@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
 const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
 const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
+const FNA_XNA_WRAPPER_VERSION: &str = "22.12.2";
 
 #[derive(Clone, Copy)]
 enum FnaShimSource {
@@ -289,6 +290,7 @@ pub fn prepare_steam_pipeline_env(
         },
     }
 
+    let home = dirs::home_dir().ok_or("no home dir")?;
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
     if node.backend == "dxmt" {
@@ -296,10 +298,12 @@ pub fn prepare_steam_pipeline_env(
     }
     if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
+        if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
+            crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
+        }
     }
     deploy_recipe_dlls(&recipe)?;
 
-    let home = dirs::home_dir().ok_or("no home dir")?;
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
 }
@@ -1610,16 +1614,10 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
         ensure_fna_native_shim_in_cache(spec, &shims_dir);
     }
 
-    let fna_src = home.join("metalsharp").join("src").join("fna");
-    let fna_build = fna_src.join("FNA").join("bin").join("Release").join("net4.0");
-    let fna3d_build = fna_src.join("FNA3D").join("build");
+    ensure_fna_runtime_assembly(&fna_dir, &ms_home)?;
 
-    if fna_build.exists() {
-        let src = fna_build.join("FNA.dll");
-        if src.exists() {
-            let _ = std::fs::copy(&src, fna_dir.join("FNA.dll"));
-        }
-    }
+    let fna3d_build = find_repo_source(&["src", "fna", "FNA3D", "build"])
+        .unwrap_or_else(|| home.join("metalsharp").join("src").join("fna").join("FNA3D").join("build"));
 
     if fna3d_build.exists() {
         let src = fna3d_build.join("libFNA3D.dylib");
@@ -1655,16 +1653,7 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
         }
     }
 
-    let runtime = ms_home.join("runtime");
-    let all_required = [
-        runtime.join("fna").join("FNA.dll"),
-        runtime.join("shims").join("libFNA3D.dylib"),
-        runtime.join("shims").join("libSDL3.dylib"),
-        runtime.join("shims").join("libkernel32.dylib"),
-        runtime.join("shims").join("libuser32.dylib"),
-        runtime.join("shims").join("libCarbon.dylib"),
-        runtime.join("shims").join("libmetalsharp_carbon_interpose.dylib"),
-    ];
+    let all_required = fna_required_runtime_assets(&ms_home.join("runtime"));
     let present = all_required.iter().filter(|p| p.exists()).count();
     if present != all_required.len() {
         return Err(format!(
@@ -1675,6 +1664,86 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
         .into());
     }
     Ok(present)
+}
+
+fn fna_required_runtime_assets(runtime: &Path) -> Vec<PathBuf> {
+    vec![
+        runtime.join("fna").join("FNA.dll"),
+        runtime.join("shims").join("libFNA3D.dylib"),
+        runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("shims").join("libkernel32.dylib"),
+        runtime.join("shims").join("libuser32.dylib"),
+        runtime.join("shims").join(FNA_CARBON_SHIM),
+        runtime.join("shims").join(FNA_CARBON_INTERPOSE_SHIM),
+    ]
+}
+
+fn ensure_fna_runtime_assembly(fna_dir: &Path, ms_home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let dst = fna_dir.join("FNA.dll");
+    if file_has_payload(&dst) {
+        return Ok(());
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(source) = find_repo_source(&["src", "fna", "FNA", "bin", "Release", "net4.0", "FNA.dll"]) {
+        candidates.push(source);
+    }
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        candidates.push(resources.join("runtime").join("fna").join("FNA.dll"));
+    }
+    candidates.push(ms_home.join("runtime").join("redist").join("fna").join("FNA.dll"));
+
+    if let Some(source) = candidates.into_iter().find(|path| file_has_payload(path)) {
+        std::fs::copy(source, dst)?;
+        return Ok(());
+    }
+
+    fetch_fna_runtime_assembly(ms_home, &dst)
+}
+
+fn fetch_fna_runtime_assembly(ms_home: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let download_dir = ms_home.join("cache").join("downloads");
+    std::fs::create_dir_all(&download_dir)?;
+    let package_file = download_dir.join(format!("FNA-XNA-Wrapper.{}.nupkg", FNA_XNA_WRAPPER_VERSION));
+    if !package_file.exists() {
+        download_fna_package(&package_file)?;
+    }
+    extract_fna_assembly_from_package(&package_file, dst)
+}
+
+fn download_fna_package(package_file: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let url = fna_package_download_url();
+    let config =
+        ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", env!("CARGO_PKG_VERSION"))).build();
+    let agent = ureq::Agent::new_with_config(config);
+    let resp = agent.get(&url).call().map_err(|err| format!("FNA runtime download failed: {}", err))?;
+    let tmp_file = package_file.with_extension("nupkg.tmp");
+    let mut input = resp.into_body().into_reader();
+    let mut output = std::fs::File::create(&tmp_file)?;
+    std::io::copy(&mut input, &mut output)?;
+    std::fs::rename(tmp_file, package_file)?;
+    Ok(())
+}
+
+fn fna_package_download_url() -> String {
+    format!(
+        "https://api.nuget.org/v3-flatcontainer/fna-xna-wrapper/{0}/fna-xna-wrapper.{0}.nupkg",
+        FNA_XNA_WRAPPER_VERSION
+    )
+}
+
+fn extract_fna_assembly_from_package(package_file: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(package_file)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut entry = archive.by_name("lib/net45/FNA.dll")?;
+    let tmp_file = dst.with_extension("dll.tmp");
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut out = std::fs::File::create(&tmp_file)?;
+    std::io::copy(&mut entry, &mut out)?;
+    std::fs::rename(tmp_file, dst)?;
+    Ok(())
 }
 
 fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf) {
@@ -1768,7 +1837,7 @@ fn find_fna_shim_source(parts: &[&str]) -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
-fn file_has_payload(path: &PathBuf) -> bool {
+fn file_has_payload(path: &Path) -> bool {
     std::fs::metadata(path).map(|metadata| metadata.len() > 0).unwrap_or(false)
 }
 
@@ -2528,6 +2597,27 @@ mod tests {
         assert!(FNA_NATIVE_SHIMS
             .iter()
             .any(|spec| spec.output == "xinput1_4.dylib" && spec.symlinks.contains(&"xinput1_3.dylib")));
+    }
+
+    #[test]
+    fn fna_runtime_repair_requires_managed_assembly_and_native_shims() {
+        let runtime = PathBuf::from("/tmp/metalsharp-runtime");
+        let required = fna_required_runtime_assets(&runtime);
+
+        assert!(required.contains(&runtime.join("fna").join("FNA.dll")));
+        assert!(required.contains(&runtime.join("shims").join("libFNA3D.dylib")));
+        assert!(required.contains(&runtime.join("shims").join("libSDL3.dylib")));
+        assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_SHIM)));
+        assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_INTERPOSE_SHIM)));
+        assert_eq!(required.len(), 7);
+    }
+
+    #[test]
+    fn fna_runtime_download_uses_nuget_flat_container() {
+        assert_eq!(
+            fna_package_download_url(),
+            "https://api.nuget.org/v3-flatcontainer/fna-xna-wrapper/22.12.2/fna-xna-wrapper.22.12.2.nupkg"
+        );
     }
 
     #[test]
