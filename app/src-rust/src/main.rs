@@ -888,6 +888,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
         },
+        (Method::Post, "/steam/anticheat-substrate-plan") => {
+            let body = read_body(req);
+            resp(200, anticheat::handle_steam_anticheat_substrate_plan(&body))
+        },
         (Method::Post, "/kernel-translation/probe") => {
             let body = read_body(req);
             resp(200, kernel_translation::handle_kernel_translation_probe(&body))
