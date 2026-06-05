@@ -334,8 +334,6 @@ pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>
         return Ok(json!({"ok": false, "error": "migration already in progress"}));
     }
 
-    write_migrate_progress("running", 0, MIGRATION_TOTAL_STEPS, "Starting MetalSharp migration...", None);
-
     std::thread::spawn(|| {
         run_migration();
         MIGRATING.store(false, Ordering::SeqCst);
@@ -835,15 +833,9 @@ fn count_settings_files(path: &Path) -> usize {
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let p = entry.path();
-            let meta = match fs::symlink_metadata(&p) {
-                Ok(meta) => meta,
-                Err(_) => continue,
-            };
-            if meta.file_type().is_symlink() {
-                continue;
-            } else if meta.is_dir() {
+            if p.is_dir() {
                 count += count_settings_files(&p);
-            } else if meta.is_file() {
+            } else {
                 count += 1;
             }
         }
@@ -911,7 +903,6 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
-        remove_root_dosdevice_mapping(&dst);
         preserve_settings_only(&preserved.prefix_steam_tmp, &dst);
 
         let dosdevices = dst.join("dosdevices");
@@ -922,7 +913,10 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !c_link.exists() {
             let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
         }
-        remove_root_dosdevice_mapping(&dst);
+        let z_link = dosdevices.join("z:");
+        if !z_link.exists() {
+            let _ = std::os::unix::fs::symlink("/", &z_link);
+        }
     }
 
     if preserved.games_tmp.exists() {
@@ -965,16 +959,6 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         let cache_dir = ms_dir.join("cache");
         let _ = fs::create_dir_all(&cache_dir);
         let _ = fs::write(cache_dir.join("steam_config.json"), data);
-    }
-}
-
-fn remove_root_dosdevice_mapping(prefix: &Path) {
-    let z_link = prefix.join("dosdevices").join("z:");
-    let Ok(meta) = fs::symlink_metadata(&z_link) else {
-        return;
-    };
-    if meta.file_type().is_symlink() && fs::read_link(&z_link).map(|target| target == Path::new("/")).unwrap_or(false) {
-        let _ = fs::remove_file(z_link);
     }
 }
 
@@ -1230,27 +1214,6 @@ mod tests {
         assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
         assert!(!ms_dir.join("prefix-steam").join("drive_c").exists());
         assert!(!find_descendant_named(&ms_dir.join("prefix-steam"), "portal2.exe"));
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_restore_removes_root_z_drive_and_does_not_count_symlink_targets() {
-        let home = test_dir("skip-root-z-drive");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        let prefix = ms_dir.join("prefix-steam");
-        let dosdevices = prefix.join("dosdevices");
-        fs::create_dir_all(&dosdevices).expect("create dosdevices");
-        std::os::unix::fs::symlink("/", dosdevices.join("z:")).expect("create z drive symlink");
-        fs::write(prefix.join("user.reg"), b"settings").expect("write prefix settings");
-
-        assert_eq!(count_settings_files(&prefix), 1);
-
-        let preserved = preserve_user_data(&ms_dir);
-        remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
-
-        assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
-        assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("z:").exists());
         let _ = fs::remove_dir_all(home);
     }
 
