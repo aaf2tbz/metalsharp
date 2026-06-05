@@ -106,6 +106,7 @@ const toast = useToast();
 const goldbergActive = ref(false);
 const eacActive = ref(false);
 const pipelineName = ref("Auto");
+const pipelineResolvedLocally = ref(false);
 const selectedLaunchMode = ref("auto");
 const pipelineOptions = ref<PipelineOption[]>([]);
 const doctorOpen = ref(false);
@@ -195,6 +196,7 @@ watch(selectedLaunchMode, (mode) => {
 watch(
   () => [props.game.launch_method, props.game.launch_method_name, props.game.preferred_pipeline],
   () => {
+    if (pipelineResolvedLocally.value) return;
     const routeId = props.game.preferred_pipeline || props.game.launch_method;
     if (routeId && userSelectablePipelineOrder.includes(routeId)) {
       pipelineName.value = props.game.launch_method_name || userSelectablePipelineNames[routeId] || pipelineName.value;
@@ -213,6 +215,7 @@ async function refreshPipelineMetadata() {
   }>("GET", `/mtsp/pipelines?appid=${props.game.appid}`);
   if (gp?.ok && gp.recommended_name) {
     pipelineName.value = gp.preferred_name || gp.recommended_name;
+    pipelineResolvedLocally.value = true;
     pipelineOptions.value = gp.pipelines ?? [];
   }
 }
@@ -335,6 +338,7 @@ async function saveBottleEdit() {
       : bottlePreferredMode.value;
     selectedLaunchMode.value = bottlePreferredMode.value;
     pipelineName.value = userSelectablePipelineNames[bottlePreferredMode.value] || pipelineName.value;
+    pipelineResolvedLocally.value = true;
     if (runtimeReport.value) {
       runtimeReport.value.bottle_name = result.bottle.name;
       runtimeReport.value.preferred_pipeline = result.bottle.preferred_pipeline || null;
