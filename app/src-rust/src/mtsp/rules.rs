@@ -332,23 +332,14 @@ fn detect_from_directory(dir: &PathBuf) -> Option<PipelineId> {
 }
 
 fn pe_info_to_pipeline(pe: &PeInfo) -> Option<PipelineId> {
+    if !pe.is_64_bit {
+        return Some(PipelineId::M9);
+    }
     match pe.detected_api {
-        D3dApi::D3D12 => {
-            if pe.is_64_bit {
-                Some(PipelineId::M12)
-            } else {
-                Some(PipelineId::M11)
-            }
-        },
+        D3dApi::D3D12 => Some(PipelineId::M12),
         D3dApi::D3D11 => Some(PipelineId::M11),
+        D3dApi::D3D10 => Some(PipelineId::M10),
         D3dApi::D3D9 => Some(PipelineId::M9),
-        D3dApi::D3D10 => {
-            if pe.is_64_bit {
-                Some(PipelineId::M10)
-            } else {
-                Some(PipelineId::M32)
-            }
-        },
         D3dApi::Unknown => None,
     }
 }
@@ -411,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn d3d10_32_bit_pe_does_not_map_to_x86_64_m10_runtime() {
+    fn d3d10_32_bit_pe_routes_to_m9() {
         let pe = PeInfo {
             machine_type: 0x014c,
             is_64_bit: false,
@@ -419,7 +410,31 @@ mod tests {
             detected_api: D3dApi::D3D10,
         };
 
-        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M32));
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
+    }
+
+    #[test]
+    fn d3d12_32_bit_pe_routes_to_m9() {
+        let pe = PeInfo {
+            machine_type: 0x014c,
+            is_64_bit: false,
+            imports: vec!["d3d12.dll".into()],
+            detected_api: D3dApi::D3D12,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
+    }
+
+    #[test]
+    fn d3d11_32_bit_pe_routes_to_m9() {
+        let pe = PeInfo {
+            machine_type: 0x014c,
+            is_64_bit: false,
+            imports: vec!["d3d11.dll".into()],
+            detected_api: D3dApi::D3D11,
+        };
+
+        assert_eq!(pe_info_to_pipeline(&pe), Some(PipelineId::M9));
     }
 
     #[test]

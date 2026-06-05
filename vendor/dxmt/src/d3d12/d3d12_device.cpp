@@ -1847,12 +1847,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
     const bool unsupported_pso_state =
         failure_stage.rfind("pso/unsupported_", 0) == 0 ||
         failure_stage.rfind("pso/metal_", 0) == 0;
+    const bool shader_compile_failure =
+        failure_stage.rfind("shader/", 0) == 0;
     char strict_fail[8] = {};
     const bool strict_deferred =
         GetEnvironmentVariableA("DXMT_D3D12_FAIL_DEFERRED_PSO", strict_fail,
                                 sizeof(strict_fail)) > 0 &&
         strict_fail[0] && strict_fail[0] != '0';
-    if (unsupported_pso_state || strict_deferred) {
+    if (unsupported_pso_state || shader_compile_failure || strict_deferred) {
       Logger::warn(str::format(
           "CreateGraphicsPipelineState: failing PSO creation for stage ",
           failure_stage, strict_deferred ? " strict=1" : ""));
@@ -1896,6 +1898,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
     Logger::warn(str::format(
         "CreateComputePipelineState: shader compilation deferred/failed at ",
         failure_stage, ": ", failure_detail));
+    const bool shader_compile_failure =
+        failure_stage.rfind("shader/", 0) == 0 ||
+        failure_stage.rfind("pso/", 0) == 0;
+    if (shader_compile_failure) {
+      Logger::warn(str::format(
+          "CreateComputePipelineState: failing PSO creation for stage ",
+          failure_stage));
+      pso->Release();
+      return E_FAIL;
+    }
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
   if (FAILED(hr))
@@ -2188,10 +2200,10 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS1 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->WaveOps = FALSE;
-    o->WaveLaneCountMin = 0;
-    o->WaveLaneCountMax = 0;
-    o->TotalLaneCount = 0;
+    o->WaveOps = TRUE;
+    o->WaveLaneCountMin = 32;
+    o->WaveLaneCountMax = 32;
+    o->TotalLaneCount = 32;
     o->ExpandedComputeResourceStates = TRUE;
     o->Int64ShaderOps = TRUE;
     return S_OK;
