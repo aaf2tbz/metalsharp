@@ -478,6 +478,7 @@ fn run_migration() {
 
     let marker = post_update_marker_path(&ms_dir);
     let _ = fs::remove_file(&marker);
+    let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
 }
@@ -595,8 +596,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
 
     let setup_json = ms_dir.join("setup.json").exists().then(|| fs::read(ms_dir.join("setup.json")).ok()).flatten();
 
-    let steam_config_path = ms_dir.join("cache").join("steam_config.json");
-    let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
+    let steam_config_json = read_preserved_steam_config(ms_dir);
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user data (cache metadata)...", None);
     let cache_tmp = tmp.join("cache");
@@ -1100,6 +1100,9 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
 }
 
 fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
+    let steam_config_json = preserved.steam_config_json.as_ref().map(|data| normalize_steam_config_json(data));
+    let steam_api_key_restored = steam_config_json.as_deref().is_some_and(steam_config_has_api_key);
+
     if preserved.prefix_steam_tmp.exists() {
         let dst = ms_dir.join("prefix-steam");
         if !dst.exists() {
@@ -1152,13 +1155,86 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
     }
 
     if let Some(ref data) = preserved.setup_json {
-        let _ = fs::write(ms_dir.join("setup.json"), data);
+        restore_setup_json(ms_dir, data, steam_api_key_restored);
     }
 
-    if let Some(ref data) = preserved.steam_config_json {
-        let cache_dir = ms_dir.join("cache");
-        let _ = fs::create_dir_all(&cache_dir);
-        let _ = fs::write(cache_dir.join("steam_config.json"), data);
+    if let Some(ref data) = steam_config_json {
+        restore_steam_config(ms_dir, data);
+    }
+}
+
+fn steam_config_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join("cache").join("steam_config.json")
+}
+
+fn migration_steam_config_backup_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join(".migration-steam_config.json")
+}
+
+fn read_preserved_steam_config(ms_dir: &Path) -> Option<Vec<u8>> {
+    for path in [steam_config_path(ms_dir), migration_steam_config_backup_path(ms_dir)] {
+        let Ok(data) = fs::read(&path) else {
+            continue;
+        };
+        let normalized = normalize_steam_config_json(&data);
+        if steam_config_has_api_key(&normalized) {
+            let _ = fs::write(migration_steam_config_backup_path(ms_dir), &normalized);
+        }
+        return Some(normalized);
+    }
+    None
+}
+
+fn normalize_steam_config_json(data: &[u8]) -> Vec<u8> {
+    let Ok(mut cfg) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(data) else {
+        return data.to_vec();
+    };
+
+    let mut changed = false;
+    let has_runtime_key = cfg.get("steam_api_key").and_then(|v| v.as_str()).is_some_and(|key| !key.is_empty());
+    if !has_runtime_key {
+        if let Some(legacy_key) =
+            cfg.get("api_key").and_then(|v| v.as_str()).filter(|key| !key.is_empty()).map(str::to_string)
+        {
+            cfg.insert("steam_api_key".into(), json!(legacy_key));
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return data.to_vec();
+    }
+
+    serde_json::to_vec_pretty(&cfg).unwrap_or_else(|_| data.to_vec())
+}
+
+fn steam_config_has_api_key(data: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(data)
+        .ok()
+        .and_then(|cfg| cfg.get("steam_api_key").and_then(|v| v.as_str()).map(str::to_string))
+        .is_some_and(|key| !key.is_empty())
+}
+
+fn restore_setup_json(ms_dir: &Path, data: &[u8], steam_api_key_restored: bool) {
+    if steam_api_key_restored {
+        if let Ok(mut cfg) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(data) {
+            cfg.insert("steamApiKeySet".into(), json!(true));
+            if let Ok(serialized) = serde_json::to_vec_pretty(&cfg) {
+                let _ = fs::write(ms_dir.join("setup.json"), serialized);
+                return;
+            }
+        }
+    }
+    let _ = fs::write(ms_dir.join("setup.json"), data);
+}
+
+fn restore_steam_config(ms_dir: &Path, data: &[u8]) {
+    let normalized = normalize_steam_config_json(data);
+    let cache_dir = ms_dir.join("cache");
+    let _ = fs::create_dir_all(&cache_dir);
+    let _ = fs::write(cache_dir.join("steam_config.json"), &normalized);
+    if steam_config_has_api_key(&normalized) {
+        let _ = fs::write(migration_steam_config_backup_path(ms_dir), &normalized);
     }
 }
 
@@ -1598,7 +1674,7 @@ mod tests {
             .expect("write setup preferences");
         fs::write(
             ms_dir.join("cache").join("steam_config.json"),
-            br#"{"api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+            br#"{"steam_api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
         )
         .expect("write Steam API key");
 
@@ -1608,11 +1684,66 @@ mod tests {
         restore_user_data(&ms_dir, &preserved);
 
         let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
+        let setup_json: serde_json::Value = serde_json::from_str(&setup).expect("parse restored setup");
         let steam_config =
             fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
 
-        assert!(setup.contains("\"deviceName\":\"Avery\""));
-        assert!(setup.contains("\"steamApiKeySet\":true"));
+        assert_eq!(setup_json.get("deviceName").and_then(|v| v.as_str()), Some("Avery"));
+        assert_eq!(setup_json.get("steamApiKeySet").and_then(|v| v.as_bool()), Some(true));
+        assert!(steam_config.contains("steam_api_key"));
+        assert!(steam_config.contains("STEAM_WEB_API_KEY"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_normalizes_legacy_steam_api_key_alias() {
+        let home = test_dir("restore-legacy-steam-api-key");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("cache")).expect("create cache dir");
+        fs::write(ms_dir.join("setup.json"), br#"{"completed":true,"steamApiKeySet":false}"#)
+            .expect("write setup preferences");
+        fs::write(
+            ms_dir.join("cache").join("steam_config.json"),
+            br#"{"api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+        )
+        .expect("write legacy Steam API key");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
+        let setup_json: serde_json::Value = serde_json::from_str(&setup).expect("parse restored setup");
+        let steam_config =
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
+
+        assert_eq!(setup_json.get("steamApiKeySet").and_then(|v| v.as_bool()), Some(true));
+        assert!(steam_config.contains("\"steam_api_key\""));
+        assert!(steam_config.contains("STEAM_WEB_API_KEY"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_recovers_steam_api_key_from_durable_backup() {
+        let home = test_dir("restore-steam-api-key-backup");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(&ms_dir).expect("create ms dir");
+        fs::write(ms_dir.join("setup.json"), br#"{"completed":true,"steamApiKeySet":true}"#)
+            .expect("write setup preferences");
+        fs::write(
+            migration_steam_config_backup_path(&ms_dir),
+            br#"{"steam_api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+        )
+        .expect("write durable Steam config backup");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        let steam_config =
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
+
+        assert!(steam_config.contains("\"steam_api_key\""));
         assert!(steam_config.contains("STEAM_WEB_API_KEY"));
         let _ = fs::remove_dir_all(home);
     }
