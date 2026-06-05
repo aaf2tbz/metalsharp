@@ -806,7 +806,7 @@ fn parse_steam_vdf_path(line: &str) -> Option<String> {
         }
         let value_start = start + ch.len_utf8();
         let mut escaped = false;
-        while let Some((end, value_ch)) = chars.next() {
+        for (end, value_ch) in chars.by_ref() {
             if escaped {
                 escaped = false;
                 continue;
