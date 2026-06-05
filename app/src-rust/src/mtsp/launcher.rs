@@ -636,7 +636,7 @@ fn launch_dxmt_metal_with_context(
     deploy_recipe_dlls(&recipe)?;
     deploy_prefix_route_dlls(&recipe, &prefix)?;
 
-    deploy_d3d12_agility_sidecars(appid, node, game_dir, exe_dir)?;
+    deploy_d3d12_agility_sidecars(appid, node, game_dir)?;
 
     if !recipe.anti_cheat.is_empty() {
         deploy_steam_appid(game_dir, appid);
@@ -707,39 +707,13 @@ fn deploy_d3d12_agility_sidecars(
     appid: u32,
     node: &PipelineNode,
     game_dir: &Path,
-    exe_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !matches!(node.id, PipelineId::M12 | PipelineId::M13) {
-        return Ok(());
-    }
-    if skips_app_local_agility_sidecars(appid) {
-        remove_app_local_agility_sidecars(game_dir, exe_dir)?;
         return Ok(());
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)
-}
-
-fn skips_app_local_agility_sidecars(appid: u32) -> bool {
-    appid == 1962700
-}
-
-fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut roots = vec![exe_dir.to_path_buf()];
-    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
-    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
-        roots.push(engine_bin);
-    }
-
-    for root in roots {
-        let target = root.join("D3D12");
-        if target.is_dir() {
-            std::fs::remove_dir_all(target)?;
-        }
-    }
-
-    Ok(())
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {

@@ -694,7 +694,7 @@ pub fn prepare_steam_game_launch(
     let mut manifest = ensure_steam_game_bottle_inner(appid, &name, dual.wine_dir.as_deref(), pipeline, false)?;
     let prefix = PathBuf::from(&manifest.prefix_path);
     fs::create_dir_all(&prefix)?;
-    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    manifest.installed_components = inspect_components_for_manifest(&manifest, &prefix, &manifest.installed_components);
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
@@ -954,7 +954,7 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
     let mut manifest = load_bottle(id)?;
     refresh_manifest_launch_state(&mut manifest);
     let prefix = PathBuf::from(&manifest.prefix_path);
-    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    manifest.installed_components = inspect_components_for_manifest(&manifest, &prefix, &manifest.installed_components);
     let log_ok = manifest.last_launch_log.as_ref().map(|p| Path::new(p).exists()).unwrap_or(false);
     refresh_manifest_runtime_views(&mut manifest);
     let detections = manifest.installed_app_detections.clone();
@@ -1085,8 +1085,11 @@ fn complete_bottle_launch(id: &str, pid: u32) -> Result<BottleManifest, Box<dyn 
     }
     manifest.last_launch_status = Some("exited".to_string());
     manifest.last_launch_finished_at = Some(timestamp_secs());
-    manifest.installed_components =
-        inspect_components(&PathBuf::from(&manifest.prefix_path), &manifest.installed_components);
+    manifest.installed_components = inspect_components_for_manifest(
+        &manifest,
+        &PathBuf::from(&manifest.prefix_path),
+        &manifest.installed_components,
+    );
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
@@ -1190,7 +1193,7 @@ pub fn prepare_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error::
     fs::create_dir_all(prefix.join("drive_c"))?;
     fs::create_dir_all(bottle_logs_dir(id))?;
     fs::create_dir_all(installer_payload_dir(id))?;
-    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    manifest.installed_components = inspect_components_for_manifest(&manifest, &prefix, &manifest.installed_components);
     manifest.health = BottleHealth::NeedsRepair;
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
@@ -1219,7 +1222,7 @@ pub fn repair_component(
     fs::create_dir_all(&prefix)?;
     fs::create_dir_all(bottle_logs_dir(id))?;
     refresh_manifest_runtime_views(&mut manifest);
-    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    manifest.installed_components = inspect_components_for_manifest(&manifest, &prefix, &manifest.installed_components);
 
     if component_id != "d3d12_agility"
         && manifest
@@ -1432,11 +1435,18 @@ pub fn repair_component(
             .map(PathBuf::from)
             .ok_or("D3D12 Agility repair requires a game install path")?;
         if dry_run {
+            let state = if game_dir.is_dir() {
+                inspect_d3d12_agility_component_for_manifest(&manifest).unwrap_or(ComponentState::Missing)
+            } else {
+                ComponentState::Missing
+            };
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: if game_dir.is_dir() { "runtime_repair_available" } else { "asset_missing" }.to_string(),
-                detail: if game_dir.is_dir() {
-                    "D3D12 Agility SDK payload can be downloaded and staged for this game".to_string()
+                detail: if state == ComponentState::Installed {
+                    "D3D12 Agility SDK payload is already staged for this game".to_string()
+                } else if game_dir.is_dir() {
+                    "D3D12 Agility SDK payload can be downloaded, staged, and verified for this game".to_string()
                 } else {
                     "Game install path is missing, so the Agility SDK payload cannot be staged".to_string()
                 },
@@ -1446,8 +1456,11 @@ pub fn repair_component(
             });
         }
 
-        crate::setup::stage_agility_sdk_for_game(appid, &game_dir, &home)?;
-        let state = inspect_d3d12_agility_component().unwrap_or(ComponentState::Installed);
+        let report = crate::setup::stage_agility_sdk_for_game_report(appid, &game_dir, &home)?;
+        let state = inspect_d3d12_agility_component_for_manifest(&manifest).unwrap_or(ComponentState::Missing);
+        if state != ComponentState::Installed {
+            return Err("D3D12 Agility repair did not verify after staging".into());
+        }
         mark_component_state(&mut manifest, component_id, state);
         manifest.health = if components_ready(&manifest.installed_components) {
             BottleHealth::Ready
@@ -1459,7 +1472,24 @@ pub fn repair_component(
         return Ok(ComponentRepairReport {
             id: component_id.to_string(),
             status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
-            detail: "Downloaded and staged the D3D12 Agility SDK payload for the M12 launch path".to_string(),
+            detail: if report.app_local_sidecars_skipped {
+                format!(
+                    "Downloaded and verified Microsoft.Direct3D.D3D12 {} shared x64 payload for this title ({})",
+                    report.package_version,
+                    report
+                        .sdk_version
+                        .map(|version| format!("D3D12SDKVersion {}", version))
+                        .unwrap_or_else(|| "default D3D12SDKVersion".to_string())
+                )
+            } else {
+                format!(
+                    "Downloaded and staged Microsoft.Direct3D.D3D12 {} to {} Agility target(s) for {} ({} file writes)",
+                    report.package_version,
+                    report.target_dirs.len(),
+                    report.sdk_path,
+                    report.staged_files.len()
+                )
+            },
             asset_path: Some(game_dir.to_string_lossy().to_string()),
             log_path: None,
             pid: None,
@@ -1787,7 +1817,11 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let bottle = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline).ok();
     let prefix = bottle.as_ref().map(|b| PathBuf::from(&b.prefix_path)).unwrap_or_else(steam_launch_prefix);
-    let components = inspect_components(&prefix, &default_components_for(profile));
+    let default_components = default_components_for(profile);
+    let components = bottle
+        .as_ref()
+        .map(|manifest| inspect_components_for_manifest(manifest, &prefix, &default_components))
+        .unwrap_or_else(|| inspect_components(&prefix, &default_components));
     let actions = component_actions(&components);
     let compatdata = load_steam_compatdata(appid).ok();
     let recipe_deps = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
@@ -1889,7 +1923,7 @@ pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Valu
         Ok(m) => m,
         Err(_) => return json!({"ok": false, "appid": appid, "installed": reports, "errors": errors}),
     };
-    manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
+    manifest.installed_components = inspect_components_for_manifest(&manifest, &prefix, &manifest.installed_components);
     let _ = save_bottle(&manifest);
 
     let still_missing = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
@@ -2360,6 +2394,25 @@ fn inspect_components(prefix: &Path, components: &[RuntimeComponent]) -> Vec<Run
         .collect()
 }
 
+fn inspect_components_for_manifest(
+    manifest: &BottleManifest,
+    prefix: &Path,
+    components: &[RuntimeComponent],
+) -> Vec<RuntimeComponent> {
+    components
+        .iter()
+        .map(|component| {
+            let fallback = inspect_component_state(prefix, &component.id, component.state);
+            let state = if component.id == "d3d12_agility" {
+                inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
+            } else {
+                fallback
+            };
+            RuntimeComponent { id: component.id.clone(), state }
+        })
+        .collect()
+}
+
 pub fn verify_directx_jun2010(prefix: &Path) -> DirectXVerification {
     let system32 = prefix.join("drive_c/windows/system32");
     let syswow64 = prefix.join("drive_c/windows/syswow64");
@@ -2638,6 +2691,21 @@ fn inspect_d3d12_agility_component() -> Option<ComponentState> {
         bin.join("D3D12Core.dll").exists() && bin.join("d3d12SDKLayers.dll").exists()
     });
     Some(if found { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn inspect_d3d12_agility_component_for_manifest(manifest: &BottleManifest) -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let appid = manifest.steam_app_id?;
+    let game_dir = manifest.game_install_path.as_deref().map(PathBuf::from)?;
+    if !game_dir.is_dir() {
+        return Some(ComponentState::Missing);
+    }
+    match crate::setup::inspect_agility_sdk_for_game(appid, &game_dir, &home) {
+        Ok(inspection) if inspection.installed() => Some(ComponentState::Installed),
+        Ok(inspection) if inspection.partially_staged() => Some(ComponentState::NeedsRepair),
+        Ok(_) => Some(ComponentState::Missing),
+        Err(_) => Some(ComponentState::Missing),
+    }
 }
 
 fn core_fonts_installed(fonts_dir: &Path) -> bool {
