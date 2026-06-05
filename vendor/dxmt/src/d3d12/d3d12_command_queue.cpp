@@ -82,7 +82,7 @@ bool DXMTD3D12SkipUnsafeMSCOffscreenPass() {
     const char *value = std::getenv("DXMT_D3D12_SKIP_UNSAFE_MSC_OFFSCREEN_PASS");
     if (!value || !value[0])
       value = std::getenv("DXMT_D3D12_SKIP_UNSAFE_MSC_R16_DEPTH_PASS");
-    return !value || !value[0] || value[0] != '0';
+    return value && value[0] && value[0] != '0';
   }();
   return enabled != 0;
 }
@@ -1179,29 +1179,15 @@ struct ReplayState {
   }
 
   void EnsureSwapchainRenderPSOReady() {
-    if (!HasSwapchainRenderTarget() || !pso || pso->IsCompiled())
+    if (!pso || pso->IsCompiled())
       return;
 
-    if (pso->IsCompilePending()) {
-      bool compiled = pso->TryCompilePendingInline();
-      Logger::info(str::format("M12 swapchain render PSO pending; advancing frame pso=",
-                               (void *)pso, " promoted_compiled=", compiled,
-                               " stage=",
-                               TraceCompileFailureStage(pso), " detail=",
-                               TraceCompileFailureDetail(pso)));
-      return;
-    }
-
-    Logger::info(str::format("M12 swapchain waiting for graphics PSO pso=",
-                             (void *)pso, " pending=",
-                             pso->IsCompilePending(), " stage=",
-                             TraceCompileFailureStage(pso), " detail=",
-                             TraceCompileFailureDetail(pso)));
     bool compiled = pso->EnsureCompiled();
-    Logger::info(str::format("M12 swapchain graphics PSO ready compiled=",
-                             compiled, " pso=", (void *)pso, " stage=",
-                             TraceCompileFailureStage(pso), " detail=",
-                             TraceCompileFailureDetail(pso)));
+    Logger::info(str::format("M12 render PSO ready compiled=",
+                             compiled, " pso=", (void *)pso,
+                             " swapchain=", HasSwapchainRenderTarget(),
+                             " stage=", TraceCompileFailureStage(pso),
+                             " detail=", TraceCompileFailureDetail(pso)));
   }
 
   void LogFinalRenderSnapshot(const char *draw_kind, uint32_t element_count,
