@@ -25,9 +25,9 @@
   --text-bright: #ffffff;
   --border: rgba(140, 170, 200, 0.12);
   --border-strong: rgba(140, 170, 200, 0.2);
-  --sidebar-bg: #141920;
-  --sidebar-hover: #1d252e;
-  --sidebar-active: rgba(95, 183, 232, 0.12);
+  --sidebar-bg: rgba(20, 25, 32, 0.55);
+  --sidebar-hover: rgba(29, 37, 46, 0.6);
+  --sidebar-active: rgba(95, 183, 232, 0.15);
   --page-header-bg: #181f27;
   --radius-sm: 4px;
   --radius-md: 6px;
@@ -67,8 +67,8 @@
   --text-bright: #0e1a26;
   --border: rgba(30, 39, 50, 0.1);
   --border-strong: rgba(30, 39, 50, 0.18);
-  --sidebar-bg: #e7ebf0;
-  --sidebar-hover: #dbe1e8;
-  --sidebar-active: rgba(52, 127, 186, 0.12);
+  --sidebar-bg: rgba(231, 235, 240, 0.6);
+  --sidebar-hover: rgba(219, 225, 232, 0.65);
+  --sidebar-active: rgba(52, 127, 186, 0.15);
   --page-header-bg: #eef2f6;
 }

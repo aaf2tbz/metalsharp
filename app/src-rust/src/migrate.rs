@@ -26,6 +26,7 @@ const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "prefix",
     "prefix-steam",
     "drive_c",
+    "dosdevices",
     "Program Files",
     "Program Files (x86)",
     "Steam",
@@ -109,12 +110,21 @@ pub fn needs_migration() -> serde_json::Value {
         None => return json!({"ok": false, "error": "no home dir"}),
     };
 
-    let setup_path = crate::platform::metalsharp_home_dir_for(&home).join("setup.json");
-    let setup_dir_exists = crate::platform::metalsharp_home_dir_for(&home).exists();
+    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    let setup_path = ms_dir.join("setup.json");
+    let setup_dir_exists = ms_dir.exists();
 
     if !setup_dir_exists || !setup_path.exists() {
         return json!({"ok": true, "needed": false, "reason": "fresh_install"});
     }
+
+    let post_update_marker = ms_dir.join(".post-update-migration");
+    let marker_requested = post_update_marker.exists()
+        && fs::read_to_string(&post_update_marker)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("needed").and_then(|n| n.as_bool()))
+            .unwrap_or(false);
 
     let setup_data = match fs::read_to_string(&setup_path) {
         Ok(d) => d,
@@ -133,7 +143,7 @@ pub fn needs_migration() -> serde_json::Value {
     let repair_needed = runtime_needs_repair(&home, setup_completed);
 
     let schema_current = current_schema.is_some_and(|schema| schema >= MIGRATE_SCHEMA_VERSION);
-    let needed = repair_needed;
+    let needed = repair_needed || marker_requested;
 
     json!({
         "ok": true,
@@ -142,7 +152,11 @@ pub fn needs_migration() -> serde_json::Value {
         "target_version": MIGRATE_VERSION,
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
-        "reason": if repair_needed {
+        "reason": if marker_requested && repair_needed {
+            "post_update_marker_and_runtime_repair"
+        } else if marker_requested {
+            "post_update_marker"
+        } else if repair_needed {
             "runtime_bundle_update_required"
         } else if schema_current {
             "up_to_date"
@@ -618,68 +632,72 @@ fn temp_suffix() -> u128 {
 }
 
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
-    if let Ok(entries) = fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy().to_string();
-            let src_path = entry.path();
-            let dst_path = dst.join(&name);
+    let entries = match fs::read_dir(src) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
 
-            if skip_names.contains(&name_str.as_str()) {
-                continue;
-            }
+        if skip_names.contains(&name_str.as_str()) {
+            continue;
+        }
 
-            match fs::symlink_metadata(&src_path) {
-                Ok(meta) => {
-                    if meta.file_type().is_symlink() {
-                        if let Ok(target) = fs::read_link(&src_path) {
-                            let _ = std::os::unix::fs::symlink(&target, &dst_path);
-                        }
-                    } else if meta.is_dir() {
-                        let _ = fs::create_dir_all(&dst_path);
-                        preserve_selective(&src_path, &dst_path, skip_names);
-                    } else {
-                        let _ = fs::copy(&src_path, &dst_path);
-                    }
-                },
-                Err(_) => {},
-            }
+        let meta = match fs::symlink_metadata(&src_path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if meta.file_type().is_symlink() {
+            continue;
+        } else if meta.is_dir() {
+            let _ = fs::create_dir_all(&dst_path);
+            preserve_selective(&src_path, &dst_path, skip_names);
+        } else {
+            let _ = fs::copy(&src_path, &dst_path);
         }
     }
 }
 
 fn preserve_settings_only(src: &PathBuf, dst: &PathBuf) {
-    if let Ok(entries) = fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy().to_string();
-            let src_path = entry.path();
-            let dst_path = dst.join(&name);
+    let entries = match fs::read_dir(src) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
 
-            if migration_preserve_denies_name(&name_str) {
-                continue;
+        if migration_preserve_denies_name(&name_str) {
+            continue;
+        }
+
+        let meta = match fs::symlink_metadata(&src_path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if meta.file_type().is_symlink() {
+            continue;
+        } else if meta.is_dir() {
+            let before = count_settings_files(&dst_path);
+            preserve_settings_only(&src_path, &dst_path);
+            if count_settings_files(&dst_path) == before
+                && fs::read_dir(&dst_path).map(|mut e| e.next().is_none()).unwrap_or(false)
+            {
+                let _ = fs::remove_dir(&dst_path);
             }
-
-            match fs::symlink_metadata(&src_path) {
-                Ok(meta) => {
-                    if meta.file_type().is_symlink() {
-                        continue;
-                    } else if meta.is_dir() {
-                        let before = count_settings_files(&dst_path);
-                        preserve_settings_only(&src_path, &dst_path);
-                        if count_settings_files(&dst_path) == before
-                            && fs::read_dir(&dst_path).map(|mut e| e.next().is_none()).unwrap_or(false)
-                        {
-                            let _ = fs::remove_dir(&dst_path);
-                        }
-                    } else if migration_preserve_allows_file(&src_path) {
-                        if let Some(parent) = dst_path.parent() {
-                            let _ = fs::create_dir_all(parent);
-                        }
-                        let _ = fs::copy(&src_path, &dst_path);
-                    }
-                },
-                Err(_) => {},
+        } else if migration_preserve_allows_file(&src_path) {
+            if let Some(parent) = dst_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Err(e) = fs::copy(&src_path, &dst_path) {
+                log_to_file(&format!("Migration preserve: failed to copy {}: {}", src_path.display(), e));
             }
         }
     }
@@ -1165,6 +1183,42 @@ mod tests {
         assert!(MIGRATION_EXACT_KILL_PATTERNS.contains(&"wineloader"));
         assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"steam"));
         assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"wine"));
+    }
+
+    #[test]
+    fn post_update_marker_overrides_ready_runtime() {
+        let home = test_dir("marker-override");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+        fs::write(
+            ms_dir.join("setup.json"),
+            serde_json::to_vec(&json!({"completed": true, "runtime_migration_schema": 3})).unwrap(),
+        )
+        .expect("write setup.json");
+
+        assert!(runtime_core_ready(&ms_dir));
+        assert!(!runtime_needs_repair(&home, true));
+
+        let marker = ms_dir.join(".post-update-migration");
+        assert!(!marker.exists());
+
+        fs::write(
+            &marker,
+            serde_json::to_vec(&json!({"needed": true, "target_version": "0.36.0", "timestamp": 1234567890})).unwrap(),
+        )
+        .expect("write marker");
+        assert!(marker.exists());
+
+        let marker_data = fs::read_to_string(&marker).expect("read marker");
+        let marker_json: serde_json::Value = serde_json::from_str(&marker_data).expect("parse marker");
+        assert!(marker_json.get("needed").and_then(|v| v.as_bool()).unwrap_or(false));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dosdevices_dir_is_denied_in_preserve() {
+        assert!(migration_preserve_denies_name("dosdevices"));
     }
 
     #[test]

@@ -97,13 +97,28 @@ const navItems = [
 .sidebar {
   width: var(--sidebar-width-expanded);
   background: var(--sidebar-bg);
-  border-right: 1px solid var(--border);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-right: 1px solid rgba(140, 170, 200, 0.08);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
   overflow: hidden;
   flex-shrink: 0;
   -webkit-app-region: drag;
+  position: relative;
+}
+.sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(95, 183, 232, 0.04) 0%, transparent 40%, rgba(95, 183, 232, 0.02) 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+.sidebar > * {
+  position: relative;
+  z-index: 1;
 }
 .sidebar.collapsed {
   width: var(--sidebar-width-collapsed);

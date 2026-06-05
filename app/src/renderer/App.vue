@@ -67,6 +67,14 @@ const viewMap: Record<string, Component> = {
 
 const activeView = computed(() => viewMap[currentView.value] ?? LibraryView);
 
+const updateChangelog = computed(() => {
+  if (!updateStatus.value?.release_notes) return "";
+  const firstLine = updateStatus.value.release_notes.split("\n").find((l) => l.trim().length > 0) ?? "";
+  const cleaned = firstLine.replace(/^#+\s*/, "").replace(/\*\*/g, "").replace(/`/g, "").trim();
+  if (cleaned.length <= 20) return cleaned;
+  return cleaned.slice(0, 19) + "\u2026";
+});
+
 provide("library", library);
 provide("config", config);
 provide("wineSteamInstalled", wineSteamInstalled);
@@ -310,7 +318,7 @@ onMounted(async () => {
       <div class="drag-strip"></div>
       <div v-if="updateStatus?.ok && updateStatus?.available" class="update-banner">
         <span class="update-banner-text" v-if="!updateDownloading"
-          >MetalSharp v{{ updateStatus.latest_version }} is available</span
+          >MetalSharp v{{ updateStatus.latest_version }} is available<span v-if="updateChangelog" class="update-changelog">{{ updateChangelog }}</span></span
         >
         <span class="update-banner-text" v-else>{{ updateMessage }}</span>
         <div v-if="updateDownloading" class="update-banner-progress">
@@ -351,6 +359,11 @@ onMounted(async () => {
 }
 .update-banner-text {
   white-space: nowrap;
+}
+.update-changelog {
+  margin-left: 8px;
+  opacity: 0.7;
+  font-weight: 400;
 }
 .update-banner-btn {
   background: rgba(0, 0, 0, 0.15);
