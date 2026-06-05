@@ -3416,11 +3416,27 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
         }
     }
 
+    let ntdll_hook_src =
+        ms_root.join("lib").join("metalsharp").join("x86_64-windows").join("metalsharp_ntdll_hook.dll");
+    if ntdll_hook_src.exists() {
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        let _ = fs::create_dir_all(&system32);
+        let dst = system32.join("metalsharp_ntdll_hook.dll");
+        if !dst.exists() {
+            let _ = fs::copy(&ntdll_hook_src, &dst);
+        }
+    }
+
     let mut reg = build_font_substitution_reg();
     reg.push_str("\r\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\r\n");
     for (dll, mode) in POST_WINEBOOT_DLL_OVERRIDES {
         reg.push_str(&format!("\"{}\"=\"{}\"\r\n", dll, mode));
     }
+
+    reg.push_str("\r\n[HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows]\r\n");
+    reg.push_str("\"AppInit_DLLs\"=\"metalsharp_ntdll_hook.dll\"\r\n");
+    reg.push_str("\"LoadAppInit_DLLs\"=dword:00000001\r\n");
+    reg.push_str("\"RequireSignedAppInit_DLLs\"=dword:00000000\r\n");
 
     let reg_file = prefix.join("drive_c").join("metalsharp-post-wineboot.reg");
     fs::write(&reg_file, &reg)?;

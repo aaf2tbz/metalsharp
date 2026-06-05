@@ -131,7 +131,7 @@ pub fn ensure_bridge_running() -> Result<(), Box<dyn std::error::Error>> {
     let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
 
     if !bridge_exe.exists() {
-        return Err("steambridge.exe not found".into());
+        return Err("steambridge.exe not found — Wine-side Steam API bridge is not yet available".into());
     }
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
@@ -173,16 +173,21 @@ fn deploy_steam_shim(game_dir: &PathBuf) {
         Some(h) => h,
         None => return,
     };
-    let shim_src =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("steam-bridge").join("libsteam_api.dylib");
-    if !shim_src.exists() {
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let shim_src = ms_home.join("runtime").join("steam-bridge").join("libsteam_api.dylib");
+    let shim_fallback = ms_home.join("runtime").join("shims").join("libsteam_api.dylib");
+    let src = if shim_src.exists() {
+        shim_src
+    } else if shim_fallback.exists() {
+        shim_fallback
+    } else {
         return;
-    }
+    };
     let dest = game_dir.join("libsteam_api.dylib");
     if dest.exists() {
         return;
     }
-    let _ = std::fs::copy(&shim_src, &dest);
+    let _ = std::fs::copy(&src, &dest);
 }
 
 pub fn launch_with_pipeline(
@@ -1595,27 +1600,81 @@ fn deploy_fna_native_shims(game_dir: &PathBuf, shims_dir: &PathBuf) {
 
 pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let shims_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("shims");
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let shims_dir = ms_home.join("runtime").join("shims");
+    let fna_dir = ms_home.join("runtime").join("fna");
     std::fs::create_dir_all(&shims_dir)?;
+    std::fs::create_dir_all(&fna_dir)?;
 
     for spec in FNA_NATIVE_SHIMS {
         ensure_fna_native_shim_in_cache(spec, &shims_dir);
     }
 
-    let installed_required = FNA_NATIVE_SHIMS
-        .iter()
-        .filter(|spec| spec.required_for_launch)
-        .filter(|spec| shims_dir.join(spec.output).exists())
-        .count();
-    let required = FNA_NATIVE_SHIMS.iter().filter(|spec| spec.required_for_launch).count();
-    if installed_required != required {
+    let fna_src = home.join("metalsharp").join("src").join("fna");
+    let fna_build = fna_src.join("FNA").join("bin").join("Release").join("net4.0");
+    let fna3d_build = fna_src.join("FNA3D").join("build");
+
+    if fna_build.exists() {
+        let src = fna_build.join("FNA.dll");
+        if src.exists() {
+            let _ = std::fs::copy(&src, fna_dir.join("FNA.dll"));
+        }
+    }
+
+    if fna3d_build.exists() {
+        let src = fna3d_build.join("libFNA3D.dylib");
+        if src.exists() {
+            let _ = std::fs::copy(&src, shims_dir.join("libFNA3D.dylib"));
+        }
+    }
+
+    let sdl3_candidates =
+        [PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"), PathBuf::from("/usr/local/lib/libSDL3.0.dylib")];
+    for sdl3 in &sdl3_candidates {
+        if sdl3.exists() {
+            let dst = shims_dir.join("libSDL3.0.dylib");
+            let _ = std::fs::copy(sdl3, &dst);
+            let _ = Command::new("/usr/bin/install_name_tool")
+                .args(["-id", "@loader_path/libSDL3.0.dylib"])
+                .arg(&dst)
+                .output();
+
+            let fna3d = shims_dir.join("libFNA3D.dylib");
+            if fna3d.exists() {
+                let _ = Command::new("/usr/bin/install_name_tool")
+                    .args(["-change", "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib", "@loader_path/libSDL3.0.dylib"])
+                    .arg(&fna3d)
+                    .output();
+            }
+
+            let symlink = shims_dir.join("libSDL3.dylib");
+            if !symlink.exists() {
+                let _ = std::os::unix::fs::symlink("libSDL3.0.dylib", symlink);
+            }
+            break;
+        }
+    }
+
+    let runtime = ms_home.join("runtime");
+    let all_required = [
+        runtime.join("fna").join("FNA.dll"),
+        runtime.join("shims").join("libFNA3D.dylib"),
+        runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("shims").join("libkernel32.dylib"),
+        runtime.join("shims").join("libuser32.dylib"),
+        runtime.join("shims").join("libCarbon.dylib"),
+        runtime.join("shims").join("libmetalsharp_carbon_interpose.dylib"),
+    ];
+    let present = all_required.iter().filter(|p| p.exists()).count();
+    if present != all_required.len() {
         return Err(format!(
-            "FNA native shim repair incomplete: {}/{} required macOS framework shims are staged",
-            installed_required, required
+            "FNA runtime repair incomplete: {}/{} required assets staged",
+            present,
+            all_required.len()
         )
         .into());
     }
-    Ok(FNA_NATIVE_SHIMS.iter().filter(|spec| shims_dir.join(spec.output).exists()).count())
+    Ok(present)
 }
 
 fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf) {

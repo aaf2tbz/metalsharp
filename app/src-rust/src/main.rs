@@ -96,6 +96,10 @@ fn main() {
     eprintln!("metalsharp-backend listening on {}", addr);
     app_log(&format!("MetalSharp v{} backend started on {}", env!("CARGO_PKG_VERSION"), addr));
 
+    if crate::steam::is_wine_steam_running() {
+        let _ = kernel_translation::ipc_bridge::start_ipc_listener();
+    }
+
     let cors_header = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
     let json_header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
 
