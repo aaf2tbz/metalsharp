@@ -178,6 +178,7 @@ fn run_install_all() {
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
         ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+        ("Steam Bridge Shim", Box::new(install_steam_bridge)),
         ("Offline EAC Mode", Box::new(install_eac_toggle)),
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Mono Configs", Box::new(install_mono_configs)),
@@ -1005,6 +1006,29 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
         Ok(true)
     } else {
         Err("Goldberg Steam emulator not found — goldberg.tar.zst missing from bundles".into())
+    }
+}
+
+fn install_steam_bridge(home: &PathBuf) -> Result<bool, String> {
+    let bridge_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("steam-bridge");
+    let shim_dst = bridge_dir.join("libsteam_api.dylib");
+
+    if shim_dst.exists() {
+        return Ok(false);
+    }
+
+    let _ = fs::create_dir_all(&bridge_dir);
+
+    let shims_dylib =
+        crate::platform::metalsharp_home_dir_for(home).join("runtime").join("shims").join("libsteam_api.dylib");
+    if shims_dylib.exists() {
+        fs::copy(&shims_dylib, &shim_dst).map_err(|e| format!("copy steam bridge shim: {}", e))?;
+    }
+
+    if shim_dst.exists() {
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }
 

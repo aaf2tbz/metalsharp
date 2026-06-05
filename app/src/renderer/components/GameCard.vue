@@ -212,7 +212,7 @@ async function refreshPipelineMetadata() {
     pipelines: PipelineOption[];
   }>("GET", `/mtsp/pipelines?appid=${props.game.appid}`);
   if (gp?.ok && gp.recommended_name) {
-    pipelineName.value = props.game.launch_method_name || gp.preferred_name || gp.recommended_name;
+    pipelineName.value = gp.preferred_name || gp.recommended_name;
     pipelineOptions.value = gp.pipelines ?? [];
   }
 }

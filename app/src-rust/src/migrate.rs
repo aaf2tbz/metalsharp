@@ -339,7 +339,7 @@ fn run_migration() {
 
     if install_ok {
         step += 1;
-        write_migrate_progress("running", step, total_steps, "Updating Wine prefixes...", None);
+        write_migrate_progress("running", step, total_steps, "Updating Wine Steam prefix...", None);
         if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
             write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
             log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
@@ -555,25 +555,6 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
 fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
     let mut prefixes = Vec::new();
     push_existing_prefix(&mut prefixes, ms_dir.join("prefix-steam"));
-
-    let bottles = ms_dir.join("bottles");
-    if let Ok(entries) = fs::read_dir(&bottles) {
-        for entry in entries.flatten() {
-            let bottle_dir = entry.path();
-            push_existing_prefix(&mut prefixes, bottle_dir.join("prefix"));
-
-            let manifest = bottle_dir.join("bottle.json");
-            let Some(prefix_path) = fs::read_to_string(&manifest)
-                .ok()
-                .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
-                .and_then(|value| value.get("prefix_path").and_then(|v| v.as_str()).map(PathBuf::from))
-            else {
-                continue;
-            };
-            push_existing_prefix(&mut prefixes, prefix_path);
-        }
-    }
-
     prefixes
 }
 
@@ -753,7 +734,6 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
         "SteamSetup.exe",
         "install_progress.json",
         "update_progress.json",
-        "migrate_progress.json",
     ];
 
     for name in &dirs_to_remove {
@@ -1014,8 +994,8 @@ mod tests {
         let prefixes = collect_existing_wine_prefixes(&ms_dir);
 
         assert!(prefixes.contains(&steam_prefix));
-        assert!(prefixes.contains(&bottle_prefix));
-        assert_eq!(prefixes.iter().filter(|prefix| *prefix == &bottle_prefix).count(), 1);
+        assert!(!prefixes.contains(&bottle_prefix));
+        assert_eq!(prefixes.len(), 1);
         let _ = fs::remove_dir_all(home);
     }
 
