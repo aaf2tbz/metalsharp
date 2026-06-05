@@ -614,50 +614,128 @@ struct AgilitySdkRequirement {
     sdk_path: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AgilityStageReport {
+    pub(crate) package_version: String,
+    pub(crate) sdk_version: Option<u32>,
+    pub(crate) sdk_path: String,
+    pub(crate) target_dirs: Vec<PathBuf>,
+    pub(crate) staged_files: Vec<PathBuf>,
+    pub(crate) app_local_sidecars_skipped: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgilitySdkInspection {
+    pub(crate) package_version: String,
+    pub(crate) sdk_version: Option<u32>,
+    pub(crate) sdk_path: String,
+    pub(crate) target_dirs: Vec<PathBuf>,
+    pub(crate) missing_files: Vec<PathBuf>,
+    pub(crate) present_files: Vec<PathBuf>,
+    pub(crate) shared_payload_ready: bool,
+    pub(crate) app_local_sidecars_skipped: bool,
+}
+
+impl AgilitySdkInspection {
+    pub(crate) fn installed(&self) -> bool {
+        if self.app_local_sidecars_skipped {
+            return self.shared_payload_ready;
+        }
+        !self.target_dirs.is_empty() && self.missing_files.is_empty()
+    }
+
+    pub(crate) fn partially_staged(&self) -> bool {
+        !self.present_files.is_empty() || self.shared_payload_ready
+    }
+}
+
 pub(crate) fn stage_agility_sdk_for_game(
     appid: u32,
     game_dir: &Path,
     home: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    stage_agility_sdk_for_game_report(appid, game_dir, home).map(|_| ())
+}
+
+pub(crate) fn stage_agility_sdk_for_game_report(
+    appid: u32,
+    game_dir: &Path,
+    home: &Path,
+) -> Result<AgilityStageReport, Box<dyn std::error::Error>> {
     let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
     let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
-    if appid == 1962700 {
-        remove_app_local_agility_sidecars(game_dir, exe_dir)?;
-        return Ok(());
-    }
-
     let requirement = read_game_agility_requirement(&exe_path);
+    let package_version = agility_package_version_for_requirement(requirement.sdk_version).to_string();
     let agility_bin = ensure_agility_sdk_bin(home, requirement.sdk_version).ok_or_else(|| {
         let version = requirement.sdk_version.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string());
         format!("Agility SDK x64 payload not found for version {}", version)
     })?;
+    validate_agility_bin_payload(&agility_bin)?;
+
+    if agility_uses_shared_payload_only(appid) {
+        remove_app_local_agility_sidecars(game_dir, exe_dir)?;
+        return Ok(AgilityStageReport {
+            package_version,
+            sdk_version: requirement.sdk_version,
+            sdk_path: requirement.sdk_path,
+            target_dirs: Vec::new(),
+            staged_files: required_agility_payload_files()
+                .iter()
+                .map(|file| agility_bin.join(file))
+                .filter(|path| path.exists())
+                .collect(),
+            app_local_sidecars_skipped: true,
+        });
+    }
+
     let dxil_dll = ensure_dxil_dll(home);
 
     let targets = resolve_agility_target_dirs(exe_dir, &requirement.sdk_path);
+    let mut staged_files = Vec::new();
 
-    for target_dir in targets {
+    for target_dir in &targets {
         std::fs::create_dir_all(&target_dir)?;
-        for dll in ["D3D12Core.dll", "d3d12SDKLayers.dll"] {
+        for dll in required_agility_payload_files() {
             let source = agility_bin.join(dll);
             if !source.exists() {
                 return Err(format!("Missing Agility SDK DLL: {}", source.display()).into());
             }
-            stage_sdk_file(&source, &target_dir.join(dll))?;
+            let dest = target_dir.join(dll);
+            stage_sdk_file(&source, &dest)?;
+            staged_files.push(dest);
         }
 
         for optional in ["D3D12StateObjectCompiler.dll", "d3dconfig.exe"] {
             let source = agility_bin.join(optional);
             if source.exists() {
-                stage_sdk_file(&source, &target_dir.join(optional))?;
+                let dest = target_dir.join(optional);
+                stage_sdk_file(&source, &dest)?;
+                staged_files.push(dest);
             }
         }
 
         if let Some(source) = &dxil_dll {
-            stage_sdk_file(source, &target_dir.join("dxil.dll"))?;
+            let dest = target_dir.join("dxil.dll");
+            stage_sdk_file(source, &dest)?;
+            staged_files.push(dest);
         }
     }
 
-    Ok(())
+    let inspection = inspect_agility_sdk_for_game(appid, game_dir, home)?;
+    if !inspection.installed() {
+        let missing =
+            inspection.missing_files.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ");
+        return Err(format!("Agility SDK staging incomplete; missing {}", missing).into());
+    }
+
+    Ok(AgilityStageReport {
+        package_version,
+        sdk_version: requirement.sdk_version,
+        sdk_path: requirement.sdk_path,
+        target_dirs: targets,
+        staged_files,
+        app_local_sidecars_skipped: false,
+    })
 }
 
 fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -674,6 +752,78 @@ fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<
         }
     }
 
+    Ok(())
+}
+
+pub(crate) fn inspect_agility_sdk_for_game(
+    appid: u32,
+    game_dir: &Path,
+    home: &Path,
+) -> Result<AgilitySdkInspection, Box<dyn std::error::Error>> {
+    let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
+    let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
+    let requirement = read_game_agility_requirement(&exe_path);
+    let package_version = agility_package_version_for_requirement(requirement.sdk_version).to_string();
+    let shared_payload_ready = find_agility_sdk_bin(home, requirement.sdk_version)
+        .as_deref()
+        .map(validate_agility_bin_payload)
+        .transpose()?
+        .is_some();
+
+    if agility_uses_shared_payload_only(appid) {
+        return Ok(AgilitySdkInspection {
+            package_version,
+            sdk_version: requirement.sdk_version,
+            sdk_path: requirement.sdk_path,
+            target_dirs: Vec::new(),
+            missing_files: Vec::new(),
+            present_files: Vec::new(),
+            shared_payload_ready,
+            app_local_sidecars_skipped: true,
+        });
+    }
+
+    let target_dirs = resolve_agility_target_dirs(exe_dir, &requirement.sdk_path);
+    let mut missing_files = Vec::new();
+    let mut present_files = Vec::new();
+    for target_dir in &target_dirs {
+        for dll in required_agility_payload_files() {
+            let path = target_dir.join(dll);
+            if path.exists() {
+                present_files.push(path);
+            } else {
+                missing_files.push(path);
+            }
+        }
+    }
+
+    Ok(AgilitySdkInspection {
+        package_version,
+        sdk_version: requirement.sdk_version,
+        sdk_path: requirement.sdk_path,
+        target_dirs,
+        missing_files,
+        present_files,
+        shared_payload_ready,
+        app_local_sidecars_skipped: false,
+    })
+}
+
+fn agility_uses_shared_payload_only(appid: u32) -> bool {
+    appid == 1962700
+}
+
+fn required_agility_payload_files() -> &'static [&'static str] {
+    &["D3D12Core.dll", "d3d12SDKLayers.dll"]
+}
+
+fn validate_agility_bin_payload(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    for dll in required_agility_payload_files() {
+        let source = dir.join(dll);
+        if !source.exists() {
+            return Err(format!("Missing Agility SDK DLL: {}", source.display()).into());
+        }
+    }
     Ok(())
 }
 
@@ -1629,6 +1779,28 @@ fn check_rosetta() -> bool {
 mod tests {
     use super::*;
 
+    fn test_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("metalsharp-setup-test-{}-{}", name, nanos))
+    }
+
+    fn write_cached_agility_payload(home: &Path, package_version: &str) -> PathBuf {
+        let bin = crate::platform::metalsharp_home_dir_for(home)
+            .join("runtime")
+            .join("redist")
+            .join("agility")
+            .join(package_version)
+            .join("build")
+            .join("native")
+            .join("bin")
+            .join("x64");
+        std::fs::create_dir_all(&bin).expect("create cached Agility bin");
+        for file in ["D3D12Core.dll", "d3d12SDKLayers.dll", "D3D12StateObjectCompiler.dll", "d3dconfig.exe"] {
+            std::fs::write(bin.join(file), file.as_bytes()).expect("write cached Agility payload");
+        }
+        bin
+    }
+
     #[test]
     fn agility_cache_candidates_include_user_runtime_redist() {
         let home = PathBuf::from("/Users/tester");
@@ -1674,5 +1846,53 @@ mod tests {
         assert!(!is_agility_runtime_payload(Path::new("build/native/bin/win32/D3D12Core.dll")));
         assert!(!is_agility_runtime_payload(Path::new("build/native/include/d3d12.h")));
         assert!(!is_agility_runtime_payload(Path::new("../build/native/bin/x64/D3D12Core.dll")));
+    }
+
+    #[test]
+    fn agility_stage_repairs_and_verifies_game_local_targets() {
+        let home = test_dir("agility-stage-home");
+        let game_dir = test_dir("agility-stage-game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("Game.exe"), b"synthetic pe placeholder").expect("write game exe");
+        write_cached_agility_payload(&home, "1.614.1");
+
+        let report = stage_agility_sdk_for_game_report(123456, &game_dir, &home).expect("stage Agility payload");
+        assert_eq!(report.package_version, "1.614.1");
+        assert_eq!(report.target_dirs.len(), 2);
+        assert!(report.target_dirs.iter().any(|dir| dir == &game_dir.join("D3D12")));
+        assert!(report.target_dirs.iter().any(|dir| dir == &game_dir.join("D3D12").join("x64")));
+
+        let inspection =
+            inspect_agility_sdk_for_game(123456, &game_dir, &home).expect("inspect staged Agility payload");
+        assert!(inspection.installed());
+        assert!(inspection.missing_files.is_empty());
+
+        let _ = std::fs::remove_dir_all(home);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn agility_shared_payload_titles_still_verify_cached_runtime() {
+        let home = test_dir("agility-shared-home");
+        let game_dir = test_dir("agility-shared-game");
+        let d3d12_dir = game_dir.join("D3D12");
+        std::fs::create_dir_all(&d3d12_dir).expect("create stale sidecar dir");
+        std::fs::write(game_dir.join("Game.exe"), b"synthetic pe placeholder").expect("write game exe");
+        std::fs::write(d3d12_dir.join("D3D12Core.dll"), b"stale").expect("write stale sidecar");
+        write_cached_agility_payload(&home, "1.614.1");
+
+        let report =
+            stage_agility_sdk_for_game_report(1962700, &game_dir, &home).expect("stage shared Agility payload");
+        assert!(report.app_local_sidecars_skipped);
+        assert!(report.target_dirs.is_empty());
+        assert!(!d3d12_dir.exists());
+
+        let inspection =
+            inspect_agility_sdk_for_game(1962700, &game_dir, &home).expect("inspect shared Agility payload");
+        assert!(inspection.installed());
+        assert!(inspection.shared_payload_ready);
+
+        let _ = std::fs::remove_dir_all(home);
+        let _ = std::fs::remove_dir_all(game_dir);
     }
 }
