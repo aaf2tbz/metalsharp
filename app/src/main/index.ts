@@ -118,7 +118,7 @@ async function checkNeedsMigration(): Promise<boolean> {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString());
           const needed = data.ok && data.needed === true;
-          if (marker.needed && !needed) clearPostUpdateMigrationMarker();
+          if (!needed && !marker.needed) clearPostUpdateMigrationMarker();
           resolve(needed);
         } catch {
           resolve(marker.needed);
