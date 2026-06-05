@@ -18,7 +18,7 @@ fn mac_cmd(name: &str) -> Command {
     Command::new(path)
 }
 
-const DEFAULT_AGILITY_PACKAGE_VERSION: &str = "1.614.1";
+const DEFAULT_AGILITY_PACKAGE_VERSION: &str = "1.619.3";
 
 pub fn state() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
@@ -1176,15 +1176,107 @@ fn agility_user_package_dir(home: &Path, package_version: &str) -> PathBuf {
 
 fn agility_package_version(sdk_version: u32) -> Option<&'static str> {
     match sdk_version {
+        4 => Some("1.4.10"),
+        600 => Some("1.600.10"),
+        602 => Some("1.602.4"),
+        606 => Some("1.606.4"),
+        608 => Some("1.608.3"),
+        610 => Some("1.610.4"),
+        611 => Some("1.611.2"),
+        613 => Some("1.613.3"),
         614 => Some("1.614.1"),
         615 => Some("1.615.1"),
+        616 => Some("1.616.1"),
+        618 => Some("1.618.5"),
         619 => Some("1.619.3"),
         _ => None,
     }
 }
 
+fn agility_preview_package_version(sdk_version: u32) -> Option<&'static str> {
+    match sdk_version {
+        700 => Some("1.700.10-preview"),
+        706 => Some("1.706.4-preview"),
+        710 => Some("1.710.0-preview"),
+        711 => Some("1.711.3-preview"),
+        714 => Some("1.714.0-preview"),
+        715 => Some("1.715.0-preview"),
+        716 => Some("1.716.1-preview"),
+        717 => Some("1.717.1-preview"),
+        719 => Some("1.719.1-preview"),
+        720 => Some("1.720.0-preview"),
+        721 => Some("1.721.0-preview"),
+        _ => None,
+    }
+}
+
 fn agility_package_version_for_requirement(required_version: Option<u32>) -> &'static str {
-    required_version.and_then(agility_package_version).unwrap_or(DEFAULT_AGILITY_PACKAGE_VERSION)
+    required_version
+        .and_then(agility_package_version)
+        .or_else(|| required_version.and_then(agility_preview_package_version))
+        .unwrap_or(DEFAULT_AGILITY_PACKAGE_VERSION)
+}
+
+fn agility_all_known_retail_versions() -> &'static [(u32, &'static str)] {
+    &[
+        (4, "1.4.10"),
+        (600, "1.600.10"),
+        (602, "1.602.4"),
+        (606, "1.606.4"),
+        (608, "1.608.3"),
+        (610, "1.610.4"),
+        (611, "1.611.2"),
+        (613, "1.613.3"),
+        (614, "1.614.1"),
+        (615, "1.615.1"),
+        (616, "1.616.1"),
+        (618, "1.618.5"),
+        (619, "1.619.3"),
+    ]
+}
+
+fn agility_all_known_preview_versions() -> &'static [(u32, &'static str)] {
+    &[
+        (700, "1.700.10-preview"),
+        (706, "1.706.4-preview"),
+        (710, "1.710.0-preview"),
+        (711, "1.711.3-preview"),
+        (714, "1.714.0-preview"),
+        (715, "1.715.0-preview"),
+        (716, "1.716.1-preview"),
+        (717, "1.717.1-preview"),
+        (719, "1.719.1-preview"),
+        (720, "1.720.0-preview"),
+        (721, "1.721.0-preview"),
+    ]
+}
+
+pub fn agility_known_sdk_versions() -> Value {
+    let retail: Vec<Value> = agility_all_known_retail_versions()
+        .iter()
+        .map(|&(sdk, pkg)| {
+            json!({
+                "sdk_version": sdk,
+                "package_version": pkg,
+                "channel": "retail"
+            })
+        })
+        .collect();
+    let preview: Vec<Value> = agility_all_known_preview_versions()
+        .iter()
+        .map(|&(sdk, pkg)| {
+            json!({
+                "sdk_version": sdk,
+                "package_version": pkg,
+                "channel": "preview"
+            })
+        })
+        .collect();
+    json!({
+        "default": DEFAULT_AGILITY_PACKAGE_VERSION,
+        "retail": retail,
+        "preview": preview
+    })
 }
 
 fn resolve_agility_target_dirs(exe_dir: &Path, sdk_path: &str) -> Vec<PathBuf> {
@@ -1864,17 +1956,21 @@ mod tests {
             .join("bin")
             .join("x64");
         std::fs::create_dir_all(&bin).expect("create cached Agility bin");
-        for file in ["D3D12Core.dll", "d3d12SDKLayers.dll", "D3D12StateObjectCompiler.dll", "d3dconfig.exe"] {
+        for file in ["D3D12Core.dll", "d3d12SDKLayers.dll"] {
             std::fs::write(bin.join(file), file.as_bytes()).expect("write cached Agility payload");
         }
         bin
+    }
+
+    fn write_default_cached_agility_payload(home: &Path) -> PathBuf {
+        write_cached_agility_payload(home, DEFAULT_AGILITY_PACKAGE_VERSION)
     }
 
     #[test]
     fn agility_cache_candidates_include_user_runtime_redist() {
         let home = PathBuf::from("/Users/tester");
         let mut candidates = Vec::new();
-        push_cached_agility_package_candidates(&mut candidates, &home, "1.614.1");
+        push_cached_agility_package_candidates(&mut candidates, &home, DEFAULT_AGILITY_PACKAGE_VERSION);
 
         assert_eq!(
             candidates.first(),
@@ -1884,7 +1980,7 @@ mod tests {
                     .join("runtime")
                     .join("redist")
                     .join("agility")
-                    .join("1.614.1")
+                    .join(DEFAULT_AGILITY_PACKAGE_VERSION)
                     .join("build")
                     .join("native")
                     .join("bin")
@@ -1895,10 +1991,55 @@ mod tests {
 
     #[test]
     fn agility_default_requirement_uses_fetchable_runtime_package() {
-        assert_eq!(agility_package_version_for_requirement(None), "1.614.1");
+        assert_eq!(agility_package_version_for_requirement(None), "1.619.3");
+        assert_eq!(agility_package_version_for_requirement(Some(4)), "1.4.10");
+        assert_eq!(agility_package_version_for_requirement(Some(600)), "1.600.10");
+        assert_eq!(agility_package_version_for_requirement(Some(602)), "1.602.4");
+        assert_eq!(agility_package_version_for_requirement(Some(606)), "1.606.4");
+        assert_eq!(agility_package_version_for_requirement(Some(608)), "1.608.3");
+        assert_eq!(agility_package_version_for_requirement(Some(610)), "1.610.4");
+        assert_eq!(agility_package_version_for_requirement(Some(611)), "1.611.2");
+        assert_eq!(agility_package_version_for_requirement(Some(613)), "1.613.3");
         assert_eq!(agility_package_version_for_requirement(Some(614)), "1.614.1");
         assert_eq!(agility_package_version_for_requirement(Some(615)), "1.615.1");
+        assert_eq!(agility_package_version_for_requirement(Some(616)), "1.616.1");
+        assert_eq!(agility_package_version_for_requirement(Some(618)), "1.618.5");
         assert_eq!(agility_package_version_for_requirement(Some(619)), "1.619.3");
+    }
+
+    #[test]
+    fn agility_preview_versions_resolve_from_sdk_number() {
+        assert_eq!(agility_package_version_for_requirement(Some(700)), "1.700.10-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(706)), "1.706.4-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(710)), "1.710.0-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(711)), "1.711.3-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(714)), "1.714.0-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(715)), "1.715.0-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(716)), "1.716.1-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(717)), "1.717.1-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(719)), "1.719.1-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(720)), "1.720.0-preview");
+        assert_eq!(agility_package_version_for_requirement(Some(721)), "1.721.0-preview");
+    }
+
+    #[test]
+    fn agility_retail_takes_priority_over_preview_for_619() {
+        assert_eq!(agility_package_version_for_requirement(Some(619)), "1.619.3");
+    }
+
+    #[test]
+    fn agility_unknown_sdk_version_falls_back_to_default() {
+        assert_eq!(agility_package_version_for_requirement(Some(999)), "1.619.3");
+    }
+
+    #[test]
+    fn agility_known_versions_listing_is_complete() {
+        let listing = agility_known_sdk_versions();
+        let retail = listing["retail"].as_array().expect("retail array");
+        let preview = listing["preview"].as_array().expect("preview array");
+        assert_eq!(retail.len(), 13);
+        assert_eq!(preview.len(), 11);
+        assert_eq!(listing["default"], "1.619.3");
     }
 
     #[test]
@@ -1923,10 +2064,10 @@ mod tests {
         let game_dir = test_dir("agility-stage-game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
         std::fs::write(game_dir.join("Game.exe"), b"synthetic pe placeholder").expect("write game exe");
-        write_cached_agility_payload(&home, "1.614.1");
+        write_default_cached_agility_payload(&home);
 
         let report = stage_agility_sdk_for_game_report(123456, &game_dir, &home).expect("stage Agility payload");
-        assert_eq!(report.package_version, "1.614.1");
+        assert_eq!(report.package_version, DEFAULT_AGILITY_PACKAGE_VERSION);
         assert_eq!(report.target_dirs.len(), 2);
         assert!(report.target_dirs.iter().any(|dir| dir == &game_dir.join("D3D12")));
         assert!(report.target_dirs.iter().any(|dir| dir == &game_dir.join("D3D12").join("x64")));
@@ -1948,7 +2089,7 @@ mod tests {
         std::fs::create_dir_all(&d3d12_dir).expect("create stale sidecar dir");
         std::fs::write(game_dir.join("Game.exe"), b"synthetic pe placeholder").expect("write game exe");
         std::fs::write(d3d12_dir.join("D3D12Core.dll"), b"stale").expect("write stale sidecar");
-        write_cached_agility_payload(&home, "1.614.1");
+        write_default_cached_agility_payload(&home);
 
         let before_repair =
             inspect_agility_sdk_for_game(1962700, &game_dir, &home).expect("inspect unrepaired shared Agility title");

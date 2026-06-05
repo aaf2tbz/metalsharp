@@ -212,6 +212,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }),
         ),
         (Method::Get, "/setup/dependencies") => resp(200, setup::dependencies()),
+        (Method::Get, "/setup/agility-versions") => resp(200, setup::agility_known_sdk_versions()),
         (Method::Post, "/setup/install-deps") => {
             let body = read_body(req);
             match setup::install_dependencies(&body) {
