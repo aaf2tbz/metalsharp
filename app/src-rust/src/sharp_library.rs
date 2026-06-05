@@ -1171,22 +1171,14 @@ fn resolve_sharp_pipeline(engine: &str, exe_path: &Path) -> crate::mtsp::engine:
         return crate::mtsp::engine::PipelineId::WineBare;
     };
 
+    if !pe.is_64_bit {
+        return crate::mtsp::engine::PipelineId::M9;
+    }
+
     match pe.detected_api {
-        crate::mtsp::pe::D3dApi::D3D12 => {
-            if pe.is_64_bit {
-                crate::mtsp::engine::PipelineId::M12
-            } else {
-                crate::mtsp::engine::PipelineId::M11
-            }
-        },
+        crate::mtsp::pe::D3dApi::D3D12 => crate::mtsp::engine::PipelineId::M12,
         crate::mtsp::pe::D3dApi::D3D11 => crate::mtsp::engine::PipelineId::M11,
-        crate::mtsp::pe::D3dApi::D3D10 => {
-            if pe.is_64_bit {
-                crate::mtsp::engine::PipelineId::M10
-            } else {
-                crate::mtsp::engine::PipelineId::M32
-            }
-        },
+        crate::mtsp::pe::D3dApi::D3D10 => crate::mtsp::engine::PipelineId::M10,
         crate::mtsp::pe::D3dApi::D3D9 => crate::mtsp::engine::PipelineId::M9,
         crate::mtsp::pe::D3dApi::Unknown => crate::mtsp::engine::PipelineId::WineBare,
     }
