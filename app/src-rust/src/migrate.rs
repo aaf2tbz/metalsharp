@@ -679,6 +679,7 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
 
     let mut updated = 0usize;
     for prefix in collect_existing_wine_prefixes(ms_dir) {
+        let steam_library_drive_links = collect_steam_library_drive_links(&prefix);
         write_migrate_progress(
             "running",
             step,
@@ -687,6 +688,7 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
             None,
         );
         run_wineboot_update(&wine, &runtime_wine, &prefix)?;
+        restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
         updated += 1;
     }
 
@@ -752,6 +754,198 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
     let _ = child.kill();
     let _ = child.wait();
     Err(error_msg)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SteamLibraryDriveLink {
+    drive: char,
+    target: PathBuf,
+    library_path: String,
+}
+
+fn collect_steam_library_drive_links(prefix: &Path) -> Vec<SteamLibraryDriveLink> {
+    let mut links = Vec::new();
+    for libraryfolders in steam_libraryfolders_files(prefix) {
+        let Ok(contents) = fs::read_to_string(&libraryfolders) else {
+            continue;
+        };
+        for line in contents.lines() {
+            let Some(path) = parse_steam_vdf_path(line) else {
+                continue;
+            };
+            let Some((drive, rest)) = split_steam_library_wine_path(&path) else {
+                continue;
+            };
+            let Some(target) = resolve_steam_library_drive_target(prefix, drive, &rest) else {
+                continue;
+            };
+            if links.iter().any(|link: &SteamLibraryDriveLink| link.drive.eq_ignore_ascii_case(&drive)) {
+                continue;
+            }
+            links.push(SteamLibraryDriveLink { drive: drive.to_ascii_lowercase(), target, library_path: path });
+        }
+    }
+    links
+}
+
+fn steam_libraryfolders_files(prefix: &Path) -> Vec<PathBuf> {
+    let steam = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+    vec![steam.join("config").join("libraryfolders.vdf"), steam.join("steamapps").join("libraryfolders.vdf")]
+}
+
+fn parse_steam_vdf_path(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("\"path\"") {
+        return None;
+    }
+    let mut quoted = Vec::new();
+    let mut chars = trimmed.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        if ch != '"' {
+            continue;
+        }
+        let value_start = start + ch.len_utf8();
+        let mut escaped = false;
+        while let Some((end, value_ch)) = chars.next() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if value_ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if value_ch == '"' {
+                quoted.push(&trimmed[value_start..end]);
+                break;
+            }
+        }
+    }
+    quoted.get(1).map(|value| value.replace("\\\\", "\\"))
+}
+
+fn split_steam_library_wine_path(path: &str) -> Option<(char, String)> {
+    let mut chars = path.chars();
+    let drive = chars.next()?;
+    if chars.next()? != ':' || !drive.is_ascii_alphabetic() || drive.eq_ignore_ascii_case(&'c') {
+        return None;
+    }
+    let rest = path.get(2..)?.replace('\\', "/");
+    if !rest.starts_with('/') {
+        return None;
+    }
+    Some((drive.to_ascii_lowercase(), rest))
+}
+
+fn resolve_steam_library_drive_target(prefix: &Path, drive: char, rest: &str) -> Option<PathBuf> {
+    let dosdevice = prefix.join("dosdevices").join(format!("{}:", drive.to_ascii_lowercase()));
+    if let Ok(target) = fs::read_link(&dosdevice) {
+        if steam_library_target_has_steamapps(&target, rest) {
+            return Some(target);
+        }
+    }
+
+    if steam_library_path_prefers_root_mapping(rest) {
+        return Some(PathBuf::from("/"));
+    }
+
+    let root = Path::new("/");
+    if steam_library_target_has_steamapps(root, rest) {
+        return Some(root.to_path_buf());
+    }
+
+    None
+}
+
+fn steam_library_path_prefers_root_mapping(rest: &str) -> bool {
+    rest.starts_with("/Volumes/")
+        || rest.starts_with("/Users/")
+        || rest.starts_with("/private/")
+        || rest.starts_with("/Applications/")
+}
+
+fn steam_library_target_has_steamapps(target: &Path, rest: &str) -> bool {
+    target.join(rest.trim_start_matches('/')).join("steamapps").exists()
+}
+
+fn restore_steam_library_drive_links(prefix: &Path, links: &[SteamLibraryDriveLink]) {
+    if links.is_empty() {
+        return;
+    }
+
+    let dosdevices = prefix.join("dosdevices");
+    if let Err(e) = fs::create_dir_all(&dosdevices) {
+        log_to_file(&format!("Migration prefix update: failed to create dosdevices for {}: {}", prefix.display(), e));
+        return;
+    }
+
+    for link in links {
+        let dosdevice = dosdevices.join(format!("{}:", link.drive.to_ascii_lowercase()));
+        if let Ok(current) = fs::read_link(&dosdevice) {
+            if current == link.target {
+                continue;
+            }
+        }
+
+        match fs::symlink_metadata(&dosdevice) {
+            Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
+                if let Err(e) = fs::remove_file(&dosdevice) {
+                    log_to_file(&format!(
+                        "Migration prefix update: failed to remove stale {} for Steam library {}: {}",
+                        dosdevice.display(),
+                        link.library_path,
+                        e
+                    ));
+                    continue;
+                }
+            },
+            Ok(meta) if meta.is_dir() => {
+                log_to_file(&format!(
+                    "Migration prefix update: skipped Steam library drive {} because {} is a directory",
+                    link.library_path,
+                    dosdevice.display()
+                ));
+                continue;
+            },
+            Ok(_) => {
+                if let Err(e) = fs::remove_file(&dosdevice) {
+                    log_to_file(&format!(
+                        "Migration prefix update: failed to remove stale {} for Steam library {}: {}",
+                        dosdevice.display(),
+                        link.library_path,
+                        e
+                    ));
+                    continue;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => {
+                log_to_file(&format!(
+                    "Migration prefix update: failed to inspect {} for Steam library {}: {}",
+                    dosdevice.display(),
+                    link.library_path,
+                    e
+                ));
+                continue;
+            },
+        }
+
+        match std::os::unix::fs::symlink(&link.target, &dosdevice) {
+            Ok(()) => log_to_file(&format!(
+                "Migration prefix update: restored Steam library drive {} -> {} for {}",
+                dosdevice.display(),
+                link.target.display(),
+                link.library_path
+            )),
+            Err(e) => log_to_file(&format!(
+                "Migration prefix update: failed to restore Steam library drive {} -> {} for {}: {}",
+                dosdevice.display(),
+                link.target.display(),
+                link.library_path,
+                e
+            )),
+        }
+    }
 }
 
 fn temp_suffix() -> u128 {
@@ -1255,6 +1449,61 @@ mod tests {
     }
 
     #[test]
+    fn migration_prefix_update_restores_root_steam_library_drive() {
+        let home = test_dir("restore-root-steam-library-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let dosdevices = prefix.join("dosdevices");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        write_steam_libraryfolders(&prefix, r#""path" "Z:\\Volumes\\AverySSD\\SteamLibrary""#);
+
+        let links = collect_steam_library_drive_links(&prefix);
+        assert_eq!(
+            links,
+            vec![SteamLibraryDriveLink {
+                drive: 'z',
+                target: PathBuf::from("/"),
+                library_path: String::from("Z:\\Volumes\\AverySSD\\SteamLibrary"),
+            }]
+        );
+
+        restore_steam_library_drive_links(&prefix, &links);
+
+        assert_eq!(fs::read_link(dosdevices.join("z:")).expect("read restored z drive"), PathBuf::from("/"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_prefix_update_restores_existing_custom_steam_library_drive() {
+        let home = test_dir("restore-custom-steam-library-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let external = home.join("ExternalSteamDisk");
+        let dosdevices = prefix.join("dosdevices");
+        fs::create_dir_all(external.join("SteamLibrary").join("steamapps")).expect("create external steamapps");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        std::os::unix::fs::symlink(&external, dosdevices.join("y:")).expect("create y drive symlink");
+        write_steam_libraryfolders(&prefix, r#""path" "Y:\\SteamLibrary""#);
+
+        let links = collect_steam_library_drive_links(&prefix);
+        assert_eq!(
+            links,
+            vec![SteamLibraryDriveLink {
+                drive: 'y',
+                target: external.clone(),
+                library_path: String::from("Y:\\SteamLibrary"),
+            }]
+        );
+
+        fs::remove_file(dosdevices.join("y:")).expect("remove y drive symlink");
+        std::os::unix::fs::symlink(&home, dosdevices.join("y:")).expect("simulate wineboot y rewrite");
+        restore_steam_library_drive_links(&prefix, &links);
+
+        assert_eq!(fs::read_link(dosdevices.join("y:")).expect("read restored y drive"), external);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_bottle_settings_without_prefix_payloads() {
         let home = test_dir("skip-bottle-prefix-payloads");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -1522,6 +1771,26 @@ mod tests {
         fs::write(host.join("manifest.json"), br#"{"abi":"metalsharp-host-runtime"}"#).expect("write manifest");
         fs::write(host.join("HostRuntimeABI.h"), b"header").expect("write header");
         fs::write(host.join("libmetalsharp_host_runtime.dylib"), b"dylib").expect("write dylib");
+    }
+
+    fn write_steam_libraryfolders(prefix: &Path, path_line: &str) {
+        let config = prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("config");
+        fs::create_dir_all(&config).expect("create Steam config dir");
+        fs::write(
+            config.join("libraryfolders.vdf"),
+            format!(
+                r#""libraryfolders"
+{{
+    "0"
+    {{
+        {}
+    }}
+}}
+"#,
+                path_line
+            ),
+        )
+        .expect("write libraryfolders.vdf");
     }
 
     fn test_dir(name: &str) -> PathBuf {
