@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::cmp::Ordering as CmpOrdering;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -61,9 +62,15 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
     "steam_autocloud.vdf",
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
-const MIGRATION_TOTAL_STEPS: usize = 6;
+const MIGRATION_TOTAL_STEPS: usize = 7;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Debug, Default)]
+struct PostUpdateMigrationMarker {
+    needed: bool,
+    target_version: Option<String>,
+}
 
 fn migrate_progress_path() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("migrate_progress.json")
@@ -111,6 +118,7 @@ pub fn needs_migration() -> serde_json::Value {
     };
 
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    let post_update_marker = read_post_update_marker(&ms_dir);
     let setup_path = ms_dir.join("setup.json");
     let setup_dir_exists = ms_dir.exists();
 
@@ -118,13 +126,10 @@ pub fn needs_migration() -> serde_json::Value {
         return json!({"ok": true, "needed": false, "reason": "fresh_install"});
     }
 
-    let post_update_marker = ms_dir.join(".post-update-migration");
-    let marker_requested = post_update_marker.exists()
-        && fs::read_to_string(&post_update_marker)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("needed").and_then(|n| n.as_bool()))
-            .unwrap_or(false);
+    let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
+    let marker_target_version = post_update_marker.as_ref().and_then(|marker| marker.target_version.clone());
+    let marker_target_mismatch =
+        post_update_marker.as_ref().is_some_and(|marker| post_update_target_newer_than_running(marker));
 
     let setup_data = match fs::read_to_string(&setup_path) {
         Ok(d) => d,
@@ -152,7 +157,12 @@ pub fn needs_migration() -> serde_json::Value {
         "target_version": MIGRATE_VERSION,
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
-        "reason": if marker_requested && repair_needed {
+        "post_update_target_version": marker_target_version,
+        "running_version": MIGRATE_VERSION,
+        "update_target_satisfied": !marker_target_mismatch,
+        "reason": if marker_target_mismatch {
+            "post_update_target_version_mismatch"
+        } else if marker_requested && repair_needed {
             "post_update_marker_and_runtime_repair"
         } else if marker_requested {
             "post_update_marker"
@@ -173,6 +183,64 @@ fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
     }
 
     setup_completed || ms_dir.join("prefix-steam").exists()
+}
+
+fn post_update_marker_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join(".post-update-migration")
+}
+
+fn read_post_update_marker(ms_dir: &Path) -> Option<PostUpdateMigrationMarker> {
+    let marker_path = post_update_marker_path(ms_dir);
+    let data = fs::read_to_string(marker_path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&data).ok()?;
+    Some(PostUpdateMigrationMarker {
+        needed: value.get("needed").and_then(|v| v.as_bool()).unwrap_or(false),
+        target_version: value.get("target_version").and_then(|v| v.as_str()).map(str::to_string),
+    })
+}
+
+fn post_update_target_newer_than_running(marker: &PostUpdateMigrationMarker) -> bool {
+    marker.target_version.as_deref().map(|target| compare_versions(target, MIGRATE_VERSION).is_gt()).unwrap_or(false)
+}
+
+fn post_update_target_error(marker: Option<&PostUpdateMigrationMarker>) -> Option<String> {
+    let marker = marker?;
+    let target = marker.target_version.as_deref()?;
+    if compare_versions(target, MIGRATE_VERSION).is_gt() {
+        return Some(format!(
+            "Update handoff targeted MetalSharp v{}, but the running app is v{}. Relaunch the installed update and retry migration.",
+            target, MIGRATE_VERSION
+        ));
+    }
+    None
+}
+
+fn compare_versions(left: &str, right: &str) -> CmpOrdering {
+    let left = parse_version_parts(left);
+    let right = parse_version_parts(right);
+    let len = left.len().max(right.len());
+    for index in 0..len {
+        let left_part = left.get(index).copied().unwrap_or(0);
+        let right_part = right.get(index).copied().unwrap_or(0);
+        match left_part.cmp(&right_part) {
+            CmpOrdering::Equal => {},
+            ordering => return ordering,
+        }
+    }
+    CmpOrdering::Equal
+}
+
+fn parse_version_parts(value: &str) -> Vec<u32> {
+    value
+        .trim()
+        .trim_start_matches('v')
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .map(|part| part.chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>())
+        .map(|part| part.parse::<u32>().unwrap_or(0))
+        .collect()
 }
 
 fn runtime_core_ready(ms_dir: &Path) -> bool {
@@ -284,15 +352,23 @@ fn run_migration() {
     };
 
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    let post_update_marker = read_post_update_marker(&ms_dir);
 
     if !ms_dir.exists() {
         write_migrate_progress("error", 0, 0, "~/.metalsharp not found", Some("no_metalsharp_dir"));
         return;
     }
 
-    if runtime_core_ready(&ms_dir) {
+    if let Some(error) = post_update_target_error(post_update_marker.as_ref()) {
+        write_migrate_progress("error", 0, MIGRATION_TOTAL_STEPS, &error, Some("post_update_target_version_mismatch"));
+        log_to_file(&format!("Migration blocked before runtime work: {}", error));
+        return;
+    }
+
+    let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
+    if runtime_core_ready(&ms_dir) && !marker_requested {
         update_migration_metadata(&ms_dir);
-        let marker = ms_dir.join(".post-update-migration");
+        let marker = post_update_marker_path(&ms_dir);
         let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", 1, 1, "Runtime already ready; app update complete.", None);
         log_to_file(&format!("Migration to v{} skipped; runtime already ready", MIGRATE_VERSION));
@@ -307,7 +383,13 @@ fn run_migration() {
     kill_steam_wine();
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Preserving user data...", None);
+    write_migrate_progress(
+        "running",
+        step,
+        total_steps,
+        "Preserving user preferences, Steam API key, and bottle settings...",
+        None,
+    );
     let preserved = preserve_user_data(&ms_dir);
 
     step += 1;
@@ -351,22 +433,7 @@ fn run_migration() {
     write_migrate_progress("running", step, total_steps, "Restoring preserved user data...", None);
     restore_user_data(&ms_dir, &preserved);
 
-    if install_ok {
-        step += 1;
-        write_migrate_progress("running", step, total_steps, "Updating Wine Steam prefix...", None);
-        if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
-            write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
-            log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
-            return;
-        }
-    }
-
-    if install_ok {
-        update_migration_metadata(&ms_dir);
-        let marker = ms_dir.join(".post-update-migration");
-        let _ = fs::remove_file(&marker);
-        write_migrate_progress("complete", total_steps, total_steps, "Update installed.", None);
-    } else {
+    if !install_ok {
         write_migrate_progress(
             "error",
             total_steps,
@@ -374,9 +441,43 @@ fn run_migration() {
             "Runtime install incomplete — re-run setup wizard after restart",
             Some("runtime_install_incomplete"),
         );
+        log_to_file(&format!("Migration to v{} finished (install_ok=false)", MIGRATE_VERSION));
+        return;
     }
 
-    log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Updating Wine Steam prefix...", None);
+    if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
+        write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
+        log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
+        return;
+    }
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Verifying MetalSharp update...", None);
+    if let Err(e) = verify_migration_ready(&ms_dir, post_update_marker.as_ref()) {
+        write_migrate_progress("error", step, total_steps, &format!("Update verification failed: {}", e), Some(&e));
+        log_to_file(&format!("Migration to v{} failed verification: {}", MIGRATE_VERSION, e));
+        return;
+    }
+
+    update_migration_metadata(&ms_dir);
+    if !migration_metadata_current(&ms_dir) {
+        write_migrate_progress(
+            "error",
+            step,
+            total_steps,
+            "Update verification failed: migration metadata was not saved",
+            Some("migration_metadata_not_saved"),
+        );
+        log_to_file(&format!("Migration to v{} failed because setup metadata was not saved", MIGRATE_VERSION));
+        return;
+    }
+
+    let marker = post_update_marker_path(&ms_dir);
+    let _ = fs::remove_file(&marker);
+    write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
+    log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
 }
 
 fn update_migration_metadata(ms_dir: &Path) {
@@ -397,6 +498,30 @@ fn update_migration_metadata(ms_dir: &Path) {
         });
         let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
     }
+}
+
+fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMarker>) -> Result<(), String> {
+    if let Some(error) = post_update_target_error(marker) {
+        return Err(error);
+    }
+
+    if !runtime_core_ready(ms_dir) {
+        return Err("runtime bundle is still incomplete after install".into());
+    }
+
+    Ok(())
+}
+
+fn migration_metadata_current(ms_dir: &Path) -> bool {
+    let setup_path = ms_dir.join("setup.json");
+    let Ok(contents) = fs::read_to_string(setup_path) else {
+        return false;
+    };
+    let Ok(cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) else {
+        return false;
+    };
+    cfg.get("last_migrated_version").and_then(|v| v.as_str()) == Some(MIGRATE_VERSION)
+        && cfg.get("runtime_migration_schema").and_then(|v| v.as_u64()).unwrap_or(0) >= MIGRATE_SCHEMA_VERSION
 }
 
 fn wait_for_install_complete() -> Result<(), String> {
@@ -1179,6 +1304,34 @@ mod tests {
     }
 
     #[test]
+    fn migration_restores_setup_preferences_and_steam_api_key() {
+        let home = test_dir("restore-user-settings");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("cache")).expect("create cache dir");
+        fs::write(ms_dir.join("setup.json"), br#"{"completed":true,"deviceName":"Avery","steamApiKeySet":true}"#)
+            .expect("write setup preferences");
+        fs::write(
+            ms_dir.join("cache").join("steam_config.json"),
+            br#"{"api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+        )
+        .expect("write Steam API key");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        let _ = fs::remove_file(ms_dir.join("setup.json"));
+        restore_user_data(&ms_dir, &preserved);
+
+        let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
+        let steam_config =
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
+
+        assert!(setup.contains("\"deviceName\":\"Avery\""));
+        assert!(setup.contains("\"steamApiKeySet\":true"));
+        assert!(steam_config.contains("STEAM_WEB_API_KEY"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_kill_patterns_avoid_broad_command_matches() {
         assert!(MIGRATION_EXACT_KILL_PATTERNS.contains(&"wineloader"));
         assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"steam"));
@@ -1213,6 +1366,40 @@ mod tests {
         let marker_json: serde_json::Value = serde_json::from_str(&marker_data).expect("parse marker");
         assert!(marker_json.get("needed").and_then(|v| v.as_bool()).unwrap_or(false));
 
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn post_update_marker_blocks_running_app_older_than_target() {
+        let marker = PostUpdateMigrationMarker { needed: true, target_version: Some("999.0.0".into()) };
+
+        let error = post_update_target_error(Some(&marker)).expect("newer target blocked");
+
+        assert!(error.contains("999.0.0"));
+        assert!(post_update_target_newer_than_running(&marker));
+    }
+
+    #[test]
+    fn post_update_marker_accepts_running_app_at_target() {
+        let marker = PostUpdateMigrationMarker { needed: true, target_version: Some(MIGRATE_VERSION.into()) };
+
+        assert!(post_update_target_error(Some(&marker)).is_none());
+        assert!(!post_update_target_newer_than_running(&marker));
+    }
+
+    #[test]
+    fn migration_ready_requires_runtime_bundle() {
+        let home = test_dir("verify-ready-runtime");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(&ms_dir).expect("create ms dir");
+
+        assert_eq!(
+            verify_migration_ready(&ms_dir, None).unwrap_err(),
+            "runtime bundle is still incomplete after install"
+        );
+
+        write_runtime_core(&ms_dir);
+        assert!(verify_migration_ready(&ms_dir, None).is_ok());
         let _ = fs::remove_dir_all(home);
     }
 

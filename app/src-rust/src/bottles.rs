@@ -435,22 +435,8 @@ fn effective_pipeline_for_bottle_refresh(
     }
 }
 
-fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
-    matches!(
-        appid,
-        17410 | 49520 | 1928870 | 774361 | 1623730 | 1868140 | 3527290 | 504230 | 1169040 | 1245620 | 1562430 | 275850
-    )
-}
-
 pub fn preferred_pipeline_for_steam_app(appid: u32) -> Option<crate::mtsp::engine::PipelineId> {
-    let preferred = load_bottle(&steam_game_bottle_id(appid)).ok().as_ref().and_then(manifest_preferred_pipeline);
-    if appid_rule_overrides_auto_preference(appid)
-        && preferred.is_some_and(|pipeline| pipeline != crate::mtsp::rules::resolve_pipeline(appid))
-    {
-        None
-    } else {
-        preferred
-    }
+    load_bottle(&steam_game_bottle_id(appid)).ok().as_ref().and_then(manifest_preferred_pipeline)
 }
 
 pub fn resolve_steam_pipeline_for_request(
@@ -1235,10 +1221,11 @@ pub fn repair_component(
     refresh_manifest_runtime_views(&mut manifest);
     manifest.installed_components = inspect_components(&prefix, &manifest.installed_components);
 
-    if manifest
-        .installed_components
-        .iter()
-        .any(|component| component.id == component_id && component.state == ComponentState::Installed)
+    if component_id != "d3d12_agility"
+        && manifest
+            .installed_components
+            .iter()
+            .any(|component| component.id == component_id && component.state == ComponentState::Installed)
     {
         manifest.health = BottleHealth::Ready;
         manifest.updated_at = timestamp_secs();
@@ -1460,7 +1447,7 @@ pub fn repair_component(
         }
 
         crate::setup::stage_agility_sdk_for_game(appid, &game_dir, &home)?;
-        let state = inspect_component_state(&prefix, component_id, ComponentState::Unknown);
+        let state = inspect_d3d12_agility_component().unwrap_or(ComponentState::Installed);
         mark_component_state(&mut manifest, component_id, state);
         manifest.health = if components_ready(&manifest.installed_components) {
             BottleHealth::Ready
@@ -4365,16 +4352,16 @@ mod tests {
     #[test]
     fn passive_steam_refresh_respects_saved_pipeline_preference() {
         let manifest = BottleManifest {
-            id: steam_game_bottle_id(620),
-            name: "Portal 2".into(),
+            id: steam_game_bottle_id(17410),
+            name: "Mirror's Edge".into(),
             custom_name: None,
             bottle_type: BottleType::Steam,
-            steam_app_id: Some(620),
+            steam_app_id: Some(17410),
             prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
             arch: BottleArch::Wow64,
-            runtime_profile: RuntimeProfile::M12,
-            preferred_pipeline: Some("m12".into()),
-            installed_components: default_components_for(RuntimeProfile::M12),
+            runtime_profile: RuntimeProfile::M9,
+            preferred_pipeline: Some("m9".into()),
+            installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
             game_install_path: None,
@@ -4391,29 +4378,12 @@ mod tests {
 
         assert_eq!(
             effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, true),
-            crate::mtsp::engine::PipelineId::M12
+            crate::mtsp::engine::PipelineId::M9
         );
         assert_eq!(
             effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, false),
             crate::mtsp::engine::PipelineId::M11
         );
-    }
-
-    #[test]
-    fn researched_appid_rules_override_stale_auto_preferences() {
-        assert!(appid_rule_overrides_auto_preference(17410));
-        assert!(appid_rule_overrides_auto_preference(49520));
-        assert!(appid_rule_overrides_auto_preference(774361));
-        assert!(appid_rule_overrides_auto_preference(1623730));
-        assert!(appid_rule_overrides_auto_preference(1868140));
-        assert!(appid_rule_overrides_auto_preference(1928870));
-        assert!(appid_rule_overrides_auto_preference(3527290));
-        assert!(appid_rule_overrides_auto_preference(504230));
-        assert!(appid_rule_overrides_auto_preference(1169040));
-        assert!(appid_rule_overrides_auto_preference(1245620));
-        assert!(appid_rule_overrides_auto_preference(1562430));
-        assert!(appid_rule_overrides_auto_preference(275850));
-        assert!(!appid_rule_overrides_auto_preference(2358720));
     }
 
     #[test]
