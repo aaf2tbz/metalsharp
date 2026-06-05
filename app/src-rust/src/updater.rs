@@ -332,7 +332,7 @@ fn newest_cached_update_dmg(cache_dir: &Path, current_version: &str) -> Option<(
     }
 
     candidates.sort_by(|(left, _), (right, _)| compare_versions(left, right));
-    candidates.pop().map(|(version, path)| (version, path))
+    candidates.pop()
 }
 
 fn dmg_filename_version(path: &Path) -> Option<String> {
