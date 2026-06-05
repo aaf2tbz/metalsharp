@@ -633,13 +633,15 @@ pub(crate) struct AgilitySdkInspection {
     pub(crate) missing_files: Vec<PathBuf>,
     pub(crate) present_files: Vec<PathBuf>,
     pub(crate) shared_payload_ready: bool,
+    pub(crate) shared_repair_marker_ready: bool,
+    pub(crate) app_local_sidecars_present: bool,
     pub(crate) app_local_sidecars_skipped: bool,
 }
 
 impl AgilitySdkInspection {
     pub(crate) fn installed(&self) -> bool {
         if self.app_local_sidecars_skipped {
-            return self.shared_payload_ready;
+            return self.shared_payload_ready && self.shared_repair_marker_ready && !self.app_local_sidecars_present;
         }
         !self.target_dirs.is_empty() && self.missing_files.is_empty()
     }
@@ -674,6 +676,13 @@ pub(crate) fn stage_agility_sdk_for_game_report(
 
     if agility_uses_shared_payload_only(appid) {
         remove_app_local_agility_sidecars(game_dir, exe_dir)?;
+        write_shared_agility_repair_marker(
+            appid,
+            game_dir,
+            &package_version,
+            requirement.sdk_version,
+            &requirement.sdk_path,
+        )?;
         return Ok(AgilityStageReport {
             package_version,
             sdk_version: requirement.sdk_version,
@@ -739,20 +748,26 @@ pub(crate) fn stage_agility_sdk_for_game_report(
 }
 
 fn remove_app_local_agility_sidecars(game_dir: &Path, exe_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let mut roots = vec![exe_dir.to_path_buf()];
-    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
-    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
-        roots.push(engine_bin);
-    }
-
-    for root in roots {
-        let target = root.join("D3D12");
+    for target in app_local_agility_sidecar_dirs(game_dir, exe_dir) {
         if target.is_dir() {
             std::fs::remove_dir_all(target)?;
         }
     }
 
     Ok(())
+}
+
+fn app_local_agility_sidecar_dirs(game_dir: &Path, exe_dir: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![exe_dir.to_path_buf()];
+    let engine_bin = game_dir.join("Engine").join("Binaries").join("Win64");
+    if engine_bin.is_dir() && !roots.iter().any(|root| root == &engine_bin) {
+        roots.push(engine_bin);
+    }
+    roots.into_iter().map(|root| root.join("D3D12")).collect()
+}
+
+fn app_local_agility_sidecars_present(game_dir: &Path, exe_dir: &Path) -> bool {
+    app_local_agility_sidecar_dirs(game_dir, exe_dir).into_iter().any(|target| target.is_dir())
 }
 
 pub(crate) fn inspect_agility_sdk_for_game(
@@ -771,6 +786,8 @@ pub(crate) fn inspect_agility_sdk_for_game(
         .is_some();
 
     if agility_uses_shared_payload_only(appid) {
+        let shared_repair_marker_ready =
+            shared_agility_repair_marker_matches(appid, game_dir, &package_version, requirement.sdk_version);
         return Ok(AgilitySdkInspection {
             package_version,
             sdk_version: requirement.sdk_version,
@@ -779,6 +796,8 @@ pub(crate) fn inspect_agility_sdk_for_game(
             missing_files: Vec::new(),
             present_files: Vec::new(),
             shared_payload_ready,
+            shared_repair_marker_ready,
+            app_local_sidecars_present: app_local_agility_sidecars_present(game_dir, exe_dir),
             app_local_sidecars_skipped: true,
         });
     }
@@ -805,6 +824,8 @@ pub(crate) fn inspect_agility_sdk_for_game(
         missing_files,
         present_files,
         shared_payload_ready,
+        shared_repair_marker_ready: false,
+        app_local_sidecars_present: false,
         app_local_sidecars_skipped: false,
     })
 }
@@ -825,6 +846,54 @@ fn validate_agility_bin_payload(dir: &Path) -> Result<(), Box<dyn std::error::Er
         }
     }
     Ok(())
+}
+
+fn shared_agility_repair_marker_path(appid: u32, game_dir: &Path) -> PathBuf {
+    game_dir.join(".metalsharp").join("agility").join(format!("shared-payload-{}.json", appid))
+}
+
+fn write_shared_agility_repair_marker(
+    appid: u32,
+    game_dir: &Path,
+    package_version: &str,
+    sdk_version: Option<u32>,
+    sdk_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let marker = shared_agility_repair_marker_path(appid, game_dir);
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(
+        marker,
+        serde_json::to_vec_pretty(&json!({
+            "appid": appid,
+            "package_version": package_version,
+            "sdk_version": sdk_version,
+            "sdk_path": sdk_path,
+            "app_local_sidecars_removed": true,
+        }))?,
+    )?;
+    Ok(())
+}
+
+fn shared_agility_repair_marker_matches(
+    appid: u32,
+    game_dir: &Path,
+    package_version: &str,
+    sdk_version: Option<u32>,
+) -> bool {
+    let marker = shared_agility_repair_marker_path(appid, game_dir);
+    let Ok(contents) = std::fs::read_to_string(marker) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&contents) else {
+        return false;
+    };
+    let marker_sdk_version = value.get("sdk_version").and_then(Value::as_u64).map(|version| version as u32);
+    value.get("appid").and_then(Value::as_u64) == Some(appid as u64)
+        && value.get("package_version").and_then(Value::as_str) == Some(package_version)
+        && marker_sdk_version == sdk_version
+        && value.get("app_local_sidecars_removed").and_then(Value::as_bool).unwrap_or(false)
 }
 
 fn stage_sdk_file(source: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -1881,6 +1950,13 @@ mod tests {
         std::fs::write(d3d12_dir.join("D3D12Core.dll"), b"stale").expect("write stale sidecar");
         write_cached_agility_payload(&home, "1.614.1");
 
+        let before_repair =
+            inspect_agility_sdk_for_game(1962700, &game_dir, &home).expect("inspect unrepaired shared Agility title");
+        assert!(!before_repair.installed());
+        assert!(before_repair.shared_payload_ready);
+        assert!(!before_repair.shared_repair_marker_ready);
+        assert!(before_repair.app_local_sidecars_present);
+
         let report =
             stage_agility_sdk_for_game_report(1962700, &game_dir, &home).expect("stage shared Agility payload");
         assert!(report.app_local_sidecars_skipped);
@@ -1891,6 +1967,15 @@ mod tests {
             inspect_agility_sdk_for_game(1962700, &game_dir, &home).expect("inspect shared Agility payload");
         assert!(inspection.installed());
         assert!(inspection.shared_payload_ready);
+        assert!(inspection.shared_repair_marker_ready);
+        assert!(!inspection.app_local_sidecars_present);
+
+        std::fs::create_dir_all(&d3d12_dir).expect("recreate stale sidecar dir");
+        let stale_again =
+            inspect_agility_sdk_for_game(1962700, &game_dir, &home).expect("inspect stale shared Agility title");
+        assert!(!stale_again.installed());
+        assert!(stale_again.shared_repair_marker_ready);
+        assert!(stale_again.app_local_sidecars_present);
 
         let _ = std::fs::remove_dir_all(home);
         let _ = std::fs::remove_dir_all(game_dir);
