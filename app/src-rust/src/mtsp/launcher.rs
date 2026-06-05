@@ -58,7 +58,13 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
         output: "xaudio2_9.dylib",
         source: FnaShimSource::BundledNative,
         symlinks: &["xaudio2_8.dylib", "xaudio2_7.dylib"],
-        required_for_launch: false,
+        required_for_launch: true,
+    },
+    FnaNativeShimSpec {
+        output: "libSystem.Native.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "system_native_stub.c"] },
+        symlinks: &[],
+        required_for_launch: true,
     },
     FnaNativeShimSpec {
         output: "xinput1_4.dylib",
