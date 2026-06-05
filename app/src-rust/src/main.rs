@@ -185,8 +185,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
         (Method::Get, "/update/progress") => resp(200, updater::read_update_progress()),
-        (Method::Get, "/update/dmg-path") => match updater::get_downloaded_dmg_path() {
-            Some(p) => resp(200, json!({"ok": true, "path": p})),
+        (Method::Get, "/update/dmg-path") => match updater::get_downloaded_dmg() {
+            Some((path, version)) => resp(200, json!({"ok": true, "path": path, "version": version})),
             None => resp(200, json!({"ok": false, "error": "no downloaded DMG"})),
         },
         (Method::Post, "/update/cleanup") => resp(200, updater::cleanup_downloaded_dmgs()),

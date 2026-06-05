@@ -1,7 +1,7 @@
 use serde_json::json;
 use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -130,27 +130,7 @@ fn clean_version(tag: &str) -> String {
 }
 
 fn semver_gt(a: &str, b: &str) -> bool {
-    let parse = |v: &str| -> Vec<u32> {
-        v.split('.')
-            .filter_map(|p| {
-                let clean: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
-                clean.parse::<u32>().ok()
-            })
-            .collect()
-    };
-    let av = parse(a);
-    let bv = parse(b);
-    for i in 0..std::cmp::max(av.len(), bv.len()) {
-        let x = av.get(i).unwrap_or(&0);
-        let y = bv.get(i).unwrap_or(&0);
-        if x > y {
-            return true;
-        }
-        if x < y {
-            return false;
-        }
-    }
-    false
+    compare_versions(a, b).is_gt()
 }
 
 pub fn start_update() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
@@ -315,22 +295,76 @@ pub fn cleanup_downloaded_dmgs() -> serde_json::Value {
     json!({"ok": true, "removed": removed, "bytes_freed": bytes_freed})
 }
 
-pub fn get_downloaded_dmg_path() -> Option<String> {
+pub fn get_downloaded_dmg() -> Option<(String, String)> {
     let update_info = check_for_update();
     let latest_version = update_info.get("latest_version").and_then(|v| v.as_str())?;
     let home = dirs::home_dir()?;
-    let dmg_path = crate::platform::metalsharp_home_dir_for(&home)
-        .join("cache")
-        .join("updates")
-        .join(format!("MetalSharp-{}.dmg", latest_version));
+    let cache_dir = crate::platform::metalsharp_home_dir_for(&home).join("cache").join("updates");
+    let dmg_path = cache_dir.join(format!("MetalSharp-{}.dmg", latest_version));
 
     let expected_size = update_info.get("download_size").and_then(|v| v.as_u64()).unwrap_or(0);
 
     if cached_dmg_ready(&dmg_path, expected_size) {
-        Some(dmg_path.to_string_lossy().to_string())
+        Some((dmg_path.to_string_lossy().to_string(), latest_version.to_string()))
     } else {
-        None
+        newest_cached_update_dmg(&cache_dir, CURRENT_VERSION)
+            .map(|(version, path)| (path.to_string_lossy().to_string(), version))
     }
+}
+
+pub fn get_downloaded_dmg_path() -> Option<String> {
+    get_downloaded_dmg().map(|(path, _version)| path)
+}
+
+fn newest_cached_update_dmg(cache_dir: &Path, current_version: &str) -> Option<(String, PathBuf)> {
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(cache_dir).ok()?.flatten() {
+        let path = entry.path();
+        if !cached_dmg_ready(&path, 0) {
+            continue;
+        }
+        let Some(version) = dmg_filename_version(&path) else {
+            continue;
+        };
+        if semver_gt(&version, current_version) {
+            candidates.push((version, path));
+        }
+    }
+
+    candidates.sort_by(|(left, _), (right, _)| compare_versions(left, right));
+    candidates.pop().map(|(version, path)| (version, path))
+}
+
+fn dmg_filename_version(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let raw = name.strip_prefix("MetalSharp-")?.strip_suffix(".dmg")?;
+    let raw = raw.strip_suffix("-arm64").unwrap_or(raw);
+    let version = clean_version(raw);
+    (!version.is_empty()).then_some(version)
+}
+
+fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
+    let left = parse_version_parts(left);
+    let right = parse_version_parts(right);
+    for i in 0..std::cmp::max(left.len(), right.len()) {
+        let l = left.get(i).unwrap_or(&0);
+        let r = right.get(i).unwrap_or(&0);
+        match l.cmp(r) {
+            std::cmp::Ordering::Equal => {},
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn parse_version_parts(value: &str) -> Vec<u32> {
+    value
+        .split('.')
+        .filter_map(|p| {
+            let clean: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
+            clean.parse::<u32>().ok()
+        })
+        .collect()
 }
 
 fn app_log(msg: &str) {
@@ -396,6 +430,34 @@ mod tests {
         assert!(cached_dmg_ready(&dmg, 4));
         assert!(!cached_dmg_ready(&dmg, 5));
 
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn cached_update_selection_requires_newer_versioned_dmg() {
+        let home = test_home("cached-dmg-version");
+        fs::create_dir_all(&home).expect("create test dir");
+        fs::write(home.join("MetalSharp-0.37.0.dmg"), b"old").expect("write old dmg");
+        fs::write(home.join("MetalSharp-0.37.1.dmg"), b"same").expect("write same dmg");
+        fs::write(home.join("MetalSharp-0.37.2.dmg"), b"new").expect("write new dmg");
+        fs::write(home.join("MetalSharp-0.37.3-arm64.dmg"), b"newer").expect("write newer dmg");
+        fs::write(home.join("MetalSharp-not-a-version.dmg"), b"junk").expect("write junk dmg");
+
+        let (version, selected) = newest_cached_update_dmg(&home, "0.37.1").expect("newer dmg selected");
+
+        assert_eq!(version, "0.37.3");
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("MetalSharp-0.37.3-arm64.dmg"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn cached_update_selection_rejects_old_or_current_dmgs() {
+        let home = test_home("cached-dmg-no-newer");
+        fs::create_dir_all(&home).expect("create test dir");
+        fs::write(home.join("MetalSharp-0.36.9.dmg"), b"old").expect("write old dmg");
+        fs::write(home.join("MetalSharp-0.37.1.dmg"), b"same").expect("write same dmg");
+
+        assert!(newest_cached_update_dmg(&home, "0.37.1").is_none());
         let _ = fs::remove_dir_all(home);
     }
 

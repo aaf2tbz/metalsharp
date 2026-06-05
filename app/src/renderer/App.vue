@@ -188,13 +188,14 @@ async function startUpdateDownload() {
     if (progress.status === "downloaded" || progress.status === "complete") {
       if (updatePollTimer) clearInterval(updatePollTimer);
       updatePollTimer = null;
-      const dmgResult = await api<{ ok: boolean; path?: string }>("GET", "/update/dmg-path");
+      const dmgResult = await api<{ ok: boolean; path?: string; version?: string }>("GET", "/update/dmg-path");
       if (!dmgResult?.path) {
         toast.show("Download complete but DMG not found", "error");
         updateDownloading.value = false;
         return;
       }
-      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, targetVersion);
+      const installVersion = dmgResult.version ?? targetVersion;
+      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, installVersion);
       if (!spawnResult?.ok) {
         toast.show(spawnResult?.error ?? "Failed to start installer", "error");
         updateDownloading.value = false;
