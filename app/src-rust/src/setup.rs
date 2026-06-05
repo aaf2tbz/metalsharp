@@ -694,7 +694,7 @@ pub(crate) fn stage_agility_sdk_for_game_report(
     let mut staged_files = Vec::new();
 
     for target_dir in &targets {
-        std::fs::create_dir_all(&target_dir)?;
+        std::fs::create_dir_all(target_dir)?;
         for dll in required_agility_payload_files() {
             let source = agility_bin.join(dll);
             if !source.exists() {
