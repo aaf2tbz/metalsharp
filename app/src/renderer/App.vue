@@ -290,7 +290,7 @@ async function initApp() {
   startHealthPolling();
 }
 
-    onMounted(async () => {
+      onMounted(async () => {
   await checkBackend();
   const migrationMode = await getAPI().isMigrationMode?.();
   if (migrationMode) {

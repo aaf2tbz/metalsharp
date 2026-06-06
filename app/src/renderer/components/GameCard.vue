@@ -628,7 +628,7 @@ function formatBytes(bytes: number): string {
 <style scoped>
 .game-card {
   background: var(--game-card-bg, var(--bg-card));
-  border: 1px solid var(--border);
+  border: 2px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
   transition:
@@ -643,7 +643,7 @@ function formatBytes(bytes: number): string {
 .game-card.installed {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--card-installed-glow-color) 35%, transparent),
-    0 0 60px color-mix(in srgb, var(--card-installed-glow-color) 48%, transparent),
+    0 0 40px color-mix(in srgb, var(--card-installed-glow-color) 48%, transparent),
     0 18px 40px color-mix(in srgb, var(--bg-deep) 36%, transparent);
 }
 .game-card.uninstalled {

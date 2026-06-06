@@ -157,7 +157,7 @@ export default {
 
 <style scoped>
 .logs-view {
-  padding: 24px 28px;
+  padding: 0 28px 24px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -166,10 +166,21 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin: -24px -28px 16px;
-  padding: 24px 28px 18px;
+  margin: 0 -28px 16px;
+  padding: 44px 28px 18px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  position: relative;
+  overflow: hidden;
+}
+.logs-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 80% at 20% 50%, rgba(95, 183, 232, 0.08) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 60% at 80% 50%, rgba(95, 183, 232, 0.05) 0%, transparent 60%);
+  pointer-events: none;
 }
 .logs-header h1 {
   font-size: 22px;
@@ -183,6 +194,7 @@ export default {
 .logs-actions {
   display: flex;
   gap: 8px;
+  -webkit-app-region: no-drag;
 }
 
 .log-drawers {

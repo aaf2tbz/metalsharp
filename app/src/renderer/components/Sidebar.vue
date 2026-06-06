@@ -167,9 +167,18 @@ const navItems = [
 .sidebar-logo-text {
   font-family: var(--font-logo);
   font-size: 10px;
-  color: var(--sidebar-logo-color);
+  color: transparent;
+  background: linear-gradient(90deg, var(--sidebar-logo-color), var(--sidebar-logo-accent), var(--sidebar-logo-color), var(--sidebar-logo-accent));
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
   line-height: 1.4;
   white-space: nowrap;
+  animation: logo-shift 6s linear infinite;
+}
+@keyframes logo-shift {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
 }
 
 .sidebar-nav {

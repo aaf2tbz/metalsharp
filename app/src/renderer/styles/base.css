@@ -123,7 +123,7 @@ textarea {
   font-weight: 600;
 }
 .btn-play:hover {
-  background: #3da8ec;
+  background: var(--play-color-hover);
 }
 
 .btn-stop {
