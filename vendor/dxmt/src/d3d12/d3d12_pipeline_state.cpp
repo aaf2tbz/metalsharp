@@ -1005,7 +1005,10 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
 
             if (out_func.handle) {
               PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
-              s_shader_cache[hash] = out_func;
+              {
+                std::lock_guard<std::mutex> lock(s_shader_mutex);
+                s_shader_cache[hash] = out_func;
+              }
 
               if (type == ShaderType::Vertex)
                 m_vs_uses_stage_in = true;
@@ -1073,7 +1076,10 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                 out_func = library.newFunction("ps_main");
               if (out_func.handle) {
                 PSTRACE("  DXIL loaded from cache OK! entry=%s", fn_name);
-                s_shader_cache[hash] = out_func;
+                {
+                  std::lock_guard<std::mutex> lock(s_shader_mutex);
+                  s_shader_cache[hash] = out_func;
+                }
                 if (type == ShaderType::Vertex)
                   m_vs_uses_stage_in = true;
                 char *tg = strstr(rbuf, "\"tg_size\"");
@@ -1693,7 +1699,7 @@ bool MTLD3D12PipelineState::Compile() {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
   }
-  if (m_vs_uses_stage_in) {
+  {
     constexpr uint32_t kSyntheticStageInAttributes = 16;
     constexpr uint32_t kSyntheticStageInStride = 16 * kSyntheticStageInAttributes;
     for (uint32_t i = 0; i < kSyntheticStageInAttributes && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
@@ -1709,7 +1715,7 @@ bool MTLD3D12PipelineState::Compile() {
     vtx_desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
     vtx_desc.layouts[0].step_rate = 1;
     info.vertex_descriptor = &vtx_desc;
-    PSTRACE("D3D12 PSO synthetic vertex descriptor attached for DXIL stage_in attrs=%u stride=%u",
+    PSTRACE("D3D12 PSO synthetic vertex descriptor attached attrs=%u stride=%u",
             vtx_desc.attribute_count, vtx_desc.layouts[0].stride);
   }
 
