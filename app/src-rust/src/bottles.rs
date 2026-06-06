@@ -50,6 +50,7 @@ pub enum RuntimeProfile {
     M11,
     M12,
     M13,
+    Gptk,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -415,6 +416,7 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::M11 => "m11",
         crate::mtsp::engine::PipelineId::M12 => "m12",
         crate::mtsp::engine::PipelineId::M13 => "m13",
+        crate::mtsp::engine::PipelineId::Gptk => "gptk_wine",
         crate::mtsp::engine::PipelineId::M32 => "m32",
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
         crate::mtsp::engine::PipelineId::Steam => "steam",
@@ -796,6 +798,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
             crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
+            crate::mtsp::engine::PipelineId::Gptk => RuntimeProfile::Gptk,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -2028,6 +2031,13 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
             crate::mtsp::engine::PipelineId::M13,
         ),
+        RuntimeProfile::Gptk => (
+            "GPTK Wine",
+            BottleArch::Win64,
+            true,
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
+            crate::mtsp::engine::PipelineId::Gptk,
+        ),
         RuntimeProfile::Dotnet => (
             ".NET",
             BottleArch::Win64,
@@ -2137,7 +2147,8 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
-        "m13" | "gptk" | "d3dmetal" => Some(RuntimeProfile::M13),
+        "m13" | "d3dmetal" => Some(RuntimeProfile::M13),
+        "gptk_wine" | "gptk-wine" => Some(RuntimeProfile::Gptk),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),

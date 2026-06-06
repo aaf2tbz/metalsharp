@@ -209,6 +209,7 @@ pub fn launch_with_pipeline(
             launch_dxmt_metal(appid, node)
         },
         PipelineId::M13 => launch_dxmt_metal(appid, node),
+        PipelineId::Gptk => launch_gptk(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
@@ -232,6 +233,8 @@ pub fn launch_steam_bottle_with_pipeline(
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
+        PipelineId::Gptk => launch_gptk_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            .map(|(pid, method)| (pid, method, log_path)),
         PipelineId::M32 | PipelineId::WineBare => {
             launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
@@ -284,6 +287,7 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+        | PipelineId::Gptk
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 => {
@@ -478,10 +482,11 @@ pub fn launch_custom_with_options(
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+        | PipelineId::Gptk
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, M13, or M32".into());
+            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, M13, GPTK, or M32".into());
         },
     }
 
@@ -678,6 +683,102 @@ fn launch_dxmt_metal_with_context(
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
         cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root));
+    }
+
+    cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+    apply_app_launch_env(&mut cmd, appid, node.id);
+    for (key, value) in extra_env {
+        cmd.env(key, value);
+    }
+
+    cmd.arg(&exe_name);
+    cmd.args(&recipe.launch_args);
+    attach_launch_log(
+        &mut cmd,
+        log_path,
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &recipe.launch_args,
+            cache_paths: cache_paths.as_ref(),
+        },
+    )?;
+    let child = cmd.spawn()?;
+    Ok((child.id(), node.id.to_legacy_method()))
+}
+
+pub fn gptk_wine64_binary() -> PathBuf {
+    let candidates = ["/opt/homebrew/bin/wine64", "/usr/local/bin/wine64"];
+    for c in &candidates {
+        let p = PathBuf::from(c);
+        if p.exists() {
+            return p;
+        }
+    }
+    PathBuf::from("/opt/homebrew/bin/wine64")
+}
+
+fn launch_gptk(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_gptk_with_context(appid, node, None, &[], None)
+}
+
+fn launch_gptk_with_context(
+    appid: u32,
+    node: &PipelineNode,
+    prefix_override: Option<&Path>,
+    extra_env: &[(String, String)],
+    log_path: Option<&Path>,
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let wine = gptk_wine64_binary();
+
+    if !wine.exists() {
+        return Err("GPTK Wine not found — install via: brew install --cask game-porting-toolkit".into());
+    }
+
+    let default_log_path;
+    let log_path = match log_path {
+        Some(path) => Some(path),
+        None => {
+            default_log_path = mtsp_launch_log_path(appid);
+            Some(default_log_path.as_path())
+        },
+    };
+
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
+    let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
+    let exe_dir = launch_working_dir(game_dir, exe_path);
+
+    let prefix = prefix_override
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    deploy_recipe_dlls(&recipe)?;
+
+    if !recipe.anti_cheat.is_empty() {
+        deploy_steam_appid(game_dir, appid);
+    }
+
+    let cache_paths = build_cache_paths(&home, node, appid);
+
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", wine_debug_value())
+        .env("WINEDEBUGGER", "none");
+
+    if let Some(overrides) = node.wine_overrides {
+        cmd.env("WINEDLLOVERRIDES", overrides);
     }
 
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);

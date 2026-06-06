@@ -10,6 +10,7 @@ pub enum PipelineId {
     M11,
     M12,
     M13,
+    Gptk,
     M32,
     FnaArm64,
     Steam,
@@ -77,6 +78,36 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 launch_args: vec![],
                 alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9],
                 shader_cache_subdir: None,
+            },
+            PipelineNode {
+                id: PipelineId::Gptk,
+                name: "GPTK",
+                description: "D3D11/D3D12 via Apple Game Porting Toolkit (Homebrew Wine)",
+                backend: "gptk",
+                graphics_backend: "gptk",
+                experimental: false,
+                requires_wine: true,
+                wine_overrides: Some("d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                dyld_paths: vec![],
+                winedllpath_dirs: vec![],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d11.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d12.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "dxgi.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d10.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "nvapi64.dll" },
+                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "atidxx64.dll" },
+                ],
+                env_vars: vec![],
+                launch_args: vec![],
+                alternatives: vec![
+                    PipelineId::M12,
+                    PipelineId::M11,
+                    PipelineId::M10,
+                    PipelineId::M9,
+                    PipelineId::Steam,
+                ],
+                shader_cache_subdir: Some("gptk"),
             },
             PipelineNode {
                 id: PipelineId::M12,
@@ -374,11 +405,20 @@ impl PipelineId {
     }
 
     pub fn is_user_selectable(self) -> bool {
-        matches!(self, PipelineId::M12 | PipelineId::M11 | PipelineId::M10 | PipelineId::M9 | PipelineId::FnaArm64)
+        matches!(
+            self,
+            PipelineId::Gptk
+                | PipelineId::M12
+                | PipelineId::M11
+                | PipelineId::M10
+                | PipelineId::M9
+                | PipelineId::FnaArm64
+        )
     }
 
     pub fn user_selectable_id(self) -> Option<&'static str> {
         match self {
+            PipelineId::Gptk => Some("gptk"),
             PipelineId::M12 => Some("m12"),
             PipelineId::M11 => Some("m11"),
             PipelineId::M10 => Some("m10"),
@@ -390,6 +430,7 @@ impl PipelineId {
 
     pub fn user_selectable_name(self) -> Option<&'static str> {
         match self {
+            PipelineId::Gptk => Some("GPTK"),
             PipelineId::M12 => Some("M12"),
             PipelineId::M11 => Some("M11"),
             PipelineId::M10 => Some("M10"),
@@ -423,7 +464,8 @@ impl PipelineId {
             "dxmt" | "auto_dxmt" | "metalsharp_dxmt" => Some(PipelineId::Dxmt),
             "m11" | "d3d11" | "dx11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "m12" | "d3d12" | "dx12" => Some(PipelineId::M12),
-            "m13" | "gptk" | "d3dmetal" | "steam_d3dmetal" => Some(PipelineId::M13),
+            "m13" | "d3dmetal" | "steam_d3dmetal" => Some(PipelineId::M13),
+            "gptk_wine" | "gptk-wine" => Some(PipelineId::Gptk),
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
@@ -439,6 +481,7 @@ impl PipelineId {
         match self {
             PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => "dxmt",
             PipelineId::M13 => "gptk_d3dmetal",
+            PipelineId::Gptk => "gptk_wine",
             PipelineId::M32 => "wined3d_32",
             PipelineId::FnaArm64 => "xna_fna_arm64",
             PipelineId::Steam => "steam",
@@ -598,11 +641,11 @@ mod tests {
             .collect();
         assert_eq!(
             selectable,
-            vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::FnaArm64]
+            vec![PipelineId::Gptk, PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::FnaArm64]
         );
 
         let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
-        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "Mono/FNA"]);
+        assert_eq!(labels, vec!["GPTK", "M12", "M11", "M10", "M9", "Mono/FNA"]);
 
         for hidden in [
             PipelineId::Dxmt,

@@ -783,7 +783,15 @@ fn m9_d3d9_source_subpath(game_dir: &Path, exe_path: Option<&Path>) -> &'static 
 fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAsset> {
     let mut assets = Vec::new();
 
-    if node.requires_wine {
+    if node.id == PipelineId::Gptk {
+        let wine64 = crate::mtsp::launcher::gptk_wine64_binary();
+        assets.push(RuntimeAsset {
+            name: "gptk_wine64".into(),
+            present: wine64.exists(),
+            path: wine64,
+            required: true,
+        });
+    } else if node.requires_wine {
         let wine = crate::platform::runtime_wine_binary(ms_root);
         assets.push(RuntimeAsset { name: "wine".into(), present: wine.exists(), path: wine, required: true });
     }
@@ -798,7 +806,7 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
         assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
     }
 
-    if node.backend == "gptk" {
+    if node.backend == "gptk" && node.id != PipelineId::Gptk {
         let framework = ms_root.join("lib").join("external").join("D3DMetal.framework");
         assets.push(RuntimeAsset {
             name: "D3DMetal.framework".into(),
