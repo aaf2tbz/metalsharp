@@ -76,14 +76,37 @@ def add_tree_to_tar(tar: tarfile.TarFile, root: Path) -> None:
             tar.addfile(info)
 
 
+def verify_tar_zst(archive: Path) -> None:
+    result = subprocess.run(
+        ["tar", "--use-compress-program=unzstd", "-tf", str(archive)],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"archive verification failed for {archive}: {result.stderr.decode(errors='replace')}"
+        )
+
+
 def write_archive(source_root: Path, output: Path) -> None:
     with tempfile.NamedTemporaryFile(suffix=".tar", delete=False) as tmp:
         tar_path = Path(tmp.name)
     try:
         with tarfile.open(tar_path, "w") as tar:
             add_tree_to_tar(tar, source_root)
-        subprocess.run(["zstd", "-q", "-19", "-T0", "-f", str(tar_path), "-o", str(output)], check=True)
-        output.chmod(0o644)
+        for threads in ["0", "1"]:
+            subprocess.run(
+                ["zstd", "-q", "-19", f"-T{threads}", "-f", str(tar_path), "-o", str(output)],
+                check=True,
+            )
+            output.chmod(0o644)
+            try:
+                verify_tar_zst(output)
+                return
+            except RuntimeError:
+                if threads == "0":
+                    print("MT zstd archive corrupt, retrying single-threaded...")
+                    continue
+                raise
     finally:
         tar_path.unlink(missing_ok=True)
 
