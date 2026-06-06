@@ -664,7 +664,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 for entry in rd.flatten() {
                     let bottle_id = entry.file_name().to_string_lossy().to_string();
                     let logs_dir = entry.path().join("logs");
-                    if !logs_dir.is_dir() { continue; }
+                    if !logs_dir.is_dir() {
+                        continue;
+                    }
                     let appid: u32 = bottle_id.strip_prefix("steam_").and_then(|s| s.parse().ok()).unwrap_or(0);
                     let pipeline = if appid > 0 {
                         crate::bottles::resolve_steam_pipeline_for_request(appid, None)
@@ -676,8 +678,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 }
             }
 
-            let steam_dumps = ms_home.join("prefix-steam").join("drive_c")
-                .join("Program Files (x86)").join("Steam").join("dumps");
+            let steam_dumps =
+                ms_home.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join("dumps");
             if steam_dumps.is_dir() {
                 let _ = scan_steam_dumps(&steam_dumps, &mut reports);
             }
@@ -2026,13 +2028,11 @@ fn pipeline_label_for_exe(exe_name: &str) -> &'static str {
                 None => continue,
             };
             let manifest_path = entry.path().join("bottle.json");
-            let manifest: serde_json::Value = match std::fs::read_to_string(&manifest_path)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-            {
-                Some(v) => v,
-                None => continue,
-            };
+            let manifest: serde_json::Value =
+                match std::fs::read_to_string(&manifest_path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+                    Some(v) => v,
+                    None => continue,
+                };
             if let Some(name) = manifest.get("game_name").and_then(|v| v.as_str()) {
                 let name_lower = name.to_lowercase().replace(' ', "");
                 let exe_base = exe_lower.trim_end_matches(".exe").replace(' ', "");
@@ -2052,8 +2052,7 @@ fn scan_steam_dumps(dir: &std::path::Path, reports: &mut Vec<serde_json::Value>)
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
             let name_lower = name.to_lowercase();
-            let is_dump = name_lower.ends_with(".dmp") || name_lower.ends_with(".mdmp")
-                || name_lower.contains("crash");
+            let is_dump = name_lower.ends_with(".dmp") || name_lower.ends_with(".mdmp") || name_lower.contains("crash");
             if is_dump {
                 let metadata = std::fs::metadata(&path).ok();
                 let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
@@ -2066,11 +2065,7 @@ fn scan_steam_dumps(dir: &std::path::Path, reports: &mut Vec<serde_json::Value>)
                     .unwrap_or_else(|| "unknown".into());
 
                 let exe_name = name.split('_').nth(1).unwrap_or("").to_string();
-                let pipeline = if exe_name.is_empty() {
-                    "System"
-                } else {
-                    pipeline_label_for_exe(&exe_name)
-                };
+                let pipeline = if exe_name.is_empty() { "System" } else { pipeline_label_for_exe(&exe_name) };
 
                 reports.push(json!({
                     "file": path.to_string_lossy(),
