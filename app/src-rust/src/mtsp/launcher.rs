@@ -1028,25 +1028,21 @@ pub fn gptk_spawn_steam(wine: &Path, prefix: &Path) -> Result<u32, Box<dyn std::
     }
 
     let prefix_str = prefix.to_string_lossy().to_string();
+    let wine_str = wine.to_string_lossy().to_string();
+    let exe_str = exe.to_string_lossy().to_string();
+    let cwd_str = steam_dir.to_string_lossy().to_string();
 
-    let mut cmd = Command::new(wine);
-    cmd.current_dir(&steam_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "none")
-        .env("STEAM_RUNTIME", "0")
-        .env("MS_FWD_COMPAT_GL_CTX", "1")
-        .env(
-            "WINEDLLOVERRIDES",
-            "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
-        )
-        .arg(&exe)
-        .args(["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+    let shell_cmd = format!(
+        "cd '{}' && WINEPREFIX='{}' WINEDEBUG=-all WINEDEBUGGER=none STEAM_RUNTIME=0 MS_FWD_COMPAT_GL_CTX=1 WINEDLLOVERRIDES='dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d' nohup '{}' -no-cef-sandbox -cef-single-process -noverifyfiles -no-dwrite </dev/null >/dev/null 2>&1 & echo $!",
+        cwd_str, prefix_str, exe_str
+    );
 
-    let child = cmd.spawn()?;
-    Ok(child.id())
+    let output = Command::new("/bin/sh").arg("-c").arg(&shell_cmd).output()?;
+
+    let pid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let pid: u32 = pid_str.parse().unwrap_or(0);
+
+    Ok(pid)
 }
 
 fn launch_gptk_with_context(
