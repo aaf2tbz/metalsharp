@@ -641,7 +641,14 @@ mod tests {
             .collect();
         assert_eq!(
             selectable,
-            vec![PipelineId::Gptk, PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::FnaArm64]
+            vec![
+                PipelineId::Gptk,
+                PipelineId::M12,
+                PipelineId::M11,
+                PipelineId::M10,
+                PipelineId::M9,
+                PipelineId::FnaArm64
+            ]
         );
 
         let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();

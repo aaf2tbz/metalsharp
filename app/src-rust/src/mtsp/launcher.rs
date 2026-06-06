@@ -725,6 +725,66 @@ pub fn gptk_wine64_binary() -> PathBuf {
     PathBuf::from("/opt/homebrew/bin/wine64")
 }
 
+fn gptk_vcrun_marker(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join(".metalsharp-gptk-vcrun-installed")
+}
+
+fn gptk_prefix_has_vcrun(prefix: &Path) -> bool {
+    if gptk_vcrun_marker(prefix).exists() {
+        return true;
+    }
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    let core = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
+    core.iter().all(|dll| system32.join(dll).exists())
+}
+
+fn ensure_gptk_vcrun(wine: &Path, prefix: &Path) {
+    if gptk_prefix_has_vcrun(prefix) {
+        return;
+    }
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let cache_dir = ms_home.join("cache").join("gptk-redist");
+    let redist = cache_dir.join("VC_redist.x64.exe");
+
+    if !redist.exists() {
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let tmp = cache_dir.join("VC_redist.x64.exe.download");
+        let _ = std::fs::remove_file(&tmp);
+        let _ = Command::new("/usr/bin/curl")
+            .args(["--fail", "--location", "--silent", "--show-error", "-o"])
+            .arg(&tmp)
+            .arg("https://aka.ms/vs/17/release/VC_redist.x64.exe")
+            .output();
+        if tmp.exists() && tmp.metadata().map(|m| m.len() > 1_000_000).unwrap_or(false) {
+            let _ = std::fs::rename(&tmp, &redist);
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    if !redist.exists() {
+        return;
+    }
+
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let output = Command::new(wine)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .arg(&redist)
+        .args(["/install", "/quiet"])
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            let _ = std::fs::write(gptk_vcrun_marker(prefix), "");
+        }
+    }
+}
+
 fn launch_gptk(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     launch_gptk_with_context(appid, node, None, &[], None)
 }
@@ -768,6 +828,8 @@ fn launch_gptk_with_context(
     if !recipe.anti_cheat.is_empty() {
         deploy_steam_appid(game_dir, appid);
     }
+
+    ensure_gptk_vcrun(&wine, &prefix);
 
     let cache_paths = build_cache_paths(&home, node, appid);
 
