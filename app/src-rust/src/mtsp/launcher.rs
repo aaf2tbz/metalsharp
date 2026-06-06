@@ -1020,6 +1020,8 @@ pub fn gptk_is_steam_running_in_prefix(gptk_prefix: &Path) -> bool {
 }
 
 pub fn gptk_spawn_steam(wine: &Path, prefix: &Path) -> Result<u32, Box<dyn std::error::Error>> {
+    use std::os::unix::process::CommandExt;
+
     let steam_dir = gptk_steam_dir(prefix);
     let exe = steam_dir.join("Steam.exe");
 
@@ -1028,21 +1030,34 @@ pub fn gptk_spawn_steam(wine: &Path, prefix: &Path) -> Result<u32, Box<dyn std::
     }
 
     let prefix_str = prefix.to_string_lossy().to_string();
-    let wine_str = wine.to_string_lossy().to_string();
-    let exe_str = exe.to_string_lossy().to_string();
-    let cwd_str = steam_dir.to_string_lossy().to_string();
 
-    let shell_cmd = format!(
-        "cd '{}' && WINEPREFIX='{}' WINEDEBUG=-all WINEDEBUGGER=none STEAM_RUNTIME=0 MS_FWD_COMPAT_GL_CTX=1 WINEDLLOVERRIDES='dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d' nohup '{}' -no-cef-sandbox -cef-single-process -noverifyfiles -no-dwrite </dev/null >/dev/null 2>&1 & echo $!",
-        cwd_str, prefix_str, exe_str
-    );
+    let mut cmd = Command::new(wine);
+    cmd.current_dir(&steam_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env("STEAM_RUNTIME", "0")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env(
+            "WINEDLLOVERRIDES",
+            "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d",
+        )
+        .arg(&exe)
+        .args(["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0);
 
-    let output = Command::new("/bin/sh").arg("-c").arg(&shell_cmd).output()?;
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
 
-    let pid_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let pid: u32 = pid_str.parse().unwrap_or(0);
-
-    Ok(pid)
+    let child = cmd.spawn()?;
+    Ok(child.id())
 }
 
 fn launch_gptk_with_context(
