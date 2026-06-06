@@ -28,12 +28,12 @@
   --text-bright: #ffffff;
   --border: rgba(140, 170, 200, 0.12);
   --border-strong: rgba(140, 170, 200, 0.2);
-  --sidebar-bg: rgba(20, 25, 32, 0.4);
+  --sidebar-bg: linear-gradient(180deg, #181f27 0%, #1a2d42 40%, #1e3a52 70%, #1a2d42 100%);
   --sidebar-hover: rgba(29, 37, 46, 0.6);
   --sidebar-active: rgba(95, 183, 232, 0.15);
-  --sidebar-text: #c8d3df;
+  --sidebar-text: #ffffff;
   --sidebar-text-active: #5fb7e8;
-  --sidebar-text-hover: #d7e0ea;
+  --sidebar-text-hover: #ffffff;
   --sidebar-logo-color: #ffffff;
   --sidebar-logo-accent: #5fb7e8;
   --page-header-bg: linear-gradient(90deg, #181f27 0%, #1a2d42 30%, #1e3a52 60%, #1a2d42 100%);

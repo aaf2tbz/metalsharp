@@ -97,9 +97,9 @@ const navItems = [
 .sidebar {
   width: var(--sidebar-width-expanded);
   background: var(--sidebar-bg);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-right: 1px solid rgba(140, 170, 200, 0.08);
+  backdrop-filter: blur(28px) saturate(200%);
+  -webkit-backdrop-filter: blur(28px) saturate(200%);
+  border-right: 1px solid rgba(140, 170, 200, 0.1);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
@@ -200,7 +200,7 @@ const navItems = [
   border: 1px solid transparent;
   background: none;
   color: var(--sidebar-text);
-  font-weight: 600;
+  font-weight: 700;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition);

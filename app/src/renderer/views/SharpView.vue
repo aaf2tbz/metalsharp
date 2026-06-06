@@ -961,7 +961,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
   display: flex;
   flex-direction: column;
   gap: 18px;
-  margin: 0 -28px 0;
+  margin: 0 -28px 20px;
   padding: 44px 28px 13px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
