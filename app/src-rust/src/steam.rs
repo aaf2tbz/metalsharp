@@ -16,6 +16,14 @@ fn steam_prefix() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("prefix-steam")
 }
 
+fn gptk_prefix() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("prefix-gptk")
+}
+
+fn gptk_wine() -> PathBuf {
+    PathBuf::from("/opt/homebrew/bin/wine64")
+}
+
 fn steam_exe_path() -> PathBuf {
     steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
 }
@@ -57,6 +65,11 @@ pub fn status() -> Value {
     let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
 
+    let gptk_wine_available = gptk_wine().exists();
+    let gptk_steam_exe = gptk_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe");
+    let gptk_installed = gptk_steam_exe.exists();
+    let gptk_running = is_gptk_steam_running();
+
     json!({
         "installed": windows_installed,
         "path": windows_path,
@@ -67,7 +80,10 @@ pub fn status() -> Value {
         "mac_running": mac_running,
         "running": running,
         "metalsharp_wine_available": ms_available,
-        "installing": installing
+        "installing": installing,
+        "gptk_wine_available": gptk_wine_available,
+        "gptk_installed": gptk_installed,
+        "gptk_running": gptk_running
     })
 }
 
@@ -76,6 +92,16 @@ pub fn is_wine_steam_running() -> bool {
         .iter()
         .filter_map(|line| parse_process_line(line))
         .any(|(_, command)| is_wine_steam_owner_command(command))
+}
+
+fn is_gptk_steam_running() -> bool {
+    let prefix = gptk_prefix().to_string_lossy().to_string();
+    process_lines().iter().filter_map(|line| parse_process_line(line)).any(|(_, command)| {
+        if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
+            return false;
+        }
+        command.contains(&prefix) && (command.contains("Steam.exe") || command.contains("steam.exe"))
+    })
 }
 
 fn process_lines() -> Vec<String> {

@@ -35,6 +35,9 @@ const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
+const gptkSteamInstalled = inject<Ref<boolean>>("gptkSteamInstalled")!;
+const gptkSteamRunning = inject<Ref<boolean>>("gptkSteamRunning")!;
+const gptkWineAvailable = inject<Ref<boolean>>("gptkWineAvailable")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const developerMode = inject<Ref<boolean>>("developerMode")!;
@@ -167,6 +170,31 @@ async function toggleMacSteam() {
   reloadLibrary();
 }
 
+async function toggleGptkSteam() {
+  if (!gptkSteamInstalled.value) {
+    toast.show("GPTK Steam is not installed yet", "error");
+    return;
+  }
+  if (gptkSteamRunning.value) {
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
+    if (result?.ok && result.running === false) {
+      gptkSteamRunning.value = false;
+      toast.show("GPTK Steam stopped");
+    } else {
+      gptkSteamRunning.value = result?.running ?? true;
+      toast.show(result?.error ?? "GPTK Steam is still running", "error");
+    }
+  } else {
+    toast.show("Starting GPTK Steam...", "success");
+    const result = await api<{ ok: boolean }>("POST", "/steam/gptk-launch");
+    if (result?.ok) {
+      gptkSteamRunning.value = true;
+      toast.show("GPTK Steam started", "success");
+    }
+  }
+  reloadLibrary();
+}
+
 async function launchGame(game: SteamGame, launchMethod = "auto") {
   if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
     if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
@@ -266,6 +294,8 @@ watch([library, search, filter], applyFilter);
           <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
           <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
           <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
+          <span v-if="gptkSteamRunning" class="badge badge-ok">GPTK Running</span>
+          <span v-else-if="gptkSteamInstalled" class="badge badge-warn">GPTK Offline</span>
           <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
             {{ backendConnected ? `Backend${backendVersion ? " v" + backendVersion : ""}` : "Backend Offline" }}
           </span>
@@ -312,6 +342,37 @@ watch([library, search, filter], applyFilter);
             <span class="control-label">
               {{
                 !macSteamInstalled ? "Install macOS Steam" : macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam"
+              }}
+            </span>
+          </button>
+          <button
+            v-if="gptkWineAvailable"
+            class="btn btn-secondary library-control-button"
+            title="GPTK Steam"
+            @click="toggleGptkSteam"
+          >
+            <svg
+              class="control-icon"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
+            </svg>
+            <span class="control-label">
+              {{
+                !gptkSteamInstalled
+                  ? "Install GPTK Steam"
+                  : gptkSteamRunning
+                    ? "Stop GPTK Steam"
+                    : "Start GPTK Steam"
               }}
             </span>
           </button>
@@ -432,11 +493,11 @@ watch([library, search, filter], applyFilter);
 }
 
 .library-controls {
-  display: grid;
-  grid-template-columns: auto minmax(280px, 1fr);
+  display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
+  flex-wrap: wrap;
   -webkit-app-region: no-drag;
 }
 .library-launch-actions {
@@ -447,15 +508,17 @@ watch([library, search, filter], applyFilter);
   min-width: 0;
 }
 .library-controls-center {
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) 148px;
+  display: flex;
   gap: 10px;
   min-width: 0;
+  flex: 1 1 280px;
 }
 .library-controls-center input {
+  flex: 1 1 150px;
   min-width: 0;
 }
 .library-controls-center select {
+  flex: 0 0 148px;
   min-width: 0;
 }
 .library-control-button {
@@ -468,12 +531,6 @@ watch([library, search, filter], applyFilter);
 .control-label {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-@media (max-width: 1040px) {
-  .library-controls {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 880px) {
@@ -493,10 +550,7 @@ watch([library, search, filter], applyFilter);
   }
   .library-launch-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-  .library-controls-center {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 }
 
