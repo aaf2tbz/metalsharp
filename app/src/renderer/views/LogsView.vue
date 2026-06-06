@@ -1,12 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 import { api, getAPI } from "../composables/useApi";
 
 const logs = ref<string[]>([]);
 const logFiles = ref<{ name: string; lines: string[] }[]>([]);
-const crashReports = ref<{ file: string; name: string; source: string; timestamp: string; size_bytes: number }[]>([]);
+const crashReports = ref<{ file: string; name: string; source: string; pipeline: string; timestamp: string; size_bytes: number }[]>([]);
 const logLineCount = ref(0);
+const logContentEl = ref<HTMLElement | null>(null);
+const liveOpen = ref(false);
 let pollInterval: ReturnType<typeof setInterval> | null = null;
+
+const pipelineOrder = ["M12", "M11", "M9", "FNA/Mono", "System", "Other"];
+const crashByPipeline = computed(() => {
+  const groups: Record<string, typeof crashReports.value> = {};
+  for (const r of crashReports.value) {
+    const key = r.pipeline || "Other";
+    (groups[key] ??= []).push(r);
+  }
+  return pipelineOrder
+    .filter((p) => groups[p]?.length)
+    .map((p) => ({ pipeline: p, reports: groups[p] }));
+});
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (logContentEl.value) logContentEl.value.scrollTop = logContentEl.value.scrollHeight;
+  });
+}
 
 async function pollLogs() {
   const result = await api<{ ok: boolean; total: number; lines: string[] }>(
@@ -15,6 +35,7 @@ async function pollLogs() {
   );
   if (result?.ok && result.lines?.length) {
     logs.value.push(...result.lines);
+    if (liveOpen.value) scrollToBottom();
   }
   if (result?.ok) logLineCount.value = result.total;
 }
@@ -68,26 +89,32 @@ onUnmounted(() => {
         <button class="btn btn-secondary" @click="clearView">Clear View</button>
       </div>
     </div>
-    <details class="log-drawer live-log-drawer" open>
+    <details class="log-drawer live-log-drawer" @toggle="liveOpen = ($event.target as HTMLDetailsElement).open; if (liveOpen) scrollToBottom()">
       <summary>
         Live log stream <span>{{ logs.length }} lines</span>
       </summary>
-      <div class="log-content">
+      <div class="log-content" ref="logContentEl">
         <div v-for="(line, i) in logs" :key="i" class="log-line" :class="logClass(line)">
           {{ line }}
         </div>
       </div>
     </details>
     <div class="log-drawers">
-      <details v-if="crashReports.length" class="log-drawer">
+      <details class="log-drawer">
         <summary>
           Crash reports <span>{{ crashReports.length }}</span>
         </summary>
-        <div v-for="report in crashReports" :key="report.file" class="report-row">
-          <strong>{{ report.name }}</strong>
-          <span>{{ report.source }} - {{ report.timestamp }} - {{ formatBytes(report.size_bytes) }}</span>
-          <small>{{ report.file }}</small>
+        <div v-if="crashByPipeline.length">
+          <div v-for="group in crashByPipeline" :key="group.pipeline" class="crash-pipeline-section">
+            <div class="crash-pipeline-label">{{ group.pipeline }}</div>
+            <div v-for="report in group.reports" :key="report.file" class="report-row">
+              <strong>{{ report.name }}</strong>
+              <span>{{ report.source }} - {{ report.timestamp }} - {{ formatBytes(report.size_bytes) }}</span>
+              <small>{{ report.file }}</small>
+            </div>
+          </div>
         </div>
+        <div v-else class="crash-empty">No crash reports found.</div>
       </details>
       <details v-if="logFiles.length" class="log-drawer">
         <summary>
@@ -130,7 +157,7 @@ export default {
 
 <style scoped>
 .logs-view {
-  padding: 24px 28px;
+  padding: 0 28px 24px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -139,10 +166,21 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin: -24px -28px 16px;
-  padding: 24px 28px 18px;
+  margin: 0 -28px 16px;
+  padding: 44px 28px 18px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  position: relative;
+  overflow: hidden;
+}
+.logs-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 80% at 20% 50%, rgba(95, 183, 232, 0.08) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 60% at 80% 50%, rgba(95, 183, 232, 0.05) 0%, transparent 60%);
+  pointer-events: none;
 }
 .logs-header h1 {
   font-size: 22px;
@@ -156,6 +194,7 @@ export default {
 .logs-actions {
   display: flex;
   gap: 8px;
+  -webkit-app-region: no-drag;
 }
 
 .log-drawers {
@@ -211,6 +250,26 @@ export default {
 .report-row small {
   overflow-wrap: anywhere;
 }
+.crash-pipeline-section {
+  border-top: 1px solid var(--border);
+}
+.crash-pipeline-section:first-child {
+  border-top: none;
+}
+.crash-pipeline-label {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.crash-empty {
+  padding: 16px 12px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+}
 .file-log {
   padding: 10px 12px;
   border-top: 1px solid var(--border);
@@ -253,13 +312,11 @@ export default {
   min-height: 0;
 }
 .live-log-drawer[open] {
-  flex: 1;
   display: flex;
-  min-height: 180px;
   flex-direction: column;
 }
 .live-log-drawer[open] .log-content {
-  max-height: none;
+  max-height: min(40vh, 380px);
 }
 
 .log-line {

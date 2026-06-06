@@ -639,18 +639,54 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/logs/crash-reports") => {
             let home = dirs::home_dir().unwrap_or_default();
+            let ms_home = crate::platform::metalsharp_home_dir_for(&home);
             let mut reports = Vec::new();
-            let game_base = crate::platform::metalsharp_home_dir_for(&home).join("games");
+
+            let game_base = ms_home.join("games");
             if let Ok(rd) = std::fs::read_dir(&game_base) {
                 for entry in rd.flatten() {
                     if entry.path().is_dir() {
-                        let appid = entry.file_name().to_string_lossy().to_string();
-                        let _ = scan_crash_files(&entry.path(), &appid, &mut reports);
+                        let appid_str = entry.file_name().to_string_lossy().to_string();
+                        let appid: u32 = appid_str.parse().unwrap_or(0);
+                        let pipeline = if appid > 0 {
+                            crate::bottles::resolve_steam_pipeline_for_request(appid, None)
+                        } else {
+                            crate::mtsp::engine::PipelineId::M11
+                        };
+                        let pipeline_label = pipeline_label_for(pipeline);
+                        let _ = scan_crash_files(&entry.path(), &appid_str, pipeline_label, &mut reports);
                     }
                 }
             }
-            let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam").join("drive_c");
-            let _ = scan_crash_files(&prefix, "system", &mut reports);
+
+            let bottles_dir = ms_home.join("bottles");
+            if let Ok(rd) = std::fs::read_dir(&bottles_dir) {
+                for entry in rd.flatten() {
+                    let bottle_id = entry.file_name().to_string_lossy().to_string();
+                    let logs_dir = entry.path().join("logs");
+                    if !logs_dir.is_dir() {
+                        continue;
+                    }
+                    let appid: u32 = bottle_id.strip_prefix("steam_").and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let pipeline = if appid > 0 {
+                        crate::bottles::resolve_steam_pipeline_for_request(appid, None)
+                    } else {
+                        crate::mtsp::engine::PipelineId::M11
+                    };
+                    let pipeline_label = pipeline_label_for(pipeline);
+                    let _ = scan_crash_files(&logs_dir, &bottle_id, pipeline_label, &mut reports);
+                }
+            }
+
+            let steam_dumps =
+                ms_home.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join("dumps");
+            if steam_dumps.is_dir() {
+                let _ = scan_steam_dumps(&steam_dumps, &mut reports);
+            }
+
+            let prefix = ms_home.join("prefix-steam").join("drive_c");
+            let _ = scan_crash_files(&prefix, "system", "System", &mut reports);
+
             reports.sort_by(|a: &serde_json::Value, b: &serde_json::Value| {
                 b.get("timestamp")
                     .unwrap_or(&json!(""))
@@ -1970,7 +2006,81 @@ fn parse_request_appid(body: &serde_json::Map<String, serde_json::Value>) -> Res
     Ok(appid)
 }
 
-fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde_json::Value>) {
+fn pipeline_label_for(pipeline: crate::mtsp::engine::PipelineId) -> &'static str {
+    match pipeline {
+        crate::mtsp::engine::PipelineId::M12 => "M12",
+        crate::mtsp::engine::PipelineId::M11 => "M11",
+        crate::mtsp::engine::PipelineId::M9 => "M9",
+        crate::mtsp::engine::PipelineId::FnaArm64 => "FNA/Mono",
+        _ => "Other",
+    }
+}
+
+fn pipeline_label_for_exe(exe_name: &str) -> &'static str {
+    let exe_lower = exe_name.to_lowercase();
+    let home = dirs::home_dir().unwrap_or_default();
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    if let Ok(rd) = std::fs::read_dir(ms_home.join("bottles")) {
+        for entry in rd.flatten() {
+            let bottle_id = entry.file_name().to_string_lossy().to_string();
+            let appid: u32 = match bottle_id.strip_prefix("steam_").and_then(|s| s.parse().ok()) {
+                Some(id) => id,
+                None => continue,
+            };
+            let manifest_path = entry.path().join("bottle.json");
+            let manifest: serde_json::Value =
+                match std::fs::read_to_string(&manifest_path).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+                    Some(v) => v,
+                    None => continue,
+                };
+            if let Some(name) = manifest.get("game_name").and_then(|v| v.as_str()) {
+                let name_lower = name.to_lowercase().replace(' ', "");
+                let exe_base = exe_lower.trim_end_matches(".exe").replace(' ', "");
+                if exe_base.contains(&name_lower) || name_lower.contains(&exe_base) {
+                    let pipeline = crate::bottles::resolve_steam_pipeline_for_request(appid, None);
+                    return pipeline_label_for(pipeline);
+                }
+            }
+        }
+    }
+    "System"
+}
+
+fn scan_steam_dumps(dir: &std::path::Path, reports: &mut Vec<serde_json::Value>) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let name_lower = name.to_lowercase();
+            let is_dump = name_lower.ends_with(".dmp") || name_lower.ends_with(".mdmp") || name_lower.contains("crash");
+            if is_dump {
+                let metadata = std::fs::metadata(&path).ok();
+                let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                let modified = metadata.and_then(|m| m.modified().ok());
+                let timestamp = modified
+                    .map(|t| {
+                        let d = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                        local_date_for_epoch(d.as_secs())
+                    })
+                    .unwrap_or_else(|| "unknown".into());
+
+                let exe_name = name.split('_').nth(1).unwrap_or("").to_string();
+                let pipeline = if exe_name.is_empty() { "System" } else { pipeline_label_for_exe(&exe_name) };
+
+                reports.push(json!({
+                    "file": path.to_string_lossy(),
+                    "name": name,
+                    "source": "steam-dumps",
+                    "pipeline": pipeline,
+                    "timestamp": timestamp,
+                    "size_bytes": size,
+                }));
+            }
+        }
+    }
+}
+
+fn scan_crash_files(dir: &std::path::Path, source: &str, pipeline: &str, reports: &mut Vec<serde_json::Value>) {
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
@@ -1991,6 +2101,7 @@ fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde
                     "file": path.to_string_lossy(),
                     "name": entry.file_name().to_string_lossy().to_string(),
                     "source": source,
+                    "pipeline": pipeline,
                     "timestamp": timestamp,
                     "size_bytes": size,
                 }));
@@ -1998,7 +2109,7 @@ fn scan_crash_files(dir: &std::path::Path, source: &str, reports: &mut Vec<serde
             }
             if path.is_dir() {
                 let sub_source = source.to_string();
-                scan_crash_files(&path, &sub_source, reports);
+                scan_crash_files(&path, &sub_source, pipeline, reports);
             }
         }
     }

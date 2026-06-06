@@ -53,6 +53,7 @@ const updateDownloading = ref(false);
 const updateProgress = ref(0);
 const updateMessage = ref("");
 const showUpdateChangelog = ref(false);
+const updateDismissed = ref(false);
 let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 let installPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -289,7 +290,7 @@ async function initApp() {
   startHealthPolling();
 }
 
-onMounted(async () => {
+      onMounted(async () => {
   await checkBackend();
   const migrationMode = await getAPI().isMigrationMode?.();
   if (migrationMode) {
@@ -320,7 +321,7 @@ onMounted(async () => {
     />
     <main class="content">
       <div class="drag-strip"></div>
-      <div v-if="updateStatus?.ok && updateStatus?.available" class="update-banner">
+      <div v-if="updateStatus?.ok && updateStatus?.available && !updateDismissed" class="update-banner">
         <span class="update-banner-text" v-if="!updateDownloading"
           >MetalSharp v{{ updateStatus.latest_version }} is available<span v-if="updateChangelog" class="update-changelog">{{ updateChangelog }}</span></span
         >
@@ -338,6 +339,7 @@ onMounted(async () => {
         >
           What's New
         </button>
+        <button v-if="!updateDownloading" class="update-banner-close" @click="updateDismissed = true" title="Dismiss">&times;</button>
       </div>
       <component :is="activeView" :key="currentView" />
     </main>
@@ -356,8 +358,7 @@ onMounted(async () => {
 
 <style>
 .drag-strip {
-  height: 38px;
-  background: var(--page-header-bg);
+  height: 0;
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
@@ -367,11 +368,22 @@ onMounted(async () => {
   justify-content: center;
   gap: 12px;
   padding: 8px 16px;
-  background: var(--accent);
-  color: #1b2838;
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid rgba(140, 170, 200, 0.08);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
+  position: relative;
+}
+.update-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(95, 183, 232, 0.06) 0%, transparent 30%, transparent 70%, rgba(95, 183, 232, 0.04) 100%);
+  pointer-events: none;
 }
 .update-banner:hover {
   opacity: 0.9;
@@ -385,31 +397,49 @@ onMounted(async () => {
   font-weight: 400;
 }
 .update-banner-btn {
-  background: rgba(0, 0, 0, 0.15);
-  border: none;
-  color: #1b2838;
+  background: rgba(95, 183, 232, 0.18);
+  border: 1px solid rgba(95, 183, 232, 0.25);
+  color: var(--accent);
   padding: 3px 14px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
+  position: relative;
+  z-index: 1;
 }
 .update-banner-btn:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(95, 183, 232, 0.28);
 }
 .update-banner-secondary {
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(140, 170, 200, 0.1);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.update-banner-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  position: relative;
+  z-index: 1;
+}
+.update-banner-close:hover {
+  color: var(--text-primary);
 }
 .update-banner-progress {
   width: 120px;
   height: 4px;
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(140, 170, 200, 0.15);
   border-radius: 2px;
   overflow: hidden;
 }
 .update-banner-progress-fill {
   height: 100%;
-  background: #1b2838;
+  background: var(--accent);
   border-radius: 2px;
   transition: width 0.3s ease;
 }

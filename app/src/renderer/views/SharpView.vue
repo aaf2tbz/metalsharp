@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { SharpApp } from "../api-types";
@@ -115,6 +115,22 @@ interface RedistSourceGuide {
 
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
+const dropdownOpen = ref<string | null>(null);
+const dropdownStyle = ref<Record<string, string>>({});
+
+function openDropdown(name: string, event: MouseEvent) {
+  if (dropdownOpen.value === name) {
+    dropdownOpen.value = null;
+    return;
+  }
+  const btn = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  dropdownStyle.value = {
+    top: `${btn.bottom + 6}px`,
+    left: `${btn.left}px`,
+    width: name === 'compat' ? '680px' : '420px',
+  };
+  dropdownOpen.value = name;
+}
 const bottles = ref<BottleManifest[]>([]);
 const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
 const compatibilityCases = ref<CompatibilityCase[]>([]);
@@ -602,243 +618,149 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-onMounted(load);
+function closeDropdowns(e: MouseEvent) {
+  if (!(e.target as HTMLElement).closest('.dropdown-wrap')) dropdownOpen.value = null;
+}
+onMounted(() => { document.addEventListener('click', closeDropdowns); load(); });
+onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 </script>
 
 <template>
   <div class="sharp-view">
     <div class="sharp-header">
-      <div>
-        <h1>Sharp Library</h1>
-        <p class="subtitle">Windows applications running via MetalSharp Wine</p>
+      <h1>Sharp Library</h1>
+      <div class="sharp-header-controls">
+      <div v-if="bottles.length" class="dropdown-wrap">
+          <button class="btn btn-secondary" @click="openDropdown('bottles', $event)">
+            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(45deg)"><path d="M8 2h8l1 7H7L8 2z"/><path d="M7 9v2a5 5 0 0 0 10 0V9"/><line x1="12" y1="16" x2="12" y2="22"/></svg>
+            <span class="btn-label-long">Runtime Bottles</span><span class="btn-label-short">Bottles</span> <span class="dropdown-count">{{ bottles.length }}</span>
+        </button>
+        <div v-if="dropdownOpen === 'bottles'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
+          <div class="dropdown-scroll">
+            <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card-compact">
+              <div class="bottle-card-main">
+                <div class="bottle-identity">
+                  <div class="bottle-title">{{ bottle.name }}</div>
+                  <div class="bottle-meta">
+                    <span class="badge" :class="bottleBadgeClass(bottle.health)">{{ bottle.health }}</span>
+                    <span v-if="bottle.last_launch_status">
+                      {{ bottle.last_launch_status }}
+                      <template v-if="bottle.last_launch_pid">pid {{ bottle.last_launch_pid }}</template>
+                    </span>
+                  </div>
+                </div>
+                <div class="bottle-facts">
+                  <span><strong>Kind</strong> {{ bottle.bottle_type }}</span>
+                  <span><strong>Runtime</strong> {{ bottle.runtime_profile }}</span>
+                  <span><strong>Arch</strong> {{ bottle.arch }}</span>
+                  <span v-if="bottle.steam_app_id"><strong>Steam</strong> {{ bottle.steam_app_id }}</span>
+                </div>
+                <div class="bottle-actions">
+                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
+                    {{ bottleLoading[bottle.id] ? "Checking" : "Doctor" }}
+                  </button>
+                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">Scan</button>
+                  <button class="btn btn-secondary btn-sm" @click="bottleAdvancedOpen[bottle.id] = !bottleAdvancedOpen[bottle.id]">
+                    {{ bottleAdvancedOpen[bottle.id] ? "Less" : "More" }}
+                  </button>
+                </div>
+              </div>
+              <div v-if="bottleAdvancedOpen[bottle.id]" class="bottle-control-surface">
+                <div class="bottle-control-grid">
+                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">Prepare</button>
+                  <button v-if="bottle.source_installer_path" class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="relaunchBottleInstaller(bottle)">Relaunch</button>
+                  <button class="btn btn-secondary btn-sm" @click="openBottleFolder(bottle)">Folder</button>
+                  <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">Logs</button>
+                  <select class="control-input" :value="bottle.runtime_profile" :disabled="bottleLoading[bottle.id]" @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)">
+                    <option v-for="profile in visibleRuntimeProfiles" :key="profile.id" :value="profile.id">{{ profile.name }}</option>
+                  </select>
+                  <div class="windows-version-controls">
+                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">Win7</button>
+                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">Win10</button>
+                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">Win11</button>
+                  </div>
+                </div>
+                <div class="bottle-components">
+                  <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">{{ component.id }}: {{ component.state }}</span>
+                  <span v-if="bottle.runtime_assets?.length" class="component-pill">runtime assets: {{ bottle.runtime_assets.length }}</span>
+                </div>
+                <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
+                  <button v-for="candidate in bottle.installed_app_detections.slice(0, 3)" :key="candidate.exe_path" class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="addBottleApp(bottle, candidate)">Add {{ candidate.name }}</button>
+                </div>
+              </div>
+              <div v-if="bottleReports[bottle.id]" class="bottle-report">
+                <div class="doctor-summary">
+                  <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">{{ bottleReports[bottle.id]?.ready ? "Ready" : "Repair" }}</span>
+                  <span>{{ bottleReports[bottle.id]?.summary }}</span>
+                </div>
+                <div v-if="bottleReports[bottle.id]?.actions.length" class="doctor-notes blocked">
+                  <div v-for="action in bottleReports[bottle.id]?.actions" :key="action.id" class="bottle-action-row">
+                    <span>{{ action.id }}: {{ action.detail }}</span>
+                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="repairBottleComponent(bottle.id, action.id)">Repair</button>
+                  </div>
+                </div>
+                <div v-if="bottleReports[bottle.id]?.component_sources?.length" class="doctor-notes">
+                  <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id">{{ source.id }}: {{ source.available ? source.source : "missing source" }}</div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
       </div>
-      <div class="sharp-header-actions">
-        <button class="btn btn-secondary" @click="refreshSharpLibrary">Refresh</button>
-        <button class="btn btn-primary" @click="installExe">Install Windows Program</button>
+      <div v-if="compatibilityCases.length" class="dropdown-wrap">
+          <button class="btn btn-secondary" @click="openDropdown('compat', $event)">
+            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            <span class="btn-label-long">Compatibility</span><span class="btn-label-short">Compat</span> <span class="dropdown-count">{{ compatibilityCases.length }}</span>
+        </button>
+        <div v-if="dropdownOpen === 'compat'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
+          <div class="dropdown-scroll">
+            <div class="compatibility-row compatibility-header">
+              <span>Case</span><span>Profile</span><span>Installer</span><span>Detected</span><span>Launch</span><span>Runtime</span><span>Prefix</span>
+            </div>
+            <div v-for="item in compatibilityCases" :key="item.id" class="compatibility-row">
+              <span><strong>{{ item.name }}</strong><small>{{ item.case_type }}<template v-if="item.bottle_id"> · {{ item.bottle_id }}</template></small></span>
+              <span>{{ item.required_profile }}</span>
+              <select class="compatibility-select" :value="item.installer_opens" @change="recordCompatibility(item, 'installer_opens', ($event.target as HTMLSelectElement).value)">
+                <option value="untested">untested</option><option value="needs_real_trace">needs trace</option><option value="yes">yes</option><option value="no">no</option><option value="not_applicable">n/a</option>
+              </select>
+              <select class="compatibility-select" :value="item.final_app_detected" @change="recordCompatibility(item, 'final_app_detected', ($event.target as HTMLSelectElement).value)">
+                <option value="pending">pending</option><option value="yes">yes</option><option value="no">no</option><option value="not_applicable">n/a</option>
+              </select>
+              <select class="compatibility-select" :value="item.final_app_launches" @change="recordCompatibility(item, 'final_app_launches', ($event.target as HTMLSelectElement).value)">
+                <option value="pending">pending</option><option value="unknown">unknown</option><option value="yes">yes</option><option value="no">no</option><option value="not_applicable">n/a</option>
+              </select>
+              <input class="compatibility-input" :value="item.known_missing_runtime" @change="recordCompatibility(item, 'known_missing_runtime', ($event.target as HTMLInputElement).value)" />
+              <span>{{ item.per_game_prefix_recommendation }}<small v-if="item.evidence_updated_at">updated {{ item.evidence_updated_at }}</small></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div v-if="redistSources.length" class="dropdown-wrap">
+          <button class="btn btn-secondary" @click="openDropdown('redist', $event)">
+            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span class="btn-label-long">Redist Sources</span><span class="btn-label-short">Redist</span> <span class="dropdown-count">{{ redistSources.length }}</span>
+        </button>
+        <div v-if="dropdownOpen === 'redist'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
+          <div class="dropdown-scroll">
+            <article v-for="source in redistSources" :key="source.id" class="redist-source-compact">
+              <div><strong>{{ source.name }}</strong><small>{{ source.policy }}</small></div>
+              <p>{{ source.notes }}</p>
+              <div class="redist-targets"><span v-for="target in source.local_targets" :key="target">{{ target }}</span></div>
+              <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
+            </article>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary" @click="installExe">
+        <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
+      </button>
+      <button class="btn btn-secondary" @click="refreshSharpLibrary">
+        <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/></svg>
+        <span class="btn-label-long">Refresh</span><span class="btn-label-short">Refresh</span>
+      </button>
       </div>
     </div>
-
-    <details v-if="bottles.length" class="support-drawer bottle-strip">
-      <summary class="support-drawer-summary">
-        <span>Runtime Bottles</span>
-        <small>{{ bottles.length }} runtime {{ bottles.length === 1 ? "prefix" : "prefixes" }} tracked</small>
-      </summary>
-      <div class="support-drawer-body bottle-list">
-        <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card">
-          <div class="bottle-card-main">
-            <div class="bottle-identity">
-              <div class="bottle-title">{{ bottle.name }}</div>
-              <div class="bottle-meta">
-                <span class="badge" :class="bottleBadgeClass(bottle.health)">{{ bottle.health }}</span>
-                <span v-if="bottle.last_launch_status">
-                  {{ bottle.last_launch_status }}
-                  <template v-if="bottle.last_launch_pid">pid {{ bottle.last_launch_pid }}</template>
-                </span>
-              </div>
-            </div>
-            <div class="bottle-facts">
-              <span>
-                <strong>Kind</strong>
-                {{ bottle.bottle_type }}
-              </span>
-              <span>
-                <strong>Runtime</strong>
-                {{ bottle.runtime_profile }}
-              </span>
-              <span>
-                <strong>Arch</strong>
-                {{ bottle.arch }}
-              </span>
-              <span v-if="bottle.steam_app_id">
-                <strong>Steam</strong>
-                {{ bottle.steam_app_id }}
-              </span>
-            </div>
-            <div class="bottle-actions">
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
-                {{ bottleLoading[bottle.id] ? "Checking" : "Doctor" }}
-              </button>
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">
-                Scan
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="bottleAdvancedOpen[bottle.id] = !bottleAdvancedOpen[bottle.id]">
-                {{ bottleAdvancedOpen[bottle.id] ? "Less" : "More" }}
-              </button>
-            </div>
-          </div>
-          <div v-if="bottleAdvancedOpen[bottle.id]" class="bottle-control-surface">
-            <div class="bottle-control-grid">
-              <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">
-                Prepare
-              </button>
-              <button
-                v-if="bottle.source_installer_path"
-                class="btn btn-secondary btn-sm"
-                :disabled="bottleLoading[bottle.id]"
-                @click="relaunchBottleInstaller(bottle)"
-              >
-                Relaunch
-              </button>
-              <button class="btn btn-secondary btn-sm" @click="openBottleFolder(bottle)">Folder</button>
-              <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">
-                Logs
-              </button>
-              <select
-                class="control-input"
-                :value="bottle.runtime_profile"
-                :disabled="bottleLoading[bottle.id]"
-                @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)"
-              >
-                <option v-for="profile in visibleRuntimeProfiles" :key="profile.id" :value="profile.id">
-                  {{ profile.name }}
-                </option>
-              </select>
-              <div class="windows-version-controls">
-                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">
-                  Win7
-                </button>
-                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">
-                  Win10
-                </button>
-                <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">
-                  Win11
-                </button>
-              </div>
-            </div>
-            <div class="bottle-components">
-              <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">
-                {{ component.id }}: {{ component.state }}
-              </span>
-              <span v-if="bottle.runtime_assets?.length" class="component-pill">
-                runtime assets: {{ bottle.runtime_assets.length }}
-              </span>
-            </div>
-            <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
-              <button
-                v-for="candidate in bottle.installed_app_detections.slice(0, 3)"
-                :key="candidate.exe_path"
-                class="btn btn-secondary btn-sm"
-                :disabled="bottleLoading[bottle.id]"
-                @click="addBottleApp(bottle, candidate)"
-              >
-                Add {{ candidate.name }}
-              </button>
-            </div>
-          </div>
-          <div v-if="bottleReports[bottle.id]" class="bottle-report">
-            <div class="doctor-summary">
-              <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">
-                {{ bottleReports[bottle.id]?.ready ? "Ready" : "Repair" }}
-              </span>
-              <span>{{ bottleReports[bottle.id]?.summary }}</span>
-            </div>
-            <div v-if="bottleReports[bottle.id]?.actions.length" class="doctor-notes blocked">
-              <div v-for="action in bottleReports[bottle.id]?.actions" :key="action.id" class="bottle-action-row">
-                <span>{{ action.id }}: {{ action.detail }}</span>
-                <button
-                  class="btn btn-secondary btn-sm"
-                  :disabled="bottleLoading[bottle.id]"
-                  @click="repairBottleComponent(bottle.id, action.id)"
-                >
-                  Repair
-                </button>
-              </div>
-            </div>
-            <div v-if="bottleReports[bottle.id]?.component_sources?.length" class="doctor-notes">
-              <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id">
-                {{ source.id }}: {{ source.available ? source.source : "missing source" }}
-              </div>
-            </div>
-          </div>
-        </article>
-      </div>
-    </details>
-
-    <details v-if="compatibilityCases.length" class="support-drawer compatibility-matrix">
-      <summary class="support-drawer-summary">
-        <span>Compatibility Matrix</span>
-        <small>{{ compatibilityCases.length }} installer and runtime cases tracked</small>
-      </summary>
-      <div class="support-drawer-body compatibility-table">
-        <div class="compatibility-row compatibility-header">
-          <span>Case</span>
-          <span>Profile</span>
-          <span>Installer</span>
-          <span>Detected</span>
-          <span>Launch</span>
-          <span>Runtime</span>
-          <span>Prefix</span>
-        </div>
-        <div v-for="item in compatibilityCases" :key="item.id" class="compatibility-row">
-          <span>
-            <strong>{{ item.name }}</strong>
-            <small>{{ item.case_type }}<template v-if="item.bottle_id"> · {{ item.bottle_id }}</template></small>
-          </span>
-          <span>{{ item.required_profile }}</span>
-          <select
-            class="compatibility-select"
-            :value="item.installer_opens"
-            @change="recordCompatibility(item, 'installer_opens', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="untested">untested</option>
-            <option value="needs_real_trace">needs trace</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
-            <option value="not_applicable">n/a</option>
-          </select>
-          <select
-            class="compatibility-select"
-            :value="item.final_app_detected"
-            @change="recordCompatibility(item, 'final_app_detected', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="pending">pending</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
-            <option value="not_applicable">n/a</option>
-          </select>
-          <select
-            class="compatibility-select"
-            :value="item.final_app_launches"
-            @change="recordCompatibility(item, 'final_app_launches', ($event.target as HTMLSelectElement).value)"
-          >
-            <option value="pending">pending</option>
-            <option value="unknown">unknown</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
-            <option value="not_applicable">n/a</option>
-          </select>
-          <input
-            class="compatibility-input"
-            :value="item.known_missing_runtime"
-            @change="recordCompatibility(item, 'known_missing_runtime', ($event.target as HTMLInputElement).value)"
-          />
-          <span>
-            {{ item.per_game_prefix_recommendation }}
-            <small v-if="item.evidence_updated_at">updated {{ item.evidence_updated_at }}</small>
-          </span>
-        </div>
-      </div>
-    </details>
-
-    <details v-if="redistSources.length" class="support-drawer redist-sources">
-      <summary class="support-drawer-summary">
-        <span>Redistributable Sources</span>
-        <small>Official source policy and local cache targets</small>
-      </summary>
-      <div class="support-drawer-body redist-source-list">
-        <article v-for="source in redistSources" :key="source.id" class="redist-source-card">
-          <div>
-            <strong>{{ source.name }}</strong>
-            <small>{{ source.policy }}</small>
-          </div>
-          <p>{{ source.notes }}</p>
-          <div class="redist-targets">
-            <span v-for="target in source.local_targets" :key="target">{{ target }}</span>
-          </div>
-          <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
-        </article>
-      </div>
-    </details>
 
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
@@ -1031,35 +953,67 @@ onMounted(load);
 
 <style scoped>
 .sharp-view {
-  padding: 24px 28px;
+  padding: 0 28px 32px;
   height: 100%;
   overflow-y: auto;
 }
 .sharp-header {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  margin: -24px -28px 20px;
-  padding: 24px 28px 18px;
+  flex-direction: column;
+  gap: 18px;
+  margin: 0 -28px 0;
+  padding: 44px 28px 13px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  position: relative;
 }
-.sharp-header-actions {
+.sharp-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 80% at 20% 50%, rgba(95, 183, 232, 0.08) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 60% at 80% 50%, rgba(95, 183, 232, 0.05) 0%, transparent 60%);
+  pointer-events: none;
+}
+.sharp-header-controls {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  -webkit-app-region: no-drag;
+  margin-top: auto;
+  padding-top: 25px;
+  min-height: 0;
+  container-type: inline-size;
+}
+.btn-label-short { display: none; }
+@container (max-width: 700px) {
+  .btn-label-long { display: none; }
+  .btn-label-short { display: inline; }
+}
+.sharp-header-controls .btn {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-icon {
+  flex-shrink: 0;
 }
 .sharp-header h1 {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 750;
+  line-height: 1.1;
 }
-.subtitle {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-top: 2px;
+.sharp-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-app-region: no-drag;
 }
 
 .support-drawer {
@@ -1069,55 +1023,57 @@ onMounted(load);
   background: color-mix(in srgb, var(--bg-card) 82%, transparent);
   overflow: hidden;
 }
-.support-drawer-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  min-height: 44px;
-  padding: 11px 14px;
-  color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 700;
-  cursor: pointer;
-  list-style: none;
-}
-.support-drawer-summary::-webkit-details-marker {
-  display: none;
-}
-.support-drawer-summary::after {
-  content: "v";
-  color: var(--text-dim);
-  transition: transform 120ms ease;
-}
-.support-drawer:not([open]) > .support-drawer-summary::after {
-  transform: rotate(-90deg);
-}
-.support-drawer-summary small {
+.dropdown-wrap {
+  position: relative;
   min-width: 0;
-  flex: 1;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 500;
+  flex-shrink: 1;
   overflow: hidden;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
-.support-drawer-body {
-  border-top: 1px solid var(--border);
-  padding: 12px;
+.dropdown-count {
+  opacity: 0.5;
+  font-size: 11px;
+  margin-left: 2px;
+}
+.dropdown-panel {
+  position: fixed;
+  max-height: min(60vh, 520px);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  overflow: hidden;
+}
+.dropdown-scroll {
+  overflow-y: auto;
+  max-height: min(60vh, 520px);
+  padding: 8px;
+}
+.bottle-card-compact {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  background: var(--bg-surface);
+}
+.bottle-card-compact:last-child {
+  margin-bottom: 0;
+}
+.redist-source-compact {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.redist-source-compact:last-child {
+  margin-bottom: 0;
 }
 .bottle-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.bottle-card {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
 }
 .bottle-card-main {
   display: grid;

@@ -22,7 +22,7 @@ body {
   font-family: var(--font-body);
   font-size: 14px;
   color: var(--text-primary);
-  background: var(--bg-deep);
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -117,13 +117,13 @@ textarea {
 }
 
 .btn-play {
-  background: var(--success);
+  background: var(--play-color);
   color: #fff;
-  border-color: var(--success);
+  border-color: var(--play-color);
   font-weight: 600;
 }
 .btn-play:hover {
-  background: #4da663;
+  background: var(--play-color-hover);
 }
 
 .btn-stop {
