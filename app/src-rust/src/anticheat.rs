@@ -1837,13 +1837,13 @@ mod tests {
     }
 
     #[test]
-    fn substrate_decision_requires_linux_substrate_for_linux_module_on_macos() {
+    fn substrate_decision_requires_wine_identity_suppression_for_linux_module_on_macos() {
         let eac = EacSummary { module_target: Some("linux64".to_string()), ..Default::default() };
-        assert_eq!(substrate_decision("macos", &eac, &[]), "requires_linux_user_space_substrate_or_vendor_macos_asset");
+        assert_eq!(substrate_decision("macos", &eac, &[]), "windows_module_via_wine_identity_suppression");
     }
 
     #[test]
-    fn substrate_plan_promotes_linux_mapping_failure_to_prototype_ready() {
+    fn substrate_plan_promotes_linux_mapping_failure_to_wine_identity_suppression() {
         let eac = EacSummary {
             module_target: Some("linux64".to_string()),
             module_mapping_status: Some("failed".to_string()),
@@ -1851,21 +1851,21 @@ mod tests {
             ..Default::default()
         };
 
-        let status = substrate_plan_status("requires_linux_user_space_substrate_or_vendor_macos_asset", &eac, "macos");
-        assert_eq!(status, "prototype_ready_linux_substrate");
-        assert!(substrate_plan_summary(&status).contains("Linux module-mapping path"));
+        let status = substrate_plan_status("windows_module_via_wine_identity_suppression", &eac, "macos");
+        assert_eq!(status, "prototype_ready_wine_identity_suppression");
+        assert!(substrate_plan_summary(&status).contains("wine_get_version"));
         assert!(substrate_implementation_stages(&status)
             .iter()
-            .any(|stage| stage.get("id").and_then(|v| v.as_str()) == Some("elf_contract_lab")));
+            .any(|stage| stage.get("id").and_then(|v| v.as_str()) == Some("build_identity_shim")));
     }
 
     #[test]
     fn substrate_plan_rejects_protected_module_lab_loading() {
         let rejected = substrate_rejected_paths();
         assert!(rejected.contains(&"load protected modules in a synthetic lab"));
-        assert!(substrate_acceptance_gates("prototype_ready_linux_substrate")
+        assert!(substrate_acceptance_gates("prototype_ready_wine_identity_suppression")
             .iter()
-            .any(|gate| gate.contains("without touching protected modules")));
+            .any(|gate| gate.contains("No protected module is patched")));
     }
 
     #[test]
