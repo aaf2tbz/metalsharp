@@ -136,7 +136,7 @@ const navItems = [
 .sidebar-hamburger {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--text-secondary);
+  color: var(--sidebar-text);
   cursor: pointer;
   padding: 4px;
   border-radius: var(--radius-sm);
@@ -148,7 +148,7 @@ const navItems = [
   flex-shrink: 0;
 }
 .sidebar-hamburger:hover {
-  color: var(--text-primary);
+  color: var(--sidebar-text-hover);
   border-color: var(--border);
   background: var(--sidebar-hover);
 }
@@ -167,7 +167,7 @@ const navItems = [
 .sidebar-logo-text {
   font-family: var(--font-logo);
   font-size: 10px;
-  color: var(--accent);
+  color: var(--sidebar-logo-color);
   line-height: 1.4;
   white-space: nowrap;
 }
@@ -184,29 +184,31 @@ const navItems = [
 .sidebar-nav-item {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   min-height: 36px;
   padding: 8px 10px;
   border: 1px solid transparent;
   background: none;
-  color: var(--text-secondary);
+  color: var(--sidebar-text);
+  font-weight: 600;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all var(--transition);
   width: 100%;
-  text-align: left;
+  text-align: center;
   font-size: 13px;
   -webkit-app-region: no-drag;
   white-space: nowrap;
 }
 .sidebar-nav-item:hover {
   background: var(--sidebar-hover);
-  color: var(--text-primary);
+  color: var(--sidebar-text-hover);
   border-color: var(--border);
 }
 .sidebar-nav-item.active {
   background: var(--sidebar-active);
-  color: var(--accent);
+  color: var(--sidebar-text-active);
   border-color: var(--border);
 }
 

@@ -642,8 +642,8 @@ function formatBytes(bytes: number): string {
 }
 .game-card.installed {
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--success) 30%, transparent),
-    0 0 30px color-mix(in srgb, var(--success) 22%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--card-installed-glow-color) 35%, transparent),
+    0 0 60px color-mix(in srgb, var(--card-installed-glow-color) 48%, transparent),
     0 18px 40px color-mix(in srgb, var(--bg-deep) 36%, transparent);
 }
 .game-card.uninstalled {
