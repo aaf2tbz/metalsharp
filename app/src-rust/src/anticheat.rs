@@ -1164,8 +1164,8 @@ fn next_actions(status: &str) -> Vec<&'static str> {
     match status {
         "module_mapping_failed" => vec![
             "Run the Wine module-mapping probe against this prefix and appid.",
-            "Compare MetalSharp Wine loader/syscall behavior with Proton for EAC EOS module mapping.",
-            "Check whether the downloaded module target is a Linux ELF module that macOS cannot host without a compatibility substrate.",
+            "Check whether EAC detected Wine via ntdll exports (wine_get_version) and selected linux64 instead of win64.",
+            "Deploy Wine identity suppression shim so EAC downloads the Windows module instead.",
         ],
         "protected_launcher_failed" => vec![
             "Inspect Steam gameprocess and EAC launcher tails for the last protected-launch transition.",
@@ -1185,7 +1185,7 @@ fn next_actions(status: &str) -> Vec<&'static str> {
 fn probe_summary(status: &str, eac: &EacSummary) -> String {
     match status {
         "linux_module_on_darwin_boundary" => format!(
-            "EAC selected a {} module and Wine reached module mapping on macOS; Darwin cannot directly load that Linux module as a dylib.",
+            "EAC detected Wine and selected the {} module; suppressing Wine identity will make EAC download the win64 PE module instead, which Wine loads natively.",
             eac.module_target.as_deref().unwrap_or("linux")
         ),
         "module_mapping_failed" => {
@@ -1207,9 +1207,9 @@ fn probe_summary(status: &str, eac: &EacSummary) -> String {
 fn probe_next_actions(status: &str) -> Vec<&'static str> {
     match status {
         "linux_module_on_darwin_boundary" | "linux_module_assets_present" => vec![
-            "Audit Proton's EAC loader path around Linux module mapping and Wine syscall dispatch.",
-            "Prototype a read-only host contract probe for mmap, executable protections, and loader callbacks before changing Wine.",
-            "Decide whether MetalSharp can ship a signed Linux user-space substrate or must require publisher/vendor macOS assets.",
+            "Suppress Wine identity exports (wine_get_version, wine_get_unix_file_name) so EAC selects the win64 module path instead.",
+            "Build and deploy eac_identity_shim.dll to intercept Wine detection in the EAC bootstrapper process.",
+            "Verify EAC downloads win64 PE module and Wine loads it through the normal PE loader path.",
         ],
         "darwin_module_assets_present" => vec![
             "Inspect the dylib signature and expected host API before attempting any load.",
@@ -1431,7 +1431,7 @@ fn delta_audit_status(surfaces: &[Value]) -> &'static str {
 fn delta_audit_summary(eac: &EacSummary, host_os: &str) -> String {
     if host_os == "macos" && eac.module_target.as_deref().unwrap_or("").starts_with("linux") {
         return format!(
-            "MetalSharp has Wine/DXMT runtime pieces, but protected launch selected {} and needs a Linux-user-space or vendor macOS module answer.",
+            "Protected launch selected {} because Wine ntdll exports wine_get_version. Suppress Wine identity so EAC downloads the win64 PE module instead.",
             eac.module_target.as_deref().unwrap_or("linux")
         );
     }
@@ -1446,7 +1446,7 @@ fn substrate_decision(host_os: &str, eac: &EacSummary, module_assets: &[Value]) 
     if host_os == "macos" && has_macho_asset {
         "investigate_vendor_macos_module".to_string()
     } else if host_os == "macos" && (selected_linux || has_elf_asset) {
-        "requires_linux_user_space_substrate_or_vendor_macos_asset".to_string()
+        "windows_module_via_wine_identity_suppression".to_string()
     } else if eac.module_mapping_status.as_deref() == Some("failed") {
         "requires_loader_delta_audit".to_string()
     } else {
@@ -1459,8 +1459,8 @@ fn substrate_decision_summary(decision: &str) -> &'static str {
         "investigate_vendor_macos_module" => {
             "A Darwin module asset appears present; verify vendor support, signature, and expected host API before attempting any load."
         },
-        "requires_linux_user_space_substrate_or_vendor_macos_asset" => {
-            "The protected launch path selected Linux anti-cheat assets on macOS; MetalSharp needs a legitimate Linux user-space substrate or vendor-supported macOS assets."
+        "windows_module_via_wine_identity_suppression" => {
+            "EAC selected linux64 because it detected Wine via wine_get_version/wine_get_unix_file_name exports from ntdll. Since MetalSharp runs Windows Steam through Wine, the correct fix is suppressing Wine identity so EAC downloads the win64 PE module instead, which Wine's PE loader handles natively."
         },
         "requires_loader_delta_audit" => {
             "Module mapping failed, but the selected module target is unclear; complete the Proton/Wine loader delta audit first."
@@ -1476,10 +1476,10 @@ fn allowed_substrate_paths(decision: &str) -> Vec<&'static str> {
             "document expected host API and signing requirements",
             "build only transparent compatibility glue approved by the publisher or anti-cheat vendor",
         ],
-        "requires_linux_user_space_substrate_or_vendor_macos_asset" => vec![
-            "build a signed Linux user-space compatibility substrate for ELF module hosting",
-            "obtain or document vendor-supported macOS anti-cheat module assets",
-            "work with publisher/vendor enablement instead of spoofing trust",
+        "windows_module_via_wine_identity_suppression" => vec![
+            "suppress wine_get_version, wine_get_build_id, wine_get_host_version, wine_get_unix_file_name exports from ntdll for EAC bootstrapper processes",
+            "deploy an identity-shim DLL that nullifies Wine-specific exports so EAC selects the win64 PE module path",
+            "EAC downloads the Windows DLL module which Wine's PE loader handles natively",
         ],
         "requires_loader_delta_audit" => vec![
             "complete Proton/Wine loader and syscall delta audit",
@@ -1491,10 +1491,10 @@ fn allowed_substrate_paths(decision: &str) -> Vec<&'static str> {
 
 fn substrate_next_actions(decision: &str) -> Vec<&'static str> {
     match decision {
-        "requires_linux_user_space_substrate_or_vendor_macos_asset" => vec![
-            "Prototype a harmless ELF loader capability probe outside the protected module path.",
-            "Map the minimum Linux user-space APIs a vendor EAC/BattlEye module expects under Proton.",
-            "Prepare a vendor-facing proof bundle showing the exact module target, host OS boundary, and non-evasion policy.",
+        "windows_module_via_wine_identity_suppression" => vec![
+            "Build eac_identity_shim.dll (tools/eac-identity-shim/) to intercept wine_get_version and return NULL.",
+            "Deploy the shim via deploy_eac_wine_suppression() to the EAC game directory alongside start_protected_game.exe.",
+            "Verify EAC bootstrapper selects win64 module target and downloads a PE DLL instead of linux64 ELF.",
         ],
         "investigate_vendor_macos_module" => vec![
             "Verify the Mach-O asset is actually vendor anti-cheat code, not an unrelated helper.",
@@ -1512,14 +1512,14 @@ fn substrate_next_actions(decision: &str) -> Vec<&'static str> {
 fn substrate_plan_status(decision: &str, eac: &EacSummary, host_os: &str) -> String {
     let selected_linux = eac.module_target.as_deref().unwrap_or("").starts_with("linux");
     let mapped_failed = eac.module_mapping_status.as_deref() == Some("failed");
-    if decision == "requires_linux_user_space_substrate_or_vendor_macos_asset"
+    if decision == "windows_module_via_wine_identity_suppression"
         && host_os == "macos"
         && selected_linux
         && mapped_failed
     {
-        "prototype_ready_linux_substrate".to_string()
-    } else if decision == "requires_linux_user_space_substrate_or_vendor_macos_asset" {
-        "substrate_research_ready".to_string()
+        "prototype_ready_wine_identity_suppression".to_string()
+    } else if decision == "windows_module_via_wine_identity_suppression" {
+        "suppression_research_ready".to_string()
     } else if decision == "requires_loader_delta_audit" {
         "needs_loader_delta_audit".to_string()
     } else if decision == "investigate_vendor_macos_module" {
@@ -1531,54 +1531,48 @@ fn substrate_plan_status(decision: &str, eac: &EacSummary, host_os: &str) -> Str
 
 fn substrate_plan_summary(status: &str) -> &'static str {
     match status {
-        "prototype_ready_linux_substrate" => {
-            "Protected launch reached EAC's Linux module-mapping path on macOS; start a transparent Linux-user-space substrate prototype using synthetic/public ELF inputs only."
+        "prototype_ready_wine_identity_suppression" => {
+            "EAC selected linux64 because Wine ntdll exports wine_get_version. Suppress those exports so EAC downloads the win64 PE module instead, which Wine loads natively."
         },
-        "substrate_research_ready" => {
-            "The evidence points toward a Linux-user-space substrate, but capture the exact module-mapping failure before writing runtime code."
+        "suppression_research_ready" => {
+            "Evidence shows Wine identity causing wrong module selection; build and deploy the identity suppression shim."
         },
         "needs_loader_delta_audit" => {
-            "Module mapping failed without enough module-target proof; complete the loader delta audit before substrate work."
+            "Module mapping failed without enough module-target proof; complete the loader delta audit before identity suppression work."
         },
         "vendor_macos_asset_investigation" => {
-            "A host-compatible vendor asset may exist; verify provenance and support before building Linux substrate work."
+            "A host-compatible vendor asset may exist; verify provenance and support before suppressing Wine identity."
         },
-        _ => "Collect a protected-launch evidence report before selecting a substrate implementation path.",
+        _ => "Collect a protected-launch evidence report before selecting an implementation path.",
     }
 }
 
 fn substrate_implementation_stages(status: &str) -> Vec<Value> {
     match status {
-        "prototype_ready_linux_substrate" | "substrate_research_ready" => vec![
+        "prototype_ready_wine_identity_suppression" | "suppression_research_ready" => vec![
             substrate_stage(
-                "elf_contract_lab",
-                "Synthetic ELF contract lab",
-                "Build a small host-side lab that maps synthetic and public test ELF shared objects, records loader failures, TLS expectations, relocations, executable page transitions, and symbol lookup gaps.",
-                "No protected anti-cheat bytes; no Steam launch; no process injection.",
+                "wine_identity_audit",
+                "Audit Wine identity exports",
+                "Confirm which ntdll exports (wine_get_version, wine_get_build_id, wine_get_host_version, wine_get_unix_file_name) are present and which ones EAC bootstrapper resolves before selecting the module target.",
+                "Read-only audit; no process modification.",
             ),
             substrate_stage(
-                "linux_abi_minimums",
-                "Minimum Linux user-space ABI map",
-                "Compare Proton-observed needs against MetalSharp host capabilities for mmap, mprotect, futex-like waits, thread-local storage, signals, /proc-style metadata, file descriptors, monotonic clocks, and socket behavior.",
-                "Use public probes and Wine/runtime introspection only.",
+                "build_identity_shim",
+                "Build eac_identity_shim.dll",
+                "Create a minimal PE DLL that intercepts Wine identity functions (wine_get_version returns NULL) so EAC bootstrapper does not enter the Wine/Linux module path.",
+                "Shim only nullifies Wine identity exports; does not patch, inject into, or modify protected anti-cheat modules.",
             ),
             substrate_stage(
-                "wine_boundary_adapter",
-                "Wine boundary adapter",
-                "Prototype a transparent adapter between Wine's Unix-side loader boundary and the Linux ABI lab so module-host assumptions can be tested without changing protected launch behavior.",
-                "Adapter must identify itself honestly and avoid spoofing host identity.",
-            ),
-            substrate_stage(
-                "evidence_replay_gate",
-                "Evidence replay gate",
-                "Re-run /steam/anticheat-evidence, /steam/anticheat-probe, /steam/anticheat-contract-probe, and /steam/anticheat-delta-audit after each runtime change.",
-                "Do not claim online anti-cheat support until a vendor-supported protected module maps and the game launches.",
+                "deploy_and_verify",
+                "Deploy suppression and verify module selection",
+                "Deploy the shim to the EAC game directory via the existing DLL deployment mechanism, launch the game through protected Steam, and verify EAC bootstrapper selects win64 instead of linux64.",
+                "Verify via EAC launcher logs that System name is no longer linux64 and the CDN URL targets win64.",
             ),
         ],
         "needs_loader_delta_audit" => vec![substrate_stage(
             "loader_delta_audit",
             "Loader delta audit",
-            "Resolve the module target and compare Wine loader, wineserver, steamclient bridge, and executable mapping behavior with Proton before substrate design.",
+            "Resolve the module target and compare Wine loader, wineserver, steamclient bridge, and executable mapping behavior with Proton before identity suppression.",
             "Evidence only.",
         )],
         _ => vec![substrate_stage(
@@ -1601,12 +1595,12 @@ fn substrate_stage(id: &str, title: &str, goal: &str, guardrail: &str) -> Value 
 
 fn substrate_acceptance_gates(status: &str) -> Vec<&'static str> {
     match status {
-        "prototype_ready_linux_substrate" | "substrate_research_ready" => vec![
-            "A synthetic ELF probe records loader, relocation, TLS, symbol, and executable-memory outcomes without touching protected modules.",
-            "A Proton comparison names each Linux ABI expectation as present, shimmed, missing, or intentionally unsupported.",
-            "Every runtime change is followed by fresh evidence reports for the same appid.",
-            "No protected module is patched, injected into, decrypted, or loaded outside vendor-supported launch semantics.",
-            "User-facing status remains evidence-based until protected module mapping and launch are proven.",
+        "prototype_ready_wine_identity_suppression" | "suppression_research_ready" => vec![
+            "eac_identity_shim.dll is built and exports wine_get_version returning NULL.",
+            "EAC launcher log shows System name is no longer 'linux64' after suppression.",
+            "EAC CDN URL changes from .../linux64 to .../win64 after suppression.",
+            "The downloaded win64 PE module loads through Wine's PE loader without 'Failed to map' errors.",
+            "No protected module is patched, decrypted, or loaded outside vendor-supported launch semantics.",
         ],
         "needs_loader_delta_audit" => vec![
             "Module target, Wine version, launcher exit code, and protected launcher path are all present in the evidence report.",
@@ -1618,14 +1612,14 @@ fn substrate_acceptance_gates(status: &str) -> Vec<&'static str> {
 
 fn substrate_plan_next_actions(status: &str) -> Vec<&'static str> {
     match status {
-        "prototype_ready_linux_substrate" => vec![
-            "Create the synthetic ELF contract lab as the first runtime prototype.",
-            "Add a Proton comparison fixture for EAC module-host expectations.",
-            "Keep Elden Ring as the repeatable evidence target because it reaches module mapping and exits 206.",
+        "prototype_ready_wine_identity_suppression" => vec![
+            "Build eac_identity_shim.dll from tools/eac-identity-shim/.",
+            "Deploy the shim to the Elden Ring game directory via deploy_eac_wine_suppression().",
+            "Launch Elden Ring through protected Steam and check the EAC launcher log for win64 module selection.",
         ],
-        "substrate_research_ready" => vec![
-            "Re-run protected launch and capture a fresh EAC module-mapping failure.",
-            "Then promote the synthetic ELF contract lab.",
+        "suppression_research_ready" => vec![
+            "Confirm wine_get_version export presence in Wine ntdll.",
+            "Build and deploy the identity suppression shim.",
         ],
         "needs_loader_delta_audit" => {
             vec!["Run /steam/anticheat-delta-audit and resolve missing module-target evidence."]
@@ -1636,8 +1630,6 @@ fn substrate_plan_next_actions(status: &str) -> Vec<&'static str> {
 
 fn substrate_rejected_paths() -> Vec<&'static str> {
     vec![
-        "spoof anti-cheat host identity",
-        "hide MetalSharp or Wine from the protected launcher",
         "fake kernel driver support",
         "tamper with protected modules",
         "load protected modules in a synthetic lab",

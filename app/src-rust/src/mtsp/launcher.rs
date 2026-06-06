@@ -2235,6 +2235,57 @@ pub fn eac_toggle_status(game_dir: &PathBuf) -> bool {
     false
 }
 
+pub fn deploy_eac_wine_suppression(game_dir: &PathBuf) -> bool {
+    let home = dirs::home_dir().unwrap_or_default();
+    let shim_dir = crate::platform::metalsharp_home_dir_for(&home)
+        .join("runtime")
+        .join("eac-identity-shim")
+        .join("x86_64-windows");
+    let shim_dll = if shim_dir.join("eac_identity_shim.dll").exists() {
+        shim_dir.join("eac_identity_shim.dll")
+    } else {
+        let exe_dir = std::env::current_exe().ok().unwrap_or_default();
+        exe_dir.parent().map(|p| p.join("eac_identity_shim.dll")).filter(|p| p.exists()).unwrap_or_default()
+    };
+    if !shim_dll.exists() {
+        return false;
+    }
+
+    let targets: Vec<PathBuf> = vec![
+        game_dir.join("Game"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("bin"),
+        game_dir.join("win64"),
+        game_dir.clone(),
+    ];
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+        let dest = target.join("eac_identity_shim.dll");
+        let _ = std::fs::copy(&shim_dll, &dest);
+        return true;
+    }
+    false
+}
+
+pub fn cleanup_eac_wine_suppression(game_dir: &PathBuf) {
+    let targets: Vec<PathBuf> = vec![
+        game_dir.clone(),
+        game_dir.join("Game"),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if target.exists() {
+            let _ = std::fs::remove_file(target.join("eac_identity_shim.dll"));
+        }
+    }
+}
+
 fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Option<&CachePaths>) {
     let tool_candidates = [
         PathBuf::from("/usr/local/bin/metal-shaderconverter"),
