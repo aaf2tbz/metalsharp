@@ -42,6 +42,8 @@ const wineSteamInstalled = ref(false);
 const wineSteamRunning = ref(false);
 const macSteamInstalled = ref(false);
 const macSteamRunning = ref(false);
+const gptkSteamInstalled = ref(false);
+const gptkSteamRunning = ref(false);
 const library = ref<SteamLibrary | null>(null);
 const config = ref<AppConfig | null>(null);
 const updateStatus = ref<UpdateStatus | null>(null);
@@ -85,6 +87,8 @@ provide("wineSteamInstalled", wineSteamInstalled);
 provide("wineSteamRunning", wineSteamRunning);
 provide("macSteamInstalled", macSteamInstalled);
 provide("macSteamRunning", macSteamRunning);
+provide("gptkSteamInstalled", gptkSteamInstalled);
+provide("gptkSteamRunning", gptkSteamRunning);
 provide("backendConnected", backendConnected);
 provide("backendVersion", backendVersion);
 provide("updateStatus", updateStatus);
@@ -106,12 +110,17 @@ async function refreshSteamStatus() {
     mac_installed: boolean;
     mac_running: boolean;
     metalsharp_wine_available: boolean;
+    gptk_wine_available: boolean;
+    gptk_installed: boolean;
+    gptk_running: boolean;
   }>("GET", "/steam/status");
   if (steamStatus) {
     wineSteamInstalled.value = steamStatus.installed;
     wineSteamRunning.value = steamStatus.running;
     macSteamInstalled.value = steamStatus.mac_installed;
     macSteamRunning.value = steamStatus.mac_running;
+    gptkSteamInstalled.value = steamStatus.gptk_installed;
+    gptkSteamRunning.value = steamStatus.gptk_running;
   }
 }
 

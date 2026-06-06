@@ -789,11 +789,11 @@ fn launch_gptk(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), B
     launch_gptk_with_context(appid, node, None, &[], None)
 }
 
-fn gptk_steam_dir(gptk_prefix: &Path) -> PathBuf {
+pub fn gptk_steam_dir(gptk_prefix: &Path) -> PathBuf {
     gptk_prefix.join("drive_c").join("Program Files (x86)").join("Steam")
 }
 
-fn gptk_steam_exe(gptk_prefix: &Path) -> PathBuf {
+pub fn gptk_steam_exe(gptk_prefix: &Path) -> PathBuf {
     gptk_steam_dir(gptk_prefix).join("Steam.exe")
 }
 
@@ -811,7 +811,7 @@ fn gptk_find_installer() -> Option<PathBuf> {
     None
 }
 
-fn gptk_steam_pids_in_prefix(gptk_prefix: &Path) -> Vec<u32> {
+pub fn gptk_steam_pids_in_prefix(gptk_prefix: &Path) -> Vec<u32> {
     let prefix_str = gptk_prefix.to_string_lossy().to_string();
     Command::new("ps")
         .args(["axo", "pid=,command="])
@@ -837,7 +837,7 @@ fn gptk_steam_pids_in_prefix(gptk_prefix: &Path) -> Vec<u32> {
         .unwrap_or_default()
 }
 
-fn gptk_kill_steam_in_prefix(gptk_prefix: &Path) {
+pub fn gptk_kill_steam_in_prefix(gptk_prefix: &Path) {
     let pids = gptk_steam_pids_in_prefix(gptk_prefix);
     for pid in &pids {
         let _ = Command::new("kill")
@@ -860,7 +860,7 @@ fn gptk_kill_steam_in_prefix(gptk_prefix: &Path) {
         .status();
 }
 
-fn gptk_install_steam(wine: &Path, gptk_prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn gptk_install_steam(wine: &Path, gptk_prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let installer = match gptk_find_installer() {
         Some(p) => p,
         None => return Err("SteamSetup.exe not found — install Steam through MetalSharp first".into()),
@@ -950,11 +950,11 @@ fn gptk_install_steam(wine: &Path, gptk_prefix: &Path) -> Result<(), Box<dyn std
     Ok(())
 }
 
-fn gptk_is_steam_running_in_prefix(gptk_prefix: &Path) -> bool {
+pub fn gptk_is_steam_running_in_prefix(gptk_prefix: &Path) -> bool {
     !gptk_steam_pids_in_prefix(gptk_prefix).is_empty()
 }
 
-fn gptk_spawn_steam(wine: &Path, prefix: &Path) -> Result<u32, Box<dyn std::error::Error>> {
+pub fn gptk_spawn_steam(wine: &Path, prefix: &Path) -> Result<u32, Box<dyn std::error::Error>> {
     let steam_dir = gptk_steam_dir(prefix);
     let exe = steam_dir.join("Steam.exe");
 

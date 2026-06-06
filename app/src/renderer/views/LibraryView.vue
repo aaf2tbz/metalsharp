@@ -35,6 +35,8 @@ const wineSteamInstalled = inject<Ref<boolean>>("wineSteamInstalled")!;
 const wineSteamRunning = inject<Ref<boolean>>("wineSteamRunning")!;
 const macSteamInstalled = inject<Ref<boolean>>("macSteamInstalled")!;
 const macSteamRunning = inject<Ref<boolean>>("macSteamRunning")!;
+const gptkSteamInstalled = inject<Ref<boolean>>("gptkSteamInstalled")!;
+const gptkSteamRunning = inject<Ref<boolean>>("gptkSteamRunning")!;
 const backendConnected = inject<Ref<boolean>>("backendConnected")!;
 const backendVersion = inject<Ref<string | null>>("backendVersion")!;
 const developerMode = inject<Ref<boolean>>("developerMode")!;
@@ -167,6 +169,58 @@ async function toggleMacSteam() {
   reloadLibrary();
 }
 
+async function toggleGptkSteam() {
+  const wine = await api<{ gptk_wine_available: boolean }>("GET", "/steam/status");
+  if (!wine?.gptk_wine_available) {
+    toast.show("GPTK Wine not found — install via: brew install --cask game-porting-toolkit", "error");
+    return;
+  }
+
+  if (!gptkSteamInstalled.value) {
+    toast.show("Installing Steam into GPTK prefix — this may take a minute...", "success");
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/steam/gptk-install");
+    if (result?.ok) {
+      gptkSteamInstalled.value = true;
+      toast.show("GPTK Steam installed — starting...", "success");
+      const launchResult = await api<{ ok: boolean; pid?: number; error?: string }>(
+        "POST",
+        "/steam/gptk-launch",
+      );
+      if (launchResult?.ok) {
+        gptkSteamRunning.value = true;
+        toast.show("GPTK Steam started — log in through the Steam window", "success");
+      } else {
+        toast.show(launchResult?.error ?? "Failed to start GPTK Steam", "error");
+      }
+    } else {
+      toast.show(result?.error ?? "Failed to install GPTK Steam", "error");
+    }
+    reloadLibrary();
+    return;
+  }
+
+  if (gptkSteamRunning.value) {
+    const result = await api<{ ok: boolean; running?: boolean; error?: string }>("POST", "/steam/gptk-stop");
+    if (result?.ok && result.running === false) {
+      gptkSteamRunning.value = false;
+      toast.show("GPTK Steam stopped");
+    } else {
+      gptkSteamRunning.value = result?.running ?? true;
+      toast.show(result?.error ?? "GPTK Steam is still running", "error");
+    }
+  } else {
+    toast.show("Starting GPTK Steam...", "success");
+    const result = await api<{ ok: boolean; pid?: number; error?: string }>("POST", "/steam/gptk-launch");
+    if (result?.ok) {
+      gptkSteamRunning.value = true;
+      toast.show("GPTK Steam started — log in through the Steam window", "success");
+    } else {
+      toast.show(result?.error ?? "Failed to start GPTK Steam", "error");
+    }
+  }
+  reloadLibrary();
+}
+
 async function launchGame(game: SteamGame, launchMethod = "auto") {
   if (isMacSteamLaunch(launchMethod) && wineSteamRunning.value) {
     if (!confirm(`Stop Wine Steam and launch ${game.name} through MacOS Steam?`)) return;
@@ -266,6 +320,8 @@ watch([library, search, filter], applyFilter);
           <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
           <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
           <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
+          <span v-if="gptkSteamRunning" class="badge badge-ok">GPTK Running</span>
+          <span v-else-if="gptkSteamInstalled" class="badge badge-warn">GPTK Offline</span>
           <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
             {{ backendConnected ? `Backend${backendVersion ? " v" + backendVersion : ""}` : "Backend Offline" }}
           </span>
@@ -312,6 +368,34 @@ watch([library, search, filter], applyFilter);
             <span class="control-label">
               {{
                 !macSteamInstalled ? "Install macOS Steam" : macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam"
+              }}
+            </span>
+          </button>
+          <button class="btn btn-secondary library-control-button" title="GPTK Steam" @click="toggleGptkSteam">
+            <svg
+              class="control-icon"
+              width="15"
+              height="15"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2" />
+              <line x1="12" y1="22" x2="12" y2="15.5" />
+              <polyline points="22 8.5 12 15.5 2 8.5" />
+              <polyline points="2 15.5 12 8.5 22 15.5" />
+              <line x1="12" y1="2" x2="12" y2="8.5" />
+            </svg>
+            <span class="control-label">
+              {{
+                !gptkSteamInstalled
+                  ? "Install GPTK Steam"
+                  : gptkSteamRunning
+                    ? "Stop GPTK Steam"
+                    : "Start GPTK Steam"
               }}
             </span>
           </button>

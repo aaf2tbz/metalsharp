@@ -361,6 +361,36 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 },
             }
         },
+        (Method::Post, "/steam/gptk-launch") => {
+            app_log("Launching GPTK Steam...");
+            match steam::launch_gptk_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-launch", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/steam/gptk-stop") => {
+            app_log("Stopping GPTK Steam...");
+            match steam::stop_gptk_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-stop", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
+        (Method::Post, "/steam/gptk-install") => {
+            app_log("Installing Steam into GPTK prefix...");
+            match steam::install_gptk_steam() {
+                Ok(v) => resp(200, v),
+                Err(e) => {
+                    app_issue_log("steam-install", "gptk-steam", &e.to_string(), &[]);
+                    resp(500, json!({"ok": false, "error": e.to_string()}))
+                },
+            }
+        },
         (Method::Post, "/steam/mac-launch-game") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());

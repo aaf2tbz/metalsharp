@@ -57,6 +57,12 @@ pub fn status() -> Value {
     let ms_available = ms_wine().exists();
     let installing = is_installing_steam();
 
+    let gptk_prefix = crate::bottles::gptk_launch_prefix();
+    let gptk_wine = crate::mtsp::launcher::gptk_wine64_binary();
+    let gptk_wine_available = gptk_wine.exists();
+    let gptk_installed = gptk_wine_available && crate::mtsp::launcher::gptk_steam_exe(&gptk_prefix).exists();
+    let gptk_running = gptk_wine_available && crate::mtsp::launcher::gptk_is_steam_running_in_prefix(&gptk_prefix);
+
     json!({
         "installed": windows_installed,
         "path": windows_path,
@@ -67,7 +73,10 @@ pub fn status() -> Value {
         "mac_running": mac_running,
         "running": running,
         "metalsharp_wine_available": ms_available,
-        "installing": installing
+        "installing": installing,
+        "gptk_wine_available": gptk_wine_available,
+        "gptk_installed": gptk_installed,
+        "gptk_running": gptk_running
     })
 }
 
@@ -375,6 +384,101 @@ pub fn stop_macos_steam() -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     Ok(json!({"ok": true, "running": is_macos_steam_running()}))
+}
+
+pub fn launch_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let wine = crate::mtsp::launcher::gptk_wine64_binary();
+    if !wine.exists() {
+        return Err("GPTK Wine not found — install via: brew install --cask game-porting-toolkit".into());
+    }
+
+    if is_wine_steam_running() {
+        let _ = stop_wine_steam();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    let gptk_prefix = crate::bottles::gptk_launch_prefix();
+    let steam_exe = crate::mtsp::launcher::gptk_steam_exe(&gptk_prefix);
+
+    if !steam_exe.exists() {
+        return Err("GPTK Steam is not installed — use Install GPTK Steam first".into());
+    }
+
+    if crate::mtsp::launcher::gptk_is_steam_running_in_prefix(&gptk_prefix) {
+        return Ok(json!({"ok": true, "message": "GPTK Steam already running"}));
+    }
+
+    deploy_gptk_steamwebhelper_wrapper(&gptk_prefix);
+
+    let pid = crate::mtsp::launcher::gptk_spawn_steam(&wine, &gptk_prefix)?;
+
+    Ok(json!({"ok": true, "pid": pid}))
+}
+
+pub fn stop_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let gptk_prefix = crate::bottles::gptk_launch_prefix();
+    crate::mtsp::launcher::gptk_kill_steam_in_prefix(&gptk_prefix);
+    let running = crate::mtsp::launcher::gptk_is_steam_running_in_prefix(&gptk_prefix);
+    Ok(json!({"ok": true, "running": running}))
+}
+
+pub fn install_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
+    let wine = crate::mtsp::launcher::gptk_wine64_binary();
+    if !wine.exists() {
+        return Err("GPTK Wine not found — install via: brew install --cask game-porting-toolkit".into());
+    }
+
+    let gptk_prefix = crate::bottles::gptk_launch_prefix();
+    let steam_exe = crate::mtsp::launcher::gptk_steam_exe(&gptk_prefix);
+
+    if steam_exe.exists() {
+        return Ok(json!({"ok": true, "message": "GPTK Steam already installed"}));
+    }
+
+    crate::mtsp::launcher::gptk_install_steam(&wine, &gptk_prefix)?;
+
+    Ok(json!({"ok": true, "message": "GPTK Steam installed"}))
+}
+
+fn deploy_gptk_steamwebhelper_wrapper(gptk_prefix: &Path) {
+    let steam_dir = crate::mtsp::launcher::gptk_steam_dir(gptk_prefix);
+
+    let cef_dirs =
+        [steam_dir.join("bin").join("cef").join("cef.win7x64"), steam_dir.join("bin").join("cef").join("cef.win64")];
+
+    let wrapper = match find_bundled_steamwebhelper_wrapper() {
+        Some(w) => w,
+        None => return,
+    };
+
+    let bundled_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+    if bundled_size == 0 || bundled_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES || !steamwebhelper_wrapper_valid(&wrapper) {
+        return;
+    }
+
+    for cef_dir in &cef_dirs {
+        let original = cef_dir.join("steamwebhelper.exe");
+        let real = cef_dir.join("steamwebhelper_real.exe");
+        let original_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
+
+        if original_size == 0 {
+            continue;
+        }
+
+        if original_size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+            continue;
+        }
+
+        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+        if real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+            let _ = std::fs::remove_file(&real);
+            let _ = std::fs::rename(&original, &real);
+        } else if original.exists() {
+            let _ = std::fs::remove_file(&original);
+        }
+
+        let _ = std::fs::copy(&wrapper, &original);
+    }
 }
 
 pub fn launch_macos_steam_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
