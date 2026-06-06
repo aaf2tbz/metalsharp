@@ -89,6 +89,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
             | PipelineId::M11
             | PipelineId::M12
             | PipelineId::M13
+            | PipelineId::Gptk
             | PipelineId::M32
             | PipelineId::FnaArm64
             | PipelineId::WineBare
@@ -106,6 +107,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+        | PipelineId::Gptk
         | PipelineId::M32
         | PipelineId::FnaArm64
         | PipelineId::WineBare => {
