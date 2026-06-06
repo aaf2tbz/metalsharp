@@ -313,8 +313,8 @@ async function initApp() {
   const setupState = await api<{ deviceName?: string; runtimeMigrationRequired?: boolean }>("GET", "/setup/state");
   if (setupState?.deviceName) setupDeviceName.value = setupState.deviceName;
   if (firstLaunch || setupState?.runtimeMigrationRequired) {
-    showSetup.value = true;
-    return;
+    // showSetup.value = true;
+    // return;
   }
   await initApp();
   checkForUpdates();

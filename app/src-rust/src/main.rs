@@ -20,6 +20,7 @@
 mod anticheat;
 mod bottles;
 mod d3d12_runtime_doctor;
+mod gptk;
 mod installer;
 mod kernel_translation;
 mod launch;
@@ -331,6 +332,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 },
             }
         },
+        (Method::Post, "/steam/gptk-install") => match gptk::install() {
+            Ok(v) => resp(200, v),
+            Err(e) => resp(500, json!({"ok": false, "error": e})),
+        },
+        (Method::Get, "/steam/gptk-install-progress") => resp(200, gptk::read_progress()),
         (Method::Post, "/steam/mac-launch") => {
             app_log("Launching macOS Steam...");
             match steam::launch_macos_steam() {

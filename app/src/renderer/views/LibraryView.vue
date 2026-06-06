@@ -50,6 +50,7 @@ const filter = ref<"all" | "installed" | "not_installed">("all");
 const runningAppId = ref<number | null>(null);
 const runningPid = ref<number | null>(null);
 const launchingAppId = ref<number | null>(null);
+const gptkInstallPollTimer = ref<ReturnType<typeof setInterval> | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -172,7 +173,40 @@ async function toggleMacSteam() {
 
 async function toggleGptkSteam() {
   if (!gptkSteamInstalled.value) {
-    toast.show("GPTK Steam is not installed yet", "error");
+    toast.show("Installing GPTK Steam — this may take a few minutes...", "success");
+    const result = await api<{ ok: boolean; status?: string; error?: string }>("POST", "/steam/gptk-install");
+    if (!result?.ok) {
+      toast.show(result?.error ?? "GPTK install failed", "error");
+      return;
+    }
+    if (result.status === "already_installed") {
+      gptkSteamInstalled.value = true;
+      toast.show("GPTK Steam is already installed");
+      return;
+    }
+    if (gptkInstallPollTimer.value) clearInterval(gptkInstallPollTimer.value);
+    gptkInstallPollTimer.value = setInterval(async () => {
+      const progress = await api<{
+        step: number;
+        total: number;
+        current: string;
+        status: string;
+        log: string;
+        error: string | null;
+      }>("GET", "/steam/gptk-install-progress");
+      if (!progress) return;
+      if (progress.status === "complete") {
+        if (gptkInstallPollTimer.value) clearInterval(gptkInstallPollTimer.value);
+        gptkInstallPollTimer.value = null;
+        gptkSteamInstalled.value = true;
+        toast.show("GPTK Steam installed!", "success");
+        reloadLibrary();
+      } else if (progress.status === "error") {
+        if (gptkInstallPollTimer.value) clearInterval(gptkInstallPollTimer.value);
+        gptkInstallPollTimer.value = null;
+        toast.show(progress.error ?? "GPTK install failed", "error");
+      }
+    }, 3000);
     return;
   }
   if (gptkSteamRunning.value) {
