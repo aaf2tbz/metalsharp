@@ -429,9 +429,13 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
                             let compatdata = bottles::load_steam_compatdata(id).ok();
-                            let steam_started = match steam::ensure_wine_steam_ready_for_game_launch() {
-                                Ok(started) => started,
-                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                            let steam_started = if pipeline == mtsp::engine::PipelineId::Gptk {
+                                false
+                            } else {
+                                match steam::ensure_wine_steam_ready_for_game_launch() {
+                                    Ok(started) => started,
+                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                                }
                             };
                             let bottle_prefix = std::path::PathBuf::from(&bottle.prefix_path);
                             mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env).map(

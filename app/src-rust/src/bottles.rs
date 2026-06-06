@@ -334,6 +334,18 @@ fn steam_launch_prefix() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("prefix-steam")
 }
 
+pub fn gptk_launch_prefix() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("prefix-gptk")
+}
+
+fn prefix_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> PathBuf {
+    if pipeline == crate::mtsp::engine::PipelineId::Gptk {
+        gptk_launch_prefix()
+    } else {
+        steam_launch_prefix()
+    }
+}
+
 pub fn bottle_dir(id: &str) -> PathBuf {
     bottles_root().join(id)
 }
@@ -484,7 +496,7 @@ fn steam_compatdata_record(
         bottle_id: manifest.id.clone(),
         compatdata_path: steam_compatdata_dir(appid).to_string_lossy().to_string(),
         prefix_path: manifest.prefix_path.clone(),
-        steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+        steam_prefix_path: manifest.prefix_path.clone(),
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
         launch_pipeline: pipeline_preference_id(pipeline).to_string(),
@@ -645,7 +657,7 @@ fn ensure_steam_game_bottle_inner(
         custom_name: None,
         bottle_type: BottleType::Steam,
         steam_app_id: Some(appid),
-        prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+        prefix_path: prefix_for_pipeline(pipeline).to_string_lossy().to_string(),
         arch: BottleArch::Wow64,
         runtime_profile,
         preferred_pipeline: None,
@@ -667,7 +679,7 @@ fn ensure_steam_game_bottle_inner(
     manifest.name = manifest.custom_name.clone().unwrap_or_else(|| name.to_string());
     manifest.bottle_type = BottleType::Steam;
     manifest.steam_app_id = Some(appid);
-    manifest.prefix_path = steam_launch_prefix().to_string_lossy().to_string();
+    manifest.prefix_path = prefix_for_pipeline(pipeline).to_string_lossy().to_string();
     manifest.runtime_profile = runtime_profile;
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(runtime_profile));
