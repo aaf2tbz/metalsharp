@@ -98,11 +98,18 @@ fn is_wine_steam_process_line(line: &str) -> bool {
     parse_process_line(line).map(|(_, command)| is_wine_steam_owner_command(command)).unwrap_or(false)
 }
 
+fn is_gptk_wine_command(command: &str) -> bool {
+    command.contains("Game Porting Toolkit.app")
+}
+
 fn is_wine_steam_owner_command(command: &str) -> bool {
     if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
         return false;
     }
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
+        return false;
+    }
+    if is_gptk_wine_command(command) {
         return false;
     }
 
@@ -112,10 +119,10 @@ fn is_wine_steam_owner_command(command: &str) -> bool {
 
     command.contains(&exe)
         || (command.contains(&prefix) && (command.contains("Steam.exe") || command.contains("steam.exe")))
-        || (lower.contains("c:\\program files (x86)\\steam")
+        || lower.contains("c:\\program files (x86)\\steam")
             && (lower.contains("steam.exe")
                 || lower.contains("steamservice.exe")
-                || lower.contains("steamerrorreporter")))
+                || lower.contains("steamerrorreporter"))
 }
 
 fn is_wine_steam_cleanup_command(command: &str) -> bool {
@@ -126,6 +133,9 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
         return false;
     }
     if command.contains("Steam.app/Contents/MacOS") || command.contains("steam_osx") {
+        return false;
+    }
+    if is_gptk_wine_command(command) {
         return false;
     }
 

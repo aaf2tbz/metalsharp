@@ -70,7 +70,6 @@ pub fn status() -> GptkStatus {
 }
 
 pub fn is_running() -> bool {
-    let prefix = gptk_prefix().to_string_lossy().to_string();
     Command::new("ps")
         .args(["axo", "pid=,command="])
         .output()
@@ -82,14 +81,168 @@ pub fn is_running() -> bool {
                 if line.contains(" rg ") || line.contains("rg -i") || line.contains("ps axo") {
                     return false;
                 }
-                line.contains(&prefix) && (line.contains("Steam.exe") || line.contains("steam.exe"))
+                line.contains("Game Porting Toolkit.app")
+                    && (line.contains("Steam.exe") || line.contains("steam.exe"))
+                    && !line.contains("steamservice.exe")
             })
         })
         .unwrap_or(false)
 }
 
+fn gptk_all_pids() -> Vec<u32> {
+    Command::new("ps")
+        .args(["axo", "pid=,command="])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| {
+            s.lines()
+                .filter_map(|line| if line.contains("Game Porting Toolkit.app") { parse_pid(line) } else { None })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_pid(line: &str) -> Option<u32> {
+    line.split_whitespace().next()?.parse().ok()
+}
+
 pub fn is_installing() -> bool {
     GPTK_INSTALLING.load(Ordering::SeqCst)
+}
+
+fn gptk_steam_dir() -> PathBuf {
+    gptk_prefix().join("drive_c").join("Program Files (x86)").join("Steam")
+}
+
+fn gptk_steam_ready_marker() -> PathBuf {
+    gptk_prefix().join("drive_c").join("metalsharp-gptk-steam-ready")
+}
+
+fn ensure_win10() -> Result<(), String> {
+    let prefix_str = gptk_prefix().to_string_lossy().to_string();
+    let reg_path = gptk_prefix().join("drive_c").join("gptk-win10.reg");
+    let reg_data = "Windows Registry Editor Version 5.00\r\n\
+        \r\n\
+        [Software\\Microsoft\\Windows NT\\CurrentVersion]\r\n\
+        \"ProductName\"=\"Microsoft Windows 10\"\r\n\
+        \"CurrentVersion\"=\"6.3\"\r\n\
+        \"CurrentBuild\"=\"19041\"\r\n\
+        \"CurrentBuildNumber\"=\"19041\"\r\n\
+        \"CurrentMajorVersionNumber\"=dword:0000000a\r\n\
+        \"CurrentMinorVersionNumber\"=dword:00000000\r\n";
+    fs::write(&reg_path, reg_data).map_err(|e| format!("write reg: {}", e))?;
+
+    let reg_win = format!("Z:\\{}", reg_path.to_string_lossy().replace('/', "\\"));
+    let output = Command::new(gptk_wine())
+        .env("WINEPREFIX", &prefix_str)
+        .arg("regedit")
+        .arg(&reg_win)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("regedit failed: {}", e))?;
+
+    if !output.success() {
+        return Err("Failed to set Win10 version in GPTK prefix".into());
+    }
+
+    let _ = fs::remove_file(&reg_path);
+    Ok(())
+}
+
+fn deploy_gptk_wrapper() -> Result<(), String> {
+    let steam_dir = gptk_steam_dir();
+    let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
+    if !cef_dir.exists() {
+        return Ok(());
+    }
+
+    let original = cef_dir.join("steamwebhelper.exe");
+    let real = cef_dir.join("steamwebhelper_real.exe");
+    let marker = cef_dir.join(".ms_gptk_wrapper_deployed");
+
+    if marker.exists() && original.exists() && original.metadata().map(|m| m.len()).unwrap_or(0) < 200_000 {
+        return Ok(());
+    }
+
+    let original_size = original.metadata().map(|m| m.len()).unwrap_or(0);
+    if original_size > 200_000 {
+        if real.exists() {
+            let _ = fs::remove_file(&original);
+        } else {
+            let _ = fs::rename(&original, &real);
+        }
+    }
+
+    if real.exists() && !original.exists() {
+        let wrapper_src = crate::platform::metalsharp_home_dir().join("cache").join("steam").join("steamwebhelper.exe");
+        if wrapper_src.exists() {
+            let _ = fs::copy(&wrapper_src, &original);
+            let _ = fs::write(&marker, "deployed");
+        }
+    }
+
+    Ok(())
+}
+
+pub fn launch() -> Result<Value, String> {
+    let steam_exe = gptk_steam_exe();
+    let steam_dir = gptk_steam_dir();
+
+    if !steam_exe.exists() || !steam_dir.join("steamui.dll").exists() {
+        return Err("GPTK Steam is not installed".into());
+    }
+
+    if is_running() {
+        return Ok(json!({"ok": true, "message": "GPTK Steam already running"}));
+    }
+
+    if !gptk_steam_ready_marker().exists() {
+        ensure_win10()?;
+        deploy_gptk_wrapper()?;
+        let _ = fs::write(gptk_steam_ready_marker(), "ready");
+    }
+
+    let prefix_str = gptk_prefix().to_string_lossy().to_string();
+
+    let child = Command::new(gptk_wine())
+        .current_dir(&steam_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("STEAM_RUNTIME", "0")
+        .arg(&steam_exe)
+        .args(["-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("failed to launch GPTK Steam: {}", e))?;
+
+    Ok(json!({"ok": true, "pid": child.id()}))
+}
+
+pub fn stop() -> Result<Value, String> {
+    let pids = gptk_all_pids();
+    for pid in &pids {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let pids = gptk_all_pids();
+    for pid in &pids {
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    Ok(json!({"ok": true, "running": is_running()}))
 }
 
 pub fn install() -> Result<Value, String> {

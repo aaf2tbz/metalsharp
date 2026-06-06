@@ -33,7 +33,7 @@ let updaterBridge: UpdaterBridge;
 let steamappsWatcher: fs.FSWatcher | null = null;
 
 function isDevRuntime(): boolean {
-  return process.env.METALSHARP_DEV === "1" || !app.isPackaged;
+  return false;
 }
 
 function getMetalsharpDir(): string {

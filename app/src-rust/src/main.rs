@@ -337,6 +337,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Err(e) => resp(500, json!({"ok": false, "error": e})),
         },
         (Method::Get, "/steam/gptk-install-progress") => resp(200, gptk::read_progress()),
+        (Method::Post, "/steam/gptk-launch") => match gptk::launch() {
+            Ok(v) => resp(200, v),
+            Err(e) => resp(500, json!({"ok": false, "error": e})),
+        },
+        (Method::Post, "/steam/gptk-stop") => match gptk::stop() {
+            Ok(v) => resp(200, v),
+            Err(e) => resp(500, json!({"ok": false, "error": e})),
+        },
         (Method::Post, "/steam/mac-launch") => {
             app_log("Launching macOS Steam...");
             match steam::launch_macos_steam() {
