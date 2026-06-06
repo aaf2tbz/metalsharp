@@ -130,8 +130,9 @@ pub fn dependencies() -> Value {
         || check_path(&crate::platform::metalsharp_home_dir_for(&home).join("runtime/wine/bin/metalsharp-wine"));
     let host_runtime = host_runtime_installed(&home);
     let dxmt_runtime = crate::installer::dxmt_runtime_current_for_home(&home);
+    let gptk_wine = check_gptk_wine();
 
-    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine && host_runtime && dxmt_runtime;
+    let all_ok = homebrew && rosetta && xcode_cli && metalsharp_wine && host_runtime && dxmt_runtime && gptk_wine;
 
     json!({
         "ok": true,
@@ -185,6 +186,14 @@ pub fn dependencies() -> Value {
                 "installed": dxmt_runtime,
                 "required": true,
                 "installCmd": "metalsharp-setup-dxmt",
+            },
+            {
+                "id": "gptk_wine",
+                "name": "Game Porting Toolkit",
+                "desc": "Apple's D3D12-to-Metal Wine runtime via Homebrew. Required for GPTK launch routes.",
+                "installed": gptk_wine,
+                "required": true,
+                "installCmd": "brew install --cask game-porting-toolkit",
             },
             {
                 "id": "mono",
@@ -1934,6 +1943,10 @@ fn check_brew(formula: &str) -> bool {
 fn check_rosetta() -> bool {
     PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
         || mac_cmd("pgrep").arg("-q").arg("oahd").status().map(|s| s.success()).unwrap_or(false)
+}
+
+fn check_gptk_wine() -> bool {
+    check_path(&PathBuf::from("/opt/homebrew/bin/wine64")) || check_path(&PathBuf::from("/usr/local/bin/wine64"))
 }
 
 #[cfg(test)]

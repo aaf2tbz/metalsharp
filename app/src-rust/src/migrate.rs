@@ -294,6 +294,7 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
         ms_dir.join("configs").join("mtsp-rules.toml"),
         runtime_wine.join("etc").join("dxmt.conf"),
+        PathBuf::from("/opt/homebrew/bin/wine64"),
     ]
     .iter()
     .all(|path| path.exists())

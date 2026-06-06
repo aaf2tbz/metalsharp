@@ -177,6 +177,7 @@ fn run_install_all() {
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
         ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
+        ("GPTK Wine (Homebrew)", Box::new(|_| install_gptk_wine())),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("Steam Bridge Shim", Box::new(install_steam_bridge)),
         ("Offline EAC Mode", Box::new(install_eac_toggle)),
@@ -336,6 +337,42 @@ fn install_rosetta() -> Result<bool, String> {
     }
 }
 
+fn install_gptk_wine() -> Result<bool, String> {
+    let candidates = [PathBuf::from("/opt/homebrew/bin/wine64"), PathBuf::from("/usr/local/bin/wine64")];
+    if candidates.iter().any(|p| p.exists()) {
+        return Ok(false);
+    }
+
+    let rosetta_plist = PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist");
+    if !rosetta_plist.exists() {
+        let rosetta_output = mac_cmd("softwareupdate")
+            .args(["--install-rosetta", "--agree-to-license"])
+            .output()
+            .map_err(|e| format!("failed to install rosetta for GPTK: {}", e))?;
+        if !rosetta_output.status.success()
+            && !String::from_utf8_lossy(&rosetta_output.stderr).contains("already installed")
+        {
+            return Err(format!(
+                "Rosetta 2 required for GPTK but install failed: {}",
+                String::from_utf8_lossy(&rosetta_output.stderr)
+            ));
+        }
+    }
+
+    let brew = find_brew()?;
+    let output = Command::new(&brew)
+        .args(["install", "--cask", "game-porting-toolkit"])
+        .output()
+        .map_err(|e| format!("brew install game-porting-toolkit failed: {}", e))?;
+
+    let combined = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+
+    if output.status.success() || combined.contains("already installed") {
+        Ok(true)
+    } else {
+        Err(combined.lines().last().unwrap_or("brew install game-porting-toolkit failed").into())
+    }
+}
 fn install_xcode_cli() -> Result<bool, String> {
     if check_command("clang") {
         return Ok(false);
