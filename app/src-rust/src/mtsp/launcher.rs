@@ -860,6 +860,69 @@ pub fn gptk_kill_steam_in_prefix(gptk_prefix: &Path) {
         .status();
 }
 
+pub fn gptk_symlink_steam_libraries(gptk_prefix: &Path) {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let ms_prefix = ms_home.join("prefix-steam");
+    let ms_steam_dir = ms_prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+    let ms_steamapps = ms_steam_dir.join("steamapps");
+
+    let gptk_steam_dir = gptk_steam_dir(gptk_prefix);
+    let gptk_steamapps = gptk_steam_dir.join("steamapps");
+
+    if !ms_steamapps.exists() || !gptk_steam_dir.exists() {
+        return;
+    }
+
+    let _ = std::fs::create_dir_all(&gptk_steamapps);
+
+    let gptk_common = gptk_steamapps.join("common");
+    let ms_common = ms_steamapps.join("common");
+    if ms_common.exists() && !gptk_common.exists() {
+        let _ = std::os::unix::fs::symlink(&ms_common, &gptk_common);
+    }
+
+    let gptk_downloading = gptk_steamapps.join("downloading");
+    let ms_downloading = ms_steamapps.join("downloading");
+    if ms_downloading.exists() && !gptk_downloading.exists() {
+        let _ = std::os::unix::fs::symlink(&ms_downloading, &gptk_downloading);
+    }
+
+    let gptk_workshop = gptk_steamapps.join("workshop");
+    let ms_workshop = ms_steamapps.join("workshop");
+    if ms_workshop.exists() && !gptk_workshop.exists() {
+        let _ = std::os::unix::fs::symlink(&ms_workshop, &gptk_workshop);
+    }
+
+    let gptk_shadercache = gptk_steamapps.join("shadercache");
+    let ms_shadercache = ms_steamapps.join("shadercache");
+    if ms_shadercache.exists() && !gptk_shadercache.exists() {
+        let _ = std::os::unix::fs::symlink(&ms_shadercache, &gptk_shadercache);
+    }
+
+    if let Ok(entries) = std::fs::read_dir(&ms_steamapps) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("appmanifest_") && name_str.ends_with(".acf") {
+                let dest = gptk_steamapps.join(&name);
+                if !dest.exists() {
+                    let _ = std::os::unix::fs::symlink(entry.path(), &dest);
+                }
+            }
+        }
+    }
+
+    let src_vdf = ms_steamapps.join("libraryfolders.vdf");
+    let dest_vdf = gptk_steamapps.join("libraryfolders.vdf");
+    if src_vdf.exists() && !dest_vdf.exists() {
+        let _ = std::fs::copy(&src_vdf, &dest_vdf);
+    }
+}
+
 pub fn gptk_install_steam(wine: &Path, gptk_prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let installer = match gptk_find_installer() {
         Some(p) => p,
@@ -946,6 +1009,8 @@ pub fn gptk_install_steam(wine: &Path, gptk_prefix: &Path) -> Result<(), Box<dyn
 
     let steam_dir = gptk_steam_dir(gptk_prefix);
     crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+
+    gptk_symlink_steam_libraries(gptk_prefix);
 
     Ok(())
 }

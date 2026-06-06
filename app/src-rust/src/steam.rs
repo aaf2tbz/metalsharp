@@ -408,6 +408,7 @@ pub fn launch_gptk_steam() -> Result<Value, Box<dyn std::error::Error>> {
         return Ok(json!({"ok": true, "message": "GPTK Steam already running"}));
     }
 
+    crate::mtsp::launcher::gptk_symlink_steam_libraries(&gptk_prefix);
     deploy_gptk_steamwebhelper_wrapper(&gptk_prefix);
 
     let pid = crate::mtsp::launcher::gptk_spawn_steam(&wine, &gptk_prefix)?;
