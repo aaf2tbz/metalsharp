@@ -1,171 +1,76 @@
 #include <dlfcn.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef int HRESULT;
 typedef unsigned int UINT;
-typedef unsigned long ULONG;
 typedef long LONG;
-typedef void* REFIID;
-
-#ifdef __APPLE__
-#define CDECL __attribute__((cdecl))
-#else
-#define CDECL
-#endif
+typedef unsigned long ULONG;
+typedef LONG NTSTATUS;
 
 #define E_FAIL ((HRESULT)0x80004005)
 
-static void* g_framework;
+static void* g_d3dshared;
 
-static HRESULT (*g_D3D12CreateDevice)(void*, unsigned, void*, void**);
-static HRESULT (*g_D3D12GetDebugInterface)(void*, void**);
-static HRESULT (*g_D3D12SerializeRootSignature)(const void*, unsigned, void*, void*);
-static HRESULT (*g_D3D12CreateRootSignatureDeserializer)(const void*, unsigned long long, void*, void**);
-static HRESULT (*g_D3D12SerializeVersionedRootSignature)(const void*, void*, void*);
-static HRESULT (*g_D3D12CreateVersionedRootSignatureDeserializer)(const void*, unsigned long long, void*, void**);
-static HRESULT (*g_D3D12EnableExperimentalFeatures)(unsigned, void*, void*, unsigned*);
+typedef NTSTATUS (*entry_fn)(void*);
+static entry_fn* g_dispatch;
+static int g_dispatch_count;
 
-static HRESULT (*g_CreateDXGIFactory)(REFIID, void**);
-static HRESULT (*g_CreateDXGIFactory1)(REFIID, void**);
-static HRESULT (*g_CreateDXGIFactory2)(UINT, REFIID, void**);
-static HRESULT (*g_DXGIDeclareAdapterRemovalSupport)(void);
-
-static HRESULT (*g_D3D11CreateDevice)(void*, unsigned, void*, unsigned, const void*, unsigned, unsigned, void**, void*,
-                                      void**);
-static HRESULT (*g_D3D11CreateDeviceAndSwapChain)(void*, unsigned, void*, unsigned, const void*, unsigned, unsigned,
-                                                  void*, void**, void**, void*, void**);
-
-static int load_framework(void) {
-    static int loaded = 0;
-    static int result = 0;
-    if (loaded)
-        return result;
-    loaded = 1;
+static int init_d3dshared(void) {
+    static int attempted = 0;
+    if (attempted)
+        return g_dispatch != NULL;
+    attempted = 1;
 
     const char* paths[] = {
-        "@executable_path/../lib/external/D3DMetal.framework/Versions/A/D3DMetal",
-        "@loader_path/../../../external/D3DMetal.framework/Versions/A/D3DMetal",
-        "D3DMetal.framework/Versions/A/D3DMetal",
+        "@executable_path/../lib/external/libd3dshared.dylib",
+        "@loader_path/../../../external/libd3dshared.dylib",
+        "@rpath/libd3dshared.dylib",
         NULL,
     };
 
     for (int i = 0; paths[i]; i++) {
-        g_framework = dlopen(paths[i], RTLD_NOW);
-        if (g_framework)
+        g_d3dshared = dlopen(paths[i], RTLD_NOW);
+        if (g_d3dshared)
             break;
     }
-
-    if (!g_framework) {
-        fprintf(stderr, "d3dmetal_bridge: failed to load D3DMetal.framework: %s\n", dlerror());
-        result = -1;
-        return result;
+    if (!g_d3dshared) {
+        fprintf(stderr, "d3dmetal_bridge: libd3dshared.dylib: %s\n", dlerror());
+        return 0;
     }
 
-#define LOAD(name)                                                                                                     \
-    do {                                                                                                               \
-        g_##name = dlsym(g_framework, #name);                                                                          \
-        if (!g_##name)                                                                                                 \
-            fprintf(stderr, "d3dmetal_bridge: missing " #name "\n");                                                   \
-    } while (0)
+    entry_fn* funcs = (entry_fn*)dlsym(g_d3dshared, "__wine_unix_call_funcs");
+    if (!funcs) {
+        fprintf(stderr, "d3dmetal_bridge: __wine_unix_call_funcs not found\n");
+        return 0;
+    }
 
-    LOAD(D3D12CreateDevice);
-    LOAD(D3D12GetDebugInterface);
-    LOAD(D3D12SerializeRootSignature);
-    LOAD(D3D12CreateRootSignatureDeserializer);
-    LOAD(D3D12SerializeVersionedRootSignature);
-    LOAD(D3D12CreateVersionedRootSignatureDeserializer);
-    LOAD(D3D12EnableExperimentalFeatures);
-    LOAD(CreateDXGIFactory);
-    LOAD(CreateDXGIFactory1);
-    LOAD(CreateDXGIFactory2);
-    LOAD(DXGIDeclareAdapterRemovalSupport);
-    LOAD(D3D11CreateDevice);
-    LOAD(D3D11CreateDeviceAndSwapChain);
+    g_dispatch = funcs;
 
-#undef LOAD
+    fprintf(stderr, "d3dmetal_bridge: calling process_attach via dispatch[0]\n");
+    NTSTATUS ret = funcs[0](NULL);
+    fprintf(stderr, "d3dmetal_bridge: process_attach returned 0x%08x\n", (unsigned)ret);
 
-    result = 1;
-    return result;
+    return 1;
 }
 
-static LONG CDECL unix_dispatch(ULONG ordinal, void* args) {
-    if (load_framework() < 0)
+static LONG unix_dispatch(ULONG ordinal, void* args) {
+    if (!init_d3dshared())
         return E_FAIL;
 
-    switch (ordinal) {
-    case 1: {
-        void** a = (void**)args;
-        return g_D3D12CreateDevice(a[0], (unsigned)(uintptr_t)a[1], a[2], (void**)a[3]);
+    if (ordinal >= 64 || !g_dispatch[ordinal]) {
+        fprintf(stderr, "d3dmetal_bridge: ordinal %lu not available\n", ordinal);
+        return E_FAIL;
     }
-    case 2: {
-        void** a = (void**)args;
-        return g_D3D12GetDebugInterface(a[0], (void**)a[1]);
-    }
-    case 3: {
-        void** a = (void**)args;
-        return g_D3D12SerializeRootSignature(a[0], (unsigned)(uintptr_t)a[1], a[2], a[3]);
-    }
-    case 4: {
-        void** a = (void**)args;
-        return g_D3D12CreateRootSignatureDeserializer(a[0], (unsigned long long)(uintptr_t)a[1], a[2], (void**)a[3]);
-    }
-    case 5: {
-        void** a = (void**)args;
-        return g_D3D12SerializeVersionedRootSignature(a[0], a[1], a[2]);
-    }
-    case 6: {
-        void** a = (void**)args;
-        return g_D3D12CreateVersionedRootSignatureDeserializer(a[0], (unsigned long long)(uintptr_t)a[1], a[2],
-                                                               (void**)a[3]);
-    }
-    case 7: {
-        void** a = (void**)args;
-        return g_D3D12EnableExperimentalFeatures((unsigned)(uintptr_t)a[0], a[1], a[2], (unsigned*)a[3]);
-    }
-    case 8: {
-        struct {
-            REFIID a;
-            void** b;
-        }* a = args;
-        return g_CreateDXGIFactory(a->a, a->b);
-    }
-    case 9: {
-        struct {
-            REFIID a;
-            void** b;
-        }* a = args;
-        return g_CreateDXGIFactory1(a->a, a->b);
-    }
-    case 10: {
-        struct {
-            UINT a;
-            REFIID b;
-            void** c;
-        }* a = args;
-        return g_CreateDXGIFactory2(a->a, a->b, a->c);
-    }
-    case 11:
-        return g_DXGIDeclareAdapterRemovalSupport();
-    case 12: {
-        void** a = (void**)args;
-        return g_D3D11CreateDevice(a[0], (unsigned)(uintptr_t)a[1], a[2], (unsigned)(uintptr_t)a[3], a[4],
-                                   (unsigned)(uintptr_t)a[5], (unsigned)(uintptr_t)a[6], (void**)a[7], a[8],
-                                   (void**)a[9]);
-    }
-    case 13: {
-        void** a = (void**)args;
-        return g_D3D11CreateDeviceAndSwapChain(a[0], (unsigned)(uintptr_t)a[1], a[2], (unsigned)(uintptr_t)a[3], a[4],
-                                               (unsigned)(uintptr_t)a[5], (unsigned)(uintptr_t)a[6], a[7], (void**)a[8],
-                                               (void**)a[9], a[10], (void**)a[11]);
-    }
-    }
-    return E_FAIL;
+
+    return g_dispatch[ordinal](args);
 }
 
 static const struct {
-    LONG(CDECL* call)(ULONG, void*);
+    LONG (*call)(ULONG, void*);
 } unix_call_entry = {unix_dispatch};
 
-void* __wine_unix_call_funcs[] = {&unix_call_entry, NULL};
-void* __wine_unix_call_wow64_funcs[] = {&unix_call_entry, NULL};
+void* __wine_unix_call_funcs[] = {(void*)&unix_call_entry, NULL};
+void* __wine_unix_call_wow64_funcs[] = {(void*)&unix_call_entry, NULL};

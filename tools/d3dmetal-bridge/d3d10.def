@@ -1,2 +1,2 @@
 EXPORTS
-    DllMain
+  D3D10CreateDevice

@@ -1,4 +1,4 @@
 EXPORTS
-    DllMain
-    D3D11CreateDevice
-    D3D11CreateDeviceAndSwapChain
+  D3D11CreateDevice                @ 1
+  D3D11CreateDeviceAndSwapChain    @ 2
+  D3D11On12CreateDevice            @ 3

@@ -1,15 +1,8 @@
 EXPORTS
-    DllMain
-    bridge_D3D12CreateDevice
-    bridge_D3D12GetDebugInterface
-    bridge_D3D12SerializeRootSignature
-    bridge_D3D12CreateRootSignatureDeserializer
-    bridge_D3D12SerializeVersionedRootSignature
-    bridge_D3D12CreateVersionedRootSignatureDeserializer
-    bridge_D3D12EnableExperimentalFeatures
-    bridge_CreateDXGIFactory
-    bridge_CreateDXGIFactory1
-    bridge_CreateDXGIFactory2
-    bridge_DXGIDeclareAdapterRemovalSupport
-    bridge_D3D11CreateDevice
-    bridge_D3D11CreateDeviceAndSwapChain
+  bridge_D3D12CreateDevice
+  bridge_D3D12GetDebugInterface
+  bridge_D3D12SerializeRootSignature
+  bridge_D3D12CreateRootSignatureDeserializer
+  bridge_D3D12SerializeVersionedRootSignature
+  bridge_D3D12CreateVersionedRootSignatureDeserializer
+  bridge_D3D12EnableExperimentalFeatures

@@ -1,91 +1,138 @@
 #include <windows.h>
+#include <stdio.h>
 
-typedef HRESULT(WINAPI* pD3D12CreateDevice)(void*, unsigned, void*, void**);
-typedef HRESULT(WINAPI* pD3D12GetDebugInterface)(void*, void**);
-typedef HRESULT(WINAPI* pD3D12SerializeRootSignature)(const void*, unsigned, void*, void*);
-typedef HRESULT(WINAPI* pD3D12CreateRootSignatureDeserializer)(const void*, unsigned long long, void*, void**);
-typedef HRESULT(WINAPI* pD3D12SerializeVersionedRootSignature)(const void*, void*, void*);
-typedef HRESULT(WINAPI* pD3D12CreateVersionedRootSignatureDeserializer)(const void*, unsigned long long, void*, void**);
-typedef HRESULT(WINAPI* pD3D12EnableExperimentalFeatures)(unsigned, void*, void*, unsigned*);
+typedef LONG NTSTATUS;
+typedef struct _UNICODE_STRING { USHORT Length; USHORT MaximumLength; WCHAR* Buffer; } UNICODE_STRING;
+typedef NTSTATUS(NTAPI* NtQueryVirtualMemory_t)(HANDLE, PVOID, ULONG, PVOID, ULONG, unsigned long*);
+typedef NTSTATUS(NTAPI* unix_call_fn)(void*, ULONG, void*);
 
-static pD3D12CreateDevice g_CreateDevice;
-static pD3D12GetDebugInterface g_GetDebugInterface;
-static pD3D12SerializeRootSignature g_SerializeRootSignature;
-static pD3D12CreateRootSignatureDeserializer g_CreateRootSignatureDeserializer;
-static pD3D12SerializeVersionedRootSignature g_SerializeVersionedRootSignature;
-static pD3D12CreateVersionedRootSignatureDeserializer g_CreateVersionedRootSignatureDeserializer;
-static pD3D12EnableExperimentalFeatures g_EnableExperimentalFeatures;
+static NtQueryVirtualMemory_t g_NtQueryVirtualMemory;
+static unix_call_fn g_dispatcher;
+static void* g_handle;
 
-static void resolve(void) {
-    static int done;
-    if (done)
-        return;
-    done = 1;
+#define STATUS_SUCCESS ((NTSTATUS)0x00000000)
 
-    HMODULE bridge = LoadLibraryA("d3dmetal_bridge.dll");
-    if (!bridge)
-        return;
+static void dbg(const char* fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = _vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        HANDLE h = GetStdHandle(STD_ERROR_HANDLE);
+        unsigned long written;
+        WriteFile(h, buf, (unsigned long)n, &written, NULL);
+    }
+}
 
-    g_CreateDevice = (pD3D12CreateDevice)GetProcAddress(bridge, "bridge_D3D12CreateDevice");
-    g_GetDebugInterface = (pD3D12GetDebugInterface)GetProcAddress(bridge, "bridge_D3D12GetDebugInterface");
-    g_SerializeRootSignature =
-        (pD3D12SerializeRootSignature)GetProcAddress(bridge, "bridge_D3D12SerializeRootSignature");
-    g_CreateRootSignatureDeserializer =
-        (pD3D12CreateRootSignatureDeserializer)GetProcAddress(bridge, "bridge_D3D12CreateRootSignatureDeserializer");
-    g_SerializeVersionedRootSignature =
-        (pD3D12SerializeVersionedRootSignature)GetProcAddress(bridge, "bridge_D3D12SerializeVersionedRootSignature");
-    g_CreateVersionedRootSignatureDeserializer = (pD3D12CreateVersionedRootSignatureDeserializer)GetProcAddress(
-        bridge, "bridge_D3D12CreateVersionedRootSignatureDeserializer");
-    g_EnableExperimentalFeatures =
-        (pD3D12EnableExperimentalFeatures)GetProcAddress(bridge, "bridge_D3D12EnableExperimentalFeatures");
+static int init_unix_bridge(void) {
+    static int attempted = 0;
+    if (attempted) return g_handle != NULL;
+    attempted = 1;
+
+    dbg("[d3d12] init_unix_bridge starting\n");
+
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) { dbg("[d3d12] FAIL: ntdll not found\n"); return 0; }
+    dbg("[d3d12] ntdll=%p\n", ntdll);
+
+    g_NtQueryVirtualMemory = (NtQueryVirtualMemory_t)GetProcAddress(ntdll, "NtQueryVirtualMemory");
+    g_dispatcher = (unix_call_fn)GetProcAddress(ntdll, "__wine_unix_call_dispatcher");
+    dbg("[d3d12] NtQueryVirtualMemory=%p dispatcher=%p\n", g_NtQueryVirtualMemory, g_dispatcher);
+    if (!g_NtQueryVirtualMemory || !g_dispatcher) {
+        dbg("[d3d12] FAIL: missing ntdll exports\n");
+        return 0;
+    }
+
+    const char* so_path = getenv("MS_D3DMETAL_UNIXLIB");
+    if (!so_path || !so_path[0]) { dbg("[d3d12] FAIL: MS_D3DMETAL_UNIXLIB not set\n"); return 0; }
+    dbg("[d3d12] so_path='%s'\n", so_path);
+
+    WCHAR wpath[1024];
+    int len = MultiByteToWideChar(CP_UTF8, 0, so_path, -1, wpath, 1024);
+    dbg("[d3d12] MultiByteToWideChar len=%d\n", len);
+    if (len <= 0) { dbg("[d3d12] FAIL: MultiByteToWideChar returned %d err=%lu\n", len, GetLastError()); return 0; }
+
+    UNICODE_STRING us;
+    us.Buffer = wpath;
+    us.Length = (USHORT)((len - 1) * sizeof(WCHAR));
+    us.MaximumLength = (USHORT)(len * sizeof(WCHAR));
+
+    dbg("[d3d12] calling NtQueryVirtualMemory(0x3EA) path='%hs' Length=%u MaxLen=%u\n",
+        so_path, (unsigned)us.Length, (unsigned)us.MaximumLength);
+
+    g_handle = NULL;
+    NTSTATUS status = g_NtQueryVirtualMemory((HANDLE)-1, &us, 0x3EA, &g_handle, sizeof(void*), NULL);
+
+    dbg("[d3d12] NtQueryVirtualMemory returned 0x%08lx handle=%p\n", (long)status, g_handle);
+    if (status != STATUS_SUCCESS || !g_handle) {
+        g_handle = NULL;
+        dbg("[d3d12] FAIL: NtQueryVirtualMemory(0x3EA) failed\n");
+
+        dbg("[d3d12] trying info class 0x1000...\n");
+        g_handle = NULL;
+        status = g_NtQueryVirtualMemory((HANDLE)-1, &us, 0x1000, &g_handle, sizeof(void*), NULL);
+        dbg("[d3d12] NtQueryVirtualMemory(0x1000) returned 0x%08lx handle=%p\n", (long)status, g_handle);
+
+        dbg("[d3d12] trying info class 0x3EB...\n");
+        g_handle = NULL;
+        status = g_NtQueryVirtualMemory((HANDLE)-1, &us, 0x3EB, &g_handle, sizeof(void*), NULL);
+        dbg("[d3d12] NtQueryVirtualMemory(0x3EB) returned 0x%08lx handle=%p\n", (long)status, g_handle);
+
+        dbg("[d3d12] trying info class 0x3E9...\n");
+        g_handle = NULL;
+        status = g_NtQueryVirtualMemory((HANDLE)-1, &us, 0x3E9, &g_handle, sizeof(void*), NULL);
+        dbg("[d3d12] NtQueryVirtualMemory(0x3E9) returned 0x%08lx handle=%p\n", (long)status, g_handle);
+
+        return 0;
+    }
+
+    dbg("[d3d12] SUCCESS: unix bridge handle=%p\n", g_handle);
+    return 1;
+}
+
+static NTSTATUS dispatch(ULONG ordinal, void* args) {
+    if (!init_unix_bridge()) return E_FAIL;
+    return g_dispatcher(g_handle, ordinal, args);
 }
 
 BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID ctx) {
-    if (reason == DLL_PROCESS_ATTACH) {
+    if (reason == DLL_PROCESS_ATTACH)
         DisableThreadLibraryCalls(h);
-        resolve();
-    }
     return TRUE;
 }
 
 HRESULT WINAPI D3D12CreateDevice(void* a, unsigned b, void* c, void** d) {
-    if (g_CreateDevice)
-        return g_CreateDevice(a, b, c, d);
-    return E_FAIL;
+    struct { void* a; unsigned b; void* c; void** d; } args = {a, b, c, d};
+    return dispatch(4, &args);
 }
 
 HRESULT WINAPI D3D12GetDebugInterface(void* a, void** b) {
-    if (g_GetDebugInterface)
-        return g_GetDebugInterface(a, b);
-    return E_FAIL;
+    struct { void* a; void** b; } args = {a, b};
+    return dispatch(8, &args);
 }
 
 HRESULT WINAPI D3D12SerializeRootSignature(const void* a, unsigned b, void* c, void* d) {
-    if (g_SerializeRootSignature)
-        return g_SerializeRootSignature(a, b, c, d);
-    return E_FAIL;
+    struct { const void* a; unsigned b; void* c; void* d; } args = {a, b, c, d};
+    return dispatch(9, &args);
 }
 
 HRESULT WINAPI D3D12CreateRootSignatureDeserializer(const void* a, unsigned long long b, void* c, void** d) {
-    if (g_CreateRootSignatureDeserializer)
-        return g_CreateRootSignatureDeserializer(a, b, c, d);
-    return E_FAIL;
+    struct { const void* a; unsigned long long b; void* c; void** d; } args = {a, b, c, d};
+    return dispatch(5, &args);
 }
 
 HRESULT WINAPI D3D12SerializeVersionedRootSignature(const void* a, void* b, void* c) {
-    if (g_SerializeVersionedRootSignature)
-        return g_SerializeVersionedRootSignature(a, b, c);
-    return E_FAIL;
+    struct { const void* a; void* b; void* c; } args = {a, b, c};
+    return dispatch(11, &args);
 }
 
 HRESULT WINAPI D3D12CreateVersionedRootSignatureDeserializer(const void* a, unsigned long long b, void* c, void** d) {
-    if (g_CreateVersionedRootSignatureDeserializer)
-        return g_CreateVersionedRootSignatureDeserializer(a, b, c, d);
-    return E_FAIL;
+    struct { const void* a; unsigned long long b; void* c; void** d; } args = {a, b, c, d};
+    return dispatch(6, &args);
 }
 
 HRESULT WINAPI D3D12EnableExperimentalFeatures(unsigned a, void* b, void* c, unsigned* d) {
-    if (g_EnableExperimentalFeatures)
-        return g_EnableExperimentalFeatures(a, b, c, d);
-    return E_FAIL;
+    struct { unsigned a; void* b; void* c; unsigned* d; } args = {a, b, c, d};
+    return dispatch(7, &args);
 }
