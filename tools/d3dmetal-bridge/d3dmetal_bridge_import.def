@@ -1,0 +1,9 @@
+LIBRARY d3dmetal_bridge.dll
+EXPORTS
+  bridge_D3D12CreateDevice
+  bridge_D3D12GetDebugInterface
+  bridge_D3D12SerializeRootSignature
+  bridge_D3D12CreateRootSignatureDeserializer
+  bridge_D3D12SerializeVersionedRootSignature
+  bridge_D3D12CreateVersionedRootSignatureDeserializer
+  bridge_D3D12EnableExperimentalFeatures

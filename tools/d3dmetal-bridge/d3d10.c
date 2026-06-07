@@ -4,4 +4,6 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID ctx) {
         DisableThreadLibraryCalls(h);
     return TRUE;
 }
-HRESULT WINAPI D3D10CreateDevice(void) { return 0x80004005; }
+HRESULT WINAPI D3D10CreateDevice(void) {
+    return 0x80004005;
+}

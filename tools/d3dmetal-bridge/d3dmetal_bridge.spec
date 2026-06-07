@@ -1,0 +1,7 @@
+@ stdcall bridge_D3D12CreateDevice(ptr long ptr ptr)
+@ stdcall bridge_D3D12GetDebugInterface(ptr ptr)
+@ stdcall bridge_D3D12SerializeRootSignature(ptr long ptr ptr)
+@ stdcall bridge_D3D12CreateRootSignatureDeserializer(ptr int64 ptr ptr)
+@ stdcall bridge_D3D12SerializeVersionedRootSignature(ptr ptr ptr)
+@ stdcall bridge_D3D12CreateVersionedRootSignatureDeserializer(ptr int64 ptr ptr)
+@ stdcall bridge_D3D12EnableExperimentalFeatures(long ptr ptr ptr)
