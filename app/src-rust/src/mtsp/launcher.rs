@@ -229,7 +229,13 @@ pub fn launch_steam_bottle_with_pipeline(
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 | PipelineId::D3DMetal => {
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::M13
+        | PipelineId::D3DMetal => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },

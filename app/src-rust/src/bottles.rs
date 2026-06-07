@@ -1859,7 +1859,10 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         recipe_name: recipe.map(|r| r.name),
         recipe_missing_dlls: missing_check_dlls,
         recipe_env,
-        d3d12_sdk: if matches!(pipeline, crate::mtsp::engine::PipelineId::M12 | crate::mtsp::engine::PipelineId::D3DMetal) {
+        d3d12_sdk: if matches!(
+            pipeline,
+            crate::mtsp::engine::PipelineId::M12 | crate::mtsp::engine::PipelineId::D3DMetal
+        ) {
             Some(crate::d3d12_runtime_doctor::latest_cached_report(appid).unwrap_or_else(|| {
                 json!({
                     "sdkAvailability": crate::d3d12_runtime_doctor::sdk_availability(),

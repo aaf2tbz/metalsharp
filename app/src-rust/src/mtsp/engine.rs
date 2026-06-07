@@ -281,19 +281,14 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "d3dmetal",
                 experimental: true,
                 requires_wine: true,
-                wine_overrides: Some(
-                    "d3d12,dxgi,d3d11,d3d10=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                ),
+                wine_overrides: Some("d3d12,dxgi,d3d11,d3d10=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec![
                     "lib/d3dmetal/x86_64-unix",
                     "lib/wine/x86_64-unix",
                     "lib/external",
                     "lib/external/D3DMetal.framework/Versions/A/Resources",
                 ],
-                winedllpath_dirs: vec![
-                    "lib/d3dmetal/x86_64-windows",
-                    "lib/metalsharp/x86_64-windows",
-                ],
+                winedllpath_dirs: vec!["lib/d3dmetal/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/d3dmetal/x86_64-windows", filename: "d3d12.dll" },
                     DllDeploy { source_subpath: "lib/d3dmetal/x86_64-windows", filename: "dxgi.dll" },
@@ -305,16 +300,9 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                         filename: "metalsharp_ntdll_hook.dll",
                     },
                 ],
-                env_vars: vec![
-                    EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" },
-                ],
+                env_vars: vec![EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" }],
                 launch_args: vec![],
-                alternatives: vec![
-                    PipelineId::M12,
-                    PipelineId::M11,
-                    PipelineId::M13,
-                    PipelineId::Steam,
-                ],
+                alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M13, PipelineId::Steam],
                 shader_cache_subdir: Some("d3dmetal"),
             },
             PipelineNode {

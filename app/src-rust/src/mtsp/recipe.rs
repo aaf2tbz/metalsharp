@@ -107,7 +107,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
-            | PipelineId::D3DMetal
+        | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::FnaArm64
         | PipelineId::WineBare => {
@@ -229,7 +229,7 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
-            | PipelineId::D3DMetal
+        | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
