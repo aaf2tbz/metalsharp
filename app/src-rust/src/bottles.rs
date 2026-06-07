@@ -50,6 +50,7 @@ pub enum RuntimeProfile {
     M11,
     M12,
     M13,
+    D3DMetal,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -415,6 +416,7 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::M11 => "m11",
         crate::mtsp::engine::PipelineId::M12 => "m12",
         crate::mtsp::engine::PipelineId::M13 => "m13",
+        crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
         crate::mtsp::engine::PipelineId::M32 => "m32",
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
         crate::mtsp::engine::PipelineId::Steam => "steam",
@@ -796,6 +798,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
             crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
+            crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -1856,7 +1859,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         recipe_name: recipe.map(|r| r.name),
         recipe_missing_dlls: missing_check_dlls,
         recipe_env,
-        d3d12_sdk: if pipeline == crate::mtsp::engine::PipelineId::M12 {
+        d3d12_sdk: if matches!(pipeline, crate::mtsp::engine::PipelineId::M12 | crate::mtsp::engine::PipelineId::D3DMetal) {
             Some(crate::d3d12_runtime_doctor::latest_cached_report(appid).unwrap_or_else(|| {
                 json!({
                     "sdkAvailability": crate::d3d12_runtime_doctor::sdk_availability(),
@@ -2028,6 +2031,13 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
             crate::mtsp::engine::PipelineId::M13,
         ),
+        RuntimeProfile::D3DMetal => (
+            "D3DMetal (Apple Framework)",
+            BottleArch::Win64,
+            true,
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs"][..],
+            crate::mtsp::engine::PipelineId::D3DMetal,
+        ),
         RuntimeProfile::Dotnet => (
             ".NET",
             BottleArch::Win64,
@@ -2123,6 +2133,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
+        crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
@@ -2137,7 +2148,8 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
-        "m13" | "gptk" | "d3dmetal" => Some(RuntimeProfile::M13),
+        "m13" | "gptk" => Some(RuntimeProfile::M13),
+        "d3dmetal" => Some(RuntimeProfile::D3DMetal),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),

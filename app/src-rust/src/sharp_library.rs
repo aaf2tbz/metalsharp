@@ -1051,7 +1051,7 @@ pub fn set_launch_args(id: &str, args: Vec<String>) -> Result<(), Box<dyn std::e
 }
 
 pub fn set_engine(id: &str, engine: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let valid = ["auto", "wine_bare", "m64", "m9", "m10", "m11", "m12", "m32", "d3d9", "d3d10", "d3d11", "d3d12"];
+    let valid = ["auto", "wine_bare", "m64", "m9", "m10", "m11", "m12", "m13", "d3dmetal", "m32", "d3d9", "d3d10", "d3d11", "d3d12"];
     if engine != "auto" && crate::mtsp::engine::PipelineId::from_str_flexible(engine).is_none() {
         return Err(format!("Unknown engine: {}. Valid: {}", engine, valid.join(", ")).into());
     }
@@ -1147,6 +1147,7 @@ fn pipeline_engine_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static str
         crate::mtsp::engine::PipelineId::M11 => "m11",
         crate::mtsp::engine::PipelineId::M12 => "m12",
         crate::mtsp::engine::PipelineId::M13 => "m13",
+        crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
         crate::mtsp::engine::PipelineId::M32 => "m32",
         crate::mtsp::engine::PipelineId::WineBare => "wine_bare",
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",

@@ -56,7 +56,7 @@ pub fn handle_steam_d3d12_runtime_doctor(body: &serde_json::Map<String, Value>) 
     let bottle = crate::bottles::ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline).ok();
 
     let latest = latest_cached_report(appid);
-    if pipeline != crate::mtsp::engine::PipelineId::M12 {
+    if !matches!(pipeline, crate::mtsp::engine::PipelineId::M12 | crate::mtsp::engine::PipelineId::D3DMetal) {
         return json!({
             "ok": true,
             "report": {

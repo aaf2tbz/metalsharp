@@ -89,6 +89,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
             | PipelineId::M11
             | PipelineId::M12
             | PipelineId::M13
+            | PipelineId::D3DMetal
             | PipelineId::M32
             | PipelineId::FnaArm64
             | PipelineId::WineBare
@@ -106,6 +107,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+            | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::FnaArm64
         | PipelineId::WineBare => {
@@ -227,6 +229,7 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+            | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
@@ -399,6 +402,7 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
             | PipelineId::M11
             | PipelineId::M12
             | PipelineId::M13
+            | PipelineId::D3DMetal
             | PipelineId::M32
             | PipelineId::FnaArm64
             | PipelineId::WineBare
@@ -647,6 +651,7 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
             | (PipelineId::M11, super::pe::D3dApi::D3D11)
             | (PipelineId::M12, super::pe::D3dApi::D3D12)
             | (PipelineId::M13, super::pe::D3dApi::D3D12)
+            | (PipelineId::D3DMetal, super::pe::D3dApi::D3D12)
             | (PipelineId::M32, _)
     )
 }

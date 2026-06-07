@@ -70,7 +70,7 @@ pub fn generate_compatdb_rules() -> CompatDbRules {
 
     let mut game_rules = Vec::new();
 
-    for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12, PipelineId::M13] {
+    for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12, PipelineId::M13, PipelineId::D3DMetal] {
         let node = get_pipeline(pipeline_id);
         let appids_for_pipeline = appids_with_pipeline(pipeline_id);
 

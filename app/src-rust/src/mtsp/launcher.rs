@@ -209,6 +209,7 @@ pub fn launch_with_pipeline(
             launch_dxmt_metal(appid, node)
         },
         PipelineId::M13 => launch_dxmt_metal(appid, node),
+        PipelineId::D3DMetal => launch_d3dmetal(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
@@ -228,7 +229,7 @@ pub fn launch_steam_bottle_with_pipeline(
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
+        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 | PipelineId::D3DMetal => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
@@ -284,6 +285,7 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+        | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 => {
@@ -304,7 +306,7 @@ pub fn prepare_steam_pipeline_env(
     }
     if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
-        if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
+        if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13 | PipelineId::D3DMetal) {
             crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
         }
     }
@@ -478,6 +480,7 @@ pub fn launch_custom_with_options(
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+        | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
@@ -714,12 +717,87 @@ fn deploy_d3d12_agility_sidecars(
     node: &PipelineNode,
     game_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !matches!(node.id, PipelineId::M12 | PipelineId::M13) {
+    if !matches!(node.id, PipelineId::M12 | PipelineId::M13 | PipelineId::D3DMetal) {
         return Ok(());
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)
+}
+
+fn launch_d3dmetal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let external_dir = ms_root.join("lib").join("external");
+    let d3dmetal_framework = external_dir.join("D3DMetal.framework").join("Versions").join("A");
+    if !d3dmetal_framework.join("D3DMetal").exists() {
+        return Err("D3DMetal.framework not found in runtime — cannot use D3DMetal pipeline".into());
+    }
+
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
+    let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
+    let exe_dir = launch_working_dir(game_dir, exe_path);
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    validate_recipe_runtime(&recipe)?;
+    cleanup_legacy_injections(game_dir)?;
+    deploy_recipe_dlls(&recipe)?;
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
+    deploy_d3d12_agility_sidecars(appid, node, game_dir)?;
+
+    if !recipe.anti_cheat.is_empty() {
+        deploy_steam_appid(game_dir, appid);
+    }
+
+    let log_path = mtsp_launch_log_path(appid);
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", wine_debug_value())
+        .env("WINEDEBUGGER", "none");
+    apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
+
+    if node.uses_winedllpath_routing() {
+        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
+        cmd.env("WINEDLLPATH", &winedllpath);
+    }
+
+    if let Some(overrides) = node.wine_overrides {
+        cmd.env("WINEDLLOVERRIDES", overrides);
+    }
+
+    cmd.env("MS_GRAPHICS_BACKEND", "d3dmetal");
+
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+    apply_app_launch_env(&mut cmd, appid, node.id);
+
+    cmd.arg(&exe_name);
+    cmd.args(&recipe.launch_args);
+    attach_launch_log(
+        &mut cmd,
+        Some(&log_path),
+        LaunchLogContext {
+            appid,
+            node,
+            prefix: &prefix,
+            cwd: exe_dir,
+            exe_name: &exe_name,
+            args: &recipe.launch_args,
+            cache_paths: None,
+        },
+    )?;
+    let child = cmd.spawn()?;
+    Ok((child.id(), "d3dmetal"))
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
