@@ -1,0 +1,3 @@
+EXPORTS
+    __wine_unix_call_dispatcher DATA
+    __wine_unixlib_handle DATA

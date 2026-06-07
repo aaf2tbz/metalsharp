@@ -294,6 +294,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/d3dmetal/x86_64-windows", filename: "dxgi.dll" },
                     DllDeploy { source_subpath: "lib/d3dmetal/x86_64-windows", filename: "d3d11.dll" },
                     DllDeploy { source_subpath: "lib/d3dmetal/x86_64-windows", filename: "d3d10.dll" },
+                    DllDeploy { source_subpath: "lib/d3dmetal/x86_64-windows", filename: "d3dmetal_bridge.dll" },
                     DllDeploy { source_subpath: "lib/d3dmetal/x86_64-unix", filename: "d3dmetal_bridge.so" },
                     DllDeploy {
                         source_subpath: "lib/metalsharp/x86_64-windows",
