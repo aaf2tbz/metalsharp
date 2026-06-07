@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "build_commit": "",
+  "build_timestamp": "2026-06-07T00:00:00.000000+00:00",
+  "_note": "D3DMetal bridge runtime manifest. PE stubs + Unix bridge for Apple D3DMetal.framework integration.",
+  "artifacts": {
+    "d3d12.dll": {
+      "_note": "PE stub: forwards D3D12 calls to d3dmetal_bridge.dll"
+    },
+    "dxgi.dll": {
+      "_note": "PE stub: forwards DXGI calls to d3dmetal_bridge.dll"
+    },
+    "d3d11.dll": {
+      "_note": "PE stub: forwards D3D11 calls to d3dmetal_bridge.dll"
+    },
+    "d3dmetal_bridge.dll": {
+      "_note": "PE builtin: unixlib pair with d3dmetal_bridge.so, uses __wine_unix_call_dispatcher"
+    },
+    "d3dmetal_bridge.so": {
+      "_note": "Unix bridge: dlopen's D3DMetal.framework, exports __wine_unix_call_funcs dispatch table"
+    }
+  },
+  "requires_framework": {
+    "name": "D3DMetal.framework",
+    "expected_path": "lib/external/D3DMetal.framework/Versions/A/D3DMetal",
+    "_note": "Apple's D3DMetal.framework, bundled from GPTK installation"
+  }
+}

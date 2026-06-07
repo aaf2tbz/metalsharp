@@ -408,7 +408,15 @@ impl PipelineId {
     }
 
     pub fn is_user_selectable(self) -> bool {
-        matches!(self, PipelineId::M12 | PipelineId::M11 | PipelineId::M10 | PipelineId::M9 | PipelineId::FnaArm64)
+        matches!(
+            self,
+            PipelineId::M12
+                | PipelineId::M11
+                | PipelineId::M10
+                | PipelineId::M9
+                | PipelineId::D3DMetal
+                | PipelineId::FnaArm64
+        )
     }
 
     pub fn user_selectable_id(self) -> Option<&'static str> {
@@ -417,6 +425,7 @@ impl PipelineId {
             PipelineId::M11 => Some("m11"),
             PipelineId::M10 => Some("m10"),
             PipelineId::M9 => Some("m9"),
+            PipelineId::D3DMetal => Some("d3dmetal"),
             PipelineId::FnaArm64 => Some("fna_arm64"),
             _ => None,
         }
@@ -428,6 +437,7 @@ impl PipelineId {
             PipelineId::M11 => Some("M11"),
             PipelineId::M10 => Some("M10"),
             PipelineId::M9 => Some("M9"),
+            PipelineId::D3DMetal => Some("D3DMetal"),
             PipelineId::FnaArm64 => Some("Mono/FNA"),
             _ => None,
         }
