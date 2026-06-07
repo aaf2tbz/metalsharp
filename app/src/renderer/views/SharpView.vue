@@ -134,12 +134,13 @@ const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
 const engineOptions = [
   { id: "m12", name: "M12" },
+  { id: "d3dmetal", name: "D3DMetal" },
   { id: "m11", name: "M11" },
   { id: "m10", name: "M10" },
   { id: "m9", name: "M9" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
-const selectableRuntimeProfileIds = new Set(["m12", "m11", "m10", "m9", "fna_arm64"]);
+const selectableRuntimeProfileIds = new Set(["m12", "d3dmetal", "m11", "m10", "m9", "fna_arm64"]);
 const visibleRuntimeProfiles = computed(() =>
   runtimeProfiles.value
     .filter((profile) => selectableRuntimeProfileIds.has(profile.id))

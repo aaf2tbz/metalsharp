@@ -104,6 +104,26 @@ pub fn runtime_wine_binary(ms_root: &std::path::Path) -> PathBuf {
     ms_root.join("bin").join("wine")
 }
 
+pub fn gptk_wine_root() -> PathBuf {
+    PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine")
+}
+
+pub fn gptk_wine64_binary() -> PathBuf {
+    gptk_wine_root().join("bin").join("wine64")
+}
+
+pub fn gptk_wineserver_binary() -> PathBuf {
+    gptk_wine_root().join("bin").join("wineserver")
+}
+
+pub fn gptk_is_installed() -> bool {
+    gptk_wine64_binary().is_file() && gptk_wineserver_binary().is_file()
+}
+
+pub fn rosetta_is_installed() -> bool {
+    std::path::Path::new("/Library/Apple/usr/lib/libRosettaAOT.dylib").exists()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

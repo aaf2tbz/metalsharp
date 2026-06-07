@@ -1152,6 +1152,7 @@ fn pipeline_engine_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static str
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
         crate::mtsp::engine::PipelineId::Steam => "steam",
         crate::mtsp::engine::PipelineId::MacSteam => "macos_steam",
+        crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
     }
 }
 

@@ -89,6 +89,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
             | PipelineId::M11
             | PipelineId::M12
             | PipelineId::M13
+            | PipelineId::D3DMetal
             | PipelineId::M32
             | PipelineId::FnaArm64
             | PipelineId::WineBare
@@ -106,6 +107,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M11
         | PipelineId::M12
         | PipelineId::M13
+        | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::FnaArm64
         | PipelineId::WineBare => {
@@ -321,12 +323,13 @@ pub fn selected_deploy_dlls_for_pipeline(
         .filter(|dll| node.id != PipelineId::M9 || dll.source_subpath == d3d9_subpath)
         .flat_map(|dll| {
             let source_path = ms_root.join(dll.source_subpath).join(dll.filename);
+            let dest_name = dll.dest_filename.unwrap_or(dll.filename);
             target_dirs.iter().map(move |target_dir| RecipeDll {
                 source_subpath: dll.source_subpath.to_string(),
                 filename: dll.filename.to_string(),
                 source_present: source_path.exists(),
                 source_path: source_path.clone(),
-                dest_path: target_dir.join(dll.filename),
+                dest_path: target_dir.join(dest_name),
             })
         })
         .collect()
@@ -678,6 +681,8 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
         1196590 => &["re8.exe"],
         2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
+        305620 => &["tld.exe"],
+        1245620 => &["start_protected_game.exe", "eldenring.exe"],
         _ => &[],
     }
 }
@@ -710,6 +715,7 @@ fn is_valid_game_exe(name: &str) -> bool {
         && !lower.contains("steamwebhelper")
         && !lower.contains("start_protected")
         && !lower.contains("easyanticheat")
+        && !lower.contains("d3dconfig")
 }
 
 fn score_exe_candidate(path: &Path, name: &str, dir_name: &str) -> i32 {
@@ -796,6 +802,13 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
     if node.backend == "dxmt" {
         let conf = ms_root.join("etc").join("dxmt.conf");
         assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
+    }
+
+    if node.backend == "d3dmetal" {
+        let gptk_wine64 = crate::platform::gptk_wine64_binary();
+        assets.push(RuntimeAsset { name: "GPTK wine64".into(), present: gptk_wine64.exists(), path: gptk_wine64, required: true });
+        let gptk_ws = crate::platform::gptk_wineserver_binary();
+        assets.push(RuntimeAsset { name: "GPTK wineserver".into(), present: gptk_ws.exists(), path: gptk_ws, required: true });
     }
 
     if node.backend == "gptk" {

@@ -50,6 +50,8 @@ pub enum RuntimeProfile {
     M11,
     M12,
     M13,
+    #[serde(rename = "d3dmetal")]
+    D3DMetal,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -415,6 +417,7 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::M11 => "m11",
         crate::mtsp::engine::PipelineId::M12 => "m12",
         crate::mtsp::engine::PipelineId::M13 => "m13",
+        crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
         crate::mtsp::engine::PipelineId::M32 => "m32",
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
         crate::mtsp::engine::PipelineId::Steam => "steam",
@@ -438,19 +441,15 @@ fn effective_pipeline_for_bottle_refresh(
 fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
     matches!(
         appid,
-        17410 | 49520 | 1928870 | 774361 | 1623730 | 1868140 | 3527290 | 504230 | 1169040 | 1245620 | 1562430 | 275850
+        17410 | 49520 | 1928870 | 774361 | 1623730 | 1868140 | 504230 | 1169040 | 1562430 | 275850
     )
 }
 
 pub fn preferred_pipeline_for_steam_app(appid: u32) -> Option<crate::mtsp::engine::PipelineId> {
-    let preferred = load_bottle(&steam_game_bottle_id(appid)).ok().as_ref().and_then(manifest_preferred_pipeline);
-    if appid_rule_overrides_auto_preference(appid)
-        && preferred.is_some_and(|pipeline| pipeline != crate::mtsp::rules::resolve_pipeline(appid))
-    {
-        None
-    } else {
-        preferred
-    }
+    load_bottle(&steam_game_bottle_id(appid))
+        .ok()
+        .as_ref()
+        .and_then(manifest_preferred_pipeline)
 }
 
 pub fn resolve_steam_pipeline_for_request(
@@ -700,7 +699,7 @@ pub fn prepare_steam_game_launch(
     appid: u32,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    if pipeline == crate::mtsp::engine::PipelineId::M12 {
+    if matches!(pipeline, crate::mtsp::engine::PipelineId::M12) {
         let _ = crate::setup::prepare_game(appid)?;
     }
     let dual = crate::scan::resolve_dual_game_dir(appid);
@@ -810,6 +809,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
             crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
+            crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -1363,6 +1363,77 @@ pub fn repair_component(
             id: component_id.to_string(),
             status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
             detail: format!("Repaired {} FNA native macOS shim(s) in MetalSharp runtime", repaired),
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
+    if matches!(component_id, "gptk" | "rosetta") {
+        if dry_run {
+            let available = if component_id == "gptk" {
+                crate::platform::gptk_is_installed()
+            } else {
+                crate::platform::rosetta_is_installed()
+            };
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if available { "already_installed" } else { "install_available" }.to_string(),
+                detail: if available {
+                    format!("{} is present on this system", component_id)
+                } else if component_id == "gptk" {
+                    "Game Porting Toolkit can be installed via: brew install game-porting-toolkit".to_string()
+                } else {
+                    "Rosetta 2 can be installed via: softwareupdate --install-rosetta --agree-to-license".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        let installed = if component_id == "gptk" {
+            if crate::platform::gptk_is_installed() {
+                true
+            } else {
+                let status = std::process::Command::new("brew")
+                    .args(["install", "game-porting-toolkit"])
+                    .status()?;
+                status.success() && crate::platform::gptk_is_installed()
+            }
+        } else {
+            if crate::platform::rosetta_is_installed() {
+                true
+            } else {
+                let status = std::process::Command::new("softwareupdate")
+                    .args(["--install-rosetta", "--agree-to-license"])
+                    .status()?;
+                status.success() && crate::platform::rosetta_is_installed()
+            }
+        };
+
+        mark_component_state(
+            &mut manifest,
+            component_id,
+            if installed { ComponentState::Installed } else { ComponentState::Missing },
+        );
+        manifest.health = if installed && components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if installed { "installed" } else { "install_failed" }.to_string(),
+            detail: if installed {
+                format!("{} is now available", component_id)
+            } else if component_id == "gptk" {
+                "Failed to install Game Porting Toolkit via Homebrew".to_string()
+            } else {
+                "Failed to install Rosetta 2".to_string()
+            },
             asset_path: None,
             log_path: None,
             pid: None,
@@ -2007,6 +2078,13 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
             crate::mtsp::engine::PipelineId::M13,
         ),
+        RuntimeProfile::D3DMetal => (
+            "D3DMetal (GPTK)",
+            BottleArch::Win64,
+            false,
+            &["gptk", "rosetta", "vcrun2019"][..],
+            crate::mtsp::engine::PipelineId::D3DMetal,
+        ),
         RuntimeProfile::Dotnet => (
             ".NET",
             BottleArch::Win64,
@@ -2102,6 +2180,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
+        crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
@@ -2116,7 +2195,8 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
-        "m13" | "gptk" | "d3dmetal" => Some(RuntimeProfile::M13),
+        "m13" | "gptk" => Some(RuntimeProfile::M13),
+        "d3dmetal" | "d3dmetal_native" => Some(RuntimeProfile::D3DMetal),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
@@ -2586,6 +2666,20 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         "gptk_amd_stub" => {
             if system32.join("atidxx64.dll").exists() {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "gptk" => {
+            if crate::platform::gptk_is_installed() {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "rosetta" => {
+            if crate::platform::rosetta_is_installed() {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -3612,6 +3706,8 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
             "gptk_amd_stub" => "GPTK AMD vendor stub from lib/gptk/x86_64-windows",
+            "gptk" => "Apple Game Porting Toolkit — provides Wine 7.7 with D3DMetal.framework (brew install game-porting-toolkit)",
+            "rosetta" => "Apple Rosetta 2 x86_64 emulation layer — required for GPTK Wine (softwareupdate --install-rosetta)",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
@@ -3654,6 +3750,8 @@ fn component_action_detail(id: &str) -> String {
         "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
         "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
         "gptk_amd_stub" => "Deploy GPTK AMD vendor stub for D3DMetal compatibility".to_string(),
+        "gptk" => "Install Apple Game Porting Toolkit via Homebrew".to_string(),
+        "rosetta" => "Install Apple Rosetta 2 for x86_64 emulation".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),

@@ -957,6 +957,7 @@ fn agility_user_package_dir(home: &Path, package_version: &str) -> PathBuf {
 
 fn agility_package_version(sdk_version: u32) -> Option<&'static str> {
     match sdk_version {
+        611 => Some("1.611.0"),
         614 => Some("1.614.1"),
         615 => Some("1.615.1"),
         619 => Some("1.619.3"),

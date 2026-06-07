@@ -73,6 +73,7 @@ function isWineSteamRouteId(launchMethod: string) {
     "d3d10",
     "d3d11",
     "d3d12",
+    "d3dmetal",
     "d3d9_metal",
     "dxmt_metal",
     "dxmt_metal12",
