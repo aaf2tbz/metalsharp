@@ -62,10 +62,12 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID ctx) {
 }
 
 static HRESULT WINAPI _CreateDXGIFactory2(unsigned flags, const void* riid, void** factory) {
-    if (!g_unix_call && !init()) return E_FAIL;
+    if (!g_unix_call && !init())
+        return E_FAIL;
     void* fn = dispatch_fn(0x8);
-    if (!fn) return E_FAIL;
-    typedef HRESULT(WINAPI* fn_t)(unsigned, const void*, void**);
+    if (!fn)
+        return E_FAIL;
+    typedef HRESULT(WINAPI * fn_t)(unsigned, const void*, void**);
     return ((fn_t)fn)(flags, riid, factory);
 }
 

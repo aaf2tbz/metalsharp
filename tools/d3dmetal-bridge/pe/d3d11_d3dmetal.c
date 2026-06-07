@@ -61,29 +61,36 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID ctx) {
     return TRUE;
 }
 
-__declspec(dllexport) HRESULT WINAPI D3D11CreateDevice(
-    void* adapter, unsigned driver_type, void* software, unsigned flags,
-    const void* feature_levels, unsigned feature_levels_count,
-    unsigned sdk_version, void** device, void* feature_level, void** immediate_context)
-{
-    if (!g_unix_call && !init()) return E_FAIL;
+__declspec(dllexport) HRESULT WINAPI D3D11CreateDevice(void* adapter, unsigned driver_type, void* software,
+                                                       unsigned flags, const void* feature_levels,
+                                                       unsigned feature_levels_count, unsigned sdk_version,
+                                                       void** device, void* feature_level, void** immediate_context) {
+    if (!g_unix_call && !init())
+        return E_FAIL;
     void* fn = dispatch_fn(0x38);
-    if (!fn) return E_FAIL;
-    typedef HRESULT(WINAPI* fn_t)(void*, unsigned, void*, unsigned, const void*, unsigned, unsigned, void**, void*, void**);
-    return ((fn_t)fn)(adapter, driver_type, software, flags, feature_levels, feature_levels_count, sdk_version, device, feature_level, immediate_context);
+    if (!fn)
+        return E_FAIL;
+    typedef HRESULT(WINAPI * fn_t)(void*, unsigned, void*, unsigned, const void*, unsigned, unsigned, void**, void*,
+                                   void**);
+    return ((fn_t)fn)(adapter, driver_type, software, flags, feature_levels, feature_levels_count, sdk_version, device,
+                      feature_level, immediate_context);
 }
 
-__declspec(dllexport) HRESULT WINAPI D3D11CreateDeviceAndSwapChain(
-    void* adapter, unsigned driver_type, void* software, unsigned flags,
-    const void* feature_levels, unsigned feature_levels_count,
-    unsigned sdk_version, const void* swap_chain_desc, void** swap_chain,
-    void** device, void* feature_level, void** immediate_context)
-{
-    if (!g_unix_call && !init()) return E_FAIL;
+__declspec(dllexport) HRESULT WINAPI D3D11CreateDeviceAndSwapChain(void* adapter, unsigned driver_type, void* software,
+                                                                   unsigned flags, const void* feature_levels,
+                                                                   unsigned feature_levels_count, unsigned sdk_version,
+                                                                   const void* swap_chain_desc, void** swap_chain,
+                                                                   void** device, void* feature_level,
+                                                                   void** immediate_context) {
+    if (!g_unix_call && !init())
+        return E_FAIL;
     void* fn = dispatch_fn(0x40);
-    if (!fn) return E_FAIL;
-    typedef HRESULT(WINAPI* fn_t)(void*, unsigned, void*, unsigned, const void*, unsigned, unsigned, const void*, void**, void**, void*, void**);
-    return ((fn_t)fn)(adapter, driver_type, software, flags, feature_levels, feature_levels_count, sdk_version, swap_chain_desc, swap_chain, device, feature_level, immediate_context);
+    if (!fn)
+        return E_FAIL;
+    typedef HRESULT(WINAPI * fn_t)(void*, unsigned, void*, unsigned, const void*, unsigned, unsigned, const void*,
+                                   void**, void**, void*, void**);
+    return ((fn_t)fn)(adapter, driver_type, software, flags, feature_levels, feature_levels_count, sdk_version,
+                      swap_chain_desc, swap_chain, device, feature_level, immediate_context);
 }
 
 __declspec(dllexport) HRESULT WINAPI D3D11On12CreateDevice(void) {
