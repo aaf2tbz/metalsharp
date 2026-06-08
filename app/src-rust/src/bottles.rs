@@ -707,11 +707,25 @@ pub fn prepare_steam_game_launch(
     save_bottle(&manifest)?;
     if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
         if let Some(ref home) = dirs::home_dir() {
-            if crate::platform::gptk_prefix_ready(home) && !crate::platform::gptk_vcrun_installed(home) {
-                eprintln!("bottle: D3DMetal profile saved, installing VC++ redist into GPTK prefix ...");
-                let result = crate::platform::install_gptk_prefix_components(home);
-                if let Err(e) = &result {
-                    eprintln!("bottle: VC++ redist install failed: {}", e);
+            if crate::platform::gptk_prefix_ready(home) {
+                if let Some(ref game_path) = manifest.game_install_path {
+                    let game_dir = std::path::PathBuf::from(game_path);
+                    if let Ok(Some(external_path)) = crate::platform::migrate_game_to_external(home, &game_dir, appid) {
+                        manifest.game_install_path = Some(external_path.to_string_lossy().to_string());
+                        manifest.runtime_assets = detect_game_runtime_assets(&external_path);
+                        manifest.installed_app_detections = detect_apps_in_game_dir(&external_path);
+                        eprintln!("bottle: D3DMetal game migrated to external SSD, updated manifest");
+                    }
+                }
+                if let Err(e) = crate::platform::ensure_gptk_dosdevices(home) {
+                    eprintln!("bottle: D3DMetal dosdevices link failed: {}", e);
+                }
+                if !crate::platform::gptk_vcrun_installed(home) {
+                    eprintln!("bottle: D3DMetal profile saved, installing VC++ redist into GPTK prefix ...");
+                    let result = crate::platform::install_gptk_prefix_components(home);
+                    if let Err(e) = &result {
+                        eprintln!("bottle: VC++ redist install failed: {}", e);
+                    }
                 }
             }
         }

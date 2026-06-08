@@ -137,6 +137,238 @@ pub fn gptk_prefix_seeding(home: &Path) -> bool {
     gptk_prefix_path(home).join(".gptk-seeding").exists()
 }
 
+pub fn ensure_gptk_dosdevices(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let gptk_prefix = gptk_prefix_path(home);
+    let dosdevices = gptk_prefix.join("dosdevices");
+    if !dosdevices.is_dir() {
+        std::fs::create_dir_all(&dosdevices)?;
+    }
+
+    let c_link = dosdevices.join("c:");
+    if c_link.exists() {
+        if let Ok(target) = std::fs::read_link(&c_link) {
+            if target != *Path::new("../drive_c") {
+                let _ = std::fs::remove_file(&c_link);
+                let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
+            }
+        }
+    } else {
+        let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
+    }
+
+    ensure_dosdevice(&dosdevices, "y:", home);
+    ensure_dosdevice(&dosdevices, "z:", Path::new("/"));
+
+    let steam_prefix = metalsharp_home_dir_for(home).join("prefix-steam");
+    let wine_steamapps = steam_prefix
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam")
+        .join("steamapps");
+
+    if let Ok(lf_data) = std::fs::read_to_string(wine_steamapps.join("libraryfolders.vdf")) {
+        for library_path in parse_library_paths_from_vdf(&lf_data) {
+            if library_path.is_absolute() && library_path.is_dir() {
+                ensure_dosdevice_for_path(&dosdevices, &library_path);
+            }
+        }
+    }
+
+    if let Ok(mac_lf_paths) = std::fs::read_dir("/Volumes") {
+        for entry in mac_lf_paths {
+            let Ok(entry) = entry else { continue };
+            let vol_path = entry.path();
+            if vol_path.is_dir() {
+                ensure_dosdevice_for_path(&dosdevices, &vol_path);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn ensure_dosdevice(dosdevices: &Path, letter: &str, target: &Path) {
+    let link = dosdevices.join(letter);
+    if link.exists() {
+        if let Ok(current) = std::fs::read_link(&link) {
+            if current == target {
+                return;
+            }
+        }
+        let _ = std::fs::remove_file(&link);
+    }
+    if let Err(e) = std::os::unix::fs::symlink(target, &link) {
+        eprintln!("gptk dosdevices: failed to link {} -> {}: {}", letter, target.display(), e);
+    } else {
+        eprintln!("gptk dosdevices: {} -> {}", letter, target.display());
+    }
+}
+
+fn ensure_dosdevice_for_path(dosdevices: &Path, target: &Path) {
+    if target.starts_with("/Volumes") {
+        for entry in std::fs::read_dir(dosdevices).unwrap_or_else(|_| {
+            std::fs::create_dir_all(dosdevices).unwrap_or(());
+            std::fs::read_dir(dosdevices).unwrap_or_else(|_| panic!("cannot read dosdevices"))
+        }) {
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.len() == 2 && name_str.ends_with(':') {
+                if let Ok(current) = std::fs::read_link(entry.path()) {
+                    if current == target {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    let existing: std::collections::HashSet<String> = match std::fs::read_dir(dosdevices) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.len() == 2 && name.ends_with(':') { Some(name) } else { None }
+            })
+            .collect(),
+        Err(_) => std::collections::HashSet::new(),
+    };
+
+    for ch in b'd'..=b'z' {
+        let letter = format!("{}:", ch as char);
+        if existing.contains(&letter) {
+            continue;
+        }
+        let link = dosdevices.join(&letter);
+        match std::os::unix::fs::symlink(target, &link) {
+            Ok(()) => {
+                eprintln!("gptk dosdevices: {} -> {} (steam library)", letter, target.display());
+                return;
+            }
+            Err(e) => {
+                eprintln!("gptk dosdevices: failed {} -> {}: {}", letter, target.display(), e);
+                return;
+            }
+        }
+    }
+}
+
+fn parse_library_paths_from_vdf(data: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for line in data.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("\"path\"") {
+            if let Some(value) = rest.split('"').nth(1) {
+                let p = PathBuf::from(value);
+                if !paths.contains(&p) {
+                    paths.push(p);
+                }
+            }
+        }
+    }
+    paths
+}
+
+fn is_game_storage_volume(name: &str) -> bool {
+    if name == "Macintosh HD" { return false; }
+    if name.starts_with("MetalSharp") { return false; }
+    if name.starts_with("Game Porting Toolkit") { return false; }
+    if name.contains("Evaluation environment") { return false; }
+    true
+}
+
+pub fn find_external_game_storage() -> Option<PathBuf> {
+    let entries = std::fs::read_dir("/Volumes").ok()?;
+    for entry in entries {
+        let entry = entry.ok()?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !is_game_storage_volume(&name_str) { continue; }
+        let vol_path = entry.path();
+        if !vol_path.is_dir() { continue; }
+        let games_dir = vol_path.join("MetalSharp").join("games");
+        if std::fs::create_dir_all(&games_dir).is_ok() {
+            return Some(games_dir);
+        }
+    }
+    None
+}
+
+pub fn is_path_on_external_volume(path: &Path) -> bool {
+    let canonical = match std::fs::canonicalize(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let canon_str = canonical.to_string_lossy();
+    if !canon_str.starts_with("/Volumes/") { return false; }
+    let rest = canon_str.strip_prefix("/Volumes/").unwrap_or("");
+    let vol_name = rest.split('/').next().unwrap_or("");
+    is_game_storage_volume(vol_name)
+}
+
+pub fn migrate_game_to_external(
+    home: &Path,
+    game_dir: &Path,
+    appid: u32,
+) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if !game_dir.is_dir() {
+        return Ok(None);
+    }
+
+    if is_path_on_external_volume(game_dir) {
+        eprintln!("gptk migrate: game already on external volume ({})", game_dir.display());
+        return Ok(None);
+    }
+
+    let storage = match find_external_game_storage() {
+        Some(s) => s,
+        None => {
+            eprintln!("gptk migrate: no writable external SSD found, using internal path");
+            return Ok(None);
+        }
+    };
+
+    let game_name = match game_dir.file_name() {
+        Some(n) => n.to_string_lossy().to_string(),
+        None => return Ok(None),
+    };
+
+    let external_game_dir = storage.join(format!("{}", appid)).join(&game_name);
+
+    if external_game_dir.is_dir()
+        && std::fs::read_dir(&external_game_dir).map(|r| r.count()).unwrap_or(0) > 0
+    {
+        eprintln!(
+            "gptk migrate: external copy already exists at {}",
+            external_game_dir.display()
+        );
+        return Ok(Some(external_game_dir));
+    }
+
+    eprintln!(
+        "gptk migrate: copying game '{}' (appid {}) from internal to external SSD ...",
+        game_name, appid
+    );
+
+    let external_base = storage.join(format!("{}", appid));
+    std::fs::create_dir_all(&external_base)?;
+    copy_dir_recursive(game_dir, &external_game_dir).map_err(|e| {
+        format!("gptk migrate: copy failed: {}", e)
+    })?;
+
+    if let Err(e) = verify_dir_copy(game_dir, &external_game_dir) {
+        eprintln!("gptk migrate: verification failed, cleaning up: {}", e);
+        let _ = std::fs::remove_dir_all(&external_base);
+        return Err(e.into());
+    }
+
+    eprintln!("gptk migrate: game copied to external SSD at {}", external_game_dir.display());
+
+    ensure_gptk_dosdevices(home)?;
+
+    Ok(Some(external_game_dir))
+}
+
 pub fn ensure_gptk_prefix(home: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let gptk_prefix = gptk_prefix_path(home);
 
@@ -212,24 +444,33 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     let steam_dst = drive_c.join("Program Files (x86)").join("Steam");
     std::fs::create_dir_all(steam_dst.parent().unwrap())?;
     copy_dir_recursive(&steam_src, &steam_dst)?;
-    eprintln!("gptk: Steam copy done");
+    verify_dir_copy(&steam_src, &steam_dst).map_err(|e| format!("gptk: Steam copy {}", e))?;
+    eprintln!("gptk: Steam copy done (verified)");
 
     eprintln!("gptk: copying users ...");
     let users_src = steam_prefix.join("drive_c").join("users");
     let users_dst = drive_c.join("users");
     if users_src.is_dir() {
-        let _ = std::fs::remove_dir_all(&users_dst);
+        if users_dst.is_dir() {
+            let _ = std::fs::remove_dir_all(&users_dst);
+        }
         copy_dir_recursive(&users_src, &users_dst)?;
+        verify_dir_copy(&users_src, &users_dst).map_err(|e| format!("gptk: users copy {}", e))?;
+        eprintln!("gptk: users copy done (verified)");
+    } else {
+        eprintln!("gptk: no users dir to copy");
     }
 
-    for dev in &["y:", "z:"] {
-        let src_link = steam_prefix.join("dosdevices").join(dev);
-        let dst_link = gptk_prefix.join("dosdevices").join(dev);
-        if src_link.exists() && !dst_link.exists() {
-            if let Ok(target) = std::fs::read_link(&src_link) {
-                let _ = std::os::unix::fs::symlink(&target, &dst_link);
-            }
-        }
+    ensure_gptk_dosdevices(home)?;
+
+    let steam_exe_check = steam_dst.join("Steam.exe");
+    if !steam_exe_check.is_file() {
+        let _ = std::fs::remove_file(&seeding_marker);
+        return Err(format!(
+            "gptk: Steam.exe missing after copy — expected at {}",
+            steam_exe_check.display()
+        )
+        .into());
     }
 
     copy_registry_hive(&steam_prefix, &gptk_prefix, "system.reg");
@@ -261,20 +502,27 @@ pub fn sync_gptk_prefix(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
             let src = steam_config_src.join(file);
             let dst = steam_config_dst.join(file);
             if src.exists() {
-                let _ = std::fs::copy(&src, &dst);
+                std::fs::copy(&src, &dst).map_err(|e| {
+                    format!(
+                        "gptk sync: copy {} -> {}: {}",
+                        src.display(),
+                        dst.display(),
+                        e
+                    )
+                })?;
             }
         }
     }
 
     copy_registry_hive(&steam_prefix, &gptk_prefix, "user.reg");
 
+    ensure_gptk_dosdevices(home)?;
+
     Ok(())
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if !dst.exists() {
-        std::fs::create_dir_all(dst)?;
-    }
+    std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
@@ -282,10 +530,39 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         if src_path.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
-            let _ = std::fs::copy(&src_path, &dst_path);
+            std::fs::copy(&src_path, &dst_path).map_err(|e| {
+                std::io::Error::new(
+                    e.kind(),
+                    format!("copy {} -> {}: {}", src_path.display(), dst_path.display(), e),
+                )
+            })?;
         }
     }
     Ok(())
+}
+
+fn verify_dir_copy(src: &Path, dst: &Path) -> Result<(), String> {
+    let src_count = count_dir_entries(src).map_err(|e| format!("stat src {}: {}", src.display(), e))?;
+    let dst_count = count_dir_entries(dst).map_err(|e| format!("stat dst {}: {}", dst.display(), e))?;
+    if src_count != dst_count {
+        return Err(format!(
+            "copy verification failed: src {} has {} entries, dst {} has {} entries",
+            src.display(),
+            src_count,
+            dst.display(),
+            dst_count
+        ));
+    }
+    Ok(())
+}
+
+fn count_dir_entries(path: &Path) -> std::io::Result<u64> {
+    let mut count: u64 = 0;
+    for entry in std::fs::read_dir(path)? {
+        let _ = entry?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 pub fn gptk_vcrun_installed(home: &Path) -> bool {
@@ -377,7 +654,9 @@ fn copy_registry_hive(src_prefix: &Path, dst_prefix: &Path, hive: &str) {
     let src = src_prefix.join(hive);
     let dst = dst_prefix.join(hive);
     if src.exists() {
-        let _ = std::fs::copy(&src, &dst);
+        if let Err(e) = std::fs::copy(&src, &dst) {
+            eprintln!("gptk: failed to copy {} -> {}: {}", src.display(), dst.display(), e);
+        }
     }
 }
 
