@@ -301,13 +301,34 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
 
     ensure_steam_launch_ready(&steam_dir);
 
-    let prefix_str = prefix.to_string_lossy().to_string();
     let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
+    if !crate::installer::moltenvk_ready(&ms_root) {
+        eprintln!("steam: WARNING — MoltenVK not found in Wine runtime, Steam webhelper UI may fail to render");
+    }
+
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    let log_dir = crate::platform::metalsharp_home_dir().join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!(
+        "steam-{}.log",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+    ));
+    let log_file = match std::fs::File::create(&log_path) {
+        Ok(f) => {
+            eprintln!("steam: tracing to {}", log_path.display());
+            Some(f)
+        },
+        Err(e) => {
+            eprintln!("steam: could not create log file {}: {}", log_path.display(), e);
+            None
+        },
+    };
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUG", "+vulkan,+d3d,+d3d11,+dxgi,+wined3d,+opengl")
         .env("WINEDEBUGGER", "none")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
@@ -317,8 +338,13 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         )
         .arg(&exe)
         .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::null());
+
+    if let Some(f) = log_file {
+        cmd.stderr(std::process::Stdio::from(f));
+    } else {
+        cmd.stderr(std::process::Stdio::null());
+    }
 
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
 

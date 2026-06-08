@@ -309,13 +309,46 @@ async function repairRuntimeComponent(component: string) {
       component,
     },
   );
-  runtimeLoading.value = false;
   if (result?.ok && result.repair) {
     toast.show(`${component}: ${result.repair.status}`, result.repair.status === "asset_missing" ? "error" : "success");
-    await runRuntimeDoctor();
+    if (result.repair.status === "started" || result.repair.status === "seeding") {
+      await pollRuntimeRepairDone(runtimeReport.value.bottle_id, component);
+    } else {
+      await runRuntimeDoctor();
+      runtimeLoading.value = false;
+    }
   } else {
     toast.show(result?.error ?? "Runtime repair failed", "error");
+    runtimeLoading.value = false;
   }
+}
+
+async function pollRuntimeRepairDone(bottleId: string, component: string) {
+  const pollInterval = 5000;
+  const maxPolls = 120;
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, pollInterval));
+    const poll = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>(
+      "POST",
+      "/bottles/repair-component",
+      {
+        id: bottleId,
+        component,
+        dryRun: true,
+      },
+    );
+    if (!poll?.ok || !poll.repair) break;
+    const status = poll.repair.status;
+    if (status === "already_installed" || status === "repair_available") {
+      toast.show(`${component}: ${status === "already_installed" ? "ready" : status}`, "success");
+      await runRuntimeDoctor();
+      runtimeLoading.value = false;
+      return;
+    }
+  }
+  toast.show(`${component}: seeding is taking longer than expected — check back`, "info");
+  await runRuntimeDoctor();
+  runtimeLoading.value = false;
 }
 
 async function saveBottleEdit() {

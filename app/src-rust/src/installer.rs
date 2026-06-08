@@ -424,6 +424,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
             let wine_check = Command::new(&ms_wine).arg("--version").output();
             match wine_check {
                 Ok(o) if o.status.success() => {
+                    fix_moltenvk_icd_paths(&runtime_dir.join("wine"));
                     mark_split_bundle_installed(home, RUNTIME_BUNDLE, &archive);
                     return Ok(true);
                 },
@@ -503,6 +504,48 @@ fn file_nonempty(path: &Path) -> bool {
 
 pub(crate) fn metalsharp_runtime_lib_ready(wine_dir: &Path) -> bool {
     file_nonempty(&wine_dir.join("lib").join("metalsharp").join("x86_64-windows").join(METALSHARP_NTDLL_HOOK_DLL))
+}
+
+pub fn moltenvk_ready(wine_dir: &Path) -> bool {
+    wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib").is_file()
+}
+
+fn fix_moltenvk_icd_paths(wine_dir: &Path) {
+    let actual_lib = wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+    if !actual_lib.exists() {
+        eprintln!("moltenvk: libMoltenVK.dylib not found in runtime — skipping ICD fix");
+        return;
+    }
+
+    let icd_dir = wine_dir.join("etc").join("vulkan").join("icd.d");
+    if !icd_dir.is_dir() {
+        eprintln!("moltenvk: ICD directory not found — skipping");
+        return;
+    }
+
+    let correct_path = format!("{}", actual_lib.to_string_lossy());
+
+    for entry in std::fs::read_dir(&icd_dir).unwrap_or_else(|_| panic!("read_dir")).flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("MoltenVK") || !name.ends_with(".json") {
+            continue;
+        }
+        let Ok(data) = fs::read_to_string(&path) else { continue };
+        let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&data) else { continue };
+        if let Some(icd) = v.get_mut("ICD") {
+            if let Some(lib_path) = icd.get_mut("library_path") {
+                let current = lib_path.as_str().unwrap_or("");
+                if current != correct_path {
+                    eprintln!("moltenvk: fixing {} ICD path {} -> {}", name, current, correct_path);
+                    *lib_path = serde_json::Value::String(correct_path.clone());
+                    if let Err(e) = fs::write(&path, serde_json::to_string_pretty(&v).unwrap_or_default()) {
+                        eprintln!("moltenvk: failed to write {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn split_bundle_marker_dir(home: &Path) -> PathBuf {
@@ -1025,6 +1068,12 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
 fn install_steam_bridge(home: &PathBuf) -> Result<bool, String> {
     let bridge_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("steam-bridge");
     let shim_dst = bridge_dir.join("libsteam_api.dylib");
+
+    let wine_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine");
+    fix_moltenvk_icd_paths(&wine_dir);
+    if !moltenvk_ready(&wine_dir) {
+        eprintln!("steam-bridge: warning — MoltenVK not found in Wine runtime, CEF webhelper may not render");
+    }
 
     if shim_dst.exists() {
         return Ok(false);
