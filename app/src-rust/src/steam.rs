@@ -310,7 +310,10 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
 
     let log_dir = crate::platform::metalsharp_home_dir().join("logs");
     let _ = std::fs::create_dir_all(&log_dir);
-    let log_path = log_dir.join(format!("steam-{}.log", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()));
+    let log_path = log_dir.join(format!(
+        "steam-{}.log",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+    ));
     let log_file = match std::fs::File::create(&log_path) {
         Ok(f) => {
             eprintln!("steam: tracing to {}", log_path.display());

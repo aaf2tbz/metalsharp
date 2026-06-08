@@ -463,7 +463,7 @@ fn copy_dir_tolerant(src: &Path, dst: &Path) -> (u64, u64) {
         Err(e) => {
             eprintln!("gptk copy: cannot read {}: {}", src.display(), e);
             return (copied, skipped);
-        }
+        },
     };
     for entry in entries.flatten() {
         let src_path = entry.path();
@@ -474,24 +474,29 @@ fn copy_dir_tolerant(src: &Path, dst: &Path) -> (u64, u64) {
                 eprintln!("gptk copy: skip {}: {}", src_path.display(), e);
                 skipped += 1;
                 continue;
-            }
+            },
         };
         if meta.file_type().is_symlink() {
             match std::fs::read_link(&src_path) {
                 Ok(target) => {
                     let _ = std::fs::remove_file(&dst_path);
                     match std::os::unix::fs::symlink(&target, &dst_path) {
-                Ok(_bytes) => copied += 1,
+                        Ok(_bytes) => copied += 1,
                         Err(e) => {
-                            eprintln!("gptk copy: skip symlink {} -> {}: {}", src_path.display(), dst_path.display(), e);
+                            eprintln!(
+                                "gptk copy: skip symlink {} -> {}: {}",
+                                src_path.display(),
+                                dst_path.display(),
+                                e
+                            );
                             skipped += 1;
-                        }
+                        },
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("gptk copy: skip readlink {}: {}", src_path.display(), e);
                     skipped += 1;
-                }
+                },
             }
         } else if meta.is_dir() {
             let (c, s) = copy_dir_tolerant(&src_path, &dst_path);
@@ -503,7 +508,7 @@ fn copy_dir_tolerant(src: &Path, dst: &Path) -> (u64, u64) {
                 Err(e) => {
                     eprintln!("gptk copy: skip {} -> {}: {}", src_path.display(), dst_path.display(), e);
                     skipped += 1;
-                }
+                },
             }
         }
     }
@@ -524,10 +529,7 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     std::fs::write(&seeding_marker, "seeding")?;
     let mut guard = SeedingGuard::new(seeding_marker.clone());
 
-    let _ = std::process::Command::new(&gptk_wineserver)
-        .env("WINEPREFIX", &gptk_prefix)
-        .arg("-k")
-        .status();
+    let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &gptk_prefix).arg("-k").status();
     eprintln!("gptk: wineserver killed (pre-seed)");
 
     if gptk_prefix.join("drive_c").is_dir() {
@@ -718,10 +720,7 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
 
     for (arch, path) in [("x64", &x64), ("x86", &x86)] {
         eprintln!("gptk: installing VC++ {} redist from {:?} ...", arch, path);
-        let _ = std::process::Command::new(&gptk_wineserver)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("-p")
-            .status();
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-p").status();
         let status = std::process::Command::new(&gptk_wine64)
             .env("WINEPREFIX", &prefix_str)
             .env("WINEDEBUG", "-all")
@@ -732,14 +731,8 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
         if !status.success() {
             eprintln!("gptk: VC++ {} installer exited with {:?}", arch, status.code());
         }
-        let _ = std::process::Command::new(&gptk_wineserver)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("-w")
-            .status();
-        let _ = std::process::Command::new(&gptk_wineserver)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("-k")
-            .status();
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-w").status();
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
     }
 
     eprintln!("gptk: VC++ redist install done, installed={}", gptk_vcrun_installed(home));
@@ -777,9 +770,8 @@ fn resolve_or_download_vcrun(redist_dir: &Path, arch: &str) -> Result<PathBuf, B
     eprintln!("gptk: downloading VC++ {} redist from Microsoft ...", arch);
     let url = format!("https://aka.ms/vs/17/release/{}", filename);
     let tmp = staged.with_extension("download");
-    let config = ureq::config::Config::builder()
-        .user_agent(format!("MetalSharp/{}", env!("CARGO_PKG_VERSION")))
-        .build();
+    let config =
+        ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", env!("CARGO_PKG_VERSION"))).build();
     let agent = ureq::Agent::new_with_config(config);
     let resp = agent.get(&url).call().map_err(|e| format!("VC++ {} download failed: {}", arch, e))?;
     let mut input = resp.into_body().into_reader();
