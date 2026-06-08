@@ -133,8 +133,8 @@ const recentLogLines = ref<Record<string, string[]>>({});
 const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
 const engineOptions = [
-  { id: "m12", name: "M12" },
   { id: "d3dmetal", name: "D3DMetal" },
+  { id: "m12", name: "M12" },
   { id: "m11", name: "M11" },
   { id: "m10", name: "M10" },
   { id: "m9", name: "M9" },

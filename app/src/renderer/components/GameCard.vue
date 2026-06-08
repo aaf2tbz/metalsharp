@@ -119,7 +119,7 @@ const bottleName = ref("");
 const bottlePreferredMode = ref("auto");
 const bottleSaving = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
-const userSelectablePipelineOrder = ["m12", "d3dmetal", "m11", "m10", "m9", "fna_arm64"];
+const userSelectablePipelineOrder = ["d3dmetal", "m12", "m11", "m10", "m9", "fna_arm64"];
 const userSelectablePipelineNames: Record<string, string> = {
   m12: "M12",
   d3dmetal: "D3DMetal",

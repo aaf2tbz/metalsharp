@@ -683,6 +683,7 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
         305620 => &["tld.exe"],
         1245620 => &["start_protected_game.exe", "eldenring.exe"],
+        1962700 => &["Subnautica2.exe"],
         _ => &[],
     }
 }

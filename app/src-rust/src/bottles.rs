@@ -711,7 +711,19 @@ pub fn prepare_steam_game_launch(
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
-    let _ = save_steam_compatdata(&manifest, pipeline);
+    if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+        if let Some(ref home) = dirs::home_dir() {
+            if crate::platform::gptk_prefix_ready(home) && !crate::platform::gptk_vcrun_installed(home) {
+                eprintln!("bottle: D3DMetal profile saved, installing VC++ redist into GPTK prefix ...");
+                let _ = crate::platform::install_gptk_prefix_components(home);
+            }
+        }
+    }
+    if let Some(appid) = manifest.steam_app_id {
+        let pipeline =
+            manifest_preferred_pipeline(&manifest).unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+        let _ = save_steam_compatdata(&manifest, pipeline);
+    }
     Ok(manifest)
 }
 
@@ -1507,6 +1519,101 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "gptk_prefix" {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        let seeding = crate::platform::gptk_prefix_seeding(&home);
+        let ready = crate::platform::gptk_prefix_ready(&home);
+
+        if dry_run {
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if ready {
+                    "already_installed".to_string()
+                } else if seeding {
+                    "seeding".to_string()
+                } else {
+                    "repair_available".to_string()
+                },
+                detail: if ready {
+                    "GPTK prefix is seeded and ready".to_string()
+                } else if seeding {
+                    "GPTK prefix is currently being prepared".to_string()
+                } else {
+                    "GPTK prefix will be created: wineboot init, Steam data copy, vcrun install (~2GB, may take a few minutes)".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        if ready {
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: "already_installed".to_string(),
+                detail: "GPTK prefix is seeded and ready".to_string(),
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        if seeding {
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: "seeding".to_string(),
+                detail: "GPTK prefix is already being prepared — check back in a moment".to_string(),
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
+        manifest.health = BottleHealth::NeedsRepair;
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+
+        let bottle_id = id.to_string();
+        thread::spawn(move || {
+            eprintln!("gptk_prefix: starting background seed ...");
+            let home = dirs::home_dir().unwrap_or_default();
+            match crate::platform::seed_gptk_prefix_sync(&home) {
+                Ok(()) => {
+                    eprintln!("gptk_prefix: seed complete");
+                    if let Ok(mut m) = load_bottle(&bottle_id) {
+                        mark_component_state(&mut m, "gptk_prefix", ComponentState::Installed);
+                        m.health = if components_ready(&m.installed_components) {
+                            BottleHealth::Ready
+                        } else {
+                            BottleHealth::NeedsRepair
+                        };
+                        m.updated_at = timestamp_secs();
+                        let _ = save_bottle(&m);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("gptk_prefix: seed failed: {}", e);
+                    if let Ok(mut m) = load_bottle(&bottle_id) {
+                        mark_component_state(&mut m, "gptk_prefix", ComponentState::Missing);
+                        m.health = BottleHealth::NeedsRepair;
+                        m.updated_at = timestamp_secs();
+                        let _ = save_bottle(&m);
+                    }
+                },
+            }
+        });
+
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: "started".to_string(),
+            detail: "GPTK prefix seeding started in background — use dry-run to poll progress".to_string(),
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if component_id == "d3d12_agility" {
         let home = dirs::home_dir().ok_or("no home dir")?;
         let appid = manifest.steam_app_id.ok_or("D3D12 Agility repair requires a Steam app id")?;
@@ -1545,6 +1652,78 @@ pub fn repair_component(
             status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
             detail: "Downloaded and staged the D3D12 Agility SDK payload for the M12 launch path".to_string(),
             asset_path: Some(game_dir.to_string_lossy().to_string()),
+            log_path: None,
+            pid: None,
+        });
+    }
+
+    if component_id == "vcrun2019" && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        if dry_run {
+            let already = crate::platform::gptk_vcrun_installed(&home);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if already { "already_installed".to_string() } else { "repair_available".to_string() },
+                detail: if already {
+                    "VC++ 2015-2022 redist is already installed in the GPTK prefix".to_string()
+                } else {
+                    "Will install VC++ 2015-2022 redist into the GPTK prefix via the Steam CommonRedist installer".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        if crate::platform::gptk_vcrun_installed(&home) {
+            mark_component_state(&mut manifest, component_id, ComponentState::Installed);
+            manifest.health = if components_ready(&manifest.installed_components) { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
+            manifest.updated_at = timestamp_secs();
+            save_bottle(&manifest)?;
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: "already_installed".to_string(),
+                detail: "VC++ 2015-2022 redist is already installed in the GPTK prefix".to_string(),
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
+        manifest.health = BottleHealth::NeedsRepair;
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+
+        let bottle_id = id.to_string();
+        thread::spawn(move || {
+            let home = dirs::home_dir().unwrap_or_default();
+            match crate::platform::install_gptk_prefix_components(&home) {
+                Ok(()) => {
+                    eprintln!("vcrun2019 gptk: install done, installed={}", crate::platform::gptk_vcrun_installed(&home));
+                },
+                Err(e) => {
+                    eprintln!("vcrun2019 gptk: install failed: {}", e);
+                },
+            }
+            let state = if crate::platform::gptk_vcrun_installed(&home) {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            };
+            if let Ok(mut m) = load_bottle(&bottle_id) {
+                mark_component_state(&mut m, "vcrun2019", state);
+                m.health = if components_ready(&m.installed_components) { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
+                m.updated_at = timestamp_secs();
+                let _ = save_bottle(&m);
+            }
+        });
+
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: "started".to_string(),
+            detail: "Installing VC++ 2015-2022 redist into GPTK prefix in background".to_string(),
+            asset_path: None,
             log_path: None,
             pid: None,
         });
@@ -2082,7 +2261,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3DMetal (GPTK)",
             BottleArch::Win64,
             false,
-            &["gptk", "rosetta", "vcrun2019"][..],
+            &["gptk", "rosetta", "gptk_prefix", "vcrun2019"][..],
             crate::mtsp::engine::PipelineId::D3DMetal,
         ),
         RuntimeProfile::Dotnet => (
@@ -2674,6 +2853,16 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "gptk" => {
             if crate::platform::gptk_is_installed() {
                 ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "gptk_prefix" => {
+            let home = dirs::home_dir().unwrap_or_default();
+            if crate::platform::gptk_prefix_ready(&home) {
+                ComponentState::Installed
+            } else if crate::platform::gptk_prefix_seeding(&home) {
+                ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
             }
@@ -3751,6 +3940,7 @@ fn component_action_detail(id: &str) -> String {
         "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
         "gptk_amd_stub" => "Deploy GPTK AMD vendor stub for D3DMetal compatibility".to_string(),
         "gptk" => "Install Apple Game Porting Toolkit via Homebrew".to_string(),
+        "gptk_prefix" => "Seed GPTK Wine prefix with Steam data and runtime components (background, ~2GB)".to_string(),
         "rosetta" => "Install Apple Rosetta 2 for x86_64 emulation".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),

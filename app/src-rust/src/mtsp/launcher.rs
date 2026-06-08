@@ -638,6 +638,14 @@ fn launch_d3dmetal_gptk_with_context(
     gptk_ensure_dependencies()?;
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+
+    if !crate::platform::gptk_prefix_ready(&home) {
+        return Err(
+            "GPTK prefix is not ready — open the bottle settings and repair 'gptk_prefix' first".into(),
+        );
+    }
+    let gptk_prefix = crate::platform::gptk_prefix_path(&home);
+    crate::platform::sync_gptk_prefix(&home)?;
     let gptk_root = crate::platform::gptk_wine_root();
     let gptk_wine64 = crate::platform::gptk_wine64_binary();
     let gptk_wineserver = crate::platform::gptk_wineserver_binary();
@@ -656,9 +664,7 @@ fn launch_d3dmetal_gptk_with_context(
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-    let prefix = prefix_override
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
+    let prefix = gptk_prefix;
     let prefix_str = prefix.to_string_lossy().to_string();
 
     if !recipe.anti_cheat.is_empty() {
