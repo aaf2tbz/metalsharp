@@ -555,6 +555,7 @@ pub fn launch_custom_with_options(
         cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root));
     }
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+    cmd.env("WINEMSYNC", "1");
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
@@ -712,7 +713,8 @@ fn launch_d3dmetal_gptk_with_context(
         .env("WINESERVER", &gptk_wineserver)
         .env("WINELOADER", &gptk_wine64)
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+        .env("MS_GRAPHICS_BACKEND", node.graphics_backend)
+        .env("WINEMSYNC", "1");
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     apply_app_launch_env(&mut cmd, appid, node.id);
@@ -823,6 +825,7 @@ fn launch_dxmt_metal_with_context(
     }
 
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+    cmd.env("WINEMSYNC", "1");
 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
@@ -913,6 +916,7 @@ fn launch_wine_bare_with_context(
     let cache_paths = build_cache_paths(&home, node, appid);
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
+    cmd.env("WINEMSYNC", "1");
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
@@ -1333,6 +1337,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
         env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), dxmt_winemetal_unixlib_path(&ms_root)));
     }
     env.push(("MS_GRAPHICS_BACKEND".to_string(), node.graphics_backend.to_string()));
+    env.push(("WINEMSYNC".to_string(), "1".to_string()));
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
     env.extend(app_compat_env_pairs(appid, node.id));
