@@ -584,11 +584,14 @@ struct PreservedData {
     setup_json: Option<Vec<u8>>,
     steam_config_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
+    prefix_gptk_tmp: PathBuf,
     cache_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
     compatdata_tmp: PathBuf,
+    prefix_steam_dosdevice_links: Vec<(String, PathBuf)>,
+    prefix_gptk_dosdevice_links: Vec<(String, PathBuf)>,
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
@@ -621,6 +624,13 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if prefix_steam.exists() {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
         preserve_settings_only(&prefix_steam, &prefix_steam_tmp);
+    }
+
+    let prefix_gptk_tmp = tmp.join("prefix-gptk");
+    let prefix_gptk = ms_dir.join("prefix-gptk");
+    if prefix_gptk.exists() {
+        let _ = fs::create_dir_all(&prefix_gptk_tmp);
+        preserve_settings_only(&prefix_gptk, &prefix_gptk_tmp);
     }
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (game metadata)...", None);
@@ -661,15 +671,25 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
         preserve_settings_only(&compatdata, &compatdata_tmp);
     }
 
+    let prefix_steam_dosdevice_links = collect_prefix_dosdevice_links(&ms_dir.join("prefix-steam"));
+    let prefix_gptk_dosdevice_links = if ms_dir.join("prefix-gptk").exists() {
+        collect_prefix_dosdevice_links(&ms_dir.join("prefix-gptk"))
+    } else {
+        Vec::new()
+    };
+
     PreservedData {
         setup_json,
         steam_config_json,
         prefix_steam_tmp,
+        prefix_gptk_tmp,
         cache_tmp,
         games_tmp,
         sharp_library_tmp,
         bottles_tmp,
         compatdata_tmp,
+        prefix_steam_dosdevice_links,
+        prefix_gptk_dosdevice_links,
     }
 }
 
@@ -955,6 +975,99 @@ fn temp_suffix() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
 }
 
+fn collect_prefix_dosdevice_links(prefix: &Path) -> Vec<(String, PathBuf)> {
+    let dosdevices = prefix.join("dosdevices");
+    if !dosdevices.is_dir() {
+        return Vec::new();
+    }
+    let mut links = Vec::new();
+    let entries = match fs::read_dir(&dosdevices) {
+        Ok(e) => e,
+        Err(_) => return links,
+    };
+    for entry in entries.flatten() {
+        let name = match entry.file_name().to_str() {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if name == "c:" {
+            continue;
+        }
+        if let Ok(target) = fs::read_link(entry.path()) {
+            if target == Path::new("/") {
+                continue;
+            }
+            links.push((name, target));
+        }
+    }
+    links
+}
+
+fn restore_prefix_dosdevice_links(prefix: &Path, links: &[(String, PathBuf)]) {
+    if links.is_empty() {
+        return;
+    }
+    let dosdevices = prefix.join("dosdevices");
+    if !dosdevices.exists() {
+        let _ = fs::create_dir_all(&dosdevices);
+    }
+    for (name, target) in links {
+        let link_path = dosdevices.join(name);
+        if let Ok(current) = fs::read_link(&link_path) {
+            if current == *target {
+                continue;
+            }
+        }
+        match fs::symlink_metadata(&link_path) {
+            Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
+                if let Err(e) = fs::remove_file(&link_path) {
+                    log_to_file(&format!(
+                        "Migration restore dosdevices: failed to remove stale {}: {}",
+                        link_path.display(),
+                        e
+                    ));
+                    continue;
+                }
+            },
+            Ok(meta) if meta.is_dir() => {
+                log_to_file(&format!(
+                    "Migration restore dosdevices: skipped {} because it is a directory",
+                    link_path.display()
+                ));
+                continue;
+            },
+            Ok(_) => {
+                if let Err(e) = fs::remove_file(&link_path) {
+                    log_to_file(&format!(
+                        "Migration restore dosdevices: failed to remove stale {}: {}",
+                        link_path.display(),
+                        e
+                    ));
+                    continue;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => {
+                log_to_file(&format!("Migration restore dosdevices: failed to inspect {}: {}", link_path.display(), e));
+                continue;
+            },
+        }
+        match std::os::unix::fs::symlink(target, &link_path) {
+            Ok(()) => log_to_file(&format!(
+                "Migration restore dosdevices: restored {} -> {}",
+                link_path.display(),
+                target.display()
+            )),
+            Err(e) => log_to_file(&format!(
+                "Migration restore dosdevices: failed to restore {} -> {}: {}",
+                link_path.display(),
+                target.display(),
+                e
+            )),
+        }
+    }
+}
+
 fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
     let entries = match fs::read_dir(src) {
         Ok(e) => e,
@@ -1124,6 +1237,22 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         }
         remove_root_dosdevice_mapping(&dst);
     }
+
+    restore_prefix_dosdevice_links(&ms_dir.join("prefix-steam"), &preserved.prefix_steam_dosdevice_links);
+
+    if preserved.prefix_gptk_tmp.exists() {
+        let dst = ms_dir.join("prefix-gptk");
+        if !dst.exists() {
+            let _ = fs::create_dir_all(&dst);
+        }
+        preserve_settings_only(&preserved.prefix_gptk_tmp, &dst);
+
+        let dosdevices = dst.join("dosdevices");
+        if !dosdevices.exists() {
+            let _ = fs::create_dir_all(&dosdevices);
+        }
+    }
+    restore_prefix_dosdevice_links(&ms_dir.join("prefix-gptk"), &preserved.prefix_gptk_dosdevice_links);
 
     if preserved.games_tmp.exists() {
         let dst = ms_dir.join("games");
@@ -1926,6 +2055,76 @@ mod tests {
             ),
         )
         .expect("write libraryfolders.vdf");
+    }
+
+    #[test]
+    fn migration_preserves_and_restores_external_drive_dosdevice_links() {
+        let home = test_dir("preserve-dosdevice-links");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let gptk_prefix = ms_dir.join("prefix-gptk");
+        let dosdevices = prefix.join("dosdevices");
+        let gptk_dosdevices = gptk_prefix.join("dosdevices");
+        let external_steam = home.join("ExternalSteam");
+
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        fs::create_dir_all(external_steam.join("steamapps")).expect("create external steamapps");
+        std::os::unix::fs::symlink("../drive_c", dosdevices.join("c:")).expect("create c drive");
+        std::os::unix::fs::symlink(&external_steam, dosdevices.join("s:")).expect("create s drive");
+        std::os::unix::fs::symlink("/", dosdevices.join("z:")).expect("create z drive");
+        fs::write(prefix.join("user.reg"), b"settings").expect("write settings");
+
+        fs::create_dir_all(&gptk_dosdevices).expect("create gptk dosdevices");
+        std::os::unix::fs::symlink("../drive_c", gptk_dosdevices.join("c:")).expect("create gptk c drive");
+        std::os::unix::fs::symlink(&home, gptk_dosdevices.join("l:")).expect("create gptk l drive");
+        fs::write(gptk_prefix.join("user.reg"), b"gptk-settings").expect("write gptk settings");
+
+        let preserved = preserve_user_data(&ms_dir);
+
+        assert_eq!(preserved.prefix_steam_dosdevice_links, vec![(String::from("s:"), external_steam.clone())]);
+        assert_eq!(preserved.prefix_gptk_dosdevice_links, vec![(String::from("l:"), home.clone())]);
+
+        fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove prefix-steam");
+        fs::remove_dir_all(ms_dir.join("prefix-gptk")).expect("remove prefix-gptk");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
+        assert_eq!(
+            fs::read_link(ms_dir.join("prefix-steam").join("dosdevices").join("s:")).expect("read restored s drive"),
+            external_steam
+        );
+        assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("z:").exists());
+
+        assert!(ms_dir.join("prefix-gptk").join("user.reg").exists());
+        assert_eq!(
+            fs::read_link(ms_dir.join("prefix-gptk").join("dosdevices").join("l:"))
+                .expect("read restored gptk l drive"),
+            home
+        );
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_skips_gptk_dosdevice_links_when_prefix_absent() {
+        let home = test_dir("skip-gptk-no-prefix");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let dosdevices = prefix.join("dosdevices");
+
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        std::os::unix::fs::symlink("../drive_c", dosdevices.join("c:")).expect("create c drive");
+        fs::write(prefix.join("user.reg"), b"settings").expect("write settings");
+
+        assert!(!ms_dir.join("prefix-gptk").exists());
+
+        let preserved = preserve_user_data(&ms_dir);
+
+        assert!(preserved.prefix_steam_dosdevice_links.is_empty());
+        assert!(preserved.prefix_gptk_dosdevice_links.is_empty());
+
+        let _ = fs::remove_dir_all(home);
     }
 
     fn test_dir(name: &str) -> PathBuf {
