@@ -172,6 +172,7 @@ fn run_install_all() {
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("System Tools", Box::new(|_| install_xcode_cli())),
+        ("Extract Tools (zstd)", Box::new(|_| install_zstd())),
         ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("Host Runtime ABI", Box::new(install_host_runtime)),
@@ -1363,6 +1364,13 @@ fn make_executable(path: &PathBuf) {
             let _ = fs::set_permissions(path, permissions);
         }
     }
+}
+
+fn install_zstd() -> Result<bool, String> {
+    if check_command("unzstd") {
+        return Ok(false);
+    }
+    brew_install("zstd")
 }
 
 fn install_mono_arm64() -> Result<bool, String> {
