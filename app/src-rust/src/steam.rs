@@ -221,20 +221,46 @@ pub fn is_installing_steam() -> bool {
     STEAM_INSTALLING.load(Ordering::SeqCst)
 }
 
+fn cef_subdirs(steam_dir: &Path) -> Vec<PathBuf> {
+    let cef_root = steam_dir.join("bin").join("cef");
+    let mut dirs = Vec::new();
+    let priority = ["cef.win64", "cef.win7x64", "cef.win7"];
+    for name in &priority {
+        let d = cef_root.join(name);
+        if d.is_dir() {
+            dirs.push(d);
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(&cef_root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() && !dirs.contains(&p) {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("cef.") {
+                    dirs.push(p);
+                }
+            }
+        }
+    }
+    dirs
+}
+
 fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
-    let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
-    let wrapper = cef_dir.join("steamwebhelper.exe");
-    let real = cef_dir.join("steamwebhelper_real.exe");
+    for cef_dir in cef_subdirs(steam_dir) {
+        let wrapper = cef_dir.join("steamwebhelper.exe");
+        let real = cef_dir.join("steamwebhelper_real.exe");
 
-    let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
-    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+        let wrapper_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
+        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
 
-    let wrapper_missing = wrapper_size == 0;
-    let wrapper_overwritten = wrapper_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
-    let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+        let wrapper_missing = wrapper_size == 0;
+        let wrapper_overwritten = wrapper_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES;
+        let real_missing_or_bad = real_size > 0 && real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES;
 
-    if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
-        deploy_steamwebhelper_wrapper(steam_dir);
+        if wrapper_missing || wrapper_overwritten || real_missing_or_bad {
+            deploy_steamwebhelper_wrapper(steam_dir);
+            return;
+        }
     }
 }
 
@@ -586,44 +612,46 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
 }
 
 pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
-    let cef_dir = steam_dir.join("bin").join("cef").join("cef.win64");
-    let original = cef_dir.join("steamwebhelper.exe");
-    let real = cef_dir.join("steamwebhelper_real.exe");
-    let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
-
     let wrapper = match find_bundled_steamwebhelper_wrapper() {
         Some(wrapper) => wrapper,
         None => return,
     };
 
-    let original_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
-    let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
     let bundled_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
 
     if bundled_size == 0 || bundled_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES || !steamwebhelper_wrapper_valid(&wrapper) {
         return;
     }
 
-    if original_size > 0 && original_size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
-        if !wrapper_marker.exists() {
+    for cef_dir in cef_subdirs(steam_dir) {
+        let original = cef_dir.join("steamwebhelper.exe");
+        let real = cef_dir.join("steamwebhelper_real.exe");
+        let wrapper_marker = cef_dir.join(".ms_wrapper_deployed");
+
+        let original_size = std::fs::metadata(&original).map(|m| m.len()).unwrap_or(0);
+        let real_size = std::fs::metadata(&real).map(|m| m.len()).unwrap_or(0);
+
+        if original_size > 0 && original_size <= STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+            if !wrapper_marker.exists() {
+                let _ = std::fs::write(&wrapper_marker, "deployed");
+            }
+            continue;
+        }
+
+        if real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+            if original_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
+                let _ = std::fs::remove_file(&real);
+                let _ = std::fs::rename(&original, &real);
+            } else {
+                continue;
+            }
+        } else if original.exists() {
+            let _ = std::fs::remove_file(&original);
+        }
+
+        if std::fs::copy(&wrapper, &original).is_ok() {
             let _ = std::fs::write(&wrapper_marker, "deployed");
         }
-        return;
-    }
-
-    if real_size < STEAMWEBHELPER_WRAPPER_MAX_BYTES {
-        if original_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES {
-            let _ = std::fs::remove_file(&real);
-            let _ = std::fs::rename(&original, &real);
-        } else {
-            return;
-        }
-    } else if original.exists() {
-        let _ = std::fs::remove_file(&original);
-    }
-
-    if std::fs::copy(&wrapper, &original).is_ok() {
-        let _ = std::fs::write(&wrapper_marker, "deployed");
     }
 }
 
@@ -1353,6 +1381,14 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     if steam_exe.exists() && steam_ui_dll.exists() {
         deploy_steamwebhelper_wrapper(&steam_dir);
+    }
+
+    for _ in 0..30 {
+        if !cef_subdirs(&steam_dir).is_empty() {
+            deploy_steamwebhelper_wrapper(&steam_dir);
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
     }
 
     Ok("Steam install thread complete".into())
