@@ -112,7 +112,7 @@ const navItems = [
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(95, 183, 232, 0.04) 0%, transparent 40%, rgba(95, 183, 232, 0.02) 100%);
+  background: linear-gradient(180deg, rgba(30, 58, 82, 0.18) 0%, transparent 40%, rgba(26, 45, 66, 0.12) 100%);
   pointer-events: none;
   z-index: 0;
 }
