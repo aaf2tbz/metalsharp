@@ -709,7 +709,10 @@ pub fn prepare_steam_game_launch(
         if let Some(ref home) = dirs::home_dir() {
             if crate::platform::gptk_prefix_ready(home) && !crate::platform::gptk_vcrun_installed(home) {
                 eprintln!("bottle: D3DMetal profile saved, installing VC++ redist into GPTK prefix ...");
-                let _ = crate::platform::install_gptk_prefix_components(home);
+                let result = crate::platform::install_gptk_prefix_components(home);
+                if let Err(e) = &result {
+                    eprintln!("bottle: VC++ redist install failed: {}", e);
+                }
             }
         }
     }
@@ -2682,6 +2685,13 @@ fn inspect_components_for_manifest(
             let fallback = inspect_component_state(prefix, &component.id, component.state);
             let state = if component.id == "d3d12_agility" {
                 inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
+            } else if component.id == "vcrun2019" && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+                let home = dirs::home_dir().unwrap_or_default();
+                if crate::platform::gptk_vcrun_installed(&home) {
+                    ComponentState::Installed
+                } else {
+                    fallback
+                }
             } else {
                 fallback
             };

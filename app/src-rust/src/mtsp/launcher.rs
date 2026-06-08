@@ -677,9 +677,7 @@ fn launch_d3dmetal_gptk_with_context(
     let prefix = gptk_prefix;
     let prefix_str = prefix.to_string_lossy().to_string();
 
-    if !recipe.anti_cheat.is_empty() {
-        deploy_steam_appid(game_dir, appid);
-    }
+    deploy_steam_appid(game_dir, appid);
 
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let cache_paths = build_cache_paths(&home, node, appid);
@@ -1303,6 +1301,10 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     let cache_paths = build_cache_paths(home, node, appid);
     let appid_string = appid.to_string();
     let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
+
+    if let Some(steam_id) = crate::steam::get_steam_id() {
+        env.push(("SteamUserSteamID".to_string(), steam_id));
+    }
 
     env.extend(route_library_env_pairs(&ms_root, &node.dyld_paths));
     if let Some(overrides) = node.wine_overrides {
