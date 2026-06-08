@@ -698,11 +698,11 @@ mod tests {
             .collect();
         assert_eq!(
             selectable,
-            vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::FnaArm64]
+            vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9, PipelineId::D3DMetal, PipelineId::FnaArm64]
         );
 
         let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
-        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "Mono/FNA"]);
+        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "D3DMetal", "Mono/FNA"]);
 
         for hidden in [
             PipelineId::Dxmt,
