@@ -163,6 +163,10 @@ verify_assets_core() {
     assets/eac-toggle/x86_64-windows/_winhttp.dll \
     assets/goldberg/x64/steam_api64.dll \
     assets/goldberg/x86/steam_api.dll \
+    assets/goldberg/steamclient/steamclient64.dll \
+    assets/goldberg/steamclient/steamclient.dll \
+    assets/goldberg/steamclient/GameOverlayRenderer64.dll \
+    assets/goldberg/steamclient/GameOverlayRenderer.dll \
     assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal \
     assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib \
     assets/gptk/x86_64-windows/atidxx64.dll \
