@@ -94,12 +94,67 @@ verify_app_bundle() {
     return 0
 }
 
+normalize_version() {
+    local value="${1#v}"
+    value="${value%%-*}"
+    value="${value%%+*}"
+    echo "$value" | sed -E 's/[^0-9.].*$//' | sed -E 's/^\.+|\.+$//g'
+}
+
+version_gt() {
+    local left
+    local right
+    left="$(normalize_version "$1")"
+    right="$(normalize_version "$2")"
+    awk -v left="$left" -v right="$right" '
+        BEGIN {
+            left_len = split(left, l, ".");
+            right_len = split(right, r, ".");
+            max = (left_len > right_len) ? left_len : right_len;
+            for (i = 1; i <= max; i++) {
+                a = (l[i] == "") ? 0 : l[i] + 0;
+                b = (r[i] == "") ? 0 : r[i] + 0;
+                if (a > b) exit 0;
+                if (a < b) exit 1;
+            }
+            exit 1;
+        }
+    '
+}
+
+read_app_version() {
+    local app_path="$1"
+    /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$app_path/Contents/Info.plist" 2>/dev/null || \
+        defaults read "$app_path/Contents/Info" CFBundleShortVersionString 2>/dev/null || true
+}
+
+require_app_version() {
+    local app_path="$1"
+    local label="$2"
+    local actual
+    actual="$(normalize_version "$(read_app_version "$app_path")")"
+    if [ -z "$actual" ]; then
+        write_status "error" 50 "$label version could not be read" "app_version_missing"
+        exit 1
+    fi
+    if [ "$actual" != "$TARGET_VERSION_CLEAN" ]; then
+        write_status "error" 50 "$label version $actual does not match update target $TARGET_VERSION_CLEAN" "app_version_mismatch"
+        exit 1
+    fi
+}
+
 restore_backup() {
     if [ -d "$BACKUP_APP_PATH" ] && [ ! -d "$APP_PATH" ]; then
         mv "$BACKUP_APP_PATH" "$APP_PATH" 2>/dev/null || \
             run_privileged "mv '$BACKUP_APP_PATH' '$APP_PATH'" || true
     fi
 }
+
+TARGET_VERSION_CLEAN="$(normalize_version "$TARGET_VERSION")"
+if [ -z "$TARGET_VERSION_CLEAN" ]; then
+    write_status "error" 0 "Update target version is invalid: $TARGET_VERSION" "target_version_invalid"
+    exit 1
+fi
 
 write_status "starting" 0 "Starting update..."
 
@@ -167,6 +222,15 @@ if ! verify_app_bundle "$APP_SOURCE"; then
     write_status "error" 50 "Update app bundle is missing required MetalSharp files" "app_bundle_invalid"
     exit 1
 fi
+require_app_version "$APP_SOURCE" "DMG app"
+
+if [ -d "$APP_PATH" ]; then
+    CURRENT_APP_VERSION="$(normalize_version "$(read_app_version "$APP_PATH")")"
+    if [ -n "$CURRENT_APP_VERSION" ] && ! version_gt "$TARGET_VERSION_CLEAN" "$CURRENT_APP_VERSION"; then
+        write_status "error" 50 "DMG version $TARGET_VERSION_CLEAN is not newer than installed MetalSharp $CURRENT_APP_VERSION" "target_not_newer"
+        exit 1
+    fi
+fi
 
 write_status "installing" 50 "Staging new version..."
 rm -rf "$TMP_APP_PATH" "$BACKUP_APP_PATH" 2>/dev/null || true
@@ -179,6 +243,7 @@ if ! verify_app_bundle "$TMP_APP_PATH"; then
     write_status "error" 60 "Failed to stage a valid update app bundle" "stage_failed"
     exit 1
 fi
+require_app_version "$TMP_APP_PATH" "Staged app"
 
 write_status "installing" 65 "Installing new version..."
 if [ -d "$APP_PATH" ]; then
@@ -203,6 +268,7 @@ if [ -d "$TMP_APP_PATH" ] || ! verify_app_bundle "$APP_PATH"; then
     write_status "error" 70 "Failed to install a valid new version" "copy_failed"
     exit 1
 fi
+require_app_version "$APP_PATH" "Installed app"
 
 rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
 write_status "installed" 80 "New version installed"
@@ -214,9 +280,9 @@ write_status "unmounting" 82 "Unmounting update disk..."
 hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
 MOUNT_POINT=""
 
-write_status "relaunching" 85 "Launching MetalSharp..."
+write_status "relaunching" 85 "Launching MetalSharp v$TARGET_VERSION_CLEAN..."
 sleep 1
-open "$APP_PATH"
+open -n "$APP_PATH"
 
 write_status "verifying" 90 "Verifying installation..."
 sleep 5
@@ -230,18 +296,14 @@ while [ $SECONDS -lt $deadline ]; do
     sleep 1
 done
 
-if [ "$BACKEND_VERSION" != "$TARGET_VERSION" ] && [ -n "$BACKEND_VERSION" ]; then
-    write_status "deploying_backend" 92 "Backend version mismatch, redeploying..."
+if [ "$BACKEND_VERSION" != "$TARGET_VERSION_CLEAN" ] && [ -n "$BACKEND_VERSION" ]; then
+    write_status "error" 92 "Launched backend reported v$BACKEND_VERSION instead of v$TARGET_VERSION_CLEAN" "backend_version_mismatch"
     pkill -x metalsharp-backend 2>/dev/null || true
-    sleep 1
-    open -a "MetalSharp"
-    sleep 5
-    RAW=$(curl -sf "http://127.0.0.1:9274/status" 2>/dev/null) || true
-    BACKEND_VERSION=$(echo "$RAW" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    exit 1
 fi
 
-if [ "$BACKEND_VERSION" = "$TARGET_VERSION" ]; then
+if [ "$BACKEND_VERSION" = "$TARGET_VERSION_CLEAN" ]; then
     write_status "complete" 100 "Update installed. Opening migration wizard..."
 else
-    write_status "error" 95 "Update installed, but backend reported v${BACKEND_VERSION:-?} instead of v${TARGET_VERSION}" "backend_version_mismatch"
+    write_status "error" 95 "Update installed, but backend reported v${BACKEND_VERSION:-?} instead of v${TARGET_VERSION_CLEAN}" "backend_version_mismatch"
 fi

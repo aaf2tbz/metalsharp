@@ -52,7 +52,7 @@ jobs:
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst
 
       - name: Setup ORAS
-        uses: oras-project/setup-oras@v1
+        uses: oras-project/setup-oras@v2
 
       - name: Publish developer SDK package
         run: |

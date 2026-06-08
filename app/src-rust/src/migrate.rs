@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::cmp::Ordering as CmpOrdering;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -61,9 +62,15 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
     "steam_autocloud.vdf",
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
-const MIGRATION_TOTAL_STEPS: usize = 6;
+const MIGRATION_TOTAL_STEPS: usize = 7;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Debug, Default)]
+struct PostUpdateMigrationMarker {
+    needed: bool,
+    target_version: Option<String>,
+}
 
 fn migrate_progress_path() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("migrate_progress.json")
@@ -111,6 +118,7 @@ pub fn needs_migration() -> serde_json::Value {
     };
 
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    let post_update_marker = read_post_update_marker(&ms_dir);
     let setup_path = ms_dir.join("setup.json");
     let setup_dir_exists = ms_dir.exists();
 
@@ -118,13 +126,10 @@ pub fn needs_migration() -> serde_json::Value {
         return json!({"ok": true, "needed": false, "reason": "fresh_install"});
     }
 
-    let post_update_marker = ms_dir.join(".post-update-migration");
-    let marker_requested = post_update_marker.exists()
-        && fs::read_to_string(&post_update_marker)
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("needed").and_then(|n| n.as_bool()))
-            .unwrap_or(false);
+    let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
+    let marker_target_version = post_update_marker.as_ref().and_then(|marker| marker.target_version.clone());
+    let marker_target_mismatch =
+        post_update_marker.as_ref().is_some_and(|marker| post_update_target_newer_than_running(marker));
 
     let setup_data = match fs::read_to_string(&setup_path) {
         Ok(d) => d,
@@ -152,7 +157,12 @@ pub fn needs_migration() -> serde_json::Value {
         "target_version": MIGRATE_VERSION,
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
-        "reason": if marker_requested && repair_needed {
+        "post_update_target_version": marker_target_version,
+        "running_version": MIGRATE_VERSION,
+        "update_target_satisfied": !marker_target_mismatch,
+        "reason": if marker_target_mismatch {
+            "post_update_target_version_mismatch"
+        } else if marker_requested && repair_needed {
             "post_update_marker_and_runtime_repair"
         } else if marker_requested {
             "post_update_marker"
@@ -173,6 +183,64 @@ fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
     }
 
     setup_completed || ms_dir.join("prefix-steam").exists()
+}
+
+fn post_update_marker_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join(".post-update-migration")
+}
+
+fn read_post_update_marker(ms_dir: &Path) -> Option<PostUpdateMigrationMarker> {
+    let marker_path = post_update_marker_path(ms_dir);
+    let data = fs::read_to_string(marker_path).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&data).ok()?;
+    Some(PostUpdateMigrationMarker {
+        needed: value.get("needed").and_then(|v| v.as_bool()).unwrap_or(false),
+        target_version: value.get("target_version").and_then(|v| v.as_str()).map(str::to_string),
+    })
+}
+
+fn post_update_target_newer_than_running(marker: &PostUpdateMigrationMarker) -> bool {
+    marker.target_version.as_deref().map(|target| compare_versions(target, MIGRATE_VERSION).is_gt()).unwrap_or(false)
+}
+
+fn post_update_target_error(marker: Option<&PostUpdateMigrationMarker>) -> Option<String> {
+    let marker = marker?;
+    let target = marker.target_version.as_deref()?;
+    if compare_versions(target, MIGRATE_VERSION).is_gt() {
+        return Some(format!(
+            "Update handoff targeted MetalSharp v{}, but the running app is v{}. Relaunch the installed update and retry migration.",
+            target, MIGRATE_VERSION
+        ));
+    }
+    None
+}
+
+fn compare_versions(left: &str, right: &str) -> CmpOrdering {
+    let left = parse_version_parts(left);
+    let right = parse_version_parts(right);
+    let len = left.len().max(right.len());
+    for index in 0..len {
+        let left_part = left.get(index).copied().unwrap_or(0);
+        let right_part = right.get(index).copied().unwrap_or(0);
+        match left_part.cmp(&right_part) {
+            CmpOrdering::Equal => {},
+            ordering => return ordering,
+        }
+    }
+    CmpOrdering::Equal
+}
+
+fn parse_version_parts(value: &str) -> Vec<u32> {
+    value
+        .trim()
+        .trim_start_matches('v')
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .map(|part| part.chars().take_while(|ch| ch.is_ascii_digit()).collect::<String>())
+        .map(|part| part.parse::<u32>().unwrap_or(0))
+        .collect()
 }
 
 fn runtime_core_ready(ms_dir: &Path) -> bool {
@@ -266,6 +334,8 @@ pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>
         return Ok(json!({"ok": false, "error": "migration already in progress"}));
     }
 
+    write_migrate_progress("running", 0, MIGRATION_TOTAL_STEPS, "Starting MetalSharp migration...", None);
+
     std::thread::spawn(|| {
         run_migration();
         MIGRATING.store(false, Ordering::SeqCst);
@@ -284,15 +354,23 @@ fn run_migration() {
     };
 
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    let post_update_marker = read_post_update_marker(&ms_dir);
 
     if !ms_dir.exists() {
         write_migrate_progress("error", 0, 0, "~/.metalsharp not found", Some("no_metalsharp_dir"));
         return;
     }
 
-    if runtime_core_ready(&ms_dir) {
+    if let Some(error) = post_update_target_error(post_update_marker.as_ref()) {
+        write_migrate_progress("error", 0, MIGRATION_TOTAL_STEPS, &error, Some("post_update_target_version_mismatch"));
+        log_to_file(&format!("Migration blocked before runtime work: {}", error));
+        return;
+    }
+
+    let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
+    if runtime_core_ready(&ms_dir) && !marker_requested {
         update_migration_metadata(&ms_dir);
-        let marker = ms_dir.join(".post-update-migration");
+        let marker = post_update_marker_path(&ms_dir);
         let _ = fs::remove_file(&marker);
         write_migrate_progress("complete", 1, 1, "Runtime already ready; app update complete.", None);
         log_to_file(&format!("Migration to v{} skipped; runtime already ready", MIGRATE_VERSION));
@@ -307,7 +385,13 @@ fn run_migration() {
     kill_steam_wine();
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Preserving user data...", None);
+    write_migrate_progress(
+        "running",
+        step,
+        total_steps,
+        "Preserving user preferences, Steam API key, and bottle settings...",
+        None,
+    );
     let preserved = preserve_user_data(&ms_dir);
 
     step += 1;
@@ -351,22 +435,7 @@ fn run_migration() {
     write_migrate_progress("running", step, total_steps, "Restoring preserved user data...", None);
     restore_user_data(&ms_dir, &preserved);
 
-    if install_ok {
-        step += 1;
-        write_migrate_progress("running", step, total_steps, "Updating Wine Steam prefix...", None);
-        if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
-            write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
-            log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
-            return;
-        }
-    }
-
-    if install_ok {
-        update_migration_metadata(&ms_dir);
-        let marker = ms_dir.join(".post-update-migration");
-        let _ = fs::remove_file(&marker);
-        write_migrate_progress("complete", total_steps, total_steps, "Update installed.", None);
-    } else {
+    if !install_ok {
         write_migrate_progress(
             "error",
             total_steps,
@@ -374,9 +443,44 @@ fn run_migration() {
             "Runtime install incomplete — re-run setup wizard after restart",
             Some("runtime_install_incomplete"),
         );
+        log_to_file(&format!("Migration to v{} finished (install_ok=false)", MIGRATE_VERSION));
+        return;
     }
 
-    log_to_file(&format!("Migration to v{} finished (install_ok={})", MIGRATE_VERSION, install_ok));
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Updating Wine Steam prefix...", None);
+    if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
+        write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
+        log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
+        return;
+    }
+
+    step += 1;
+    write_migrate_progress("running", step, total_steps, "Verifying MetalSharp update...", None);
+    if let Err(e) = verify_migration_ready(&ms_dir, post_update_marker.as_ref()) {
+        write_migrate_progress("error", step, total_steps, &format!("Update verification failed: {}", e), Some(&e));
+        log_to_file(&format!("Migration to v{} failed verification: {}", MIGRATE_VERSION, e));
+        return;
+    }
+
+    update_migration_metadata(&ms_dir);
+    if !migration_metadata_current(&ms_dir) {
+        write_migrate_progress(
+            "error",
+            step,
+            total_steps,
+            "Update verification failed: migration metadata was not saved",
+            Some("migration_metadata_not_saved"),
+        );
+        log_to_file(&format!("Migration to v{} failed because setup metadata was not saved", MIGRATE_VERSION));
+        return;
+    }
+
+    let marker = post_update_marker_path(&ms_dir);
+    let _ = fs::remove_file(&marker);
+    let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
+    write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
+    log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
 }
 
 fn update_migration_metadata(ms_dir: &Path) {
@@ -397,6 +501,30 @@ fn update_migration_metadata(ms_dir: &Path) {
         });
         let _ = fs::write(&setup_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
     }
+}
+
+fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMarker>) -> Result<(), String> {
+    if let Some(error) = post_update_target_error(marker) {
+        return Err(error);
+    }
+
+    if !runtime_core_ready(ms_dir) {
+        return Err("runtime bundle is still incomplete after install".into());
+    }
+
+    Ok(())
+}
+
+fn migration_metadata_current(ms_dir: &Path) -> bool {
+    let setup_path = ms_dir.join("setup.json");
+    let Ok(contents) = fs::read_to_string(setup_path) else {
+        return false;
+    };
+    let Ok(cfg) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&contents) else {
+        return false;
+    };
+    cfg.get("last_migrated_version").and_then(|v| v.as_str()) == Some(MIGRATE_VERSION)
+        && cfg.get("runtime_migration_schema").and_then(|v| v.as_u64()).unwrap_or(0) >= MIGRATE_SCHEMA_VERSION
 }
 
 fn wait_for_install_complete() -> Result<(), String> {
@@ -468,8 +596,7 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
 
     let setup_json = ms_dir.join("setup.json").exists().then(|| fs::read(ms_dir.join("setup.json")).ok()).flatten();
 
-    let steam_config_path = ms_dir.join("cache").join("steam_config.json");
-    let steam_config_json = steam_config_path.exists().then(|| fs::read(&steam_config_path).ok()).flatten();
+    let steam_config_json = read_preserved_steam_config(ms_dir);
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user data (cache metadata)...", None);
     let cache_tmp = tmp.join("cache");
@@ -552,6 +679,7 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
 
     let mut updated = 0usize;
     for prefix in collect_existing_wine_prefixes(ms_dir) {
+        let steam_library_drive_links = collect_steam_library_drive_links(&prefix);
         write_migrate_progress(
             "running",
             step,
@@ -560,6 +688,7 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
             None,
         );
         run_wineboot_update(&wine, &runtime_wine, &prefix)?;
+        restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
         updated += 1;
     }
 
@@ -625,6 +754,198 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
     let _ = child.kill();
     let _ = child.wait();
     Err(error_msg)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SteamLibraryDriveLink {
+    drive: char,
+    target: PathBuf,
+    library_path: String,
+}
+
+fn collect_steam_library_drive_links(prefix: &Path) -> Vec<SteamLibraryDriveLink> {
+    let mut links = Vec::new();
+    for libraryfolders in steam_libraryfolders_files(prefix) {
+        let Ok(contents) = fs::read_to_string(&libraryfolders) else {
+            continue;
+        };
+        for line in contents.lines() {
+            let Some(path) = parse_steam_vdf_path(line) else {
+                continue;
+            };
+            let Some((drive, rest)) = split_steam_library_wine_path(&path) else {
+                continue;
+            };
+            let Some(target) = resolve_steam_library_drive_target(prefix, drive, &rest) else {
+                continue;
+            };
+            if links.iter().any(|link: &SteamLibraryDriveLink| link.drive.eq_ignore_ascii_case(&drive)) {
+                continue;
+            }
+            links.push(SteamLibraryDriveLink { drive: drive.to_ascii_lowercase(), target, library_path: path });
+        }
+    }
+    links
+}
+
+fn steam_libraryfolders_files(prefix: &Path) -> Vec<PathBuf> {
+    let steam = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+    vec![steam.join("config").join("libraryfolders.vdf"), steam.join("steamapps").join("libraryfolders.vdf")]
+}
+
+fn parse_steam_vdf_path(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("\"path\"") {
+        return None;
+    }
+    let mut quoted = Vec::new();
+    let mut chars = trimmed.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        if ch != '"' {
+            continue;
+        }
+        let value_start = start + ch.len_utf8();
+        let mut escaped = false;
+        for (end, value_ch) in chars.by_ref() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if value_ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if value_ch == '"' {
+                quoted.push(&trimmed[value_start..end]);
+                break;
+            }
+        }
+    }
+    quoted.get(1).map(|value| value.replace("\\\\", "\\"))
+}
+
+fn split_steam_library_wine_path(path: &str) -> Option<(char, String)> {
+    let mut chars = path.chars();
+    let drive = chars.next()?;
+    if chars.next()? != ':' || !drive.is_ascii_alphabetic() || drive.eq_ignore_ascii_case(&'c') {
+        return None;
+    }
+    let rest = path.get(2..)?.replace('\\', "/");
+    if !rest.starts_with('/') {
+        return None;
+    }
+    Some((drive.to_ascii_lowercase(), rest))
+}
+
+fn resolve_steam_library_drive_target(prefix: &Path, drive: char, rest: &str) -> Option<PathBuf> {
+    let dosdevice = prefix.join("dosdevices").join(format!("{}:", drive.to_ascii_lowercase()));
+    if let Ok(target) = fs::read_link(&dosdevice) {
+        if steam_library_target_has_steamapps(&target, rest) {
+            return Some(target);
+        }
+    }
+
+    if steam_library_path_prefers_root_mapping(rest) {
+        return Some(PathBuf::from("/"));
+    }
+
+    let root = Path::new("/");
+    if steam_library_target_has_steamapps(root, rest) {
+        return Some(root.to_path_buf());
+    }
+
+    None
+}
+
+fn steam_library_path_prefers_root_mapping(rest: &str) -> bool {
+    rest.starts_with("/Volumes/")
+        || rest.starts_with("/Users/")
+        || rest.starts_with("/private/")
+        || rest.starts_with("/Applications/")
+}
+
+fn steam_library_target_has_steamapps(target: &Path, rest: &str) -> bool {
+    target.join(rest.trim_start_matches('/')).join("steamapps").exists()
+}
+
+fn restore_steam_library_drive_links(prefix: &Path, links: &[SteamLibraryDriveLink]) {
+    if links.is_empty() {
+        return;
+    }
+
+    let dosdevices = prefix.join("dosdevices");
+    if let Err(e) = fs::create_dir_all(&dosdevices) {
+        log_to_file(&format!("Migration prefix update: failed to create dosdevices for {}: {}", prefix.display(), e));
+        return;
+    }
+
+    for link in links {
+        let dosdevice = dosdevices.join(format!("{}:", link.drive.to_ascii_lowercase()));
+        if let Ok(current) = fs::read_link(&dosdevice) {
+            if current == link.target {
+                continue;
+            }
+        }
+
+        match fs::symlink_metadata(&dosdevice) {
+            Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
+                if let Err(e) = fs::remove_file(&dosdevice) {
+                    log_to_file(&format!(
+                        "Migration prefix update: failed to remove stale {} for Steam library {}: {}",
+                        dosdevice.display(),
+                        link.library_path,
+                        e
+                    ));
+                    continue;
+                }
+            },
+            Ok(meta) if meta.is_dir() => {
+                log_to_file(&format!(
+                    "Migration prefix update: skipped Steam library drive {} because {} is a directory",
+                    link.library_path,
+                    dosdevice.display()
+                ));
+                continue;
+            },
+            Ok(_) => {
+                if let Err(e) = fs::remove_file(&dosdevice) {
+                    log_to_file(&format!(
+                        "Migration prefix update: failed to remove stale {} for Steam library {}: {}",
+                        dosdevice.display(),
+                        link.library_path,
+                        e
+                    ));
+                    continue;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => {
+                log_to_file(&format!(
+                    "Migration prefix update: failed to inspect {} for Steam library {}: {}",
+                    dosdevice.display(),
+                    link.library_path,
+                    e
+                ));
+                continue;
+            },
+        }
+
+        match std::os::unix::fs::symlink(&link.target, &dosdevice) {
+            Ok(()) => log_to_file(&format!(
+                "Migration prefix update: restored Steam library drive {} -> {} for {}",
+                dosdevice.display(),
+                link.target.display(),
+                link.library_path
+            )),
+            Err(e) => log_to_file(&format!(
+                "Migration prefix update: failed to restore Steam library drive {} -> {} for {}: {}",
+                dosdevice.display(),
+                link.target.display(),
+                link.library_path,
+                e
+            )),
+        }
+    }
 }
 
 fn temp_suffix() -> u128 {
@@ -708,9 +1029,15 @@ fn count_settings_files(path: &Path) -> usize {
     if let Ok(entries) = fs::read_dir(path) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_dir() {
+            let meta = match fs::symlink_metadata(&p) {
+                Ok(meta) => meta,
+                Err(_) => continue,
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            } else if meta.is_dir() {
                 count += count_settings_files(&p);
-            } else {
+            } else if meta.is_file() {
                 count += 1;
             }
         }
@@ -773,11 +1100,15 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
 }
 
 fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
+    let steam_config_json = preserved.steam_config_json.as_ref().map(|data| normalize_steam_config_json(data));
+    let steam_api_key_restored = steam_config_json.as_deref().is_some_and(steam_config_has_api_key);
+
     if preserved.prefix_steam_tmp.exists() {
         let dst = ms_dir.join("prefix-steam");
         if !dst.exists() {
             let _ = fs::create_dir_all(&dst);
         }
+        remove_root_dosdevice_mapping(&dst);
         preserve_settings_only(&preserved.prefix_steam_tmp, &dst);
 
         let dosdevices = dst.join("dosdevices");
@@ -788,10 +1119,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !c_link.exists() {
             let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
         }
-        let z_link = dosdevices.join("z:");
-        if !z_link.exists() {
-            let _ = std::os::unix::fs::symlink("/", &z_link);
-        }
+        remove_root_dosdevice_mapping(&dst);
     }
 
     if preserved.games_tmp.exists() {
@@ -827,13 +1155,96 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
     }
 
     if let Some(ref data) = preserved.setup_json {
-        let _ = fs::write(ms_dir.join("setup.json"), data);
+        restore_setup_json(ms_dir, data, steam_api_key_restored);
     }
 
-    if let Some(ref data) = preserved.steam_config_json {
-        let cache_dir = ms_dir.join("cache");
-        let _ = fs::create_dir_all(&cache_dir);
-        let _ = fs::write(cache_dir.join("steam_config.json"), data);
+    if let Some(ref data) = steam_config_json {
+        restore_steam_config(ms_dir, data);
+    }
+}
+
+fn steam_config_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join("cache").join("steam_config.json")
+}
+
+fn migration_steam_config_backup_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join(".migration-steam_config.json")
+}
+
+fn read_preserved_steam_config(ms_dir: &Path) -> Option<Vec<u8>> {
+    for path in [steam_config_path(ms_dir), migration_steam_config_backup_path(ms_dir)] {
+        let Ok(data) = fs::read(&path) else {
+            continue;
+        };
+        let normalized = normalize_steam_config_json(&data);
+        if steam_config_has_api_key(&normalized) {
+            let _ = fs::write(migration_steam_config_backup_path(ms_dir), &normalized);
+        }
+        return Some(normalized);
+    }
+    None
+}
+
+fn normalize_steam_config_json(data: &[u8]) -> Vec<u8> {
+    let Ok(mut cfg) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(data) else {
+        return data.to_vec();
+    };
+
+    let mut changed = false;
+    let has_runtime_key = cfg.get("steam_api_key").and_then(|v| v.as_str()).is_some_and(|key| !key.is_empty());
+    if !has_runtime_key {
+        if let Some(legacy_key) =
+            cfg.get("api_key").and_then(|v| v.as_str()).filter(|key| !key.is_empty()).map(str::to_string)
+        {
+            cfg.insert("steam_api_key".into(), json!(legacy_key));
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return data.to_vec();
+    }
+
+    serde_json::to_vec_pretty(&cfg).unwrap_or_else(|_| data.to_vec())
+}
+
+fn steam_config_has_api_key(data: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(data)
+        .ok()
+        .and_then(|cfg| cfg.get("steam_api_key").and_then(|v| v.as_str()).map(str::to_string))
+        .is_some_and(|key| !key.is_empty())
+}
+
+fn restore_setup_json(ms_dir: &Path, data: &[u8], steam_api_key_restored: bool) {
+    if steam_api_key_restored {
+        if let Ok(mut cfg) = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(data) {
+            cfg.insert("steamApiKeySet".into(), json!(true));
+            if let Ok(serialized) = serde_json::to_vec_pretty(&cfg) {
+                let _ = fs::write(ms_dir.join("setup.json"), serialized);
+                return;
+            }
+        }
+    }
+    let _ = fs::write(ms_dir.join("setup.json"), data);
+}
+
+fn restore_steam_config(ms_dir: &Path, data: &[u8]) {
+    let normalized = normalize_steam_config_json(data);
+    let cache_dir = ms_dir.join("cache");
+    let _ = fs::create_dir_all(&cache_dir);
+    let _ = fs::write(cache_dir.join("steam_config.json"), &normalized);
+    if steam_config_has_api_key(&normalized) {
+        let _ = fs::write(migration_steam_config_backup_path(ms_dir), &normalized);
+    }
+}
+
+fn remove_root_dosdevice_mapping(prefix: &Path) {
+    let z_link = prefix.join("dosdevices").join("z:");
+    let Ok(meta) = fs::symlink_metadata(&z_link) else {
+        return;
+    };
+    if meta.file_type().is_symlink() && fs::read_link(&z_link).map(|target| target == Path::new("/")).unwrap_or(false) {
+        let _ = fs::remove_file(z_link);
     }
 }
 
@@ -1093,6 +1504,82 @@ mod tests {
     }
 
     #[test]
+    fn migration_restore_removes_root_z_drive_and_does_not_count_symlink_targets() {
+        let home = test_dir("skip-root-z-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let dosdevices = prefix.join("dosdevices");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        std::os::unix::fs::symlink("/", dosdevices.join("z:")).expect("create z drive symlink");
+        fs::write(prefix.join("user.reg"), b"settings").expect("write prefix settings");
+
+        assert_eq!(count_settings_files(&prefix), 1);
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
+        assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("z:").exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_prefix_update_restores_root_steam_library_drive() {
+        let home = test_dir("restore-root-steam-library-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let dosdevices = prefix.join("dosdevices");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        write_steam_libraryfolders(&prefix, r#""path" "Z:\\Volumes\\AverySSD\\SteamLibrary""#);
+
+        let links = collect_steam_library_drive_links(&prefix);
+        assert_eq!(
+            links,
+            vec![SteamLibraryDriveLink {
+                drive: 'z',
+                target: PathBuf::from("/"),
+                library_path: String::from("Z:\\Volumes\\AverySSD\\SteamLibrary"),
+            }]
+        );
+
+        restore_steam_library_drive_links(&prefix, &links);
+
+        assert_eq!(fs::read_link(dosdevices.join("z:")).expect("read restored z drive"), PathBuf::from("/"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_prefix_update_restores_existing_custom_steam_library_drive() {
+        let home = test_dir("restore-custom-steam-library-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let external = home.join("ExternalSteamDisk");
+        let dosdevices = prefix.join("dosdevices");
+        fs::create_dir_all(external.join("SteamLibrary").join("steamapps")).expect("create external steamapps");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        std::os::unix::fs::symlink(&external, dosdevices.join("y:")).expect("create y drive symlink");
+        write_steam_libraryfolders(&prefix, r#""path" "Y:\\SteamLibrary""#);
+
+        let links = collect_steam_library_drive_links(&prefix);
+        assert_eq!(
+            links,
+            vec![SteamLibraryDriveLink {
+                drive: 'y',
+                target: external.clone(),
+                library_path: String::from("Y:\\SteamLibrary"),
+            }]
+        );
+
+        fs::remove_file(dosdevices.join("y:")).expect("remove y drive symlink");
+        std::os::unix::fs::symlink(&home, dosdevices.join("y:")).expect("simulate wineboot y rewrite");
+        restore_steam_library_drive_links(&prefix, &links);
+
+        assert_eq!(fs::read_link(dosdevices.join("y:")).expect("read restored y drive"), external);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_bottle_settings_without_prefix_payloads() {
         let home = test_dir("skip-bottle-prefix-payloads");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -1179,6 +1666,89 @@ mod tests {
     }
 
     #[test]
+    fn migration_restores_setup_preferences_and_steam_api_key() {
+        let home = test_dir("restore-user-settings");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("cache")).expect("create cache dir");
+        fs::write(ms_dir.join("setup.json"), br#"{"completed":true,"deviceName":"Avery","steamApiKeySet":true}"#)
+            .expect("write setup preferences");
+        fs::write(
+            ms_dir.join("cache").join("steam_config.json"),
+            br#"{"steam_api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+        )
+        .expect("write Steam API key");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        let _ = fs::remove_file(ms_dir.join("setup.json"));
+        restore_user_data(&ms_dir, &preserved);
+
+        let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
+        let setup_json: serde_json::Value = serde_json::from_str(&setup).expect("parse restored setup");
+        let steam_config =
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
+
+        assert_eq!(setup_json.get("deviceName").and_then(|v| v.as_str()), Some("Avery"));
+        assert_eq!(setup_json.get("steamApiKeySet").and_then(|v| v.as_bool()), Some(true));
+        assert!(steam_config.contains("steam_api_key"));
+        assert!(steam_config.contains("STEAM_WEB_API_KEY"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_normalizes_legacy_steam_api_key_alias() {
+        let home = test_dir("restore-legacy-steam-api-key");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("cache")).expect("create cache dir");
+        fs::write(ms_dir.join("setup.json"), br#"{"completed":true,"steamApiKeySet":false}"#)
+            .expect("write setup preferences");
+        fs::write(
+            ms_dir.join("cache").join("steam_config.json"),
+            br#"{"api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+        )
+        .expect("write legacy Steam API key");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
+        let setup_json: serde_json::Value = serde_json::from_str(&setup).expect("parse restored setup");
+        let steam_config =
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
+
+        assert_eq!(setup_json.get("steamApiKeySet").and_then(|v| v.as_bool()), Some(true));
+        assert!(steam_config.contains("\"steam_api_key\""));
+        assert!(steam_config.contains("STEAM_WEB_API_KEY"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_recovers_steam_api_key_from_durable_backup() {
+        let home = test_dir("restore-steam-api-key-backup");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(&ms_dir).expect("create ms dir");
+        fs::write(ms_dir.join("setup.json"), br#"{"completed":true,"steamApiKeySet":true}"#)
+            .expect("write setup preferences");
+        fs::write(
+            migration_steam_config_backup_path(&ms_dir),
+            br#"{"steam_api_key":"STEAM_WEB_API_KEY","steam_id":"76561198000000000"}"#,
+        )
+        .expect("write durable Steam config backup");
+
+        let preserved = preserve_user_data(&ms_dir);
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        let steam_config =
+            fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
+
+        assert!(steam_config.contains("\"steam_api_key\""));
+        assert!(steam_config.contains("STEAM_WEB_API_KEY"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_kill_patterns_avoid_broad_command_matches() {
         assert!(MIGRATION_EXACT_KILL_PATTERNS.contains(&"wineloader"));
         assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"steam"));
@@ -1213,6 +1783,40 @@ mod tests {
         let marker_json: serde_json::Value = serde_json::from_str(&marker_data).expect("parse marker");
         assert!(marker_json.get("needed").and_then(|v| v.as_bool()).unwrap_or(false));
 
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn post_update_marker_blocks_running_app_older_than_target() {
+        let marker = PostUpdateMigrationMarker { needed: true, target_version: Some("999.0.0".into()) };
+
+        let error = post_update_target_error(Some(&marker)).expect("newer target blocked");
+
+        assert!(error.contains("999.0.0"));
+        assert!(post_update_target_newer_than_running(&marker));
+    }
+
+    #[test]
+    fn post_update_marker_accepts_running_app_at_target() {
+        let marker = PostUpdateMigrationMarker { needed: true, target_version: Some(MIGRATE_VERSION.into()) };
+
+        assert!(post_update_target_error(Some(&marker)).is_none());
+        assert!(!post_update_target_newer_than_running(&marker));
+    }
+
+    #[test]
+    fn migration_ready_requires_runtime_bundle() {
+        let home = test_dir("verify-ready-runtime");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(&ms_dir).expect("create ms dir");
+
+        assert_eq!(
+            verify_migration_ready(&ms_dir, None).unwrap_err(),
+            "runtime bundle is still incomplete after install"
+        );
+
+        write_runtime_core(&ms_dir);
+        assert!(verify_migration_ready(&ms_dir, None).is_ok());
         let _ = fs::remove_dir_all(home);
     }
 
@@ -1298,6 +1902,26 @@ mod tests {
         fs::write(host.join("manifest.json"), br#"{"abi":"metalsharp-host-runtime"}"#).expect("write manifest");
         fs::write(host.join("HostRuntimeABI.h"), b"header").expect("write header");
         fs::write(host.join("libmetalsharp_host_runtime.dylib"), b"dylib").expect("write dylib");
+    }
+
+    fn write_steam_libraryfolders(prefix: &Path, path_line: &str) {
+        let config = prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("config");
+        fs::create_dir_all(&config).expect("create Steam config dir");
+        fs::write(
+            config.join("libraryfolders.vdf"),
+            format!(
+                r#""libraryfolders"
+{{
+    "0"
+    {{
+        {}
+    }}
+}}
+"#,
+                path_line
+            ),
+        )
+        .expect("write libraryfolders.vdf");
     }
 
     fn test_dir(name: &str) -> PathBuf {

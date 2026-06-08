@@ -383,17 +383,28 @@ watch([library, search, filter], applyFilter);
 
 <style scoped>
 .library-view {
-  padding: 24px 28px 32px;
+  padding: 0 28px 32px;
   height: 100%;
   overflow-y: auto;
   background: var(--bg-deep);
 }
 
 .library-header {
-  margin: -24px -28px 24px;
-  padding: 28px 28px 20px;
+  margin: 0 -28px 20px;
+  padding: 44px 28px 14px;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  position: relative;
+  overflow: hidden;
+}
+.library-header::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 60% 80% at 20% 50%, rgba(95, 183, 232, 0.08) 0%, transparent 70%),
+              radial-gradient(ellipse 40% 60% at 80% 50%, rgba(95, 183, 232, 0.05) 0%, transparent 60%);
+  pointer-events: none;
 }
 .library-title-row {
   display: flex;
@@ -427,6 +438,7 @@ watch([library, search, filter], applyFilter);
   align-items: center;
   gap: 12px;
   min-width: 0;
+  -webkit-app-region: no-drag;
 }
 .library-launch-actions {
   display: flex;

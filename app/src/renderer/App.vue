@@ -52,6 +52,8 @@ const developerMode = ref(localStorage.getItem("metalsharp-developer-mode") === 
 const updateDownloading = ref(false);
 const updateProgress = ref(0);
 const updateMessage = ref("");
+const showUpdateChangelog = ref(false);
+const updateDismissed = ref(false);
 let updatePollTimer: ReturnType<typeof setInterval> | null = null;
 let installPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -74,6 +76,8 @@ const updateChangelog = computed(() => {
   if (cleaned.length <= 20) return cleaned;
   return cleaned.slice(0, 19) + "\u2026";
 });
+
+const fullUpdateChangelog = computed(() => updateStatus.value?.release_notes?.trim() ?? "");
 
 provide("library", library);
 provide("config", config);
@@ -188,13 +192,14 @@ async function startUpdateDownload() {
     if (progress.status === "downloaded" || progress.status === "complete") {
       if (updatePollTimer) clearInterval(updatePollTimer);
       updatePollTimer = null;
-      const dmgResult = await api<{ ok: boolean; path?: string }>("GET", "/update/dmg-path");
+      const dmgResult = await api<{ ok: boolean; path?: string; version?: string }>("GET", "/update/dmg-path");
       if (!dmgResult?.path) {
         toast.show("Download complete but DMG not found", "error");
         updateDownloading.value = false;
         return;
       }
-      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, targetVersion);
+      const installVersion = dmgResult.version ?? targetVersion;
+      const spawnResult = await backend.updaterSpawnInstall(dmgResult.path, pid, installVersion);
       if (!spawnResult?.ok) {
         toast.show(spawnResult?.error ?? "Failed to start installer", "error");
         updateDownloading.value = false;
@@ -285,7 +290,7 @@ async function initApp() {
   startHealthPolling();
 }
 
-onMounted(async () => {
+      onMounted(async () => {
   await checkBackend();
   const migrationMode = await getAPI().isMigrationMode?.();
   if (migrationMode) {
@@ -316,7 +321,7 @@ onMounted(async () => {
     />
     <main class="content">
       <div class="drag-strip"></div>
-      <div v-if="updateStatus?.ok && updateStatus?.available" class="update-banner">
+      <div v-if="updateStatus?.ok && updateStatus?.available && !updateDismissed" class="update-banner">
         <span class="update-banner-text" v-if="!updateDownloading"
           >MetalSharp v{{ updateStatus.latest_version }} is available<span v-if="updateChangelog" class="update-changelog">{{ updateChangelog }}</span></span
         >
@@ -327,17 +332,33 @@ onMounted(async () => {
         <button v-if="!updateDownloading" class="update-banner-btn" @click="startUpdateDownload">
           Download &amp; Install
         </button>
+        <button
+          v-if="!updateDownloading && fullUpdateChangelog"
+          class="update-banner-btn update-banner-secondary"
+          @click.stop="showUpdateChangelog = true"
+        >
+          What's New
+        </button>
+        <button v-if="!updateDownloading" class="update-banner-close" @click="updateDismissed = true" title="Dismiss">&times;</button>
       </div>
       <component :is="activeView" :key="currentView" />
     </main>
   </template>
+  <div v-if="showUpdateChangelog" class="modal-backdrop" @click="showUpdateChangelog = false">
+    <section class="update-changelog-modal" @click.stop>
+      <header class="update-changelog-modal-header">
+        <h2>MetalSharp v{{ updateStatus?.latest_version }}</h2>
+        <button class="modal-close-btn" type="button" @click="showUpdateChangelog = false">Close</button>
+      </header>
+      <pre>{{ fullUpdateChangelog }}</pre>
+    </section>
+  </div>
   <Toast />
 </template>
 
 <style>
 .drag-strip {
-  height: 38px;
-  background: var(--page-header-bg);
+  height: 0;
   -webkit-app-region: drag;
   flex-shrink: 0;
 }
@@ -347,12 +368,22 @@ onMounted(async () => {
   justify-content: center;
   gap: 12px;
   padding: 8px 16px;
-  background: var(--accent);
-  color: #1b2838;
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: 1px solid rgba(140, 170, 200, 0.08);
+  color: var(--text-primary);
   font-size: 12px;
   font-weight: 600;
-  cursor: pointer;
   flex-shrink: 0;
+  position: relative;
+}
+.update-banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(95, 183, 232, 0.06) 0%, transparent 30%, transparent 70%, rgba(95, 183, 232, 0.04) 100%);
+  pointer-events: none;
 }
 .update-banner:hover {
   opacity: 0.9;
@@ -366,30 +397,105 @@ onMounted(async () => {
   font-weight: 400;
 }
 .update-banner-btn {
-  background: rgba(0, 0, 0, 0.15);
-  border: none;
-  color: #1b2838;
+  background: rgba(95, 183, 232, 0.18);
+  border: 1px solid rgba(95, 183, 232, 0.25);
+  color: var(--accent);
   padding: 3px 14px;
   border-radius: 4px;
   font-size: 11px;
   font-weight: 700;
   cursor: pointer;
+  position: relative;
+  z-index: 1;
 }
 .update-banner-btn:hover {
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(95, 183, 232, 0.28);
+}
+.update-banner-secondary {
+  background: rgba(140, 170, 200, 0.1);
+  border-color: var(--border);
+  color: var(--text-secondary);
+}
+.update-banner-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+  position: relative;
+  z-index: 1;
+}
+.update-banner-close:hover {
+  color: var(--text-primary);
 }
 .update-banner-progress {
   width: 120px;
   height: 4px;
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(140, 170, 200, 0.15);
   border-radius: 2px;
   overflow: hidden;
 }
 .update-banner-progress-fill {
   height: 100%;
-  background: #1b2838;
+  background: var(--accent);
   border-radius: 2px;
   transition: width 0.3s ease;
+}
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: rgba(6, 10, 16, 0.68);
+}
+.update-changelog-modal {
+  width: min(640px, 100%);
+  max-height: min(620px, 82vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+.update-changelog-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.update-changelog-modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+.modal-close-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.update-changelog-modal pre {
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  line-height: 1.5;
 }
 .content {
   flex: 1;

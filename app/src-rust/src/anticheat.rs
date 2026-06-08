@@ -473,6 +473,65 @@ pub fn handle_steam_anticheat_substrate_decision(body: &Map<String, Value>) -> V
     })
 }
 
+pub fn handle_steam_anticheat_substrate_plan(body: &Map<String, Value>) -> Value {
+    let appid = match body.get("appid").and_then(|v| v.as_u64()) {
+        Some(id) if id > 0 && id <= u32::MAX as u64 => id as u32,
+        _ => return json!({"ok": false, "error": "appid required"}),
+    };
+
+    let home = match dirs::home_dir() {
+        Some(home) => home,
+        None => return json!({"ok": false, "appid": appid, "error": "no home dir"}),
+    };
+
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+    let game_dir = resolve_anticheat_game_dir(appid);
+    let eac_identity = game_dir.as_ref().and_then(|dir| read_eac_identity(&dir.path));
+    let artifacts = collect_artifacts(&prefix, game_dir.as_ref().map(|dir| dir.path.as_path()));
+    let eac = summarize_eac(appid, &artifacts, eac_identity.as_ref());
+    let steam = summarize_steam(appid, &artifacts);
+    let module_assets = game_dir.as_ref().map(|dir| collect_module_assets(&dir.path)).unwrap_or_default();
+    let host_os = std::env::consts::OS;
+    let decision = substrate_decision(host_os, &eac, &module_assets);
+    let status = substrate_plan_status(&decision, &eac, host_os);
+
+    json!({
+        "ok": true,
+        "appid": appid,
+        "status": status,
+        "summary": substrate_plan_summary(&status),
+        "decision": decision,
+        "host": {
+            "os": host_os,
+            "arch": std::env::consts::ARCH,
+        },
+        "evidenceStatus": evidence_status(&eac, &steam, &artifacts),
+        "gameDir": game_dir.as_ref().map(|dir| dir.path.to_string_lossy().to_string()),
+        "gameDirSource": game_dir.as_ref().map(|dir| dir.source),
+        "gameDirStaged": game_dir.as_ref().map(|dir| dir.staged).unwrap_or(false),
+        "facts": {
+            "moduleTarget": eac.module_target,
+            "moduleMappingStatus": eac.module_mapping_status,
+            "launcherExitCode": eac.launcher_exit_code,
+            "setupExitCode": eac.setup_exit_code,
+            "canDlopenLinuxElfDirectly": can_dlopen_linux_elf_directly(host_os),
+            "hasVendorMacOSAsset": module_assets.iter().any(|asset| asset.get("format").and_then(|v| v.as_str()) == Some("mach_o")),
+        },
+        "prototypeScope": {
+            "mode": "synthetic_and_public_elf_only",
+            "loadsProtectedModules": false,
+            "modifiesProtectedModules": false,
+            "launchesProtectedGame": false,
+            "touchesSteamState": false,
+        },
+        "implementationStages": substrate_implementation_stages(&status),
+        "acceptanceGates": substrate_acceptance_gates(&status),
+        "allowedPaths": allowed_substrate_paths(&decision),
+        "rejectedPaths": substrate_rejected_paths(),
+        "nextActions": substrate_plan_next_actions(&status),
+    })
+}
+
 fn resolve_anticheat_game_dir(appid: u32) -> Option<GameDirEvidence> {
     let completed = crate::setup::resolve_game_dir(appid).map(|path| GameDirEvidence {
         path,
@@ -1450,6 +1509,142 @@ fn substrate_next_actions(decision: &str) -> Vec<&'static str> {
     }
 }
 
+fn substrate_plan_status(decision: &str, eac: &EacSummary, host_os: &str) -> String {
+    let selected_linux = eac.module_target.as_deref().unwrap_or("").starts_with("linux");
+    let mapped_failed = eac.module_mapping_status.as_deref() == Some("failed");
+    if decision == "requires_linux_user_space_substrate_or_vendor_macos_asset"
+        && host_os == "macos"
+        && selected_linux
+        && mapped_failed
+    {
+        "prototype_ready_linux_substrate".to_string()
+    } else if decision == "requires_linux_user_space_substrate_or_vendor_macos_asset" {
+        "substrate_research_ready".to_string()
+    } else if decision == "requires_loader_delta_audit" {
+        "needs_loader_delta_audit".to_string()
+    } else if decision == "investigate_vendor_macos_module" {
+        "vendor_macos_asset_investigation".to_string()
+    } else {
+        "needs_protected_launch_evidence".to_string()
+    }
+}
+
+fn substrate_plan_summary(status: &str) -> &'static str {
+    match status {
+        "prototype_ready_linux_substrate" => {
+            "Protected launch reached EAC's Linux module-mapping path on macOS; start a transparent Linux-user-space substrate prototype using synthetic/public ELF inputs only."
+        },
+        "substrate_research_ready" => {
+            "The evidence points toward a Linux-user-space substrate, but capture the exact module-mapping failure before writing runtime code."
+        },
+        "needs_loader_delta_audit" => {
+            "Module mapping failed without enough module-target proof; complete the loader delta audit before substrate work."
+        },
+        "vendor_macos_asset_investigation" => {
+            "A host-compatible vendor asset may exist; verify provenance and support before building Linux substrate work."
+        },
+        _ => "Collect a protected-launch evidence report before selecting a substrate implementation path.",
+    }
+}
+
+fn substrate_implementation_stages(status: &str) -> Vec<Value> {
+    match status {
+        "prototype_ready_linux_substrate" | "substrate_research_ready" => vec![
+            substrate_stage(
+                "elf_contract_lab",
+                "Synthetic ELF contract lab",
+                "Build a small host-side lab that maps synthetic and public test ELF shared objects, records loader failures, TLS expectations, relocations, executable page transitions, and symbol lookup gaps.",
+                "No protected anti-cheat bytes; no Steam launch; no process injection.",
+            ),
+            substrate_stage(
+                "linux_abi_minimums",
+                "Minimum Linux user-space ABI map",
+                "Compare Proton-observed needs against MetalSharp host capabilities for mmap, mprotect, futex-like waits, thread-local storage, signals, /proc-style metadata, file descriptors, monotonic clocks, and socket behavior.",
+                "Use public probes and Wine/runtime introspection only.",
+            ),
+            substrate_stage(
+                "wine_boundary_adapter",
+                "Wine boundary adapter",
+                "Prototype a transparent adapter between Wine's Unix-side loader boundary and the Linux ABI lab so module-host assumptions can be tested without changing protected launch behavior.",
+                "Adapter must identify itself honestly and avoid spoofing host identity.",
+            ),
+            substrate_stage(
+                "evidence_replay_gate",
+                "Evidence replay gate",
+                "Re-run /steam/anticheat-evidence, /steam/anticheat-probe, /steam/anticheat-contract-probe, and /steam/anticheat-delta-audit after each runtime change.",
+                "Do not claim online anti-cheat support until a vendor-supported protected module maps and the game launches.",
+            ),
+        ],
+        "needs_loader_delta_audit" => vec![substrate_stage(
+            "loader_delta_audit",
+            "Loader delta audit",
+            "Resolve the module target and compare Wine loader, wineserver, steamclient bridge, and executable mapping behavior with Proton before substrate design.",
+            "Evidence only.",
+        )],
+        _ => vec![substrate_stage(
+            "evidence_collection",
+            "Protected-launch evidence collection",
+            "Launch once through the protected Steam route and collect scoped EAC/BattlEye, Steam, Wine, and contract-probe evidence.",
+            "No runtime changes.",
+        )],
+    }
+}
+
+fn substrate_stage(id: &str, title: &str, goal: &str, guardrail: &str) -> Value {
+    json!({
+        "id": id,
+        "title": title,
+        "goal": goal,
+        "guardrail": guardrail,
+    })
+}
+
+fn substrate_acceptance_gates(status: &str) -> Vec<&'static str> {
+    match status {
+        "prototype_ready_linux_substrate" | "substrate_research_ready" => vec![
+            "A synthetic ELF probe records loader, relocation, TLS, symbol, and executable-memory outcomes without touching protected modules.",
+            "A Proton comparison names each Linux ABI expectation as present, shimmed, missing, or intentionally unsupported.",
+            "Every runtime change is followed by fresh evidence reports for the same appid.",
+            "No protected module is patched, injected into, decrypted, or loaded outside vendor-supported launch semantics.",
+            "User-facing status remains evidence-based until protected module mapping and launch are proven.",
+        ],
+        "needs_loader_delta_audit" => vec![
+            "Module target, Wine version, launcher exit code, and protected launcher path are all present in the evidence report.",
+            "Delta audit separates required runtime gaps from Proton-comparison-only gaps.",
+        ],
+        _ => vec!["A protected-launch evidence report exists for the target appid."],
+    }
+}
+
+fn substrate_plan_next_actions(status: &str) -> Vec<&'static str> {
+    match status {
+        "prototype_ready_linux_substrate" => vec![
+            "Create the synthetic ELF contract lab as the first runtime prototype.",
+            "Add a Proton comparison fixture for EAC module-host expectations.",
+            "Keep Elden Ring as the repeatable evidence target because it reaches module mapping and exits 206.",
+        ],
+        "substrate_research_ready" => vec![
+            "Re-run protected launch and capture a fresh EAC module-mapping failure.",
+            "Then promote the synthetic ELF contract lab.",
+        ],
+        "needs_loader_delta_audit" => {
+            vec!["Run /steam/anticheat-delta-audit and resolve missing module-target evidence."]
+        },
+        _ => vec!["Collect protected-launch evidence for the target appid first."],
+    }
+}
+
+fn substrate_rejected_paths() -> Vec<&'static str> {
+    vec![
+        "spoof anti-cheat host identity",
+        "hide MetalSharp or Wine from the protected launcher",
+        "fake kernel driver support",
+        "tamper with protected modules",
+        "load protected modules in a synthetic lab",
+        "claim online anti-cheat support before protected module mapping and launch are proven with vendor-supported semantics",
+    ]
+}
+
 fn classify_module_path(path: &Path) -> &'static str {
     let path_lc = path.to_string_lossy().to_ascii_lowercase();
     if path_lc.contains("battleye") || path_lc.contains("beclient") || path_lc.contains("beservice") {
@@ -1653,6 +1848,32 @@ mod tests {
     fn substrate_decision_requires_linux_substrate_for_linux_module_on_macos() {
         let eac = EacSummary { module_target: Some("linux64".to_string()), ..Default::default() };
         assert_eq!(substrate_decision("macos", &eac, &[]), "requires_linux_user_space_substrate_or_vendor_macos_asset");
+    }
+
+    #[test]
+    fn substrate_plan_promotes_linux_mapping_failure_to_prototype_ready() {
+        let eac = EacSummary {
+            module_target: Some("linux64".to_string()),
+            module_mapping_status: Some("failed".to_string()),
+            launcher_exit_code: Some(206),
+            ..Default::default()
+        };
+
+        let status = substrate_plan_status("requires_linux_user_space_substrate_or_vendor_macos_asset", &eac, "macos");
+        assert_eq!(status, "prototype_ready_linux_substrate");
+        assert!(substrate_plan_summary(&status).contains("Linux module-mapping path"));
+        assert!(substrate_implementation_stages(&status)
+            .iter()
+            .any(|stage| stage.get("id").and_then(|v| v.as_str()) == Some("elf_contract_lab")));
+    }
+
+    #[test]
+    fn substrate_plan_rejects_protected_module_lab_loading() {
+        let rejected = substrate_rejected_paths();
+        assert!(rejected.contains(&"load protected modules in a synthetic lab"));
+        assert!(substrate_acceptance_gates("prototype_ready_linux_substrate")
+            .iter()
+            .any(|gate| gate.contains("without touching protected modules")));
     }
 
     #[test]
