@@ -17,7 +17,26 @@ fn steam_prefix() -> PathBuf {
 }
 
 fn steam_exe_path() -> PathBuf {
-    steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
+    resolve_steam_dir().join("Steam.exe")
+}
+
+fn resolve_steam_dir() -> PathBuf {
+    let primary = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+    if primary.join("Steam.exe").exists() {
+        return primary;
+    }
+
+    if let Ok(bottles_root) = crate::platform::metalsharp_home_dir().join("bottles").read_dir() {
+        for entry in bottles_root.flatten() {
+            let candidate = entry.path().join("prefix").join("drive_c").join("Program Files (x86)").join("Steam");
+            if candidate.join("Steam.exe").exists() {
+                eprintln!("steam: found Steam in Sharp Library bottle: {:?}", candidate);
+                return candidate;
+            }
+        }
+    }
+
+    primary
 }
 
 fn macos_steam_app() -> Option<PathBuf> {
@@ -219,6 +238,23 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     }
 }
 
+fn resolve_steam_prefix() -> PathBuf {
+    let steam_dir = resolve_steam_dir();
+    if steam_dir.starts_with(steam_prefix()) {
+        return steam_prefix();
+    }
+    if let Ok(entries) = crate::platform::metalsharp_home_dir().join("bottles").read_dir() {
+        for entry in entries.flatten() {
+            let bottle_prefix = entry.path().join("prefix");
+            let bottle_steam = bottle_prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+            if bottle_steam == steam_dir {
+                return bottle_prefix;
+            }
+        }
+    }
+    steam_prefix()
+}
+
 fn spawn_wine_steam(args: &[&str]) -> Result<u32, Box<dyn std::error::Error>> {
     spawn_wine_steam_with_env(args, &[])
 }
@@ -229,8 +265,9 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
         return Err("MetalSharp Wine not found".into());
     }
 
-    let exe = steam_exe_path();
-    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+    let steam_dir = resolve_steam_dir();
+    let exe = steam_dir.join("Steam.exe");
+    let prefix = resolve_steam_prefix();
 
     if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
         return Err("Steam is not installed — use the setup wizard to install it first".into());
@@ -238,7 +275,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
 
     ensure_steam_launch_ready(&steam_dir);
 
-    let prefix_str = steam_prefix().to_string_lossy().to_string();
+    let prefix_str = prefix.to_string_lossy().to_string();
     let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
 
     let mut cmd = Command::new(&wine);
@@ -278,8 +315,8 @@ pub fn launch_wine_steam_with_env(extra_env: &[(String, String)]) -> Result<Valu
         return Err("MetalSharp Wine not found".into());
     }
 
-    let exe = steam_exe_path();
-    let steam_dir = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam");
+    let steam_dir = resolve_steam_dir();
+    let exe = steam_dir.join("Steam.exe");
 
     if !exe.exists() || !steam_dir.join("steamui.dll").exists() {
         return Err("Steam is not installed — use the setup wizard to install it first".into());
