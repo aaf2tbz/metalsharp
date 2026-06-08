@@ -806,8 +806,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .and_then(|v| v.split('&').next())
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let game_dir = crate::setup::resolve_windows_game_dir(appid)
-                .or_else(|| crate::setup::resolve_game_dir(appid));
+            let game_dir =
+                crate::setup::resolve_windows_game_dir(appid).or_else(|| crate::setup::resolve_game_dir(appid));
             let active = game_dir.as_ref().map(|d| mtsp::launcher::goldberg_status(&d.to_path_buf())).unwrap_or(false);
             resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active}))
         },
@@ -818,8 +818,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let aid = id as u32;
-                    let game_dir = crate::setup::resolve_windows_game_dir(aid)
-                        .or_else(|| crate::setup::resolve_game_dir(aid));
+                    let game_dir =
+                        crate::setup::resolve_windows_game_dir(aid).or_else(|| crate::setup::resolve_game_dir(aid));
                     match game_dir {
                         Some(dir) if dir.exists() => {
                             if enable {

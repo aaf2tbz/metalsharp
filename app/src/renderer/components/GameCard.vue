@@ -404,7 +404,16 @@ function formatBytes(bytes: number): string {
       </div>
       <div class="game-card-meta">
         <span v-if="game.installed" class="route-chip">{{ pipelineName }}</span>
-        <span v-if="game.bottle_id" class="route-chip bottle-chip">{{ game.bottle_id }}</span>
+
+        <label v-if="game.installed" class="tool-chip toggle-label steam-emu-toggle" title="gbe_fork Steam emulator">
+          <input
+            type="checkbox"
+            :checked="goldbergActive"
+            @change="toggleGoldberg(($event.target as HTMLInputElement).checked)"
+          />
+          <span class="toggle-switch"></span>
+          <span class="toggle-text">Steam Emu</span>
+        </label>
         <span v-if="game.bottle_runtime_assets" class="game-card-size">{{ game.bottle_runtime_assets }} assets</span>
         <span v-if="game.size_bytes" class="game-card-size">{{ formatBytes(game.size_bytes) }}</span>
       </div>
@@ -495,15 +504,6 @@ function formatBytes(bytes: number): string {
             </button>
           </div>
           <div v-if="developerMode" class="secondary-action-grid">
-            <label class="tool-chip toggle-label" title="gbe_fork Steam emulator (steamclient + steam_api mode)">
-              <input
-                type="checkbox"
-                :checked="goldbergActive"
-                @change="toggleGoldberg(($event.target as HTMLInputElement).checked)"
-              />
-              <span class="toggle-switch"></span>
-              <span class="toggle-text">Steam Emu</span>
-            </label>
             <label class="tool-chip toggle-label" title="Offline EAC mode">
               <input
                 type="checkbox"
@@ -628,6 +628,8 @@ function formatBytes(bytes: number): string {
 
 <style scoped>
 .game-card {
+  display: flex;
+  flex-direction: column;
   background: var(--game-card-bg, var(--bg-card));
   border: 2px solid var(--border);
   border-radius: var(--radius-lg);
@@ -720,6 +722,9 @@ function formatBytes(bytes: number): string {
 }
 
 .game-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
   background: var(--game-card-body-bg, transparent);
   color: var(--game-card-text, var(--text-primary));
   padding: 14px;
@@ -768,6 +773,7 @@ function formatBytes(bytes: number): string {
 }
 
 .game-card-actions {
+  margin-top: auto;
   min-height: 38px;
 }
 .game-card-actions-stack {
@@ -806,6 +812,15 @@ function formatBytes(bytes: number): string {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.steam-emu-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  min-height: 22px;
+  vertical-align: middle;
 }
 .launch-mode-select {
   flex: 1 1 auto;

@@ -160,11 +160,7 @@ pub fn ensure_gptk_dosdevices(home: &Path) -> Result<(), Box<dyn std::error::Err
     ensure_dosdevice(&dosdevices, "z:", Path::new("/"));
 
     let steam_prefix = metalsharp_home_dir_for(home).join("prefix-steam");
-    let wine_steamapps = steam_prefix
-        .join("drive_c")
-        .join("Program Files (x86)")
-        .join("Steam")
-        .join("steamapps");
+    let wine_steamapps = steam_prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
 
     if let Ok(lf_data) = std::fs::read_to_string(wine_steamapps.join("libraryfolders.vdf")) {
         for library_path in parse_library_paths_from_vdf(&lf_data) {
@@ -228,7 +224,11 @@ fn ensure_dosdevice_for_path(dosdevices: &Path, target: &Path) {
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                if name.len() == 2 && name.ends_with(':') { Some(name) } else { None }
+                if name.len() == 2 && name.ends_with(':') {
+                    Some(name)
+                } else {
+                    None
+                }
             })
             .collect(),
         Err(_) => std::collections::HashSet::new(),
@@ -244,11 +244,11 @@ fn ensure_dosdevice_for_path(dosdevices: &Path, target: &Path) {
             Ok(()) => {
                 eprintln!("gptk dosdevices: {} -> {} (steam library)", letter, target.display());
                 return;
-            }
+            },
             Err(e) => {
                 eprintln!("gptk dosdevices: failed {} -> {}: {}", letter, target.display(), e);
                 return;
-            }
+            },
         }
     }
 }
@@ -270,10 +270,18 @@ fn parse_library_paths_from_vdf(data: &str) -> Vec<PathBuf> {
 }
 
 fn is_game_storage_volume(name: &str) -> bool {
-    if name == "Macintosh HD" { return false; }
-    if name.starts_with("MetalSharp") { return false; }
-    if name.starts_with("Game Porting Toolkit") { return false; }
-    if name.contains("Evaluation environment") { return false; }
+    if name == "Macintosh HD" {
+        return false;
+    }
+    if name.starts_with("MetalSharp") {
+        return false;
+    }
+    if name.starts_with("Game Porting Toolkit") {
+        return false;
+    }
+    if name.contains("Evaluation environment") {
+        return false;
+    }
     true
 }
 
@@ -283,9 +291,13 @@ pub fn find_external_game_storage() -> Option<PathBuf> {
         let entry = entry.ok()?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
-        if !is_game_storage_volume(&name_str) { continue; }
+        if !is_game_storage_volume(&name_str) {
+            continue;
+        }
         let vol_path = entry.path();
-        if !vol_path.is_dir() { continue; }
+        if !vol_path.is_dir() {
+            continue;
+        }
         let games_dir = vol_path.join("MetalSharp").join("games");
         if std::fs::create_dir_all(&games_dir).is_ok() {
             return Some(games_dir);
@@ -300,7 +312,9 @@ pub fn is_path_on_external_volume(path: &Path) -> bool {
         Err(_) => return false,
     };
     let canon_str = canonical.to_string_lossy();
-    if !canon_str.starts_with("/Volumes/") { return false; }
+    if !canon_str.starts_with("/Volumes/") {
+        return false;
+    }
     let rest = canon_str.strip_prefix("/Volumes/").unwrap_or("");
     let vol_name = rest.split('/').next().unwrap_or("");
     is_game_storage_volume(vol_name)
@@ -325,7 +339,7 @@ pub fn migrate_game_to_external(
         None => {
             eprintln!("gptk migrate: no writable external SSD found, using internal path");
             return Ok(None);
-        }
+        },
     };
 
     let game_name = match game_dir.file_name() {
@@ -335,26 +349,16 @@ pub fn migrate_game_to_external(
 
     let external_game_dir = storage.join(format!("{}", appid)).join(&game_name);
 
-    if external_game_dir.is_dir()
-        && std::fs::read_dir(&external_game_dir).map(|r| r.count()).unwrap_or(0) > 0
-    {
-        eprintln!(
-            "gptk migrate: external copy already exists at {}",
-            external_game_dir.display()
-        );
+    if external_game_dir.is_dir() && std::fs::read_dir(&external_game_dir).map(|r| r.count()).unwrap_or(0) > 0 {
+        eprintln!("gptk migrate: external copy already exists at {}", external_game_dir.display());
         return Ok(Some(external_game_dir));
     }
 
-    eprintln!(
-        "gptk migrate: copying game '{}' (appid {}) from internal to external SSD ...",
-        game_name, appid
-    );
+    eprintln!("gptk migrate: copying game '{}' (appid {}) from internal to external SSD ...", game_name, appid);
 
     let external_base = storage.join(format!("{}", appid));
     std::fs::create_dir_all(&external_base)?;
-    copy_dir_recursive(game_dir, &external_game_dir).map_err(|e| {
-        format!("gptk migrate: copy failed: {}", e)
-    })?;
+    copy_dir_recursive(game_dir, &external_game_dir).map_err(|e| format!("gptk migrate: copy failed: {}", e))?;
 
     if let Err(e) = verify_dir_copy(game_dir, &external_game_dir) {
         eprintln!("gptk migrate: verification failed, cleaning up: {}", e);
@@ -466,11 +470,7 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     let steam_exe_check = steam_dst.join("Steam.exe");
     if !steam_exe_check.is_file() {
         let _ = std::fs::remove_file(&seeding_marker);
-        return Err(format!(
-            "gptk: Steam.exe missing after copy — expected at {}",
-            steam_exe_check.display()
-        )
-        .into());
+        return Err(format!("gptk: Steam.exe missing after copy — expected at {}", steam_exe_check.display()).into());
     }
 
     copy_registry_hive(&steam_prefix, &gptk_prefix, "system.reg");
@@ -502,14 +502,8 @@ pub fn sync_gptk_prefix(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
             let src = steam_config_src.join(file);
             let dst = steam_config_dst.join(file);
             if src.exists() {
-                std::fs::copy(&src, &dst).map_err(|e| {
-                    format!(
-                        "gptk sync: copy {} -> {}: {}",
-                        src.display(),
-                        dst.display(),
-                        e
-                    )
-                })?;
+                std::fs::copy(&src, &dst)
+                    .map_err(|e| format!("gptk sync: copy {} -> {}: {}", src.display(), dst.display(), e))?;
             }
         }
     }
@@ -531,10 +525,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             std::fs::copy(&src_path, &dst_path).map_err(|e| {
-                std::io::Error::new(
-                    e.kind(),
-                    format!("copy {} -> {}: {}", src_path.display(), dst_path.display(), e),
-                )
+                std::io::Error::new(e.kind(), format!("copy {} -> {}: {}", src_path.display(), dst_path.display(), e))
             })?;
         }
     }
