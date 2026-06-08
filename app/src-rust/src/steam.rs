@@ -640,7 +640,10 @@ pub fn get_wine_steam_installed_games() -> Vec<u32> {
 pub fn deploy_steamwebhelper_wrapper(steam_dir: &PathBuf) {
     let wrapper = match find_bundled_steamwebhelper_wrapper() {
         Some(wrapper) => wrapper,
-        None => return,
+        None => match download_steamwebhelper_wrapper_fallback() {
+            Some(wrapper) => wrapper,
+            None => return,
+        },
     };
 
     let bundled_size = std::fs::metadata(&wrapper).map(|m| m.len()).unwrap_or(0);
@@ -754,6 +757,69 @@ fn find_steam_bundle_archive() -> Option<PathBuf> {
         return Some(cached);
     }
     let _ = std::fs::remove_file(&tmp);
+    None
+}
+
+fn download_steamwebhelper_wrapper_fallback() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let cache_dir = crate::platform::metalsharp_home_dir_for(&home).join("cache").join("steam");
+    let _ = std::fs::create_dir_all(&cache_dir);
+    let cached = cache_dir.join("steamwebhelper.exe");
+    if cached.exists() && steamwebhelper_wrapper_valid(&cached) {
+        return Some(cached);
+    }
+
+    let url = "https://github.com/aaf2tbz/metalsharp/releases/download/bundles/metalsharp-steam.tar.zst";
+    let archive_tmp = cache_dir.join("metalsharp-steam.tar.zst.download");
+    let archive_path = cache_dir.join("metalsharp-steam.tar.zst");
+
+    let output = Command::new("curl")
+        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "-o"])
+        .arg(&archive_tmp)
+        .arg(url)
+        .output()
+        .ok()?;
+    if !output.status.success() || !archive_tmp.exists() {
+        let _ = std::fs::remove_file(&archive_tmp);
+        return None;
+    }
+    let _ = std::fs::rename(&archive_tmp, &archive_path);
+
+    let extract_tmp = cache_dir.join("steam-extract-download");
+    let _ = std::fs::remove_dir_all(&extract_tmp);
+    let _ = std::fs::create_dir_all(&extract_tmp);
+
+    let file = std::fs::File::open(&archive_path).ok()?;
+    let mut decoder = zstd::Decoder::new(file).ok()?;
+
+    let mut tar_cmd = Command::new("tar")
+        .args(["-xf", "-"])
+        .arg("-C")
+        .arg(&extract_tmp)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    if let Some(mut stdin) = tar_cmd.stdin.take() {
+        let _ = std::io::copy(&mut decoder, &mut stdin);
+        drop(stdin);
+    }
+
+    let status = tar_cmd.wait().ok()?;
+    if !status.success() {
+        let _ = std::fs::remove_dir_all(&extract_tmp);
+        return None;
+    }
+
+    let extracted = extract_tmp.join("steam").join("steamwebhelper.exe");
+    if extracted.exists() && std::fs::copy(&extracted, &cached).is_ok() && steamwebhelper_wrapper_valid(&cached) {
+        let _ = std::fs::remove_dir_all(&extract_tmp);
+        return Some(cached);
+    }
+
+    let _ = std::fs::remove_dir_all(&extract_tmp);
     None
 }
 

@@ -172,6 +172,7 @@ fn run_install_all() {
     let steps: Vec<(&str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)> = vec![
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("System Tools", Box::new(|_| install_xcode_cli())),
+        ("Extract Tools (zstd)", Box::new(|_| ensure_zstd())),
         ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("Host Runtime ABI", Box::new(install_host_runtime)),
@@ -339,7 +340,7 @@ fn install_rosetta() -> Result<bool, String> {
 }
 
 fn install_xcode_cli() -> Result<bool, String> {
-    if check_command("clang") {
+    if xcode_cli_functional() {
         return Ok(false);
     }
 
@@ -349,19 +350,87 @@ fn install_xcode_cli() -> Result<bool, String> {
         .map_err(|e| format!("failed to run xcode-select: {}", e))?;
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("already installed") || stderr.contains("command line tools are already installed") {
+    if (stderr.contains("already installed") || stderr.contains("command line tools are already installed"))
+        && xcode_cli_functional()
+    {
         return Ok(false);
     }
 
     for _ in 0..120 {
         std::thread::sleep(Duration::from_secs(5));
-        let check = check_command("clang");
-        if check {
+        if xcode_cli_functional() {
             return Ok(true);
         }
     }
 
-    Err("timed out waiting for Xcode CLI tools installation (you may need to complete it manually)".into())
+    install_xcode_cli_softwareupdate()?;
+
+    if xcode_cli_functional() {
+        Ok(true)
+    } else {
+        Err("Xcode CLI tools installation failed — install manually with: xcode-select --install".into())
+    }
+}
+
+fn xcode_cli_functional() -> bool {
+    let clang = match find_system_command("clang") {
+        Some(p) => p,
+        None => return false,
+    };
+    Command::new(&clang)
+        .args(["-x", "c", "-c", "-o", "/dev/null", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn install_xcode_cli_softwareupdate() -> Result<(), String> {
+    let list_output = Command::new("/usr/sbin/softwareupdate")
+        .args(["--list"])
+        .output()
+        .map_err(|e| format!("softwareupdate --list failed: {}", e))?;
+
+    let list = String::from_utf8_lossy(&list_output.stdout);
+    let label = list
+        .lines()
+        .find(|line| line.to_lowercase().contains("command line tools") || line.to_lowercase().contains("xcode"))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find(|word| word.starts_with('*') || word.contains("CLTools") || word.contains("Xcode"))
+                .map(|w| w.trim_start_matches('*').trim_start_matches('"').trim_end_matches('"').to_string())
+                .or_else(|| {
+                    let parts: Vec<&str> = line.splitn(2, ',').collect();
+                    parts.first().map(|s| {
+                        s.trim().trim_start_matches('*').trim_start_matches('"').trim_end_matches('"').to_string()
+                    })
+                })
+        });
+
+    let install_target = match label {
+        Some(l) => l,
+        None => "*Command Line Tools*".to_string(),
+    };
+
+    let install_output = Command::new("/usr/sbin/softwareupdate")
+        .args(["--install", &install_target])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("softwareupdate --install failed: {}", e))?;
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&install_output.stdout),
+        String::from_utf8_lossy(&install_output.stderr)
+    );
+    if !install_output.status.success() && !combined.contains("No updates") && !combined.contains("already installed") {
+        return Err(format!("softwareupdate install failed: {}", combined.lines().last().unwrap_or("unknown error")));
+    }
+
+    Ok(())
 }
 
 fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
@@ -1363,6 +1432,13 @@ fn make_executable(path: &PathBuf) {
             let _ = fs::set_permissions(path, permissions);
         }
     }
+}
+
+pub fn ensure_zstd() -> Result<bool, String> {
+    if check_command("unzstd") {
+        return Ok(false);
+    }
+    brew_install("zstd")
 }
 
 fn install_mono_arm64() -> Result<bool, String> {
