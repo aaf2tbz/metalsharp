@@ -439,17 +439,11 @@ fn effective_pipeline_for_bottle_refresh(
 }
 
 fn appid_rule_overrides_auto_preference(appid: u32) -> bool {
-    matches!(
-        appid,
-        17410 | 49520 | 1928870 | 774361 | 1623730 | 1868140 | 504230 | 1169040 | 1562430 | 275850
-    )
+    matches!(appid, 17410 | 49520 | 1928870 | 774361 | 1623730 | 1868140 | 504230 | 1169040 | 1562430 | 275850)
 }
 
 pub fn preferred_pipeline_for_steam_app(appid: u32) -> Option<crate::mtsp::engine::PipelineId> {
-    load_bottle(&steam_game_bottle_id(appid))
-        .ok()
-        .as_ref()
-        .and_then(manifest_preferred_pipeline)
+    load_bottle(&steam_game_bottle_id(appid)).ok().as_ref().and_then(manifest_preferred_pipeline)
 }
 
 pub fn resolve_steam_pipeline_for_request(
@@ -1412,9 +1406,7 @@ pub fn repair_component(
             if crate::platform::gptk_is_installed() {
                 true
             } else {
-                let status = std::process::Command::new("brew")
-                    .args(["install", "game-porting-toolkit"])
-                    .status()?;
+                let status = std::process::Command::new("brew").args(["install", "game-porting-toolkit"]).status()?;
                 status.success() && crate::platform::gptk_is_installed()
             }
         } else {
@@ -1698,7 +1690,8 @@ pub fn repair_component(
                 detail: if already {
                     "VC++ 2015-2022 redist is already installed in the GPTK prefix".to_string()
                 } else {
-                    "Will install VC++ 2015-2022 redist into the GPTK prefix via the Steam CommonRedist installer".to_string()
+                    "Will install VC++ 2015-2022 redist into the GPTK prefix via the Steam CommonRedist installer"
+                        .to_string()
                 },
                 asset_path: None,
                 log_path: None,
@@ -1708,7 +1701,11 @@ pub fn repair_component(
 
         if crate::platform::gptk_vcrun_installed(&home) {
             mark_component_state(&mut manifest, component_id, ComponentState::Installed);
-            manifest.health = if components_ready(&manifest.installed_components) { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
+            manifest.health = if components_ready(&manifest.installed_components) {
+                BottleHealth::Ready
+            } else {
+                BottleHealth::NeedsRepair
+            };
             manifest.updated_at = timestamp_secs();
             save_bottle(&manifest)?;
             return Ok(ComponentRepairReport {
@@ -1731,7 +1728,10 @@ pub fn repair_component(
             let home = dirs::home_dir().unwrap_or_default();
             match crate::platform::install_gptk_prefix_components(&home) {
                 Ok(()) => {
-                    eprintln!("vcrun2019 gptk: install done, installed={}", crate::platform::gptk_vcrun_installed(&home));
+                    eprintln!(
+                        "vcrun2019 gptk: install done, installed={}",
+                        crate::platform::gptk_vcrun_installed(&home)
+                    );
                 },
                 Err(e) => {
                     eprintln!("vcrun2019 gptk: install failed: {}", e);
@@ -1744,7 +1744,11 @@ pub fn repair_component(
             };
             if let Ok(mut m) = load_bottle(&bottle_id) {
                 mark_component_state(&mut m, "vcrun2019", state);
-                m.health = if components_ready(&m.installed_components) { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
+                m.health = if components_ready(&m.installed_components) {
+                    BottleHealth::Ready
+                } else {
+                    BottleHealth::NeedsRepair
+                };
                 m.updated_at = timestamp_secs();
                 let _ = save_bottle(&m);
             }

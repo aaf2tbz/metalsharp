@@ -39,3 +39,4 @@ metalsharp-*/
 # SQLite runtime sidecars
 *.db-shm
 *.db-wal
+vkd3d-proton-reference/

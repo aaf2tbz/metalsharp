@@ -97,12 +97,32 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi_dxmt.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "dxgi_dxmt.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "d3d10core.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "winemetal.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "nvapi64.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/metalsharp/x86_64-windows", filename: "metalsharp_ntdll_hook.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -136,12 +156,32 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi_dxmt.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "dxgi_dxmt.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "d3d10core.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "winemetal.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "nvapi64.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/metalsharp/x86_64-windows", filename: "metalsharp_ntdll_hook.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -178,15 +218,39 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10_1.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/wine/x86_64-windows",
+                        filename: "d3d10_1.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi_dxmt.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d10core.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "winemetal.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "dxgi_dxmt.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "d3d10core.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "winemetal.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "nvapi64.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/metalsharp/x86_64-windows", filename: "metalsharp_ntdll_hook.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -222,8 +286,16 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvapi64.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/metalsharp/x86_64-windows", filename: "metalsharp_ntdll_hook.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "nvapi64.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -250,9 +322,21 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d10.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "nvapi64.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "atidxx64.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/metalsharp/x86_64-windows", filename: "metalsharp_ntdll_hook.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/gptk/x86_64-windows",
+                        filename: "nvapi64.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/gptk/x86_64-windows",
+                        filename: "atidxx64.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/metalsharp/x86_64-windows",
+                        filename: "metalsharp_ntdll_hook.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![],
                 launch_args: vec![],
@@ -378,7 +462,15 @@ impl PipelineId {
     }
 
     pub fn is_user_selectable(self) -> bool {
-        matches!(self, PipelineId::M12 | PipelineId::D3DMetal | PipelineId::M11 | PipelineId::M10 | PipelineId::M9 | PipelineId::FnaArm64)
+        matches!(
+            self,
+            PipelineId::M12
+                | PipelineId::D3DMetal
+                | PipelineId::M11
+                | PipelineId::M10
+                | PipelineId::M9
+                | PipelineId::FnaArm64
+        )
     }
 
     pub fn user_selectable_id(self) -> Option<&'static str> {

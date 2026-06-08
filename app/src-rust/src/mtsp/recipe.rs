@@ -807,9 +807,19 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
 
     if node.backend == "d3dmetal" {
         let gptk_wine64 = crate::platform::gptk_wine64_binary();
-        assets.push(RuntimeAsset { name: "GPTK wine64".into(), present: gptk_wine64.exists(), path: gptk_wine64, required: true });
+        assets.push(RuntimeAsset {
+            name: "GPTK wine64".into(),
+            present: gptk_wine64.exists(),
+            path: gptk_wine64,
+            required: true,
+        });
         let gptk_ws = crate::platform::gptk_wineserver_binary();
-        assets.push(RuntimeAsset { name: "GPTK wineserver".into(), present: gptk_ws.exists(), path: gptk_ws, required: true });
+        assets.push(RuntimeAsset {
+            name: "GPTK wineserver".into(),
+            present: gptk_ws.exists(),
+            path: gptk_ws,
+            required: true,
+        });
     }
 
     if node.backend == "gptk" {

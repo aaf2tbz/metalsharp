@@ -236,10 +236,7 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     copy_registry_hive(&steam_prefix, &gptk_prefix, "user.reg");
     copy_registry_hive(&steam_prefix, &gptk_prefix, "userdef.reg");
 
-    let _ = std::process::Command::new(&gptk_wineserver)
-        .env("WINEPREFIX", &gptk_prefix)
-        .arg("-k")
-        .status();
+    let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &gptk_prefix).arg("-k").status();
 
     eprintln!("gptk: installing components (vcrun, etc.) ...");
     install_gptk_prefix_components(home)?;
@@ -342,16 +339,17 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
         .iter()
         .filter_map(|ver| {
             let p = steam_redist.join("vcredist").join(ver).join("VC_redist.x64.exe");
-            if p.exists() { Some(p) } else { None }
+            if p.exists() {
+                Some(p)
+            } else {
+                None
+            }
         })
         .next();
 
     if let Some(installer) = installer {
         eprintln!("gptk: installing VC++ redist from {:?} ...", installer);
-        let _ = std::process::Command::new(&gptk_wineserver)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("-p")
-            .status();
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-p").status();
 
         let status = std::process::Command::new(&gptk_wine64)
             .env("WINEPREFIX", &prefix_str)
@@ -364,14 +362,8 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
             eprintln!("gptk: VC++ redist installer exited with {:?}", status.code());
         }
 
-        let _ = std::process::Command::new(&gptk_wineserver)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("-w")
-            .status();
-        let _ = std::process::Command::new(&gptk_wineserver)
-            .env("WINEPREFIX", &prefix_str)
-            .arg("-k")
-            .status();
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-w").status();
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
 
         eprintln!("gptk: VC++ redist install done, installed={}", gptk_vcrun_installed(home));
     } else {

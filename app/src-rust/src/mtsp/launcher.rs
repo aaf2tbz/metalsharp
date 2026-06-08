@@ -612,20 +612,22 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
 fn gptk_ensure_dependencies() -> Result<(), Box<dyn std::error::Error>> {
     if !crate::platform::rosetta_is_installed() {
         eprintln!("d3dmetal: Installing Rosetta 2...");
-        let status = std::process::Command::new("softwareupdate")
-            .args(["--install-rosetta", "--agree-to-license"])
-            .status()?;
+        let status =
+            std::process::Command::new("softwareupdate").args(["--install-rosetta", "--agree-to-license"]).status()?;
         if !status.success() {
-            return Err("Failed to install Rosetta 2. Install manually: softwareupdate --install-rosetta --agree-to-license".into());
+            return Err(
+                "Failed to install Rosetta 2. Install manually: softwareupdate --install-rosetta --agree-to-license"
+                    .into(),
+            );
         }
     }
     if !crate::platform::gptk_is_installed() {
         eprintln!("d3dmetal: Installing Game Porting Toolkit via Homebrew...");
-        let status = std::process::Command::new("brew")
-            .args(["install", "game-porting-toolkit"])
-            .status()?;
+        let status = std::process::Command::new("brew").args(["install", "game-porting-toolkit"]).status()?;
         if !status.success() {
-            return Err("Failed to install GPTK via Homebrew. Install manually: brew install game-porting-toolkit".into());
+            return Err(
+                "Failed to install GPTK via Homebrew. Install manually: brew install game-porting-toolkit".into()
+            );
         }
         if !crate::platform::gptk_is_installed() {
             return Err("GPTK installed via brew but wine64 binary not found at expected path".into());
@@ -650,9 +652,7 @@ fn launch_d3dmetal_gptk_with_context(
     let home = dirs::home_dir().ok_or("no home dir")?;
 
     if !crate::platform::gptk_prefix_ready(&home) {
-        return Err(
-            "GPTK prefix is not ready — open the bottle settings and repair 'gptk_prefix' first".into(),
-        );
+        return Err("GPTK prefix is not ready — open the bottle settings and repair 'gptk_prefix' first".into());
     }
     let gptk_prefix = crate::platform::gptk_prefix_path(&home);
     crate::platform::sync_gptk_prefix(&home)?;
