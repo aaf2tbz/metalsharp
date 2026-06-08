@@ -390,7 +390,13 @@ fn run_migration() {
     }
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Preserving user preferences, Steam API key, and bottle settings...", None);
+    write_migrate_progress(
+        "running",
+        step,
+        total_steps,
+        "Preserving user preferences, Steam API key, and bottle settings...",
+        None,
+    );
     let preserved = preserve_user_data(&ms_dir);
 
     step += 1;
