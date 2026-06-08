@@ -1613,6 +1613,8 @@ pub fn repair_component(
                 },
                 Err(e) => {
                     eprintln!("gptk_prefix: seed failed: {}", e);
+                    let marker = crate::platform::gptk_prefix_path(&dirs::home_dir().unwrap_or_default()).join(".gptk-seeding");
+                    let _ = std::fs::remove_file(&marker);
                     if let Ok(mut m) = load_bottle(&bottle_id) {
                         mark_component_state(&mut m, "gptk_prefix", ComponentState::Missing);
                         m.health = BottleHealth::NeedsRepair;

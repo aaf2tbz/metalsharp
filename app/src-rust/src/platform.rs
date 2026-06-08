@@ -126,7 +126,28 @@ pub fn gptk_prefix_ready(home: &Path) -> bool {
 }
 
 pub fn gptk_prefix_seeding(home: &Path) -> bool {
-    gptk_prefix_path(home).join(".gptk-seeding").exists()
+    let prefix = gptk_prefix_path(home);
+    let marker = prefix.join(".gptk-seeding");
+    if !marker.exists() {
+        return false;
+    }
+    if !prefix.join("drive_c").is_dir() {
+        eprintln!("gptk: stale seeding marker found with no drive_c — clearing");
+        let _ = std::fs::remove_file(&marker);
+        return false;
+    }
+    if let Ok(meta) = std::fs::metadata(&marker) {
+        if let Ok(modified) = meta.modified() {
+            if let Ok(age) = modified.elapsed() {
+                if age > std::time::Duration::from_secs(1800) {
+                    eprintln!("gptk: seeding marker is {}s old — clearing as stale", age.as_secs());
+                    let _ = std::fs::remove_file(&marker);
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 pub fn ensure_gptk_dosdevices(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -407,6 +428,88 @@ pub fn ensure_gptk_prefix(home: &Path) -> Result<PathBuf, Box<dyn std::error::Er
     Err("GPTK prefix is being prepared — try again in a moment".into())
 }
 
+struct SeedingGuard {
+    marker: PathBuf,
+    armed: bool,
+}
+
+impl SeedingGuard {
+    fn new(marker: PathBuf) -> Self {
+        Self { marker, armed: true }
+    }
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SeedingGuard {
+    fn drop(&mut self) {
+        if self.armed && self.marker.exists() {
+            eprintln!("gptk: cleaning up seeding marker after failure");
+            let _ = std::fs::remove_file(&self.marker);
+        }
+    }
+}
+
+fn copy_dir_tolerant(src: &Path, dst: &Path) -> (u64, u64) {
+    let mut copied = 0u64;
+    let mut skipped = 0u64;
+    if let Err(e) = std::fs::create_dir_all(dst) {
+        eprintln!("gptk copy: cannot create {}: {}", dst.display(), e);
+        return (copied, skipped);
+    }
+    let entries = match std::fs::read_dir(src) {
+        Ok(rd) => rd,
+        Err(e) => {
+            eprintln!("gptk copy: cannot read {}: {}", src.display(), e);
+            return (copied, skipped);
+        }
+    };
+    for entry in entries.flatten() {
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let meta = match std::fs::symlink_metadata(&src_path) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("gptk copy: skip {}: {}", src_path.display(), e);
+                skipped += 1;
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            match std::fs::read_link(&src_path) {
+                Ok(target) => {
+                    let _ = std::fs::remove_file(&dst_path);
+                    match std::os::unix::fs::symlink(&target, &dst_path) {
+                Ok(_bytes) => copied += 1,
+                        Err(e) => {
+                            eprintln!("gptk copy: skip symlink {} -> {}: {}", src_path.display(), dst_path.display(), e);
+                            skipped += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("gptk copy: skip readlink {}: {}", src_path.display(), e);
+                    skipped += 1;
+                }
+            }
+        } else if meta.is_dir() {
+            let (c, s) = copy_dir_tolerant(&src_path, &dst_path);
+            copied += c;
+            skipped += s;
+        } else {
+            match std::fs::copy(&src_path, &dst_path) {
+                Ok(_) => copied += 1,
+                Err(e) => {
+                    eprintln!("gptk copy: skip {} -> {}: {}", src_path.display(), dst_path.display(), e);
+                    skipped += 1;
+                }
+            }
+        }
+    }
+    (copied, skipped)
+}
+
 pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let gptk_prefix = gptk_prefix_path(home);
     let steam_prefix = metalsharp_home_dir_for(home).join("prefix-steam");
@@ -419,11 +522,17 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     let seeding_marker = gptk_prefix.join(".gptk-seeding");
     let _ = std::fs::create_dir_all(&gptk_prefix);
     std::fs::write(&seeding_marker, "seeding")?;
+    let mut guard = SeedingGuard::new(seeding_marker.clone());
 
-    if gptk_prefix.exists() && gptk_prefix.join("drive_c").is_dir() {
-        let _ = std::fs::remove_dir_all(&gptk_prefix);
+    let _ = std::process::Command::new(&gptk_wineserver)
+        .env("WINEPREFIX", &gptk_prefix)
+        .arg("-k")
+        .status();
+    eprintln!("gptk: wineserver killed (pre-seed)");
+
+    if gptk_prefix.join("drive_c").is_dir() {
+        let _ = std::fs::remove_dir_all(gptk_prefix.join("drive_c"));
     }
-    let _ = std::fs::create_dir_all(&gptk_prefix);
     std::fs::write(&seeding_marker, "seeding")?;
 
     let dyld = format!(
@@ -442,13 +551,11 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
         .arg("--init")
         .status()?;
     if !status.success() {
-        let _ = std::fs::remove_file(&seeding_marker);
         return Err("GPTK wineboot --init failed".into());
     }
     eprintln!("gptk: wineboot --init done");
 
     if !steam_prefix.join("drive_c").join("Program Files (x86)").join("Steam").exists() {
-        let _ = std::fs::remove_file(&seeding_marker);
         return Err("MetalSharp Wine Steam not installed — install Steam first".into());
     }
 
@@ -457,9 +564,8 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     let steam_src = steam_prefix.join("drive_c").join("Program Files (x86)").join("Steam");
     let steam_dst = drive_c.join("Program Files (x86)").join("Steam");
     std::fs::create_dir_all(steam_dst.parent().unwrap())?;
-    copy_dir_recursive(&steam_src, &steam_dst)?;
-    verify_dir_copy(&steam_src, &steam_dst).map_err(|e| format!("gptk: Steam copy {}", e))?;
-    eprintln!("gptk: Steam copy done (verified)");
+    let (copied, skipped) = copy_dir_tolerant(&steam_src, &steam_dst);
+    eprintln!("gptk: Steam copy done ({} copied, {} skipped)", copied, skipped);
 
     eprintln!("gptk: copying users ...");
     let users_src = steam_prefix.join("drive_c").join("users");
@@ -468,9 +574,8 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
         if users_dst.is_dir() {
             let _ = std::fs::remove_dir_all(&users_dst);
         }
-        copy_dir_recursive(&users_src, &users_dst)?;
-        verify_dir_copy(&users_src, &users_dst).map_err(|e| format!("gptk: users copy {}", e))?;
-        eprintln!("gptk: users copy done (verified)");
+        let (copied, skipped) = copy_dir_tolerant(&users_src, &users_dst);
+        eprintln!("gptk: users copy done ({} copied, {} skipped)", copied, skipped);
     } else {
         eprintln!("gptk: no users dir to copy");
     }
@@ -479,7 +584,6 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
 
     let steam_exe_check = steam_dst.join("Steam.exe");
     if !steam_exe_check.is_file() {
-        let _ = std::fs::remove_file(&seeding_marker);
         return Err(format!("gptk: Steam.exe missing after copy — expected at {}", steam_exe_check.display()).into());
     }
 
@@ -493,8 +597,9 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     install_gptk_prefix_components(home)?;
     eprintln!("gptk: components done");
 
-    let _ = std::fs::remove_file(&seeding_marker);
     std::fs::write(gptk_prefix.join(".gptk-ready"), "ready")?;
+    guard.disarm();
+    let _ = std::fs::remove_file(&seeding_marker);
     eprintln!("gptk: prefix ready");
 
     Ok(())

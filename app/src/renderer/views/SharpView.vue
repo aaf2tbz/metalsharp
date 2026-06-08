@@ -258,15 +258,41 @@ async function repairBottleComponent(id: string, component: string) {
     id,
     component,
   });
-  bottleLoading.value[id] = false;
   if (result?.ok && result.repair) {
     const repair = result.repair;
     const missing = repair.status === "asset_missing";
     toast.show(missing ? repair.detail : `${repair.id}: ${repair.status}`, missing ? "error" : "success");
-    await doctorBottle(id);
+    if (repair.status === "started" || repair.status === "seeding") {
+      await pollRepairDone(id, component);
+    } else {
+      await doctorBottle(id);
+    }
   } else {
     toast.show(result?.error ?? "Failed to repair component", "error");
   }
+  bottleLoading.value[id] = false;
+}
+
+async function pollRepairDone(id: string, component: string) {
+  const pollInterval = 5000;
+  const maxPolls = 120;
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, pollInterval));
+    const poll = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
+      id,
+      component,
+      dryRun: true,
+    });
+    if (!poll?.ok || !poll.repair) break;
+    const status = poll.repair.status;
+    if (status === "already_installed" || status === "repair_available") {
+      toast.show(`${component}: ${status === "already_installed" ? "ready" : status}`, "success");
+      await doctorBottle(id);
+      return;
+    }
+  }
+  toast.show(`${component}: seeding is taking longer than expected — check back`, "info");
+  await doctorBottle(id);
 }
 
 async function setBottleProfile(id: string, profile: string) {
