@@ -1588,6 +1588,12 @@ pub fn repair_component(
         save_bottle(&manifest)?;
 
         let bottle_id = id.to_string();
+        let home_for_marker = dirs::home_dir().unwrap_or_default();
+        let gptk_prefix = crate::platform::gptk_prefix_path(&home_for_marker);
+        let _ = std::fs::create_dir_all(&gptk_prefix);
+        if let Err(e) = std::fs::write(gptk_prefix.join(".gptk-seeding"), "seeding") {
+            return Err(format!("failed to write seeding marker: {}", e).into());
+        }
         thread::spawn(move || {
             eprintln!("gptk_prefix: starting background seed ...");
             let home = dirs::home_dir().unwrap_or_default();

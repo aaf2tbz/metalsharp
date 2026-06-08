@@ -2304,19 +2304,19 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
 
         let x86_orig = target.join("steam_api.dll.orig");
         let x86_current = target.join("steam_api.dll");
-        if x86_orig.exists() && x86_current.exists() {
+        if x86_orig.exists() {
             let _ = std::fs::rename(&x86_orig, &x86_current);
         }
 
         let x64_orig = target.join("steam_api64.dll.orig");
         let x64_current = target.join("steam_api64.dll");
-        if x64_orig.exists() && x64_current.exists() {
+        if x64_orig.exists() {
             let _ = std::fs::rename(&x64_orig, &x64_current);
         }
 
         let sc64_orig = target.join("steamclient64.dll.orig");
         let sc64_current = target.join("steamclient64.dll");
-        if sc64_orig.exists() && sc64_current.exists() {
+        if sc64_orig.exists() {
             let _ = std::fs::rename(&sc64_orig, &sc64_current);
         } else if sc64_current.exists() {
             let _ = std::fs::remove_file(&sc64_current);
@@ -2324,7 +2324,7 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
 
         let sc32_orig = target.join("steamclient.dll.orig");
         let sc32_current = target.join("steamclient.dll");
-        if sc32_orig.exists() && sc32_current.exists() {
+        if sc32_orig.exists() {
             let _ = std::fs::rename(&sc32_orig, &sc32_current);
         } else if sc32_current.exists() {
             let _ = std::fs::remove_file(&sc32_current);

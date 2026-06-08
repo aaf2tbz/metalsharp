@@ -114,23 +114,15 @@ pub fn gptk_prefix_path(home: &Path) -> PathBuf {
 
 pub fn gptk_prefix_ready(home: &Path) -> bool {
     let prefix = gptk_prefix_path(home);
+    if !prefix.join(".gptk-ready").is_file() {
+        return false;
+    }
+    if prefix.join(".gptk-seeding").exists() {
+        let _ = std::fs::remove_file(prefix.join(".gptk-seeding"));
+    }
     let steam_exe = prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe");
-    let has_ready = prefix.join(".gptk-ready").exists();
-    let has_seeding = prefix.join(".gptk-seeding").exists();
-
-    if !has_ready && !has_seeding && steam_exe.exists() {
-        let _ = std::fs::write(prefix.join(".gptk-ready"), "ready");
-        return true;
-    }
-
-    if has_ready && steam_exe.exists() {
-        if has_seeding {
-            let _ = std::fs::remove_file(prefix.join(".gptk-seeding"));
-        }
-        return true;
-    }
-
-    false
+    let dosdevices = prefix.join("dosdevices");
+    steam_exe.is_file() && dosdevices.is_dir()
 }
 
 pub fn gptk_prefix_seeding(home: &Path) -> bool {
@@ -202,13 +194,11 @@ fn ensure_dosdevice(dosdevices: &Path, letter: &str, target: &Path) {
 
 fn ensure_dosdevice_for_path(dosdevices: &Path, target: &Path) {
     if target.starts_with("/Volumes") {
-        for entry in std::fs::read_dir(dosdevices).unwrap_or_else(|_| {
-            std::fs::create_dir_all(dosdevices).unwrap_or(());
-            std::fs::read_dir(dosdevices).unwrap_or_else(|_| panic!("cannot read dosdevices"))
-        }) {
-            let Ok(entry) = entry else { continue };
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
+        let Ok(rd) = std::fs::read_dir(dosdevices) else {
+            return;
+        };
+        for entry in rd.flatten() {
+            let name_str = entry.file_name().to_string_lossy().to_string();
             if name_str.len() == 2 && name_str.ends_with(':') {
                 if let Ok(current) = std::fs::read_link(entry.path()) {
                     if current == target {
@@ -358,12 +348,27 @@ pub fn migrate_game_to_external(
 
     let external_base = storage.join(format!("{}", appid));
     std::fs::create_dir_all(&external_base)?;
-    copy_dir_recursive(game_dir, &external_game_dir).map_err(|e| format!("gptk migrate: copy failed: {}", e))?;
 
-    if let Err(e) = verify_dir_copy(game_dir, &external_game_dir) {
+    let tmp_name = format!(".{}.partial", game_name);
+    let tmp_dir = external_base.join(&tmp_name);
+    if tmp_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    copy_dir_recursive(game_dir, &tmp_dir).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        format!("gptk migrate: copy failed: {}", e)
+    })?;
+
+    if let Err(e) = verify_dir_copy(game_dir, &tmp_dir) {
         eprintln!("gptk migrate: verification failed, cleaning up: {}", e);
-        let _ = std::fs::remove_dir_all(&external_base);
+        let _ = std::fs::remove_dir_all(&tmp_dir);
         return Err(e.into());
+    }
+
+    if let Err(e) = std::fs::rename(&tmp_dir, &external_game_dir) {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(format!("gptk migrate: rename failed: {}", e).into());
     }
 
     eprintln!("gptk migrate: game copied to external SSD at {}", external_game_dir.display());
@@ -386,6 +391,11 @@ pub fn ensure_gptk_prefix(home: &Path) -> Result<PathBuf, Box<dyn std::error::Er
     }
 
     let home = home.to_path_buf();
+    let gptk_prefix = gptk_prefix_path(&home);
+    let _ = std::fs::create_dir_all(&gptk_prefix);
+    if let Err(e) = std::fs::write(gptk_prefix.join(".gptk-seeding"), "seeding") {
+        return Err(format!("failed to write seeding marker: {}", e).into());
+    }
     std::thread::spawn(move || {
         if let Err(e) = seed_gptk_prefix_sync(&home) {
             eprintln!("gptk prefix seed failed: {}", e);
@@ -521,7 +531,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        let meta = std::fs::symlink_metadata(&src_path)?;
+        if meta.file_type().is_symlink() {
+            let target = std::fs::read_link(&src_path)?;
+            let _ = std::fs::remove_file(&dst_path);
+            std::os::unix::fs::symlink(&target, &dst_path)?;
+        } else if meta.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             std::fs::copy(&src_path, &dst_path).map_err(|e| {
