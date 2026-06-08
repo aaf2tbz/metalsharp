@@ -688,7 +688,7 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
     }
 }
 
-fn find_case_insensitive(dir: &Path, name: &str) -> Option<PathBuf> {
+pub fn find_case_insensitive(dir: &Path, name: &str) -> Option<PathBuf> {
     let target = name.to_lowercase();
     for entry in WalkDir::new(dir).max_depth(5).into_iter().flatten() {
         if !entry.path().is_file() {
