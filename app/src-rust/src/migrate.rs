@@ -448,12 +448,14 @@ fn run_migration() {
     }
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Updating Wine Steam prefix...", None);
-    if let Err(e) = update_existing_wine_prefixes(&ms_dir, step) {
-        write_migrate_progress("error", step, total_steps, &format!("Wine prefix update failed: {}", e), Some(&e));
-        log_to_file(&format!("Migration to v{} failed while updating Wine prefixes: {}", MIGRATE_VERSION, e));
-        return;
-    }
+    write_migrate_progress(
+        "running",
+        step,
+        total_steps,
+        "Skipping Wine prefix wineboot (GPTK manages prefix separately)...",
+        None,
+    );
+    log_to_file("Migration: skipping wineboot -u for Wine Steam prefix; GPTK prefix is managed separately");
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Verifying MetalSharp update...", None);
