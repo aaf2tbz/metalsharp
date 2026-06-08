@@ -28,7 +28,7 @@
   --text-bright: #ffffff;
   --border: rgba(140, 170, 200, 0.12);
   --border-strong: rgba(140, 170, 200, 0.2);
-  --sidebar-bg: linear-gradient(180deg, #181f27 0%, #1a2d42 40%, #1e3a52 70%, #1a2d42 100%);
+  --sidebar-bg: rgba(18, 28, 40, 0.72);
   --sidebar-hover: rgba(29, 37, 46, 0.6);
   --sidebar-active: rgba(95, 183, 232, 0.15);
   --sidebar-text: #ffffff;

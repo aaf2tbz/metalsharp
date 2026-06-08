@@ -2210,20 +2210,43 @@ fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
     deploy_goldberg_internal(home, game_dir, appid);
 }
 
-pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
-    let emu_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("goldberg");
-    if !emu_dir.exists() {
-        return;
-    }
-
-    let targets: Vec<PathBuf> = vec![
-        game_dir.clone(),
+fn goldberg_deploy_targets(game_dir: &Path) -> Vec<PathBuf> {
+    let mut targets: Vec<PathBuf> = vec![
+        game_dir.to_path_buf(),
         game_dir.join("Game"),
         game_dir.join("bin"),
         game_dir.join("Binaries").join("Win32"),
         game_dir.join("Binaries").join("Win64"),
         game_dir.join("win64"),
     ];
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let child = entry.path().join("Binaries").join("Win64");
+            if child.is_dir() {
+                targets.push(child);
+            }
+        }
+    }
+    targets.dedup();
+    targets
+}
+
+fn goldberg_deploy_settings(steam_settings: &Path, appid: u32) {
+    if !steam_settings.exists() {
+        let _ = std::fs::create_dir_all(steam_settings);
+    }
+    let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), appid.to_string());
+    let _ = std::fs::write(steam_settings.join("account_name.txt"), "Player\n");
+    let _ = std::fs::write(steam_settings.join("user_steam_id.txt"), "76561198000000000\n");
+}
+
+pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
+    let emu_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("goldberg");
+    if !emu_dir.exists() {
+        return;
+    }
+
+    let targets = goldberg_deploy_targets(game_dir);
 
     let steamclient_dir = emu_dir.join("steamclient");
 
@@ -2283,22 +2306,23 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
         }
     }
 
-    let steam_settings = game_dir.join("steam_settings");
-    if !steam_settings.exists() {
-        let _ = std::fs::create_dir_all(&steam_settings);
+    goldberg_deploy_settings(&game_dir.join("steam_settings"), appid);
+
+    for target in &targets {
+        if target == game_dir {
+            continue;
+        }
+        if !target.join("steam_api64.dll.orig").exists() && !target.join("steam_api.dll.orig").exists() {
+            continue;
+        }
+        goldberg_deploy_settings(&target.join("steam_settings"), appid);
     }
-    let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), appid.to_string());
+
+    generate_steam_interfaces(game_dir);
 }
 
 pub fn cleanup_goldberg(game_dir: &PathBuf) {
-    let targets: Vec<PathBuf> = vec![
-        game_dir.clone(),
-        game_dir.join("Game"),
-        game_dir.join("bin"),
-        game_dir.join("Binaries").join("Win32"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("win64"),
-    ];
+    let targets = goldberg_deploy_targets(game_dir);
 
     for target in &targets {
         if !target.exists() {
@@ -2335,11 +2359,25 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
 
         let _ = std::fs::remove_file(target.join("GameOverlayRenderer64.dll"));
         let _ = std::fs::remove_file(target.join("GameOverlayRenderer.dll"));
+
+        let ss = target.join("steam_settings");
+        if ss.is_dir() && target != game_dir {
+            let _ = std::fs::remove_file(ss.join("force_steam_appid.txt"));
+            let _ = std::fs::remove_file(ss.join("account_name.txt"));
+            let _ = std::fs::remove_file(ss.join("user_steam_id.txt"));
+            let _ = std::fs::remove_file(ss.join("steam_interfaces.txt"));
+            if std::fs::read_dir(&ss).map(|d| d.count()).unwrap_or(1) == 0 {
+                let _ = std::fs::remove_dir(&ss);
+            }
+        }
     }
 
     let steam_settings = game_dir.join("steam_settings");
     if steam_settings.exists() {
         let _ = std::fs::remove_file(steam_settings.join("force_steam_appid.txt"));
+        let _ = std::fs::remove_file(steam_settings.join("account_name.txt"));
+        let _ = std::fs::remove_file(steam_settings.join("user_steam_id.txt"));
+        let _ = std::fs::remove_file(steam_settings.join("steam_interfaces.txt"));
         if std::fs::read_dir(&steam_settings).map(|d| d.count()).unwrap_or(1) == 0 {
             let _ = std::fs::remove_dir(&steam_settings);
         }
@@ -2347,14 +2385,7 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
 }
 
 pub fn goldberg_status(game_dir: &PathBuf) -> bool {
-    let targets: Vec<PathBuf> = vec![
-        game_dir.clone(),
-        game_dir.join("Game"),
-        game_dir.join("bin"),
-        game_dir.join("Binaries").join("Win32"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("win64"),
-    ];
+    let targets = goldberg_deploy_targets(game_dir);
 
     for target in &targets {
         if !target.exists() {
@@ -2382,14 +2413,7 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
         return;
     }
 
-    let targets: Vec<PathBuf> = vec![
-        game_dir.to_path_buf(),
-        game_dir.join("Game"),
-        game_dir.join("bin"),
-        game_dir.join("Binaries").join("Win32"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("win64"),
-    ];
+    let targets = goldberg_deploy_targets(game_dir);
 
     for target in &targets {
         if !target.exists() {
@@ -2470,6 +2494,96 @@ fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
     let old = spg_dir.join("start_protected_game.old");
     let _ = std::fs::rename(&spg, &old);
     let _ = std::fs::copy(&real_exe, &spg);
+}
+
+fn generate_steam_interfaces(game_dir: &Path) {
+    let steam_settings = game_dir.join("steam_settings");
+    let interfaces_file = steam_settings.join("steam_interfaces.txt");
+    if interfaces_file.exists() {
+        return;
+    }
+
+    let candidates: Vec<PathBuf> = vec![
+        game_dir.join("steam_api64.dll.orig"),
+        game_dir.join("steam_api.dll.orig"),
+        game_dir.join("Game").join("steam_api64.dll.orig"),
+        game_dir.join("Game").join("steam_api.dll.orig"),
+        game_dir.join("Binaries").join("Win64").join("steam_api64.dll.orig"),
+        game_dir.join("Binaries").join("Win32").join("steam_api.dll.orig"),
+        game_dir.join("bin").join("steam_api64.dll.orig"),
+        game_dir.join("win64").join("steam_api64.dll.orig"),
+    ];
+
+    let dll_path = match candidates.iter().find(|p| p.exists()) {
+        Some(p) => p,
+        None => return,
+    };
+
+    let data = match std::fs::read(dll_path) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    let interfaces = extract_steam_interfaces(&data);
+    if interfaces.is_empty() {
+        return;
+    }
+
+    let content = interfaces.join("\n") + "\n";
+    let _ = std::fs::create_dir_all(&steam_settings);
+    let _ = std::fs::write(&interfaces_file, content);
+    eprintln!("goldberg: generated steam_interfaces.txt ({} interfaces) from {}", interfaces.len(), dll_path.display());
+}
+
+fn extract_steam_interfaces(data: &[u8]) -> Vec<String> {
+    let pattern = b"Steam";
+    let mut interfaces = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for i in 0..data.len().saturating_sub(8) {
+        if data[i] != b'S' {
+            continue;
+        }
+        if &data[i..i + 5] != pattern {
+            continue;
+        }
+
+        let end = data[i..].iter().position(|&b| b == 0).unwrap_or(0);
+        if !(6..=80).contains(&end) {
+            continue;
+        }
+        let s = match std::str::from_utf8(&data[i..i + end]) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        if !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+            continue;
+        }
+        if !s.chars().any(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let lower = s.to_ascii_lowercase();
+        if !lower.starts_with("steam")
+            || lower.contains("steamapps")
+            || lower.contains("steam.dll")
+            || lower.contains("steam_api")
+            || lower.contains("steamclient")
+            || lower.contains("steamgame")
+            || lower.contains("steamoverlay")
+            || lower.contains("steam_appid")
+            || lower.contains("steamworks")
+        {
+            continue;
+        }
+
+        if seen.insert(s.to_string()) {
+            interfaces.push(s.to_string());
+        }
+    }
+
+    interfaces.sort();
+    interfaces
 }
 
 pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
