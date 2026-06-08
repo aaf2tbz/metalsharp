@@ -228,9 +228,9 @@ async function toggleGoldberg(enable: boolean) {
   });
   if (result?.ok) {
     goldbergActive.value = result.goldberg_active;
-    toast.show(enable ? "Goldberg enabled" : "Goldberg disabled", "success");
+    toast.show(enable ? "Steam Emu enabled" : "Steam Emu disabled", "success");
   } else {
-    toast.show("Failed to toggle Goldberg", "error");
+    toast.show("Failed to toggle Steam Emu", "error");
   }
 }
 
@@ -495,14 +495,14 @@ function formatBytes(bytes: number): string {
             </button>
           </div>
           <div v-if="developerMode" class="secondary-action-grid">
-            <label class="tool-chip toggle-label" title="Goldberg Steam emulator">
+            <label class="tool-chip toggle-label" title="gbe_fork Steam emulator (steamclient + steam_api mode)">
               <input
                 type="checkbox"
                 :checked="goldbergActive"
                 @change="toggleGoldberg(($event.target as HTMLInputElement).checked)"
               />
               <span class="toggle-switch"></span>
-              <span class="toggle-text">Goldberg</span>
+              <span class="toggle-text">Steam Emu</span>
             </label>
             <label class="tool-chip toggle-label" title="Offline EAC mode">
               <input

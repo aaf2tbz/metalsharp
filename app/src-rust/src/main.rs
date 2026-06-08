@@ -806,8 +806,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .and_then(|v| v.split('&').next())
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let game_dir = crate::setup::resolve_game_dir(appid);
-            let active = game_dir.as_ref().map(|d| mtsp::launcher::goldberg_status(d)).unwrap_or(false);
+            let game_dir = crate::setup::resolve_windows_game_dir(appid)
+                .or_else(|| crate::setup::resolve_game_dir(appid));
+            let active = game_dir.as_ref().map(|d| mtsp::launcher::goldberg_status(&d.to_path_buf())).unwrap_or(false);
             resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active}))
         },
         (Method::Post, "/goldberg/toggle") => {
@@ -817,17 +818,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match appid {
                 Some(id) => {
                     let aid = id as u32;
-                    let game_dir = crate::setup::resolve_game_dir(aid);
+                    let game_dir = crate::setup::resolve_windows_game_dir(aid)
+                        .or_else(|| crate::setup::resolve_game_dir(aid));
                     match game_dir {
                         Some(dir) if dir.exists() => {
                             if enable {
                                 let home = dirs::home_dir().unwrap_or_default();
-                                mtsp::launcher::deploy_goldberg_internal(&home, &dir, aid);
-                                app_log(&format!("[GOLDBERG] enabled for appid {}", aid));
+                                mtsp::launcher::deploy_goldberg_internal(&home, &dir.to_path_buf(), aid);
+                                app_log(&format!("[STEAM_EMU] enabled for appid {}", aid));
                                 resp(200, json!({"ok": true, "goldberg_active": true}))
                             } else {
-                                mtsp::launcher::cleanup_goldberg(&dir);
-                                app_log(&format!("[GOLDBERG] disabled for appid {}", aid));
+                                mtsp::launcher::cleanup_goldberg(&dir.to_path_buf());
+                                app_log(&format!("[STEAM_EMU] disabled for appid {}", aid));
                                 resp(200, json!({"ok": true, "goldberg_active": false}))
                             }
                         },

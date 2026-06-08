@@ -204,6 +204,12 @@ pub fn launch_with_pipeline(
     let pipeline_id = super::rules::resolve_requested_pipeline(appid, Some(pipeline_id));
     let node = get_pipeline(pipeline_id);
 
+    if let Some(home) = dirs::home_dir() {
+        if let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) {
+            ensure_steam_emu_if_active(&home, &game_dir, appid);
+        }
+    }
+
     match pipeline_id {
         PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
             launch_dxmt_metal(appid, node)
@@ -227,6 +233,12 @@ pub fn launch_steam_bottle_with_pipeline(
     let pipeline_id = super::rules::resolve_requested_pipeline(appid, Some(pipeline_id));
     let node = get_pipeline(pipeline_id);
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
+
+    if let Some(home) = dirs::home_dir() {
+        if let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) {
+            ensure_steam_emu_if_active(&home, &game_dir, appid);
+        }
+    }
 
     match pipeline_id {
         PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
@@ -2196,8 +2208,8 @@ fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
 }
 
 pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
-    let goldberg_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("goldberg");
-    if !goldberg_dir.exists() {
+    let emu_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("goldberg");
+    if !emu_dir.exists() {
         return;
     }
 
@@ -2210,12 +2222,14 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
         game_dir.join("win64"),
     ];
 
+    let steamclient_dir = emu_dir.join("steamclient");
+
     for target in &targets {
         if !target.exists() {
             continue;
         }
 
-        let x86_src = goldberg_dir.join("x86").join("steam_api.dll");
+        let x86_src = emu_dir.join("x86").join("steam_api.dll");
         let x86_dst = target.join("steam_api.dll");
         if x86_src.exists() && !x86_dst.with_extension("orig").exists() {
             if x86_dst.exists() {
@@ -2224,13 +2238,45 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
             let _ = std::fs::copy(&x86_src, &x86_dst);
         }
 
-        let x64_src = goldberg_dir.join("x64").join("steam_api64.dll");
+        let x64_src = emu_dir.join("x64").join("steam_api64.dll");
         let x64_dst = target.join("steam_api64.dll");
         if x64_src.exists() && !x64_dst.with_extension("orig").exists() {
             if x64_dst.exists() {
                 let _ = std::fs::rename(&x64_dst, target.join("steam_api64.dll.orig"));
             }
             let _ = std::fs::copy(&x64_src, &x64_dst);
+        }
+
+        if steamclient_dir.is_dir() {
+            let sc64_src = steamclient_dir.join("steamclient64.dll");
+            let sc64_dst = target.join("steamclient64.dll");
+            if sc64_src.exists() && !sc64_dst.with_extension("orig").exists() {
+                if sc64_dst.exists() {
+                    let _ = std::fs::rename(&sc64_dst, target.join("steamclient64.dll.orig"));
+                }
+                let _ = std::fs::copy(&sc64_src, &sc64_dst);
+            }
+
+            let sc32_src = steamclient_dir.join("steamclient.dll");
+            let sc32_dst = target.join("steamclient.dll");
+            if sc32_src.exists() && !sc32_dst.with_extension("orig").exists() {
+                if sc32_dst.exists() {
+                    let _ = std::fs::rename(&sc32_dst, target.join("steamclient.dll.orig"));
+                }
+                let _ = std::fs::copy(&sc32_src, &sc32_dst);
+            }
+
+            let ov64_src = steamclient_dir.join("GameOverlayRenderer64.dll");
+            let ov64_dst = target.join("GameOverlayRenderer64.dll");
+            if ov64_src.exists() && !ov64_dst.exists() {
+                let _ = std::fs::copy(&ov64_src, &ov64_dst);
+            }
+
+            let ov32_src = steamclient_dir.join("GameOverlayRenderer.dll");
+            let ov32_dst = target.join("GameOverlayRenderer.dll");
+            if ov32_src.exists() && !ov32_dst.exists() {
+                let _ = std::fs::copy(&ov32_src, &ov32_dst);
+            }
         }
     }
 
@@ -2257,16 +2303,35 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
         }
 
         let x86_orig = target.join("steam_api.dll.orig");
-        let x86_goldberg = target.join("steam_api.dll");
-        if x86_orig.exists() && x86_goldberg.exists() {
-            let _ = std::fs::rename(&x86_orig, &x86_goldberg);
+        let x86_current = target.join("steam_api.dll");
+        if x86_orig.exists() && x86_current.exists() {
+            let _ = std::fs::rename(&x86_orig, &x86_current);
         }
 
         let x64_orig = target.join("steam_api64.dll.orig");
-        let x64_goldberg = target.join("steam_api64.dll");
-        if x64_orig.exists() && x64_goldberg.exists() {
-            let _ = std::fs::rename(&x64_orig, &x64_goldberg);
+        let x64_current = target.join("steam_api64.dll");
+        if x64_orig.exists() && x64_current.exists() {
+            let _ = std::fs::rename(&x64_orig, &x64_current);
         }
+
+        let sc64_orig = target.join("steamclient64.dll.orig");
+        let sc64_current = target.join("steamclient64.dll");
+        if sc64_orig.exists() && sc64_current.exists() {
+            let _ = std::fs::rename(&sc64_orig, &sc64_current);
+        } else if sc64_current.exists() {
+            let _ = std::fs::remove_file(&sc64_current);
+        }
+
+        let sc32_orig = target.join("steamclient.dll.orig");
+        let sc32_current = target.join("steamclient.dll");
+        if sc32_orig.exists() && sc32_current.exists() {
+            let _ = std::fs::rename(&sc32_orig, &sc32_current);
+        } else if sc32_current.exists() {
+            let _ = std::fs::remove_file(&sc32_current);
+        }
+
+        let _ = std::fs::remove_file(target.join("GameOverlayRenderer64.dll"));
+        let _ = std::fs::remove_file(target.join("GameOverlayRenderer.dll"));
     }
 
     let steam_settings = game_dir.join("steam_settings");
@@ -2292,11 +2357,79 @@ pub fn goldberg_status(game_dir: &PathBuf) -> bool {
         if !target.exists() {
             continue;
         }
-        if target.join("steam_api.dll.orig").exists() || target.join("steam_api64.dll.orig").exists() {
+        if target.join("steam_api.dll.orig").exists()
+            || target.join("steam_api64.dll.orig").exists()
+            || target.join("steamclient64.dll.orig").exists()
+            || target.join("steamclient.dll.orig").exists()
+        {
             return true;
         }
     }
     false
+}
+
+pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
+    if !goldberg_status(&game_dir.to_path_buf()) {
+        return;
+    }
+
+    let emu_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("goldberg");
+    if !emu_dir.exists() {
+        eprintln!("steam_emu: toggle active but runtime not found");
+        return;
+    }
+
+    let targets: Vec<PathBuf> = vec![
+        game_dir.to_path_buf(),
+        game_dir.join("Game"),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win32"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+
+        let x64_dst = target.join("steam_api64.dll");
+        let x64_orig = target.join("steam_api64.dll.orig");
+        if x64_orig.exists() && !x64_dst.exists() {
+            if let Ok(data) = std::fs::read(emu_dir.join("x64").join("steam_api64.dll")) {
+                let _ = std::fs::write(&x64_dst, data);
+                eprintln!("steam_emu: repaired steam_api64.dll in {}", target.display());
+            }
+        }
+
+        let x86_dst = target.join("steam_api.dll");
+        let x86_orig = target.join("steam_api.dll.orig");
+        if x86_orig.exists() && !x86_dst.exists() {
+            if let Ok(data) = std::fs::read(emu_dir.join("x86").join("steam_api.dll")) {
+                let _ = std::fs::write(&x86_dst, data);
+                eprintln!("steam_emu: repaired steam_api.dll in {}", target.display());
+            }
+        }
+
+        let steamclient_dir = emu_dir.join("steamclient");
+        if steamclient_dir.is_dir() {
+            let sc64_dst = target.join("steamclient64.dll");
+            let sc64_orig = target.join("steamclient64.dll.orig");
+            if sc64_orig.exists() && !sc64_dst.exists() {
+                if let Ok(data) = std::fs::read(steamclient_dir.join("steamclient64.dll")) {
+                    let _ = std::fs::write(&sc64_dst, data);
+                    eprintln!("steam_emu: repaired steamclient64.dll in {}", target.display());
+                }
+            }
+        }
+    }
+
+    let steam_settings = game_dir.join("steam_settings");
+    let appid_file = steam_settings.join("force_steam_appid.txt");
+    if !appid_file.exists() {
+        let _ = std::fs::create_dir_all(&steam_settings);
+        let _ = std::fs::write(&appid_file, appid.to_string());
+    }
 }
 
 pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
