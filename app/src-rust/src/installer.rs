@@ -64,6 +64,10 @@ const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/eac-toggle/x86_64-windows/_winhttp.dll",
     "assets/goldberg/x64/steam_api64.dll",
     "assets/goldberg/x86/steam_api.dll",
+    "assets/goldberg/steamclient/steamclient64.dll",
+    "assets/goldberg/steamclient/steamclient.dll",
+    "assets/goldberg/steamclient/GameOverlayRenderer64.dll",
+    "assets/goldberg/steamclient/GameOverlayRenderer.dll",
     "assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal",
     "assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib",
     "assets/gptk/x86_64-windows/atidxx64.dll",
@@ -966,13 +970,15 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
     let goldberg_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("goldberg");
     let x86_dll = goldberg_dir.join("x86").join("steam_api.dll");
     let x64_dll = goldberg_dir.join("x64").join("steam_api64.dll");
+    let sc64_dll = goldberg_dir.join("steamclient").join("steamclient64.dll");
 
-    if x86_dll.exists() && x64_dll.exists() {
+    if x86_dll.exists() && x64_dll.exists() && sc64_dll.exists() {
         return Ok(false);
     }
 
     let _ = fs::create_dir_all(goldberg_dir.join("x86"));
     let _ = fs::create_dir_all(goldberg_dir.join("x64"));
+    let _ = fs::create_dir_all(goldberg_dir.join("steamclient"));
 
     let bundled = find_bundled_archive("goldberg");
     if let Some(archive) = bundled {
@@ -983,6 +989,7 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
 
         let src_x86 = tmp.join("x86");
         let src_x64 = tmp.join("x64");
+        let src_sc = tmp.join("steamclient");
 
         if src_x86.exists() {
             for entry in fs::read_dir(&src_x86).map_err(|e| format!("read x86: {}", e))? {
@@ -994,6 +1001,12 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
             for entry in fs::read_dir(&src_x64).map_err(|e| format!("read x64: {}", e))? {
                 let entry = entry.map_err(|e| e.to_string())?;
                 let _ = fs::copy(entry.path(), goldberg_dir.join("x64").join(entry.file_name()));
+            }
+        }
+        if src_sc.exists() {
+            for entry in fs::read_dir(&src_sc).map_err(|e| format!("read steamclient: {}", e))? {
+                let entry = entry.map_err(|e| e.to_string())?;
+                let _ = fs::copy(entry.path(), goldberg_dir.join("steamclient").join(entry.file_name()));
             }
         }
 
