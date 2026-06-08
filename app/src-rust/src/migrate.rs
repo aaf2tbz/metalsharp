@@ -62,7 +62,7 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
     "steam_autocloud.vdf",
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
-const MIGRATION_TOTAL_STEPS: usize = 7;
+const MIGRATION_TOTAL_STEPS: usize = 8;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -382,17 +382,15 @@ fn run_migration() {
     let mut step = 0usize;
 
     step += 1;
-    write_migrate_progress("running", step, total_steps, "Stopping Steam and Wine processes...", None);
-    kill_steam_wine();
+    write_migrate_progress("running", step, total_steps, "Ensuring extract tools (zstd) are available...", None);
+    if let Err(e) = crate::installer::ensure_zstd() {
+        write_migrate_progress("error", step, total_steps, &format!("Failed to install zstd: {}", e), Some(&e));
+        log_to_file(&format!("Migration blocked: zstd not available: {}", e));
+        return;
+    }
 
     step += 1;
-    write_migrate_progress(
-        "running",
-        step,
-        total_steps,
-        "Preserving user preferences, Steam API key, and bottle settings...",
-        None,
-    );
+    write_migrate_progress("running", step, total_steps, "Preserving user preferences, Steam API key, and bottle settings...", None);
     let preserved = preserve_user_data(&ms_dir);
 
     step += 1;
