@@ -679,32 +679,30 @@ fn count_dir_entries(path: &Path) -> std::io::Result<u64> {
 pub fn gptk_vcrun_installed(home: &Path) -> bool {
     let gptk_prefix = gptk_prefix_path(home);
     let system32 = gptk_prefix.join("drive_c").join("windows").join("system32");
-    let vcruntime140 = system32.join("vcruntime140.dll");
-    let msvcp140 = system32.join("msvcp140.dll");
-    if !vcruntime140.exists() || !msvcp140.exists() {
-        return false;
-    }
-    let vcrun_size = vcruntime140.metadata().map(|m| m.len()).unwrap_or(0);
-    let msvc_size = msvcp140.metadata().map(|m| m.len()).unwrap_or(0);
-    vcrun_size > 100_000 && msvc_size > 100_000
+    let syswow64 = gptk_prefix.join("drive_c").join("windows").join("syswow64");
+    let has = |dir: &std::path::Path, dll: &str| -> bool {
+        let p = dir.join(dll);
+        p.is_file() && p.metadata().map(|m| m.len()).unwrap_or(0) > 10_000
+    };
+    let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "msvcp140.dll");
+    let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
+    x64_ok && x86_ok
 }
 
 pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let gptk_prefix = gptk_prefix_path(home);
-    let steam_prefix = metalsharp_home_dir_for(home).join("prefix-steam");
-
     if !gptk_prefix.join("drive_c").is_dir() {
-        return Ok(());
+        return Err("GPTK prefix has no drive_c — run seed first".into());
     }
 
     if gptk_vcrun_installed(home) {
-        eprintln!("gptk: vcrun already installed in prefix");
+        eprintln!("gptk: vcrun already installed in prefix (x64 + x86)");
         return Ok(());
     }
 
     let gptk_wine64 = gptk_wine64_binary();
     let gptk_wineserver = gptk_wineserver_binary();
-
+    let prefix_str = gptk_prefix.to_string_lossy().to_string();
     let dyld = format!(
         "{}:{}:{}",
         gptk_wine_root().join("lib").display(),
@@ -712,9 +710,54 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
         gptk_wine_root().join("lib").join("external").display(),
     );
 
-    let prefix_str = gptk_prefix.to_string_lossy().to_string();
+    let redist_dir = metalsharp_home_dir_for(home).join("runtime").join("redist").join("vcredist");
+    let _ = std::fs::create_dir_all(&redist_dir);
 
-    let steam_redist = steam_prefix
+    let x64 = resolve_or_download_vcrun(&redist_dir, "x64")?;
+    let x86 = resolve_or_download_vcrun(&redist_dir, "x86")?;
+
+    for (arch, path) in [("x64", &x64), ("x86", &x86)] {
+        eprintln!("gptk: installing VC++ {} redist from {:?} ...", arch, path);
+        let _ = std::process::Command::new(&gptk_wineserver)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("-p")
+            .status();
+        let status = std::process::Command::new(&gptk_wine64)
+            .env("WINEPREFIX", &prefix_str)
+            .env("WINEDEBUG", "-all")
+            .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+            .arg(path)
+            .args(["/install"])
+            .status()?;
+        if !status.success() {
+            eprintln!("gptk: VC++ {} installer exited with {:?}", arch, status.code());
+        }
+        let _ = std::process::Command::new(&gptk_wineserver)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("-w")
+            .status();
+        let _ = std::process::Command::new(&gptk_wineserver)
+            .env("WINEPREFIX", &prefix_str)
+            .arg("-k")
+            .status();
+    }
+
+    eprintln!("gptk: VC++ redist install done, installed={}", gptk_vcrun_installed(home));
+    Ok(())
+}
+
+fn resolve_or_download_vcrun(redist_dir: &Path, arch: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let filename = format!("vc_redist.{}.exe", arch);
+    let staged = redist_dir.join(&filename);
+    if staged.is_file() && staged.metadata().map(|m| m.len()).unwrap_or(0) > 100_000 {
+        eprintln!("gptk: using staged {} redist", arch);
+        return Ok(staged);
+    }
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let steam_redist = home
+        .join(".metalsharp")
+        .join("prefix-steam")
         .join("drive_c")
         .join("Program Files (x86)")
         .join("Steam")
@@ -723,42 +766,28 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
         .join("Steamworks Shared")
         .join("_CommonRedist");
 
-    let installer = ["2022", "2019", "2017", "2015"]
-        .iter()
-        .filter_map(|ver| {
-            let p = steam_redist.join("vcredist").join(ver).join("VC_redist.x64.exe");
-            if p.exists() {
-                Some(p)
-            } else {
-                None
-            }
-        })
-        .next();
-
-    if let Some(installer) = installer {
-        eprintln!("gptk: installing VC++ redist from {:?} ...", installer);
-        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-p").status();
-
-        let status = std::process::Command::new(&gptk_wine64)
-            .env("WINEPREFIX", &prefix_str)
-            .env("WINEDEBUG", "-all")
-            .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-            .arg(&installer)
-            .args(["/install", "/quiet"])
-            .status()?;
-        if !status.success() {
-            eprintln!("gptk: VC++ redist installer exited with {:?}", status.code());
+    for ver in &["2022", "2019", "2017", "2015"] {
+        let candidate = steam_redist.join("vcredist").join(ver).join(&filename);
+        if candidate.is_file() {
+            eprintln!("gptk: found {} redist in Steam CommonRedist/{}", arch, ver);
+            return Ok(candidate);
         }
-
-        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-w").status();
-        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
-
-        eprintln!("gptk: VC++ redist install done, installed={}", gptk_vcrun_installed(home));
-    } else {
-        eprintln!("gptk: no vcredist installer found in Steam CommonRedist");
     }
 
-    Ok(())
+    eprintln!("gptk: downloading VC++ {} redist from Microsoft ...", arch);
+    let url = format!("https://aka.ms/vs/17/release/{}", filename);
+    let tmp = staged.with_extension("download");
+    let config = ureq::config::Config::builder()
+        .user_agent(format!("MetalSharp/{}", env!("CARGO_PKG_VERSION")))
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let resp = agent.get(&url).call().map_err(|e| format!("VC++ {} download failed: {}", arch, e))?;
+    let mut input = resp.into_body().into_reader();
+    let mut output = std::fs::File::create(&tmp)?;
+    std::io::copy(&mut input, &mut output)?;
+    std::fs::rename(&tmp, &staged)?;
+    eprintln!("gptk: downloaded {} redist to {}", arch, staged.display());
+    Ok(staged)
 }
 
 fn copy_registry_hive(src_prefix: &Path, dst_prefix: &Path, hive: &str) {

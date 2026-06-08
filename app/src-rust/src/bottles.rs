@@ -1713,10 +1713,9 @@ pub fn repair_component(
                 id: component_id.to_string(),
                 status: if already { "already_installed".to_string() } else { "repair_available".to_string() },
                 detail: if already {
-                    "VC++ 2015-2022 redist is already installed in the GPTK prefix".to_string()
+                    "VC++ 2015-2022 redist (x86 + x64) already installed in the GPTK prefix".to_string()
                 } else {
-                    "Will install VC++ 2015-2022 redist into the GPTK prefix via the Steam CommonRedist installer"
-                        .to_string()
+                    "Will download and install VC++ 2015-2022 redist (x86 + x64) into the GPTK prefix".to_string()
                 },
                 asset_path: None,
                 log_path: None,
@@ -1736,7 +1735,7 @@ pub fn repair_component(
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: "already_installed".to_string(),
-                detail: "VC++ 2015-2022 redist is already installed in the GPTK prefix".to_string(),
+                detail: "VC++ 2015-2022 redist (x86 + x64) already installed in the GPTK prefix".to_string(),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -1782,7 +1781,7 @@ pub fn repair_component(
         return Ok(ComponentRepairReport {
             id: component_id.to_string(),
             status: "started".to_string(),
-            detail: "Installing VC++ 2015-2022 redist into GPTK prefix in background".to_string(),
+            detail: "Downloading and installing VC++ 2015-2022 (x86 + x64) into GPTK prefix".to_string(),
             asset_path: None,
             log_path: None,
             pid: None,
