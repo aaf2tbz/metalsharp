@@ -268,18 +268,46 @@ fn parse_vdf_path(line: &str, key: &str) -> Option<String> {
 
 pub fn resolve_wine_path(path: &str) -> String {
     let p = path.replace('\\', "/");
-    for drive in &["C:", "c:", "D:", "d:", "E:", "e:", "F:", "f:", "G:", "g:", "H:", "h:"] {
-        if let Some(rest) = p.strip_prefix(drive) {
-            if rest.starts_with('/') || rest.is_empty() {
-                return format!("/{}", rest);
-            }
-            return rest.to_string();
-        }
+    if let Some(rest) = p.strip_prefix("Z:/").or_else(|| p.strip_prefix("z:/")) {
+        return rest.to_string();
     }
-    if p.starts_with("Z:/") || p.starts_with("z:/") || p.starts_with("Z:") || p.starts_with("z:") {
-        return p[2..].to_string();
+    if let Some(rest) = p.strip_prefix("Z:").or_else(|| p.strip_prefix("z:")) {
+        return rest.to_string();
+    }
+    if let Some(resolved) = resolve_wine_drive_letter(&p) {
+        return resolved;
+    }
+    if let Some(rest) = p.strip_prefix("C:/").or_else(|| p.strip_prefix("c:/")) {
+        return format!("/{}", rest);
+    }
+    if p.eq_ignore_ascii_case("C:") || p.eq_ignore_ascii_case("C:/") {
+        return "/".to_string();
     }
     p
+}
+
+fn resolve_wine_drive_letter(path: &str) -> Option<String> {
+    let mut chars = path.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || drive.eq_ignore_ascii_case(&'c') || drive.eq_ignore_ascii_case(&'z') {
+        return None;
+    }
+    chars.next().filter(|&c| c == ':')?;
+    let rest = &path[2..];
+
+    let home = dirs::home_dir()?;
+    let dosdevice = home
+        .join(".metalsharp")
+        .join("prefix-steam")
+        .join("dosdevices")
+        .join(format!("{}:", drive.to_ascii_lowercase()));
+    let target = std::fs::read_link(&dosdevice).ok()?;
+
+    if rest.is_empty() {
+        return Some(target.to_string_lossy().to_string());
+    }
+    let rest_trimmed = rest.trim_start_matches('/');
+    Some(format!("{}/{}", target.display(), rest_trimmed))
 }
 
 pub fn wine_steam_library_paths() -> Vec<PathBuf> {
