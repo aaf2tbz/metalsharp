@@ -686,6 +686,9 @@ fn launch_d3dmetal_gptk_with_context(
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+    apply_start_protected_game_bypass(appid, game_dir);
+
     let prefix = gptk_prefix;
     let prefix_str = prefix.to_string_lossy().to_string();
 
@@ -2432,6 +2435,39 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
     }
 }
 
+fn start_protected_game_real_exe(appid: u32) -> Option<&'static str> {
+    match appid {
+        1245620 => Some("eldenring.exe"),
+        1888160 => Some("armoredcore6.exe"),
+        _ => None,
+    }
+}
+
+fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
+    let real_exe_name = match start_protected_game_real_exe(appid) {
+        Some(name) => name,
+        None => return,
+    };
+
+    let spg = match super::recipe::find_case_insensitive(game_dir, "start_protected_game.exe") {
+        Some(path) => path,
+        None => return,
+    };
+    let spg_dir = match spg.parent() {
+        Some(dir) => dir,
+        None => return,
+    };
+
+    let real_exe = match super::recipe::find_case_insensitive(game_dir, real_exe_name) {
+        Some(path) => path,
+        None => return,
+    };
+
+    let old = spg_dir.join("start_protected_game.old");
+    let _ = std::fs::rename(&spg, &old);
+    let _ = std::fs::copy(&real_exe, &spg);
+}
+
 pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
     let targets: Vec<PathBuf> = vec![
         game_dir.join("Game"),
@@ -3060,6 +3096,55 @@ mod tests {
         assert!(text.contains("steam_bridge_port="));
         assert!(text.contains("compatdata_manifest="));
         assert!(text.contains("steam_identity_mode=wine_steam_background"));
+    }
+
+    #[test]
+    fn start_protected_game_bypass_renames_and_copies_real_exe() {
+        let home = test_dir("spg-bypass");
+        let game_dir = home.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write real exe");
+
+        apply_start_protected_game_bypass(1245620, &home);
+
+        assert!(game_dir.join("start_protected_game.old").exists());
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME");
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn start_protected_game_bypass_is_idempotent() {
+        let home = test_dir("spg-idempotent");
+        let game_dir = home.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write real exe");
+
+        apply_start_protected_game_bypass(1245620, &home);
+        apply_start_protected_game_bypass(1245620, &home);
+
+        assert!(game_dir.join("start_protected_game.old").exists());
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME");
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn start_protected_game_bypass_skips_unknown_appid() {
+        let home = test_dir("spg-skip");
+        let game_dir = home.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+
+        apply_start_protected_game_bypass(99999, &home);
+
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"EAC_STUB");
+        assert!(!game_dir.join("start_protected_game.old").exists());
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     fn test_dir(name: &str) -> PathBuf {
