@@ -2458,6 +2458,10 @@ fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
         None => return,
     };
 
+    if spg_dir.join("start_protected_game.old").exists() {
+        return;
+    }
+
     let real_exe = match super::recipe::find_case_insensitive(game_dir, real_exe_name) {
         Some(path) => path,
         None => return,
@@ -3116,18 +3120,18 @@ mod tests {
     }
 
     #[test]
-    fn start_protected_game_bypass_is_idempotent() {
-        let home = test_dir("spg-idempotent");
+    fn start_protected_game_bypass_skips_if_old_already_exists() {
+        let home = test_dir("spg-skip-old");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("start_protected_game.old"), b"PREVIOUS_STUB").expect("write old");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"REAL_GAME_ALREADY").expect("write current");
         std::fs::write(game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write real exe");
 
         apply_start_protected_game_bypass(1245620, &home);
-        apply_start_protected_game_bypass(1245620, &home);
 
-        assert!(game_dir.join("start_protected_game.old").exists());
-        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME_ALREADY");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"PREVIOUS_STUB");
 
         let _ = std::fs::remove_dir_all(home);
     }
