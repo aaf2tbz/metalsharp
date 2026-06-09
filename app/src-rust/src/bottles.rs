@@ -729,6 +729,34 @@ pub fn prepare_steam_game_launch(
                 }
             }
         }
+    } else {
+        let vcrun_component = manifest.installed_components.iter().find(|c| c.id == "vcrun2019");
+        let needs_vcrun =
+            vcrun_component.is_some() && !matches!(vcrun_component.unwrap().state, ComponentState::Installed);
+        if needs_vcrun {
+            if let Some(installer) = resolve_component_installer("vcrun2019", manifest.arch)
+                .or_else(|| resolve_game_runtime_asset_installer(&manifest, "vcrun2019"))
+            {
+                let log_path =
+                    bottle_logs_dir(&manifest.id).join(format!("component-vcrun2019-auto-{}.log", timestamp_secs()));
+                eprintln!("bottle: VC++ redist not installed in prefix, running installer ...");
+                match launch_component_installer(&prefix, &installer, &log_path) {
+                    Ok(pid) => {
+                        mark_component_state(&mut manifest, "vcrun2019", ComponentState::NeedsRepair);
+                        mark_manifest_launch_started(&mut manifest, pid, &log_path);
+                        manifest.health = BottleHealth::NeedsRepair;
+                        save_bottle(&manifest)?;
+                        watch_bottle_launch(manifest.id.clone(), pid);
+                        manifest = load_bottle(&manifest.id)?;
+                    },
+                    Err(e) => {
+                        eprintln!("bottle: VC++ redist auto-install failed: {}", e);
+                    },
+                }
+            } else {
+                eprintln!("bottle: VC++ redist installer not found, skipping auto-install");
+            }
+        }
     }
     if let Some(appid) = manifest.steam_app_id {
         let pipeline =
@@ -2831,7 +2859,13 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "vcrun2019" => {
-            let has = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
+            let has = |dll: &str| -> bool {
+                let check = |dir: &std::path::Path| -> bool {
+                    let p = dir.join(dll);
+                    p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
+                };
+                check(&system32) || check(&syswow64)
+            };
             let core = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
             let core_count = core.iter().filter(|dll| has(dll)).count();
             if core_count == core.len() {
@@ -3317,7 +3351,7 @@ fn resolve_component_installer_from_roots(
 
 fn component_installer_args(component_id: &str, executable: &Path) -> Vec<String> {
     match component_id {
-        "vcrun2019" | "vcrun2013" | "vcrun2010" => vec!["/quiet".to_string(), "/norestart".to_string()],
+        "vcrun2019" => vec!["/install".to_string(), "/norestart".to_string()],
         "dotnet40" | "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
         "directx_jun2010" => vec!["/silent".to_string()],
