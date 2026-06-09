@@ -5707,11 +5707,12 @@ mod tests {
 
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Missing);
 
-        fs::write(system32.join("vcruntime140.dll"), b"dll").expect("write dll");
+        let dll_payload = vec![0u8; 20_000];
+        fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
 
-        fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write dll");
-        fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
+        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write dll");
+        fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5760,7 +5761,8 @@ mod tests {
         fs::create_dir_all(&system32).expect("create system32");
         fs::create_dir_all(&syswow64).expect("create syswow64");
 
-        fs::write(system32.join("msvcp140.dll"), b"dll").expect("write dll");
+        let dll_payload = vec![0u8; 20_000];
+        fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
         let _ = fs::remove_dir_all(&dir);
     }
