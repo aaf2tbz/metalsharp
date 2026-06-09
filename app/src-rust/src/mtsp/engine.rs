@@ -404,9 +404,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 dyld_paths: vec![],
                 winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
-                env_vars: vec![
-                    EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" },
-                ],
+                env_vars: vec![EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" }],
                 launch_args: vec![],
                 alternatives: vec![PipelineId::MacSteam, PipelineId::Steam],
                 shader_cache_subdir: Some("fna-arm64"),
