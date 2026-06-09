@@ -11,6 +11,81 @@ const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
 const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
 const FNA_XNA_WRAPPER_VERSION: &str = "22.12.2";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MonoArch {
+    Native,
+    X86,
+}
+
+pub struct FnaGameProfile {
+    pub appid: u32,
+    pub mono_config: &'static str,
+    pub mono_arch: MonoArch,
+    pub preferred_exes: &'static [&'static str],
+    pub method_label: &'static str,
+    pub setup_script: Option<&'static str>,
+    pub deploy_macos_steam_libs: bool,
+    pub launcher_exe: Option<&'static str>,
+    pub launcher_source: Option<&'static str>,
+    pub deploy_terraria_post: bool,
+}
+
+const FNA_GAME_PROFILES: &[FnaGameProfile] = &[
+    FnaGameProfile {
+        appid: 105600,
+        mono_config: "terraria-mono.config",
+        mono_arch: MonoArch::X86,
+        preferred_exes: &["TerrariaLauncher.exe", "Terraria.exe"],
+        method_label: "xna_fna_x86",
+        setup_script: Some("setup-terraria-deps.sh"),
+        deploy_macos_steam_libs: true,
+        launcher_exe: Some("TerrariaLauncher.exe"),
+        launcher_source: Some("TerrariaLauncher.cs"),
+        deploy_terraria_post: true,
+    },
+    FnaGameProfile {
+        appid: 504230,
+        mono_config: "celeste-x86-mono.config",
+        mono_arch: MonoArch::X86,
+        preferred_exes: &[],
+        method_label: "xna_fna_x86",
+        setup_script: Some("setup-celeste-deps.sh"),
+        deploy_macos_steam_libs: false,
+        launcher_exe: None,
+        launcher_source: None,
+        deploy_terraria_post: false,
+    },
+    FnaGameProfile {
+        appid: 413150,
+        mono_config: "stardew-mono.config",
+        mono_arch: MonoArch::Native,
+        preferred_exes: &[],
+        method_label: "xna_fna_arm64",
+        setup_script: None,
+        deploy_macos_steam_libs: false,
+        launcher_exe: None,
+        launcher_source: None,
+        deploy_terraria_post: false,
+    },
+];
+
+const DEFAULT_FNA_PROFILE: FnaGameProfile = FnaGameProfile {
+    appid: 0,
+    mono_config: "terraria-mono.config",
+    mono_arch: MonoArch::Native,
+    preferred_exes: &[],
+    method_label: "xna_fna_arm64",
+    setup_script: None,
+    deploy_macos_steam_libs: false,
+    launcher_exe: None,
+    launcher_source: None,
+    deploy_terraria_post: false,
+};
+
+pub fn find_fna_profile(appid: u32) -> &'static FnaGameProfile {
+    FNA_GAME_PROFILES.iter().find(|p| p.appid == appid).unwrap_or(&DEFAULT_FNA_PROFILE)
+}
+
 #[derive(Clone, Copy)]
 enum FnaShimSource {
     RepoC { parts: &'static [&'static str], undefined_dynamic_lookup: bool },
@@ -1059,6 +1134,7 @@ fn launch_macos_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::er
 }
 
 fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
+    let profile = find_fna_profile(appid);
     let node = get_pipeline(PipelineId::FnaArm64);
     let game_dir = resolve_fna_game_dir(appid)?;
     let home = dirs::home_dir().ok_or("no home dir")?;
@@ -1071,17 +1147,14 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
 
     let _ = ensure_bridge_running();
 
-    let exe = match appid {
-        105600 => find_preferred_exe(dir, &["TerrariaLauncher.exe", "Terraria.exe"])?,
-        _ => resolve_game_exe(dir).into(),
+    let exe = if !profile.preferred_exes.is_empty() {
+        find_preferred_exe(dir, profile.preferred_exes)?
+    } else {
+        resolve_game_exe(dir).into()
     };
 
     let mono_bin = find_mono_binary_for_app(appid)?;
-    let mono_config = find_config(match appid {
-        504230 => "celeste-x86-mono.config",
-        413150 => "stardew-mono.config",
-        _ => "terraria-mono.config",
-    });
+    let mono_config = find_config(profile.mono_config);
     let shims_dir = find_shims_dir();
     let mono_root =
         mono_bin.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(""));
@@ -1102,7 +1175,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     };
 
     let mut cmd =
-        if matches!(appid, 504230 | 105600) && crate::platform::current() == crate::platform::HostPlatform::Macos {
+        if profile.mono_arch == MonoArch::X86 && crate::platform::current() == crate::platform::HostPlatform::Macos {
             let mut arch_cmd = Command::new("arch");
             arch_cmd.arg("-x86_64").arg(&mono_bin);
             arch_cmd
@@ -1152,16 +1225,14 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/Mono/XNA launch exited early with status {}. Log: {}", status, log_tail).into());
     }
-    let method = match appid {
-        105600 | 504230 => "xna_fna_x86",
-        _ => "xna_fna_arm64",
-    };
+    let method = profile.method_label;
     Ok((child.id(), method, log_path))
 }
 
 fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    if matches!(appid, 504230 | 105600) {
+    let profile = find_fna_profile(appid);
+    if profile.mono_arch == MonoArch::X86 {
         let mono_x86 =
             crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86").join("bin").join("mono");
         if mono_x86.exists() {
@@ -1615,13 +1686,18 @@ fn find_preferred_exe(dir: &PathBuf, candidates: &[&str]) -> Result<PathBuf, Box
 }
 
 fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
-    let (launcher_name, source_file) = match appid {
-        105600 => ("TerrariaLauncher.exe", "TerrariaLauncher.cs"),
-        _ => return,
+    let profile = find_fna_profile(appid);
+    let launcher_name = match profile.launcher_exe {
+        Some(n) => n,
+        None => return,
+    };
+    let source_file = match profile.launcher_source {
+        Some(s) => s,
+        None => return,
     };
 
     let launcher = game_dir.join(launcher_name);
-    if launcher.exists() && appid != 105600 {
+    if launcher.exists() {
         return;
     }
 
@@ -1656,18 +1732,16 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
         None => return,
     };
 
-    let mono_root = match appid {
-        105600 => crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86"),
-        _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-arm64"),
+    let mono_runtime = match profile.mono_arch {
+        MonoArch::X86 => "mono-x86",
+        MonoArch::Native => "mono-arm64",
     };
+    let mono_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join(mono_runtime);
     let mono_bin = mono_root.join("bin").join("mono");
     let mcs_exe = home
         .join(".metalsharp")
         .join("runtime")
-        .join(match appid {
-            105600 => "mono-x86",
-            _ => "mono-arm64",
-        })
+        .join(mono_runtime)
         .join("lib")
         .join("mono")
         .join("4.5")
@@ -1725,37 +1799,39 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         copy_fna_native_lib(game_dir, &shims_dir, lib, *symlink);
     }
 
-    let mac_terrarria_libs = home
-        .join("Library")
-        .join("Application Support")
-        .join("Steam")
-        .join("steamapps")
-        .join("common")
-        .join("Terraria")
-        .join("Terraria.app")
-        .join("Contents")
-        .join("MacOS")
-        .join("osx");
+    let profile = find_fna_profile(appid);
 
-    let terraria_native_libs = [
-        ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
-        ("libSDL3.0.dylib", Some("libSDL3.dylib")),
-        ("libFAudio.0.dylib", Some("libFAudio.dylib")),
-        ("libsteam_api.dylib", None),
-        ("libnfd.dylib", None),
-    ];
+    if profile.deploy_macos_steam_libs {
+        let mac_terrarria_libs = home
+            .join("Library")
+            .join("Application Support")
+            .join("Steam")
+            .join("steamapps")
+            .join("common")
+            .join("Terraria")
+            .join("Terraria.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("osx");
 
-    for (lib, symlink) in &terraria_native_libs {
-        let src = mac_terrarria_libs.join(lib).to_string_lossy().to_string();
+        let terraria_native_libs = [
+            ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
+            ("libSDL3.0.dylib", Some("libSDL3.dylib")),
+            ("libFAudio.0.dylib", Some("libFAudio.dylib")),
+            ("libsteam_api.dylib", None),
+            ("libnfd.dylib", None),
+        ];
 
-        if game_dir.join(lib).exists() {
-            continue;
-        }
-
-        if std::path::Path::new(&src).exists() {
-            let _ = std::fs::copy(std::path::Path::new(&src), game_dir.join(lib));
-            if let Some(sym) = symlink {
-                ensure_fna_symlink(game_dir, lib, sym);
+        for (lib, symlink) in &terraria_native_libs {
+            let src = mac_terrarria_libs.join(lib).to_string_lossy().to_string();
+            if game_dir.join(lib).exists() {
+                continue;
+            }
+            if std::path::Path::new(&src).exists() {
+                let _ = std::fs::copy(std::path::Path::new(&src), game_dir.join(lib));
+                if let Some(sym) = symlink {
+                    ensure_fna_symlink(game_dir, lib, sym);
+                }
             }
         }
     }
@@ -1783,7 +1859,7 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         }
     }
 
-    if appid == 105600 {
+    if profile.deploy_terraria_post {
         deploy_terraria_runtime(game_dir, &metalsharp_home);
     }
 

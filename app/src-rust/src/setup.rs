@@ -342,14 +342,13 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     let is_dotnet = detect_dotnet_game(&game_dir);
     let pipeline =
         if is_dotnet { crate::mtsp::engine::PipelineId::FnaArm64 } else { crate::mtsp::rules::resolve_pipeline(appid) };
+    let fna_profile = crate::mtsp::launcher::find_fna_profile(appid);
     let game_type = match appid {
-        105600 => "xna_fna_arm64",
-        504230 => "xna_fna_x86",
         945360 | 1139900 => "steam",
         620 | 265930 => "dxmt",
         _ => {
             if is_dotnet {
-                "xna_fna"
+                fna_profile.method_label
             } else {
                 pipeline.to_legacy_method()
             }
@@ -361,13 +360,11 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     }
 
     match appid {
-        105600 => prepare_terrarria(&game_dir, &home)?,
-        504230 => prepare_celeste(&game_dir, &home)?,
         945360 | 1139900 => prepare_metalsharp_game(&game_dir, &home, appid)?,
         620 | 265930 => prepare_goldberg_game(&game_dir, &home, appid)?,
         _ => {
             if is_dotnet {
-                setup_fna_runtime(&game_dir, &home)?;
+                prepare_fna_game(appid, &game_dir, &home)?;
             } else if pipeline.is_dxmt_family() {
                 prepare_dxmt_pipeline(appid, &game_dir, &home, pipeline)?;
             }
@@ -387,6 +384,25 @@ pub fn prepare_game(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
         "gameType": game_type,
         "appid": appid,
     }))
+}
+
+fn prepare_fna_game(appid: u32, game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = crate::mtsp::launcher::find_fna_profile(appid);
+
+    if let Some(script) = profile.setup_script {
+        let _ = crate::launch::run_game_setup_script(appid);
+        let _ = script;
+    }
+
+    if profile.appid == 105600 {
+        prepare_terrarria(game_dir, home)?;
+    } else if profile.appid == 504230 {
+        prepare_celeste(game_dir, home)?;
+    } else {
+        setup_fna_runtime(game_dir, home)?;
+    }
+
+    Ok(())
 }
 
 fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
