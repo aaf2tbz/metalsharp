@@ -13,6 +13,131 @@ use walkdir::WalkDir;
 
 const BOTTLES_DIR: &str = "bottles";
 const COMPATDATA_DIR: &str = "compatdata";
+
+const VCPP_X64_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+const VCPP_X86_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x86.exe";
+const VCPP_X64_FILENAME: &str = "vc_redist.x64.exe";
+const VCPP_X86_FILENAME: &str = "vc_redist.x86.exe";
+const VCPP_MIN_SIZE: u64 = 1_000_000;
+
+fn vcpp_cached_dir() -> Option<PathBuf> {
+    Some(crate::platform::metalsharp_home_dir().join("runtime").join("redist").join("vcredist"))
+}
+
+fn vcpp_downloaded(path: &Path) -> bool {
+    path.is_file() && fs::metadata(path).map(|m| m.len() > VCPP_MIN_SIZE).unwrap_or(false)
+}
+
+fn vcpp_download(url: &str, dest: &Path) -> Result<(), String> {
+    if vcpp_downloaded(dest) {
+        return Ok(());
+    }
+    let tmp = dest.with_extension("download");
+    let _ = fs::remove_file(&tmp);
+    if let Some(parent) = dest.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let output = Command::new("curl")
+        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "-o"])
+        .arg(&tmp)
+        .arg(url)
+        .output()
+        .map_err(|e| format!("curl failed: {}", e))?;
+    if !output.status.success() {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("curl download failed for {}", url));
+    }
+    if !vcpp_downloaded(&tmp) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("downloaded file too small or missing: {}", dest.display()));
+    }
+    let _ = fs::rename(&tmp, dest);
+    Ok(())
+}
+
+fn vcpp_both_cached() -> Option<(PathBuf, PathBuf)> {
+    let dir = vcpp_cached_dir()?;
+    let x64 = dir.join(VCPP_X64_FILENAME);
+    let x86 = dir.join(VCPP_X86_FILENAME);
+    if vcpp_downloaded(&x64) && vcpp_downloaded(&x86) {
+        Some((x64, x86))
+    } else {
+        None
+    }
+}
+
+fn vcpp_ensure_downloaded() -> Result<(PathBuf, PathBuf), String> {
+    let dir = vcpp_cached_dir().ok_or("no home dir")?;
+    let _ = fs::create_dir_all(&dir);
+    let x64 = dir.join(VCPP_X64_FILENAME);
+    let x86 = dir.join(VCPP_X86_FILENAME);
+    if !vcpp_downloaded(&x64) {
+        eprintln!("vcredist: downloading VC++ 2015-2022 x64 from Microsoft ...");
+        vcpp_download(VCPP_X64_URL, &x64)?;
+    }
+    if !vcpp_downloaded(&x86) {
+        eprintln!("vcredist: downloading VC++ 2015-2022 x86 from Microsoft ...");
+        vcpp_download(VCPP_X86_URL, &x86)?;
+    }
+    Ok((x64, x86))
+}
+
+fn vcpp_prefix_has_runtime(prefix: &Path) -> bool {
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
+    let has = |dir: &std::path::Path, dll: &str| -> bool {
+        let p = dir.join(dll);
+        p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
+    };
+    let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "msvcp140.dll");
+    let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
+    x64_ok && x86_ok
+}
+
+fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
+    let (x64, x86) = vcpp_ensure_downloaded()?;
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+    let prefix_str = prefix.to_string_lossy().to_string();
+    eprintln!("vcredist: installing VC++ 2015-2022 x64 into {} ...", prefix.display());
+    let x64_status = Command::new(&wine)
+        .arg(&x64)
+        .arg("/install")
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("wine x64 failed: {}", e))?;
+    if !x64_status.success() {
+        return Err("VC++ x64 installer failed".into());
+    }
+    let _ = Command::new(ms_root.join("bin").join("wineserver")).env("WINEPREFIX", &prefix_str).arg("-w").status();
+    eprintln!("vcredist: installing VC++ 2015-2022 x86 into {} ...", prefix.display());
+    let x86_status = Command::new(&wine)
+        .arg(&x86)
+        .arg("/install")
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", "-all")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| format!("wine x86 failed: {}", e))?;
+    if !x86_status.success() {
+        return Err("VC++ x86 installer failed".into());
+    }
+    let _ = Command::new(ms_root.join("bin").join("wineserver")).env("WINEPREFIX", &prefix_str).arg("-w").status();
+    if vcpp_prefix_has_runtime(prefix) {
+        eprintln!("vcredist: VC++ 2015-2022 verified in {}", prefix.display());
+        Ok(())
+    } else {
+        Err("VC++ runtime DLLs not found after install".into())
+    }
+}
 const MANIFEST_FILE: &str = "bottle.json";
 const COMPATDATA_MANIFEST_FILE: &str = "metalsharp-compatdata.json";
 const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
@@ -733,28 +858,26 @@ pub fn prepare_steam_game_launch(
         let vcrun_component = manifest.installed_components.iter().find(|c| c.id == "vcrun2019");
         let needs_vcrun =
             vcrun_component.is_some() && !matches!(vcrun_component.unwrap().state, ComponentState::Installed);
-        if needs_vcrun {
-            if let Some(installer) = resolve_component_installer("vcrun2019", manifest.arch)
-                .or_else(|| resolve_game_runtime_asset_installer(&manifest, "vcrun2019"))
-            {
-                let log_path =
-                    bottle_logs_dir(&manifest.id).join(format!("component-vcrun2019-auto-{}.log", timestamp_secs()));
-                eprintln!("bottle: VC++ redist not installed in prefix, running installer ...");
-                match launch_component_installer(&prefix, &installer, &log_path) {
-                    Ok(pid) => {
-                        mark_component_state(&mut manifest, "vcrun2019", ComponentState::NeedsRepair);
-                        mark_manifest_launch_started(&mut manifest, pid, &log_path);
-                        manifest.health = BottleHealth::NeedsRepair;
-                        save_bottle(&manifest)?;
-                        watch_bottle_launch(manifest.id.clone(), pid);
-                        manifest = load_bottle(&manifest.id)?;
-                    },
-                    Err(e) => {
-                        eprintln!("bottle: VC++ redist auto-install failed: {}", e);
-                    },
-                }
-            } else {
-                eprintln!("bottle: VC++ redist installer not found, skipping auto-install");
+        if needs_vcrun && !vcpp_prefix_has_runtime(&prefix) {
+            eprintln!("bottle: VC++ 2015-2022 not installed in prefix, downloading and installing ...");
+            match vcpp_install_into_prefix(&prefix) {
+                Ok(()) => {
+                    mark_component_state(&mut manifest, "vcrun2019", ComponentState::Installed);
+                    manifest.health = if components_ready(&manifest.installed_components) {
+                        BottleHealth::Ready
+                    } else {
+                        BottleHealth::NeedsRepair
+                    };
+                    manifest.updated_at = timestamp_secs();
+                    save_bottle(&manifest)?;
+                },
+                Err(e) => {
+                    eprintln!("bottle: VC++ 2015-2022 install failed: {}", e);
+                    mark_component_state(&mut manifest, "vcrun2019", ComponentState::NeedsRepair);
+                    manifest.health = BottleHealth::NeedsRepair;
+                    manifest.updated_at = timestamp_secs();
+                    save_bottle(&manifest)?;
+                },
             }
         }
     }
@@ -1817,6 +1940,80 @@ pub fn repair_component(
         });
     }
 
+    if component_id == "vcrun2019" && !matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+        if dry_run {
+            let installed = vcpp_prefix_has_runtime(&prefix);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if installed { "already_installed" } else { "repair_available" }.to_string(),
+                detail: if installed {
+                    "VC++ 2015-2022 (x86 + x64) already installed".to_string()
+                } else {
+                    "Will download and install VC++ 2015-2022 (x86 + x64) from Microsoft".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+        if vcpp_prefix_has_runtime(&prefix) {
+            mark_component_state(&mut manifest, component_id, ComponentState::Installed);
+            manifest.health = if components_ready(&manifest.installed_components) {
+                BottleHealth::Ready
+            } else {
+                BottleHealth::NeedsRepair
+            };
+            manifest.updated_at = timestamp_secs();
+            save_bottle(&manifest)?;
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: "already_installed".to_string(),
+                detail: "VC++ 2015-2022 (x86 + x64) already installed".to_string(),
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+        let prefix_owned = prefix.clone();
+        let bottle_id = id.to_string();
+        thread::spawn(move || {
+            match vcpp_install_into_prefix(&prefix_owned) {
+                Ok(()) => {
+                    eprintln!(
+                        "vcrun2019: VC++ 2015-2022 installed, verified={}",
+                        vcpp_prefix_has_runtime(&prefix_owned)
+                    );
+                },
+                Err(e) => {
+                    eprintln!("vcrun2019: VC++ 2015-2022 install failed: {}", e);
+                },
+            }
+            let state = if vcpp_prefix_has_runtime(&prefix_owned) {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            };
+            if let Ok(mut m) = load_bottle(&bottle_id) {
+                mark_component_state(&mut m, "vcrun2019", state);
+                m.health = if components_ready(&m.installed_components) {
+                    BottleHealth::Ready
+                } else {
+                    BottleHealth::NeedsRepair
+                };
+                m.updated_at = timestamp_secs();
+                let _ = save_bottle(&m);
+            }
+        });
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: "started".to_string(),
+            detail: "Downloading and installing VC++ 2015-2022 (x86 + x64) from Microsoft".to_string(),
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     let Some(installer) = resolve_component_installer(component_id, manifest.arch)
         .or_else(|| resolve_game_runtime_asset_installer(&manifest, component_id))
     else {
@@ -2859,18 +3056,15 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
             }
         },
         "vcrun2019" => {
-            let has = |dll: &str| -> bool {
-                let check = |dir: &std::path::Path| -> bool {
-                    let p = dir.join(dll);
-                    p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
-                };
-                check(&system32) || check(&syswow64)
+            let has = |dir: &std::path::Path, dll: &str| -> bool {
+                let p = dir.join(dll);
+                p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
             };
-            let core = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
-            let core_count = core.iter().filter(|dll| has(dll)).count();
-            if core_count == core.len() {
+            let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "msvcp140.dll");
+            let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
+            if x64_ok && x86_ok {
                 ComponentState::Installed
-            } else if core_count > 0 {
+            } else if has(&system32, "vcruntime140.dll") || has(&syswow64, "vcruntime140.dll") {
                 ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
@@ -3261,18 +3455,9 @@ fn resolve_component_installer_from_roots(
     local_redist: &Path,
 ) -> Option<ComponentInstaller> {
     let executable = match component_id {
-        "vcrun2019" => {
-            let filename = match arch {
-                BottleArch::Win32 => "VC_redist.x86.exe",
-                BottleArch::Win64 | BottleArch::Wow64 => "VC_redist.x64.exe",
-            };
-            first_existing(&[
-                redist_root.join("vcredist").join("2022").join(filename),
-                redist_root.join("vcredist").join("2019").join(filename),
-                redist_root.join("vcredist").join("2017").join(filename),
-                redist_root.join("vcredist").join("2015").join(filename),
-                local_redist.join(filename),
-            ])
+        "vcrun2019" => match vcpp_ensure_downloaded() {
+            Ok((x64, _x86)) => Some(x64),
+            Err(_) => None,
         },
         "vcrun2013" => {
             let filename = match arch {
@@ -5121,17 +5306,14 @@ mod tests {
         let local_redist = dir.join("runtime-redist");
         let dotnet = local_redist.join("DotNet").join("4.8").join("NDP48-x86-x64-AllOS-ENU.exe");
         let dotnet40 = local_redist.join("DotNet").join("4.0").join("dotNetFx40_Client_x86_x64.exe");
-        let vc = local_redist.join("VC_redist.x86.exe");
         let xna = local_redist.join("XNA").join("4.0").join("xnafx40_redist.msi");
         let physx = local_redist.join("PhysX").join("PhysX-9.12.1031-SystemSoftware.msi");
         fs::create_dir_all(dotnet.parent().expect("dotnet parent")).expect("create dotnet dir");
         fs::create_dir_all(dotnet40.parent().expect("dotnet40 parent")).expect("create dotnet40 dir");
-        fs::create_dir_all(vc.parent().expect("vc parent")).expect("create vc dir");
         fs::create_dir_all(xna.parent().expect("xna parent")).expect("create xna dir");
         fs::create_dir_all(physx.parent().expect("physx parent")).expect("create physx dir");
         fs::write(&dotnet, b"dotnet").expect("write dotnet redist");
         fs::write(&dotnet40, b"dotnet40").expect("write dotnet40 redist");
-        fs::write(&vc, b"vc").expect("write vc redist");
         fs::write(&xna, b"xna").expect("write xna redist");
         fs::write(&physx, b"physx").expect("write physx redist");
 
@@ -5141,9 +5323,6 @@ mod tests {
         let dotnet40_installer =
             resolve_component_installer_from_roots("dotnet40", BottleArch::Wow64, &steam_redist, &local_redist)
                 .expect("resolve local dotnet40");
-        let vc_installer =
-            resolve_component_installer_from_roots("vcrun2019", BottleArch::Win32, &steam_redist, &local_redist)
-                .expect("resolve local vc");
         let xna_installer =
             resolve_component_installer_from_roots("xna", BottleArch::Wow64, &steam_redist, &local_redist)
                 .expect("resolve local xna");
@@ -5159,7 +5338,6 @@ mod tests {
             dotnet40_installer.path.to_string_lossy().to_ascii_lowercase(),
             dotnet40.to_string_lossy().to_ascii_lowercase()
         );
-        assert_eq!(vc_installer.path, vc);
         assert_eq!(xna_installer.path, xna);
         assert_eq!(physx_installer.path, physx);
         let _ = fs::remove_dir_all(dir);
@@ -5711,8 +5889,9 @@ mod tests {
         fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
 
-        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write dll");
         fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
+        fs::write(syswow64.join("vcruntime140.dll"), &dll_payload).expect("write dll");
+        fs::write(syswow64.join("msvcp140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -5762,6 +5941,7 @@ mod tests {
         fs::create_dir_all(&syswow64).expect("create syswow64");
 
         let dll_payload = vec![0u8; 20_000];
+        fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
         fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
         let _ = fs::remove_dir_all(&dir);
