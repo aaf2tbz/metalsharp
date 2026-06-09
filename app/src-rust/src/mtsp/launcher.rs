@@ -1049,6 +1049,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     let mono_bin = find_mono_binary_for_app(appid)?;
     let mono_config = find_config(match appid {
         504230 => "celeste-x86-mono.config",
+        413150 => "stardew-mono.config",
         _ => "terraria-mono.config",
     });
     let shims_dir = find_shims_dir();
@@ -1109,6 +1110,9 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+
+    cmd.env("SteamAppId", appid.to_string());
+    cmd.env("SteamGameId", appid.to_string());
 
     cmd.arg(&exe);
 
@@ -1729,8 +1733,13 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     let gdiplus_src =
         home.join("repos").join("metalsharp").join("src").join("fna").join("terraria").join("gdiplus_stub.c");
     if !game_dir.join("libgdiplus.dylib").exists() && gdiplus_src.exists() {
-        let _ = Command::new("clang")
-            .args(["-shared", "-arch", "x86_64", "-o"])
+        let mut gdi_cmd = Command::new("clang");
+        gdi_cmd.arg("-shared");
+        for arch_arg in fna_native_arch_args() {
+            gdi_cmd.arg(arch_arg);
+        }
+        let _ = gdi_cmd
+            .arg("-o")
             .arg(game_dir.join("libgdiplus.dylib"))
             .arg(&gdiplus_src)
             .args(["-install_name", "@loader_path/libgdiplus.dylib"])
@@ -2063,8 +2072,13 @@ fn deploy_terraria_runtime(game_dir: &PathBuf, metalsharp_home: &PathBuf) {
 
     if let Some(source) = find_repo_source(&["src", "fna", "terraria", "faudio_stub.c"]) {
         let output = game_dir.join("libFAudio.0.dylib");
-        let _ = Command::new("clang")
-            .args(["-shared", "-arch", "x86_64", "-o"])
+        let mut faudio_cmd = Command::new("clang");
+        faudio_cmd.arg("-shared");
+        for arch_arg in fna_native_arch_args() {
+            faudio_cmd.arg(arch_arg);
+        }
+        let _ = faudio_cmd
+            .arg("-o")
             .arg(&output)
             .arg(&source)
             .args(["-install_name", "@loader_path/libFAudio.0.dylib"])

@@ -156,6 +156,47 @@ const engineOptions = [
   { id: "m9", name: "M9" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
+
+const componentDisplayName: Record<string, string> = {
+  "mono-arm64": "Mono ARM64",
+  "mono-x86": "Mono x86_64",
+  "fna": "FNA Runtime",
+  "xna": "XNA Assemblies",
+  "d3d12_agility": "D3D12 Agility",
+  "gpu_vendor_stubs": "GPU Stubs",
+  "gptk_amd_stub": "GPTK AMD Stub",
+  "gptk": "GPTK",
+  "rosetta": "Rosetta",
+  "corefonts": "Core Fonts",
+  "vcrun2019": "VC++ 2019",
+  "vcrun2010": "VC++ 2010",
+  "vcrun2013": "VC++ 2013",
+  "dotnet40": ".NET 4.0",
+  "dotnet48": ".NET 4.8",
+  "webview2": "WebView2",
+  "directx_jun2010": "DX Jun2010",
+  "openal": "OpenAL",
+  "physx": "PhysX",
+  "easyanticheat_eos": "EAC EOS",
+  "battleye": "BattlEye",
+};
+
+const fnaComponentIds = new Set(["mono-arm64", "mono-x86", "fna", "xna"]);
+
+function componentLabel(id: string): string {
+  return componentDisplayName[id] ?? id;
+}
+
+function componentStateClass(state: string): string {
+  if (state === "installed" || state === "ready") return "pill-ok";
+  if (state === "missing") return "pill-missing";
+  if (state === "needs_repair" || state === "partial") return "pill-warn";
+  return "pill-unknown";
+}
+
+function isFnaProfile(profile: string): boolean {
+  return profile === "fna_arm64" || profile === "fna_x86";
+}
 const selectableRuntimeProfileIds = new Set(["m12", "d3dmetal", "m11", "m10", "m9", "fna_arm64"]);
 const visibleRuntimeProfiles = computed(() =>
   runtimeProfiles.value
@@ -708,7 +749,14 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   </div>
                 </div>
                 <div class="bottle-components">
-                  <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill">{{ component.id }}: {{ component.state }}</span>
+                  <template v-if="isFnaProfile(bottle.runtime_profile)">
+                    <div class="fna-component-header">Mono/FNA Runtime</div>
+                    <span v-for="component in bottle.installed_components.filter(c => fnaComponentIds.has(c.id))" :key="component.id" class="component-pill" :class="componentStateClass(component.state)">{{ componentLabel(component.id) }}: {{ component.state }}</span>
+                    <span v-for="component in bottle.installed_components.filter(c => !fnaComponentIds.has(c.id))" :key="component.id" class="component-pill">{{ componentLabel(component.id) }}: {{ component.state }}</span>
+                  </template>
+                  <template v-else>
+                    <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill" :class="componentStateClass(component.state)">{{ componentLabel(component.id) }}: {{ component.state }}</span>
+                  </template>
                   <span v-if="bottle.runtime_assets?.length" class="component-pill">runtime assets: {{ bottle.runtime_assets.length }}</span>
                 </div>
                 <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
@@ -727,7 +775,11 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   </div>
                 </div>
                 <div v-if="bottleReports[bottle.id]?.component_sources?.length" class="doctor-notes">
-                  <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id">{{ source.id }}: {{ source.available ? source.source : "missing source" }}</div>
+                  <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id" class="component-source-row">
+                    <span class="source-label">{{ componentLabel(source.id) }}</span>
+                    <span class="source-status" :class="source.available ? 'source-ok' : 'source-missing'">{{ source.available ? source.source : "missing source" }}</span>
+                    <span v-if="source.detail" class="source-detail">{{ source.detail }}</span>
+                  </div>
                 </div>
               </div>
             </article>
@@ -1187,6 +1239,49 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+}
+.component-pill.pill-ok {
+  color: var(--color-green, #4ade80);
+  border-color: var(--color-green, #4ade80);
+}
+.component-pill.pill-missing {
+  color: var(--color-red, #f87171);
+  border-color: var(--color-red, #f87171);
+}
+.component-pill.pill-warn {
+  color: var(--color-yellow, #facc15);
+  border-color: var(--color-yellow, #facc15);
+}
+.fna-component-header {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  grid-column: 1 / -1;
+}
+.component-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-top: 4px;
+}
+.source-label {
+  font-weight: 600;
+  min-width: 110px;
+}
+.source-ok {
+  color: var(--color-green, #4ade80);
+}
+.source-missing {
+  color: var(--color-red, #f87171);
+}
+.source-detail {
+  color: var(--text-secondary);
+  font-size: 11px;
+  flex-basis: 100%;
 }
 .bottle-report {
   margin-top: 10px;

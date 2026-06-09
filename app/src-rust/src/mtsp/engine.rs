@@ -405,7 +405,6 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
                 env_vars: vec![
-                    EnvVar { key: "FNA3D_DRIVER", value: "OpenGL" },
                     EnvVar { key: "METAL_DEVICE_WRAPPER_TYPE", value: "0" },
                 ],
                 launch_args: vec![],

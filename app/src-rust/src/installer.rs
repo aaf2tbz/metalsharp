@@ -1251,7 +1251,7 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
     let configs_dir = crate::platform::metalsharp_home_dir_for(&home).join("configs");
     let _ = fs::create_dir_all(&configs_dir);
 
-    let config_files = ["terraria-mono.config", "celeste-x86-mono.config"];
+    let config_files = ["terraria-mono.config", "celeste-x86-mono.config", "stardew-mono.config"];
     let mut any_installed = false;
 
     for name in &config_files {

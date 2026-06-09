@@ -411,7 +411,7 @@ fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         let stub_src = repo.join("src/fna/terraria/gdiplus_stub.c");
         if stub_src.exists() {
             let _ = mac_cmd("clang")
-                .args(["-shared", "-arch", "arm64", "-o"])
+                .args(["-shared", "-arch", "arm64", "-arch", "x86_64", "-o"])
                 .arg(&gdiplus)
                 .arg(&stub_src)
                 .args(["-install_name", "@loader_path/libgdiplus.dylib"])
@@ -488,7 +488,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
         let alias_file = repo.join("src/fna/shims/csteamworks_aliases.txt");
         if shim_src.exists() {
             let mut cmd = mac_cmd("clang");
-            cmd.args(["-shared", "-arch", "x86_64"]).arg("-o").arg(&csteamworks).arg(&shim_src);
+            cmd.args(["-shared", "-arch", "arm64", "-arch", "x86_64"]).arg("-o").arg(&csteamworks).arg(&shim_src);
 
             if alias_file.exists() {
                 if let Ok(aliases) = std::fs::read_to_string(&alias_file) {
@@ -508,7 +508,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
 
             if result.is_err() || !result.unwrap().success() {
                 let _ = mac_cmd("clang")
-                    .args(["-shared", "-arch", "x86_64"])
+                    .args(["-shared", "-arch", "arm64", "-arch", "x86_64"])
                     .arg("-o")
                     .arg(&csteamworks)
                     .arg(&shim_src)
@@ -530,7 +530,7 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
             let stub_src = repo.join("src/fna/shims").join(&stub_name);
             if stub_src.exists() {
                 let _ = mac_cmd("clang")
-                    .args(["-shared", "-arch", "x86_64"])
+                    .args(["-shared", "-arch", "arm64", "-arch", "x86_64"])
                     .arg("-o")
                     .arg(&dst)
                     .arg(&stub_src)
@@ -1885,7 +1885,7 @@ fn build_shim(src: &PathBuf, game_dir: &PathBuf) {
 
     let output = game_dir.join(output_name);
     let result = mac_cmd("clang")
-        .args(["-shared", "-arch", "arm64"])
+        .args(["-shared", "-arch", "arm64", "-arch", "x86_64"])
         .arg("-o")
         .arg(&output)
         .arg(src)
