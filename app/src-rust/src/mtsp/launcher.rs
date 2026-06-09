@@ -1332,6 +1332,15 @@ fn launch_fna_kickstart(
 
     let _ = std::fs::copy(&kick_bin, &game_kick);
 
+    let source_libmono = kickstart_dir.join("osx").join("libmonosgen-2.0.1.dylib");
+    if source_libmono.exists() {
+        let _ = Command::new("/usr/bin/install_name_tool")
+            .arg("-id")
+            .arg("@rpath/libmonosgen-2.0.1.dylib")
+            .arg(&source_libmono)
+            .output();
+    }
+
     let game_osx = dir.join("osx");
     let _ = std::fs::create_dir_all(&game_osx);
 
@@ -1353,6 +1362,14 @@ fn launch_fna_kickstart(
                     }
                 }
             }
+        }
+        let game_libmono = game_osx.join("libmonosgen-2.0.1.dylib");
+        if game_libmono.exists() {
+            let _ = Command::new("/usr/bin/install_name_tool")
+                .arg("-id")
+                .arg("@rpath/libmonosgen-2.0.1.dylib")
+                .arg(&game_libmono)
+                .output();
         }
     }
 
