@@ -71,7 +71,7 @@ const FNA_GAME_PROFILES: &[FnaGameProfile] = &[
 
 const DEFAULT_FNA_PROFILE: FnaGameProfile = FnaGameProfile {
     appid: 0,
-    mono_config: "terraria-mono.config",
+    mono_config: "generic-fna-mono.config",
     mono_arch: MonoArch::Native,
     preferred_exes: &[],
     method_label: "xna_fna_arm64",
@@ -84,6 +84,59 @@ const DEFAULT_FNA_PROFILE: FnaGameProfile = FnaGameProfile {
 
 pub fn find_fna_profile(appid: u32) -> &'static FnaGameProfile {
     FNA_GAME_PROFILES.iter().find(|p| p.appid == appid).unwrap_or(&DEFAULT_FNA_PROFILE)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FnaFlavor {
+    Fna,
+    MonoGame,
+    Xna,
+    Unknown,
+}
+
+pub fn detect_fna_flavor(game_dir: &PathBuf) -> FnaFlavor {
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.to_lowercase().ends_with("_data") && entry.path().is_dir() {
+                let managed = entry.path().join("Managed");
+                if !managed.exists() {
+                    continue;
+                }
+                if let Ok(managed_entries) = std::fs::read_dir(&managed) {
+                    let mut has_fna = false;
+                    let mut has_monogame = false;
+                    let mut has_xna = false;
+                    for me in managed_entries.flatten() {
+                        let dll_name = me.file_name().to_string_lossy().to_string();
+                        let dll_lower = dll_name.to_lowercase();
+                        if dll_lower == "fna.dll" {
+                            has_fna = true;
+                        }
+                        if dll_lower.starts_with("monogame") || dll_lower.contains("mg.framework") {
+                            has_monogame = true;
+                        }
+                        if dll_lower.starts_with("microsoft.xna.framework") {
+                            has_xna = true;
+                        }
+                    }
+                    if has_fna {
+                        return FnaFlavor::Fna;
+                    }
+                    if has_monogame {
+                        return FnaFlavor::MonoGame;
+                    }
+                    if has_xna {
+                        return FnaFlavor::Xna;
+                    }
+                }
+            }
+        }
+    }
+    if game_dir.join("FNA.dll").exists() {
+        return FnaFlavor::Fna;
+    }
+    FnaFlavor::Unknown
 }
 
 #[derive(Clone, Copy)]
@@ -3494,6 +3547,63 @@ mod tests {
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_SHIM)));
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_INTERPOSE_SHIM)));
         assert_eq!(required.len(), 12);
+    }
+
+    #[test]
+    fn fna_flavor_detection_identifies_fna_by_managed_dll() {
+        let game_dir = test_dir("fna-flavor-fna");
+        let managed = game_dir.join("Game_Data").join("Managed");
+        std::fs::create_dir_all(&managed).expect("managed dir");
+        std::fs::write(managed.join("FNA.dll"), b"fna").expect("fna dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Fna);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_identifies_monogame_by_managed_dll() {
+        let game_dir = test_dir("fna-flavor-mg");
+        let managed = game_dir.join("Game_Data").join("Managed");
+        std::fs::create_dir_all(&managed).expect("managed dir");
+        std::fs::write(managed.join("MonoGame.Framework.dll"), b"mg").expect("mg dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::MonoGame);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_identifies_xna_by_managed_dll() {
+        let game_dir = test_dir("fna-flavor-xna");
+        let managed = game_dir.join("Game_Data").join("Managed");
+        std::fs::create_dir_all(&managed).expect("managed dir");
+        std::fs::write(managed.join("Microsoft.Xna.Framework.dll"), b"xna").expect("xna dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Xna);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_falls_back_to_top_level_fna_dll() {
+        let game_dir = test_dir("fna-flavor-toplevel");
+        std::fs::create_dir_all(&game_dir).expect("game dir");
+        std::fs::write(game_dir.join("FNA.dll"), b"fna").expect("fna dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Fna);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_returns_unknown_for_empty_dir() {
+        let game_dir = test_dir("fna-flavor-empty");
+        std::fs::create_dir_all(&game_dir).expect("game dir");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Unknown);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn default_fna_profile_uses_generic_config() {
+        assert_eq!(DEFAULT_FNA_PROFILE.mono_config, "generic-fna-mono.config");
     }
 
     #[test]

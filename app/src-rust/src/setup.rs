@@ -399,6 +399,7 @@ fn prepare_fna_game(appid: u32, game_dir: &PathBuf, home: &PathBuf) -> Result<()
     } else if profile.appid == 504230 {
         prepare_celeste(game_dir, home)?;
     } else {
+        let _flavor = crate::mtsp::launcher::detect_fna_flavor(game_dir);
         setup_fna_runtime(game_dir, home)?;
     }
 
