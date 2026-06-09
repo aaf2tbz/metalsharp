@@ -27,13 +27,15 @@ source folders, or the referenced upstream/runtime packages.
 
 ## Wine / Wine runtime payload
 
-- Repository: https://gitlab.winehq.org/wine/wine
+- Upstream: https://gitlab.winehq.org/wine/wine (Wine 11.5)
 - License: GNU Lesser General Public License v2.1 or later
-- Used as: Bundled Wine runtime, Wine PE/DLL surfaces, Wine prefix tooling, and
-  Wine-backed game/app launch runtime.
+- Used as: MetalSharp builds and bundles a custom Wine 11.5 runtime from upstream
+  source, used as the Wine PE/DLL surface, prefix tooling, and Wine-backed
+  game/app launch runtime.
 - Notes: Wine-derived runtime payloads keep their upstream LGPL terms. Runtime
   bundle manifests and release assets preserve the redistributed payload
-  boundaries.
+  boundaries. The MetalSharp Wine build includes DXMT integration patches and
+  macOS-specific runtime adjustments not present in upstream Wine or CrossOver.
 
 ## Apple Game Porting Toolkit 4 / D3DMetal
 
@@ -42,8 +44,7 @@ source folders, or the referenced upstream/runtime packages.
 - Used as: D3DMetal framework and libmetalirconverter for D3D11/D3D12 to Metal
   translation in the M13/D3DMetal pipeline (GPTK 4.0 evaluation environment).
 - Notes: GPTK 4 is licensed to Apple Developer Program members for development
-  and evaluation purposes. The Wine-based source component (via CodeWeavers/
-  CrossOver) is LGPL-2.1; the Apple-specific D3DMetal runtime layer is
+  and evaluation purposes. The Apple-specific D3DMetal runtime layer is
   proprietary and governed by Apple's SDK license agreement.
 
 ## MinGW-w64 DirectX headers

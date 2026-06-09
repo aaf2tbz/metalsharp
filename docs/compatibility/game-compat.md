@@ -1,5 +1,5 @@
 # Game Compatibility
 
-The current repo compatibility ledger lives at [GAMES-SUPPORTED.md](GAMES-SUPPORTED.md).
+The current compatibility ledger lives at [GAMES-SUPPORTED.md](GAMES-SUPPORTED.md).
 
-Use that file for current game status, route recommendations, recent playtesting notes, and the visible route selector contract.
+That file contains tested-and-working games organized by pipeline (D3DMetal, M12, M11, M10, M9, Mono/FNA) with playtesting notes. Games not yet confirmed working are omitted until verified.
