@@ -1,94 +1,65 @@
 <div align="center">
 
-# M E T A L S H A R P
+# MetalSharp
 
-**Run Windows Steam games and Windows programs on macOS with Metal.**
+**Run Windows Steam games on macOS with Metal.**
 
 <a href="https://github.com/aaf2tbz/metalsharp/actions"><img src="https://img.shields.io/github/actions/workflow/status/aaf2tbz/metalsharp/ci.yml?branch=main&style=for-the-badge" alt="CI"></a>
 <a href="https://github.com/aaf2tbz/metalsharp/releases"><img src="https://img.shields.io/github/v/release/aaf2tbz/metalsharp?style=for-the-badge" alt="Release"></a>
 <a href="https://github.com/aaf2tbz/metalsharp/discussions"><img src="https://img.shields.io/github/discussions/aaf2tbz/metalsharp?style=for-the-badge" alt="Discussions"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT"></a>
 
-**Beta 7**
-
 </div>
 
 ---
 
-MetalSharp is an ARM64 app for Apple Silicon that bundles its own Wine runtime, DXMT Metal graphics support, Windows Steam setup, game detection, runtime bottles, Mono/FNA/XNA support, logs, and launch diagnostics.
+MetalSharp is a macOS app for Apple Silicon that translates Direct3D calls to Metal via DXMT, bundles its own Wine runtime, and manages Steam game detection, launch routing, and runtime bottles.
 
-## Runtime
+## Quick Start
 
-MetalSharp keeps state under `~/.metalsharp/`:
+Download the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it. The setup wizard handles the rest.
 
-```text
-~/.metalsharp/
-├── runtime/wine/   MetalSharp Wine, DXMT, D3D/DXGI DLLs, shims
-├── runtime/redist/ Optional user-supplied redistributables
-├── prefix-steam/   Shared Windows Steam prefix and live Steam session
-├── bottles/        Runtime bottle manifests, prefixes, logs, assets
-├── games/          Prepared game payloads
-├── sharp-library/  Imported Windows apps
-├── shader-cache/   Per-game graphics caches
-├── configs/        Pipeline/runtime rules
-├── cache/          Steam/update cache
-├── logs/           App, launch, crash, setup, migration logs
-└── crashes/        Preserved crash reports
-```
+For building from source, see [Install from Source](docs/guides/install-from-source.md).
 
-`prefix-steam` remains the shared Wine Steam prefix. Wine Steam stays alive as the background client/session owner for Steam games.
+## Routes
 
-`bottles` is the runtime authority layer. Installer and Sharp Library bottles use their own prefixes. Steam game bottles use ids like `steam_620` and preflight the actual shared Steam prefix. Env-dependent Steam routes launch the selected game executable directly through the chosen MTSP pipeline with the bottle prefix, route env, and `SteamAppId`/`SteamGameId`, while Wine Steam remains alive for Steamworks connectivity.
-
-## Launching
-
-When Play is clicked, MetalSharp resolves the best route, syncs the bottle/runtime record, checks required components/assets, prepares DLLs/cache/env/logs, ensures Wine Steam is ready when needed, then launches the game through the selected MTSP path. The visible route selector is intentionally small; `dxmt` is the internal auto-router, not a manual button.
-
-| Mode | Purpose |
+| Route | Engine |
 |---|---|
 | **M12** | D3D12 to Metal |
 | **M11** | D3D11 to Metal |
 | **M10** | D3D10 to Metal |
-| **M9** | D3D9 / 32-bit capable DXMT-family route |
-| **Mono/FNA** | Windows XNA/FNA games through MetalSharp's native Mono runtime, FNA assemblies, XNA compatibility shims, FMOD/FAudio/FNA3D/native-library staging, and Steamworks shim support |
+| **M9** | D3D9 / 32-bit DXMT |
+| **Mono/FNA** | Windows XNA/FNA via native Mono |
+| **D3DMetal** | Apple Game Porting Toolkit |
 
-Internal routes such as Wine Steam, macOS Steam, plain Wine, M32, and raw DXMT remain available to the backend for auto-routing, compatibility records, diagnostics, and legacy repair paths, but they are not exposed as normal bottle options.
+## Features
 
-## Sharp Library
-
-Sharp Library manages Windows apps, demos, launchers, and installers. Use **Install Windows Program** for standalone `.exe` files, MSI packages, launcher bootstrapper apps, .NET installers, WebView apps, Java launchers, and game installers.
-
-Installer bottles classify the program, apply known launcher recipes where possible, launch it with the right profile, keep per-bottle logs, scan for installed app candidates, and import detected apps back into Sharp Library with their `bottle_id`.
-
-## Diagnostics and Migration
-
-Use Logs and Runtime Doctor when something fails. Doctor checks common blockers like Wine Mono, native .NET CLR files, Gecko, VC runtime, DirectX June 2010, WebView2, core fonts, Mono/FNA runtime assets, runtime profile, app detection, launch state, and redistributable assets.
-
-Upgrades preserve `setup.json`, Steam settings/cache, `prefix-steam`, `games`, `sharp-library`, `bottles`, and Steam game compatdata.
-
-## Download
-
-Get the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it.
+- **Sharp Library** - Import and run standalone Windows programs, installers, and launchers
+- **Runtime Bottles** - Per-game isolated Wine prefixes with component tracking and repair
+- **MTSP Routing** - Automatic pipeline selection based on game compatibility data
+- **Steam Integration** - Detects your Steam library, manages the Wine Steam session, and deploys the CEF wrapper
 
 ## Requirements
 
-- macOS DMG: Apple Silicon Mac, macOS 14 or newer
+- Apple Silicon Mac, macOS 14+
 - About 2 GB free space
+- Homebrew (installed by setup wizard)
 
-## Help
+## Documentation
 
+- [Install from Source](docs/guides/install-from-source.md)
 - [How to Use MetalSharp](docs/guides/how-to-use-metalsharp.md)
-- [Docs Map](docs/README.md)
-- [Runtime Bundles and Steam Routing](docs/runtime/runtime-bundles-and-steam-routing.md)
+- [GPTK (D3DMetal) Guide](docs/guides/gptk-guide.md)
+- [Game Compatibility](docs/compatibility/GAMES-SUPPORTED.md)
 - [Launch Architecture](docs/architecture/launch-architecture.md)
-- [Wine Architecture](docs/runtime/wine-architecture.md)
-- [Game Compatibility](docs/compatibility/game-compat.md)
-- [Supported Games](docs/compatibility/GAMES-SUPPORTED.md)
-- [Third-Party Licenses](THIRD_PARTY_LICENSES)
+- [Docs Map](docs/README.md)
+
+## Community
+
 - [Releases](https://github.com/aaf2tbz/metalsharp/releases)
 - [Discussions](https://github.com/aaf2tbz/metalsharp/discussions)
 - [Issues](https://github.com/aaf2tbz/metalsharp/issues)
 
 ## License
 
-MetalSharp is MIT licensed. Third-party runtime and source components keep their original licenses; see [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
+MIT licensed. Third-party components keep their original licenses; see [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
