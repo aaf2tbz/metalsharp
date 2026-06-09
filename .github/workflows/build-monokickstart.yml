@@ -36,7 +36,7 @@ jobs:
           fi
 
           cp "$MONO_LIB/libmonosgen-2.0.1.dylib" libmonosgen-2.0.1.dylib
-          install_name_tool -id "@rpath/osx/libmonosgen-2.0.1.dylib" libmonosgen-2.0.1.dylib
+          install_name_tool -id "@rpath/libmonosgen-2.0.1.dylib" libmonosgen-2.0.1.dylib
 
           clang -arch x86_64 -arch arm64 \
             -mmacosx-version-min=11.0 \
