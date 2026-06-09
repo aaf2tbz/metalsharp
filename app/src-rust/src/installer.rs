@@ -185,9 +185,7 @@ fn run_install_all() {
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Mono Configs", Box::new(install_mono_configs)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
-        ("FNA Shim Precompile", Box::new(|_| {
-            crate::mtsp::launcher::precompile_all_fna_shims().map(|_| true)
-        })),
+        ("FNA Shim Precompile", Box::new(|_| crate::mtsp::launcher::precompile_all_fna_shims().map(|_| true))),
     ];
 
     let total = steps.len();
@@ -1254,7 +1252,8 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
     let configs_dir = crate::platform::metalsharp_home_dir_for(&home).join("configs");
     let _ = fs::create_dir_all(&configs_dir);
 
-    let config_files = ["terraria-mono.config", "celeste-x86-mono.config", "stardew-mono.config", "generic-fna-mono.config"];
+    let config_files =
+        ["terraria-mono.config", "celeste-x86-mono.config", "stardew-mono.config", "generic-fna-mono.config"];
     let mut any_installed = false;
 
     for name in &config_files {

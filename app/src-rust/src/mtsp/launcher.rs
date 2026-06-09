@@ -33,7 +33,7 @@ pub struct FnaGameProfile {
 const FNA_GAME_PROFILES: &[FnaGameProfile] = &[
     FnaGameProfile {
         appid: 105600,
-    mono_config: "generic-fna-mono.config",
+        mono_config: "generic-fna-mono.config",
         mono_arch: MonoArch::X86,
         preferred_exes: &["TerrariaLauncher.exe", "Terraria.exe"],
         method_label: "xna_fna_x86",
@@ -104,13 +104,19 @@ struct FnaNativeShimSpec {
 const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     FnaNativeShimSpec {
         output: "libkernel32.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "kernel32_shim.c"], undefined_dynamic_lookup: false },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "kernel32_shim.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
     FnaNativeShimSpec {
         output: "libuser32.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "user32_shim.c"], undefined_dynamic_lookup: false },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "user32_shim.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -125,7 +131,10 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: FNA_CARBON_INTERPOSE_SHIM,
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "carbon_interpose.c"], undefined_dynamic_lookup: false },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "carbon_interpose.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -137,7 +146,10 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: "libSystem.Native.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "system_native_stub.c"], undefined_dynamic_lookup: false },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "system_native_stub.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -149,19 +161,28 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: "libgdiplus.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "terraria", "gdiplus_stub.c"], undefined_dynamic_lookup: false },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "terraria", "gdiplus_stub.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: false,
     },
     FnaNativeShimSpec {
         output: "libFAudio.0.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "terraria", "faudio_stub.c"], undefined_dynamic_lookup: false },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "terraria", "faudio_stub.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &["libFAudio.dylib"],
         required_for_launch: false,
     },
     FnaNativeShimSpec {
         output: "libCSteamworks.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "csteamworks_shim.c"], undefined_dynamic_lookup: true },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "csteamworks_shim.c"],
+            undefined_dynamic_lookup: true,
+        },
         symlinks: &[],
         required_for_launch: false,
     },
@@ -173,7 +194,10 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: "libfmodstudio.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "fmodstudio_stub.c"], undefined_dynamic_lookup: true },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "fmodstudio_stub.c"],
+            undefined_dynamic_lookup: true,
+        },
         symlinks: &[],
         required_for_launch: false,
     },
@@ -2104,7 +2128,13 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
     }
 }
 
-fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, frameworks: &[&str], undefined_dynamic_lookup: bool) -> bool {
+fn build_fna_c_shim(
+    source: &PathBuf,
+    output: &PathBuf,
+    install_name: &str,
+    frameworks: &[&str],
+    undefined_dynamic_lookup: bool,
+) -> bool {
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -2316,10 +2346,8 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
     if cached.exists() {
         let _ = std::fs::copy(&cached, &dst);
     } else {
-        let homebrew_candidates = [
-            PathBuf::from(format!("/opt/homebrew/lib/{}", lib)),
-            PathBuf::from(format!("/usr/local/lib/{}", lib)),
-        ];
+        let homebrew_candidates =
+            [PathBuf::from(format!("/opt/homebrew/lib/{}", lib)), PathBuf::from(format!("/usr/local/lib/{}", lib))];
         for candidate in &homebrew_candidates {
             if candidate.exists() {
                 let _ = std::fs::copy(candidate, &dst);
