@@ -76,8 +76,6 @@ const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/fnalibs/libtheorafile.dylib",
     "assets/goldberg/x64/steam_api64.dll",
     "assets/goldberg/x86/steam_api.dll",
-    "assets/goldberg/steamclient/steamclient64.dll",
-    "assets/goldberg/steamclient/steamclient.dll",
     "assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal",
     "assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib",
     "assets/gptk/x86_64-windows/d3d10.dll",
@@ -1827,7 +1825,7 @@ mod tests {
         fs::create_dir_all(&pe_dir).expect("create GPTK PE dir");
         fs::create_dir_all(&resources).expect("create framework resources");
         for dll in
-            ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll", "atidxx64.dll"]
+            ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"]
         {
             fs::write(pe_dir.join(dll), b"dll").expect("write GPTK DLL");
         }

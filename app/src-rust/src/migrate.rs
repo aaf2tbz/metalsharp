@@ -274,7 +274,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("dxgi.dll"),
         runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvapi64.dll"),
         runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvngx-on-metalfx.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("atidxx64.dll"),
         runtime_wine
             .join("lib")
             .join("external")
@@ -291,7 +290,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
             .join("Resources"),
         ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
         ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
-        ms_dir.join("runtime").join("goldberg").join("steamclient").join("steamclient64.dll"),
         ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
         ms_dir.join("configs").join("mtsp-rules.toml"),
         runtime_wine.join("etc").join("dxmt.conf"),
@@ -1995,7 +1993,6 @@ mod tests {
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("dxgi.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvapi64.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvngx-on-metalfx.dll"),
-            runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("atidxx64.dll"),
             runtime_wine
                 .join("lib")
                 .join("external")
@@ -2013,7 +2010,6 @@ mod tests {
                 .join("libD3DMetalHelper.dylib"),
             ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
             ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
-            ms_dir.join("runtime").join("goldberg").join("steamclient").join("steamclient64.dll"),
             ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
             ms_dir.join("configs").join("mtsp-rules.toml"),
             runtime_wine.join("etc").join("dxmt.conf"),
