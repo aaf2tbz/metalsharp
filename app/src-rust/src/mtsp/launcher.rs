@@ -1875,6 +1875,7 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
         },
         "mono" | "macos-steam" => {
             env.push(("FNA3D_SHADER_CACHE_PATH".to_string(), shader_dir));
+            env.push(("FNA3D_PIPELINE_CACHE_PATH".to_string(), pipeline_dir));
         },
         _ => {},
     }
