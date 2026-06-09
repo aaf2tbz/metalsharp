@@ -4208,7 +4208,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet40" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.0 offline installers",
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
-            "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "vcrun2019" => "Auto-downloads VC++ 2015-2022 (x86+x64) from Microsoft, or uses Steam CommonRedist / local redist",
             "vcrun2010" => "Uses Steam CommonRedist or local Visual C++ 2010 redistributable",
             "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",

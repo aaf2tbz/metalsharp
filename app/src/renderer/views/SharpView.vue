@@ -168,7 +168,7 @@ const componentDisplayName: Record<string, string> = {
   "gptk": "GPTK",
   "rosetta": "Rosetta",
   "corefonts": "Core Fonts",
-  "vcrun2019": "VC++ 2019",
+  "vcrun2019": "VC++ 2015-2022",
   "vcrun2010": "VC++ 2010",
   "vcrun2013": "VC++ 2013",
   "dotnet40": ".NET 4.0",
