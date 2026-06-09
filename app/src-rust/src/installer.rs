@@ -1824,9 +1824,7 @@ mod tests {
         let resources = framework.join("Versions").join("A").join("Resources");
         fs::create_dir_all(&pe_dir).expect("create GPTK PE dir");
         fs::create_dir_all(&resources).expect("create framework resources");
-        for dll in
-            ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"]
-        {
+        for dll in ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"] {
             fs::write(pe_dir.join(dll), b"dll").expect("write GPTK DLL");
         }
 
