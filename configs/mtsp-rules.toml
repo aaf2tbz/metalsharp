@@ -342,7 +342,7 @@ pipeline = "wine_bare"
 name = "Dome Keeper"
 
 [overrides.1562430]
-pipeline = "m9"
+pipeline = "fna_arm64"
 name = "DREDGE"
 
 [overrides.1092790]

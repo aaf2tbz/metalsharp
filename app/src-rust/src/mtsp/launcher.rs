@@ -33,7 +33,7 @@ pub struct FnaGameProfile {
 const FNA_GAME_PROFILES: &[FnaGameProfile] = &[
     FnaGameProfile {
         appid: 105600,
-        mono_config: "terraria-mono.config",
+    mono_config: "generic-fna-mono.config",
         mono_arch: MonoArch::X86,
         preferred_exes: &["TerrariaLauncher.exe", "Terraria.exe"],
         method_label: "xna_fna_x86",
@@ -1774,9 +1774,6 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     };
     let metalsharp_home = crate::platform::metalsharp_home_dir_for(&home);
     let fna_dll = metalsharp_home.join("runtime").join("fna").join("FNA.dll");
-    if !fna_dll.exists() {
-        return;
-    }
 
     let shims_dir = PathBuf::from(find_shims_dir());
     let _ = std::fs::create_dir_all(&shims_dir);
@@ -1873,13 +1870,15 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         "Microsoft.Xna.Framework.Storage.dll",
     ];
 
-    if !game_dir.join("FNA.dll").exists() {
-        let _ = std::fs::copy(&fna_dll, game_dir.join("FNA.dll"));
-    }
-    for name in &xna_assemblies {
-        let dst = game_dir.join(name);
-        if !dst.exists() {
-            let _ = std::fs::copy(&fna_dll, dst);
+    if fna_dll.exists() {
+        if !game_dir.join("FNA.dll").exists() {
+            let _ = std::fs::copy(&fna_dll, game_dir.join("FNA.dll"));
+        }
+        for name in &xna_assemblies {
+            let dst = game_dir.join(name);
+            if !dst.exists() {
+                let _ = std::fs::copy(&fna_dll, dst);
+            }
         }
     }
 
@@ -2305,10 +2304,30 @@ fn compile_csharp_with_mono(
 }
 
 fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symlink: Option<&str>) {
-    let src = shims_dir.join(lib);
-    if src.exists() && !game_dir.join(lib).exists() {
-        let _ = std::fs::copy(&src, game_dir.join(lib));
+    let dst = game_dir.join(lib);
+    if dst.exists() {
+        if let Some(sym) = symlink {
+            ensure_fna_symlink(game_dir, lib, sym);
+        }
+        return;
     }
+
+    let cached = shims_dir.join(lib);
+    if cached.exists() {
+        let _ = std::fs::copy(&cached, &dst);
+    } else {
+        let homebrew_candidates = [
+            PathBuf::from(format!("/opt/homebrew/lib/{}", lib)),
+            PathBuf::from(format!("/usr/local/lib/{}", lib)),
+        ];
+        for candidate in &homebrew_candidates {
+            if candidate.exists() {
+                let _ = std::fs::copy(candidate, &dst);
+                break;
+            }
+        }
+    }
+
     if let Some(sym) = symlink {
         ensure_fna_symlink(game_dir, lib, sym);
     }
