@@ -323,7 +323,7 @@ pub fn prepare_steam_pipeline_env(
     if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
         if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
-            crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
+            crate::setup::stage_agility_sdk_for_game_with_dxmt_version(appid, game_dir, &home)?;
         }
     }
     if pipeline_id == PipelineId::D3DMetal {
@@ -864,7 +864,7 @@ fn deploy_d3d12_agility_sidecars(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
-    crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)
+    crate::setup::stage_agility_sdk_for_game_with_dxmt_version(appid, game_dir, &home)
 }
 
 fn launch_wine_bare(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {

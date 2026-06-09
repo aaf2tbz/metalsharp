@@ -1817,7 +1817,8 @@ pub fn repair_component(
             });
         }
 
-        let report = crate::setup::stage_agility_sdk_for_game_report(appid, &game_dir, &home)?;
+        let dxmt_version = crate::setup::dxmt_runtime_d3d12_sdk_version(&home);
+        let report = crate::setup::stage_agility_sdk_for_game_report_inner(appid, &game_dir, &home, dxmt_version)?;
         let state = inspect_d3d12_agility_component_for_manifest(&manifest).unwrap_or(ComponentState::Missing);
         if state != ComponentState::Installed {
             return Err("D3D12 Agility repair did not verify after staging".into());
