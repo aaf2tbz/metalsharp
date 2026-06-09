@@ -241,6 +241,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         "dxvk.tar.zst": ("dxvk", "dxvk-1.10.3"),
         "mono-x86.tar.zst": ("mono-x86", "mono-x86"),
         "fnalibs.tar.zst": ("fnalibs", "fnalibs"),
+        "fna-kickstart.tar.zst": ("fna-kickstart", "fna-kickstart"),
     }
     for archive_name, (extract_name, target_name) in optional_archives.items():
         archive = SOURCE_BUNDLES / archive_name

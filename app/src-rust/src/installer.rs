@@ -62,6 +62,14 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
 ];
 const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/eac-toggle/x86_64-windows/_winhttp.dll",
+    "assets/fna-kickstart/kick.bin.osx",
+    "assets/fna-kickstart/FNA.dll",
+    "assets/fna-kickstart/mscorlib.dll",
+    "assets/fna-kickstart/osx/libmonosgen-2.0.1.dylib",
+    "assets/fna-kickstart/osx/libSDL3.0.dylib",
+    "assets/fna-kickstart/osx/libFNA3D.0.dylib",
+    "assets/fna-kickstart/osx/libFAudio.0.dylib",
+    "assets/fna-kickstart/osx/libMonoPosixHelper.dylib",
     "assets/fnalibs/libFNA3D.0.dylib",
     "assets/fnalibs/libSDL3.0.dylib",
     "assets/fnalibs/libFAudio.0.dylib",
@@ -706,6 +714,7 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
         ("eac-toggle", runtime_dir.join("eac-toggle")),
         ("shims", runtime_dir.join("shims")),
         ("fnalibs", runtime_dir.join("fnalibs")),
+        ("fna-kickstart", runtime_dir.join("fna-kickstart")),
     ] {
         let src = assets.join(src_name);
         if src.exists() {

@@ -1162,7 +1162,8 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     let node = get_pipeline(PipelineId::FnaArm64);
     let game_dir = resolve_fna_game_dir(appid)?;
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let local_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let local_dir = ms_home.join("games").join(appid.to_string());
     let dir = if game_dir.exists() { &game_dir } else { &local_dir };
 
     ensure_launcher_exe(appid, dir);
@@ -1176,6 +1177,13 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     } else {
         resolve_game_exe(dir).into()
     };
+
+    let kickstart_dir = ms_home.join("runtime").join("fna-kickstart");
+    let kick_bin = kickstart_dir.join("kick.bin.osx");
+
+    if kick_bin.exists() {
+        return launch_fna_kickstart(appid, profile, node, dir, &exe, &home, &ms_home, &kickstart_dir);
+    }
 
     let mono_bin = find_mono_binary_for_app(appid)?;
     let mono_config = find_config(profile.mono_config);
@@ -1251,6 +1259,193 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     }
     let method = profile.method_label;
     Ok((child.id(), method, log_path))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_fna_kickstart(
+    appid: u32,
+    profile: &FnaGameProfile,
+    node: &PipelineNode,
+    dir: &PathBuf,
+    exe: &PathBuf,
+    home: &PathBuf,
+    ms_home: &PathBuf,
+    kickstart_dir: &PathBuf,
+) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
+    let kick_bin = kickstart_dir.join("kick.bin.osx");
+    let exe_name = exe.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Game.exe".to_string());
+    let bin_name = exe_name.replace(".exe", ".bin.osx");
+    let game_kick = dir.join(&bin_name);
+
+    let _ = std::fs::copy(&kick_bin, &game_kick);
+
+    let game_osx = dir.join("osx");
+    let _ = std::fs::create_dir_all(&game_osx);
+
+    let kick_osx = kickstart_dir.join("osx");
+    if kick_osx.exists() {
+        for entry in std::fs::read_dir(&kick_osx)? {
+            let entry = entry?;
+            let src = entry.path();
+            if src.is_file() || src.is_symlink() {
+                let name = entry.file_name();
+                let dst = game_osx.join(&name);
+                if !dst.exists() {
+                    if src.is_symlink() {
+                        if let Ok(target) = std::fs::read_link(&src) {
+                            let _ = std::os::unix::fs::symlink(target, dst);
+                        }
+                    } else {
+                        let _ = std::fs::copy(&src, &dst);
+                    }
+                }
+            }
+        }
+    }
+
+    let fnalibs_dir = ms_home.join("runtime").join("fnalibs");
+    if fnalibs_dir.exists() {
+        for entry in std::fs::read_dir(&fnalibs_dir)? {
+            let entry = entry?;
+            let src = entry.path();
+            if src.is_file() && !game_osx.join(entry.file_name()).exists() {
+                let _ = std::fs::copy(&src, game_osx.join(entry.file_name()));
+            }
+        }
+    }
+
+    let shims_dir = PathBuf::from(find_shims_dir());
+    deploy_fna_native_shims(&dir.to_path_buf(), &shims_dir);
+    for spec in FNA_NATIVE_SHIMS {
+        let shim = dir.join(spec.output);
+        if shim.exists() {
+            let dst = game_osx.join(spec.output);
+            if !dst.exists() {
+                let _ = std::fs::copy(&shim, &dst);
+            }
+            for symlink in spec.symlinks {
+                let link = game_osx.join(symlink);
+                if !link.exists() {
+                    let _ = std::os::unix::fs::symlink(spec.output, link);
+                }
+            }
+        }
+    }
+
+    let shared_libs =
+        ["libsteam_api.dylib", "libCSteamworks.dylib", "libfmod.dylib", "libfmodstudio.dylib", "libnfd.dylib"];
+    for lib in &shared_libs {
+        let src = shims_dir.join(lib);
+        if src.exists() && !game_osx.join(lib).exists() {
+            let _ = std::fs::copy(&src, game_osx.join(lib));
+        }
+        if dir.join(lib).exists() && !game_osx.join(lib).exists() {
+            let _ = std::fs::copy(dir.join(lib), game_osx.join(lib));
+        }
+    }
+
+    let bcl_dlls = [
+        "mscorlib.dll",
+        "System.dll",
+        "System.Core.dll",
+        "System.Xml.dll",
+        "System.Xml.Linq.dll",
+        "System.Configuration.dll",
+        "System.Security.dll",
+        "System.Runtime.Serialization.dll",
+        "System.Data.dll",
+        "System.Drawing.dll",
+        "Mono.Security.dll",
+        "Mono.Posix.dll",
+        "Microsoft.CSharp.dll",
+    ];
+    for dll in &bcl_dlls {
+        let src = kickstart_dir.join(dll);
+        if src.exists() && !dir.join(dll).exists() {
+            let _ = std::fs::copy(&src, dir.join(dll));
+        }
+    }
+
+    let fna_dll = kickstart_dir.join("FNA.dll");
+    if fna_dll.exists() && !dir.join("FNA.dll").exists() {
+        let _ = std::fs::copy(&fna_dll, dir.join("FNA.dll"));
+    }
+
+    let monoconfig_src = kickstart_dir.join("monoconfig");
+    if monoconfig_src.exists() {
+        let game_monoconfig = dir.join("monoconfig");
+        let custom_config = find_config(profile.mono_config);
+        let custom_path = PathBuf::from(&custom_config);
+        if custom_path.exists() {
+            let _ = std::fs::copy(&custom_path, &game_monoconfig);
+        } else {
+            let _ = std::fs::copy(&monoconfig_src, &game_monoconfig);
+        }
+    }
+
+    let machine_config_src = kickstart_dir.join("mono").join("4.5").join("machine.config");
+    let machine_config_dst = dir.join("mono").join("4.5").join("machine.config");
+    if machine_config_src.exists() && !machine_config_dst.exists() {
+        let _ = std::fs::create_dir_all(machine_config_dst.parent().unwrap());
+        let _ = std::fs::copy(&machine_config_src, &machine_config_dst);
+    }
+
+    let log_path = fna_launch_log_path(appid);
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let stderr = stdout.try_clone()?;
+
+    let mut cmd = Command::new(&game_kick);
+    cmd.current_dir(dir).env("MONO_DISABLE_SHARED_AREA", "1").stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+
+    for (key, value) in fna_native_launch_env(dir) {
+        cmd.env(key, value);
+    }
+
+    let cache_paths = build_cache_paths(home, node, appid);
+    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_home.join("runtime").join("wine"));
+
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+
+    cmd.env("SteamAppId", appid.to_string());
+    cmd.env("SteamGameId", appid.to_string());
+
+    if profile.mono_arch == MonoArch::X86 && crate::platform::current() == crate::platform::HostPlatform::Macos {
+        let mut arch_cmd = Command::new("arch");
+        arch_cmd.arg("-x86_64").arg(&game_kick);
+        arch_cmd.current_dir(dir).stdout(Stdio::from(OpenOptions::new().create(true).append(true).open(&log_path)?));
+        arch_cmd.stderr(Stdio::from(OpenOptions::new().create(true).append(true).open(&log_path)?));
+        for (key, value) in fna_native_launch_env(dir) {
+            arch_cmd.env(key, value);
+        }
+        for ev in &node.env_vars {
+            arch_cmd.env(ev.key, ev.value);
+        }
+        arch_cmd.env("SteamAppId", appid.to_string());
+        arch_cmd.env("SteamGameId", appid.to_string());
+        arch_cmd.env("MONO_DISABLE_SHARED_AREA", "1");
+        let mut child = arch_cmd.spawn()?;
+        std::thread::sleep(Duration::from_millis(900));
+        if let Some(status) = child.try_wait()? {
+            let log_tail = tail_text(&log_path, 4096);
+            return Err(
+                format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into()
+            );
+        }
+        return Ok((child.id(), profile.method_label, log_path));
+    }
+
+    let mut child = cmd.spawn()?;
+    std::thread::sleep(Duration::from_millis(900));
+    if let Some(status) = child.try_wait()? {
+        let log_tail = tail_text(&log_path, 4096);
+        return Err(format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into());
+    }
+    Ok((child.id(), profile.method_label, log_path))
 }
 
 fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -2009,9 +2204,14 @@ pub fn precompile_all_fna_shims() -> Result<usize, String> {
 
 fn fna_required_runtime_assets(runtime: &Path) -> Vec<PathBuf> {
     vec![
-        runtime.join("fna").join("FNA.dll"),
-        runtime.join("shims").join("libFNA3D.dylib"),
-        runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("fna-kickstart").join("kick.bin.osx"),
+        runtime.join("fna-kickstart").join("FNA.dll"),
+        runtime.join("fna-kickstart").join("osx").join("libmonosgen-2.0.1.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libSDL3.0.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib"),
+        runtime.join("fnalibs").join("libFNA3D.0.dylib"),
+        runtime.join("fnalibs").join("libSDL3.0.dylib"),
         runtime.join("shims").join("libkernel32.dylib"),
         runtime.join("shims").join("libuser32.dylib"),
         runtime.join("shims").join(FNA_CARBON_SHIM),
@@ -2342,16 +2542,25 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
         return;
     }
 
-    let cached = shims_dir.join(lib);
-    if cached.exists() {
-        let _ = std::fs::copy(&cached, &dst);
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let fnalibs = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs").join(lib);
+    if fnalibs.exists() {
+        let _ = std::fs::copy(&fnalibs, &dst);
     } else {
-        let homebrew_candidates =
-            [PathBuf::from(format!("/opt/homebrew/lib/{}", lib)), PathBuf::from(format!("/usr/local/lib/{}", lib))];
-        for candidate in &homebrew_candidates {
-            if candidate.exists() {
-                let _ = std::fs::copy(candidate, &dst);
-                break;
+        let cached = shims_dir.join(lib);
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, &dst);
+        } else {
+            let homebrew_candidates =
+                [PathBuf::from(format!("/opt/homebrew/lib/{}", lib)), PathBuf::from(format!("/usr/local/lib/{}", lib))];
+            for candidate in &homebrew_candidates {
+                if candidate.exists() {
+                    let _ = std::fs::copy(candidate, &dst);
+                    break;
+                }
             }
         }
     }
@@ -3272,12 +3481,19 @@ mod tests {
         let runtime = PathBuf::from("/tmp/metalsharp-runtime");
         let required = fna_required_runtime_assets(&runtime);
 
-        assert!(required.contains(&runtime.join("fna").join("FNA.dll")));
-        assert!(required.contains(&runtime.join("shims").join("libFNA3D.dylib")));
-        assert!(required.contains(&runtime.join("shims").join("libSDL3.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("kick.bin.osx")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("FNA.dll")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libmonosgen-2.0.1.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libSDL3.0.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib")));
+        assert!(required.contains(&runtime.join("fnalibs").join("libFNA3D.0.dylib")));
+        assert!(required.contains(&runtime.join("fnalibs").join("libSDL3.0.dylib")));
+        assert!(required.contains(&runtime.join("shims").join("libkernel32.dylib")));
+        assert!(required.contains(&runtime.join("shims").join("libuser32.dylib")));
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_SHIM)));
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_INTERPOSE_SHIM)));
-        assert_eq!(required.len(), 7);
+        assert_eq!(required.len(), 12);
     }
 
     #[test]

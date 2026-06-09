@@ -161,6 +161,14 @@ verify_graphics_core() {
 verify_assets_core() {
   verify_required_files "$1" "ASSETS" \
     assets/eac-toggle/x86_64-windows/_winhttp.dll \
+    assets/fna-kickstart/kick.bin.osx \
+    assets/fna-kickstart/FNA.dll \
+    assets/fna-kickstart/mscorlib.dll \
+    assets/fna-kickstart/osx/libmonosgen-2.0.1.dylib \
+    assets/fna-kickstart/osx/libSDL3.0.dylib \
+    assets/fna-kickstart/osx/libFNA3D.0.dylib \
+    assets/fna-kickstart/osx/libFAudio.0.dylib \
+    assets/fna-kickstart/osx/libMonoPosixHelper.dylib \
     assets/fnalibs/libFNA3D.0.dylib \
     assets/fnalibs/libSDL3.0.dylib \
     assets/fnalibs/libFAudio.0.dylib \
