@@ -68,7 +68,6 @@ const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/goldberg/steamclient/steamclient.dll",
     "assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal",
     "assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib",
-    "assets/gptk/x86_64-windows/atidxx64.dll",
     "assets/gptk/x86_64-windows/d3d10.dll",
     "assets/gptk/x86_64-windows/d3d11.dll",
     "assets/gptk/x86_64-windows/d3d12.dll",
@@ -1056,8 +1055,7 @@ fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
 
 fn gptk_runtime_ready(gptk_dir: &Path, framework: &Path) -> bool {
     let pe_dir = gptk_dir.join("x86_64-windows");
-    let required_pe =
-        ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll", "atidxx64.dll"];
+    let required_pe = ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"];
     required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
         && file_nonempty(&framework.join("Versions").join("A").join("D3DMetal"))
         && framework_has_resource_dylib(framework)

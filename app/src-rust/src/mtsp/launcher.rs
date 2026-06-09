@@ -696,14 +696,25 @@ fn launch_d3dmetal_gptk_with_context(
     deploy_steam_appid(game_dir, appid);
 
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+
+    if node.uses_winedllpath_routing() {
+        validate_recipe_runtime(&recipe)?;
+    }
+    deploy_recipe_dlls(&recipe)?;
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
+
     let cache_paths = build_cache_paths(&home, node, appid);
 
-    let dyld = format!(
-        "{}:{}:{}",
-        gptk_root.join("lib").display(),
-        gptk_root.join("lib").join("wine").join("x86_64-unix").display(),
-        gptk_root.join("lib").join("external").display(),
-    );
+    let mut dyld_parts = vec![
+        gptk_root.join("lib").to_string_lossy().to_string(),
+        gptk_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
+        gptk_root.join("lib").join("external").to_string_lossy().to_string(),
+    ];
+    for dyld_dir in &node.dyld_paths {
+        let full = ms_root.join(dyld_dir);
+        dyld_parts.push(full.to_string_lossy().to_string());
+    }
+    let dyld = dyld_parts.join(":");
 
     let mut cmd = Command::new(&gptk_wine64);
     cmd.current_dir(exe_dir)
@@ -715,6 +726,15 @@ fn launch_d3dmetal_gptk_with_context(
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("MS_GRAPHICS_BACKEND", node.graphics_backend)
         .env("WINEMSYNC", "1");
+
+    if node.uses_winedllpath_routing() {
+        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
+        cmd.env("WINEDLLPATH", &winedllpath);
+    }
+
+    if let Some(overrides) = node.wine_overrides {
+        cmd.env("WINEDLLOVERRIDES", overrides);
+    }
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     apply_app_launch_env(&mut cmd, appid, node.id);
