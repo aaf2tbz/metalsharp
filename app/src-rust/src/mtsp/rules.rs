@@ -476,7 +476,7 @@ mod tests {
             (1169040, PipelineId::WineBare),
             (1237320, PipelineId::M11),
             (1245620, PipelineId::M11),
-            (1562430, PipelineId::M9),
+            (1562430, PipelineId::FnaArm64),
             (1623730, PipelineId::M12),
             (1868140, PipelineId::M9),
             (1928870, PipelineId::M12),

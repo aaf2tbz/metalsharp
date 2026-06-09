@@ -11,9 +11,137 @@ const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
 const FNA_CARBON_INTERPOSE_SHIM: &str = "libmetalsharp_carbon_interpose.dylib";
 const FNA_XNA_WRAPPER_VERSION: &str = "22.12.2";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MonoArch {
+    Native,
+    X86,
+}
+
+pub struct FnaGameProfile {
+    pub appid: u32,
+    pub mono_config: &'static str,
+    pub mono_arch: MonoArch,
+    pub preferred_exes: &'static [&'static str],
+    pub method_label: &'static str,
+    pub setup_script: Option<&'static str>,
+    pub deploy_macos_steam_libs: bool,
+    pub launcher_exe: Option<&'static str>,
+    pub launcher_source: Option<&'static str>,
+    pub deploy_terraria_post: bool,
+}
+
+const FNA_GAME_PROFILES: &[FnaGameProfile] = &[
+    FnaGameProfile {
+        appid: 105600,
+        mono_config: "generic-fna-mono.config",
+        mono_arch: MonoArch::X86,
+        preferred_exes: &["TerrariaLauncher.exe", "Terraria.exe"],
+        method_label: "xna_fna_x86",
+        setup_script: Some("setup-terraria-deps.sh"),
+        deploy_macos_steam_libs: true,
+        launcher_exe: Some("TerrariaLauncher.exe"),
+        launcher_source: Some("TerrariaLauncher.cs"),
+        deploy_terraria_post: true,
+    },
+    FnaGameProfile {
+        appid: 504230,
+        mono_config: "celeste-x86-mono.config",
+        mono_arch: MonoArch::X86,
+        preferred_exes: &[],
+        method_label: "xna_fna_x86",
+        setup_script: Some("setup-celeste-deps.sh"),
+        deploy_macos_steam_libs: false,
+        launcher_exe: None,
+        launcher_source: None,
+        deploy_terraria_post: false,
+    },
+    FnaGameProfile {
+        appid: 413150,
+        mono_config: "stardew-mono.config",
+        mono_arch: MonoArch::Native,
+        preferred_exes: &[],
+        method_label: "xna_fna_arm64",
+        setup_script: None,
+        deploy_macos_steam_libs: false,
+        launcher_exe: None,
+        launcher_source: None,
+        deploy_terraria_post: false,
+    },
+];
+
+const DEFAULT_FNA_PROFILE: FnaGameProfile = FnaGameProfile {
+    appid: 0,
+    mono_config: "generic-fna-mono.config",
+    mono_arch: MonoArch::Native,
+    preferred_exes: &[],
+    method_label: "xna_fna_arm64",
+    setup_script: None,
+    deploy_macos_steam_libs: false,
+    launcher_exe: None,
+    launcher_source: None,
+    deploy_terraria_post: false,
+};
+
+pub fn find_fna_profile(appid: u32) -> &'static FnaGameProfile {
+    FNA_GAME_PROFILES.iter().find(|p| p.appid == appid).unwrap_or(&DEFAULT_FNA_PROFILE)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FnaFlavor {
+    Fna,
+    MonoGame,
+    Xna,
+    Unknown,
+}
+
+pub fn detect_fna_flavor(game_dir: &PathBuf) -> FnaFlavor {
+    if let Ok(entries) = std::fs::read_dir(game_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.to_lowercase().ends_with("_data") && entry.path().is_dir() {
+                let managed = entry.path().join("Managed");
+                if !managed.exists() {
+                    continue;
+                }
+                if let Ok(managed_entries) = std::fs::read_dir(&managed) {
+                    let mut has_fna = false;
+                    let mut has_monogame = false;
+                    let mut has_xna = false;
+                    for me in managed_entries.flatten() {
+                        let dll_name = me.file_name().to_string_lossy().to_string();
+                        let dll_lower = dll_name.to_lowercase();
+                        if dll_lower == "fna.dll" {
+                            has_fna = true;
+                        }
+                        if dll_lower.starts_with("monogame") || dll_lower.contains("mg.framework") {
+                            has_monogame = true;
+                        }
+                        if dll_lower.starts_with("microsoft.xna.framework") {
+                            has_xna = true;
+                        }
+                    }
+                    if has_fna {
+                        return FnaFlavor::Fna;
+                    }
+                    if has_monogame {
+                        return FnaFlavor::MonoGame;
+                    }
+                    if has_xna {
+                        return FnaFlavor::Xna;
+                    }
+                }
+            }
+        }
+    }
+    if game_dir.join("FNA.dll").exists() {
+        return FnaFlavor::Fna;
+    }
+    FnaFlavor::Unknown
+}
+
 #[derive(Clone, Copy)]
 enum FnaShimSource {
-    RepoC { parts: &'static [&'static str] },
+    RepoC { parts: &'static [&'static str], undefined_dynamic_lookup: bool },
     RepoObjC { parts: &'static [&'static str], frameworks: &'static [&'static str] },
     BundledNative,
 }
@@ -29,13 +157,19 @@ struct FnaNativeShimSpec {
 const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     FnaNativeShimSpec {
         output: "libkernel32.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "kernel32_shim.c"] },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "kernel32_shim.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
     FnaNativeShimSpec {
         output: "libuser32.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "user32_shim.c"] },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "user32_shim.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -50,7 +184,10 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: FNA_CARBON_INTERPOSE_SHIM,
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "carbon_interpose.c"] },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "carbon_interpose.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -62,7 +199,10 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: "libSystem.Native.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "system_native_stub.c"] },
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "system_native_stub.c"],
+            undefined_dynamic_lookup: false,
+        },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -70,6 +210,48 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
         output: "xinput1_4.dylib",
         source: FnaShimSource::BundledNative,
         symlinks: &["xinput1_3.dylib", "xinput9_1_0.dylib"],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libgdiplus.dylib",
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "terraria", "gdiplus_stub.c"],
+            undefined_dynamic_lookup: false,
+        },
+        symlinks: &[],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libFAudio.0.dylib",
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "terraria", "faudio_stub.c"],
+            undefined_dynamic_lookup: false,
+        },
+        symlinks: &["libFAudio.dylib"],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libCSteamworks.dylib",
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "csteamworks_shim.c"],
+            undefined_dynamic_lookup: true,
+        },
+        symlinks: &[],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libfmod.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "fmod_stub.c"], undefined_dynamic_lookup: true },
+        symlinks: &[],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libfmodstudio.dylib",
+        source: FnaShimSource::RepoC {
+            parts: &["src", "fna", "shims", "fmodstudio_stub.c"],
+            undefined_dynamic_lookup: true,
+        },
+        symlinks: &[],
         required_for_launch: false,
     },
 ];
@@ -696,14 +878,25 @@ fn launch_d3dmetal_gptk_with_context(
     deploy_steam_appid(game_dir, appid);
 
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+
+    if node.uses_winedllpath_routing() {
+        validate_recipe_runtime(&recipe)?;
+    }
+    deploy_recipe_dlls(&recipe)?;
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
+
     let cache_paths = build_cache_paths(&home, node, appid);
 
-    let dyld = format!(
-        "{}:{}:{}",
-        gptk_root.join("lib").display(),
-        gptk_root.join("lib").join("wine").join("x86_64-unix").display(),
-        gptk_root.join("lib").join("external").display(),
-    );
+    let mut dyld_parts = vec![
+        gptk_root.join("lib").to_string_lossy().to_string(),
+        gptk_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
+        gptk_root.join("lib").join("external").to_string_lossy().to_string(),
+    ];
+    for dyld_dir in &node.dyld_paths {
+        let full = ms_root.join(dyld_dir);
+        dyld_parts.push(full.to_string_lossy().to_string());
+    }
+    let dyld = dyld_parts.join(":");
 
     let mut cmd = Command::new(&gptk_wine64);
     cmd.current_dir(exe_dir)
@@ -715,6 +908,15 @@ fn launch_d3dmetal_gptk_with_context(
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("MS_GRAPHICS_BACKEND", node.graphics_backend)
         .env("WINEMSYNC", "1");
+
+    if node.uses_winedllpath_routing() {
+        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
+        cmd.env("WINEDLLPATH", &winedllpath);
+    }
+
+    if let Some(overrides) = node.wine_overrides {
+        cmd.env("WINEDLLOVERRIDES", overrides);
+    }
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     apply_app_launch_env(&mut cmd, appid, node.id);
@@ -1009,10 +1211,12 @@ fn launch_macos_steam(appid: u32) -> Result<(u32, &'static str), Box<dyn std::er
 }
 
 fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
+    let profile = find_fna_profile(appid);
     let node = get_pipeline(PipelineId::FnaArm64);
     let game_dir = resolve_fna_game_dir(appid)?;
     let home = dirs::home_dir().ok_or("no home dir")?;
-    let local_dir = crate::platform::metalsharp_home_dir_for(&home).join("games").join(appid.to_string());
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let local_dir = ms_home.join("games").join(appid.to_string());
     let dir = if game_dir.exists() { &game_dir } else { &local_dir };
 
     ensure_launcher_exe(appid, dir);
@@ -1021,16 +1225,21 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
 
     let _ = ensure_bridge_running();
 
-    let exe = match appid {
-        105600 => find_preferred_exe(dir, &["TerrariaLauncher.exe", "Terraria.exe"])?,
-        _ => resolve_game_exe(dir).into(),
+    let exe = if !profile.preferred_exes.is_empty() {
+        find_preferred_exe(dir, profile.preferred_exes)?
+    } else {
+        resolve_game_exe(dir).into()
     };
 
+    let kickstart_dir = ms_home.join("runtime").join("fna-kickstart");
+    let kick_bin = kickstart_dir.join("kick.bin.osx");
+
+    if kick_bin.exists() {
+        return launch_fna_kickstart(appid, profile, node, dir, &exe, &home, &ms_home, &kickstart_dir);
+    }
+
     let mono_bin = find_mono_binary_for_app(appid)?;
-    let mono_config = find_config(match appid {
-        504230 => "celeste-x86-mono.config",
-        _ => "terraria-mono.config",
-    });
+    let mono_config = find_config(profile.mono_config);
     let shims_dir = find_shims_dir();
     let mono_root =
         mono_bin.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(""));
@@ -1051,7 +1260,7 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     };
 
     let mut cmd =
-        if matches!(appid, 504230 | 105600) && crate::platform::current() == crate::platform::HostPlatform::Macos {
+        if profile.mono_arch == MonoArch::X86 && crate::platform::current() == crate::platform::HostPlatform::Macos {
             let mut arch_cmd = Command::new("arch");
             arch_cmd.arg("-x86_64").arg(&mono_bin);
             arch_cmd
@@ -1090,6 +1299,9 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
         cmd.env(ev.key, ev.value);
     }
 
+    cmd.env("SteamAppId", appid.to_string());
+    cmd.env("SteamGameId", appid.to_string());
+
     cmd.arg(&exe);
 
     let mut child = cmd.spawn()?;
@@ -1098,16 +1310,201 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/Mono/XNA launch exited early with status {}. Log: {}", status, log_tail).into());
     }
-    let method = match appid {
-        105600 | 504230 => "xna_fna_x86",
-        _ => "xna_fna_arm64",
-    };
+    let method = profile.method_label;
     Ok((child.id(), method, log_path))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn launch_fna_kickstart(
+    appid: u32,
+    profile: &FnaGameProfile,
+    node: &PipelineNode,
+    dir: &PathBuf,
+    exe: &PathBuf,
+    home: &PathBuf,
+    ms_home: &PathBuf,
+    kickstart_dir: &PathBuf,
+) -> Result<(u32, &'static str, PathBuf), Box<dyn std::error::Error>> {
+    let kick_bin = kickstart_dir.join("kick.bin.osx");
+    let exe_name = exe.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Game.exe".to_string());
+    let bin_name = exe_name.replace(".exe", ".bin.osx");
+    let game_kick = dir.join(&bin_name);
+
+    let _ = std::fs::copy(&kick_bin, &game_kick);
+
+    let game_osx = dir.join("osx");
+    let _ = std::fs::create_dir_all(&game_osx);
+
+    let kick_osx = kickstart_dir.join("osx");
+    if kick_osx.exists() {
+        for entry in std::fs::read_dir(&kick_osx)? {
+            let entry = entry?;
+            let src = entry.path();
+            if src.is_file() || src.is_symlink() {
+                let name = entry.file_name();
+                let dst = game_osx.join(&name);
+                if !dst.exists() {
+                    if src.is_symlink() {
+                        if let Ok(target) = std::fs::read_link(&src) {
+                            let _ = std::os::unix::fs::symlink(target, dst);
+                        }
+                    } else {
+                        let _ = std::fs::copy(&src, &dst);
+                    }
+                }
+            }
+        }
+    }
+
+    let fnalibs_dir = ms_home.join("runtime").join("fnalibs");
+    if fnalibs_dir.exists() {
+        for entry in std::fs::read_dir(&fnalibs_dir)? {
+            let entry = entry?;
+            let src = entry.path();
+            if src.is_file() && !game_osx.join(entry.file_name()).exists() {
+                let _ = std::fs::copy(&src, game_osx.join(entry.file_name()));
+            }
+        }
+    }
+
+    let shims_dir = PathBuf::from(find_shims_dir());
+    deploy_fna_native_shims(&dir.to_path_buf(), &shims_dir);
+    for spec in FNA_NATIVE_SHIMS {
+        let shim = dir.join(spec.output);
+        if shim.exists() {
+            let dst = game_osx.join(spec.output);
+            if !dst.exists() {
+                let _ = std::fs::copy(&shim, &dst);
+            }
+            for symlink in spec.symlinks {
+                let link = game_osx.join(symlink);
+                if !link.exists() {
+                    let _ = std::os::unix::fs::symlink(spec.output, link);
+                }
+            }
+        }
+    }
+
+    let shared_libs =
+        ["libsteam_api.dylib", "libCSteamworks.dylib", "libfmod.dylib", "libfmodstudio.dylib", "libnfd.dylib"];
+    for lib in &shared_libs {
+        let src = shims_dir.join(lib);
+        if src.exists() && !game_osx.join(lib).exists() {
+            let _ = std::fs::copy(&src, game_osx.join(lib));
+        }
+        if dir.join(lib).exists() && !game_osx.join(lib).exists() {
+            let _ = std::fs::copy(dir.join(lib), game_osx.join(lib));
+        }
+    }
+
+    let bcl_dlls = [
+        "mscorlib.dll",
+        "System.dll",
+        "System.Core.dll",
+        "System.Xml.dll",
+        "System.Xml.Linq.dll",
+        "System.Configuration.dll",
+        "System.Security.dll",
+        "System.Runtime.Serialization.dll",
+        "System.Data.dll",
+        "System.Drawing.dll",
+        "Mono.Security.dll",
+        "Mono.Posix.dll",
+        "Microsoft.CSharp.dll",
+    ];
+    for dll in &bcl_dlls {
+        let src = kickstart_dir.join(dll);
+        if src.exists() && !dir.join(dll).exists() {
+            let _ = std::fs::copy(&src, dir.join(dll));
+        }
+    }
+
+    let fna_dll = kickstart_dir.join("FNA.dll");
+    if fna_dll.exists() && !dir.join("FNA.dll").exists() {
+        let _ = std::fs::copy(&fna_dll, dir.join("FNA.dll"));
+    }
+
+    let monoconfig_src = kickstart_dir.join("monoconfig");
+    if monoconfig_src.exists() {
+        let game_monoconfig = dir.join("monoconfig");
+        let custom_config = find_config(profile.mono_config);
+        let custom_path = PathBuf::from(&custom_config);
+        if custom_path.exists() {
+            let _ = std::fs::copy(&custom_path, &game_monoconfig);
+        } else {
+            let _ = std::fs::copy(&monoconfig_src, &game_monoconfig);
+        }
+    }
+
+    let machine_config_src = kickstart_dir.join("mono").join("4.5").join("machine.config");
+    let machine_config_dst = dir.join("mono").join("4.5").join("machine.config");
+    if machine_config_src.exists() && !machine_config_dst.exists() {
+        let _ = std::fs::create_dir_all(machine_config_dst.parent().unwrap());
+        let _ = std::fs::copy(&machine_config_src, &machine_config_dst);
+    }
+
+    let log_path = fna_launch_log_path(appid);
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let stderr = stdout.try_clone()?;
+
+    let mut cmd = Command::new(&game_kick);
+    cmd.current_dir(dir).env("MONO_DISABLE_SHARED_AREA", "1").stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+
+    for (key, value) in fna_native_launch_env(dir) {
+        cmd.env(key, value);
+    }
+
+    let cache_paths = build_cache_paths(home, node, appid);
+    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_home.join("runtime").join("wine"));
+
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+
+    cmd.env("SteamAppId", appid.to_string());
+    cmd.env("SteamGameId", appid.to_string());
+
+    if profile.mono_arch == MonoArch::X86 && crate::platform::current() == crate::platform::HostPlatform::Macos {
+        let mut arch_cmd = Command::new("arch");
+        arch_cmd.arg("-x86_64").arg(&game_kick);
+        arch_cmd.current_dir(dir).stdout(Stdio::from(OpenOptions::new().create(true).append(true).open(&log_path)?));
+        arch_cmd.stderr(Stdio::from(OpenOptions::new().create(true).append(true).open(&log_path)?));
+        for (key, value) in fna_native_launch_env(dir) {
+            arch_cmd.env(key, value);
+        }
+        for ev in &node.env_vars {
+            arch_cmd.env(ev.key, ev.value);
+        }
+        arch_cmd.env("SteamAppId", appid.to_string());
+        arch_cmd.env("SteamGameId", appid.to_string());
+        arch_cmd.env("MONO_DISABLE_SHARED_AREA", "1");
+        let mut child = arch_cmd.spawn()?;
+        std::thread::sleep(Duration::from_millis(900));
+        if let Some(status) = child.try_wait()? {
+            let log_tail = tail_text(&log_path, 4096);
+            return Err(
+                format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into()
+            );
+        }
+        return Ok((child.id(), profile.method_label, log_path));
+    }
+
+    let mut child = cmd.spawn()?;
+    std::thread::sleep(Duration::from_millis(900));
+    if let Some(status) = child.try_wait()? {
+        let log_tail = tail_text(&log_path, 4096);
+        return Err(format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into());
+    }
+    Ok((child.id(), profile.method_label, log_path))
 }
 
 fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
-    if matches!(appid, 504230 | 105600) {
+    let profile = find_fna_profile(appid);
+    if profile.mono_arch == MonoArch::X86 {
         let mono_x86 =
             crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86").join("bin").join("mono");
         if mono_x86.exists() {
@@ -1478,6 +1875,7 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
         },
         "mono" | "macos-steam" => {
             env.push(("FNA3D_SHADER_CACHE_PATH".to_string(), shader_dir));
+            env.push(("FNA3D_PIPELINE_CACHE_PATH".to_string(), pipeline_dir));
         },
         _ => {},
     }
@@ -1561,13 +1959,18 @@ fn find_preferred_exe(dir: &PathBuf, candidates: &[&str]) -> Result<PathBuf, Box
 }
 
 fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
-    let (launcher_name, source_file) = match appid {
-        105600 => ("TerrariaLauncher.exe", "TerrariaLauncher.cs"),
-        _ => return,
+    let profile = find_fna_profile(appid);
+    let launcher_name = match profile.launcher_exe {
+        Some(n) => n,
+        None => return,
+    };
+    let source_file = match profile.launcher_source {
+        Some(s) => s,
+        None => return,
     };
 
     let launcher = game_dir.join(launcher_name);
-    if launcher.exists() && appid != 105600 {
+    if launcher.exists() {
         return;
     }
 
@@ -1602,18 +2005,16 @@ fn ensure_launcher_exe(appid: u32, game_dir: &PathBuf) {
         None => return,
     };
 
-    let mono_root = match appid {
-        105600 => crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-x86"),
-        _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("mono-arm64"),
+    let mono_runtime = match profile.mono_arch {
+        MonoArch::X86 => "mono-x86",
+        MonoArch::Native => "mono-arm64",
     };
+    let mono_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join(mono_runtime);
     let mono_bin = mono_root.join("bin").join("mono");
     let mcs_exe = home
         .join(".metalsharp")
         .join("runtime")
-        .join(match appid {
-            105600 => "mono-x86",
-            _ => "mono-arm64",
-        })
+        .join(mono_runtime)
         .join("lib")
         .join("mono")
         .join("4.5")
@@ -1646,9 +2047,6 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     };
     let metalsharp_home = crate::platform::metalsharp_home_dir_for(&home);
     let fna_dll = metalsharp_home.join("runtime").join("fna").join("FNA.dll");
-    if !fna_dll.exists() {
-        return;
-    }
 
     let shims_dir = PathBuf::from(find_shims_dir());
     let _ = std::fs::create_dir_all(&shims_dir);
@@ -1671,55 +2069,67 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         copy_fna_native_lib(game_dir, &shims_dir, lib, *symlink);
     }
 
-    let mac_terrarria_libs = home
-        .join("Library")
-        .join("Application Support")
-        .join("Steam")
-        .join("steamapps")
-        .join("common")
-        .join("Terraria")
-        .join("Terraria.app")
-        .join("Contents")
-        .join("MacOS")
-        .join("osx");
+    let profile = find_fna_profile(appid);
 
-    let terraria_native_libs = [
-        ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
-        ("libSDL3.0.dylib", Some("libSDL3.dylib")),
-        ("libFAudio.0.dylib", Some("libFAudio.dylib")),
-        ("libsteam_api.dylib", None),
-        ("libnfd.dylib", None),
-    ];
+    if profile.deploy_macos_steam_libs {
+        let mac_terrarria_libs = home
+            .join("Library")
+            .join("Application Support")
+            .join("Steam")
+            .join("steamapps")
+            .join("common")
+            .join("Terraria")
+            .join("Terraria.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("osx");
 
-    for (lib, symlink) in &terraria_native_libs {
-        let src = mac_terrarria_libs.join(lib).to_string_lossy().to_string();
+        let terraria_native_libs = [
+            ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
+            ("libSDL3.0.dylib", Some("libSDL3.dylib")),
+            ("libFAudio.0.dylib", Some("libFAudio.dylib")),
+            ("libsteam_api.dylib", None),
+            ("libnfd.dylib", None),
+        ];
 
-        if game_dir.join(lib).exists() {
-            continue;
-        }
-
-        if std::path::Path::new(&src).exists() {
-            let _ = std::fs::copy(std::path::Path::new(&src), game_dir.join(lib));
-            if let Some(sym) = symlink {
-                ensure_fna_symlink(game_dir, lib, sym);
+        for (lib, symlink) in &terraria_native_libs {
+            let src = mac_terrarria_libs.join(lib).to_string_lossy().to_string();
+            if game_dir.join(lib).exists() {
+                continue;
+            }
+            if std::path::Path::new(&src).exists() {
+                let _ = std::fs::copy(std::path::Path::new(&src), game_dir.join(lib));
+                if let Some(sym) = symlink {
+                    ensure_fna_symlink(game_dir, lib, sym);
+                }
             }
         }
     }
 
     let gdiplus_src =
         home.join("repos").join("metalsharp").join("src").join("fna").join("terraria").join("gdiplus_stub.c");
-    if !game_dir.join("libgdiplus.dylib").exists() && gdiplus_src.exists() {
-        let _ = Command::new("clang")
-            .args(["-shared", "-arch", "x86_64", "-o"])
-            .arg(game_dir.join("libgdiplus.dylib"))
-            .arg(&gdiplus_src)
-            .args(["-install_name", "@loader_path/libgdiplus.dylib"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+    if !game_dir.join("libgdiplus.dylib").exists() {
+        let cached = shims_dir.join("libgdiplus.dylib");
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, game_dir.join("libgdiplus.dylib"));
+        } else if gdiplus_src.exists() {
+            let mut gdi_cmd = Command::new("clang");
+            gdi_cmd.arg("-shared");
+            for arch_arg in fna_native_arch_args() {
+                gdi_cmd.arg(arch_arg);
+            }
+            let _ = gdi_cmd
+                .arg("-o")
+                .arg(game_dir.join("libgdiplus.dylib"))
+                .arg(&gdiplus_src)
+                .args(["-install_name", "@loader_path/libgdiplus.dylib"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
     }
 
-    if appid == 105600 {
+    if profile.deploy_terraria_post {
         deploy_terraria_runtime(game_dir, &metalsharp_home);
     }
 
@@ -1733,13 +2143,15 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         "Microsoft.Xna.Framework.Storage.dll",
     ];
 
-    if !game_dir.join("FNA.dll").exists() {
-        let _ = std::fs::copy(&fna_dll, game_dir.join("FNA.dll"));
-    }
-    for name in &xna_assemblies {
-        let dst = game_dir.join(name);
-        if !dst.exists() {
-            let _ = std::fs::copy(&fna_dll, dst);
+    if fna_dll.exists() {
+        if !game_dir.join("FNA.dll").exists() {
+            let _ = std::fs::copy(&fna_dll, game_dir.join("FNA.dll"));
+        }
+        for name in &xna_assemblies {
+            let dst = game_dir.join(name);
+            if !dst.exists() {
+                let _ = std::fs::copy(&fna_dll, dst);
+            }
         }
     }
 
@@ -1823,11 +2235,37 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
     Ok(present)
 }
 
+pub fn precompile_all_fna_shims() -> Result<usize, String> {
+    let home = dirs::home_dir().ok_or("no home dir".to_string())?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let shims_dir = ms_home.join("runtime").join("shims");
+    let _ = std::fs::create_dir_all(&shims_dir);
+
+    let mut compiled = 0usize;
+    for spec in FNA_NATIVE_SHIMS {
+        let dst = shims_dir.join(spec.output);
+        if dst.exists() {
+            continue;
+        }
+        ensure_fna_native_shim_in_cache(spec, &shims_dir);
+        if dst.exists() {
+            compiled += 1;
+        }
+    }
+
+    Ok(compiled)
+}
+
 fn fna_required_runtime_assets(runtime: &Path) -> Vec<PathBuf> {
     vec![
-        runtime.join("fna").join("FNA.dll"),
-        runtime.join("shims").join("libFNA3D.dylib"),
-        runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("fna-kickstart").join("kick.bin.osx"),
+        runtime.join("fna-kickstart").join("FNA.dll"),
+        runtime.join("fna-kickstart").join("osx").join("libmonosgen-2.0.1.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libSDL3.0.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib"),
+        runtime.join("fnalibs").join("libFNA3D.0.dylib"),
+        runtime.join("fnalibs").join("libSDL3.0.dylib"),
         runtime.join("shims").join("libkernel32.dylib"),
         runtime.join("shims").join("libuser32.dylib"),
         runtime.join("shims").join(FNA_CARBON_SHIM),
@@ -1910,14 +2348,14 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
     }
 
     match spec.source {
-        FnaShimSource::RepoC { parts } => {
+        FnaShimSource::RepoC { parts, undefined_dynamic_lookup } => {
             if let Some(source) = find_fna_shim_source(parts) {
-                let _ = build_fna_c_shim(&source, &dst, spec.output, &[]);
+                let _ = build_fna_c_shim(&source, &dst, spec.output, &[], undefined_dynamic_lookup);
             }
         },
         FnaShimSource::RepoObjC { parts, frameworks } => {
             if let Some(source) = find_fna_shim_source(parts) {
-                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks);
+                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks, false);
             }
         },
         FnaShimSource::BundledNative => {
@@ -1927,9 +2365,30 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
             }
         },
     }
+
+    if dst.exists() {
+        for symlink in spec.symlinks {
+            let link = shims_dir.join(symlink);
+            if !link.exists() {
+                #[cfg(unix)]
+                {
+                    if std::fs::symlink_metadata(&link).is_ok() {
+                        let _ = std::fs::remove_file(&link);
+                    }
+                    let _ = std::os::unix::fs::symlink(spec.output, &link);
+                }
+            }
+        }
+    }
 }
 
-fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, frameworks: &[&str]) -> bool {
+fn build_fna_c_shim(
+    source: &PathBuf,
+    output: &PathBuf,
+    install_name: &str,
+    frameworks: &[&str],
+    undefined_dynamic_lookup: bool,
+) -> bool {
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1941,6 +2400,9 @@ fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, fram
     }
     if source.extension().and_then(|ext| ext.to_str()) == Some("m") {
         cmd.arg("-fobjc-arc");
+    }
+    if undefined_dynamic_lookup {
+        cmd.args(["-undefined", "dynamic_lookup"]);
     }
     cmd.arg("-o").arg(output).arg(source).args(["-install_name", &format!("@loader_path/{}", install_name)]);
     for framework in frameworks {
@@ -2041,17 +2503,30 @@ fn deploy_terraria_runtime(game_dir: &PathBuf, metalsharp_home: &PathBuf) {
         let _ = compile_repo_csharp_to_game(&source, &output, "library", &[]);
     }
 
-    if let Some(source) = find_repo_source(&["src", "fna", "terraria", "faudio_stub.c"]) {
-        let output = game_dir.join("libFAudio.0.dylib");
-        let _ = Command::new("clang")
-            .args(["-shared", "-arch", "x86_64", "-o"])
-            .arg(&output)
-            .arg(&source)
-            .args(["-install_name", "@loader_path/libFAudio.0.dylib"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
+    let faudio_dst = game_dir.join("libFAudio.0.dylib");
+    if !faudio_dst.exists() {
+        let home = dirs::home_dir().unwrap_or_default();
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let cached = ms_home.join("runtime").join("shims").join("libFAudio.0.dylib");
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, &faudio_dst);
+            ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
+        } else if let Some(source) = find_repo_source(&["src", "fna", "terraria", "faudio_stub.c"]) {
+            let mut faudio_cmd = Command::new("clang");
+            faudio_cmd.arg("-shared");
+            for arch_arg in fna_native_arch_args() {
+                faudio_cmd.arg(arch_arg);
+            }
+            let _ = faudio_cmd
+                .arg("-o")
+                .arg(&faudio_dst)
+                .arg(&source)
+                .args(["-install_name", "@loader_path/libFAudio.0.dylib"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
+        }
     }
 
     if let Some(source) = find_repo_source(&["src", "fna", "terraria", "TerrariaOfflinePatcher.cs"]) {
@@ -2113,10 +2588,37 @@ fn compile_csharp_with_mono(
 }
 
 fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symlink: Option<&str>) {
-    let src = shims_dir.join(lib);
-    if src.exists() && !game_dir.join(lib).exists() {
-        let _ = std::fs::copy(&src, game_dir.join(lib));
+    let dst = game_dir.join(lib);
+    if dst.exists() {
+        if let Some(sym) = symlink {
+            ensure_fna_symlink(game_dir, lib, sym);
+        }
+        return;
     }
+
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return,
+    };
+    let fnalibs = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs").join(lib);
+    if fnalibs.exists() {
+        let _ = std::fs::copy(&fnalibs, &dst);
+    } else {
+        let cached = shims_dir.join(lib);
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, &dst);
+        } else {
+            let homebrew_candidates =
+                [PathBuf::from(format!("/opt/homebrew/lib/{}", lib)), PathBuf::from(format!("/usr/local/lib/{}", lib))];
+            for candidate in &homebrew_candidates {
+                if candidate.exists() {
+                    let _ = std::fs::copy(candidate, &dst);
+                    break;
+                }
+            }
+        }
+    }
+
     if let Some(sym) = symlink {
         ensure_fna_symlink(game_dir, lib, sym);
     }
@@ -3033,12 +3535,76 @@ mod tests {
         let runtime = PathBuf::from("/tmp/metalsharp-runtime");
         let required = fna_required_runtime_assets(&runtime);
 
-        assert!(required.contains(&runtime.join("fna").join("FNA.dll")));
-        assert!(required.contains(&runtime.join("shims").join("libFNA3D.dylib")));
-        assert!(required.contains(&runtime.join("shims").join("libSDL3.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("kick.bin.osx")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("FNA.dll")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libmonosgen-2.0.1.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libSDL3.0.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib")));
+        assert!(required.contains(&runtime.join("fnalibs").join("libFNA3D.0.dylib")));
+        assert!(required.contains(&runtime.join("fnalibs").join("libSDL3.0.dylib")));
+        assert!(required.contains(&runtime.join("shims").join("libkernel32.dylib")));
+        assert!(required.contains(&runtime.join("shims").join("libuser32.dylib")));
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_SHIM)));
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_INTERPOSE_SHIM)));
-        assert_eq!(required.len(), 7);
+        assert_eq!(required.len(), 12);
+    }
+
+    #[test]
+    fn fna_flavor_detection_identifies_fna_by_managed_dll() {
+        let game_dir = test_dir("fna-flavor-fna");
+        let managed = game_dir.join("Game_Data").join("Managed");
+        std::fs::create_dir_all(&managed).expect("managed dir");
+        std::fs::write(managed.join("FNA.dll"), b"fna").expect("fna dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Fna);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_identifies_monogame_by_managed_dll() {
+        let game_dir = test_dir("fna-flavor-mg");
+        let managed = game_dir.join("Game_Data").join("Managed");
+        std::fs::create_dir_all(&managed).expect("managed dir");
+        std::fs::write(managed.join("MonoGame.Framework.dll"), b"mg").expect("mg dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::MonoGame);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_identifies_xna_by_managed_dll() {
+        let game_dir = test_dir("fna-flavor-xna");
+        let managed = game_dir.join("Game_Data").join("Managed");
+        std::fs::create_dir_all(&managed).expect("managed dir");
+        std::fs::write(managed.join("Microsoft.Xna.Framework.dll"), b"xna").expect("xna dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Xna);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_falls_back_to_top_level_fna_dll() {
+        let game_dir = test_dir("fna-flavor-toplevel");
+        std::fs::create_dir_all(&game_dir).expect("game dir");
+        std::fs::write(game_dir.join("FNA.dll"), b"fna").expect("fna dll");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Fna);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn fna_flavor_detection_returns_unknown_for_empty_dir() {
+        let game_dir = test_dir("fna-flavor-empty");
+        std::fs::create_dir_all(&game_dir).expect("game dir");
+
+        assert_eq!(detect_fna_flavor(&game_dir), FnaFlavor::Unknown);
+        let _ = std::fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
+    fn default_fna_profile_uses_generic_config() {
+        assert_eq!(DEFAULT_FNA_PROFILE.mono_config, "generic-fna-mono.config");
     }
 
     #[test]

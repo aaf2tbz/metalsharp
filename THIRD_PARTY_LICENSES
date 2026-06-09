@@ -35,6 +35,17 @@ source folders, or the referenced upstream/runtime packages.
   bundle manifests and release assets preserve the redistributed payload
   boundaries.
 
+## Apple Game Porting Toolkit 4 / D3DMetal
+
+- Source: https://developer.apple.com/download/all/?q=game%20porting%20toolkit
+- License: Apple Game Porting Toolkit License Agreement (proprietary)
+- Used as: D3DMetal framework and libmetalirconverter for D3D11/D3D12 to Metal
+  translation in the M13/D3DMetal pipeline (GPTK 4.0 evaluation environment).
+- Notes: GPTK 4 is licensed to Apple Developer Program members for development
+  and evaluation purposes. The Wine-based source component (via CodeWeavers/
+  CrossOver) is LGPL-2.1; the Apple-specific D3DMetal runtime layer is
+  proprietary and governed by Apple's SDK license agreement.
+
 ## MinGW-w64 DirectX headers
 
 - Repository: https://github.com/mingw-w64/mingw-w64
@@ -42,16 +53,35 @@ source folders, or the referenced upstream/runtime packages.
 - Files: `vendor/dxmt/include/native/directx/COPYING.MinGW-w64.txt`
 - Used as: Native DirectX header surface inside the DXMT vendor tree.
 
-## FNA / FAudio / SDL runtime lane
+## FNA / FAudio / SDL / FNA3D runtime lane
 
 - FNA repository: https://github.com/FNA-XNA/FNA
+- FNA3D repository: https://github.com/FNA-XNA/FNA3D
 - FAudio repository: https://github.com/FNA-XNA/FAudio
-- SDL repository: https://github.com/libsdl-org/SDL
-- Licenses: FNA is Microsoft Public License; FAudio and SDL use zlib-style
-  licenses.
+- SDL3 repository: https://github.com/libsdl-org/SDL
+- Licenses: FNA is Microsoft Public License (Ms-PL); FNA3D, FAudio, and SDL3
+  use the zlib License. FNA.dll is distributed via the fna-xna-wrapper NuGet
+  package (MIT) at version 22.12.2.
 - Used as: Runtime-compatible assembly/native-library staging for Windows
   XNA/FNA games such as Celeste and Terraria. MetalSharp also ships local
   compatibility shims and stubs in `src/fna/`.
+
+## fnalibs — FNA native library bundle
+
+- Repository: https://github.com/FNA-XNA/fnalibs-dailies
+- Components: SDL3 (zlib), FNA3D (zlib), FAudio (zlib), theorafile (zlib)
+- theorafile statically links libogg, libvorbis, and libtheora (BSD-3-Clause);
+  license texts are provided in the upstream repo.
+- Used as: Pre-built universal (x86_64 + arm64) macOS dylibs for FNA native
+  runtime, extracted to `~/.metalsharp/runtime/fnalibs/`.
+
+## theorafile — Ogg Theora video playback
+
+- Repository: https://github.com/FNA-XNA/theorafile
+- License: zlib License
+- Notes: Statically links libogg (BSD-3-Clause), libvorbis (BSD-3-Clause), and
+  libtheora (BSD-3-Clause).
+- Used as: Video playback native library for FNA games.
 
 ## Mono runtime lane
 
@@ -59,6 +89,22 @@ source folders, or the referenced upstream/runtime packages.
 - License: MIT for Mono runtime components, with some subcomponents under their
   own compatible licenses.
 - Used as: Native Mono ARM64/x86_64 runtime lane for Mono/FNA/XNA games.
+
+## MonoKickstart
+
+- Repository: https://github.com/OutOfOrder/MonoKickstart
+- License: zlib License
+- Used as: Universal macOS launcher (`kick.bin.osx`) that hosts the Mono
+  runtime for FNA/MonoGame/XNA games. MetalSharp builds a universal
+  (x86_64 + arm64) binary from the upstream `kick.c` source, linked against
+  the Mono runtime's `libmonosgen-2.0.1.dylib`.
+
+## fna-xna-wrapper — FNA.dll NuGet package
+
+- Package: https://www.nuget.org/packages/fna-xna-wrapper/22.12.2
+- License: MIT
+- Used as: Pre-built FNA.dll managed assembly shipped in `fna-kickstart/` for
+  Mono/FNA/XNA game runtime staging.
 
 ## Steamworks / CSteamworks compatibility shims
 

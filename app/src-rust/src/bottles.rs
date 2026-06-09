@@ -2543,7 +2543,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "GPTK D3DMetal",
             BottleArch::Win64,
             true,
-            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs", "gptk_amd_stub"][..],
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs"][..],
             crate::mtsp::engine::PipelineId::M13,
         ),
         RuntimeProfile::D3DMetal => (
@@ -3161,13 +3161,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
-        "gptk_amd_stub" => {
-            if system32.join("atidxx64.dll").exists() {
-                ComponentState::Installed
-            } else {
-                ComponentState::Missing
-            }
-        },
+        "gptk_amd_stub" => ComponentState::Installed,
         "gptk" => {
             if crate::platform::gptk_is_installed() {
                 ComponentState::Installed
@@ -4214,12 +4208,12 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet40" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.0 offline installers",
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
-            "vcrun2019" => "Uses Steam CommonRedist VC_redist or compatible local Visual C++ redistributable",
+            "vcrun2019" => "Auto-downloads VC++ 2015-2022 (x86+x64) from Microsoft, or uses Steam CommonRedist / local redist",
             "vcrun2010" => "Uses Steam CommonRedist or local Visual C++ 2010 redistributable",
             "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
-            "gptk_amd_stub" => "GPTK AMD vendor stub from lib/gptk/x86_64-windows",
-            "gptk" => "Apple Game Porting Toolkit — provides Wine 7.7 with D3DMetal.framework (brew install game-porting-toolkit)",
+            "gptk_amd_stub" => "GPTK AMD vendor stub (deprecated — GPTK 4.0 no longer ships atidxx64.dll)",
+            "gptk" => "Apple Game Porting Toolkit — provides Wine with D3DMetal.framework 4.0 (brew install game-porting-toolkit)",
             "rosetta" => "Apple Rosetta 2 x86_64 emulation layer — required for GPTK Wine (softwareupdate --install-rosetta)",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
@@ -4262,7 +4256,7 @@ fn component_action_detail(id: &str) -> String {
         "vcrun2010" => "Install Visual C++ 2010 runtime DLLs (msvcr100, msvcp100)".to_string(),
         "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
         "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
-        "gptk_amd_stub" => "Deploy GPTK AMD vendor stub for D3DMetal compatibility".to_string(),
+        "gptk_amd_stub" => "GPTK AMD vendor stub (deprecated — GPTK 4.0 removed atidxx64.dll)".to_string(),
         "gptk" => "Install Apple Game Porting Toolkit via Homebrew".to_string(),
         "gptk_prefix" => "Seed GPTK Wine prefix with Steam data and runtime components (background, ~2GB)".to_string(),
         "rosetta" => "Install Apple Rosetta 2 for x86_64 emulation".to_string(),
@@ -5986,10 +5980,8 @@ mod tests {
             inspect_component_state(&dir, "gpu_vendor_stubs", ComponentState::Unknown),
             ComponentState::Installed
         );
-        assert_eq!(inspect_component_state(&dir, "gptk_amd_stub", ComponentState::Unknown), ComponentState::Missing);
-
-        fs::write(system32.join("atidxx64.dll"), b"dll").expect("write amd stub");
         assert_eq!(inspect_component_state(&dir, "gptk_amd_stub", ComponentState::Unknown), ComponentState::Installed);
+
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -6005,7 +5997,7 @@ mod tests {
         let m13 = default_components_for(RuntimeProfile::M13);
         let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m13_ids.contains(&"gpu_vendor_stubs"));
-        assert!(m13_ids.contains(&"gptk_amd_stub"));
+        assert!(!m13_ids.contains(&"gptk_amd_stub"));
     }
 
     #[test]

@@ -1,0 +1,139 @@
+name: Build MonoKickstart
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 1 * *"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build FNA Kickstart
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install zstd mono
+
+      - name: Build universal kick.bin.osx
+        run: |
+          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/kick.c" -o kick.c
+          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/binreloc.c" -o binreloc.c
+          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/binreloc.h" -o binreloc.h
+          mkdir -p include/mono-2.0/mono/metadata include/mono-2.0/mono/utils include/mono-2.0/mono/jit
+          for f in mono-config.h assembly.h image.h; do
+            curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/precompiled/include/mono-2.0/mono/metadata/$f" -o "include/mono-2.0/mono/metadata/$f"
+          done
+          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/precompiled/include/mono-2.0/mono/utils/mono-publib.h" -o "include/mono-2.0/mono/utils/mono-publib.h"
+          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/precompiled/include/mono-2.0/mono/jit/jit.h" -o "include/mono-2.0/mono/jit/jit.h"
+
+          MONO_LIB="/Library/Frameworks/Mono.framework/Versions/Current/lib"
+          if [ ! -d "$MONO_LIB" ]; then
+            MONO_LIB="$(brew --prefix mono)/lib"
+          fi
+
+          cp "$MONO_LIB/libmonosgen-2.0.1.dylib" libmonosgen-2.0.1.dylib
+          install_name_tool -id "@rpath/osx/libmonosgen-2.0.1.dylib" libmonosgen-2.0.1.dylib
+
+          clang -arch x86_64 -arch arm64 \
+            -mmacosx-version-min=11.0 \
+            -DENABLE_BINRELOC \
+            -Iinclude/mono-2.0 \
+            -Xlinker -search_paths_first \
+            -o kick.bin.osx kick.c binreloc.c \
+            -L. -lmonosgen-2.0 \
+            -framework CoreFoundation \
+            -rpath @executable_path/osx
+
+          file kick.bin.osx
+          otool -L kick.bin.osx
+
+      - name: Stage fna-kickstart layout
+        run: |
+          mkdir -p fna-kickstart/osx fna-kickstart/mono/4.5
+
+          cp kick.bin.osx fna-kickstart/
+          cp libmonosgen-2.0.1.dylib fna-kickstart/osx/
+
+          cd fna-kickstart/osx
+          ln -sf libmonosgen-2.0.1.dylib libmonosgen-2.0.dylib
+          ln -sf libmonosgen-2.0.1.dylib libmono-2.0.dylib
+          ln -sf libmonosgen-2.0.1.dylib libmono-2.0.1.dylib
+          cd ../..
+
+          MONO_LIB="/Library/Frameworks/Mono.framework/Versions/Current/lib"
+          if [ ! -d "$MONO_LIB" ]; then
+            MONO_LIB="$(brew --prefix mono)/lib"
+          fi
+          MONO_ETC="/Library/Frameworks/Mono.framework/Versions/Current/etc"
+          if [ ! -d "$MONO_ETC" ]; then
+            MONO_ETC="$(brew --prefix mono)/etc"
+          fi
+
+          lipo -create \
+            "$MONO_LIB/libmonosgen-2.0.1.dylib" \
+            -output fna-kickstart/osx/libmonosgen-2.0.1.dylib 2>/dev/null || true
+
+          if [ -f "$MONO_LIB/libMonoPosixHelper.dylib" ]; then
+            cp "$MONO_LIB/libMonoPosixHelper.dylib" fna-kickstart/osx/
+          fi
+
+          for dll in mscorlib.dll System.dll System.Core.dll System.Xml.dll System.Xml.Linq.dll \
+                     System.Configuration.dll System.Security.dll System.Runtime.Serialization.dll \
+                     System.Data.dll System.Drawing.dll Mono.Security.dll Mono.Posix.dll \
+                     Microsoft.CSharp.dll System.ComponentModel.Composition.dll; do
+            if [ -f "$MONO_LIB/mono/4.5/$dll" ]; then
+              cp "$MONO_LIB/mono/4.5/$dll" fna-kickstart/
+            fi
+          done
+
+          if [ -f "$MONO_LIB/mono/4.5/mcs.exe" ]; then
+            cp "$MONO_LIB/mono/4.5/mcs.exe" fna-kickstart/
+          fi
+
+          if [ -f "$MONO_ETC/mono/config" ]; then
+            cp "$MONO_ETC/mono/config" fna-kickstart/monoconfig
+          fi
+          if [ -f "$MONO_ETC/mono/4.5/machine.config" ]; then
+            cp "$MONO_ETC/mono/4.5/machine.config" fna-kickstart/mono/4.5/
+          fi
+
+          if [ -f "$MONO_LIB/mono/4.5/FNA.dll" ]; then
+            cp "$MONO_LIB/mono/4.5/FNA.dll" fna-kickstart/
+          fi
+
+      - name: Download fnalibs-dailies
+        run: |
+          RUN_ID=$(gh api "repos/FNA-XNA/fnalibs-dailies/actions/runs?per_page=1&status=success" \
+            --jq '.workflow_runs[0].id')
+          gh run download "$RUN_ID" -n fnalibs-apple -R FNA-XNA/fnalibs-dailies -D fnalibs-apple
+          cp fnalibs-apple/osx/*.dylib fna-kickstart/osx/
+          ls -la fna-kickstart/osx/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create fna-kickstart.tar.zst
+        run: |
+          tar --use-compress-program="zstd -19 -T0" -cf fna-kickstart.tar.zst fna-kickstart
+          ls -lh fna-kickstart.tar.zst
+
+      - name: Upload to bundles release
+        run: |
+          gh release upload bundles fna-kickstart.tar.zst --clobber --repo ${{ github.repository }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "## MonoKickstart Build" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          find fna-kickstart -type f -o -type l | sort >> "$GITHUB_STEP_SUMMARY"
+          echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**kick.bin.osx**: $(file fna-kickstart/kick.bin.osx | head -1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "**libmonosgen**: $(file fna-kickstart/osx/libmonosgen-2.0.1.dylib | head -1)" >> "$GITHUB_STEP_SUMMARY"
+          echo "**tar size**: $(ls -lh fna-kickstart.tar.zst | awk '{print $5}')" >> "$GITHUB_STEP_SUMMARY"

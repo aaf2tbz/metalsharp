@@ -129,6 +129,48 @@ const userSelectablePipelineNames: Record<string, string> = {
   fna_arm64: "Mono/FNA",
 };
 
+const componentDisplayName: Record<string, string> = {
+  "mono-arm64": "Mono ARM64",
+  "mono-x86": "Mono x86_64",
+  "fna": "FNA Runtime",
+  "xna": "XNA Assemblies",
+  "d3d12_agility": "D3D12 Agility",
+  "gpu_vendor_stubs": "GPU Stubs",
+  "gptk_amd_stub": "GPTK AMD Stub",
+  "gptk": "GPTK",
+  "rosetta": "Rosetta",
+  "corefonts": "Core Fonts",
+  "vcrun2019": "VC++ 2015-2022",
+  "vcrun2010": "VC++ 2010",
+  "vcrun2013": "VC++ 2013",
+  "dotnet40": ".NET 4.0",
+  "dotnet48": ".NET 4.8",
+  "webview2": "WebView2",
+  "directx_jun2010": "DX Jun2010",
+  "openal": "OpenAL",
+  "physx": "PhysX",
+  "easyanticheat_eos": "EAC EOS",
+  "battleye": "BattlEye",
+};
+
+function componentLabel(id: string): string {
+  return componentDisplayName[id] ?? id;
+}
+
+function componentStateIcon(state: string): string {
+  if (state === "installed" || state === "ready") return "OK";
+  if (state === "missing") return "!";
+  if (state === "needs_repair" || state === "partial") return "~";
+  return "?";
+}
+
+function componentStateClass(state: string): string {
+  if (state === "installed" || state === "ready") return "check-ok";
+  if (state === "missing") return "check-missing";
+  if (state === "needs_repair" || state === "partial") return "check-warn";
+  return "check-unknown";
+}
+
 function normalizePipelineOption(option: PipelineOption): PipelineOption | null {
   const id = option.id.toLowerCase();
   if (!userSelectablePipelineOrder.includes(id)) return null;
@@ -626,9 +668,9 @@ function formatBytes(bytes: number): string {
                 {{ bottleSaving ? "Saving..." : "Save Bottle" }}
               </button>
               <div class="doctor-checks">
-                <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check">
-                  <span class="doctor-check-state">{{ component.state === "missing" ? "!" : "OK" }}</span>
-                  <span class="doctor-check-label">{{ component.id }}</span>
+                <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check" :class="componentStateClass(component.state)">
+                  <span class="doctor-check-state">{{ componentStateIcon(component.state) }}</span>
+                  <span class="doctor-check-label">{{ componentLabel(component.id) }}</span>
                   <span class="doctor-check-detail">{{ component.state }}</span>
                 </div>
               </div>
@@ -978,6 +1020,15 @@ function formatBytes(bytes: number): string {
 .doctor-check-state {
   color: var(--success);
   font-weight: 700;
+}
+.doctor-check.check-missing .doctor-check-state {
+  color: var(--error);
+}
+.doctor-check.check-warn .doctor-check-state {
+  color: var(--warning, #facc15);
+}
+.doctor-check.check-unknown .doctor-check-state {
+  color: var(--text-dim);
 }
 .doctor-check-label {
   color: var(--text-primary);

@@ -62,13 +62,24 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
 ];
 const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/eac-toggle/x86_64-windows/_winhttp.dll",
+    "assets/fna-kickstart/kick.bin.osx",
+    "assets/fna-kickstart/FNA.dll",
+    "assets/fna-kickstart/mscorlib.dll",
+    "assets/fna-kickstart/osx/libmonosgen-2.0.1.dylib",
+    "assets/fna-kickstart/osx/libSDL3.0.dylib",
+    "assets/fna-kickstart/osx/libFNA3D.0.dylib",
+    "assets/fna-kickstart/osx/libFAudio.0.dylib",
+    "assets/fna-kickstart/osx/libMonoPosixHelper.dylib",
+    "assets/fnalibs/libFNA3D.0.dylib",
+    "assets/fnalibs/libSDL3.0.dylib",
+    "assets/fnalibs/libFAudio.0.dylib",
+    "assets/fnalibs/libtheorafile.dylib",
     "assets/goldberg/x64/steam_api64.dll",
     "assets/goldberg/x86/steam_api.dll",
     "assets/goldberg/steamclient/steamclient64.dll",
     "assets/goldberg/steamclient/steamclient.dll",
     "assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal",
     "assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib",
-    "assets/gptk/x86_64-windows/atidxx64.dll",
     "assets/gptk/x86_64-windows/d3d10.dll",
     "assets/gptk/x86_64-windows/d3d11.dll",
     "assets/gptk/x86_64-windows/d3d12.dll",
@@ -186,6 +197,7 @@ fn run_install_all() {
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Mono Configs", Box::new(install_mono_configs)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
+        ("FNA Shim Precompile", Box::new(|_| crate::mtsp::launcher::precompile_all_fna_shims().map(|_| true))),
     ];
 
     let total = steps.len();
@@ -701,6 +713,8 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
         ("goldberg", runtime_dir.join("goldberg")),
         ("eac-toggle", runtime_dir.join("eac-toggle")),
         ("shims", runtime_dir.join("shims")),
+        ("fnalibs", runtime_dir.join("fnalibs")),
+        ("fna-kickstart", runtime_dir.join("fna-kickstart")),
     ] {
         let src = assets.join(src_name);
         if src.exists() {
@@ -1056,8 +1070,7 @@ fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
 
 fn gptk_runtime_ready(gptk_dir: &Path, framework: &Path) -> bool {
     let pe_dir = gptk_dir.join("x86_64-windows");
-    let required_pe =
-        ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll", "atidxx64.dll"];
+    let required_pe = ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"];
     required_pe.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
         && file_nonempty(&framework.join("Versions").join("A").join("D3DMetal"))
         && framework_has_resource_dylib(framework)
@@ -1253,7 +1266,8 @@ fn install_mono_configs(home: &PathBuf) -> Result<bool, String> {
     let configs_dir = crate::platform::metalsharp_home_dir_for(&home).join("configs");
     let _ = fs::create_dir_all(&configs_dir);
 
-    let config_files = ["terraria-mono.config", "celeste-x86-mono.config"];
+    let config_files =
+        ["terraria-mono.config", "celeste-x86-mono.config", "stardew-mono.config", "generic-fna-mono.config"];
     let mut any_installed = false;
 
     for name in &config_files {
