@@ -136,11 +136,18 @@ textarea {
 }
 
 .btn-install {
-  background: var(--accent);
+  background: #3ac5a9;
   color: #fff;
-  border-color: var(--accent);
+  border-color: #3ac5a9;
 }
 .btn-install:hover {
+  background: #2fb89b;
+}
+:root[data-theme="light"] .btn-install {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+:root[data-theme="light"] .btn-install:hover {
   background: var(--accent-hover);
 }
 
