@@ -27,7 +27,11 @@ Internal routes (`dxmt` auto-detect, Wine Steam, macOS Steam, `wine_bare`) remai
 
 Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 
-*No games currently confirmed working through D3DMetal. This pipeline is available for investigation and GPTK-specific testing.*
+| Game | AppID | Notes |
+|---|---:|---|
+| Elden Ring | 1245620 | Offline play. |
+| ARMORED CORE VI FIRES OF RUBICON | 1888160 | Offline play. |
+| High On Life | 1583230 | Also works on M12. |
 
 ---
 
@@ -37,7 +41,9 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 |---|---:|---|
 | PEAK | 3527290 | Medium settings. |
 | Hollow Knight: Silksong | 1030300 | |
-| Schedule I | 3164500 | Also works on M11. |
+| Schedule I | 3164500 | |
+| Ghostrunner | 1139900 | |
+| Dark Deception | 332950 | Runtime bootstrap required on first launch. |
 
 ---
 
@@ -45,24 +51,14 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 
 | Game | AppID | Notes |
 |---|---:|---|
-| Repo | 3241660 | Online play through Steam. |
-| Skul: The Hero Slayer | 1147560 | |
+| Repo | 3241660 | |
 | The Witcher 3: Wild Hunt | 292030 | |
-| Stumble Guys | 16677740 | Online Steam session. |
 | The Wilds | 1028590 | |
-| Totally Accurate Battle Simulator | 508440 | |
-| Subnautica | 264710 | |
-| Subnautica: Below Zero | 848450 | |
 | The Long Dark | 305620 | Ultra settings verified. |
-| Thronefall | 2239150 | |
-| Sons of the Forest | 1326470 | |
-| Schedule I | 3164500 | |
+| Subnautica | 264710 | |
 | Rain World | 312520 | |
-| Among Us | 945360 | |
 | Hollow Knight | 367520 | |
-| Valheim | 892970 | Fallback M9. |
-| Combat Master | 2281730 | Saved M11 bottle config required. |
-| Ghostrunner | 1139900 | |
+| Party Animals | 1823720 | Steam online play. |
 
 ---
 
@@ -76,10 +72,11 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 
 | Game | AppID | Notes |
 |---|---:|---|
-| Nidhogg 2 | 535520 | |
-| Undertale | 391540 | |
 | Dave the Diver | 1868140 | 32-bit. Requires vcrun2019 + DX Jun2010. |
-| Blasphemous | 774361 | 32-bit. Sync-loading mitigation active. |
+| Mirror's Edge | 17410 | Sync-loading mitigation active. |
+| Among Us | 945360 | Steam online play. |
+| Team Fortress 2 | 440 | Steam online play. |
+| Portal 2 | 620 | Steam Emu. |
 
 ---
 
