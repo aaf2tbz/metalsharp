@@ -555,7 +555,7 @@ fn prepare_dxmt_pipeline(
     let marker = game_dir.join(".metalsharp_prepared");
     stage_packaged_steam_runtime_for_game(appid, game_dir)?;
     if pipeline == crate::mtsp::engine::PipelineId::M12 {
-        stage_agility_sdk_for_game_with_dxmt_version(appid, game_dir, home)?;
+        stage_agility_sdk_for_game(appid, game_dir, home)?;
     }
     if !marker.exists() {
         let _ = std::fs::write(&marker, "dxmt");
@@ -651,12 +651,6 @@ impl AgilitySdkInspection {
     }
 }
 
-pub(crate) fn dxmt_runtime_d3d12_sdk_version(home: &Path) -> Option<u32> {
-    let ms_root = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine");
-    let dxmt_d3d12 = ms_root.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll");
-    crate::mtsp::pe::read_export_u32(&dxmt_d3d12, "D3D12SDKVersion")
-}
-
 pub(crate) fn stage_agility_sdk_for_game(
     appid: u32,
     game_dir: &Path,
@@ -665,35 +659,14 @@ pub(crate) fn stage_agility_sdk_for_game(
     stage_agility_sdk_for_game_report(appid, game_dir, home).map(|_| ())
 }
 
-pub(crate) fn stage_agility_sdk_for_game_with_dxmt_version(
-    appid: u32,
-    game_dir: &Path,
-    home: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let dxmt_version = dxmt_runtime_d3d12_sdk_version(home);
-    stage_agility_sdk_for_game_report_inner(appid, game_dir, home, dxmt_version).map(|_| ())
-}
-
 pub(crate) fn stage_agility_sdk_for_game_report(
     appid: u32,
     game_dir: &Path,
     home: &Path,
 ) -> Result<AgilityStageReport, Box<dyn std::error::Error>> {
-    stage_agility_sdk_for_game_report_inner(appid, game_dir, home, None)
-}
-
-pub(crate) fn stage_agility_sdk_for_game_report_inner(
-    appid: u32,
-    game_dir: &Path,
-    home: &Path,
-    dxmt_sdk_override: Option<u32>,
-) -> Result<AgilityStageReport, Box<dyn std::error::Error>> {
     let exe_path = crate::mtsp::recipe::resolve_game_exe(appid, game_dir)?;
     let exe_dir = exe_path.parent().ok_or("game exe parent not found")?;
-    let mut requirement = read_game_agility_requirement(&exe_path);
-    if let Some(dxmt_version) = dxmt_sdk_override {
-        requirement.sdk_version = Some(dxmt_version);
-    }
+    let requirement = read_game_agility_requirement(&exe_path);
     let package_version = agility_package_version_for_requirement(requirement.sdk_version).to_string();
     let agility_bin = ensure_agility_sdk_bin(home, requirement.sdk_version).ok_or_else(|| {
         let version = requirement.sdk_version.map(|value| value.to_string()).unwrap_or_else(|| "default".to_string());
