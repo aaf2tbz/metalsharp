@@ -62,6 +62,10 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
 ];
 const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/eac-toggle/x86_64-windows/_winhttp.dll",
+    "assets/fnalibs/libFNA3D.0.dylib",
+    "assets/fnalibs/libSDL3.0.dylib",
+    "assets/fnalibs/libFAudio.0.dylib",
+    "assets/fnalibs/libtheorafile.dylib",
     "assets/goldberg/x64/steam_api64.dll",
     "assets/goldberg/x86/steam_api.dll",
     "assets/goldberg/steamclient/steamclient64.dll",
@@ -701,6 +705,7 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
         ("goldberg", runtime_dir.join("goldberg")),
         ("eac-toggle", runtime_dir.join("eac-toggle")),
         ("shims", runtime_dir.join("shims")),
+        ("fnalibs", runtime_dir.join("fnalibs")),
     ] {
         let src = assets.join(src_name);
         if src.exists() {

@@ -161,6 +161,10 @@ verify_graphics_core() {
 verify_assets_core() {
   verify_required_files "$1" "ASSETS" \
     assets/eac-toggle/x86_64-windows/_winhttp.dll \
+    assets/fnalibs/libFNA3D.0.dylib \
+    assets/fnalibs/libSDL3.0.dylib \
+    assets/fnalibs/libFAudio.0.dylib \
+    assets/fnalibs/libtheorafile.dylib \
     assets/goldberg/x64/steam_api64.dll \
     assets/goldberg/x86/steam_api.dll \
     assets/goldberg/steamclient/steamclient64.dll \
