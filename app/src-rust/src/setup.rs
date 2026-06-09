@@ -407,17 +407,23 @@ fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
 
     let gdiplus = game_dir.join("libgdiplus.dylib");
     if !gdiplus.exists() {
-        let repo = home.join("metalsharp");
-        let stub_src = repo.join("src/fna/terraria/gdiplus_stub.c");
-        if stub_src.exists() {
-            let _ = mac_cmd("clang")
-                .args(["-shared", "-arch", "arm64", "-arch", "x86_64", "-o"])
-                .arg(&gdiplus)
-                .arg(&stub_src)
-                .args(["-install_name", "@loader_path/libgdiplus.dylib"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+        let ms_home = crate::platform::metalsharp_home_dir_for(home);
+        let cached = ms_home.join("runtime").join("shims").join("libgdiplus.dylib");
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, &gdiplus);
+        } else {
+            let repo = home.join("metalsharp");
+            let stub_src = repo.join("src/fna/terraria/gdiplus_stub.c");
+            if stub_src.exists() {
+                let _ = mac_cmd("clang")
+                    .args(["-shared", "-arch", "arm64", "-arch", "x86_64", "-o"])
+                    .arg(&gdiplus)
+                    .arg(&stub_src)
+                    .args(["-install_name", "@loader_path/libgdiplus.dylib"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
         }
     }
 
@@ -483,30 +489,13 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
 
     let csteamworks = game_dir.join("libCSteamworks.dylib");
     if !csteamworks.exists() {
-        let repo = home.join("metalsharp");
-        let shim_src = repo.join("src/fna/shims/csteamworks_shim.c");
-        let alias_file = repo.join("src/fna/shims/csteamworks_aliases.txt");
-        if shim_src.exists() {
-            let mut cmd = mac_cmd("clang");
-            cmd.args(["-shared", "-arch", "arm64", "-arch", "x86_64"]).arg("-o").arg(&csteamworks).arg(&shim_src);
-
-            if alias_file.exists() {
-                if let Ok(aliases) = std::fs::read_to_string(&alias_file) {
-                    let flags: Vec<&str> = aliases.split_whitespace().collect();
-                    if !flags.is_empty() {
-                        cmd.args(["-L"]).arg(game_dir).arg("-lsteam_api");
-                        cmd.args(&flags);
-                    }
-                }
-            }
-
-            let result = cmd
-                .args(["-install_name", "@loader_path/libCSteamworks.dylib"])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
-
-            if result.is_err() || !result.unwrap().success() {
+        let cached = shims_dir.join("libCSteamworks.dylib");
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, &csteamworks);
+        } else {
+            let repo = home.join("metalsharp");
+            let shim_src = repo.join("src/fna/shims/csteamworks_shim.c");
+            if shim_src.exists() {
                 let _ = mac_cmd("clang")
                     .args(["-shared", "-arch", "arm64", "-arch", "x86_64"])
                     .arg("-o")
@@ -516,29 +505,33 @@ fn prepare_celeste(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn std
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .status();
+                let _ = std::fs::copy(&csteamworks, shims_dir.join("libCSteamworks.dylib"));
             }
-
-            let _ = std::fs::copy(&csteamworks, shims_dir.join("libCSteamworks.dylib"));
         }
     }
 
     for fmod in &["libfmod.dylib", "libfmodstudio.dylib"] {
         let dst = game_dir.join(fmod);
         if !dst.exists() {
-            let stub_name = fmod.replace(".dylib", "_stub.c");
-            let repo = home.join("metalsharp");
-            let stub_src = repo.join("src/fna/shims").join(&stub_name);
-            if stub_src.exists() {
-                let _ = mac_cmd("clang")
-                    .args(["-shared", "-arch", "arm64", "-arch", "x86_64"])
-                    .arg("-o")
-                    .arg(&dst)
-                    .arg(&stub_src)
-                    .args(["-undefined", "dynamic_lookup", "-install_name", &format!("@loader_path/{}", fmod)])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-                let _ = std::fs::copy(&dst, shims_dir.join(fmod));
+            let cached = shims_dir.join(fmod);
+            if cached.exists() {
+                let _ = std::fs::copy(&cached, &dst);
+            } else {
+                let stub_name = fmod.replace("lib", "").replace(".dylib", "_stub.c");
+                let repo = home.join("metalsharp");
+                let stub_src = repo.join("src/fna/shims").join(&stub_name);
+                if stub_src.exists() {
+                    let _ = mac_cmd("clang")
+                        .args(["-shared", "-arch", "arm64", "-arch", "x86_64"])
+                        .arg("-o")
+                        .arg(&dst)
+                        .arg(&stub_src)
+                        .args(["-undefined", "dynamic_lookup", "-install_name", &format!("@loader_path/{}", fmod)])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
+                    let _ = std::fs::copy(&dst, shims_dir.join(fmod));
+                }
             }
         }
     }
@@ -1815,6 +1808,18 @@ fn setup_fna_runtime(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         let src = fna3d_build.join("libFNA3D.dylib");
         if src.exists() {
             let _ = std::fs::copy(&src, game_dir.join("libFNA3D.dylib"));
+        }
+    }
+
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let shims_dir = ms_home.join("runtime").join("shims");
+    if shims_dir.exists() {
+        for shim in &["libCSteamworks.dylib", "libfmod.dylib", "libfmodstudio.dylib"] {
+            let cached = shims_dir.join(shim);
+            let dst = game_dir.join(shim);
+            if !dst.exists() && cached.exists() {
+                let _ = std::fs::copy(&cached, &dst);
+            }
         }
     }
 

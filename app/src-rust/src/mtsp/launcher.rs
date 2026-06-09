@@ -13,7 +13,7 @@ const FNA_XNA_WRAPPER_VERSION: &str = "22.12.2";
 
 #[derive(Clone, Copy)]
 enum FnaShimSource {
-    RepoC { parts: &'static [&'static str] },
+    RepoC { parts: &'static [&'static str], undefined_dynamic_lookup: bool },
     RepoObjC { parts: &'static [&'static str], frameworks: &'static [&'static str] },
     BundledNative,
 }
@@ -29,13 +29,13 @@ struct FnaNativeShimSpec {
 const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     FnaNativeShimSpec {
         output: "libkernel32.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "kernel32_shim.c"] },
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "kernel32_shim.c"], undefined_dynamic_lookup: false },
         symlinks: &[],
         required_for_launch: true,
     },
     FnaNativeShimSpec {
         output: "libuser32.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "user32_shim.c"] },
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "user32_shim.c"], undefined_dynamic_lookup: false },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -50,7 +50,7 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: FNA_CARBON_INTERPOSE_SHIM,
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "carbon_interpose.c"] },
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "carbon_interpose.c"], undefined_dynamic_lookup: false },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -62,7 +62,7 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
     },
     FnaNativeShimSpec {
         output: "libSystem.Native.dylib",
-        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "system_native_stub.c"] },
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "system_native_stub.c"], undefined_dynamic_lookup: false },
         symlinks: &[],
         required_for_launch: true,
     },
@@ -70,6 +70,36 @@ const FNA_NATIVE_SHIMS: &[FnaNativeShimSpec] = &[
         output: "xinput1_4.dylib",
         source: FnaShimSource::BundledNative,
         symlinks: &["xinput1_3.dylib", "xinput9_1_0.dylib"],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libgdiplus.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "terraria", "gdiplus_stub.c"], undefined_dynamic_lookup: false },
+        symlinks: &[],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libFAudio.0.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "terraria", "faudio_stub.c"], undefined_dynamic_lookup: false },
+        symlinks: &["libFAudio.dylib"],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libCSteamworks.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "csteamworks_shim.c"], undefined_dynamic_lookup: true },
+        symlinks: &[],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libfmod.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "fmod_stub.c"], undefined_dynamic_lookup: true },
+        symlinks: &[],
+        required_for_launch: false,
+    },
+    FnaNativeShimSpec {
+        output: "libfmodstudio.dylib",
+        source: FnaShimSource::RepoC { parts: &["src", "fna", "shims", "fmodstudio_stub.c"], undefined_dynamic_lookup: true },
+        symlinks: &[],
         required_for_launch: false,
     },
 ];
@@ -1732,20 +1762,25 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
 
     let gdiplus_src =
         home.join("repos").join("metalsharp").join("src").join("fna").join("terraria").join("gdiplus_stub.c");
-    if !game_dir.join("libgdiplus.dylib").exists() && gdiplus_src.exists() {
-        let mut gdi_cmd = Command::new("clang");
-        gdi_cmd.arg("-shared");
-        for arch_arg in fna_native_arch_args() {
-            gdi_cmd.arg(arch_arg);
+    if !game_dir.join("libgdiplus.dylib").exists() {
+        let cached = shims_dir.join("libgdiplus.dylib");
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, game_dir.join("libgdiplus.dylib"));
+        } else if gdiplus_src.exists() {
+            let mut gdi_cmd = Command::new("clang");
+            gdi_cmd.arg("-shared");
+            for arch_arg in fna_native_arch_args() {
+                gdi_cmd.arg(arch_arg);
+            }
+            let _ = gdi_cmd
+                .arg("-o")
+                .arg(game_dir.join("libgdiplus.dylib"))
+                .arg(&gdiplus_src)
+                .args(["-install_name", "@loader_path/libgdiplus.dylib"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
         }
-        let _ = gdi_cmd
-            .arg("-o")
-            .arg(game_dir.join("libgdiplus.dylib"))
-            .arg(&gdiplus_src)
-            .args(["-install_name", "@loader_path/libgdiplus.dylib"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
     }
 
     if appid == 105600 {
@@ -1852,6 +1887,27 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
     Ok(present)
 }
 
+pub fn precompile_all_fna_shims() -> Result<usize, String> {
+    let home = dirs::home_dir().ok_or("no home dir".to_string())?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let shims_dir = ms_home.join("runtime").join("shims");
+    let _ = std::fs::create_dir_all(&shims_dir);
+
+    let mut compiled = 0usize;
+    for spec in FNA_NATIVE_SHIMS {
+        let dst = shims_dir.join(spec.output);
+        if dst.exists() {
+            continue;
+        }
+        ensure_fna_native_shim_in_cache(spec, &shims_dir);
+        if dst.exists() {
+            compiled += 1;
+        }
+    }
+
+    Ok(compiled)
+}
+
 fn fna_required_runtime_assets(runtime: &Path) -> Vec<PathBuf> {
     vec![
         runtime.join("fna").join("FNA.dll"),
@@ -1939,14 +1995,14 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
     }
 
     match spec.source {
-        FnaShimSource::RepoC { parts } => {
+        FnaShimSource::RepoC { parts, undefined_dynamic_lookup } => {
             if let Some(source) = find_fna_shim_source(parts) {
-                let _ = build_fna_c_shim(&source, &dst, spec.output, &[]);
+                let _ = build_fna_c_shim(&source, &dst, spec.output, &[], undefined_dynamic_lookup);
             }
         },
         FnaShimSource::RepoObjC { parts, frameworks } => {
             if let Some(source) = find_fna_shim_source(parts) {
-                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks);
+                let _ = build_fna_c_shim(&source, &dst, spec.output, frameworks, false);
             }
         },
         FnaShimSource::BundledNative => {
@@ -1956,9 +2012,24 @@ fn ensure_fna_native_shim_in_cache(spec: &FnaNativeShimSpec, shims_dir: &PathBuf
             }
         },
     }
+
+    if dst.exists() {
+        for symlink in spec.symlinks {
+            let link = shims_dir.join(symlink);
+            if !link.exists() {
+                #[cfg(unix)]
+                {
+                    if std::fs::symlink_metadata(&link).is_ok() {
+                        let _ = std::fs::remove_file(&link);
+                    }
+                    let _ = std::os::unix::fs::symlink(spec.output, &link);
+                }
+            }
+        }
+    }
 }
 
-fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, frameworks: &[&str]) -> bool {
+fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, frameworks: &[&str], undefined_dynamic_lookup: bool) -> bool {
     if let Some(parent) = output.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -1970,6 +2041,9 @@ fn build_fna_c_shim(source: &PathBuf, output: &PathBuf, install_name: &str, fram
     }
     if source.extension().and_then(|ext| ext.to_str()) == Some("m") {
         cmd.arg("-fobjc-arc");
+    }
+    if undefined_dynamic_lookup {
+        cmd.args(["-undefined", "dynamic_lookup"]);
     }
     cmd.arg("-o").arg(output).arg(source).args(["-install_name", &format!("@loader_path/{}", install_name)]);
     for framework in frameworks {
@@ -2070,22 +2144,30 @@ fn deploy_terraria_runtime(game_dir: &PathBuf, metalsharp_home: &PathBuf) {
         let _ = compile_repo_csharp_to_game(&source, &output, "library", &[]);
     }
 
-    if let Some(source) = find_repo_source(&["src", "fna", "terraria", "faudio_stub.c"]) {
-        let output = game_dir.join("libFAudio.0.dylib");
-        let mut faudio_cmd = Command::new("clang");
-        faudio_cmd.arg("-shared");
-        for arch_arg in fna_native_arch_args() {
-            faudio_cmd.arg(arch_arg);
+    let faudio_dst = game_dir.join("libFAudio.0.dylib");
+    if !faudio_dst.exists() {
+        let home = dirs::home_dir().unwrap_or_default();
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let cached = ms_home.join("runtime").join("shims").join("libFAudio.0.dylib");
+        if cached.exists() {
+            let _ = std::fs::copy(&cached, &faudio_dst);
+            ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
+        } else if let Some(source) = find_repo_source(&["src", "fna", "terraria", "faudio_stub.c"]) {
+            let mut faudio_cmd = Command::new("clang");
+            faudio_cmd.arg("-shared");
+            for arch_arg in fna_native_arch_args() {
+                faudio_cmd.arg(arch_arg);
+            }
+            let _ = faudio_cmd
+                .arg("-o")
+                .arg(&faudio_dst)
+                .arg(&source)
+                .args(["-install_name", "@loader_path/libFAudio.0.dylib"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
         }
-        let _ = faudio_cmd
-            .arg("-o")
-            .arg(&output)
-            .arg(&source)
-            .args(["-install_name", "@loader_path/libFAudio.0.dylib"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        ensure_fna_symlink(game_dir, "libFAudio.0.dylib", "libFAudio.dylib");
     }
 
     if let Some(source) = find_repo_source(&["src", "fna", "terraria", "TerrariaOfflinePatcher.cs"]) {

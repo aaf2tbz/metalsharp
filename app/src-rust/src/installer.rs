@@ -185,6 +185,9 @@ fn run_install_all() {
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Mono Configs", Box::new(install_mono_configs)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
+        ("FNA Shim Precompile", Box::new(|_| {
+            crate::mtsp::launcher::precompile_all_fna_shims().map(|_| true)
+        })),
     ];
 
     let total = steps.len();
