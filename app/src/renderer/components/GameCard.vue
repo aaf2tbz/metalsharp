@@ -142,6 +142,7 @@ const componentDisplayName: Record<string, string> = {
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
+  "gptk_prefix": "GPTK Prefix",
   "rosetta": "Rosetta",
   "corefonts": "Core Fonts",
   "vcrun2019_x64": "VC++ 2015-2022 x64",
@@ -685,7 +686,7 @@ function formatBytes(bytes: number): string {
               </div>
               <div v-if="runtimeReport.actions.length" class="doctor-notes blocked">
                 <div v-for="action in runtimeReport.actions" :key="action.id" class="runtime-action-row">
-                  <span>{{ action.id }}: {{ action.detail }}</span>
+                  <span>{{ componentLabel(action.id) }}: {{ action.detail }}</span>
                   <button
                     class="btn btn-secondary btn-sm"
                     :disabled="runtimeLoading"

@@ -1601,7 +1601,20 @@ pub fn repair_component(
             if crate::platform::gptk_is_installed() {
                 true
             } else {
-                let status = std::process::Command::new("brew").args(["install", "game-porting-toolkit"]).status()?;
+                let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
+                    .iter()
+                    .find(|p| std::path::Path::new(p).is_file())
+                    .unwrap_or(&"brew");
+                let path_val = std::env::var("PATH").unwrap_or_default();
+                let full_path = format!(
+                    "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{}",
+                    path_val
+                );
+                let status = std::process::Command::new(brew)
+                    .args(["install", "game-porting-toolkit"])
+                    .env("PATH", &full_path)
+                    .env("HOME", std::env::var("HOME").unwrap_or_default())
+                    .status()?;
                 status.success() && crate::platform::gptk_is_installed()
             }
         } else {
