@@ -162,12 +162,18 @@ const componentDisplayName: Record<string, string> = {
   "mono-x86": "Mono x86_64",
   "fna": "FNA Runtime",
   "xna": "XNA Assemblies",
+  "sdl2": "SDL2",
+  "fna3d": "FNA3D",
+  "faudio": "FAudio",
+  "fmod": "FMOD Audio",
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
   "rosetta": "Rosetta",
   "corefonts": "Core Fonts",
+  "vcrun2019_x64": "VC++ 2015-2022 x64",
+  "vcrun2019_x86": "VC++ 2015-2022 x86",
   "vcrun2019": "VC++ 2015-2022",
   "vcrun2010": "VC++ 2010",
   "vcrun2013": "VC++ 2013",
@@ -181,7 +187,7 @@ const componentDisplayName: Record<string, string> = {
   "battleye": "BattlEye",
 };
 
-const fnaComponentIds = new Set(["mono-arm64", "mono-x86", "fna", "xna"]);
+const fnaComponentIds = new Set(["mono-arm64", "mono-x86", "fna", "xna", "sdl2", "fna3d", "faudio", "fmod"]);
 
 function componentLabel(id: string): string {
   return componentDisplayName[id] ?? id;
@@ -1404,6 +1410,8 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 }
 
 .sharp-card {
+  align-self: start;
+  height: fit-content;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

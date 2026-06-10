@@ -134,12 +134,18 @@ const componentDisplayName: Record<string, string> = {
   "mono-x86": "Mono x86_64",
   "fna": "FNA Runtime",
   "xna": "XNA Assemblies",
+  "sdl2": "SDL2",
+  "fna3d": "FNA3D",
+  "faudio": "FAudio",
+  "fmod": "FMOD Audio",
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
   "rosetta": "Rosetta",
   "corefonts": "Core Fonts",
+  "vcrun2019_x64": "VC++ 2015-2022 x64",
+  "vcrun2019_x86": "VC++ 2015-2022 x86",
   "vcrun2019": "VC++ 2015-2022",
   "vcrun2010": "VC++ 2010",
   "vcrun2013": "VC++ 2013",
@@ -703,6 +709,8 @@ function formatBytes(bytes: number): string {
 
 <style scoped>
 .game-card {
+  align-self: start;
+  height: fit-content;
   display: flex;
   flex-direction: column;
   background: var(--game-card-bg, var(--bg-card));

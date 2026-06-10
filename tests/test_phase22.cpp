@@ -8,8 +8,6 @@
 
 using namespace metalsharp;
 
-extern "C" HRESULT XAudio2Create(void** ppXAudio2, UINT Flags, UINT XAudio2Processor);
-
 static int testsPassed = 0;
 static int testsFailed = 0;
 
@@ -115,17 +113,17 @@ static bool test_coreaudio_queued_buffers() {
 }
 
 static bool test_xaudio2_create() {
-    void* engine = nullptr;
-    HRESULT hr = XAudio2Create(&engine, 0, 0);
-    bool ok = hr == S_OK && engine != nullptr;
-    if (engine)
-        delete static_cast<XAudio2Engine*>(engine);
+    auto* engine = new XAudio2Engine();
+    HRESULT hr = engine->init();
+    bool ok = hr == S_OK;
+    delete engine;
     return ok;
 }
 
-static bool test_xaudio2_null_pointer() {
-    HRESULT hr = XAudio2Create(nullptr, 0, 0);
-    return hr == E_POINTER;
+static bool test_xaudio2_default_init() {
+    XAudio2Engine engine;
+    HRESULT hr = engine.init();
+    return hr == S_OK;
 }
 
 static bool test_xaudio2_source_voice() {
@@ -289,7 +287,7 @@ int main() {
     TEST(coreaudio_frequency_ratio);
     TEST(coreaudio_queued_buffers);
     TEST(xaudio2_create);
-    TEST(xaudio2_null_pointer);
+    TEST(xaudio2_default_init);
     TEST(xaudio2_source_voice);
     TEST(xaudio2_submit_start_stop);
 

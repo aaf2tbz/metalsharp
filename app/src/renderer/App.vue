@@ -262,6 +262,13 @@ function startHealthPolling() {
   setInterval(refreshSteamStatus, 5000);
 
   setInterval(async () => {
+    const result = await api<{ ok?: boolean; new_appids?: number[] }>("GET", "/steam/watch-steamapps");
+    if (result?.new_appids && result.new_appids.length > 0) {
+      await loadLibrary();
+    }
+  }, 30000);
+
+  setInterval(async () => {
     const prev = backendConnected.value;
     backendConnected.value = await getAPI().isBackendAlive();
     if (backendConnected.value) {
@@ -344,15 +351,17 @@ async function initApp() {
       <component :is="activeView" :key="currentView" />
     </main>
   </template>
-  <div v-if="showUpdateChangelog" class="modal-backdrop" @click="showUpdateChangelog = false">
-    <section class="update-changelog-modal" @click.stop>
-      <header class="update-changelog-modal-header">
-        <h2>MetalSharp v{{ updateStatus?.latest_version }}</h2>
-        <button class="modal-close-btn" type="button" @click="showUpdateChangelog = false">Close</button>
-      </header>
-      <pre>{{ fullUpdateChangelog }}</pre>
-    </section>
-  </div>
+  <Teleport to="body">
+    <div v-if="showUpdateChangelog" class="modal-backdrop" @click="showUpdateChangelog = false">
+      <section class="update-changelog-modal" @click.stop>
+        <header class="update-changelog-modal-header">
+          <h2>MetalSharp v{{ updateStatus?.latest_version }}</h2>
+          <button class="modal-close-btn" type="button" @click="showUpdateChangelog = false">Close</button>
+        </header>
+        <pre class="update-changelog-body">{{ fullUpdateChangelog }}</pre>
+      </section>
+    </div>
+  </Teleport>
   <Toast />
 </template>
 
@@ -472,6 +481,7 @@ async function initApp() {
   gap: 16px;
   padding: 16px 18px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .update-changelog-modal-header h2 {
   margin: 0;
@@ -488,7 +498,8 @@ async function initApp() {
   font-weight: 700;
   cursor: pointer;
 }
-.update-changelog-modal pre {
+.update-changelog-modal pre,
+.update-changelog-body {
   margin: 0;
   padding: 18px;
   overflow: auto;
@@ -496,6 +507,8 @@ async function initApp() {
   word-break: break-word;
   font: inherit;
   line-height: 1.5;
+  flex: 1;
+  min-height: 0;
 }
 .content {
   flex: 1;

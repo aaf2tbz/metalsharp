@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(metalsharp VERSION 0.44.1 LANGUAGES C CXX OBJC OBJCXX)
+project(metalsharp VERSION 0.45.0 LANGUAGES C CXX OBJC OBJCXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -156,11 +156,10 @@ add_library(metalsharp_audio SHARED
     src/audio/XAudio2Buffer.cpp
     src/audio/X3DAudioEngine.cpp
     src/audio/DirectSoundBackend.cpp
-    src/audio/CoreAudioBackend.mm
+    src/audio/CoreAudioBackend.cpp
     src/audio/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK} ${AVFOUNDATION_FRAMEWORK})
-target_compile_options(metalsharp_audio PRIVATE -fobjc-arc)
+target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK})
 set_target_properties(metalsharp_audio PROPERTIES OUTPUT_NAME "xaudio2_9" PREFIX "")
 
 add_library(metalsharp_input SHARED

@@ -384,9 +384,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Ok(_) => resp(200, json!({"ok": true, "port": mtsp::launcher::bridge_port()})),
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
-        (Method::Get, "/steam/watch-steamapps") => match steam::watch_steamapps() {
-            Some(new_ids) => resp(200, json!({"ok": true, "new_appids": new_ids})),
-            None => resp(200, json!({"ok": true, "new_appids": []})),
+        (Method::Get, "/steam/watch-steamapps") => {
+            let new_ids = steam::watch_steamapps();
+            resp(200, json!({"ok": true, "new_appids": new_ids}))
         },
         (Method::Post, "/steam/install-game") => {
             let body = read_body(req);
@@ -660,7 +660,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             crate::mtsp::engine::PipelineId::M11
                         };
                         let pipeline_label = pipeline_label_for(pipeline);
-                        let _ = scan_crash_files(&entry.path(), &appid_str, pipeline_label, &mut reports);
+                        let _ = scan_crash_files(&entry.path(), &appid_str, pipeline_label, &mut reports, 0);
                     }
                 }
             }
@@ -680,7 +680,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         crate::mtsp::engine::PipelineId::M11
                     };
                     let pipeline_label = pipeline_label_for(pipeline);
-                    let _ = scan_crash_files(&logs_dir, &bottle_id, pipeline_label, &mut reports);
+                    let _ = scan_crash_files(&logs_dir, &bottle_id, pipeline_label, &mut reports, 0);
                 }
             }
 
@@ -691,7 +691,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
 
             let prefix = ms_home.join("prefix-steam").join("drive_c");
-            let _ = scan_crash_files(&prefix, "system", "System", &mut reports);
+            for crash_dir in [
+                prefix.join("users").join("steamuser").join("AppData").join("Local").join("CrashDumps"),
+                prefix.join("ProgramData").join("CrashDumps"),
+            ] {
+                if crash_dir.is_dir() {
+                    let _ = scan_crash_files(&crash_dir, "system", "System", &mut reports, 0);
+                }
+            }
 
             reports.sort_by(|a: &serde_json::Value, b: &serde_json::Value| {
                 b.get("timestamp")
@@ -2088,7 +2095,16 @@ fn scan_steam_dumps(dir: &std::path::Path, reports: &mut Vec<serde_json::Value>)
     }
 }
 
-fn scan_crash_files(dir: &std::path::Path, source: &str, pipeline: &str, reports: &mut Vec<serde_json::Value>) {
+fn scan_crash_files(
+    dir: &std::path::Path,
+    source: &str,
+    pipeline: &str,
+    reports: &mut Vec<serde_json::Value>,
+    depth: u32,
+) {
+    if depth > 2 {
+        return;
+    }
     let crash_patterns = ["crash", ".dmp", ".mdmp", "crashdump", "crash_report"];
     if let Ok(rd) = std::fs::read_dir(dir) {
         for entry in rd.flatten() {
@@ -2117,7 +2133,7 @@ fn scan_crash_files(dir: &std::path::Path, source: &str, pipeline: &str, reports
             }
             if path.is_dir() {
                 let sub_source = source.to_string();
-                scan_crash_files(&path, &sub_source, pipeline, reports);
+                scan_crash_files(&path, &sub_source, pipeline, reports, depth + 1);
             }
         }
     }

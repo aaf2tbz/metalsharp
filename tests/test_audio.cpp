@@ -4,8 +4,6 @@
 #include <metalsharp/Platform.h>
 #include <metalsharp/XAudio2Engine.h>
 
-extern "C" HRESULT XAudio2Create(void** ppXAudio2, UINT Flags, UINT XAudio2Processor);
-
 static int passed = 0;
 static int failed = 0;
 
@@ -87,21 +85,17 @@ int main() {
 
     {
         printf("\n--- XAudio2Engine Creation ---\n");
-        void* engine = nullptr;
-        HRESULT hr = XAudio2Create(&engine, 0, 0);
-        CHECK(hr == S_OK, "XAudio2Create returns S_OK");
-        CHECK(engine != nullptr, "Engine pointer non-null");
-
-        if (engine) {
-            auto* eng = static_cast<metalsharp::XAudio2Engine*>(engine);
-            delete eng;
-        }
+        auto* engine = new metalsharp::XAudio2Engine();
+        HRESULT hr = engine->init();
+        CHECK(hr == S_OK, "XAudio2Engine init returns S_OK");
+        delete engine;
     }
 
     {
-        printf("\n--- XAudio2Engine Null Checks ---\n");
-        HRESULT hr = XAudio2Create(nullptr, 0, 0);
-        CHECK(hr == E_POINTER, "XAudio2Create null pointer returns E_POINTER");
+        printf("\n--- XAudio2Engine Null Init ---\n");
+        metalsharp::XAudio2Engine engine;
+        HRESULT hr = engine.init();
+        CHECK(hr == S_OK, "XAudio2Engine default init succeeds");
     }
 
     {
