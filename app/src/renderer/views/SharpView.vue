@@ -1406,6 +1406,8 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 }
 
 .sharp-card {
+  align-self: start;
+  height: fit-content;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);

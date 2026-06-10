@@ -705,6 +705,8 @@ function formatBytes(bytes: number): string {
 
 <style scoped>
 .game-card {
+  align-self: start;
+  height: fit-content;
   display: flex;
   flex-direction: column;
   background: var(--game-card-bg, var(--bg-card));
