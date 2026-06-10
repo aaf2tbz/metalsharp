@@ -165,12 +165,12 @@ verify_assets_core() {
     assets/fna-kickstart/FNA.dll \
     assets/fna-kickstart/mscorlib.dll \
     assets/fna-kickstart/osx/libmonosgen-2.0.1.dylib \
-    assets/fna-kickstart/osx/libSDL3.0.dylib \
+    assets/fna-kickstart/osx/libSDL2-2.0.0.dylib \
     assets/fna-kickstart/osx/libFNA3D.0.dylib \
     assets/fna-kickstart/osx/libFAudio.0.dylib \
     assets/fna-kickstart/osx/libMonoPosixHelper.dylib \
     assets/fnalibs/libFNA3D.0.dylib \
-    assets/fnalibs/libSDL3.0.dylib \
+    assets/fnalibs/libSDL2-2.0.0.dylib \
     assets/fnalibs/libFAudio.0.dylib \
     assets/fnalibs/libtheorafile.dylib \
     assets/goldberg/x64/steam_api64.dll \
