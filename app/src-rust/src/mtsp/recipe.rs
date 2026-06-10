@@ -195,6 +195,11 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
+    if appid == 440 {
+        append_unique_launch_arg(launch_args, "-steam");
+        append_unique_launch_arg(launch_args, "-secure");
+    }
+
     match (appid, pipeline) {
         (1196590 | 1623730 | 1928870 | 2358720 | 2456740, PipelineId::M12) => {
             append_unique_launch_arg(launch_args, "-dx12");

@@ -445,6 +445,10 @@ name = "Warframe"
 pipeline = "m11"
 name = "Rust"
 
+[overrides.440]
+pipeline = "m9"
+name = "Team Fortress 2"
+
 [overrides.730]
 pipeline = "m11"
 name = "Counter-Strike 2"

@@ -994,6 +994,10 @@ fn launch_dxmt_metal_with_context(
         deploy_steam_appid(game_dir, appid);
     }
 
+    if appid == 440 {
+        deploy_tf2_steam_identity(game_dir, &prefix);
+    }
+
     let cache_paths = build_cache_paths(&home, node, appid);
     if node.id == PipelineId::M12
         && std::env::var("METALSHARP_M12_LIVE_MSC_SIDECAR")
@@ -3108,6 +3112,43 @@ fn extract_steam_interfaces(data: &[u8]) -> Vec<String> {
 
     interfaces.sort();
     interfaces
+}
+
+fn deploy_tf2_steam_identity(game_dir: &Path, prefix: &Path) {
+    let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+    if !steam_dir.is_dir() {
+        eprintln!("[TF2] Wine Steam directory not found — skipping steamclient deployment");
+        return;
+    }
+
+    let targets: Vec<PathBuf> = vec![
+        game_dir.to_path_buf(),
+        game_dir.join("bin"),
+        game_dir.join("bin").join("x64"),
+        game_dir.join("tf").join("bin"),
+    ];
+
+    for target in &targets {
+        if !target.is_dir() {
+            continue;
+        }
+        for dll_name in &["steamclient.dll", "steamclient64.dll"] {
+            let src = steam_dir.join(dll_name);
+            let dst = target.join(dll_name);
+            if !src.exists() || dst.exists() {
+                continue;
+            }
+            if let Err(e) = std::fs::copy(&src, &dst) {
+                eprintln!("[TF2] failed to copy {} to {}: {}", dll_name, target.display(), e);
+            }
+        }
+        let appid_file = target.join("steam_appid.txt");
+        if !appid_file.exists() {
+            let _ = std::fs::write(&appid_file, "440");
+        }
+    }
+
+    eprintln!("[TF2] deployed steamclient DLLs and steam_appid.txt");
 }
 
 pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
