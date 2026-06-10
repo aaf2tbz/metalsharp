@@ -1872,9 +1872,14 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
 
     match node.backend {
         "dxmt" => {
-            env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir));
+            env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir.clone()));
             env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
             env.push(("DXMT_LOG_PATH".to_string(), pipeline_dir));
+            env.push(("MESA_SHADER_CACHE_DIR".to_string(), shader_dir));
+            let moltenvk_icd = ms_root.join("etc").join("vulkan").join("icd.d").join("MoltenVK_icd.json");
+            if moltenvk_icd.exists() {
+                env.push(("VK_ICD_FILENAMES".to_string(), moltenvk_icd.to_string_lossy().to_string()));
+            }
         },
         "dxvk" => {
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
