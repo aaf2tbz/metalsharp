@@ -1,6 +1,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,7 +10,6 @@
 #include <time.h>
 #include <unistd.h>
 #include <utime.h>
-#include <stdint.h>
 
 typedef struct {
     int32_t Flags;
@@ -34,7 +34,8 @@ typedef struct {
 static void fill_file_status(FileStatus* fs, const struct stat* s, int32_t err) {
     fs->Flags = 0;
     fs->Errno = err;
-    if (err != 0) return;
+    if (err != 0)
+        return;
     fs->Dev = (int32_t)s->st_dev;
     fs->Ino = (int64_t)s->st_ino;
     fs->Mode = (int32_t)s->st_mode;
