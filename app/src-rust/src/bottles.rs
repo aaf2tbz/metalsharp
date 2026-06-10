@@ -2655,14 +2655,14 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "FNA / Mono ARM64",
             BottleArch::Win64,
             false,
-            &["mono-arm64", "fna", "xna"][..],
+            &["mono-arm64", "fna", "xna", "sdl2", "fna3d", "faudio"][..],
             crate::mtsp::engine::PipelineId::FnaArm64,
         ),
         RuntimeProfile::FnaX86 => (
             "FNA / Mono x86_64",
             BottleArch::Win64,
             false,
-            &["mono-x86", "fna", "xna"][..],
+            &["mono-x86", "fna", "xna", "sdl2", "fna3d", "faudio", "fmod"][..],
             crate::mtsp::engine::PipelineId::FnaArm64,
         ),
     };
@@ -3110,6 +3110,10 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "mono-arm64" => inspect_host_mono_component("mono-arm64").unwrap_or(fallback),
         "mono-x86" => inspect_host_mono_component("mono-x86").unwrap_or(fallback),
         "fna" => inspect_fna_runtime_component().unwrap_or(fallback),
+        "sdl2" => inspect_fnalibs_file("libSDL2-2.0.0.dylib").unwrap_or(fallback),
+        "fna3d" => inspect_fnalibs_file("libFNA3D.0.dylib").unwrap_or(fallback),
+        "faudio" => inspect_fnalibs_file("libFAudio.0.dylib").unwrap_or(fallback),
+        "fmod" => inspect_fmod_component().unwrap_or(fallback),
         "d3d12_agility" => inspect_d3d12_agility_component().unwrap_or(fallback),
         "gecko" => {
             if windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists() {
@@ -3309,8 +3313,9 @@ fn inspect_fna_runtime_component() -> Option<ComponentState> {
     let runtime = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
     let required = [
         runtime.join("fna").join("FNA.dll"),
-        runtime.join("shims").join("libFNA3D.dylib"),
-        runtime.join("shims").join("libSDL3.dylib"),
+        runtime.join("fnalibs").join("libFNA3D.0.dylib"),
+        runtime.join("fnalibs").join("libSDL2-2.0.0.dylib"),
+        runtime.join("fnalibs").join("libFAudio.0.dylib"),
         runtime.join("shims").join("libkernel32.dylib"),
         runtime.join("shims").join("libuser32.dylib"),
         runtime.join("shims").join("libCarbon.dylib"),
@@ -3320,6 +3325,26 @@ fn inspect_fna_runtime_component() -> Option<ComponentState> {
     Some(if present == required.len() {
         ComponentState::Installed
     } else if present > 0 {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    })
+}
+
+fn inspect_fnalibs_file(filename: &str) -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let path = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs").join(filename);
+    Some(if path.exists() { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn inspect_fmod_component() -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let fmod_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs").join("fmod");
+    let core = fmod_dir.join("libfmod.dylib");
+    let studio = fmod_dir.join("libfmodstudio.dylib");
+    Some(if core.exists() && studio.exists() {
+        ComponentState::Installed
+    } else if core.exists() || studio.exists() {
         ComponentState::NeedsRepair
     } else {
         ComponentState::Missing

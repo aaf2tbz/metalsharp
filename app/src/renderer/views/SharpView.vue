@@ -162,6 +162,10 @@ const componentDisplayName: Record<string, string> = {
   "mono-x86": "Mono x86_64",
   "fna": "FNA Runtime",
   "xna": "XNA Assemblies",
+  "sdl2": "SDL2",
+  "fna3d": "FNA3D",
+  "faudio": "FAudio",
+  "fmod": "FMOD Audio",
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
@@ -183,7 +187,7 @@ const componentDisplayName: Record<string, string> = {
   "battleye": "BattlEye",
 };
 
-const fnaComponentIds = new Set(["mono-arm64", "mono-x86", "fna", "xna"]);
+const fnaComponentIds = new Set(["mono-arm64", "mono-x86", "fna", "xna", "sdl2", "fna3d", "faudio", "fmod"]);
 
 function componentLabel(id: string): string {
   return componentDisplayName[id] ?? id;
