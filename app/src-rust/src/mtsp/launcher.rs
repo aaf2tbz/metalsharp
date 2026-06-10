@@ -1951,10 +1951,7 @@ fn rewrite_config_with_absolute_paths(
     for lib in &native_libs_needing_abs_path {
         if game_dir.join(lib).exists() {
             let abs = format!("{}/{}", game_dir_str, lib);
-            rewritten = rewritten.replace(
-                &format!("target=\"{}\"", lib),
-                &format!("target=\"{}\"", abs),
-            );
+            rewritten = rewritten.replace(&format!("target=\"{}\"", lib), &format!("target=\"{}\"", abs));
         }
     }
 
@@ -2709,11 +2706,7 @@ fn fix_dylib_install_names(dylib_path: &PathBuf) {
         .stderr(std::process::Stdio::null())
         .status();
 
-    if let Ok(output) = Command::new("/usr/bin/otool")
-        .args(["-L", "-arch", "x86_64"])
-        .arg(dylib_path)
-        .output()
-    {
+    if let Ok(output) = Command::new("/usr/bin/otool").args(["-L", "-arch", "x86_64"]).arg(dylib_path).output() {
         let deps = String::from_utf8_lossy(&output.stdout);
         for line in deps.lines() {
             let trimmed = line.trim();
