@@ -89,7 +89,7 @@ fn vcpp_prefix_has_runtime(prefix: &Path) -> bool {
         let p = dir.join(dll);
         p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
     };
-    let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "msvcp140.dll");
+    let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "vcruntime140_1.dll") && has(&system32, "msvcp140.dll");
     let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
     x64_ok && x86_ok
 }
@@ -109,8 +109,6 @@ fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
         .arg("/install")
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("wine x64 failed: {}", e))?;
     if !x64_status.success() {
@@ -123,8 +121,6 @@ fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
         .arg("/install")
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("wine x86 failed: {}", e))?;
     if !x86_status.success() {
@@ -510,7 +506,24 @@ pub fn next_launch_log_path(id: &str) -> PathBuf {
 pub fn load_bottle(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     validate_bottle_id(id)?;
     let data = fs::read_to_string(bottle_manifest_path(id))?;
-    Ok(serde_json::from_str(&data)?)
+    let mut manifest: BottleManifest = serde_json::from_str(&data)?;
+    let has_legacy = manifest.installed_components.iter().any(|c| c.id == "vcrun2019");
+    let has_x64 = manifest.installed_components.iter().any(|c| c.id == "vcrun2019_x64");
+    let has_x86 = manifest.installed_components.iter().any(|c| c.id == "vcrun2019_x86");
+    if has_legacy && !has_x64 && !has_x86 {
+        let state = manifest
+            .installed_components
+            .iter()
+            .find(|c| c.id == "vcrun2019")
+            .map(|c| c.state)
+            .unwrap_or(ComponentState::Unknown);
+        manifest.installed_components.retain(|c| c.id != "vcrun2019");
+        manifest.installed_components.push(RuntimeComponent { id: "vcrun2019_x64".to_string(), state });
+        manifest.installed_components.push(RuntimeComponent { id: "vcrun2019_x86".to_string(), state });
+        manifest.installed_components.sort_by(|a, b| a.id.cmp(&b.id));
+        let _ = save_bottle(&manifest);
+    }
+    Ok(manifest)
 }
 
 pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::Error>> {
@@ -855,14 +868,21 @@ pub fn prepare_steam_game_launch(
             }
         }
     } else {
-        let vcrun_component = manifest.installed_components.iter().find(|c| c.id == "vcrun2019");
-        let needs_vcrun =
-            vcrun_component.is_some() && !matches!(vcrun_component.unwrap().state, ComponentState::Installed);
+        let vcrun_ids: Vec<String> = manifest
+            .installed_components
+            .iter()
+            .filter(|c| matches!(c.id.as_str(), "vcrun2019" | "vcrun2019_x64" | "vcrun2019_x86"))
+            .filter(|c| !matches!(c.state, ComponentState::Installed))
+            .map(|c| c.id.clone())
+            .collect();
+        let needs_vcrun = !vcrun_ids.is_empty();
         if needs_vcrun && !vcpp_prefix_has_runtime(&prefix) {
             eprintln!("bottle: VC++ 2015-2022 not installed in prefix, downloading and installing ...");
             match vcpp_install_into_prefix(&prefix) {
                 Ok(()) => {
-                    mark_component_state(&mut manifest, "vcrun2019", ComponentState::Installed);
+                    for cid in &vcrun_ids {
+                        mark_component_state(&mut manifest, cid, ComponentState::Installed);
+                    }
                     manifest.health = if components_ready(&manifest.installed_components) {
                         BottleHealth::Ready
                     } else {
@@ -873,7 +893,9 @@ pub fn prepare_steam_game_launch(
                 },
                 Err(e) => {
                     eprintln!("bottle: VC++ 2015-2022 install failed: {}", e);
-                    mark_component_state(&mut manifest, "vcrun2019", ComponentState::NeedsRepair);
+                    for cid in &vcrun_ids {
+                        mark_component_state(&mut manifest, cid, ComponentState::NeedsRepair);
+                    }
                     manifest.health = BottleHealth::NeedsRepair;
                     manifest.updated_at = timestamp_secs();
                     save_bottle(&manifest)?;
@@ -1857,18 +1879,21 @@ pub fn repair_component(
         });
     }
 
-    if component_id == "vcrun2019" && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+    if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
+        && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+    {
         let home = dirs::home_dir().ok_or("no home dir")?;
+        let cid = component_id.to_string();
         if dry_run {
             let already = crate::platform::gptk_vcrun_installed(&home);
             return Ok(ComponentRepairReport {
-                id: component_id.to_string(),
+                id: cid,
                 status: if already { "already_installed".to_string() } else { "repair_available".to_string() },
-                detail: if already {
-                    "VC++ 2015-2022 redist (x86 + x64) already installed in the GPTK prefix".to_string()
-                } else {
-                    "Will download and install VC++ 2015-2022 redist (x86 + x64) into the GPTK prefix".to_string()
-                },
+                detail: format!(
+                    "VC++ 2015-2022 redist {}{}",
+                    if component_id == "vcrun2019_x64" { "(x64) " } else if component_id == "vcrun2019_x86" { "(x86) " } else { "(x86 + x64) " },
+                    if already { "already installed in the GPTK prefix" } else { "will be installed into the GPTK prefix" }
+                ),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -1885,9 +1910,10 @@ pub fn repair_component(
             manifest.updated_at = timestamp_secs();
             save_bottle(&manifest)?;
             return Ok(ComponentRepairReport {
-                id: component_id.to_string(),
+                id: cid,
                 status: "already_installed".to_string(),
-                detail: "VC++ 2015-2022 redist (x86 + x64) already installed in the GPTK prefix".to_string(),
+                detail: format!("VC++ 2015-2022 redist {}already installed in the GPTK prefix",
+                    if component_id == "vcrun2019_x64" { "(x64) " } else if component_id == "vcrun2019_x86" { "(x86) " } else { "(x86 + x64) " }),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -1900,17 +1926,19 @@ pub fn repair_component(
         save_bottle(&manifest)?;
 
         let bottle_id = id.to_string();
+        let cid_report = cid.clone();
         thread::spawn(move || {
             let home = dirs::home_dir().unwrap_or_default();
             match crate::platform::install_gptk_prefix_components(&home) {
                 Ok(()) => {
                     eprintln!(
-                        "vcrun2019 gptk: install done, installed={}",
+                        "{} gptk: install done, installed={}",
+                        cid,
                         crate::platform::gptk_vcrun_installed(&home)
                     );
                 },
                 Err(e) => {
-                    eprintln!("vcrun2019 gptk: install failed: {}", e);
+                    eprintln!("{} gptk: install failed: {}", cid, e);
                 },
             }
             let state = if crate::platform::gptk_vcrun_installed(&home) {
@@ -1919,7 +1947,7 @@ pub fn repair_component(
                 ComponentState::Missing
             };
             if let Ok(mut m) = load_bottle(&bottle_id) {
-                mark_component_state(&mut m, "vcrun2019", state);
+                mark_component_state(&mut m, &cid, state);
                 m.health = if components_ready(&m.installed_components) {
                     BottleHealth::Ready
                 } else {
@@ -1931,26 +1959,34 @@ pub fn repair_component(
         });
 
         return Ok(ComponentRepairReport {
-            id: component_id.to_string(),
+            id: cid_report,
             status: "started".to_string(),
-            detail: "Downloading and installing VC++ 2015-2022 (x86 + x64) into GPTK prefix".to_string(),
+            detail: format!("Downloading and installing VC++ 2015-2022 {} into GPTK prefix",
+                if component_id == "vcrun2019_x64" { "(x64)" } else if component_id == "vcrun2019_x86" { "(x86)" } else { "(x86 + x64)" }),
             asset_path: None,
             log_path: None,
             pid: None,
         });
     }
 
-    if component_id == "vcrun2019" && !matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+    if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
+        && !matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+    {
+        let is_x64 = component_id == "vcrun2019_x64" || component_id == "vcrun2019";
+        let is_x86 = component_id == "vcrun2019_x86" || component_id == "vcrun2019";
+        let arch_label = if is_x64 && is_x86 {
+            "x86 + x64"
+        } else if is_x64 {
+            "x64"
+        } else {
+            "x86"
+        };
         if dry_run {
             let installed = vcpp_prefix_has_runtime(&prefix);
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: if installed { "already_installed" } else { "repair_available" }.to_string(),
-                detail: if installed {
-                    "VC++ 2015-2022 (x86 + x64) already installed".to_string()
-                } else {
-                    "Will download and install VC++ 2015-2022 (x86 + x64) from Microsoft".to_string()
-                },
+                detail: format!("VC++ 2015-2022 ({}) {}", arch_label, if installed { "already installed" } else { "will be installed" }),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -1968,7 +2004,7 @@ pub fn repair_component(
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: "already_installed".to_string(),
-                detail: "VC++ 2015-2022 (x86 + x64) already installed".to_string(),
+                detail: format!("VC++ 2015-2022 ({}) already installed", arch_label),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -1976,16 +2012,18 @@ pub fn repair_component(
         }
         let prefix_owned = prefix.clone();
         let bottle_id = id.to_string();
+        let cid = component_id.to_string();
         thread::spawn(move || {
             match vcpp_install_into_prefix(&prefix_owned) {
                 Ok(()) => {
                     eprintln!(
-                        "vcrun2019: VC++ 2015-2022 installed, verified={}",
+                        "{}: VC++ 2015-2022 installed, verified={}",
+                        cid,
                         vcpp_prefix_has_runtime(&prefix_owned)
                     );
                 },
                 Err(e) => {
-                    eprintln!("vcrun2019: VC++ 2015-2022 install failed: {}", e);
+                    eprintln!("{}: VC++ 2015-2022 install failed: {}", cid, e);
                 },
             }
             let state = if vcpp_prefix_has_runtime(&prefix_owned) {
@@ -1994,7 +2032,7 @@ pub fn repair_component(
                 ComponentState::Missing
             };
             if let Ok(mut m) = load_bottle(&bottle_id) {
-                mark_component_state(&mut m, "vcrun2019", state);
+                mark_component_state(&mut m, &cid, state);
                 m.health = if components_ready(&m.installed_components) {
                     BottleHealth::Ready
                 } else {
@@ -2007,7 +2045,7 @@ pub fn repair_component(
         return Ok(ComponentRepairReport {
             id: component_id.to_string(),
             status: "started".to_string(),
-            detail: "Downloading and installing VC++ 2015-2022 (x86 + x64) from Microsoft".to_string(),
+            detail: format!("Downloading and installing VC++ 2015-2022 ({}) from Microsoft", arch_label),
             asset_path: None,
             log_path: None,
             pid: None,
@@ -2501,84 +2539,84 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "Launcher",
             BottleArch::Wow64,
             true,
-            &["gecko", "vcrun2019", "corefonts"][..],
+            &["gecko", "vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::GameInstall => (
             "Game Installer",
             BottleArch::Wow64,
             true,
-            &["vcrun2019", "vcrun2013", "directx_jun2010", "corefonts"][..],
+            &["vcrun2019_x64", "vcrun2019_x86", "vcrun2013", "directx_jun2010", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::M9 => (
             "D3D9 Metal",
             BottleArch::Wow64,
             true,
-            &["d3d9", "vcrun2019", "directx_jun2010"][..],
+            &["d3d9", "vcrun2019_x64", "vcrun2019_x86", "directx_jun2010"][..],
             crate::mtsp::engine::PipelineId::M9,
         ),
         RuntimeProfile::M10 => (
             "D3D10 Metal",
             BottleArch::Wow64,
             true,
-            &["d3d10", "d3d10_1", "dxgi", "vcrun2019"][..],
+            &["d3d10", "d3d10_1", "dxgi", "vcrun2019_x64", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::M10,
         ),
         RuntimeProfile::M11 => (
             "D3D11 Metal",
             BottleArch::Win64,
             true,
-            &["d3d11", "dxgi", "vcrun2019"][..],
+            &["d3d11", "dxgi", "vcrun2019_x64", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::M11,
         ),
         RuntimeProfile::M12 => (
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d12_agility", "d3d11", "dxgi", "vcrun2019", "gpu_vendor_stubs", "corefonts"][..],
+            &["d3d12", "d3d12_agility", "d3d11", "dxgi", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::M13 => (
             "GPTK D3DMetal",
             BottleArch::Win64,
             true,
-            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019", "gpu_vendor_stubs"][..],
+            &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs"][..],
             crate::mtsp::engine::PipelineId::M13,
         ),
         RuntimeProfile::D3DMetal => (
             "D3DMetal (GPTK)",
             BottleArch::Win64,
             false,
-            &["gptk", "rosetta", "gptk_prefix", "vcrun2019"][..],
+            &["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::D3DMetal,
         ),
         RuntimeProfile::Dotnet => (
             ".NET",
             BottleArch::Win64,
             true,
-            &["wine-mono", "gecko", "dotnet48", "vcrun2019", "corefonts"][..],
+            &["wine-mono", "gecko", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::Win32Dotnet => (
             "32-bit .NET",
             BottleArch::Win32,
             true,
-            &["wine-mono", "gecko", "dotnet48", "vcrun2019", "corefonts"][..],
+            &["wine-mono", "gecko", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M9,
         ),
         RuntimeProfile::Webview => (
             "WebView",
             BottleArch::Wow64,
             true,
-            &["gecko", "webview2", "dotnet48", "vcrun2019", "corefonts"][..],
+            &["gecko", "webview2", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::JavaLauncher => (
             "Java Launcher",
             BottleArch::Wow64,
             true,
-            &["vcrun2019", "corefonts"][..],
+            &["vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::FnaArm64 => (
@@ -2796,7 +2834,8 @@ fn infer_components_from_runtime_assets(assets: &[BottleRuntimeAsset]) -> Vec<Ru
     for asset in assets {
         match asset.kind.as_str() {
             "vcredist" => {
-                ids.insert("vcrun2019".to_string());
+                ids.insert("vcrun2019_x64".to_string());
+                ids.insert("vcrun2019_x86".to_string());
             },
             "vcredist_2013" => {
                 ids.insert("vcrun2013".to_string());
@@ -2861,7 +2900,8 @@ fn components_from_installscript(path: &Path) -> Vec<String> {
     );
     maybe_add(&mut ids, &lower, "vcrun2013", &["vcredist_2013", "msvcr120", "msvcp120", "visual c++ 2013"]);
     if !ids.iter().any(|id| id == "vcrun2010" || id == "vcrun2013") {
-        maybe_add(&mut ids, &lower, "vcrun2019", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
+        maybe_add(&mut ids, &lower, "vcrun2019_x64", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
+        maybe_add(&mut ids, &lower, "vcrun2019_x86", &["vcredist", "vc_redist", "visual c++", "vc runtime"]);
     }
     maybe_add(
         &mut ids,
@@ -2932,7 +2972,9 @@ fn inspect_components_for_manifest(
             let fallback = inspect_component_state(prefix, &component.id, component.state);
             let state = if component.id == "d3d12_agility" {
                 inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
-            } else if component.id == "vcrun2019" && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
+            } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
+                && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+            {
                 let home = dirs::home_dir().unwrap_or_default();
                 if crate::platform::gptk_vcrun_installed(&home) {
                     ComponentState::Installed
@@ -3055,16 +3097,31 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
-        "vcrun2019" => {
+        "vcrun2019_x64" | "vcrun2019" => {
             let has = |dir: &std::path::Path, dll: &str| -> bool {
                 let p = dir.join(dll);
                 p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
             };
-            let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "msvcp140.dll");
-            let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
-            if x64_ok && x86_ok {
+            let x64_dlls = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
+            let x64_ok = x64_dlls.iter().all(|dll| has(&system32, dll));
+            if x64_ok {
                 ComponentState::Installed
-            } else if has(&system32, "vcruntime140.dll") || has(&syswow64, "vcruntime140.dll") {
+            } else if has(&system32, "vcruntime140.dll") || has(&system32, "msvcp140.dll") {
+                ComponentState::NeedsRepair
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "vcrun2019_x86" => {
+            let has = |dir: &std::path::Path, dll: &str| -> bool {
+                let p = dir.join(dll);
+                p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
+            };
+            let x86_dlls = ["vcruntime140.dll", "msvcp140.dll"];
+            let x86_ok = x86_dlls.iter().all(|dll| has(&syswow64, dll));
+            if x86_ok {
+                ComponentState::Installed
+            } else if has(&syswow64, "vcruntime140.dll") || has(&syswow64, "msvcp140.dll") {
                 ComponentState::NeedsRepair
             } else {
                 ComponentState::Missing
@@ -3449,8 +3506,12 @@ fn resolve_component_installer_from_roots(
     local_redist: &Path,
 ) -> Option<ComponentInstaller> {
     let executable = match component_id {
-        "vcrun2019" => match vcpp_ensure_downloaded() {
-            Ok((x64, _x86)) => Some(x64),
+        "vcrun2019_x64" | "vcrun2019" => match vcpp_ensure_downloaded() {
+            Ok((x64, _)) => Some(x64),
+            Err(_) => None,
+        },
+        "vcrun2019_x86" => match vcpp_ensure_downloaded() {
+            Ok((_, x86)) => Some(x86),
             Err(_) => None,
         },
         "vcrun2013" => {
@@ -3530,7 +3591,7 @@ fn resolve_component_installer_from_roots(
 
 fn component_installer_args(component_id: &str, executable: &Path) -> Vec<String> {
     match component_id {
-        "vcrun2019" => vec!["/install".to_string(), "/norestart".to_string()],
+        "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019" => vec!["/install".to_string(), "/norestart".to_string()],
         "dotnet40" | "dotnet48" => vec!["/q".to_string(), "/norestart".to_string()],
         "webview2" => vec!["/silent".to_string(), "/install".to_string()],
         "directx_jun2010" => vec!["/silent".to_string()],
@@ -4208,7 +4269,8 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
         detail: match id {
             "dotnet40" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.0 offline installers",
             "dotnet48" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist .NET 4.x offline installers",
-            "vcrun2019" => "Auto-downloads VC++ 2015-2022 (x86+x64) from Microsoft, or uses Steam CommonRedist / local redist",
+            "vcrun2019_x64" => "Auto-downloads VC++ 2015-2022 x64 from Microsoft, installs into wine prefix system32",
+            "vcrun2019_x86" => "Auto-downloads VC++ 2015-2022 x86 from Microsoft, installs into wine prefix syswow64",
             "vcrun2010" => "Uses Steam CommonRedist or local Visual C++ 2010 redistributable",
             "vcrun2013" => "Uses Steam CommonRedist or local Visual C++ 2013 redistributable",
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
@@ -4252,7 +4314,8 @@ fn component_action_detail(id: &str) -> String {
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet40" => "Install the native .NET Framework 4.0 runtime for CLR v4 titles".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
-        "vcrun2019" => "Install Visual C++ 2015-2022 runtime DLLs".to_string(),
+        "vcrun2019_x64" => "Install Visual C++ 2015-2022 x64 runtime DLLs".to_string(),
+        "vcrun2019_x86" => "Install Visual C++ 2015-2022 x86 runtime DLLs".to_string(),
         "vcrun2010" => "Install Visual C++ 2010 runtime DLLs (msvcr100, msvcp100)".to_string(),
         "vcrun2013" => "Install Visual C++ 2013 runtime DLLs (msvcr120, msvcp120)".to_string(),
         "gpu_vendor_stubs" => "Deploy NVAPI/NVNGX GPU vendor stubs for NVIDIA API compatibility".to_string(),
@@ -4612,15 +4675,24 @@ fn redist_source_guides() -> Vec<RedistSourceGuide> {
             notes: "Use the Evergreen Standalone Installer for offline scenarios; Wine compatibility still needs per-installer evidence.".to_string(),
         },
         RedistSourceGuide {
-            id: "vcrun2019".to_string(),
-            name: "Latest Microsoft Visual C++ Redistributable (2015-2022)".to_string(),
-            source_url: "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist".to_string(),
+            id: "vcrun2019_x64".to_string(),
+            name: "Microsoft Visual C++ 2015-2022 (x64)".to_string(),
+            source_url: "https://aka.ms/vs/17/release/vc_redist.x64.exe".to_string(),
             local_targets: vec![
-                redist.join("VC_redist.x64.exe").to_string_lossy().to_string(),
-                redist.join("VC_redist.x86.exe").to_string_lossy().to_string(),
+                redist.join("vcredist").join("vc_redist.x64.exe").to_string_lossy().to_string(),
             ],
-            policy: "official_download_or_steam_commonredist".to_string(),
-            notes: "Prefer Steam CommonRedist when present; otherwise use Microsoft's latest supported redist links. Installs vcruntime140, vcruntime140_1, msvcp140 family, concrt140, vcomp140.".to_string(),
+            policy: "official_download".to_string(),
+            notes: "Installs vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll into system32".to_string(),
+        },
+        RedistSourceGuide {
+            id: "vcrun2019_x86".to_string(),
+            name: "Microsoft Visual C++ 2015-2022 (x86)".to_string(),
+            source_url: "https://aka.ms/vs/17/release/vc_redist.x86.exe".to_string(),
+            local_targets: vec![
+                redist.join("vcredist").join("vc_redist.x86.exe").to_string_lossy().to_string(),
+            ],
+            policy: "official_download".to_string(),
+            notes: "Installs vcruntime140.dll, msvcp140.dll into syswow64".to_string(),
         },
         RedistSourceGuide {
             id: "vcrun2010".to_string(),
@@ -5011,7 +5083,8 @@ mod tests {
         let ids = components.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(ids.contains(&"wine-mono"));
         assert!(ids.contains(&"dotnet48"));
-        assert!(ids.contains(&"vcrun2019"));
+        assert!(ids.contains(&"vcrun2019_x64"));
+        assert!(ids.contains(&"vcrun2019_x86"));
     }
 
     #[test]
@@ -5192,17 +5265,20 @@ mod tests {
     fn profile_rebuild_drops_stale_components_but_keeps_overlap_state() {
         let existing = vec![
             RuntimeComponent { id: "d3d12".into(), state: ComponentState::Missing },
-            RuntimeComponent { id: "vcrun2019".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x86".into(), state: ComponentState::NeedsRepair },
         ];
 
         let rebuilt = rebuild_components_for_profile(&existing, RuntimeProfile::Plain);
 
         assert!(!rebuilt.iter().any(|component| component.id == "d3d12"));
-        assert!(!rebuilt.iter().any(|component| component.id == "vcrun2019"));
+        assert!(!rebuilt.iter().any(|component| component.id == "vcrun2019_x64"));
 
         let rebuilt = rebuild_components_for_profile(&existing, RuntimeProfile::M9);
-        let vcrun = rebuilt.iter().find(|component| component.id == "vcrun2019").expect("vcrun component");
-        assert_eq!(vcrun.state, ComponentState::Installed);
+        let vcrun_x64 = rebuilt.iter().find(|component| component.id == "vcrun2019_x64").expect("vcrun x64 component");
+        assert_eq!(vcrun_x64.state, ComponentState::Installed);
+        let vcrun_x86 = rebuilt.iter().find(|component| component.id == "vcrun2019_x86").expect("vcrun x86 component");
+        assert_eq!(vcrun_x86.state, ComponentState::NeedsRepair);
         assert!(!rebuilt.iter().any(|component| component.id == "d3d12"));
     }
 
@@ -5247,7 +5323,7 @@ mod tests {
     #[test]
     fn unknown_and_needs_repair_components_are_not_ready() {
         let components = vec![
-            RuntimeComponent { id: "vcrun2019".into(), state: ComponentState::Unknown },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::Unknown },
             RuntimeComponent { id: "directx_jun2010".into(), state: ComponentState::NeedsRepair },
         ];
 
@@ -5255,7 +5331,7 @@ mod tests {
 
         assert!(!components_ready(&components));
         assert_eq!(actions.len(), 2);
-        assert!(missing_components_summary(&components).contains("vcrun2019"));
+        assert!(missing_components_summary(&components).contains("vcrun2019_x64"));
         assert!(missing_components_summary(&components).contains("directx_jun2010"));
     }
 
@@ -5263,7 +5339,7 @@ mod tests {
     fn absent_inspectable_redists_are_missing_not_unknown() {
         let prefix = test_dir("missing-redists-prefix");
         let components = vec![
-            RuntimeComponent { id: "vcrun2019".into(), state: ComponentState::Unknown },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::Unknown },
             RuntimeComponent { id: "directx_jun2010".into(), state: ComponentState::Unknown },
             RuntimeComponent { id: "corefonts".into(), state: ComponentState::Unknown },
             RuntimeComponent { id: "gecko".into(), state: ComponentState::Unknown },
@@ -5565,7 +5641,8 @@ mod tests {
         assert!(assets.iter().any(|asset| asset.kind == "installscript"));
         assert!(assets.iter().any(|asset| asset.kind == "easyanticheat_eos"));
         assert!(assets.iter().any(|asset| asset.kind == "battleye"));
-        assert!(ids.contains(&"vcrun2019"));
+        assert!(ids.contains(&"vcrun2019_x64"));
+        assert!(ids.contains(&"vcrun2019_x86"));
         assert!(ids.contains(&"openal"));
         assert!(ids.contains(&"directx_jun2010"));
         assert!(ids.contains(&"xna"));
@@ -5877,16 +5954,20 @@ mod tests {
         fs::create_dir_all(&system32).expect("create system32");
         fs::create_dir_all(&syswow64).expect("create syswow64");
 
-        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Missing);
+        assert_eq!(inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown), ComponentState::Missing);
+        assert_eq!(inspect_component_state(&dir, "vcrun2019_x86", ComponentState::Unknown), ComponentState::Missing);
 
         let dll_payload = vec![0u8; 20_000];
         fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
+        assert_eq!(inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown), ComponentState::NeedsRepair);
 
+        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write dll");
         fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
+        assert_eq!(inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown), ComponentState::Installed);
+
         fs::write(syswow64.join("vcruntime140.dll"), &dll_payload).expect("write dll");
         fs::write(syswow64.join("msvcp140.dll"), &dll_payload).expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::Installed);
+        assert_eq!(inspect_component_state(&dir, "vcrun2019_x86", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -5937,7 +6018,7 @@ mod tests {
         let dll_payload = vec![0u8; 20_000];
         fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
         fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2019", ComponentState::Unknown), ComponentState::NeedsRepair);
+        assert_eq!(inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown), ComponentState::NeedsRepair);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -5958,7 +6039,8 @@ mod tests {
     fn game_install_profile_includes_vcrun2013() {
         let components = default_components_for(RuntimeProfile::GameInstall);
         let ids = components.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
-        assert!(ids.contains(&"vcrun2019"));
+        assert!(ids.contains(&"vcrun2019_x64"));
+        assert!(ids.contains(&"vcrun2019_x86"));
         assert!(ids.contains(&"vcrun2013"));
         assert!(ids.contains(&"directx_jun2010"));
     }
@@ -6005,7 +6087,8 @@ mod tests {
         let guides = redist_source_guides();
         assert!(guides.iter().any(|g| g.id == "vcrun2010"));
         assert!(guides.iter().any(|g| g.id == "vcrun2013"));
-        assert!(guides.iter().any(|g| g.id == "vcrun2019"));
+        assert!(guides.iter().any(|g| g.id == "vcrun2019_x64"));
+        assert!(guides.iter().any(|g| g.id == "vcrun2019_x86"));
     }
 
     #[test]

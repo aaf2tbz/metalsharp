@@ -195,7 +195,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
-    if appid == 440 {
+    if appid == 440 || appid == 620 {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
