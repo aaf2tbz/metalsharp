@@ -1606,10 +1606,7 @@ pub fn repair_component(
                     .find(|p| std::path::Path::new(p).is_file())
                     .unwrap_or(&"brew");
                 let path_val = std::env::var("PATH").unwrap_or_default();
-                let full_path = format!(
-                    "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{}",
-                    path_val
-                );
+                let full_path = format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{}", path_val);
                 let status = std::process::Command::new(brew)
                     .args(["install", "game-porting-toolkit"])
                     .env("PATH", &full_path)
