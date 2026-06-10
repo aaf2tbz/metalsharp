@@ -44,11 +44,20 @@ static uint32_t assignSlot(ControllerSlot* slots, GCController* gc) {
             slots[i].connected = true;
             const char* typeName = "unknown";
             switch (slots[i].type) {
-            case ControllerType::DualShock4: typeName = "DualShock 4"; break;
-            case ControllerType::DualSense: typeName = "DualSense"; break;
-            case ControllerType::Xbox: typeName = "Xbox"; break;
-            case ControllerType::MFi: typeName = "MFi"; break;
-            default: break;
+            case ControllerType::DualShock4:
+                typeName = "DualShock 4";
+                break;
+            case ControllerType::DualSense:
+                typeName = "DualSense";
+                break;
+            case ControllerType::Xbox:
+                typeName = "Xbox";
+                break;
+            case ControllerType::MFi:
+                typeName = "MFi";
+                break;
+            default:
+                break;
             }
             MS_INFO("GameControllerBridge: controller %u connected (%s)", i, typeName);
             return i;
@@ -84,22 +93,23 @@ bool GameControllerBridge::init() {
                                                         m_connected[slot] = true;
                                                   }];
 
-    [[NSNotificationCenter defaultCenter] addObserverForName:GCControllerDidDisconnectNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification* note) {
-                                                    GCController* gc = note.object;
-                                                    for (uint32_t i = 0; i < 4; i++) {
-                                                        if (impl->slots[i].controller == gc) {
-                                                            MS_INFO("GameControllerBridge: controller %u disconnected", i);
-                                                            impl->slots[i].controller = nil;
-                                                            impl->slots[i].type = ControllerType::Unknown;
-                                                            impl->slots[i].connected = false;
-                                                            m_connected[i] = false;
-                                                            break;
-                                                        }
-                                                    }
-                                                  }];
+    [[NSNotificationCenter defaultCenter]
+        addObserverForName:GCControllerDidDisconnectNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification* note) {
+                  GCController* gc = note.object;
+                  for (uint32_t i = 0; i < 4; i++) {
+                      if (impl->slots[i].controller == gc) {
+                          MS_INFO("GameControllerBridge: controller %u disconnected", i);
+                          impl->slots[i].controller = nil;
+                          impl->slots[i].type = ControllerType::Unknown;
+                          impl->slots[i].connected = false;
+                          m_connected[i] = false;
+                          break;
+                      }
+                  }
+                }];
 
     NSArray<GCController*>* connected = [GCController controllers];
     for (NSUInteger i = 0; i < connected.count && i < MAX_CONTROLLERS; i++) {

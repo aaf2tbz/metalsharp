@@ -102,8 +102,7 @@ static void convertUInt8ToFloat(const uint8_t* src, float* dst, uint32_t sampleC
 
 static void convertInt24ToFloat(const uint8_t* src, float* dst, uint32_t sampleCount) {
     for (uint32_t i = 0; i < sampleCount; i++) {
-        int32_t v = (static_cast<int32_t>(src[i * 3 + 2]) << 24) |
-                    (static_cast<int32_t>(src[i * 3 + 1]) << 16) |
+        int32_t v = (static_cast<int32_t>(src[i * 3 + 2]) << 24) | (static_cast<int32_t>(src[i * 3 + 1]) << 16) |
                     (static_cast<int32_t>(src[i * 3]) << 8);
         dst[i] = static_cast<float>(v) / 2147483648.0f;
     }
@@ -119,9 +118,8 @@ static void convertFloatToFloat(const float* src, float* dst, uint32_t sampleCou
     memcpy(dst, src, sampleCount * sizeof(float));
 }
 
-static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*,
-                                    const AudioTimeStamp*, UInt32, UInt32 inNumberFrames,
-                                    AudioBufferList* ioData) {
+static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UInt32,
+                                    UInt32 inNumberFrames, AudioBufferList* ioData) {
     auto* impl = static_cast<CoreAudioBackend::Impl*>(inRefCon);
 
     if (!impl->playing.load(std::memory_order_acquire)) {
@@ -259,8 +257,8 @@ bool CoreAudioBackend::init() {
     asbd.mBitsPerChannel = 32;
     m_impl->asbd = asbd;
 
-    status = AudioUnitSetProperty(audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &asbd,
-                                  sizeof(asbd));
+    status =
+        AudioUnitSetProperty(audioUnit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &asbd, sizeof(asbd));
     if (status != noErr) {
         MS_WARN("CoreAudioBackend: failed to set stream format (%d)", (int)status);
     }
@@ -272,8 +270,7 @@ bool CoreAudioBackend::init() {
         MS_WARN("CoreAudioBackend: failed to set IO buffer size to %u frames (%d) — using default", bufFrames,
                 (int)status);
     } else {
-        MS_INFO("CoreAudioBackend: IO buffer set to %u frames (%.1f ms)", bufFrames,
-                bufFrames * 1000.0 / 44100.0);
+        MS_INFO("CoreAudioBackend: IO buffer set to %u frames (%.1f ms)", bufFrames, bufFrames * 1000.0 / 44100.0);
     }
 
     AURenderCallbackStruct callback = {};
