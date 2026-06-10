@@ -89,7 +89,8 @@ fn vcpp_prefix_has_runtime(prefix: &Path) -> bool {
         let p = dir.join(dll);
         p.is_file() && p.metadata().map(|m| m.len() > 10_000).unwrap_or(false)
     };
-    let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "vcruntime140_1.dll") && has(&system32, "msvcp140.dll");
+    let x64_ok =
+        has(&system32, "vcruntime140.dll") && has(&system32, "vcruntime140_1.dll") && has(&system32, "msvcp140.dll");
     let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
     x64_ok && x86_ok
 }
@@ -1891,8 +1892,18 @@ pub fn repair_component(
                 status: if already { "already_installed".to_string() } else { "repair_available".to_string() },
                 detail: format!(
                     "VC++ 2015-2022 redist {}{}",
-                    if component_id == "vcrun2019_x64" { "(x64) " } else if component_id == "vcrun2019_x86" { "(x86) " } else { "(x86 + x64) " },
-                    if already { "already installed in the GPTK prefix" } else { "will be installed into the GPTK prefix" }
+                    if component_id == "vcrun2019_x64" {
+                        "(x64) "
+                    } else if component_id == "vcrun2019_x86" {
+                        "(x86) "
+                    } else {
+                        "(x86 + x64) "
+                    },
+                    if already {
+                        "already installed in the GPTK prefix"
+                    } else {
+                        "will be installed into the GPTK prefix"
+                    }
                 ),
                 asset_path: None,
                 log_path: None,
@@ -1912,8 +1923,16 @@ pub fn repair_component(
             return Ok(ComponentRepairReport {
                 id: cid,
                 status: "already_installed".to_string(),
-                detail: format!("VC++ 2015-2022 redist {}already installed in the GPTK prefix",
-                    if component_id == "vcrun2019_x64" { "(x64) " } else if component_id == "vcrun2019_x86" { "(x86) " } else { "(x86 + x64) " }),
+                detail: format!(
+                    "VC++ 2015-2022 redist {}already installed in the GPTK prefix",
+                    if component_id == "vcrun2019_x64" {
+                        "(x64) "
+                    } else if component_id == "vcrun2019_x86" {
+                        "(x86) "
+                    } else {
+                        "(x86 + x64) "
+                    }
+                ),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -1931,11 +1950,7 @@ pub fn repair_component(
             let home = dirs::home_dir().unwrap_or_default();
             match crate::platform::install_gptk_prefix_components(&home) {
                 Ok(()) => {
-                    eprintln!(
-                        "{} gptk: install done, installed={}",
-                        cid,
-                        crate::platform::gptk_vcrun_installed(&home)
-                    );
+                    eprintln!("{} gptk: install done, installed={}", cid, crate::platform::gptk_vcrun_installed(&home));
                 },
                 Err(e) => {
                     eprintln!("{} gptk: install failed: {}", cid, e);
@@ -1961,8 +1976,16 @@ pub fn repair_component(
         return Ok(ComponentRepairReport {
             id: cid_report,
             status: "started".to_string(),
-            detail: format!("Downloading and installing VC++ 2015-2022 {} into GPTK prefix",
-                if component_id == "vcrun2019_x64" { "(x64)" } else if component_id == "vcrun2019_x86" { "(x86)" } else { "(x86 + x64)" }),
+            detail: format!(
+                "Downloading and installing VC++ 2015-2022 {} into GPTK prefix",
+                if component_id == "vcrun2019_x64" {
+                    "(x64)"
+                } else if component_id == "vcrun2019_x86" {
+                    "(x86)"
+                } else {
+                    "(x86 + x64)"
+                }
+            ),
             asset_path: None,
             log_path: None,
             pid: None,
@@ -1986,7 +2009,11 @@ pub fn repair_component(
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: if installed { "already_installed" } else { "repair_available" }.to_string(),
-                detail: format!("VC++ 2015-2022 ({}) {}", arch_label, if installed { "already installed" } else { "will be installed" }),
+                detail: format!(
+                    "VC++ 2015-2022 ({}) {}",
+                    arch_label,
+                    if installed { "already installed" } else { "will be installed" }
+                ),
                 asset_path: None,
                 log_path: None,
                 pid: None,
@@ -2016,11 +2043,7 @@ pub fn repair_component(
         thread::spawn(move || {
             match vcpp_install_into_prefix(&prefix_owned) {
                 Ok(()) => {
-                    eprintln!(
-                        "{}: VC++ 2015-2022 installed, verified={}",
-                        cid,
-                        vcpp_prefix_has_runtime(&prefix_owned)
-                    );
+                    eprintln!("{}: VC++ 2015-2022 installed, verified={}", cid, vcpp_prefix_has_runtime(&prefix_owned));
                 },
                 Err(e) => {
                     eprintln!("{}: VC++ 2015-2022 install failed: {}", cid, e);
@@ -2574,7 +2597,16 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D12 Metal",
             BottleArch::Win64,
             true,
-            &["d3d12", "d3d12_agility", "d3d11", "dxgi", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs", "corefonts"][..],
+            &[
+                "d3d12",
+                "d3d12_agility",
+                "d3d11",
+                "dxgi",
+                "vcrun2019_x64",
+                "vcrun2019_x86",
+                "gpu_vendor_stubs",
+                "corefonts",
+            ][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
         RuntimeProfile::M13 => (
@@ -5959,7 +5991,10 @@ mod tests {
 
         let dll_payload = vec![0u8; 20_000];
         fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown), ComponentState::NeedsRepair);
+        assert_eq!(
+            inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown),
+            ComponentState::NeedsRepair
+        );
 
         fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write dll");
         fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
@@ -6018,7 +6053,10 @@ mod tests {
         let dll_payload = vec![0u8; 20_000];
         fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write dll");
         fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write dll");
-        assert_eq!(inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown), ComponentState::NeedsRepair);
+        assert_eq!(
+            inspect_component_state(&dir, "vcrun2019_x64", ComponentState::Unknown),
+            ComponentState::NeedsRepair
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
