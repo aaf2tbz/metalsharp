@@ -411,13 +411,15 @@ fn prepare_terrarria(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         home.join("Library/Application Support/Steam/steamapps/common/Terraria/Terraria.app/Contents/MacOS/osx");
 
     if mac_libs.exists() {
-        for lib in &["libsteam_api.dylib", "libSDL3.0.dylib", "libFAudio.0.dylib", "libFNA3D.0.dylib", "libnfd.dylib"] {
+        for lib in
+            &["libsteam_api.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib", "libFNA3D.0.dylib", "libnfd.dylib"]
+        {
             let src = mac_libs.join(lib);
             if src.exists() {
                 let _ = std::fs::copy(&src, game_dir.join(lib));
             }
         }
-        let _ = std::os::unix::fs::symlink("libSDL3.0.dylib", game_dir.join("libSDL3.dylib"));
+        let _ = std::os::unix::fs::symlink("libSDL2-2.0.0.dylib", game_dir.join("libSDL2.dylib"));
         let _ = std::os::unix::fs::symlink("libFAudio.0.dylib", game_dir.join("libFAudio.dylib"));
         let _ = std::os::unix::fs::symlink("libFNA3D.0.dylib", game_dir.join("libFNA3D.dylib"));
     }
@@ -1849,25 +1851,22 @@ fn setup_fna_runtime(game_dir: &PathBuf, home: &PathBuf) -> Result<(), Box<dyn s
         }
     }
 
-    let sdl3_candidates =
-        [PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"), PathBuf::from("/usr/local/lib/libSDL3.0.dylib")];
-    for sdl3 in &sdl3_candidates {
-        if sdl3.exists() {
-            let dst = game_dir.join("libSDL3.0.dylib");
-            let _ = std::fs::copy(sdl3, &dst);
-            let _ = mac_cmd("install_name_tool").args(["-id", "@loader_path/libSDL3.0.dylib"]).arg(&dst).output();
+    let fnalibs_dir = ms_home.join("runtime").join("fnalibs");
+    let sdl2_src = fnalibs_dir.join("libSDL2-2.0.0.dylib");
+    if sdl2_src.exists() {
+        let dst = game_dir.join("libSDL2-2.0.0.dylib");
+        let _ = std::fs::copy(&sdl2_src, &dst);
+        let _ = mac_cmd("install_name_tool").args(["-id", "@loader_path/libSDL2-2.0.0.dylib"]).arg(&dst).output();
 
-            let fna3d = game_dir.join("libFNA3D.dylib");
-            if fna3d.exists() {
-                let _ = mac_cmd("install_name_tool")
-                    .args(["-change", "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib", "@loader_path/libSDL3.0.dylib"])
-                    .arg(&fna3d)
-                    .output();
-            }
-
-            let _ = std::os::unix::fs::symlink("libSDL3.0.dylib", game_dir.join("libSDL3.dylib"));
-            break;
+        let fna3d = game_dir.join("libFNA3D.0.dylib");
+        if fna3d.exists() {
+            let _ = mac_cmd("install_name_tool")
+                .args(["-change", "@rpath/libSDL2-2.0.0.dylib", "@loader_path/libSDL2-2.0.0.dylib"])
+                .arg(&fna3d)
+                .output();
         }
+
+        let _ = std::os::unix::fs::symlink("libSDL2-2.0.0.dylib", game_dir.join("libSDL2.dylib"));
     }
 
     let steam_dylib_candidates = [

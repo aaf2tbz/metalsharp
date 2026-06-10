@@ -3640,11 +3640,11 @@ mod tests {
         assert!(required.contains(&runtime.join("fna-kickstart").join("kick.bin.osx")));
         assert!(required.contains(&runtime.join("fna-kickstart").join("FNA.dll")));
         assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libmonosgen-2.0.1.dylib")));
-        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libSDL3.0.dylib")));
+        assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libSDL2-2.0.0.dylib")));
         assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib")));
         assert!(required.contains(&runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib")));
         assert!(required.contains(&runtime.join("fnalibs").join("libFNA3D.0.dylib")));
-        assert!(required.contains(&runtime.join("fnalibs").join("libSDL3.0.dylib")));
+        assert!(required.contains(&runtime.join("fnalibs").join("libSDL2-2.0.0.dylib")));
         assert!(required.contains(&runtime.join("shims").join("libkernel32.dylib")));
         assert!(required.contains(&runtime.join("shims").join("libuser32.dylib")));
         assert!(required.contains(&runtime.join("shims").join(FNA_CARBON_SHIM)));
