@@ -681,7 +681,7 @@ mod tests {
 
         assert_eq!(
             m12.wine_overrides,
-            Some("winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;opengl32=n;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
@@ -706,7 +706,7 @@ mod tests {
         assert_eq!(m10.dyld_paths, m11.dyld_paths);
         assert_eq!(
             m10.wine_overrides,
-            Some("winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;opengl32=n;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
 
         let m10_dlls: std::collections::HashSet<_> = m10.deploy_dlls.iter().map(|dll| dll.filename).collect();
@@ -736,7 +736,7 @@ mod tests {
         assert!(!m9.experimental);
         assert!(m9.launch_args.is_empty());
         assert_eq!(m9.shader_cache_subdir, Some("m9"));
-        assert_eq!(m9.wine_overrides, Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+        assert_eq!(m9.wine_overrides, Some("d3d9=n,b;opengl32=n;gameoverlayrenderer,gameoverlayrenderer64=d"));
 
         let m9_dlls: std::collections::HashSet<_> =
             m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
