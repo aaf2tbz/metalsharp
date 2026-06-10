@@ -994,10 +994,6 @@ fn launch_dxmt_metal_with_context(
         deploy_steam_appid(game_dir, appid);
     }
 
-    if appid == 440 || appid == 620 {
-        deploy_source_steam_identity(game_dir, &prefix, appid);
-    }
-
     let cache_paths = build_cache_paths(&home, node, appid);
     if node.id == PipelineId::M12
         && std::env::var("METALSHARP_M12_LIVE_MSC_SIDECAR")
@@ -1235,15 +1231,8 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
         resolve_game_exe(dir).into()
     };
 
-    let kickstart_dir = ms_home.join("runtime").join("fna-kickstart");
-    let kick_bin = kickstart_dir.join("kick.bin.osx");
-
-    if kick_bin.exists() {
-        return launch_fna_kickstart(appid, profile, node, dir, &exe, &home, &ms_home, &kickstart_dir);
-    }
-
     let mono_bin = find_mono_binary_for_app(appid)?;
-    let mono_config = find_config(profile.mono_config);
+    let mono_config = rewrite_config_with_absolute_paths(profile.mono_config, dir)?;
     let shims_dir = find_shims_dir();
     let mono_root =
         mono_bin.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from(""));
@@ -1939,6 +1928,42 @@ fn find_config(name: &str) -> String {
     runtime_config.to_string_lossy().to_string()
 }
 
+fn rewrite_config_with_absolute_paths(
+    template_config: &str,
+    game_dir: &Path,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let runtime_config = ms_home.join("configs").join(template_config);
+
+    let content = std::fs::read_to_string(&runtime_config).unwrap_or_default();
+    let game_dir_str = game_dir.to_string_lossy();
+    let native_libs_needing_abs_path = [
+        "libSDL2-2.0.0.dylib",
+        "libFNA3D.0.dylib",
+        "libFNA3D.dylib",
+        "libFAudio.0.dylib",
+        "libFAudio.dylib",
+        "libfmod.dylib",
+        "libfmodstudio.dylib",
+    ];
+    let mut rewritten = content;
+    for lib in &native_libs_needing_abs_path {
+        if game_dir.join(lib).exists() {
+            let abs = format!("{}/{}", game_dir_str, lib);
+            rewritten = rewritten.replace(
+                &format!("target=\"{}\"", lib),
+                &format!("target=\"{}\"", abs),
+            );
+        }
+    }
+
+    let deployed_name = format!("{}.{}", template_config, game_dir.file_name().unwrap_or_default().to_string_lossy());
+    let deployed_path = ms_home.join("configs").join(&deployed_name);
+    std::fs::write(&deployed_path, &rewritten)?;
+    Ok(deployed_path.to_string_lossy().to_string())
+}
+
 fn resolve_fna_game_dir(appid: u32) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
 
@@ -2075,8 +2100,8 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     let shared_native_libs = [
         ("libFNA3D.dylib", None),
         ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
-        ("libSDL3.0.dylib", Some("libSDL3.dylib")),
-        ("libSDL3.dylib", None),
+        ("libSDL2-2.0.0.dylib", Some("libSDL2.dylib")),
+        ("libSDL2.dylib", None),
         ("libFAudio.0.dylib", Some("libFAudio.dylib")),
         ("libFAudio.dylib", None),
         ("libCSteamworks.dylib", None),
@@ -2088,6 +2113,22 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
 
     for (lib, symlink) in &shared_native_libs {
         copy_fna_native_lib(game_dir, &shims_dir, lib, *symlink);
+    }
+
+    let fmod_libs: &[(&str, Option<&str>)] = &[("libfmod.dylib", None), ("libfmodstudio.dylib", None)];
+    for (lib, symlink) in fmod_libs {
+        let dst = game_dir.join(lib);
+        if dst.exists() {
+            continue;
+        }
+        let fmod_dir = metalsharp_home.join("runtime").join("fnalibs").join("fmod");
+        if fmod_dir.join(lib).exists() {
+            let _ = std::fs::copy(fmod_dir.join(lib), &dst);
+            fix_dylib_install_names(&dst);
+            if let Some(sym) = symlink {
+                ensure_fna_symlink(game_dir, lib, sym);
+            }
+        }
     }
 
     let profile = find_fna_profile(appid);
@@ -2107,7 +2148,7 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
 
         let terraria_native_libs = [
             ("libFNA3D.0.dylib", Some("libFNA3D.dylib")),
-            ("libSDL3.0.dylib", Some("libSDL3.dylib")),
+            ("libSDL2-2.0.0.dylib", Some("libSDL2.dylib")),
             ("libFAudio.0.dylib", Some("libFAudio.dylib")),
             ("libsteam_api.dylib", None),
             ("libnfd.dylib", None),
@@ -2216,30 +2257,36 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
         }
     }
 
-    let sdl3_candidates =
-        [PathBuf::from("/opt/homebrew/lib/libSDL3.0.dylib"), PathBuf::from("/usr/local/lib/libSDL3.0.dylib")];
-    for sdl3 in &sdl3_candidates {
-        if sdl3.exists() {
-            let dst = shims_dir.join("libSDL3.0.dylib");
-            let _ = std::fs::copy(sdl3, &dst);
+    let fnalibs_dir = ms_home.join("runtime").join("fnalibs");
+    if fnalibs_dir.exists() {
+        let sdl2_src = fnalibs_dir.join("libSDL2-2.0.0.dylib");
+        if sdl2_src.exists() {
+            let dst = shims_dir.join("libSDL2-2.0.0.dylib");
+            let _ = std::fs::copy(&sdl2_src, &dst);
             let _ = Command::new("/usr/bin/install_name_tool")
-                .args(["-id", "@loader_path/libSDL3.0.dylib"])
+                .args(["-id", "@rpath/libSDL2-2.0.0.dylib"])
                 .arg(&dst)
                 .output();
-
-            let fna3d = shims_dir.join("libFNA3D.dylib");
-            if fna3d.exists() {
-                let _ = Command::new("/usr/bin/install_name_tool")
-                    .args(["-change", "/opt/homebrew/opt/sdl3/lib/libSDL3.0.dylib", "@loader_path/libSDL3.0.dylib"])
-                    .arg(&fna3d)
-                    .output();
-            }
-
-            let symlink = shims_dir.join("libSDL3.dylib");
+            let symlink = shims_dir.join("libSDL2.dylib");
             if !symlink.exists() {
-                let _ = std::os::unix::fs::symlink("libSDL3.0.dylib", symlink);
+                let _ = std::os::unix::fs::symlink("libSDL2-2.0.0.dylib", symlink);
             }
-            break;
+        }
+        let fna3d_src = fnalibs_dir.join("libFNA3D.0.dylib");
+        if fna3d_src.exists() {
+            let _ = std::fs::copy(&fna3d_src, shims_dir.join("libFNA3D.0.dylib"));
+            let symlink = shims_dir.join("libFNA3D.dylib");
+            if !symlink.exists() {
+                let _ = std::os::unix::fs::symlink("libFNA3D.0.dylib", symlink);
+            }
+        }
+        let faudio_src = fnalibs_dir.join("libFAudio.0.dylib");
+        if faudio_src.exists() {
+            let _ = std::fs::copy(&faudio_src, shims_dir.join("libFAudio.0.dylib"));
+            let symlink = shims_dir.join("libFAudio.dylib");
+            if !symlink.exists() {
+                let _ = std::os::unix::fs::symlink("libFAudio.0.dylib", symlink);
+            }
         }
     }
 
@@ -2282,11 +2329,11 @@ fn fna_required_runtime_assets(runtime: &Path) -> Vec<PathBuf> {
         runtime.join("fna-kickstart").join("kick.bin.osx"),
         runtime.join("fna-kickstart").join("FNA.dll"),
         runtime.join("fna-kickstart").join("osx").join("libmonosgen-2.0.1.dylib"),
-        runtime.join("fna-kickstart").join("osx").join("libSDL3.0.dylib"),
+        runtime.join("fna-kickstart").join("osx").join("libSDL2-2.0.0.dylib"),
         runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib"),
         runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib"),
         runtime.join("fnalibs").join("libFNA3D.0.dylib"),
-        runtime.join("fnalibs").join("libSDL3.0.dylib"),
+        runtime.join("fnalibs").join("libSDL2-2.0.0.dylib"),
         runtime.join("shims").join("libkernel32.dylib"),
         runtime.join("shims").join("libuser32.dylib"),
         runtime.join("shims").join(FNA_CARBON_SHIM),
@@ -2611,6 +2658,7 @@ fn compile_csharp_with_mono(
 fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symlink: Option<&str>) {
     let dst = game_dir.join(lib);
     if dst.exists() {
+        fix_dylib_install_names(&dst);
         if let Some(sym) = symlink {
             ensure_fna_symlink(game_dir, lib, sym);
         }
@@ -2640,9 +2688,49 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
         }
     }
 
+    if dst.exists() {
+        fix_dylib_install_names(&dst);
+    }
+
     if let Some(sym) = symlink {
         ensure_fna_symlink(game_dir, lib, sym);
     }
+}
+
+fn fix_dylib_install_names(dylib_path: &PathBuf) {
+    if crate::platform::current() != crate::platform::HostPlatform::Macos {
+        return;
+    }
+    let name = dylib_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    let _ = Command::new("/usr/bin/install_name_tool")
+        .args(["-id", &format!("@loader_path/{}", name)])
+        .arg(dylib_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    if let Ok(output) = Command::new("/usr/bin/otool")
+        .args(["-L", "-arch", "x86_64"])
+        .arg(dylib_path)
+        .output()
+    {
+        let deps = String::from_utf8_lossy(&output.stdout);
+        for line in deps.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("@rpath/") {
+                let dep_name = trimmed.split(' ').next().unwrap_or("");
+                let dep_file = dep_name.strip_prefix("@rpath/").unwrap_or(dep_name);
+                let _ = Command::new("/usr/bin/install_name_tool")
+                    .args(["-change", dep_name, &format!("@loader_path/{}", dep_file)])
+                    .arg(dylib_path)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+    }
+
+    codesign_fna_shim(dylib_path);
 }
 
 fn ensure_fna_symlink(game_dir: &PathBuf, lib: &str, sym: &str) {
@@ -3112,43 +3200,6 @@ fn extract_steam_interfaces(data: &[u8]) -> Vec<String> {
 
     interfaces.sort();
     interfaces
-}
-
-fn deploy_source_steam_identity(game_dir: &Path, prefix: &Path, appid: u32) {
-    let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
-    if !steam_dir.is_dir() {
-        eprintln!("[Source] Wine Steam directory not found — skipping steamclient deployment");
-        return;
-    }
-
-    let targets: Vec<PathBuf> = vec![
-        game_dir.to_path_buf(),
-        game_dir.join("bin"),
-        game_dir.join("bin").join("x64"),
-        game_dir.join("tf").join("bin"),
-    ];
-
-    for target in &targets {
-        if !target.is_dir() {
-            continue;
-        }
-        for dll_name in &["steamclient.dll", "steamclient64.dll"] {
-            let src = steam_dir.join(dll_name);
-            let dst = target.join(dll_name);
-            if !src.exists() || dst.exists() {
-                continue;
-            }
-            if let Err(e) = std::fs::copy(&src, &dst) {
-                eprintln!("[Source] failed to copy {} to {}: {}", dll_name, target.display(), e);
-            }
-        }
-        let appid_file = target.join("steam_appid.txt");
-        if !appid_file.exists() {
-            let _ = std::fs::write(&appid_file, appid.to_string());
-        }
-    }
-
-    eprintln!("[Source] deployed steamclient DLLs and steam_appid.txt for appid {}", appid);
 }
 
 pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
