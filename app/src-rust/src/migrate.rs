@@ -977,6 +977,17 @@ fn temp_suffix() -> u128 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
 }
 
+fn is_dmg_mount_target(target: &Path) -> bool {
+    let Some(name) = target.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    if !lower.contains("metalsharp") {
+        return false;
+    }
+    lower.contains("-arm64") || lower.contains("-x86_64") || lower.contains(".dmg") || lower.contains("-intel")
+}
+
 fn collect_prefix_dosdevice_links(prefix: &Path) -> Vec<(String, PathBuf)> {
     let dosdevices = prefix.join("dosdevices");
     if !dosdevices.is_dir() {
@@ -999,6 +1010,9 @@ fn collect_prefix_dosdevice_links(prefix: &Path) -> Vec<(String, PathBuf)> {
             if target == Path::new("/") {
                 continue;
             }
+            if is_dmg_mount_target(&target) {
+                continue;
+            }
             links.push((name, target));
         }
     }
@@ -1014,6 +1028,14 @@ fn restore_prefix_dosdevice_links(prefix: &Path, links: &[(String, PathBuf)]) {
         let _ = fs::create_dir_all(&dosdevices);
     }
     for (name, target) in links {
+        if is_dmg_mount_target(target) {
+            log_to_file(&format!(
+                "Migration restore dosdevices: skipping DMG mount target {} -> {}",
+                name,
+                target.display()
+            ));
+            continue;
+        }
         let link_path = dosdevices.join(name);
         if let Ok(current) = fs::read_link(&link_path) {
             if current == *target {
@@ -2102,6 +2124,43 @@ mod tests {
                 .expect("read restored gptk l drive"),
             home
         );
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_filters_dmg_mount_dosdevice_links() {
+        let home = test_dir("filter-dmg-mounts");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let dosdevices = prefix.join("dosdevices");
+        let external_steam = home.join("ExternalSteam");
+
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        fs::create_dir_all(external_steam.join("steamapps")).expect("create external steamapps");
+        std::os::unix::fs::symlink("../drive_c", dosdevices.join("c:")).expect("create c drive");
+        std::os::unix::fs::symlink(&external_steam, dosdevices.join("d:")).expect("create d drive");
+        std::os::unix::fs::symlink("/Volumes/MetalSharp 0.44.1-arm64", dosdevices.join("e:"))
+            .expect("create dmg mount");
+        std::os::unix::fs::symlink("/Volumes/MetalSharp-0.45.0-arm64", dosdevices.join("f:"))
+            .expect("create dmg mount 2");
+        fs::write(prefix.join("user.reg"), b"settings").expect("write settings");
+
+        let preserved = preserve_user_data(&ms_dir);
+
+        assert_eq!(preserved.prefix_steam_dosdevice_links.len(), 1);
+        assert_eq!(preserved.prefix_steam_dosdevice_links[0], (String::from("d:"), external_steam.clone()));
+
+        fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove prefix");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved);
+
+        assert_eq!(
+            fs::read_link(ms_dir.join("prefix-steam").join("dosdevices").join("d:")).expect("read d drive"),
+            external_steam
+        );
+        assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("e:").exists());
+        assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("f:").exists());
 
         let _ = fs::remove_dir_all(home);
     }
