@@ -170,6 +170,7 @@ const componentDisplayName: Record<string, string> = {
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
+  "gptk_prefix": "GPTK Prefix",
   "rosetta": "Rosetta",
   "corefonts": "Core Fonts",
   "vcrun2019_x64": "VC++ 2015-2022 x64",
@@ -776,7 +777,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                 </div>
                 <div v-if="bottleReports[bottle.id]?.actions.length" class="doctor-notes blocked">
                   <div v-for="action in bottleReports[bottle.id]?.actions" :key="action.id" class="bottle-action-row">
-                    <span>{{ action.id }}: {{ action.detail }}</span>
+                    <span>{{ componentLabel(action.id) }}: {{ action.detail }}</span>
                     <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="repairBottleComponent(bottle.id, action.id)">Repair</button>
                   </div>
                 </div>

@@ -214,6 +214,7 @@ bool CoreAudioBackend::init() {
     m_impl->channels = 2;
     m_impl->sampleRate = 44100;
     m_impl->bytesPerSample = 2;
+    m_impl->formatFrozen = false;
     m_impl->writePos.store(0, std::memory_order_release);
     m_impl->readPos.store(0, std::memory_order_release);
     m_impl->queuedCount.store(0, std::memory_order_release);
@@ -341,9 +342,9 @@ bool CoreAudioBackend::submitBuffer(const void* data, uint32_t size, const XAudi
     uint32_t freeFrames = m_impl->ringFramesFree();
     if (frames > freeFrames) {
         frames = freeFrames;
-        totalFloatSamples = frames * format.channels;
+        totalFloatSamples = frames * m_impl->channels;
         MS_TRACE("CoreAudioBackend: ring buffer near-full, dropping %u frames",
-                 (size / m_impl->bytesPerSample / format.channels) - frames);
+                 (size / m_impl->bytesPerSample / m_impl->channels) - frames);
     }
 
     if (frames == 0)
@@ -364,7 +365,7 @@ bool CoreAudioBackend::submitBuffer(const void* data, uint32_t size, const XAudi
         convertInt24ToFloat(src, floatBuf, totalFloatSamples);
         break;
     case 4:
-        if (format.formatTag == 3) {
+        if (m_impl->format.formatTag == 3) {
             convertFloatToFloat(reinterpret_cast<const float*>(src), floatBuf, totalFloatSamples);
         } else {
             convertInt32ToFloat(reinterpret_cast<const int32_t*>(src), floatBuf, totalFloatSamples);

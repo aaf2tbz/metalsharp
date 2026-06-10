@@ -76,10 +76,24 @@ enum RouteResponse {
 fn main() {
     let port = std::env::var("METALSHARP_PORT").unwrap_or_else(|_| "9274".into());
     let addr = format!("127.0.0.1:{}", port);
-    let server = Arc::new(Server::http(&addr).unwrap_or_else(|e| {
-        eprintln!("failed to bind {}: {}", addr, e);
-        std::process::exit(1);
-    }));
+    let server = Arc::new({
+        let mut attempts = 0u32;
+        let max_attempts = 30u32;
+        loop {
+            match Server::http(&addr) {
+                Ok(s) => break s,
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= max_attempts {
+                        eprintln!("failed to bind {} after {} attempts: {}", addr, max_attempts, e);
+                        std::process::exit(1);
+                    }
+                    eprintln!("bind {} attempt {}/{} failed: {} — retrying in 500ms", addr, attempts, max_attempts, e);
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                },
+            }
+        }
+    });
 
     ctrlc::set_handler(move || {
         app_log("Shutting down — cleaning up running games");
