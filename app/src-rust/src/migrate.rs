@@ -455,10 +455,15 @@ fn run_migration() {
         "running",
         step,
         total_steps,
-        "Skipping Wine prefix wineboot (GPTK manages prefix separately)...",
+        "Updating Wine prefixes and registering external Steam libraries...",
         None,
     );
-    log_to_file("Migration: skipping wineboot -u for Wine Steam prefix; GPTK prefix is managed separately");
+    match update_existing_wine_prefixes(&ms_dir, step) {
+        Ok(updated) => log_to_file(&format!("Migration: wineboot -u completed for {} prefix(es)", updated)),
+        Err(e) => log_to_file(&format!("Migration: wineboot -u failed (non-fatal): {}", e)),
+    }
+    register_external_steam_libraries(&ms_dir);
+    clear_steam_crash_marker(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Verifying MetalSharp update...", None);
@@ -1206,6 +1211,281 @@ fn migration_preserve_allows_file(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| MIGRATION_SETTINGS_EXTENSIONS.iter().any(|allowed| ext.eq_ignore_ascii_case(allowed)))
         .unwrap_or(false)
+}
+
+fn clear_steam_crash_marker(ms_dir: &Path) {
+    let crash_file =
+        ms_dir.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join(".crash");
+    if crash_file.exists() {
+        match fs::remove_file(&crash_file) {
+            Ok(()) => log_to_file("Migration: cleared Steam .crash marker"),
+            Err(e) => log_to_file(&format!("Migration: failed to clear Steam .crash marker: {}", e)),
+        }
+    }
+}
+
+fn register_external_steam_libraries(ms_dir: &Path) {
+    let prefix = ms_dir.join("prefix-steam");
+    if !prefix.exists() {
+        return;
+    }
+
+    let steamapps_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
+    if !steamapps_dir.exists() {
+        return;
+    }
+
+    let external_libs = discover_external_steam_libraries();
+    if external_libs.is_empty() {
+        log_to_file("Migration: no external Steam libraries found on mounted volumes");
+        return;
+    }
+
+    log_to_file(&format!(
+        "Migration: found {} external Steam librar(y/ies), registering Wine drive mappings",
+        external_libs.len()
+    ));
+
+    let dosdevices = prefix.join("dosdevices");
+    let mut next_drive = find_next_available_drive_letter(&dosdevices);
+
+    for lib in &external_libs {
+        if next_drive.is_none() {
+            log_to_file("Migration: no more drive letters available for external libraries");
+            break;
+        }
+        let drive = next_drive.unwrap();
+        let drive_link = dosdevices.join(format!("{}:", drive));
+
+        if let Err(e) = std::os::unix::fs::symlink(&lib.unix_path, &drive_link) {
+            log_to_file(&format!(
+                "Migration: failed to create dosdevice {} -> {}: {}",
+                drive,
+                lib.unix_path.display(),
+                e
+            ));
+            continue;
+        }
+
+        log_to_file(&format!(
+            "Migration: mapped Wine drive {} -> {} for Steam library '{}'",
+            drive,
+            lib.unix_path.display(),
+            lib.unix_path.display()
+        ));
+
+        next_drive = next_drive_after(drive).and_then(|d| find_next_available_drive_letter_from(&dosdevices, d));
+    }
+
+    if let Err(e) = update_libraryfolders_vdf(&steamapps_dir, &external_libs) {
+        log_to_file(&format!("Migration: failed to update libraryfolders.vdf: {}", e));
+    }
+}
+
+struct ExternalSteamLibrary {
+    unix_path: PathBuf,
+}
+
+fn discover_external_steam_libraries() -> Vec<ExternalSteamLibrary> {
+    discover_external_steam_libraries_from(Path::new("/Volumes"))
+}
+
+fn discover_external_steam_libraries_from(volumes_dir: &Path) -> Vec<ExternalSteamLibrary> {
+    let mut libs = Vec::new();
+    let volumes = match fs::read_dir(volumes_dir) {
+        Ok(entries) => entries,
+        Err(_) => return libs,
+    };
+
+    for entry in volumes.flatten() {
+        let mount_point = entry.path();
+        if !mount_point.is_dir() {
+            continue;
+        }
+
+        let is_system = mount_point
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|name| {
+                let lower = name.to_ascii_lowercase();
+                lower.starts_with("macintosh") || lower.contains("metalsharp") || lower.starts_with(".")
+            })
+            .unwrap_or(true);
+        if is_system {
+            continue;
+        }
+
+        let candidates = [
+            mount_point.join("SteamLibrary").join("SteamLibrary"),
+            mount_point.join("SteamLibrary"),
+            mount_point.join("steamapps").join(".."),
+        ];
+
+        for candidate in &candidates {
+            let steamapps = candidate.join("steamapps");
+            if steamapps.is_dir() {
+                let has_manifests = fs::read_dir(&steamapps)
+                    .map(|entries| {
+                        entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with("appmanifest_"))
+                    })
+                    .unwrap_or(false);
+                if has_manifests {
+                    libs.push(ExternalSteamLibrary { unix_path: candidate.clone() });
+                    break;
+                }
+            }
+        }
+    }
+
+    libs
+}
+
+fn find_next_available_drive_letter(dosdevices: &Path) -> Option<char> {
+    find_next_available_drive_letter_from(dosdevices, 'd')
+}
+
+fn find_next_available_drive_letter_from(dosdevices: &Path, start: char) -> Option<char> {
+    let mut c = start;
+    loop {
+        let link_path = dosdevices.join(format!("{}:", c));
+        if !link_path.exists() {
+            return Some(c);
+        }
+        c = (c as u8 + 1) as char;
+        if c > 'z' {
+            return None;
+        }
+    }
+}
+
+fn next_drive_after(drive: char) -> Option<char> {
+    let next = (drive as u8 + 1) as char;
+    if next <= 'z' {
+        Some(next)
+    } else {
+        None
+    }
+}
+
+fn update_libraryfolders_vdf(steamapps_dir: &Path, external_libs: &[ExternalSteamLibrary]) -> Result<(), String> {
+    let lf_path = steamapps_dir.join("libraryfolders.vdf");
+    let existing = fs::read_to_string(&lf_path).unwrap_or_default();
+
+    let mut max_index: u32 = 0;
+    let mut existing_paths: Vec<String> = Vec::new();
+
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if let Some(idx_str) = trimmed.strip_prefix('"') {
+            if let Some(end) = idx_str.find('"') {
+                if let Ok(idx) = idx_str[..end].parse::<u32>() {
+                    if idx > max_index {
+                        max_index = idx;
+                    }
+                }
+            }
+        }
+        if trimmed.starts_with("\"path\"") {
+            let mut quoted = Vec::new();
+            let mut chars = trimmed.char_indices().peekable();
+            while let Some((start, ch)) = chars.next() {
+                if ch != '"' {
+                    continue;
+                }
+                let value_start = start + ch.len_utf8();
+                let mut escaped = false;
+                for (end, value_ch) in chars.by_ref() {
+                    if escaped {
+                        escaped = false;
+                        continue;
+                    }
+                    if value_ch == '\\' {
+                        escaped = true;
+                        continue;
+                    }
+                    if value_ch == '"' {
+                        quoted.push(&trimmed[value_start..end]);
+                        break;
+                    }
+                }
+            }
+            if let Some(path_val) = quoted.get(1) {
+                existing_paths.push(path_val.to_string());
+            }
+        }
+    }
+
+    let dosdevices = steamapps_dir.join("..").join("..").join("..").join("dosdevices");
+
+    let mut additions = String::new();
+    for lib in external_libs {
+        let windows_path = match resolve_unix_path_to_windows(&lib.unix_path, &dosdevices) {
+            Some(p) => p,
+            None => {
+                log_to_file(&format!("Migration: could not resolve Windows path for {}", lib.unix_path.display()));
+                continue;
+            },
+        };
+
+        let already_registered = existing_paths.iter().any(|p| {
+            let normalized = p.replace('\\', "/");
+            let lib_normalized = windows_path.replace('\\', "/");
+            normalized.eq_ignore_ascii_case(&lib_normalized)
+        });
+        if already_registered {
+            log_to_file(&format!(
+                "Migration: external library {} already registered in libraryfolders.vdf",
+                lib.unix_path.display()
+            ));
+            continue;
+        }
+
+        max_index += 1;
+        additions.push_str(&format!("\t\"{}\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n", max_index, windows_path));
+        log_to_file(&format!("Migration: added external library entry {} -> {}", max_index, windows_path));
+    }
+
+    if additions.is_empty() {
+        return Ok(());
+    }
+
+    let new_content = if let Some(pos) = existing.rfind('}') {
+        let mut result = existing[..=pos].to_string();
+        result.push_str(&additions);
+        result.push('}');
+        result
+    } else {
+        return Err("libraryfolders.vdf has unexpected format".into());
+    };
+
+    fs::write(&lf_path, &new_content).map_err(|e| format!("failed to write libraryfolders.vdf: {}", e))
+}
+
+fn resolve_unix_path_to_windows(unix_path: &Path, dosdevices: &Path) -> Option<String> {
+    let entries = fs::read_dir(dosdevices).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.ends_with(':') || name_str == "c:" {
+            continue;
+        }
+        let target = fs::read_link(entry.path()).ok()?;
+        if unix_path.starts_with(&target) {
+            let drive = &name_str[..name_str.len() - 1];
+            let rest = match unix_path.strip_prefix(&target) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let rest_str = rest.to_string_lossy();
+            let windows_rest: String = rest_str.replace('/', "\\\\");
+            if windows_rest.is_empty() {
+                return Some(format!("{}:\\\\", drive.to_uppercase()));
+            } else {
+                return Some(format!("{}:\\\\{}", drive.to_uppercase(), windows_rest.trim_start_matches('\\')));
+            }
+        }
+    }
+    None
 }
 
 fn remove_old_runtime(ms_dir: &PathBuf) {
@@ -2194,6 +2474,120 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    #[test]
+    fn clear_steam_crash_marker_removes_existing_crash_file() {
+        let home = test_dir("clear-crash-marker");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let crash_file =
+            ms_dir.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join(".crash");
+        fs::create_dir_all(crash_file.parent().unwrap()).expect("create Steam dir");
+        fs::write(&crash_file, b"").expect("write crash marker");
+
+        assert!(crash_file.exists());
+        clear_steam_crash_marker(&ms_dir);
+        assert!(!crash_file.exists());
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn clear_steam_crash_marker_is_noop_when_no_crash_file() {
+        let home = test_dir("no-crash-marker");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let steam_dir = ms_dir.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
+        fs::create_dir_all(&steam_dir).expect("create Steam dir");
+
+        clear_steam_crash_marker(&ms_dir);
+        assert!(!steam_dir.join(".crash").exists());
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discover_external_steam_libraries_finds_volume_with_steamapps() {
+        let home = test_dir("discover-external");
+        let fake_volumes = home.join("fake_volumes");
+        let steam_lib = fake_volumes.join("ExternalDisk").join("SteamLibrary").join("SteamLibrary");
+        let steamapps = steam_lib.join("steamapps");
+        fs::create_dir_all(&steamapps).expect("create steamapps");
+        fs::write(steamapps.join("appmanifest_620.acf"), b"test").expect("write manifest");
+
+        let libs = discover_external_steam_libraries_from(&fake_volumes);
+        assert_eq!(libs.len(), 1);
+        assert_eq!(libs[0].unix_path, steam_lib);
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discover_external_skips_system_and_metalsharp_volumes() {
+        let home = test_dir("discover-skip-system");
+        let fake_volumes = home.join("fake_volumes");
+        let mac_hd = fake_volumes.join("Macintosh HD");
+        let ms_mount = fake_volumes.join("MetalSharp 0.45.1-arm64");
+        let dot = fake_volumes.join(".hidden_volume");
+        for v in [&mac_hd, &ms_mount, &dot] {
+            let steamapps = v.join("SteamLibrary").join("steamapps");
+            fs::create_dir_all(&steamapps).expect("create steamapps");
+            fs::write(steamapps.join("appmanifest_620.acf"), b"test").expect("write manifest");
+        }
+
+        let libs = discover_external_steam_libraries_from(&fake_volumes);
+        assert!(libs.is_empty());
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discover_external_finds_nesting_level_one_steamlibrary() {
+        let home = test_dir("discover-level-one");
+        let fake_volumes = home.join("fake_volumes");
+        let steam_lib = fake_volumes.join("ExternalDisk").join("SteamLibrary");
+        let steamapps = steam_lib.join("steamapps");
+        fs::create_dir_all(&steamapps).expect("create steamapps");
+        fs::write(steamapps.join("appmanifest_620.acf"), b"test").expect("write manifest");
+
+        let libs = discover_external_steam_libraries_from(&fake_volumes);
+        assert_eq!(libs.len(), 1);
+        assert_eq!(libs[0].unix_path, steam_lib);
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn next_drive_letter_picks_first_free() {
+        let home = test_dir("drive-letter-basic");
+        let dosdevices = home.join("dosdevices");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+
+        assert_eq!(find_next_available_drive_letter_from(&dosdevices, 'd'), Some('d'));
+
+        std::os::unix::fs::symlink(&home, dosdevices.join("d:")).expect("create d drive");
+        assert_eq!(find_next_available_drive_letter_from(&dosdevices, 'd'), Some('e'));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn resolve_unix_path_to_windows_maps_through_dosdevices() {
+        let home = test_dir("resolve-wine-path");
+        let dosdevices = home.join("dosdevices");
+        let external = home.join("ExternalSteam");
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        fs::create_dir_all(&external).expect("create external");
+        std::os::unix::fs::symlink(&external, dosdevices.join("e:")).expect("create e drive");
+
+        let result = resolve_unix_path_to_windows(&external, &dosdevices);
+        assert_eq!(result, Some("E:\\\\".to_string()));
+
+        let sub = external.join("SteamLibrary");
+        fs::create_dir_all(&sub).expect("create sub");
+        let result2 = resolve_unix_path_to_windows(&sub, &dosdevices);
+        assert_eq!(result2, Some("E:\\\\SteamLibrary".to_string()));
+
+        let _ = fs::remove_dir_all(home);
     }
 
     fn find_descendant_named(root: &Path, name: &str) -> bool {
