@@ -89,10 +89,14 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;opengl32=n;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
+                winedllpath_dirs: vec![
+                    "lib/dxmt/x86_64-windows",
+                    "lib/metalsharp/x86_64-windows",
+                    "lib/zink/x86_64-windows",
+                ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
@@ -123,6 +127,17 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                         filename: "metalsharp_ntdll_hook.dll",
                         dest_filename: None,
                     },
+                    DllDeploy { source_subpath: "lib/zink/x86_64-windows", filename: "opengl32.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/zink/x86_64-windows",
+                        filename: "libgallium_wgl.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/zink/x86_64-windows",
+                        filename: "libwinpthread-1.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
@@ -131,6 +146,9 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                     EnvVar { key: "DXMT_D3D12_PSO_WORKERS", value: "6" },
                     EnvVar { key: "DXMT_CONFIG", value: DXMT_M12_SAFE_CONFIG },
+                    EnvVar { key: "MESA_LOADER_DRIVER_OVERRIDE", value: "zink" },
+                    EnvVar { key: "MESA_GL_VERSION_OVERRIDE", value: "3.3COMPAT" },
+                    EnvVar { key: "MVK_CONFIG_API_VERSION_TO_ADVERTISE", value: "4206592" },
                 ],
                 launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes"],
                 alternatives: vec![
@@ -150,9 +168,13 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("winemetal,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some("winemetal,dxgi,d3d11,d3d10core=n,b;opengl32=n;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
+                winedllpath_dirs: vec![
+                    "lib/dxmt/x86_64-windows",
+                    "lib/metalsharp/x86_64-windows",
+                    "lib/zink/x86_64-windows",
+                ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
@@ -182,11 +204,25 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                         filename: "metalsharp_ntdll_hook.dll",
                         dest_filename: None,
                     },
+                    DllDeploy { source_subpath: "lib/zink/x86_64-windows", filename: "opengl32.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/zink/x86_64-windows",
+                        filename: "libgallium_wgl.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/zink/x86_64-windows",
+                        filename: "libwinpthread-1.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                     EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
+                    EnvVar { key: "MESA_LOADER_DRIVER_OVERRIDE", value: "zink" },
+                    EnvVar { key: "MESA_GL_VERSION_OVERRIDE", value: "3.3COMPAT" },
+                    EnvVar { key: "MVK_CONFIG_API_VERSION_TO_ADVERTISE", value: "4206592" },
                 ],
                 launch_args: vec![],
                 alternatives: vec![
@@ -208,13 +244,14 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;opengl32=n;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec![
                     "lib/wine/x86_64-windows",
                     "lib/dxmt/x86_64-windows",
                     "lib/metalsharp/x86_64-windows",
+                    "lib/zink/x86_64-windows",
                 ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll", dest_filename: None },
@@ -251,11 +288,25 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                         filename: "metalsharp_ntdll_hook.dll",
                         dest_filename: None,
                     },
+                    DllDeploy { source_subpath: "lib/zink/x86_64-windows", filename: "opengl32.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/zink/x86_64-windows",
+                        filename: "libgallium_wgl.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/zink/x86_64-windows",
+                        filename: "libwinpthread-1.dll",
+                        dest_filename: None,
+                    },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                     EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
+                    EnvVar { key: "MESA_LOADER_DRIVER_OVERRIDE", value: "zink" },
+                    EnvVar { key: "MESA_GL_VERSION_OVERRIDE", value: "3.3COMPAT" },
+                    EnvVar { key: "MVK_CONFIG_API_VERSION_TO_ADVERTISE", value: "4206592" },
                 ],
                 launch_args: vec![],
                 alternatives: vec![
