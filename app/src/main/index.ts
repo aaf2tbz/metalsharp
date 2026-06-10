@@ -210,6 +210,14 @@ app.whenReady().then(async () => {
     console.warn(`MetalSharp backend did not start during app launch: ${backendStart.error}`);
   }
 
+  if (!backendStart.ok || !(await bridge.isAlive())) {
+    console.log("Backend not responding after first start — retrying...");
+    const retryStart = await bridge.start();
+    if (!retryStart.ok) {
+      console.warn(`MetalSharp backend retry failed: ${retryStart.error}`);
+    }
+  }
+
   const needsMigration = await checkNeedsMigration();
   migrationMode = needsMigration;
 

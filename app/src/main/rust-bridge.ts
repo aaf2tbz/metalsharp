@@ -82,7 +82,6 @@ export class RustBridge {
     if (needsRestart) {
       console.log("Backend version mismatch or not running — restarting...");
       await this.killExisting();
-      await new Promise((r) => setTimeout(r, 500));
     } else if (await this.isAlive()) {
       console.log("Backend already running and up to date");
       return { ok: true };
@@ -105,7 +104,6 @@ export class RustBridge {
 
     this.stop();
     await this.killExisting();
-    await new Promise((r) => setTimeout(r, 500));
 
     try {
       this.spawnBackend(binPath);
@@ -229,6 +227,9 @@ export class RustBridge {
       const runningPid = await this.getBackendPid();
       if (!runningPid) return false;
 
+      const runningVersion = await this.getBackendVersion();
+      if (runningVersion && runningVersion !== this.getOwnVersion()) return true;
+
       const runningPath = await this.getProcessPath(runningPid);
       if (runningPath && runningPath !== binPath) return true;
 
@@ -237,6 +238,37 @@ export class RustBridge {
     } catch {}
 
     return false;
+  }
+
+  private getOwnVersion(): string {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
+      return pkg.version || "";
+    } catch {
+      return "";
+    }
+  }
+
+  private async getBackendVersion(): Promise<string | null> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            resolve(data.version ?? null);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(null);
+      });
+    });
   }
 
   private async getProcessPath(pid: number): Promise<string | null> {
@@ -266,6 +298,22 @@ export class RustBridge {
     try {
       process.kill(pid, "SIGTERM");
     } catch {}
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+        await new Promise((r) => setTimeout(r, 200));
+      } catch {
+        break;
+      }
+    }
+
+    const portDeadline = Date.now() + 3000;
+    while (Date.now() < portDeadline) {
+      if (!(await this.isAlive())) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
   private findBinary(): string | null {
