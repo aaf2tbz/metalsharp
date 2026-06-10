@@ -384,9 +384,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Ok(_) => resp(200, json!({"ok": true, "port": mtsp::launcher::bridge_port()})),
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
-        (Method::Get, "/steam/watch-steamapps") => match steam::watch_steamapps() {
-            Some(new_ids) => resp(200, json!({"ok": true, "new_appids": new_ids})),
-            None => resp(200, json!({"ok": true, "new_appids": []})),
+        (Method::Get, "/steam/watch-steamapps") => {
+            let new_ids = steam::watch_steamapps();
+            resp(200, json!({"ok": true, "new_appids": new_ids}))
         },
         (Method::Post, "/steam/install-game") => {
             let body = read_body(req);

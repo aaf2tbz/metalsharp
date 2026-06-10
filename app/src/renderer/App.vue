@@ -262,6 +262,13 @@ function startHealthPolling() {
   setInterval(refreshSteamStatus, 5000);
 
   setInterval(async () => {
+    const result = await api<{ ok?: boolean; new_appids?: number[] }>("GET", "/steam/watch-steamapps");
+    if (result?.new_appids && result.new_appids.length > 0) {
+      await loadLibrary();
+    }
+  }, 30000);
+
+  setInterval(async () => {
     const prev = backendConnected.value;
     backendConnected.value = await getAPI().isBackendAlive();
     if (backendConnected.value) {

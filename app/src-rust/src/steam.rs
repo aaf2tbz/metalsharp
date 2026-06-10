@@ -1486,15 +1486,9 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     Ok("Steam install thread complete".into())
 }
 
-pub fn watch_steamapps() -> Option<String> {
-    let steamapps = steam_prefix().join("drive_c").join("Program Files (x86)").join("Steam").join("steamapps");
-
-    if !steamapps.exists() {
-        return None;
-    }
-
-    let current = get_wine_steam_installed_games();
-    let cached_path = crate::platform::metalsharp_home_dir().join("cache").join("wine_steam_appids.cache");
+pub fn watch_steamapps() -> Vec<u32> {
+    let current = get_installed_appids();
+    let cached_path = crate::platform::metalsharp_home_dir().join("cache").join("steam_appids.cache");
 
     let cached: Vec<u32> = if cached_path.exists() {
         std::fs::read_to_string(&cached_path)
@@ -1512,13 +1506,10 @@ pub fn watch_steamapps() -> Option<String> {
         }
     }
 
+    let _ = std::fs::create_dir_all(cached_path.parent().unwrap_or(std::path::Path::new(".")));
     let _ = std::fs::write(&cached_path, current.iter().map(|id| id.to_string()).collect::<Vec<_>>().join("\n"));
 
-    if new_appids.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_string(&new_appids).unwrap_or_default())
-    }
+    new_appids
 }
 
 #[cfg(test)]
