@@ -30,6 +30,7 @@ struct CoreAudioBackend::Impl {
     uint32_t bytesPerSample = 2;
     uint32_t channels = 2;
     uint32_t sampleRate = 44100;
+    bool formatFrozen = false;
     XAudio2WaveFormat format = {};
 
     alignas(64) uint8_t ringBuffer[RING_BUFFER_BYTES] = {};
@@ -38,21 +39,23 @@ struct CoreAudioBackend::Impl {
 
     alignas(64) std::atomic<uint32_t> queuedCount{0};
     alignas(64) std::atomic<uint32_t> underrunCount{0};
-    uint32_t fadeOutRemaining = 0;
+    std::atomic<uint32_t> fadeOutRemaining{0};
     float fadeOutGain = 1.0f;
 
     uint32_t ringFramesAvailable() const {
         uint32_t w = writePos.load(std::memory_order_acquire);
         uint32_t r = readPos.load(std::memory_order_acquire);
         uint32_t total = RING_BUFFER_FRAMES * RING_BUFFER_CHANNELS * sizeof(float);
-        return ((w + total - r) % total) / (channels * sizeof(float));
+        uint32_t frameBytes = channels * sizeof(float);
+        return frameBytes > 0 ? ((w + total - r) % total) / frameBytes : 0;
     }
 
     uint32_t ringFramesFree() const {
         uint32_t w = writePos.load(std::memory_order_acquire);
         uint32_t r = readPos.load(std::memory_order_acquire);
         uint32_t total = RING_BUFFER_FRAMES * RING_BUFFER_CHANNELS * sizeof(float);
-        return ((r + total - w - 1) % total) / (channels * sizeof(float));
+        uint32_t frameBytes = channels * sizeof(float);
+        return frameBytes > 0 ? ((r + total - w - 1) % total) / frameBytes : 0;
     }
 
     uint32_t ringRead(float* out, uint32_t frames) {
@@ -143,7 +146,7 @@ static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*,
 
     float vol = impl->volume.load(std::memory_order_acquire);
     bool applyVolume = vol < 0.999f;
-    bool applyFadeOut = impl->fadeOutRemaining > 0;
+    bool applyFadeOut = impl->fadeOutRemaining.load(std::memory_order_acquire) > 0;
 
     for (UInt32 bufIdx = 0; bufIdx < ioData->mNumberBuffers; bufIdx++) {
         auto& outBuf = ioData->mBuffers[bufIdx];
@@ -157,18 +160,19 @@ static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*,
             impl->ringRead(outPtr, available);
             uint32_t remaining = framesNeeded - available;
             memset(outPtr + available * impl->channels, 0, remaining * impl->channels * sizeof(float));
-            if (impl->fadeOutRemaining == 0) {
+            if (impl->fadeOutRemaining.load(std::memory_order_acquire) == 0) {
                 impl->underrunCount.fetch_add(1, std::memory_order_relaxed);
             }
         } else {
             memset(outPtr, 0, outBuf.mDataByteSize);
-            if (impl->fadeOutRemaining == 0) {
+            if (impl->fadeOutRemaining.load(std::memory_order_acquire) == 0) {
                 impl->underrunCount.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
         if (applyFadeOut && bufIdx == 0) {
-            uint32_t toFade = std::min(impl->fadeOutRemaining, framesNeeded);
+            uint32_t remaining = impl->fadeOutRemaining.load(std::memory_order_acquire);
+            uint32_t toFade = std::min(remaining, framesNeeded);
             for (uint32_t f = 0; f < toFade; f++) {
                 float t = static_cast<float>(f) / static_cast<float>(FADE_OUT_FRAMES);
                 float gain = 1.0f - t * impl->fadeOutGain;
@@ -176,8 +180,9 @@ static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*,
                     outPtr[f * impl->channels + c] *= gain;
                 }
             }
-            impl->fadeOutRemaining -= toFade;
-            if (impl->fadeOutRemaining == 0) {
+            uint32_t newRemaining = remaining - toFade;
+            impl->fadeOutRemaining.store(newRemaining, std::memory_order_release);
+            if (newRemaining == 0) {
                 impl->fadeOutGain = 1.0f;
             }
         }
@@ -317,18 +322,21 @@ bool CoreAudioBackend::submitBuffer(const void* data, uint32_t size, const XAudi
     if (!data || size == 0)
         return false;
 
-    m_impl->format = format;
-    m_impl->channels = format.channels;
-    m_impl->sampleRate = format.samplesPerSec;
-    m_impl->bytesPerSample = format.bitsPerSample == 8    ? 1
-                             : format.bitsPerSample == 16 ? 2
-                             : format.bitsPerSample == 24 ? 3
-                             : format.bitsPerSample == 32 ? 4
-                                                          : 2;
+    if (!m_impl->formatFrozen) {
+        m_impl->format = format;
+        m_impl->channels = format.channels;
+        m_impl->sampleRate = format.samplesPerSec;
+        m_impl->bytesPerSample = format.bitsPerSample == 8    ? 1
+                                 : format.bitsPerSample == 16 ? 2
+                                 : format.bitsPerSample == 24 ? 3
+                                 : format.bitsPerSample == 32 ? 4
+                                                              : 2;
+        m_impl->formatFrozen = true;
+    }
 
     uint32_t totalSamples = size / m_impl->bytesPerSample;
     uint32_t totalFloatSamples = totalSamples;
-    uint32_t frames = totalSamples / format.channels;
+    uint32_t frames = totalSamples / m_impl->channels;
 
     uint32_t freeFrames = m_impl->ringFramesFree();
     if (frames > freeFrames) {
@@ -398,10 +406,10 @@ void CoreAudioBackend::play() {
 void CoreAudioBackend::stop() {
     if (m_impl->playing.load(std::memory_order_acquire)) {
         m_impl->fadeOutGain = 1.0f;
-        m_impl->fadeOutRemaining = FADE_OUT_FRAMES;
+        m_impl->fadeOutRemaining.store(FADE_OUT_FRAMES, std::memory_order_release);
 
         uint32_t waited = 0;
-        while (m_impl->fadeOutRemaining > 0 && waited < FADE_OUT_FRAMES + 100) {
+        while (m_impl->fadeOutRemaining.load(std::memory_order_acquire) > 0 && waited < FADE_OUT_FRAMES + 100) {
             usleep(500);
             waited++;
         }
@@ -422,10 +430,10 @@ void CoreAudioBackend::stop() {
 void CoreAudioBackend::pause() {
     if (m_impl->playing.load(std::memory_order_acquire)) {
         m_impl->fadeOutGain = 0.5f;
-        m_impl->fadeOutRemaining = FADE_OUT_FRAMES;
+        m_impl->fadeOutRemaining.store(FADE_OUT_FRAMES, std::memory_order_release);
 
         uint32_t waited = 0;
-        while (m_impl->fadeOutRemaining > 0 && waited < FADE_OUT_FRAMES + 100) {
+        while (m_impl->fadeOutRemaining.load(std::memory_order_acquire) > 0 && waited < FADE_OUT_FRAMES + 100) {
             usleep(500);
             waited++;
         }

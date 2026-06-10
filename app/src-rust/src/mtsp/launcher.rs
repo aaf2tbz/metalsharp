@@ -2115,7 +2115,7 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     let fmod_libs: &[(&str, Option<&str>)] = &[("libfmod.dylib", None), ("libfmodstudio.dylib", None)];
     for (lib, symlink) in fmod_libs {
         let dst = game_dir.join(lib);
-        if dst.exists() {
+        if dst.exists() && dst.metadata().map(|m| m.len() > 0).unwrap_or(false) {
             continue;
         }
         let fmod_dir = metalsharp_home.join("runtime").join("fnalibs").join("fmod");

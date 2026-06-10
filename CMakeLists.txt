@@ -157,6 +157,7 @@ add_library(metalsharp_audio SHARED
     src/audio/X3DAudioEngine.cpp
     src/audio/DirectSoundBackend.cpp
     src/audio/CoreAudioBackend.cpp
+    src/audio/EntryPoint.cpp
 )
 target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK})
 set_target_properties(metalsharp_audio PROPERTIES OUTPUT_NAME "xaudio2_9" PREFIX "")

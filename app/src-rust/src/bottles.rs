@@ -110,6 +110,8 @@ fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
         .arg("/install")
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("wine x64 failed: {}", e))?;
     if !x64_status.success() {
@@ -122,6 +124,8 @@ fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
         .arg("/install")
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map_err(|e| format!("wine x86 failed: {}", e))?;
     if !x86_status.success() {

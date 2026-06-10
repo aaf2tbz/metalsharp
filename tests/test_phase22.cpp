@@ -120,7 +120,7 @@ static bool test_xaudio2_create() {
     return ok;
 }
 
-static bool test_xaudio2_null_pointer() {
+static bool test_xaudio2_default_init() {
     XAudio2Engine engine;
     HRESULT hr = engine.init();
     return hr == S_OK;
@@ -287,7 +287,7 @@ int main() {
     TEST(coreaudio_frequency_ratio);
     TEST(coreaudio_queued_buffers);
     TEST(xaudio2_create);
-    TEST(xaudio2_null_pointer);
+    TEST(xaudio2_default_init);
     TEST(xaudio2_source_voice);
     TEST(xaudio2_submit_start_stop);
 
