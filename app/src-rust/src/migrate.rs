@@ -714,6 +714,11 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
     let mut updated = 0usize;
     for prefix in collect_existing_wine_prefixes(ms_dir) {
         let steam_library_drive_links = collect_steam_library_drive_links(&prefix);
+        // Snapshot all dosdevice symlinks before wineboot rewrites them.
+        // This covers custom drive mappings (external drives, Z:, etc.) that
+        // wineboot -u may destroy.
+        let all_dosdevice_links = collect_prefix_dosdevice_links(&prefix);
+
         write_migrate_progress(
             "running",
             step,
@@ -721,8 +726,25 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
             &format!("Updating Wine prefix {}...", prefix.display()),
             None,
         );
+
+        // Pre-check: dosdevices must exist and be a directory.
+        let dosdevices = prefix.join("dosdevices");
+        if dosdevices.exists() && !dosdevices.is_dir() {
+            log_to_file(&format!(
+                "Migration: dosdevices exists but is not a directory for {} — skipping wineboot",
+                prefix.display()
+            ));
+            continue;
+        }
+
         run_wineboot_update(&wine, &runtime_wine, &prefix)?;
+
         restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
+        restore_prefix_dosdevice_links(&prefix, &all_dosdevice_links);
+
+        // Post-check: verify critical dosdevice links survived wineboot.
+        verify_prefix_dosdevices_integrity(&prefix);
+
         updated += 1;
     }
 
@@ -749,7 +771,8 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
     let mut cmd = Command::new(wine);
     cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "none")
+        .env("WINEDEBUGGER", "/usr/bin/true")
+        .env("WINEDLLOVERRIDES", "winedbg=d")
         .arg("wineboot")
         .arg("-u")
         .stdout(std::process::Stdio::null())
@@ -976,6 +999,56 @@ fn restore_steam_library_drive_links(prefix: &Path, links: &[SteamLibraryDriveLi
                 dosdevice.display(),
                 link.target.display(),
                 link.library_path,
+                e
+            )),
+        }
+    }
+}
+
+fn verify_prefix_dosdevices_integrity(prefix: &Path) {
+    let dosdevices = prefix.join("dosdevices");
+    if !dosdevices.is_dir() {
+        log_to_file(&format!(
+            "Migration: dosdevices directory missing after wineboot for {}",
+            prefix.display()
+        ));
+        let _ = fs::create_dir_all(&dosdevices);
+    }
+
+    // Verify c: -> drive_c exists — this is the critical Wine system drive.
+    let c_drive = dosdevices.join("c:");
+    let expected_c = prefix.join("drive_c");
+    let c_ok = match fs::read_link(&c_drive) {
+        Ok(target) => {
+            // Wine may use relative (../drive_c) or absolute path.
+            let resolved = if target.is_relative() {
+                dosdevices.join(&target)
+            } else {
+                target
+            };
+            match fs::canonicalize(&resolved) {
+                Ok(resolved) => match fs::canonicalize(&expected_c) {
+                    Ok(expected) => resolved == expected,
+                    Err(_) => true, // Can't verify — assume OK
+                },
+                Err(_) => true, // Can't resolve — assume OK
+            }
+        },
+        Err(_) => false,
+    };
+
+    if !c_ok {
+        if c_drive.exists() {
+            let _ = fs::remove_file(&c_drive);
+        }
+        match std::os::unix::fs::symlink("../drive_c", &c_drive) {
+            Ok(()) => log_to_file(&format!(
+                "Migration: recreated c: -> drive_c for {}",
+                prefix.display()
+            )),
+            Err(e) => log_to_file(&format!(
+                "Migration: failed to recreate c: dosdevice for {}: {}",
+                prefix.display(),
                 e
             )),
         }
