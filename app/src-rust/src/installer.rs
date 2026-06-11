@@ -1093,7 +1093,8 @@ fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
     let x64_dll = goldberg_dir.join("x64").join("steam_api64.dll");
     let sc64_dll = goldberg_dir.join("steamclient").join("steamclient64.dll");
 
-    if x86_dll.exists() && x64_dll.exists() && sc64_dll.exists() {
+    if x86_dll.exists() && x64_dll.exists() {
+        // steamclient is optional — only check core DLLs.
         return Ok(false);
     }
 

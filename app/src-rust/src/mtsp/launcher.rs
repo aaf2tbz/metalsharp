@@ -2865,12 +2865,13 @@ fn goldberg_deploy_settings(steam_settings: &Path, appid: u32) {
 pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
     let emu_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("goldberg");
     if !emu_dir.exists() {
+        eprintln!("goldberg: runtime directory not found at {}", emu_dir.display());
         return;
     }
 
     let targets = goldberg_deploy_targets(game_dir);
-
     let steamclient_dir = emu_dir.join("steamclient");
+    let mut deployed_any = false;
 
     for target in &targets {
         if !target.exists() {
@@ -2884,6 +2885,7 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
                 let _ = std::fs::rename(&x86_dst, target.join("steam_api.dll.orig"));
             }
             let _ = std::fs::copy(&x86_src, &x86_dst);
+            deployed_any = true;
         }
 
         let x64_src = emu_dir.join("x64").join("steam_api64.dll");
@@ -2893,6 +2895,7 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
                 let _ = std::fs::rename(&x64_dst, target.join("steam_api64.dll.orig"));
             }
             let _ = std::fs::copy(&x64_src, &x64_dst);
+            deployed_any = true;
         }
 
         if steamclient_dir.is_dir() {
@@ -2928,6 +2931,10 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
         }
     }
 
+    if !deployed_any {
+        eprintln!("goldberg: no new DLLs deployed (all targets already have .orig backups or no source DLLs)");
+    }
+
     goldberg_deploy_settings(&game_dir.join("steam_settings"), appid);
 
     for target in &targets {
@@ -2940,6 +2947,7 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
         goldberg_deploy_settings(&target.join("steam_settings"), appid);
     }
 
+    // Always regenerate interfaces after deployment — the DLLs must be in place first.
     generate_steam_interfaces(game_dir);
 }
 
@@ -3229,11 +3237,15 @@ fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
 fn generate_steam_interfaces(game_dir: &Path) {
     let steam_settings = game_dir.join("steam_settings");
     let interfaces_file = steam_settings.join("steam_interfaces.txt");
-    if interfaces_file.exists() {
+
+    // Don't bail early if the file exists but is empty or nearly empty.
+    let existing_ok = interfaces_file.exists()
+        && std::fs::read_to_string(&interfaces_file).map(|c| c.trim().lines().count() >= 3).unwrap_or(false);
+    if existing_ok {
         return;
     }
 
-    let candidates: Vec<PathBuf> = vec![
+    let mut candidates: Vec<PathBuf> = vec![
         game_dir.join("steam_api64.dll.orig"),
         game_dir.join("steam_api.dll.orig"),
         game_dir.join("Game").join("steam_api64.dll.orig"),
@@ -3243,6 +3255,13 @@ fn generate_steam_interfaces(game_dir: &Path) {
         game_dir.join("bin").join("steam_api64.dll.orig"),
         game_dir.join("win64").join("steam_api64.dll.orig"),
     ];
+
+    // Also try the current (non-.orig) DLLs — the Goldberg emulator DLL itself
+    // ships the same Steam interface exports.
+    candidates.push(game_dir.join("steam_api64.dll"));
+    candidates.push(game_dir.join("steam_api.dll"));
+    candidates.push(game_dir.join("Game").join("steam_api64.dll"));
+    candidates.push(game_dir.join("bin").join("steam_api64.dll"));
 
     let dll_path = match candidates.iter().find(|p| p.exists()) {
         Some(p) => p,
