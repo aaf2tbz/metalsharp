@@ -2249,6 +2249,13 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
         "libFNA3D.0.dylib",
         "libFAudio.0.dylib",
         "FNA.dll",
+        "Microsoft.Xna.Framework.dll",
+        "Microsoft.Xna.Framework.Game.dll",
+        "Microsoft.Xna.Framework.Graphics.dll",
+        "Microsoft.Xna.Framework.Audio.dll",
+        "Microsoft.Xna.Framework.Input.dll",
+        "Microsoft.Xna.Framework.Media.dll",
+        "Microsoft.Xna.Framework.Storage.dll",
         "steam_appid.txt",
     ];
     if profile.mono_arch == MonoArch::X86 {
