@@ -489,6 +489,10 @@ fn run_migration() {
     let marker = post_update_marker_path(&ms_dir);
     let _ = fs::remove_file(&marker);
     let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
+
+    kill_steam_wine();
+    log_to_file("Migration: killed Wine/Steam processes after prefix update to dismiss wineboot window");
+
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
 }
