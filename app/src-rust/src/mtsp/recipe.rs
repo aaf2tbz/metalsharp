@@ -195,7 +195,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
-    if appid == 440 || appid == 620 {
+    if matches!(appid, 440 | 620 | 1260320) {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
@@ -1047,6 +1047,18 @@ mod tests {
 
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")), "appid {appid}");
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")), "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn source_style_titles_get_steam_secure_launch_args() {
+        for appid in [440, 620, 1260320] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "appid {appid}");
+            assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
+            assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
         }
     }
 
