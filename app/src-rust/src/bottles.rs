@@ -750,6 +750,10 @@ pub fn resolve_steam_pipeline_for_request(
     }
 }
 
+pub fn steam_pipeline_defaults_offline(pipeline: crate::mtsp::engine::PipelineId) -> bool {
+    matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
+}
+
 pub fn load_steam_compatdata(appid: u32) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
     let data = fs::read_to_string(steam_compatdata_manifest_path(appid))?;
     Ok(serde_json::from_str(&data)?)
@@ -777,9 +781,7 @@ fn steam_compatdata_record(
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> SteamCompatdataRecord {
     let appid = manifest.steam_app_id.unwrap_or_default();
-    let recipe = crate::mtsp::rules::get_game_recipe(appid);
-    let offline_d3dmetal = matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
-        && recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false);
+    let offline_default = steam_pipeline_defaults_offline(pipeline);
     SteamCompatdataRecord {
         appid,
         name: manifest.name.clone(),
@@ -790,13 +792,13 @@ fn steam_compatdata_record(
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
         launch_pipeline: pipeline_preference_id(pipeline).to_string(),
-        steam_identity_mode: if offline_d3dmetal {
+        steam_identity_mode: if offline_default {
             "offline_steam_emulation".to_string()
         } else {
             "wine_steam_background".to_string()
         },
         compat_tool_name: "MetalSharp".to_string(),
-        launch_command_template: if offline_d3dmetal {
+        launch_command_template: if offline_default {
             format!("POST /steam/launch-offline {{\"appid\":{}}}", appid)
         } else {
             format!(
@@ -6462,11 +6464,11 @@ mod tests {
     #[test]
     fn d3dmetal_offline_titles_advertise_offline_compatdata_route() {
         let manifest = BottleManifest {
-            id: "steam_2050650".into(),
-            name: "Resident Evil 4".into(),
+            id: "steam_999999".into(),
+            name: "D3DMetal Game".into(),
             custom_name: None,
             bottle_type: BottleType::Steam,
-            steam_app_id: Some(2050650),
+            steam_app_id: Some(999999),
             prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
             arch: BottleArch::Win64,
             runtime_profile: RuntimeProfile::D3DMetal,
@@ -6474,7 +6476,7 @@ mod tests {
             installed_components: default_components_for(RuntimeProfile::D3DMetal),
             source_installer_path: None,
             installer_kind: None,
-            game_install_path: Some("/games/Resident Evil 4".into()),
+            game_install_path: Some("/games/D3DMetal Game".into()),
             runtime_assets: Vec::new(),
             installed_app_detections: Vec::new(),
             health: BottleHealth::Ready,
@@ -6491,7 +6493,7 @@ mod tests {
         assert_eq!(record.launch_pipeline, "d3dmetal");
         assert_eq!(record.steam_identity_mode, "offline_steam_emulation");
         assert!(record.launch_command_template.contains("/steam/launch-offline"));
-        assert!(record.launch_command_template.contains("2050650"));
+        assert!(record.launch_command_template.contains("999999"));
     }
 
     #[test]

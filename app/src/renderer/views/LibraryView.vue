@@ -237,6 +237,8 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
     error?: string;
     engine?: string;
     gameType?: string;
+    offline_mode?: boolean;
+    steam_runtime?: string;
   }>("POST", launchEndpoint, {
     appid: game.appid,
     launchMethod,
@@ -247,7 +249,8 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   if (launchResult?.ok && launchResult.pid) {
     runningPid.value = launchResult.pid;
     runningAppId.value = game.appid;
-    if (useWineSteamRoute) wineSteamRunning.value = true;
+    if (useWineSteamRoute && !launchResult.offline_mode && launchResult.steam_runtime !== "offline")
+      wineSteamRunning.value = true;
     if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
   } else {

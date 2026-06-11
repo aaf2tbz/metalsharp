@@ -467,9 +467,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                     Ok(prepared) => prepared,
                                     Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                                 };
-                            let recipe = mtsp::rules::get_game_recipe(id);
-                            let offline_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetal)
-                                && recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false);
+                            let offline_direct = bottles::steam_pipeline_defaults_offline(pipeline);
                             if offline_direct {
                                 let Some(game_dir) = launch_recipe.game_dir.as_ref() else {
                                     return resp(404, json!({"ok": false, "error": "Game directory not found"}));
@@ -554,13 +552,15 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     let pipeline = bottles::resolve_steam_pipeline_for_request(id, None);
                     let node = mtsp::engine::get_pipeline(pipeline);
 
-                    if !recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false) {
+                    if !bottles::steam_pipeline_defaults_offline(pipeline)
+                        && !recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false)
+                    {
                         return resp(
                             400,
                             json!({
                                 "ok": false,
                                 "error": "Game is not marked as offline-capable",
-                                "hint": "Set offline_capable = true in mtsp-rules.toml for this appid"
+                                "hint": "Use D3DMetal or set offline_capable = true in mtsp-rules.toml for this appid"
                             }),
                         );
                     }
