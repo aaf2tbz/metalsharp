@@ -122,6 +122,14 @@
         "to": "scripts/tools/updater"
       },
       {
+        "from": "../configs",
+        "to": "configs",
+        "filter": [
+          "*.config",
+          "*.toml"
+        ]
+      },
+      {
         "from": "bundles/metalsharp-electron.tar.zst",
         "to": "bundles/metalsharp-electron.tar.zst"
       },

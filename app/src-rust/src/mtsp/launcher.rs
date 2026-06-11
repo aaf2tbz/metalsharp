@@ -1268,11 +1268,11 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
     let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
     let stderr = stdout.try_clone()?;
 
-    cmd.current_dir(dir)
-        .env(runtime_lib_key, &runtime_lib_path)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &runtime_lib_path)
-        .env("MONO_CONFIG", mono_config)
-        .env("MONO_ENV_OPTIONS", "--runtime=v4.0")
+    cmd.current_dir(dir).env(runtime_lib_key, &runtime_lib_path).env("DYLD_FALLBACK_LIBRARY_PATH", &runtime_lib_path);
+    if !mono_config.is_empty() {
+        cmd.env("MONO_CONFIG", &mono_config);
+    }
+    cmd.env("MONO_ENV_OPTIONS", "--runtime=v4.0")
         .env("MONO_PATH", mono_path)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -1937,6 +1937,11 @@ fn rewrite_config_with_absolute_paths(
     let runtime_config = ms_home.join("configs").join(template_config);
 
     let content = std::fs::read_to_string(&runtime_config).unwrap_or_default();
+    if content.is_empty() {
+        // Template not found in deployed configs — skip rewrite, return empty
+        // so the caller treats it as "no config to apply"
+        return Ok(String::new());
+    }
     let game_dir_str = game_dir.to_string_lossy();
     let native_libs_needing_abs_path = [
         "libSDL2-2.0.0.dylib",
