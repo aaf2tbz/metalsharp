@@ -649,8 +649,12 @@ struct PreservedData {
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
-    let tmp =
-        std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}-{}", std::process::id(), temp_suffix()));
+    let tmp = std::env::temp_dir().join(format!(
+        "metalsharp-migration-preserve-{}-{}-{:x}",
+        std::process::id(),
+        temp_suffix(),
+        std::hash::Hasher::finish(&std::collections::hash_map::DefaultHasher::new())
+    ));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
