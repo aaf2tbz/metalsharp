@@ -388,7 +388,11 @@ pub fn launch_with_pipeline(
 
     if let Some(home) = dirs::home_dir() {
         if let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) {
-            ensure_steam_emu_if_active(&home, &game_dir, appid);
+            if goldberg_status(&game_dir.to_path_buf()) {
+                ensure_steam_emu_if_active(&home, &game_dir, appid);
+            } else {
+                ensure_real_steam_dlls(&home, &game_dir, appid);
+            }
         }
     }
 
@@ -418,7 +422,11 @@ pub fn launch_steam_bottle_with_pipeline(
 
     if let Some(home) = dirs::home_dir() {
         if let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) {
-            ensure_steam_emu_if_active(&home, &game_dir, appid);
+            if goldberg_status(&game_dir.to_path_buf()) {
+                ensure_steam_emu_if_active(&home, &game_dir, appid);
+            } else {
+                ensure_real_steam_dlls(&home, &game_dir, appid);
+            }
         }
     }
 
@@ -3065,41 +3073,9 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
         }
     }
 
-    let steam_settings = game_dir.join("steam_settings");
-    let _ = std::fs::create_dir_all(&steam_settings);
-
-    // Always ensure force_steam_appid.txt is current — a stale appid from a
-    // previous game launch is the #1 cause of Goldberg crashes.
-    let appid_file = steam_settings.join("force_steam_appid.txt");
-    let current_appid = std::fs::read_to_string(&appid_file).unwrap_or_default();
-    if current_appid.trim() != appid.to_string() {
-        let _ = std::fs::write(&appid_file, appid.to_string());
-        eprintln!(
-            "steam_emu: updated force_steam_appid.txt from {:?} to {}",
-            current_appid.trim(),
-            appid
-        );
-    }
-
-    // Also ensure steam_appid.txt in the game root and exe-adjacent dirs are current.
-    let appid_targets = [
-        game_dir.to_path_buf(),
-        game_dir.join("Game"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("bin"),
-        game_dir.join("win64"),
-    ];
-    for dir in &appid_targets {
-        if dir.is_dir() {
-            let f = dir.join("steam_appid.txt");
-            let existing = std::fs::read_to_string(&f).unwrap_or_default();
-            if existing.trim() != appid.to_string() {
-                let _ = std::fs::write(&f, appid.to_string());
-            }
-        }
-    }
-
     // Validate steam_interfaces.txt — regenerate if missing or empty.
+    // This is the only repair we do at launch time; appid was set at toggle.
+    let steam_settings = game_dir.join("steam_settings");
     let interfaces_file = steam_settings.join("steam_interfaces.txt");
     let needs_interfaces = !interfaces_file.exists()
         || std::fs::read_to_string(&interfaces_file)
@@ -3109,6 +3085,110 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
         eprintln!("steam_emu: steam_interfaces.txt missing or incomplete, regenerating");
         generate_steam_interfaces(game_dir);
     }
+}
+
+/// For non-Goldberg launches: ensure the game directory has real Steam DLLs,
+/// not leftover Goldberg emulator files. Restores .orig backups if they exist,
+/// or deploys from the user's Wine Steam installation.
+fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32) {
+    let targets = goldberg_deploy_targets(game_dir);
+    let mut restored_any = false;
+
+    for target in &targets {
+        if !target.exists() {
+            continue;
+        }
+
+        // Restore .orig backups (real Steam DLLs saved when Goldberg was toggled on).
+        let x86_orig = target.join("steam_api.dll.orig");
+        let x86_current = target.join("steam_api.dll");
+        if x86_orig.exists() {
+            // .orig exists but Goldberg was untoggled — orphaned state.
+            // This shouldn't happen (cleanup_goldberg restores .orig) but
+            // handle it defensively.
+            let _ = std::fs::rename(&x86_orig, &x86_current);
+            eprintln!("real_steam: restored orphaned steam_api.dll.orig in {}", target.display());
+            restored_any = true;
+        }
+
+        let x64_orig = target.join("steam_api64.dll.orig");
+        let x64_current = target.join("steam_api64.dll");
+        if x64_orig.exists() {
+            let _ = std::fs::rename(&x64_orig, &x64_current);
+            eprintln!("real_steam: restored orphaned steam_api64.dll.orig in {}", target.display());
+            restored_any = true;
+        }
+
+        let sc64_orig = target.join("steamclient64.dll.orig");
+        let sc64_current = target.join("steamclient64.dll");
+        if sc64_orig.exists() {
+            let _ = std::fs::rename(&sc64_orig, &sc64_current);
+            restored_any = true;
+        }
+
+        let sc32_orig = target.join("steamclient.dll.orig");
+        let sc32_current = target.join("steamclient.dll");
+        if sc32_orig.exists() {
+            let _ = std::fs::rename(&sc32_orig, &sc32_current);
+            restored_any = true;
+        }
+    }
+
+    if restored_any {
+        // Also clean up Goldberg settings dirs that shouldn't exist when
+        // the emulator is off.
+        let steam_settings = game_dir.join("steam_settings");
+        if steam_settings.is_dir() {
+            let _ = std::fs::remove_file(steam_settings.join("force_steam_appid.txt"));
+            let _ = std::fs::remove_file(steam_settings.join("account_name.txt"));
+            let _ = std::fs::remove_file(steam_settings.join("user_steam_id.txt"));
+            let _ = std::fs::remove_file(steam_settings.join("steam_interfaces.txt"));
+            if std::fs::read_dir(&steam_settings).map(|d| d.count()).unwrap_or(1) == 0 {
+                let _ = std::fs::remove_dir(&steam_settings);
+            }
+        }
+    }
+
+    // Deploy real steam_api64.dll from the user's Wine Steam installation
+    // if the game directory doesn't have one at all.
+    let wine_steam_dir = crate::platform::metalsharp_home_dir_for(home)
+        .join("prefix-steam")
+        .join("drive_c")
+        .join("Program Files (x86)")
+        .join("Steam");
+    let real_steam_api64 = wine_steam_dir.join("steam_api64.dll");
+    let real_steam_api = wine_steam_dir.join("steam_api.dll");
+
+    if real_steam_api64.exists() {
+        for target in &targets {
+            if !target.exists() {
+                continue;
+            }
+            // Only deploy if no steam_api64.dll exists (game shipped without one,
+            // or it was never installed via Steam).
+            let dest = target.join("steam_api64.dll");
+            if !dest.exists() {
+                let _ = std::fs::copy(&real_steam_api64, &dest);
+                eprintln!("real_steam: deployed Wine Steam steam_api64.dll to {}", target.display());
+            }
+        }
+    }
+
+    if real_steam_api.exists() {
+        for target in &targets {
+            if !target.exists() {
+                continue;
+            }
+            let dest = target.join("steam_api.dll");
+            if !dest.exists() {
+                let _ = std::fs::copy(&real_steam_api, &dest);
+                eprintln!("real_steam: deployed Wine Steam steam_api.dll to {}", target.display());
+            }
+        }
+    }
+
+    // Always ensure steam_appid.txt is correct for the real Steam runtime.
+    deploy_steam_appid(game_dir, appid);
 }
 
 fn start_protected_game_real_exe(appid: u32) -> Option<&'static str> {
