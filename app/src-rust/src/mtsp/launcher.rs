@@ -3066,10 +3066,48 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
     }
 
     let steam_settings = game_dir.join("steam_settings");
+    let _ = std::fs::create_dir_all(&steam_settings);
+
+    // Always ensure force_steam_appid.txt is current — a stale appid from a
+    // previous game launch is the #1 cause of Goldberg crashes.
     let appid_file = steam_settings.join("force_steam_appid.txt");
-    if !appid_file.exists() {
-        let _ = std::fs::create_dir_all(&steam_settings);
+    let current_appid = std::fs::read_to_string(&appid_file).unwrap_or_default();
+    if current_appid.trim() != appid.to_string() {
         let _ = std::fs::write(&appid_file, appid.to_string());
+        eprintln!(
+            "steam_emu: updated force_steam_appid.txt from {:?} to {}",
+            current_appid.trim(),
+            appid
+        );
+    }
+
+    // Also ensure steam_appid.txt in the game root and exe-adjacent dirs are current.
+    let appid_targets = [
+        game_dir.to_path_buf(),
+        game_dir.join("Game"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("bin"),
+        game_dir.join("win64"),
+    ];
+    for dir in &appid_targets {
+        if dir.is_dir() {
+            let f = dir.join("steam_appid.txt");
+            let existing = std::fs::read_to_string(&f).unwrap_or_default();
+            if existing.trim() != appid.to_string() {
+                let _ = std::fs::write(&f, appid.to_string());
+            }
+        }
+    }
+
+    // Validate steam_interfaces.txt — regenerate if missing or empty.
+    let interfaces_file = steam_settings.join("steam_interfaces.txt");
+    let needs_interfaces = !interfaces_file.exists()
+        || std::fs::read_to_string(&interfaces_file)
+            .map(|content| content.trim().lines().count() < 3)
+            .unwrap_or(true);
+    if needs_interfaces {
+        eprintln!("steam_emu: steam_interfaces.txt missing or incomplete, regenerating");
+        generate_steam_interfaces(game_dir);
     }
 }
 
@@ -3213,6 +3251,21 @@ pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
         if dir.is_dir() {
             let appid_file = dir.join("steam_appid.txt");
             let _ = std::fs::write(&appid_file, appid.to_string());
+        }
+    }
+
+    // If Goldberg toggle is active, also update force_steam_appid.txt so the
+    // emulator sees the correct appid at launch.
+    let goldberg_settings = game_dir.join("steam_settings").join("force_steam_appid.txt");
+    if goldberg_settings.exists() {
+        let current = std::fs::read_to_string(&goldberg_settings).unwrap_or_default();
+        if current.trim() != appid.to_string() {
+            let _ = std::fs::write(&goldberg_settings, appid.to_string());
+            eprintln!(
+                "deploy_steam_appid: updated goldberg force_steam_appid.txt from {:?} to {}",
+                current.trim(),
+                appid
+            );
         }
     }
 }
