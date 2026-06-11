@@ -476,6 +476,20 @@ fn install_exe_with_options(
         return Err("Only .exe and .msi Windows program installers are supported".into());
     }
 
+    // SteamSetup.exe must always go through MetalSharp's own Steam install path
+    // so it installs to ~/.metalsharp/prefix-steam/ — not a random bottle prefix.
+    if is_steam_installer(&src) {
+        match crate::steam::install_steam() {
+            Ok(msg) => {
+                return Ok(SharpInstallOutcome::InstallerStarted {
+                    pid: 0,
+                    message: format!("Steam installation started via MetalSharp: {}", msg),
+                })
+            },
+            Err(e) => return Err(format!("Steam install failed: {}", e).into()),
+        }
+    }
+
     if should_run_as_wine_installer(&src) {
         return start_wine_installer(&src, fresh_bottle);
     }
@@ -522,6 +536,16 @@ fn install_exe_with_options(
     save_library(&library)?;
 
     Ok(SharpInstallOutcome::Imported(Box::new(app)))
+}
+
+fn is_steam_installer(src: &Path) -> bool {
+    let name = src.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    name == "steamsetup.exe"
+}
+
+fn is_steam_exe(src: &Path) -> bool {
+    let name = src.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    name == "steam.exe"
 }
 
 fn should_run_as_wine_installer(src: &Path) -> bool {
@@ -762,6 +786,26 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
 
     let work_dir = PathBuf::from(&app.install_dir);
     let exe_path = work_dir.join(&app.exe_path);
+
+    // Steam.exe should always be launched via MetalSharp's Wine Steam path
+    // — not as a generic bottle app. This ensures correct prefix, env,
+    // wrapper deployment, and Steam startup sequence.
+    if is_steam_exe(&exe_path) {
+        let result = crate::steam::launch_wine_steam();
+        return match result {
+            Ok(v) => {
+                let pid = v.get("pid").and_then(|p| p.as_u64()).unwrap_or(0) as u32;
+                Ok(SharpLaunchResult {
+                    pid,
+                    game_type: "wine_steam",
+                    pipeline: crate::mtsp::engine::PipelineId::Steam,
+                    exe_path: exe_path.to_string_lossy().to_string(),
+                    warnings: vec![],
+                })
+            },
+            Err(e) => Err(format!("Failed to launch Wine Steam: {}", e).into()),
+        };
+    }
 
     if !exe_path.exists() {
         return Err(format!("EXE not found: {}", exe_path.display()).into());

@@ -240,6 +240,30 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/setup/install-progress") => resp(200, installer::read_progress()),
         (Method::Get, "/setup/installing") => resp(200, json!({"installing": installer::is_installing()})),
+        (Method::Post, "/setup/install-vcpp-x64") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+            if !prefix.join("drive_c/windows/system32").exists() {
+                resp(400, json!({"ok": false, "error": "Wine prefix not ready — install runtime and Steam first"}))
+            } else {
+                match bottles::vcpp_ensure_and_install_x64(&prefix) {
+                    Ok(()) => resp(200, json!({"ok": true})),
+                    Err(e) => resp(500, json!({"ok": false, "error": e})),
+                }
+            }
+        },
+        (Method::Post, "/setup/install-vcpp-x86") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+            if !prefix.join("drive_c/windows/system32").exists() {
+                resp(400, json!({"ok": false, "error": "Wine prefix not ready — install runtime and Steam first"}))
+            } else {
+                match bottles::vcpp_ensure_and_install_x86(&prefix) {
+                    Ok(()) => resp(200, json!({"ok": true})),
+                    Err(e) => resp(500, json!({"ok": false, "error": e})),
+                }
+            }
+        },
         (Method::Post, "/game/prepare") => {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());

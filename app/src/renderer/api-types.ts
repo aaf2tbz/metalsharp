@@ -168,6 +168,7 @@ type MetalsharpAPI = {
   migrateStart: () => Promise<BackendResponse>;
   migrateProgress: () => Promise<BackendResponse>;
   quitApp: () => void;
+  uninstallApp: () => void;
   pickExeFile: () => Promise<string | null>;
   pickImageFile: () => Promise<string | null>;
 };

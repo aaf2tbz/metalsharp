@@ -2,6 +2,10 @@
 import { ref, inject, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
+import IconZap from "~icons/lucide/zap";
+import IconBattery from "~icons/lucide/battery";
+import IconLock from "~icons/lucide/lock";
+import IconCheck from "~icons/lucide/check";
 
 const emit = defineEmits<{ done: [] }>();
 const toast = useToast();
@@ -21,7 +25,12 @@ const brewChecking = ref(true);
 const brewInstalled = ref(false);
 const brewInstalling = ref(false);
 
-const steps = ["Welcome", "Install Homebrew", "Install Runtime", "Done"];
+const steps = ["Welcome", "Install Homebrew", "Install Runtime", "VC++ Runtimes", "Done"];
+
+const vcppX64Done = ref(false);
+const vcppX86Done = ref(false);
+const vcppX64Installing = ref(false);
+const vcppX86Installing = ref(false);
 
 async function checkBrew() {
   brewChecking.value = true;
@@ -169,9 +178,41 @@ async function finish() {
 }
 
 async function goToDoneStep() {
-  step.value = 3;
+  step.value = 4;
   const gen = await api<{ name: string }>("GET", "/setup/device-name");
   if (gen?.name) deviceName.value = gen.name;
+}
+
+async function installVcppX64() {
+  vcppX64Installing.value = true;
+  try {
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/setup/install-vcpp-x64");
+    if (result?.ok) {
+      vcppX64Done.value = true;
+      toast.show("VC++ 2015-2022 x64 installed", "success");
+    } else {
+      toast.show(result?.error ?? "Failed to install VC++ x64", "error");
+    }
+  } catch {
+    toast.show("Failed to install VC++ x64", "error");
+  }
+  vcppX64Installing.value = false;
+}
+
+async function installVcppX86() {
+  vcppX86Installing.value = true;
+  try {
+    const result = await api<{ ok: boolean; error?: string }>("POST", "/setup/install-vcpp-x86");
+    if (result?.ok) {
+      vcppX86Done.value = true;
+      toast.show("VC++ 2015-2022 x86 installed", "success");
+    } else {
+      toast.show(result?.error ?? "Failed to install VC++ x86", "error");
+    }
+  } catch {
+    toast.show("Failed to install VC++ x86", "error");
+  }
+  vcppX86Installing.value = false;
 }
 </script>
 
@@ -197,7 +238,7 @@ async function goToDoneStep() {
         <div class="setup-features">
           <div class="setup-feature">
             <div class="setup-feature-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
+              <IconZap width="20" height="20" />
             </div>
             <div>
               <div class="setup-feature-title">D3D9/11/12 via DXMT + Metal</div>
@@ -206,7 +247,7 @@ async function goToDoneStep() {
           </div>
           <div class="setup-feature">
             <div class="setup-feature-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/></svg>
+              <IconBattery width="20" height="20" />
             </div>
             <div>
               <div class="setup-feature-title">FNA/XNA via Native Mono</div>
@@ -215,7 +256,7 @@ async function goToDoneStep() {
           </div>
           <div class="setup-feature">
             <div class="setup-feature-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+              <IconLock width="20" height="20" />
             </div>
             <div>
               <div class="setup-feature-title">Wine Steam Integration</div>
@@ -288,14 +329,50 @@ async function goToDoneStep() {
 
         <div class="setup-actions">
           <button class="btn btn-secondary" @click="step = 1">Back</button>
-          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Finish Setup</button>
+          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Next: VC++ Runtimes</button>
         </div>
       </div>
 
       <div v-if="step === 3" class="setup-body">
+        <div class="setup-section-header">
+          <h1>VC++ 2015-2022 Runtimes</h1>
+          <p>Many Windows games depend on the Microsoft Visual C++ Redistributable. Installing both x64 and x86 ensures games like Portal 2, Celeste, and other Steam titles can find the runtime DLLs they need at launch.</p>
+        </div>
+
+        <div class="setup-vcpp-section">
+          <div class="setup-vcpp-card">
+            <div class="setup-vcpp-info">
+              <div class="setup-vcpp-name">VC++ 2015-2022 <strong>x64</strong></div>
+              <div class="setup-vcpp-desc">Required for 64-bit games (Portal 2, Elden Ring, most modern titles)</div>
+            </div>
+            <span v-if="vcppX64Done" class="badge badge-ok" style="font-size:12px;padding:6px 14px;">Done</span>
+            <button v-else class="btn btn-primary" :disabled="vcppX64Installing" @click="installVcppX64">
+              {{ vcppX64Installing ? "Installing..." : "Install x64" }}
+            </button>
+          </div>
+
+          <div class="setup-vcpp-card">
+            <div class="setup-vcpp-info">
+              <div class="setup-vcpp-name">VC++ 2015-2022 <strong>x86</strong></div>
+              <div class="setup-vcpp-desc">Required for 32-bit games and WoW64 compatibility (older titles, 32-bit components)</div>
+            </div>
+            <span v-if="vcppX86Done" class="badge badge-ok" style="font-size:12px;padding:6px 14px;">Done</span>
+            <button v-else class="btn btn-primary" :disabled="vcppX86Installing" @click="installVcppX86">
+              {{ vcppX86Installing ? "Installing..." : "Install x86" }}
+            </button>
+          </div>
+        </div>
+
+        <div class="setup-actions">
+          <button class="btn btn-secondary" @click="step = 2">Back</button>
+          <button class="btn btn-primary btn-lg" @click="goToDoneStep">Continue</button>
+        </div>
+      </div>
+
+      <div v-if="step === 4" class="setup-body">
         <div class="setup-complete">
           <div class="setup-complete-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
+            <IconCheck width="36" height="36" />
           </div>
           <h1>You're All Set!</h1>
           <p>MetalSharp is ready. Open your library, start Steam, and download games.</p>
@@ -555,6 +632,36 @@ async function goToDoneStep() {
   font-size: 13px;
   color: var(--text-dim);
   margin-bottom: 12px;
+}
+
+.setup-vcpp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+  margin-top: 16px;
+}
+.setup-vcpp-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+}
+.setup-vcpp-info {
+  flex: 1;
+}
+.setup-vcpp-name {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.setup-vcpp-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
 }
 
 .setup-complete {

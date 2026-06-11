@@ -1732,11 +1732,21 @@ pub fn deploy_goldberg_for_launch(
 }
 
 fn find_steam_api(home: &PathBuf) -> Option<PathBuf> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
     let candidates = vec![
+        // Primary: macOS Steam app dylib
         home.join("Library/Application Support/Steam/steamapps/common/Terraria/Terraria.app/Contents/MacOS/osx/libsteam_api.dylib"),
         home.join("Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/Frameworks/Steam Helper.app/Contents/MacOS/libsteam_api.dylib"),
+        // Fallback: MetalSharp runtime shims (works without macOS Steam installed)
+        ms_home.join("runtime").join("steam-bridge").join("libsteam_api.dylib"),
+        ms_home.join("runtime").join("shims").join("libsteam_api.dylib"),
+        ms_home.join("cache").join("steam").join("libsteam_api.dylib"),
     ];
-    candidates.into_iter().find(|p| p.exists())
+    let found = candidates.into_iter().find(|p| p.exists());
+    if found.is_none() {
+        eprintln!("setup: libsteam_api.dylib not found in any candidate path (Celeste Steam API shim will be missing)");
+    }
+    found
 }
 
 pub fn detect_dotnet_game(game_dir: &PathBuf) -> bool {

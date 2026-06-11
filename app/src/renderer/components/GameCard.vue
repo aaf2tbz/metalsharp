@@ -2,6 +2,11 @@
 import { computed, ref, onMounted, watch } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
+import IconX from "~icons/lucide/x";
+import IconFlaskConical from "~icons/lucide/flask-conical";
+import IconShieldPlus from "~icons/lucide/shield-plus";
+import IconBox from "~icons/lucide/box";
+import IconRotateCcw from "~icons/lucide/rotate-ccw";
 
 interface SteamGame {
   appid: number;
@@ -100,6 +105,7 @@ const emit = defineEmits<{
   stop: [];
   install: [];
   uninstall: [];
+  expanded: [appid: number, open: boolean];
 }>();
 
 const toast = useToast();
@@ -239,6 +245,13 @@ onMounted(async () => {
   }
 });
 
+watch(doctorOpen, (open) => {
+  if (!open) emit('expanded', props.game.appid, false);
+});
+watch(runtimeOpen, (open) => {
+  if (!open) emit('expanded', props.game.appid, false);
+});
+
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
@@ -298,6 +311,7 @@ async function toggleEac(enable: boolean) {
 
 async function runDoctor() {
   doctorOpen.value = true;
+  emit('expanded', props.game.appid, true);
   doctorLoading.value = true;
   doctorReport.value = null;
   const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>("POST", "/mtsp/doctor", {
@@ -315,6 +329,7 @@ async function runDoctor() {
 
 async function runRuntimeDoctor() {
   runtimeOpen.value = true;
+  emit('expanded', props.game.appid, true);
   runtimeLoading.value = true;
   runtimeReport.value = null;
   const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>(
@@ -339,6 +354,7 @@ async function runRuntimeDoctor() {
 async function openBottleWorkspace() {
   if (runtimeOpen.value && runtimeReport.value) {
     runtimeOpen.value = false;
+    emit('expanded', props.game.appid, false);
     return;
   }
   await runRuntimeDoctor();
@@ -463,18 +479,7 @@ function formatBytes(bytes: number): string {
       />
       <span v-else class="game-icon-placeholder">{{ game.name.charAt(0).toUpperCase() }}</span>
       <button v-if="running" class="running-close-button" title="Close game" @click="emit('stop')">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.4"
-          stroke-linecap="round"
-        >
-          <path d="M18 6 6 18" />
-          <path d="m6 6 12 12" />
-        </svg>
+        <IconX width="14" height="14" />
       </button>
     </div>
     <div class="game-card-body">
@@ -511,21 +516,7 @@ function formatBytes(bytes: number): string {
         <div v-else-if="game.installed" class="game-card-actions-stack">
           <div class="primary-action-row">
             <button class="icon-button bottle-button" title="Bottle" @click="openBottleWorkspace">
-              <svg
-                v-if="!runtimeLoading"
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M10 2h4" />
-                <path d="M11 2v5l-4 5v8a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-8l-4-5V2" />
-                <path d="M8 15h8" />
-              </svg>
+              <IconFlaskConical v-if="!runtimeLoading" width="17" height="17" />
               <span v-else class="spinner"></span>
             </button>
             <button class="btn btn-play" @click="emit('play', selectedLaunchMode)">Play</button>
@@ -541,21 +532,11 @@ function formatBytes(bytes: number): string {
               title="Run Launch Doctor"
               @click="runDoctor"
             >
-              <svg
+              <IconShieldPlus
                 v-if="!doctorLoading"
                 width="16"
                 height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                <path d="M9 12h6" />
-                <path d="M12 9v6" />
-              </svg>
+              />
               <span v-else class="spinner"></span>
             </button>
             <button
@@ -565,23 +546,11 @@ function formatBytes(bytes: number): string {
               title="Run Runtime Doctor"
               @click="runRuntimeDoctor"
             >
-              <svg
+              <IconBox
                 v-if="!runtimeLoading"
                 width="16"
                 height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path
-                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
-                />
-                <path d="M3.3 7 12 12l8.7-5" />
-                <path d="M12 22V12" />
-              </svg>
+              />
               <span v-else class="spinner"></span>
             </button>
           </div>
@@ -647,19 +616,7 @@ function formatBytes(bytes: number): string {
                 <div class="bottle-input-row">
                   <input v-model="bottleName" class="bottle-name-input" type="text" :placeholder="game.name" />
                   <button class="icon-button compact-button" title="Use Steam name" @click="resetBottleName">
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                      <path d="M3 3v5h5" />
-                    </svg>
+                    <IconRotateCcw width="14" height="14" />
                   </button>
                 </div>
               </div>

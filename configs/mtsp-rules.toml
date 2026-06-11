@@ -453,6 +453,28 @@ name = "Half-Life 2"
 pipeline = "m9"
 name = "Team Fortress 2"
 
+[overrides.2552430]
+pipeline = "m11"
+name = "KINGDOM HEARTS -HD 1.5+2.5 ReMIX-"
+offline_capable = true
+
+[overrides.2552430.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.2552430.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll"]
+
+[overrides.2552440]
+pipeline = "m11"
+name = "KINGDOM HEARTS HD 2.8 Final Chapter Prologue"
+offline_capable = true
+
+[overrides.2552440.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.2552440.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll"]
+
 [overrides.730]
 pipeline = "m11"
 name = "Counter-Strike 2"

@@ -58,6 +58,16 @@ fn known_process_patterns(appid: u32) -> Vec<String> {
         2767030 => vec!["MarvelRivals.exe".into(), "start_protected_game.exe".into()],
         553850 => vec!["helldivers2.exe".into()],
         1643320 => vec!["S.T.A.L.K.E.R.2.exe".into(), "Stalker2.exe".into()],
+        2552430 => vec![
+            "KINGDOM HEARTS FINAL MIX.exe".into(),
+            "KINGDOM HEARTS II FINAL MIX.exe".into(),
+            "KINGDOM HEARTS Birth by Sleep FINAL MIX.exe".into(),
+            "KINGDOM HEARTS Re_Chain of Memories.exe".into(),
+        ],
+        2552440 => vec![
+            "KINGDOM HEARTS 0.2 Birth by Sleep -A fragmentary passage-.exe".into(),
+            "KINGDOM HEARTS Dream Drop Distance.exe".into(),
+        ],
         _ => vec![],
     }
 }

@@ -189,12 +189,12 @@ function startSteamappsWatcher() {
   }
 }
 
-function cleanup() {
+async function cleanup() {
   if (steamappsWatcher) {
     steamappsWatcher.close();
     steamappsWatcher = null;
   }
-  bridge?.stop();
+  await bridge?.killProcess();
 }
 
 let migrationMode = false;
@@ -234,13 +234,13 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("window-all-closed", () => {
-  cleanup();
+app.on("window-all-closed", async () => {
+  await cleanup();
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  cleanup();
+app.on("before-quit", async () => {
+  await cleanup();
 });
 
 function backendErrorMessage(error: unknown): string {
@@ -534,6 +534,70 @@ function registerIpc() {
   });
 
   ipcMain.on("app:quit", () => {
+    app.quit();
+  });
+
+  ipcMain.on("app:uninstall", async () => {
+    if (!mainWindow) return;
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "Uninstall MetalSharp",
+      message: "Are you sure you want to uninstall MetalSharp?",
+      detail:
+        "This will permanently delete all Wine prefixes, bottles, game data, " +
+        "Steam installation, Wine runtime, shader caches, and all settings. " +
+        "MetalSharp will also be removed from Applications and moved to Trash. " +
+        "This action cannot be undone.",
+      buttons: ["Cancel", "Uninstall"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (choice.response !== 1) return;
+
+    await cleanup();
+
+    const msDir = getMetalsharpDir();
+    let dataRemoved = false;
+    try {
+      fs.rmSync(msDir, { recursive: true, force: true });
+      dataRemoved = true;
+    } catch (e) {
+      console.error("Failed to remove MetalSharp data:", e);
+    }
+
+    // Spawn a detached shell that waits for this process to exit, then
+    // moves the app bundle to the macOS Trash.
+    const exePath = app.getPath("exe");
+    const appBundle = exePath.match(/^(\/Applications\/[^/]+\.app)\//)?.[1];
+    if (appBundle && fs.existsSync(appBundle)) {
+      const pid = process.pid;
+      const script = `
+        while kill -0 ${pid} 2>/dev/null; do sleep 0.5; done
+        osascript -e 'tell application "Finder" to delete POSIX file "${appBundle}"'
+      `;
+      const { spawn } = require("child_process");
+      spawn("/bin/bash", ["-c", script], { detached: true, stdio: "ignore" }).unref();
+    }
+
+    // Show success dialog — user must close the app to finish.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, {
+        type: "info",
+        title: "MetalSharp Uninstalled",
+        message: "MetalSharp data has been removed successfully.",
+        detail:
+          "All Wine prefixes, bottles, Steam, runtime, and settings have been deleted. " +
+          (appBundle
+            ? "When you close this window, MetalSharp will be moved to the Trash."
+            : "Close this window to exit MetalSharp.") +
+          "\n\nClick OK to close the app.",
+        buttons: ["OK"],
+        defaultId: 0,
+        noLink: true,
+      });
+    }
+
     app.quit();
   });
 

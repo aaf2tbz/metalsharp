@@ -493,6 +493,11 @@ fn run_migration() {
     kill_steam_wine();
     log_to_file("Migration: killed Wine/Steam processes after prefix update to dismiss wineboot window");
 
+    // Wait for any lingering Steam update windows to close before declaring
+    // the migration complete. wineboot -u can fork Steam.exe for self-update;
+    // the kill above sends SIGTERM but Steam may still be shutting down.
+    wait_for_steam_update_windows(&ms_dir, 90);
+
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
 }
@@ -575,6 +580,44 @@ fn kill_steam_wine() {
     std::thread::sleep(std::time::Duration::from_millis(750));
 }
 
+fn wait_for_steam_update_windows(ms_dir: &Path, timeout_secs: u64) {
+    let prefix = ms_dir.join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let start = std::time::Instant::now();
+    let mut saw_steam = false;
+
+    while start.elapsed().as_secs() < timeout_secs {
+        let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => break,
+        };
+
+        let steam_alive = output.lines().any(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains(&prefix_str.to_ascii_lowercase())
+                && (lower.contains("steam.exe") || lower.contains("steamupdate.exe"))
+        });
+
+        if steam_alive {
+            if !saw_steam {
+                log_to_file("Migration: Steam update window detected, waiting for it to close...");
+                saw_steam = true;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        } else if saw_steam {
+            log_to_file("Migration: Steam update window has closed, migration ready to complete");
+            return;
+        } else {
+            // Never saw Steam — no update window appeared, nothing to wait for
+            return;
+        }
+    }
+
+    if saw_steam {
+        log_to_file("Migration: timed out waiting for Steam update window to close (non-fatal)");
+    }
+}
+
 fn run_pkill(args: &[&str]) {
     let Ok(mut child) = mac_cmd("pkill").args(args).spawn() else {
         return;
@@ -606,8 +649,12 @@ struct PreservedData {
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
-    let tmp =
-        std::env::temp_dir().join(format!("metalsharp-migration-preserve-{}-{}", std::process::id(), temp_suffix()));
+    let tmp = std::env::temp_dir().join(format!(
+        "metalsharp-migration-preserve-{}-{}-{:x}",
+        std::process::id(),
+        temp_suffix(),
+        std::hash::Hasher::finish(&std::collections::hash_map::DefaultHasher::new())
+    ));
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
@@ -714,6 +761,11 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
     let mut updated = 0usize;
     for prefix in collect_existing_wine_prefixes(ms_dir) {
         let steam_library_drive_links = collect_steam_library_drive_links(&prefix);
+        // Snapshot all dosdevice symlinks before wineboot rewrites them.
+        // This covers custom drive mappings (external drives, Z:, etc.) that
+        // wineboot -u may destroy.
+        let all_dosdevice_links = collect_prefix_dosdevice_links(&prefix);
+
         write_migrate_progress(
             "running",
             step,
@@ -721,8 +773,25 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
             &format!("Updating Wine prefix {}...", prefix.display()),
             None,
         );
+
+        // Pre-check: dosdevices must exist and be a directory.
+        let dosdevices = prefix.join("dosdevices");
+        if dosdevices.exists() && !dosdevices.is_dir() {
+            log_to_file(&format!(
+                "Migration: dosdevices exists but is not a directory for {} — skipping wineboot",
+                prefix.display()
+            ));
+            continue;
+        }
+
         run_wineboot_update(&wine, &runtime_wine, &prefix)?;
+
         restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
+        restore_prefix_dosdevice_links(&prefix, &all_dosdevice_links);
+
+        // Post-check: verify critical dosdevice links survived wineboot.
+        verify_prefix_dosdevices_integrity(&prefix);
+
         updated += 1;
     }
 
@@ -749,7 +818,8 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
     let mut cmd = Command::new(wine);
     cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "none")
+        .env("WINEDEBUGGER", "/usr/bin/true")
+        .env("WINEDLLOVERRIDES", "winedbg=d")
         .arg("wineboot")
         .arg("-u")
         .stdout(std::process::Stdio::null())
@@ -978,6 +1048,44 @@ fn restore_steam_library_drive_links(prefix: &Path, links: &[SteamLibraryDriveLi
                 link.library_path,
                 e
             )),
+        }
+    }
+}
+
+fn verify_prefix_dosdevices_integrity(prefix: &Path) {
+    let dosdevices = prefix.join("dosdevices");
+    if !dosdevices.is_dir() {
+        log_to_file(&format!("Migration: dosdevices directory missing after wineboot for {}", prefix.display()));
+        let _ = fs::create_dir_all(&dosdevices);
+    }
+
+    // Verify c: -> drive_c exists — this is the critical Wine system drive.
+    let c_drive = dosdevices.join("c:");
+    let expected_c = prefix.join("drive_c");
+    let c_ok = match fs::read_link(&c_drive) {
+        Ok(target) => {
+            // Wine may use relative (../drive_c) or absolute path.
+            let resolved = if target.is_relative() { dosdevices.join(&target) } else { target };
+            match fs::canonicalize(&resolved) {
+                Ok(resolved) => match fs::canonicalize(&expected_c) {
+                    Ok(expected) => resolved == expected,
+                    Err(_) => true, // Can't verify — assume OK
+                },
+                Err(_) => true, // Can't resolve — assume OK
+            }
+        },
+        Err(_) => false,
+    };
+
+    if !c_ok {
+        if c_drive.exists() {
+            let _ = fs::remove_file(&c_drive);
+        }
+        match std::os::unix::fs::symlink("../drive_c", &c_drive) {
+            Ok(()) => log_to_file(&format!("Migration: recreated c: -> drive_c for {}", prefix.display())),
+            Err(e) => {
+                log_to_file(&format!("Migration: failed to recreate c: dosdevice for {}: {}", prefix.display(), e))
+            },
         }
     }
 }
@@ -1319,24 +1427,35 @@ fn discover_external_steam_libraries_from(volumes_dir: &Path) -> Vec<ExternalSte
             continue;
         }
 
+        // Exhaustive candidate list for Steam libraries on external drives.
+        // Covers common layouts: dedicated SteamLibrary, nested, and volume-root.
         let candidates = [
+            // Standard Steam library layout on external drives
             mount_point.join("SteamLibrary").join("SteamLibrary"),
             mount_point.join("SteamLibrary"),
+            // Some Steam installs nest under a steamapps parent
             mount_point.join("steamapps").join(".."),
+            // Volume root itself may be the library (e.g. AverySSD with SteamLibrary at root)
+            mount_point.clone(),
         ];
 
         for candidate in &candidates {
             let steamapps = candidate.join("steamapps");
-            if steamapps.is_dir() {
-                let has_manifests = fs::read_dir(&steamapps)
-                    .map(|entries| {
-                        entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with("appmanifest_"))
-                    })
-                    .unwrap_or(false);
-                if has_manifests {
+            if !steamapps.is_dir() {
+                continue;
+            }
+            // Accept a library if it has steamapps with manifests, OR if
+            // steamapps is a valid directory (some installs are in-progress
+            // or have manifest files in non-standard locations).
+            let has_manifests = fs::read_dir(&steamapps)
+                .map(|entries| entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with("appmanifest_")))
+                .unwrap_or(false);
+            if has_manifests {
+                // Deduplicate — skip if we already found this path
+                if !libs.iter().any(|lib| lib.unix_path == *candidate) {
                     libs.push(ExternalSteamLibrary { unix_path: candidate.clone() });
-                    break;
                 }
+                break;
             }
         }
     }
@@ -1466,6 +1585,7 @@ fn update_libraryfolders_vdf(steamapps_dir: &Path, external_libs: &[ExternalStea
 }
 
 fn resolve_unix_path_to_windows(unix_path: &Path, dosdevices: &Path) -> Option<String> {
+    // First pass: check existing dosdevice mappings (dedicated drive letters).
     let entries = fs::read_dir(dosdevices).ok()?;
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -1489,7 +1609,29 @@ fn resolve_unix_path_to_windows(unix_path: &Path, dosdevices: &Path) -> Option<S
             }
         }
     }
+
+    // Fallback: use Z: drive (Wine's standard mapping of Z: -> /).
+    // External volumes like /Volumes/AverySSD/SteamLibrary become
+    // Z:\\Volumes\\AverySSD\\SteamLibrary in Wine.
+    ensure_z_drive(dosdevices);
+    let unix_str = unix_path.to_string_lossy();
+    if unix_str.starts_with('/') {
+        let windows_path = format!("Z:{}", unix_str.replace('/', "\\\\"));
+        log_to_file(&format!("Migration: resolved external library to Z: path: {}", windows_path));
+        return Some(windows_path);
+    }
     None
+}
+
+fn ensure_z_drive(dosdevices: &Path) {
+    let z_drive = dosdevices.join("z:");
+    if z_drive.exists() {
+        return;
+    }
+    match std::os::unix::fs::symlink("/", &z_drive) {
+        Ok(()) => log_to_file("Migration: created Z: drive mapping to /"),
+        Err(e) => log_to_file(&format!("Migration: failed to create Z: drive: {}", e)),
+    }
 }
 
 fn remove_old_runtime(ms_dir: &PathBuf) {

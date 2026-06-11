@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("metalsharp", {
   migrateStart: () => ipcRenderer.invoke("migrate:start"),
   migrateProgress: () => ipcRenderer.invoke("migrate:progress"),
   quitApp: () => ipcRenderer.send("app:quit"),
+  uninstallApp: () => ipcRenderer.send("app:uninstall"),
   pickExeFile: () => ipcRenderer.invoke("app:pick-exe-file"),
   pickImageFile: () => ipcRenderer.invoke("app:pick-image-file"),
 });

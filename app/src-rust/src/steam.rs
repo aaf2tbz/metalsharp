@@ -1423,7 +1423,8 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     wineboot_cmd
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "none")
+        .env("WINEDEBUGGER", "/usr/bin/true")
+        .env("WINEDLLOVERRIDES", "winedbg=d")
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
@@ -1455,20 +1456,56 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     install_cmd
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "none")
+        .env("WINEDEBUGGER", "/usr/bin/true")
+        .env("WINEDLLOVERRIDES", "winedbg=d")
         .arg(&installer)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut install_cmd, &ms_root);
-    let _child = install_cmd.spawn()?;
+
+    let mut install_child = install_cmd.spawn()?;
+    let install_pid = install_child.id();
 
     let steam_exe = steam_dir.join("Steam.exe");
     let steam_ui_dll = steam_dir.join("steamui.dll");
+    let mut install_crashed = false;
     for _ in 0..70 {
+        // Check if the installer process is still running before waiting.
+        match install_child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    eprintln!("steam: installer exited early with status {:?}", status.code());
+                    install_crashed = true;
+                }
+                break;
+            },
+            Ok(None) => {}, // Still running
+            Err(e) => {
+                eprintln!("steam: failed to check installer status: {}", e);
+                break;
+            },
+        }
         if steam_exe.exists() && steam_ui_dll.exists() {
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    // If installer crashed, wait briefly for any remaining file I/O to settle
+    // before checking if Steam was partially installed anyway.
+    if install_crashed {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if steam_exe.exists() && steam_ui_dll.exists() {
+            eprintln!("steam: installer crashed but Steam files are present — continuing");
+        } else {
+            // Kill any remaining Wine processes from the failed install
+            let _ = Command::new("pkill")
+                .args(["-f", &format!("WINEPREFIX={}", prefix_str)])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            return Err(format!("Steam installer crashed (pid {}). Check Wine setup and retry.", install_pid).into());
+        }
     }
 
     if steam_exe.exists() && steam_ui_dll.exists() {

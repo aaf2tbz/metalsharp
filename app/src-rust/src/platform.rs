@@ -451,6 +451,24 @@ impl Drop for SeedingGuard {
     }
 }
 
+fn fast_copy_dir(src: &Path, dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let status = std::process::Command::new("ditto").arg(src).arg(dst).stderr(std::process::Stdio::piped()).status()?;
+    if !status.success() {
+        eprintln!("gptk: ditto failed ({:?}), falling back to recursive copy", status.code());
+        let (copied, skipped) = copy_dir_tolerant(src, dst);
+        if copied == 0 && skipped > 0 {
+            return Err(format!(
+                "gptk copy failed: 0 files copied, {} skipped from {} -> {}",
+                skipped,
+                src.display(),
+                dst.display()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
 fn copy_dir_tolerant(src: &Path, dst: &Path) -> (u64, u64) {
     let mut copied = 0u64;
     let mut skipped = 0u64;
@@ -557,17 +575,34 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
     }
     eprintln!("gptk: wineboot --init done");
 
+    // Validate that wineboot actually created the prefix skeleton.
+    let drive_c = gptk_prefix.join("drive_c");
+    let windows = drive_c.join("windows");
+    let dosdevices = gptk_prefix.join("dosdevices");
+    if !drive_c.is_dir() || !windows.is_dir() || !dosdevices.is_dir() {
+        let missing: Vec<&str> =
+            [("drive_c", drive_c.is_dir()), ("drive_c/windows", windows.is_dir()), ("dosdevices", dosdevices.is_dir())]
+                .iter()
+                .filter(|(_, exists)| !exists)
+                .map(|(name, _)| *name)
+                .collect();
+        return Err(format!(
+            "gptk: wineboot --init succeeded but prefix is incomplete (missing: {})",
+            missing.join(", ")
+        )
+        .into());
+    }
+
     if !steam_prefix.join("drive_c").join("Program Files (x86)").join("Steam").exists() {
         return Err("MetalSharp Wine Steam not installed — install Steam first".into());
     }
 
     eprintln!("gptk: copying Steam directory ...");
-    let drive_c = gptk_prefix.join("drive_c");
     let steam_src = steam_prefix.join("drive_c").join("Program Files (x86)").join("Steam");
     let steam_dst = drive_c.join("Program Files (x86)").join("Steam");
     std::fs::create_dir_all(steam_dst.parent().unwrap())?;
-    let (copied, skipped) = copy_dir_tolerant(&steam_src, &steam_dst);
-    eprintln!("gptk: Steam copy done ({} copied, {} skipped)", copied, skipped);
+    fast_copy_dir(&steam_src, &steam_dst)?;
+    eprintln!("gptk: Steam copy done");
 
     eprintln!("gptk: copying users ...");
     let users_src = steam_prefix.join("drive_c").join("users");
@@ -576,8 +611,8 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
         if users_dst.is_dir() {
             let _ = std::fs::remove_dir_all(&users_dst);
         }
-        let (copied, skipped) = copy_dir_tolerant(&users_src, &users_dst);
-        eprintln!("gptk: users copy done ({} copied, {} skipped)", copied, skipped);
+        fast_copy_dir(&users_src, &users_dst)?;
+        eprintln!("gptk: users copy done");
     } else {
         eprintln!("gptk: no users dir to copy");
     }

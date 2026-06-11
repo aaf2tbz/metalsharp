@@ -463,7 +463,8 @@ async function initApp() {
   background: rgba(6, 10, 16, 0.68);
 }
 .update-changelog-modal {
-  width: min(640px, 100%);
+  width: 640px;
+  max-width: calc(100vw - 64px);
   max-height: min(620px, 82vh);
   display: flex;
   flex-direction: column;
@@ -473,6 +474,7 @@ async function initApp() {
   border-radius: 8px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
   overflow: hidden;
+  transform: translateZ(0);
 }
 .update-changelog-modal-header {
   display: flex;
@@ -493,10 +495,19 @@ async function initApp() {
   background: var(--bg-surface);
   color: var(--text-primary);
   border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
+  min-width: 72px;
+  min-height: 32px;
+  padding: 8px 16px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+.modal-close-btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .update-changelog-modal pre,
 .update-changelog-body {

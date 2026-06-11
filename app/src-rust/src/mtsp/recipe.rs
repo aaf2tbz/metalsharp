@@ -692,6 +692,17 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         220 => &["hl2.exe"],
         440 => &["tf/win32/tf.exe", "tf.exe"],
         620 => &["portal2.exe"],
+        2552430 => &[
+            "KINGDOM HEARTS FINAL MIX.exe",
+            "KINGDOM HEARTS Re_Chain of Memories.exe",
+            "KINGDOM HEARTS II FINAL MIX.exe",
+            "KINGDOM HEARTS Birth by Sleep FINAL MIX.exe",
+        ],
+        2552440 => &[
+            "KINGDOM HEARTS 0.2 Birth by Sleep -A fragmentary passage-.exe",
+            "KINGDOM HEARTS Dream Drop Distance.exe",
+            "KINGDOM HEARTS Re_coded.exe",
+        ],
         _ => &[],
     }
 }
