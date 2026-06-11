@@ -537,6 +537,35 @@ function registerIpc() {
     app.quit();
   });
 
+  ipcMain.on("app:uninstall", async () => {
+    if (!mainWindow) return;
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "Uninstall MetalSharp",
+      message: "Are you sure you want to uninstall MetalSharp?",
+      detail:
+        "This will permanently delete all Wine prefixes, bottles, game data, " +
+        "Steam installation, Wine runtime, shader caches, and all settings. " +
+        "This action cannot be undone.",
+      buttons: ["Cancel", "Uninstall"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (choice.response !== 1) return;
+
+    await cleanup();
+
+    const msDir = getMetalsharpDir();
+    try {
+      fs.rmSync(msDir, { recursive: true, force: true });
+    } catch (e) {
+      console.error("Failed to remove MetalSharp data:", e);
+    }
+
+    app.quit();
+  });
+
   ipcMain.handle("app:pick-exe-file", async () => {
     if (!mainWindow) return null;
     const result = await dialog.showOpenDialog(mainWindow, {

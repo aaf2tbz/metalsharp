@@ -3,6 +3,7 @@ import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { AppConfig, UpdateStatus } from "../api-types";
+import IconTrash2 from "~icons/lucide/trash-2";
 
 interface CacheSummary {
   bytes: number;
@@ -237,6 +238,10 @@ function toggleDeveloperMode(enabled: boolean) {
   developerMode.value = enabled;
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
 }
+
+function uninstallMetalsharp() {
+  getAPI().uninstallApp();
+}
 </script>
 
 <template>
@@ -451,6 +456,21 @@ function toggleDeveloperMode(enabled: boolean) {
         </div>
       </div>
     </div>
+
+    <div class="settings-section danger-zone">
+      <h2><IconTrash2 width="14" height="14" /> Danger Zone</h2>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Uninstall MetalSharp</div>
+          <div class="settings-desc">
+            Permanently deletes all Wine prefixes, bottles, Steam installation, Wine runtime, shader caches, and settings. The app will close after cleanup.
+          </div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-danger btn-sm" @click="uninstallMetalsharp">Uninstall MetalSharp</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -542,5 +562,22 @@ function toggleDeveloperMode(enabled: boolean) {
   display: inline-flex;
   align-items: center;
   min-height: 30px;
+}
+.danger-zone {
+  border-color: rgba(220, 60, 60, 0.25);
+}
+.danger-zone h2 {
+  color: #dc3c3c;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-danger {
+  background: rgba(220, 60, 60, 0.15);
+  border: 1px solid rgba(220, 60, 60, 0.3);
+  color: #dc3c3c;
+}
+.btn-danger:hover {
+  background: rgba(220, 60, 60, 0.25);
 }
 </style>
