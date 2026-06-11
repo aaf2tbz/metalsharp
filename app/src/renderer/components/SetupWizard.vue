@@ -192,7 +192,7 @@ async function goToDoneStep() {
         <div class="setup-hero">
           <div class="setup-hero-icon">M</div>
           <h1 class="setup-hero-title">Welcome to MetalSharp</h1>
-          <p class="setup-hero-sub">Run Windows games natively on macOS with Metal. No VM, no Vulkan.</p>
+          <p class="setup-hero-sub">A compatibility layer for running Windows Steam games on Apple Silicon through Wine and Metal translation.</p>
         </div>
         <div class="setup-features">
           <div class="setup-feature">
@@ -200,8 +200,8 @@ async function goToDoneStep() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
             </div>
             <div>
-              <div class="setup-feature-title">Direct3D to Metal</div>
-              <div class="setup-feature-desc">Single-hop translation — faster than DXVK+MoltenVK</div>
+              <div class="setup-feature-title">D3D9/11/12 via DXMT + Metal</div>
+              <div class="setup-feature-desc">Translates Direct3D calls to Metal with DXMT, including D3D12 support</div>
             </div>
           </div>
           <div class="setup-feature">
@@ -209,8 +209,8 @@ async function goToDoneStep() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/></svg>
             </div>
             <div>
-              <div class="setup-feature-title">XNA/FNA Native</div>
-              <div class="setup-feature-desc">Run Celeste, Terraria, and other XNA games via FNA + SDL3 + Metal</div>
+              <div class="setup-feature-title">FNA/XNA via Native Mono</div>
+              <div class="setup-feature-desc">XNA and FNA titles run through native Mono with SDL2 and Metal audio/input shims</div>
             </div>
           </div>
           <div class="setup-feature">
@@ -218,8 +218,8 @@ async function goToDoneStep() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
             </div>
             <div>
-              <div class="setup-feature-title">Steam Integration</div>
-              <div class="setup-feature-desc">Browse your library, download games, launch with one click</div>
+              <div class="setup-feature-title">Wine Steam Integration</div>
+              <div class="setup-feature-desc">Windows Steam runs inside a Wine prefix — browse your library, install, and launch games</div>
             </div>
           </div>
         </div>
