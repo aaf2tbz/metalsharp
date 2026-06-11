@@ -100,6 +100,7 @@ const emit = defineEmits<{
   stop: [];
   install: [];
   uninstall: [];
+  expanded: [appid: number, open: boolean];
 }>();
 
 const toast = useToast();
@@ -239,6 +240,13 @@ onMounted(async () => {
   }
 });
 
+watch(doctorOpen, (open) => {
+  if (!open) emit('expanded', props.game.appid, false);
+});
+watch(runtimeOpen, (open) => {
+  if (!open) emit('expanded', props.game.appid, false);
+});
+
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
@@ -298,6 +306,7 @@ async function toggleEac(enable: boolean) {
 
 async function runDoctor() {
   doctorOpen.value = true;
+  emit('expanded', props.game.appid, true);
   doctorLoading.value = true;
   doctorReport.value = null;
   const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>("POST", "/mtsp/doctor", {
@@ -315,6 +324,7 @@ async function runDoctor() {
 
 async function runRuntimeDoctor() {
   runtimeOpen.value = true;
+  emit('expanded', props.game.appid, true);
   runtimeLoading.value = true;
   runtimeReport.value = null;
   const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>(
@@ -339,6 +349,7 @@ async function runRuntimeDoctor() {
 async function openBottleWorkspace() {
   if (runtimeOpen.value && runtimeReport.value) {
     runtimeOpen.value = false;
+    emit('expanded', props.game.appid, false);
     return;
   }
   await runRuntimeDoctor();

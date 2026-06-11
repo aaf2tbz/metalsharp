@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, type Ref } from "vue";
+import { ref, inject, onMounted, watch, computed, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
@@ -47,6 +47,8 @@ const filter = ref<"all" | "installed" | "not_installed">("all");
 const runningAppId = ref<number | null>(null);
 const runningPid = ref<number | null>(null);
 const launchingAppId = ref<number | null>(null);
+const expandedAppId = ref<number | null>(null);
+const gameGridRef = ref<HTMLElement | null>(null);
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -107,6 +109,59 @@ function applyFilter() {
     games = games.filter((g) => g.name.toLowerCase().includes(q));
   }
   filteredGames.value = games;
+}
+
+function onCardExpanded(appid: number, open: boolean) {
+  expandedAppId.value = open ? appid : null;
+  // After Vue updates the DOM, compute per-row heights so only the
+  // row containing the expanded card grows.
+  requestAnimationFrame(() => applyGridRowHeights());
+}
+
+function applyGridRowHeights() {
+  const grid = gameGridRef.value;
+  if (!grid) return;
+  const cards = [...grid.children] as HTMLElement[];
+  if (cards.length === 0) return;
+
+  const expandedIdx = expandedAppId.value
+    ? filteredGames.value.findIndex((g) => g.appid === expandedAppId.value)
+    : -1;
+
+  if (expandedIdx < 0) {
+    // No card expanded — reset to uniform rows.
+    grid.style.gridTemplateRows = "";
+    for (const card of cards) card.style.gridRow = "";
+    return;
+  }
+
+  // Determine how many columns the grid has by checking the first row.
+  const gridStyle = getComputedStyle(grid);
+  const gridWidth = grid.clientWidth;
+  const columnGap = parseFloat(gridStyle.columnGap) || 0;
+  const colCount = gridStyle.gridTemplateColumns.split(" ").length;
+  if (colCount <= 1) {
+    // Single column — nothing to isolate.
+    grid.style.gridTemplateRows = "";
+    return;
+  }
+
+  const expandedRow = Math.floor(expandedIdx / colCount);
+  const rowCount = Math.ceil(cards.length / colCount);
+
+  // Build explicit row sizes: min-content for all rows except the expanded one.
+  const rowSizes = Array.from({ length: rowCount }, (_, i) =>
+    i === expandedRow ? "auto" : "min-content",
+  );
+  grid.style.gridTemplateRows = rowSizes.join(" ");
+
+  // Place each card into its explicit row.
+  for (let i = 0; i < cards.length; i++) {
+    const row = Math.floor(i / colCount) + 1;
+    const col = (i % colCount) + 1;
+    cards[i].style.gridRow = `${row}`;
+    cards[i].style.gridColumn = `${col}`;
+  }
 }
 
 async function toggleSteam() {
@@ -247,7 +302,6 @@ onMounted(() => {
   applyFilter();
 });
 
-import { watch } from "vue";
 watch([library, search, filter], applyFilter);
 </script>
 
@@ -363,7 +417,7 @@ watch([library, search, filter], applyFilter);
       <p>Add your Steam API key in Settings to load your library, or download a game manually.</p>
     </div>
 
-    <div v-else class="game-grid">
+    <div v-else ref="gameGridRef" class="game-grid">
       <GameCard
         v-for="game in filteredGames"
         :key="game.appid"
@@ -376,6 +430,7 @@ watch([library, search, filter], applyFilter);
         @stop="stopGame(game)"
         @install="installGame(game)"
         @uninstall="uninstallGame(game)"
+        @expanded="onCardExpanded"
       />
     </div>
   </div>
