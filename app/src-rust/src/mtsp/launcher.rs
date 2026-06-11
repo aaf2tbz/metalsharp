@@ -4036,10 +4036,12 @@ mod tests {
 
     #[test]
     fn default_fna_profile_uses_generic_config() {
-        assert_eq!(DEFAULT_FNA_PROFILE.mono_config, "generic-fna-mono.config");
-        assert!(matches!(DEFAULT_FNA_PROFILE.mono_arch, MonoArch::X86));
-        assert_eq!(DEFAULT_FNA_PROFILE.method_label, "xna_fna_x86");
-        assert!(!DEFAULT_FNA_PROFILE.include_runtime_shims_in_library_path);
+        let profile = find_fna_profile(u32::MAX);
+
+        assert_eq!(profile.mono_config, "generic-fna-mono.config");
+        assert!(matches!(profile.mono_arch, MonoArch::X86));
+        assert_eq!(profile.method_label, "xna_fna_x86");
+        assert!(!profile.include_runtime_shims_in_library_path);
     }
 
     #[test]
