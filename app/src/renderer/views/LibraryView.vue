@@ -3,6 +3,10 @@ import { ref, inject, onMounted, watch, computed, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
+import IconCrosshair from "~icons/lucide/crosshair";
+import IconSmartphone from "~icons/lucide/smartphone";
+import IconRefreshCcw from "~icons/lucide/refresh-ccw";
+import IconBattery from "~icons/lucide/battery";
 
 interface SteamGame {
   appid: number;
@@ -329,41 +333,11 @@ watch([library, search, filter], applyFilter);
       <div class="library-controls">
         <div class="library-launch-actions">
           <button class="btn btn-secondary library-control-button" title="Wine Steam" @click="toggleSteam">
-            <svg
-              class="control-icon"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M3 12h6" />
-              <path d="M15 12h6" />
-              <path d="M12 3v6" />
-              <path d="M12 15v6" />
-            </svg>
+            <IconCrosshair class="control-icon" width="15" height="15" />
             <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
           </button>
           <button class="btn btn-secondary library-control-button" title="MacOS Steam" @click="toggleMacSteam">
-            <svg
-              class="control-icon"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <rect x="5" y="4" width="14" height="17" rx="2" />
-              <path d="M9 4V2h6v2" />
-              <path d="M9 18h6" />
-            </svg>
+            <IconSmartphone class="control-icon" width="15" height="15" />
             <span class="control-label">
               {{
                 !macSteamInstalled ? "Install macOS Steam" : macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam"
@@ -375,22 +349,7 @@ watch([library, search, filter], applyFilter);
             title="Refresh"
             @click="reloadLibrary()"
           >
-            <svg
-              class="control-icon"
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-              <path d="M3 12A9 9 0 0 1 18.5 5.8" />
-              <path d="M18 2v4h4" />
-              <path d="M6 22v-4H2" />
-            </svg>
+            <IconRefreshCcw class="control-icon" width="15" height="15" />
             <span class="control-label">Refresh</span>
           </button>
         </div>
@@ -407,11 +366,7 @@ watch([library, search, filter], applyFilter);
 
     <div v-if="!library || library.games.length === 0" class="empty-state">
       <div class="empty-icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="2" y="6" width="20" height="12" rx="2" />
-          <line x1="6" y1="10" x2="6" y2="14" />
-          <line x1="10" y1="10" x2="10" y2="14" />
-        </svg>
+        <IconBattery width="48" height="48" />
       </div>
       <h2>No games found</h2>
       <p>Add your Steam API key in Settings to load your library, or download a game manually.</p>

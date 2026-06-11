@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
+import IconArrowRight from "~icons/lucide/arrow-right";
 
 const status = ref("idle");
 const step = ref(0);
@@ -124,7 +125,7 @@ onUnmounted(() => {
         <div v-for="(stage, i) in stages" :key="stage.name" class="pipeline-stage" :class="{ active: !complete && !error }">
           <span class="stage-label">{{ stage.name }}</span>
           <div v-if="i < stages.length - 1" class="pipeline-arrow">
-            <svg width="16" height="12" viewBox="0 0 16 12"><path d="M0 6h12m0 0l-4-4m4 4l-4 4" stroke="currentColor" stroke-width="1.5" fill="none" /></svg>
+            <IconArrowRight width="16" height="12" />
           </div>
         </div>
       </div>

@@ -3,6 +3,13 @@ import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { SharpApp } from "../api-types";
+import IconGlassWater from "~icons/lucide/glass-water";
+import IconLayoutGrid from "~icons/lucide/layout-grid";
+import IconDownload from "~icons/lucide/download";
+import IconUpload from "~icons/lucide/upload";
+import IconRefreshCcw from "~icons/lucide/refresh-ccw";
+import IconMonitor from "~icons/lucide/monitor";
+import IconX from "~icons/lucide/x";
 
 interface LaunchDoctorCheck {
   id: string;
@@ -707,7 +714,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
       <div class="sharp-header-controls">
       <div v-if="bottles.length" class="dropdown-wrap">
           <button class="btn btn-secondary" @click="openDropdown('bottles', $event)">
-            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(45deg)"><path d="M8 2h8l1 7H7L8 2z"/><path d="M7 9v2a5 5 0 0 0 10 0V9"/><line x1="12" y1="16" x2="12" y2="22"/></svg>
+            <IconGlassWater class="btn-icon" width="14" height="14" style="transform:rotate(45deg)" />
             <span class="btn-label-long">Runtime Bottles</span><span class="btn-label-short">Bottles</span> <span class="dropdown-count">{{ bottles.length }}</span>
         </button>
         <div v-if="dropdownOpen === 'bottles'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
@@ -795,7 +802,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
       </div>
       <div v-if="compatibilityCases.length" class="dropdown-wrap">
           <button class="btn btn-secondary" @click="openDropdown('compat', $event)">
-            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            <IconLayoutGrid class="btn-icon" width="14" height="14" />
             <span class="btn-label-long">Compatibility</span><span class="btn-label-short">Compat</span> <span class="dropdown-count">{{ compatibilityCases.length }}</span>
         </button>
         <div v-if="dropdownOpen === 'compat'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
@@ -823,7 +830,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
       </div>
       <div v-if="redistSources.length" class="dropdown-wrap">
           <button class="btn btn-secondary" @click="openDropdown('redist', $event)">
-            <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <IconDownload class="btn-icon" width="14" height="14" />
             <span class="btn-label-long">Redist Sources</span><span class="btn-label-short">Redist</span> <span class="dropdown-count">{{ redistSources.length }}</span>
         </button>
         <div v-if="dropdownOpen === 'redist'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
@@ -838,11 +845,11 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
         </div>
       </div>
       <button class="btn btn-primary" @click="installExe">
-        <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <IconUpload class="btn-icon" width="14" height="14" />
         <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
       </button>
       <button class="btn btn-secondary" @click="refreshSharpLibrary">
-        <svg class="btn-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h4"/><path d="M6 22v-4H2"/></svg>
+        <IconRefreshCcw class="btn-icon" width="14" height="14" />
         <span class="btn-label-long">Refresh</span><span class="btn-label-short">Refresh</span>
       </button>
       </div>
@@ -850,11 +857,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="2" y="3" width="20" height="14" rx="2" />
-          <line x1="8" y1="21" x2="16" y2="21" />
-          <line x1="12" y1="17" x2="12" y2="21" />
-        </svg>
+        <IconMonitor width="48" height="48" />
       </div>
       <h2>No applications installed</h2>
       <p>Click "Install Windows Program" to add a Windows application</p>
@@ -876,10 +879,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
             title="Close application"
             @click="stopSharpApp(app)"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-              <path d="M18 6 6 18" />
-              <path d="m6 6 12 12" />
-            </svg>
+            <IconX width="14" height="14" />
           </button>
         </div>
         <div class="sharp-card-body">

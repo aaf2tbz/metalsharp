@@ -2,6 +2,10 @@
 import { ref, inject, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
+import IconZap from "~icons/lucide/zap";
+import IconBattery from "~icons/lucide/battery";
+import IconLock from "~icons/lucide/lock";
+import IconCheck from "~icons/lucide/check";
 
 const emit = defineEmits<{ done: [] }>();
 const toast = useToast();
@@ -234,7 +238,7 @@ async function installVcppX86() {
         <div class="setup-features">
           <div class="setup-feature">
             <div class="setup-feature-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
+              <IconZap width="20" height="20" />
             </div>
             <div>
               <div class="setup-feature-title">D3D9/11/12 via DXMT + Metal</div>
@@ -243,7 +247,7 @@ async function installVcppX86() {
           </div>
           <div class="setup-feature">
             <div class="setup-feature-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="6" y1="10" x2="6" y2="14"/><line x1="10" y1="10" x2="10" y2="14"/></svg>
+              <IconBattery width="20" height="20" />
             </div>
             <div>
               <div class="setup-feature-title">FNA/XNA via Native Mono</div>
@@ -252,7 +256,7 @@ async function installVcppX86() {
           </div>
           <div class="setup-feature">
             <div class="setup-feature-icon">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" /></svg>
+              <IconLock width="20" height="20" />
             </div>
             <div>
               <div class="setup-feature-title">Wine Steam Integration</div>
@@ -368,7 +372,7 @@ async function installVcppX86() {
       <div v-if="step === 4" class="setup-body">
         <div class="setup-complete">
           <div class="setup-complete-icon">
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
+            <IconCheck width="36" height="36" />
           </div>
           <h1>You're All Set!</h1>
           <p>MetalSharp is ready. Open your library, start Steam, and download games.</p>
