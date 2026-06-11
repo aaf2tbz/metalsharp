@@ -63,7 +63,6 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
 const MIGRATION_TOTAL_STEPS: usize = 8;
-const STEAM_UPDATE_SECOND_WINDOW_GRACE_SECS: u64 = 15;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -494,10 +493,10 @@ fn run_migration() {
     kill_steam_wine();
     log_to_file("Migration: killed Wine/Steam processes after prefix update to dismiss wineboot window");
 
-    // Wait for any lingering Steam update windows to close before declaring
-    // the migration complete. wineboot -u can fork Steam.exe for self-update;
-    // the kill above sends SIGTERM but Steam may still be shutting down.
-    wait_for_steam_update_windows(&ms_dir, 90);
+    // wineboot -u can fork Steam.exe twice for self-update. The second Wine
+    // window is crash-prone during migration, so dismiss it and let the app's
+    // normal Steam launch path start Steam after migration completes.
+    dismiss_steam_update_windows_after_migration(&ms_dir, 90);
 
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
@@ -581,7 +580,7 @@ fn kill_steam_wine() {
     std::thread::sleep(std::time::Duration::from_millis(750));
 }
 
-fn wait_for_steam_update_windows(ms_dir: &Path, timeout_secs: u64) {
+fn dismiss_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u64) {
     let prefix = ms_dir.join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
     let start = std::time::Instant::now();
@@ -600,12 +599,10 @@ fn wait_for_steam_update_windows(ms_dir: &Path, timeout_secs: u64) {
             SteamUpdateWaitAction::LogFirstClose => {
                 log_to_file("Migration: initial Wine/Steam update window closed, waiting for Steam updater window...");
             },
-            SteamUpdateWaitAction::HoldAfterSecondOpen => {
-                log_to_file(
-                    "Migration: Steam updater window detected, holding 15 seconds before completing migration...",
-                );
-                std::thread::sleep(std::time::Duration::from_secs(STEAM_UPDATE_SECOND_WINDOW_GRACE_SECS));
-                log_to_file("Migration: Steam updater grace period elapsed, migration ready to complete");
+            SteamUpdateWaitAction::KillAfterSecondOpen => {
+                log_to_file("Migration: second Wine/Steam updater window detected; force-killing it after wineboot");
+                force_kill_steam_update_processes_for_prefix(&prefix_str);
+                log_to_file("Migration: dismissed post-wineboot Steam updater window; Steam can be started normally from the app");
                 return;
             },
             SteamUpdateWaitAction::None => {},
@@ -629,6 +626,16 @@ fn steam_update_process_alive(prefix_str: &str, process_output: &str) -> bool {
     })
 }
 
+fn force_kill_steam_update_processes_for_prefix(prefix_str: &str) {
+    if prefix_str.trim().is_empty() {
+        return;
+    }
+
+    run_pkill(&["-TERM", "-f", prefix_str]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    run_pkill(&["-KILL", "-f", prefix_str]);
+}
+
 #[derive(Default)]
 struct SteamUpdateWindowWait {
     first_open_seen: bool,
@@ -648,7 +655,7 @@ impl SteamUpdateWindowWait {
         }
 
         if steam_alive && self.first_close_seen {
-            return SteamUpdateWaitAction::HoldAfterSecondOpen;
+            return SteamUpdateWaitAction::KillAfterSecondOpen;
         }
 
         SteamUpdateWaitAction::None
@@ -664,7 +671,7 @@ enum SteamUpdateWaitAction {
     None,
     LogFirstOpen,
     LogFirstClose,
-    HoldAfterSecondOpen,
+    KillAfterSecondOpen,
 }
 
 fn run_pkill(args: &[&str]) {
@@ -2387,7 +2394,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_waits_for_second_steam_update_window() {
+    fn migration_kills_second_steam_update_window() {
         let mut wait = SteamUpdateWindowWait::default();
 
         assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
@@ -2395,7 +2402,7 @@ mod tests {
         assert_eq!(wait.observe(true), SteamUpdateWaitAction::None);
         assert_eq!(wait.observe(false), SteamUpdateWaitAction::LogFirstClose);
         assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
-        assert_eq!(wait.observe(true), SteamUpdateWaitAction::HoldAfterSecondOpen);
+        assert_eq!(wait.observe(true), SteamUpdateWaitAction::KillAfterSecondOpen);
     }
 
     #[test]
