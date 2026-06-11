@@ -126,7 +126,44 @@ fn gptk_seed_failure_path(home: &Path) -> PathBuf {
 }
 
 fn gptk_steam_exe(prefix: &Path) -> PathBuf {
-    prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
+    gptk_steam_dir(prefix).join("Steam.exe")
+}
+
+fn gptk_steam_dir(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join("Program Files (x86)").join("Steam")
+}
+
+pub fn gptk_disabled_steam_exe(prefix: &Path) -> PathBuf {
+    gptk_steam_dir(prefix).join("Steam.exe.metalsharp-offline-disabled")
+}
+
+fn gptk_steam_launcher_present(prefix: &Path) -> bool {
+    gptk_steam_exe(prefix).is_file() || gptk_disabled_steam_exe(prefix).is_file()
+}
+
+pub fn disable_gptk_steam_launcher_for_offline(prefix: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    let steam_exe = gptk_steam_exe(prefix);
+    let disabled = gptk_disabled_steam_exe(prefix);
+    if disabled.exists() {
+        return Ok(false);
+    }
+    if steam_exe.exists() {
+        std::fs::rename(&steam_exe, &disabled)
+            .map_err(|e| format!("disable GPTK Steam launcher {}: {}", steam_exe.display(), e))?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+pub fn restore_gptk_steam_launcher(prefix: &Path) -> Result<bool, Box<dyn std::error::Error>> {
+    let steam_exe = gptk_steam_exe(prefix);
+    let disabled = gptk_disabled_steam_exe(prefix);
+    if steam_exe.exists() || !disabled.exists() {
+        return Ok(false);
+    }
+    std::fs::rename(&disabled, &steam_exe)
+        .map_err(|e| format!("restore GPTK Steam launcher {}: {}", steam_exe.display(), e))?;
+    Ok(true)
 }
 
 const GPTK_WINEBOOT_REQUIRED_PATHS: &[(&str, bool)] = &[
@@ -223,9 +260,8 @@ pub fn gptk_prefix_ready(home: &Path) -> bool {
     if !prefix.join(".gptk-ready").is_file() {
         return false;
     }
-    let steam_exe = gptk_steam_exe(&prefix);
     let dosdevices = prefix.join("dosdevices");
-    let ready = steam_exe.is_file() && dosdevices.is_dir() && gptk_wineboot_runtime_ready(&prefix);
+    let ready = gptk_steam_launcher_present(&prefix) && dosdevices.is_dir() && gptk_wineboot_runtime_ready(&prefix);
     if ready {
         if prefix.join(".gptk-seeding").exists() {
             let _ = std::fs::remove_file(prefix.join(".gptk-seeding"));
@@ -266,9 +302,12 @@ pub fn gptk_prefix_status(home: &Path) -> GptkPrefixStatus {
 
 fn gptk_prefix_status_for_prefix(prefix: &Path, failed_marker: &Path) -> GptkPrefixStatus {
     let ready_marker = prefix.join(".gptk-ready");
-    let steam_exe = gptk_steam_exe(prefix);
     let dosdevices = prefix.join("dosdevices");
-    if ready_marker.is_file() && steam_exe.is_file() && dosdevices.is_dir() && gptk_wineboot_runtime_ready(prefix) {
+    if ready_marker.is_file()
+        && gptk_steam_launcher_present(prefix)
+        && dosdevices.is_dir()
+        && gptk_wineboot_runtime_ready(prefix)
+    {
         let _ = std::fs::remove_file(prefix.join(".gptk-seeding"));
         let _ = std::fs::remove_file(failed_marker);
         return GptkPrefixStatus::Ready;
@@ -302,7 +341,7 @@ fn gptk_prefix_status_for_prefix(prefix: &Path, failed_marker: &Path) -> GptkPre
             missing_runtime.join(", ")
         ));
     }
-    if !steam_exe.is_file() {
+    if !gptk_steam_launcher_present(prefix) {
         return GptkPrefixStatus::Partial("GPTK prefix is incomplete: missing Steam.exe".to_string());
     }
     if !ready_marker.is_file() {
@@ -1386,5 +1425,22 @@ mod tests {
         assert!(!failed.exists());
 
         let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gptk_ready_status_accepts_offline_disabled_steam_launcher() {
+        let home = test_prefix("gptk-ready-disabled-steam-home");
+        let prefix = gptk_prefix_path(&home);
+        let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+        fs::create_dir_all(&steam_dir).expect("create steam dir");
+        create_gptk_wineboot_runtime(&prefix);
+        fs::write(gptk_disabled_steam_exe(&prefix), "steam disabled").expect("write disabled steam exe");
+        fs::write(prefix.join(".gptk-ready"), "ready").expect("write ready");
+        let failed = prefix.join(".gptk-seed-failed");
+
+        assert!(gptk_prefix_ready(&home));
+        assert_eq!(gptk_prefix_status_for_prefix(&prefix, &failed), GptkPrefixStatus::Ready);
+
+        let _ = fs::remove_dir_all(home);
     }
 }

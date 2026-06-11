@@ -556,6 +556,8 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
     let (install_dir, exe_path) = shortcut_library_paths(&shortcut);
     let install_dir_string = install_dir.to_string_lossy().to_string();
     let exe_path_string = exe_path.to_string_lossy().to_string();
+    let desired_launch_args =
+        defaulted_launcher_launch_args(&shortcut.name, &exe_path, &install_dir_string, &shortcut.launch_args);
 
     if let Some(app) = apps.iter_mut().find(|app| {
         app.id == id
@@ -580,8 +582,8 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
             app.exe_path = exe_path_string.clone();
             changed = true;
         }
-        if app.launch_args != shortcut.launch_args {
-            app.launch_args = shortcut.launch_args;
+        if app.launch_args != desired_launch_args {
+            app.launch_args = desired_launch_args;
             changed = true;
         }
         if app.size_bytes != size_bytes {
@@ -600,13 +602,21 @@ fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonS
         cover_position_x: default_cover_position(),
         cover_position_y: default_cover_position(),
         engine: "auto".to_string(),
-        launch_args: shortcut.launch_args,
+        launch_args: desired_launch_args,
         user_launch_args: Vec::new(),
         bottle_id: None,
         installed_at: chrono_now(),
         size_bytes: dir_size(&install_dir),
     });
     true
+}
+
+fn defaulted_launcher_launch_args(name: &str, exe_path: &Path, install_dir: &str, base_args: &[String]) -> Vec<String> {
+    let mut args = base_args.to_vec();
+    if let Some(kind) = store_launcher_kind_for_identity(name, exe_path, install_dir) {
+        append_unique_launch_args(&mut args, default_launcher_launch_args(kind));
+    }
+    args
 }
 
 fn shortcut_library_paths(shortcut: &crate::scan::NonSteamShortcut) -> (PathBuf, PathBuf) {
@@ -1954,6 +1964,37 @@ mod tests {
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].launch_args, vec!["-d3d12", "-windowed"]);
         assert_eq!(apps[0].user_launch_args, vec!["-user"]);
+    }
+
+    #[test]
+    fn non_steam_shortcut_sync_keeps_launcher_defaults_idempotent() {
+        let root = test_dir("shortcut-launcher-defaults");
+        fs::create_dir_all(&root).expect("create test dir");
+        let exe = root.join("EpicGamesLauncher.exe");
+        fs::write(&exe, b"not pe").expect("write exe");
+        let shortcut = crate::scan::NonSteamShortcut {
+            name: "Epic Games Launcher".into(),
+            exe_path: exe,
+            start_dir: Some(root.clone()),
+            launch_args: vec!["-existing".into()],
+        };
+        let mut apps = Vec::new();
+
+        assert!(sync_non_steam_shortcut(&mut apps, shortcut.clone()));
+        assert_eq!(
+            apps[0].launch_args,
+            vec![
+                "-existing",
+                "-SkipBuildPatchPrereq",
+                "-OpenGL",
+                "--disable-gpu-sandbox",
+                "--disable-direct-composition"
+            ]
+        );
+        assert!(!apply_default_launcher_launch_args(&mut apps));
+        assert!(!sync_non_steam_shortcut(&mut apps, shortcut));
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
