@@ -59,16 +59,7 @@ export class RustBridge {
 
   async ensureRunning(maxMs = 15000): Promise<{ ok: boolean; error?: string }> {
     if (await this.isAlive()) return { ok: true };
-
-    const started = await this.start();
-    if (!started.ok) return started;
-
-    try {
-      await this.waitForReady(maxMs);
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: (e as Error).message };
-    }
+    return { ok: false, error: "Backend is not running" };
   }
 
   private async startInner(): Promise<{ ok: boolean; error?: string }> {
@@ -81,7 +72,7 @@ export class RustBridge {
     const needsRestart = await this.shouldRestart(binPath);
     if (needsRestart) {
       console.log("Backend version mismatch or not running — restarting...");
-      await this.killExisting();
+      await this.killProcess();
     } else if (await this.isAlive()) {
       console.log("Backend already running and up to date");
       return { ok: true };
@@ -103,7 +94,7 @@ export class RustBridge {
     }
 
     this.stop();
-    await this.killExisting();
+    await this.killProcess();
 
     try {
       this.spawnBackend(binPath);
@@ -115,8 +106,46 @@ export class RustBridge {
   }
 
   stop() {
-    this.proc?.kill();
+    this.killProcess();
+  }
+
+  async killProcess() {
+    // Kill the child we spawned (if any).
+    if (this.proc?.pid) {
+      try {
+        this.proc.kill("SIGTERM");
+      } catch {}
+    }
     this.proc = null;
+
+    // Also find and kill any backend still listening on our port.
+    const pid = await this.getBackendPid();
+    if (pid) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+
+      // Wait up to 3s for graceful shutdown, then force-kill.
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(pid, 0);
+          await new Promise((r) => setTimeout(r, 200));
+        } catch {
+          break;
+        }
+      }
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+
+    // Wait for the port to be released.
+    const portDeadline = Date.now() + 2000;
+    while (Date.now() < portDeadline) {
+      if (!(await this.isAlive())) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
   }
 
   async isAlive(): Promise<boolean> {
@@ -283,37 +312,6 @@ export class RustBridge {
         }
       });
     });
-  }
-
-  private async killExisting() {
-    if (this.proc?.pid) {
-      try {
-        this.proc.kill();
-      } catch {}
-    }
-    this.proc = null;
-
-    const pid = await this.getBackendPid();
-    if (!pid) return;
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {}
-
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(pid, 0);
-        await new Promise((r) => setTimeout(r, 200));
-      } catch {
-        break;
-      }
-    }
-
-    const portDeadline = Date.now() + 3000;
-    while (Date.now() < portDeadline) {
-      if (!(await this.isAlive())) break;
-      await new Promise((r) => setTimeout(r, 200));
-    }
   }
 
   private findBinary(): string | null {

@@ -189,12 +189,12 @@ function startSteamappsWatcher() {
   }
 }
 
-function cleanup() {
+async function cleanup() {
   if (steamappsWatcher) {
     steamappsWatcher.close();
     steamappsWatcher = null;
   }
-  bridge?.stop();
+  await bridge?.killProcess();
 }
 
 let migrationMode = false;
@@ -234,13 +234,13 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("window-all-closed", () => {
-  cleanup();
+app.on("window-all-closed", async () => {
+  await cleanup();
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => {
-  cleanup();
+app.on("before-quit", async () => {
+  await cleanup();
 });
 
 function backendErrorMessage(error: unknown): string {
