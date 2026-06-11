@@ -195,7 +195,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
-    if matches!(appid, 440 | 620 | 4000 | 252490 | 271590 | 292030 | 1172380 | 1260320 | 3241660) {
+    if requires_steam_secure_launch_args(appid) {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
@@ -211,6 +211,10 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         },
         _ => {},
     }
+}
+
+pub(crate) fn requires_steam_secure_launch_args(appid: u32) -> bool {
+    matches!(appid, 440 | 620 | 4000 | 252490 | 271590 | 292030 | 1172380 | 1260320 | 3241660)
 }
 
 fn append_unique_launch_arg(launch_args: &mut Vec<String>, arg: &str) {

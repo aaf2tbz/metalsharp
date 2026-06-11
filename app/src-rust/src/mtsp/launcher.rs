@@ -2991,7 +2991,7 @@ fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
     if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
         ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
     } else {
-        ensure_real_steam_dlls(&home, &game_dir, appid);
+        ensure_real_steam_dlls(&home, &game_dir, appid, super::recipe::requires_steam_secure_launch_args(appid));
     }
 }
 
@@ -3372,7 +3372,7 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
 /// For non-Goldberg launches: ensure the game directory has real Steam DLLs,
 /// not leftover Goldberg emulator files. Restores .orig backups if they exist,
 /// or deploys from the user's Wine Steam installation.
-fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32) {
+fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32, deploy_secure_components: bool) {
     let targets = goldberg_deploy_targets(game_dir);
     let mut restored_any = false;
 
@@ -3469,8 +3469,33 @@ fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32) {
         }
     }
 
+    if deploy_secure_components {
+        for filename in ["steamclient64.dll", "steamclient.dll", "GameOverlayRenderer64.dll", "GameOverlayRenderer.dll"]
+        {
+            deploy_real_steam_component(&wine_steam_dir, &targets, filename);
+        }
+    }
+
     // Always ensure steam_appid.txt is correct for the real Steam runtime.
     deploy_steam_appid(game_dir, appid);
+}
+
+fn deploy_real_steam_component(wine_steam_dir: &Path, targets: &[PathBuf], filename: &str) {
+    let source = wine_steam_dir.join(filename);
+    if !source.exists() {
+        return;
+    }
+
+    for target in targets {
+        if !target.exists() {
+            continue;
+        }
+        let dest = target.join(filename);
+        if !dest.exists() {
+            let _ = std::fs::copy(&source, &dest);
+            eprintln!("real_steam: deployed Wine Steam {} to {}", filename, target.display());
+        }
+    }
 }
 
 fn start_protected_game_real_exe(appid: u32) -> Option<&'static str> {
@@ -4334,6 +4359,80 @@ mod tests {
         assert_eq!(aliases, vec![dosdevices.join("c:").join("Games").join("Portal 2")]);
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn secure_steam_launch_deploys_real_steam_client_components() {
+        let home = test_dir("secure-real-steam");
+        let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam");
+        let game_dir = home.join("SteamLibrary").join("steamapps").join("common").join("Team Fortress 2");
+        let bin_dir = game_dir.join("bin");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        std::fs::create_dir_all(&bin_dir).expect("create game bin");
+
+        for filename in [
+            "steam_api64.dll",
+            "steam_api.dll",
+            "steamclient64.dll",
+            "steamclient.dll",
+            "GameOverlayRenderer64.dll",
+            "GameOverlayRenderer.dll",
+        ] {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+
+        ensure_real_steam_dlls(&home, &game_dir, 440, true);
+
+        for target in [&game_dir, &bin_dir] {
+            assert_eq!(std::fs::read(target.join("steam_api64.dll")).expect("read api64"), b"steam_api64.dll");
+            assert_eq!(std::fs::read(target.join("steam_api.dll")).expect("read api"), b"steam_api.dll");
+            assert_eq!(
+                std::fs::read(target.join("steamclient64.dll")).expect("read steamclient64"),
+                b"steamclient64.dll"
+            );
+            assert_eq!(std::fs::read(target.join("steamclient.dll")).expect("read steamclient"), b"steamclient.dll");
+            assert_eq!(
+                std::fs::read(target.join("GameOverlayRenderer64.dll")).expect("read overlay64"),
+                b"GameOverlayRenderer64.dll"
+            );
+            assert_eq!(
+                std::fs::read(target.join("GameOverlayRenderer.dll")).expect("read overlay"),
+                b"GameOverlayRenderer.dll"
+            );
+            assert_eq!(std::fs::read_to_string(target.join("steam_appid.txt")).expect("read appid"), "440");
+        }
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn ordinary_real_steam_launch_keeps_client_components_conservative() {
+        let home = test_dir("ordinary-real-steam");
+        let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam");
+        let game_dir = home.join("SteamLibrary").join("steamapps").join("common").join("Ordinary Game");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+
+        for filename in ["steam_api64.dll", "steamclient64.dll", "GameOverlayRenderer64.dll"] {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+
+        ensure_real_steam_dlls(&home, &game_dir, 999999, false);
+
+        assert!(game_dir.join("steam_api64.dll").exists());
+        assert!(!game_dir.join("steamclient64.dll").exists());
+        assert!(!game_dir.join("GameOverlayRenderer64.dll").exists());
+        assert_eq!(std::fs::read_to_string(game_dir.join("steam_appid.txt")).expect("read appid"), "999999");
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
