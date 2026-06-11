@@ -558,8 +558,10 @@ function registerIpc() {
     await cleanup();
 
     const msDir = getMetalsharpDir();
+    let dataRemoved = false;
     try {
       fs.rmSync(msDir, { recursive: true, force: true });
+      dataRemoved = true;
     } catch (e) {
       console.error("Failed to remove MetalSharp data:", e);
     }
@@ -576,6 +578,24 @@ function registerIpc() {
       `;
       const { spawn } = require("child_process");
       spawn("/bin/bash", ["-c", script], { detached: true, stdio: "ignore" }).unref();
+    }
+
+    // Show success dialog — user must close the app to finish.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, {
+        type: "info",
+        title: "MetalSharp Uninstalled",
+        message: "MetalSharp data has been removed successfully.",
+        detail:
+          "All Wine prefixes, bottles, Steam, runtime, and settings have been deleted. " +
+          (appBundle
+            ? "When you close this window, MetalSharp will be moved to the Trash."
+            : "Close this window to exit MetalSharp.") +
+          "\n\nClick OK to close the app.",
+        buttons: ["OK"],
+        defaultId: 0,
+        noLink: true,
+      });
     }
 
     app.quit();
