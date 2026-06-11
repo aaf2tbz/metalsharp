@@ -59,6 +59,20 @@ export class RustBridge {
 
   async ensureRunning(maxMs = 15000): Promise<{ ok: boolean; error?: string }> {
     if (await this.isAlive()) return { ok: true };
+
+    // In dev mode, auto-restart the backend so binary swaps "just work".
+    // In production, the app owns the lifecycle — only start() spawns.
+    if (this.devMode) {
+      const started = await this.start();
+      if (!started.ok) return started;
+      try {
+        await this.waitForReady(maxMs);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    }
+
     return { ok: false, error: "Backend is not running" };
   }
 
