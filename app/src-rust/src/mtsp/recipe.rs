@@ -197,7 +197,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
 
     append_database_default_launch_args(appid, pipeline, launch_args);
 
-    if requires_steam_secure_launch_args(appid) {
+    if uses_steam_secure_launch_model(appid, pipeline) {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
@@ -237,6 +237,10 @@ fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&
 
 pub(crate) fn requires_steam_secure_launch_args(appid: u32) -> bool {
     matches!(appid, 440 | 620 | 4000 | 252490 | 271590 | 292030 | 1172380 | 1260320 | 3241660)
+}
+
+pub(crate) fn uses_steam_secure_launch_model(appid: u32, pipeline: PipelineId) -> bool {
+    requires_steam_secure_launch_args(appid) && !matches!(pipeline, PipelineId::M13 | PipelineId::D3DMetal)
 }
 
 fn append_unique_launch_arg(launch_args: &mut Vec<String>, arg: &str) {
@@ -1085,6 +1089,41 @@ mod tests {
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "appid {appid}");
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn d3dmetal_launches_skip_steam_secure_args() {
+        for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
+            for appid in [440, 620, 4000, 252490, 271590, 292030, 1172380, 1260320, 3241660] {
+                let args = effective_launch_args(appid, super::super::engine::get_pipeline(pipeline));
+
+                assert!(!uses_steam_secure_launch_model(appid, pipeline), "appid {appid} pipeline {pipeline:?}");
+                assert!(
+                    !args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")),
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+                assert!(
+                    !args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")),
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn d3dmetal_launches_keep_game_specific_defaults() {
+        for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
+            let rust_args = effective_launch_args(252490, super::super::engine::get_pipeline(pipeline));
+            assert!(rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-vulkan")), "pipeline {pipeline:?}");
+            assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+            assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
+
+            let rdr2_args = effective_launch_args(1174180, super::super::engine::get_pipeline(pipeline));
+            assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-api")), "pipeline {pipeline:?}");
+            assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("Vulkan")), "pipeline {pipeline:?}");
+            assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+            assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
         }
     }
 

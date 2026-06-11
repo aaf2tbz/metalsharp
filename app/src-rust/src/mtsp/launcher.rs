@@ -2991,7 +2991,12 @@ fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
     if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
         ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
     } else {
-        ensure_real_steam_dlls(&home, &game_dir, appid, super::recipe::requires_steam_secure_launch_args(appid));
+        ensure_real_steam_dlls(
+            &home,
+            &game_dir,
+            appid,
+            super::recipe::uses_steam_secure_launch_model(appid, pipeline_id),
+        );
     }
 }
 
