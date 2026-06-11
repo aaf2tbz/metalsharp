@@ -76,15 +76,15 @@ const FNA_GAME_PROFILES: &[FnaGameProfile] = &[
 const DEFAULT_FNA_PROFILE: FnaGameProfile = FnaGameProfile {
     appid: 0,
     mono_config: "generic-fna-mono.config",
-    mono_arch: MonoArch::Native,
+    mono_arch: MonoArch::X86,
     preferred_exes: &[],
-    method_label: "xna_fna_arm64",
+    method_label: "xna_fna_x86",
     setup_script: None,
     deploy_macos_steam_libs: false,
     launcher_exe: None,
     launcher_source: None,
     deploy_terraria_post: false,
-    include_runtime_shims_in_library_path: true,
+    include_runtime_shims_in_library_path: false,
 };
 
 pub fn find_fna_profile(appid: u32) -> &'static FnaGameProfile {
@@ -2143,7 +2143,7 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     let fmod_libs: &[(&str, Option<&str>)] = &[("libfmod.dylib", None), ("libfmodstudio.dylib", None)];
     for (lib, symlink) in fmod_libs {
         let dst = game_dir.join(lib);
-        if dst.exists() && dst.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+        if dst.exists() && !fna_native_lib_needs_refresh(lib, &dst) {
             continue;
         }
         let fmod_dir = metalsharp_home.join("runtime").join("fnalibs").join("fmod");
@@ -2246,6 +2246,57 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     if let Err(err) = deploy_offline_steamworks_net(game_dir, &metalsharp_home) {
         eprintln!("fna: offline Steamworks deploy failed: {}", err);
     }
+}
+
+pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usize, Box<dyn std::error::Error>> {
+    if !game_dir.is_dir() {
+        return Err(format!("FNA game directory is missing: {}", game_dir.display()).into());
+    }
+
+    let game_dir = game_dir.to_path_buf();
+    repair_fna_native_runtime_shims()?;
+    deploy_fna_assemblies(appid, &game_dir);
+
+    let profile = find_fna_profile(appid);
+    let mut required = vec![
+        "libSystem.Native.dylib",
+        "libSDL2-2.0.0.dylib",
+        "libFNA3D.0.dylib",
+        "libFAudio.0.dylib",
+        "FNA.dll",
+        "steam_appid.txt",
+    ];
+    if profile.mono_arch == MonoArch::X86 {
+        required.push("libfmod.dylib");
+        required.push("libfmodstudio.dylib");
+    }
+
+    let ready = required
+        .iter()
+        .filter(|name| {
+            let path = game_dir.join(name);
+            path.exists() && path.metadata().map(|metadata| metadata.len() > 0).unwrap_or(false)
+        })
+        .count();
+    if ready != required.len() {
+        return Err(
+            format!("FNA game runtime repair incomplete: {}/{} required assets staged", ready, required.len()).into()
+        );
+    }
+
+    for (lib, name) in [
+        ("libFNA3D.0.dylib", "FNA3D"),
+        ("libFAudio.0.dylib", "FAudio"),
+        ("libfmod.dylib", "FMOD"),
+        ("libfmodstudio.dylib", "FMOD Studio"),
+    ] {
+        let path = game_dir.join(lib);
+        if path.exists() && !fna_native_lib_source_valid(lib, &path) {
+            return Err(format!("{} runtime asset is invalid: {}", name, path.display()).into());
+        }
+    }
+
+    Ok(ready)
 }
 
 fn deploy_fna_native_shims(game_dir: &PathBuf, shims_dir: &PathBuf) {
@@ -2714,7 +2765,12 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
         Some(h) => h,
         None => return,
     };
-    let fnalibs = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs").join(lib);
+    let fnalibs_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs");
+    let fnalibs = if matches!(lib, "libfmod.dylib" | "libfmodstudio.dylib") {
+        fnalibs_dir.join("fmod").join(lib)
+    } else {
+        fnalibs_dir.join(lib)
+    };
     if fna_native_lib_source_valid(lib, &fnalibs) {
         let _ = std::fs::copy(&fnalibs, &dst);
     } else {
@@ -2746,9 +2802,12 @@ fn fna_native_lib_needs_refresh(lib: &str, path: &Path) -> bool {
     !fna_native_lib_source_valid(lib, path)
 }
 
-fn fna_native_lib_source_valid(lib: &str, path: &Path) -> bool {
+pub(crate) fn fna_native_lib_source_valid(lib: &str, path: &Path) -> bool {
     if !file_has_payload(path) {
         return false;
+    }
+    if matches!(lib, "libfmod.dylib" | "libfmodstudio.dylib") {
+        return std::fs::metadata(path).map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false);
     }
     if matches!(lib, "libFNA3D.0.dylib" | "libFNA3D.dylib" | "libFAudio.0.dylib" | "libFAudio.dylib") {
         return !dylib_depends_on(path, "libSDL3") && dylib_depends_on(path, "libSDL2");
@@ -3872,13 +3931,14 @@ mod tests {
     }
 
     #[test]
-    fn celeste_profile_isolates_game_dir_dylibs_from_runtime_shims() {
+    fn celeste_and_default_profiles_isolate_game_dir_dylibs_from_runtime_shims() {
         let celeste = find_fna_profile(504230);
         assert!(matches!(celeste.mono_arch, MonoArch::X86));
         assert!(!celeste.include_runtime_shims_in_library_path);
 
         let default = find_fna_profile(0);
-        assert!(default.include_runtime_shims_in_library_path);
+        assert!(matches!(default.mono_arch, MonoArch::X86));
+        assert!(!default.include_runtime_shims_in_library_path);
     }
 
     #[test]
@@ -3886,6 +3946,20 @@ mod tests {
         let path = PathBuf::from("/tmp/libFNA3D.0.dylib");
         assert!(fna_native_lib_source_valid("libSDL2-2.0.0.dylib", &path) || !path.exists());
         assert!(!fna_native_lib_source_valid("libFNA3D.0.dylib", &path));
+    }
+
+    #[test]
+    fn fna_runtime_validation_rejects_tiny_fmod_stubs() {
+        let game_dir = test_dir("fna-runtime-validation-fmod");
+        std::fs::create_dir_all(&game_dir).expect("test dir");
+        let stub = game_dir.join("libfmod.dylib");
+        std::fs::write(&stub, vec![0u8; 32 * 1024]).expect("stub dylib");
+
+        let real = game_dir.join("libfmodstudio.dylib");
+        std::fs::write(&real, vec![0u8; 512 * 1024]).expect("real dylib");
+
+        assert!(!fna_native_lib_source_valid("libfmod.dylib", &stub));
+        assert!(fna_native_lib_source_valid("libfmodstudio.dylib", &real));
     }
 
     #[test]
@@ -3963,6 +4037,9 @@ mod tests {
     #[test]
     fn default_fna_profile_uses_generic_config() {
         assert_eq!(DEFAULT_FNA_PROFILE.mono_config, "generic-fna-mono.config");
+        assert!(matches!(DEFAULT_FNA_PROFILE.mono_arch, MonoArch::X86));
+        assert_eq!(DEFAULT_FNA_PROFILE.method_label, "xna_fna_x86");
+        assert!(!DEFAULT_FNA_PROFILE.include_runtime_shims_in_library_path);
     }
 
     #[test]

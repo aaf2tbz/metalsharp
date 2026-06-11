@@ -166,8 +166,20 @@ const componentDisplayName: Record<string, string> = {
   "battleye": "BattlEye",
 };
 
+const runtimeProfileDisplayName: Record<string, string> = {
+  fna_arm64: "FNA / Mono ARM64",
+  fna_x86: "FNA / Mono x86_64",
+  d3dmetal: "D3DMetal (GPTK)",
+  game_install: "Game Installer",
+  winebare: "Plain Wine",
+};
+
 function componentLabel(id: string): string {
   return componentDisplayName[id] ?? id;
+}
+
+function runtimeProfileLabel(id: string): string {
+  return runtimeProfileDisplayName[id] ?? id;
 }
 
 function componentStateIcon(state: string): string {
@@ -616,7 +628,7 @@ function formatBytes(bytes: number): string {
                 <span class="badge" :class="runtimeReport.actions.length ? 'badge-warn' : 'badge-ok'">
                   {{ runtimeReport.actions.length ? "Bottle Repair" : "Bottle Ready" }}
                 </span>
-                <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeReport.runtime_profile }}</span>
+                <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeProfileLabel(runtimeReport.runtime_profile) }}</span>
               </div>
               <div class="bottle-edit-row">
                 <span>Bottle Name</span>

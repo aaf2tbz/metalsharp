@@ -648,7 +648,13 @@ fn fna_support_assets_current(home: &Path) -> bool {
     let fna3d = runtime.join("fnalibs").join("libFNA3D.0.dylib");
     let kick_fna3d = runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib");
     let sdl2 = runtime.join("fnalibs").join("libSDL2-2.0.0.dylib");
-    fna_dylib_uses_sdl2(&fna3d) && fna_dylib_uses_sdl2(&kick_fna3d) && sdl2.exists()
+    let fmod = runtime.join("fnalibs").join("fmod").join("libfmod.dylib");
+    let fmodstudio = runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib");
+    fna_dylib_uses_sdl2(&fna3d)
+        && fna_dylib_uses_sdl2(&kick_fna3d)
+        && sdl2.exists()
+        && fmod.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
+        && fmodstudio.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
 }
 
 fn fna_dylib_uses_sdl2(path: &Path) -> bool {
