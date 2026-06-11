@@ -116,7 +116,8 @@
         "to": "runtime/shim-sources/fna/shims",
         "filter": [
           "*.c",
-          "*.m"
+          "*.m",
+          "*.cs"
         ]
       },
       {
@@ -146,6 +147,10 @@
       {
         "from": "bundles/metalsharp-assets.tar.zst",
         "to": "bundles/metalsharp-assets.tar.zst"
+      },
+      {
+        "from": "bundles/fnalibs.tar.zst",
+        "to": "bundles/fnalibs.tar.zst"
       },
       {
         "from": "bundles/metalsharp-scripts-tools.tar.zst",

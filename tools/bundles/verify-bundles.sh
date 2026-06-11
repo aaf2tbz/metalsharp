@@ -87,6 +87,10 @@ verify_local() {
       failed=1
       continue
     fi
+    if [ "$asset" = "fnalibs.tar.zst" ] && ! verify_fnalibs_core "$path"; then
+      failed=1
+      continue
+    fi
     if [ "$asset" = "metalsharp-scripts-tools.tar.zst" ] && ! verify_scripts_tools_core "$path"; then
       failed=1
       continue
@@ -159,7 +163,8 @@ verify_graphics_core() {
 }
 
 verify_assets_core() {
-  verify_required_files "$1" "ASSETS" \
+  local path="$1"
+  verify_required_files "$path" "ASSETS" \
     assets/eac-toggle/x86_64-windows/_winhttp.dll \
     assets/fna-kickstart/kick.bin.osx \
     assets/fna-kickstart/FNA.dll \
@@ -173,6 +178,8 @@ verify_assets_core() {
     assets/fnalibs/libSDL2-2.0.0.dylib \
     assets/fnalibs/libFAudio.0.dylib \
     assets/fnalibs/libtheorafile.dylib \
+    assets/fnalibs/fmod/libfmod.dylib \
+    assets/fnalibs/fmod/libfmodstudio.dylib \
     assets/goldberg/x64/steam_api64.dll \
     assets/goldberg/x86/steam_api.dll \
     assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal \
@@ -184,7 +191,96 @@ verify_assets_core() {
     assets/gptk/x86_64-windows/nvapi64.dll \
     assets/gptk/x86_64-windows/nvngx-on-metalfx.dll \
     assets/mono-arm64/bin/mono-sgen \
-    assets/shims/libsteam_api.dylib
+    assets/shims/libsteam_api.dylib &&
+    verify_fna_payloads "$path" "ASSETS" assets/fnalibs &&
+    verify_fna_kickstart_payloads "$path" "ASSETS" assets/fna-kickstart/osx
+}
+
+verify_fnalibs_core() {
+  local path="$1"
+  verify_required_files "$path" "FNALIBS" \
+    fnalibs/libFNA3D.0.dylib \
+    fnalibs/libSDL2-2.0.0.dylib \
+    fnalibs/libFAudio.0.dylib \
+    fnalibs/libtheorafile.dylib \
+    fnalibs/fmod/libfmod.dylib \
+    fnalibs/fmod/libfmodstudio.dylib &&
+    verify_fna_payloads "$path" "FNALIBS" fnalibs
+}
+
+verify_fna_payloads() {
+  local path="$1"
+  local label="$2"
+  local root="$3"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-fna-payloads.XXXXXX")"
+
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" \
+    "$root/libFNA3D.0.dylib" \
+    "$root/libFAudio.0.dylib" \
+    "$root/libSDL2-2.0.0.dylib" \
+    "$root/fmod/libfmod.dylib" \
+    "$root/fmod/libfmodstudio.dylib"; then
+    echo "$label INVALID: $path is missing FNA native payloads" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local failed=0
+  dylib_uses_sdl2 "$tmp/$root/libFNA3D.0.dylib" "$label FNA3D" || failed=1
+  dylib_uses_sdl2 "$tmp/$root/libFAudio.0.dylib" "$label FAudio" || failed=1
+  payload_at_least "$tmp/$root/fmod/libfmod.dylib" 262144 "$label FMOD" || failed=1
+  payload_at_least "$tmp/$root/fmod/libfmodstudio.dylib" 262144 "$label FMOD Studio" || failed=1
+  rm -rf "$tmp"
+  return "$failed"
+}
+
+verify_fna_kickstart_payloads() {
+  local path="$1"
+  local label="$2"
+  local root="$3"
+  local tmp
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-fna-kickstart.XXXXXX")"
+
+  if ! tar --use-compress-program=unzstd -xf "$path" -C "$tmp" \
+    "$root/libFNA3D.0.dylib" \
+    "$root/libFAudio.0.dylib" \
+    "$root/libSDL2-2.0.0.dylib"; then
+    echo "$label INVALID: $path is missing FNA kickstart native payloads" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  local failed=0
+  dylib_uses_sdl2 "$tmp/$root/libFNA3D.0.dylib" "$label kickstart FNA3D" || failed=1
+  dylib_uses_sdl2 "$tmp/$root/libFAudio.0.dylib" "$label kickstart FAudio" || failed=1
+  rm -rf "$tmp"
+  return "$failed"
+}
+
+dylib_uses_sdl2() {
+  local path="$1"
+  local label="$2"
+  local deps
+  deps="$(otool -L -arch x86_64 "$path" 2>/dev/null || true)"
+  if ! grep -q "libSDL2" <<< "$deps" || grep -q "libSDL3" <<< "$deps"; then
+    echo "$label INVALID: $path must link SDL2 and must not link SDL3" >&2
+    return 1
+  fi
+  return 0
+}
+
+payload_at_least() {
+  local path="$1"
+  local min_bytes="$2"
+  local label="$3"
+  local size
+  size="$(stat -f %z "$path" 2>/dev/null || stat -c %s "$path" 2>/dev/null || echo 0)"
+  if [ "$size" -lt "$min_bytes" ]; then
+    echo "$label INVALID: $path is too small ($size bytes)" >&2
+    return 1
+  fi
+  return 0
 }
 
 verify_scripts_tools_core() {

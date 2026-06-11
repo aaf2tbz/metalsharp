@@ -2240,6 +2240,7 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
     let game_dir = game_dir.to_path_buf();
     repair_fna_native_runtime_shims()?;
     deploy_fna_assemblies(appid, &game_dir);
+    deploy_offline_steamworks_net(&game_dir, &crate::platform::metalsharp_home_dir())?;
 
     let profile = find_fna_profile(appid);
     let mut required = vec![
@@ -2253,6 +2254,10 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
     if profile.mono_arch == MonoArch::X86 {
         required.push("libfmod.dylib");
         required.push("libfmodstudio.dylib");
+    }
+    if game_dir.join("Steamworks.NET.dll.metalsharp-original").exists() || game_dir.join("Steamworks.NET.dll").exists()
+    {
+        required.push("Steamworks.NET.dll");
     }
 
     let ready = required
@@ -2278,6 +2283,14 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
         if path.exists() && !fna_native_lib_source_valid(lib, &path) {
             return Err(format!("{} runtime asset is invalid: {}", name, path.display()).into());
         }
+    }
+    if game_dir.join("Steamworks.NET.dll.metalsharp-original").exists()
+        && !offline_steamworks_net_deployed(
+            &game_dir.join("Steamworks.NET.dll"),
+            &game_dir.join("Steamworks.NET.dll.metalsharp-original"),
+        )
+    {
+        return Err(format!("offline Steamworks.NET.dll repair did not replace {}", game_dir.display()).into());
     }
 
     Ok(ready)
@@ -2305,6 +2318,7 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
     let fna_dir = ms_home.join("runtime").join("fna");
     std::fs::create_dir_all(&shims_dir)?;
     std::fs::create_dir_all(&fna_dir)?;
+    let refreshed = crate::installer::repair_fna_support_assets().unwrap_or(0);
 
     for spec in FNA_NATIVE_SHIMS {
         ensure_fna_native_shim_in_cache(spec, &shims_dir);
@@ -2376,7 +2390,7 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
             return Err(format!("FNA3D runtime asset is not SDL2-linked: {}", path.display()).into());
         }
     }
-    Ok(present)
+    Ok(present + refreshed)
 }
 
 pub fn precompile_all_fna_shims() -> Result<usize, String> {

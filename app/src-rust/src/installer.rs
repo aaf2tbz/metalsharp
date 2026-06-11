@@ -28,6 +28,7 @@ const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
 const RUNTIME_BUNDLE: &str = "metalsharp-runtime";
 const GRAPHICS_DLL_BUNDLE: &str = "metalsharp-graphics-dll";
 const ASSETS_BUNDLE: &str = "metalsharp-assets";
+const FNALIBS_BUNDLE: &str = "fnalibs";
 const SCRIPTS_TOOLS_BUNDLE: &str = "metalsharp-scripts-tools";
 const STEAM_BUNDLE: &str = "metalsharp-steam";
 const METALSHARP_NTDLL_HOOK_DLL: &str = "metalsharp_ntdll_hook.dll";
@@ -74,6 +75,8 @@ const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/fnalibs/libSDL2-2.0.0.dylib",
     "assets/fnalibs/libFAudio.0.dylib",
     "assets/fnalibs/libtheorafile.dylib",
+    "assets/fnalibs/fmod/libfmod.dylib",
+    "assets/fnalibs/fmod/libfmodstudio.dylib",
     "assets/goldberg/x64/steam_api64.dll",
     "assets/goldberg/x86/steam_api.dll",
     "assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal",
@@ -87,6 +90,14 @@ const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/mono-arm64/bin/mono-sgen",
     "assets/shims/libsteam_api.dylib",
 ];
+const FNALIBS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
+    "fnalibs/libFNA3D.0.dylib",
+    "fnalibs/libSDL2-2.0.0.dylib",
+    "fnalibs/libFAudio.0.dylib",
+    "fnalibs/libtheorafile.dylib",
+    "fnalibs/fmod/libfmod.dylib",
+    "fnalibs/fmod/libfmodstudio.dylib",
+];
 const SCRIPTS_TOOLS_REQUIRED_ARCHIVE_FILES: &[&str] =
     &["scripts/tools/configs/mtsp-rules.toml", "scripts/tools/updater/update.sh"];
 const STEAM_REQUIRED_ARCHIVE_FILES: &[&str] =
@@ -96,6 +107,7 @@ const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp-runtime.tar.zst",
     "metalsharp-graphics-dll.tar.zst",
     "metalsharp-assets.tar.zst",
+    "fnalibs.tar.zst",
     "metalsharp-scripts-tools.tar.zst",
     "metalsharp-steam.tar.zst",
 ];
@@ -648,13 +660,17 @@ fn fna_support_assets_current(home: &Path) -> bool {
     let fna3d = runtime.join("fnalibs").join("libFNA3D.0.dylib");
     let kick_fna3d = runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib");
     let sdl2 = runtime.join("fnalibs").join("libSDL2-2.0.0.dylib");
+    let faudio = runtime.join("fnalibs").join("libFAudio.0.dylib");
+    let kick_faudio = runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib");
     let fmod = runtime.join("fnalibs").join("fmod").join("libfmod.dylib");
     let fmodstudio = runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib");
     fna_dylib_uses_sdl2(&fna3d)
         && fna_dylib_uses_sdl2(&kick_fna3d)
+        && fna_dylib_uses_sdl2(&faudio)
+        && fna_dylib_uses_sdl2(&kick_faudio)
         && sdl2.exists()
-        && fmod.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
-        && fmodstudio.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
+        && fmod_dylib_has_payload(&fmod)
+        && fmod_dylib_has_payload(&fmodstudio)
 }
 
 fn fna_dylib_uses_sdl2(path: &Path) -> bool {
@@ -672,6 +688,108 @@ fn fna_dylib_uses_sdl2(path: &Path) -> bool {
     }
     let deps = String::from_utf8_lossy(&output.stdout);
     deps.contains("libSDL2") && !deps.contains("libSDL3")
+}
+
+fn fmod_dylib_has_payload(path: &Path) -> bool {
+    path.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
+}
+
+pub(crate) fn repair_fna_support_assets() -> Result<usize, String> {
+    let home = dirs::home_dir().ok_or_else(|| "no home dir".to_string())?;
+    let runtime_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
+
+    if let Some(archive) = find_bundled_archive(FNALIBS_BUNDLE) {
+        return repair_fna_support_assets_from_fnalibs_archive(&archive, &runtime_dir);
+    }
+
+    let archive = find_bundled_archive(ASSETS_BUNDLE).ok_or_else(|| {
+        "FNA support assets not found — fnalibs.tar.zst or metalsharp-assets.tar.zst is missing".to_string()
+    })?;
+    repair_fna_support_assets_from_assets_archive(&archive, &runtime_dir)
+}
+
+fn repair_fna_support_assets_from_fnalibs_archive(archive: &Path, runtime_dir: &Path) -> Result<usize, String> {
+    let tmp = std::env::temp_dir().join("metalsharp-fnalibs-repair");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {}", tmp.display(), e))?;
+    extract_zst(&archive.to_path_buf(), &tmp, FNALIBS_BUNDLE)?;
+    let copied = refresh_fna_support_assets_from_fnalibs_dir(&tmp.join("fnalibs"), runtime_dir)?;
+    let _ = fs::remove_dir_all(&tmp);
+    Ok(copied)
+}
+
+fn repair_fna_support_assets_from_assets_archive(archive: &Path, runtime_dir: &Path) -> Result<usize, String> {
+    let tmp = std::env::temp_dir().join("metalsharp-assets-fna-repair");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {}", tmp.display(), e))?;
+    extract_zst(&archive.to_path_buf(), &tmp, ASSETS_BUNDLE)?;
+    let assets = tmp.join("assets");
+    let mut copied = refresh_fna_support_assets_from_fnalibs_dir(&assets.join("fnalibs"), runtime_dir)?;
+    copied += refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart").join("osx"), runtime_dir)?;
+    let _ = fs::remove_dir_all(&tmp);
+    Ok(copied)
+}
+
+fn refresh_fna_support_assets_from_fnalibs_dir(source: &Path, runtime_dir: &Path) -> Result<usize, String> {
+    if !fna_support_source_dir_valid(source) {
+        return Err(format!("FNA support source is invalid: {}", source.display()));
+    }
+
+    let fnalibs_dir = runtime_dir.join("fnalibs");
+    let fmod_dir = fnalibs_dir.join("fmod");
+    fs::create_dir_all(&fmod_dir).map_err(|e| format!("create {}: {}", fmod_dir.display(), e))?;
+
+    let mut copied = 0usize;
+    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib", "libtheorafile.dylib"] {
+        copy_file_overwrite(&source.join(name), &fnalibs_dir.join(name))?;
+        copied += 1;
+    }
+    for name in ["libfmod.dylib", "libfmodstudio.dylib"] {
+        copy_file_overwrite(&source.join("fmod").join(name), &fmod_dir.join(name))?;
+        copied += 1;
+    }
+
+    let kick_osx = runtime_dir.join("fna-kickstart").join("osx");
+    fs::create_dir_all(&kick_osx).map_err(|e| format!("create {}: {}", kick_osx.display(), e))?;
+    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib", "libtheorafile.dylib"] {
+        copy_file_overwrite(&source.join(name), &kick_osx.join(name))?;
+        copied += 1;
+    }
+
+    Ok(copied)
+}
+
+fn refresh_fna_kickstart_from_dir(source: &Path, runtime_dir: &Path) -> Result<usize, String> {
+    if !fna_dylib_uses_sdl2(&source.join("libFNA3D.0.dylib"))
+        || !fna_dylib_uses_sdl2(&source.join("libFAudio.0.dylib"))
+        || !source.join("libSDL2-2.0.0.dylib").exists()
+    {
+        return Ok(0);
+    }
+
+    let kick_osx = runtime_dir.join("fna-kickstart").join("osx");
+    fs::create_dir_all(&kick_osx).map_err(|e| format!("create {}: {}", kick_osx.display(), e))?;
+    let mut copied = 0usize;
+    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib"] {
+        copy_file_overwrite(&source.join(name), &kick_osx.join(name))?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
+fn fna_support_source_dir_valid(source: &Path) -> bool {
+    fna_dylib_uses_sdl2(&source.join("libFNA3D.0.dylib"))
+        && fna_dylib_uses_sdl2(&source.join("libFAudio.0.dylib"))
+        && source.join("libSDL2-2.0.0.dylib").exists()
+        && fmod_dylib_has_payload(&source.join("fmod").join("libfmod.dylib"))
+        && fmod_dylib_has_payload(&source.join("fmod").join("libfmodstudio.dylib"))
+}
+
+fn copy_file_overwrite(src: &Path, dst: &Path) -> Result<(), String> {
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
+    }
+    fs::copy(src, dst).map(|_| ()).map_err(|e| format!("copy {} to {}: {}", src.display(), dst.display(), e))
 }
 
 fn mark_split_bundle_installed(home: &Path, bundle: &str, archive: &Path) {
@@ -1678,7 +1796,14 @@ fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
     }
 
     if name == ASSETS_BUNDLE || name == "metalsharp-assets.tar.zst" {
-        return archive_required_files_valid(path, ASSETS_REQUIRED_ARCHIVE_FILES);
+        return archive_required_files_valid(path, ASSETS_REQUIRED_ARCHIVE_FILES)
+            && archive_fna_support_payloads_valid(path, "assets/fnalibs")
+            && archive_fna_kickstart_payloads_valid(path, "assets/fna-kickstart/osx");
+    }
+
+    if name == FNALIBS_BUNDLE || name == "fnalibs.tar.zst" {
+        return archive_required_files_valid(path, FNALIBS_REQUIRED_ARCHIVE_FILES)
+            && archive_fna_support_payloads_valid(path, "fnalibs");
     }
 
     if name == SCRIPTS_TOOLS_BUNDLE || name == "metalsharp-scripts-tools.tar.zst" {
@@ -1743,6 +1868,102 @@ fn archive_required_files_valid(path: &Path, required_files: &[&str]) -> bool {
         && required_files.iter().all(|required| file_nonempty(&tmp.join(required)));
     let _ = fs::remove_dir_all(&tmp);
     ready
+}
+
+fn archive_fna_support_payloads_valid(path: &Path, root: &str) -> bool {
+    let tmp = std::env::temp_dir().join(format!(
+        "metalsharp-fna-validate-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    if fs::create_dir_all(&tmp).is_err() {
+        return false;
+    }
+
+    let files = [
+        format!("{}/libFNA3D.0.dylib", root),
+        format!("{}/libFAudio.0.dylib", root),
+        format!("{}/libSDL2-2.0.0.dylib", root),
+        format!("{}/fmod/libfmod.dylib", root),
+        format!("{}/fmod/libfmodstudio.dylib", root),
+    ];
+    let file_args: Vec<&str> = files.iter().map(String::as_str).collect();
+    let extracted = extract_archive_files(path, &tmp, &file_args);
+    let root_path = tmp.join(root);
+    let valid = extracted
+        && fna_dylib_uses_sdl2(&root_path.join("libFNA3D.0.dylib"))
+        && fna_dylib_uses_sdl2(&root_path.join("libFAudio.0.dylib"))
+        && root_path.join("libSDL2-2.0.0.dylib").exists()
+        && fmod_dylib_has_payload(&root_path.join("fmod").join("libfmod.dylib"))
+        && fmod_dylib_has_payload(&root_path.join("fmod").join("libfmodstudio.dylib"));
+
+    let _ = fs::remove_dir_all(&tmp);
+    valid
+}
+
+fn archive_fna_kickstart_payloads_valid(path: &Path, root: &str) -> bool {
+    let tmp = std::env::temp_dir().join(format!(
+        "metalsharp-fna-kick-validate-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+    ));
+    let _ = fs::remove_dir_all(&tmp);
+    if fs::create_dir_all(&tmp).is_err() {
+        return false;
+    }
+
+    let files = [
+        format!("{}/libFNA3D.0.dylib", root),
+        format!("{}/libFAudio.0.dylib", root),
+        format!("{}/libSDL2-2.0.0.dylib", root),
+    ];
+    let file_args: Vec<&str> = files.iter().map(String::as_str).collect();
+    let extracted = extract_archive_files(path, &tmp, &file_args);
+    let root_path = tmp.join(root);
+    let valid = extracted
+        && fna_dylib_uses_sdl2(&root_path.join("libFNA3D.0.dylib"))
+        && fna_dylib_uses_sdl2(&root_path.join("libFAudio.0.dylib"))
+        && root_path.join("libSDL2-2.0.0.dylib").exists();
+
+    let _ = fs::remove_dir_all(&tmp);
+    valid
+}
+
+fn extract_archive_files(path: &Path, dest: &Path, files: &[&str]) -> bool {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut decoder = match zstd::Decoder::new(file) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+
+    let mut tar_cmd = match mac_cmd("tar")
+        .args(["-xf", "-"])
+        .arg("-C")
+        .arg(dest)
+        .args(files)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(cmd) => cmd,
+        Err(_) => return false,
+    };
+
+    if let Some(mut stdin) = tar_cmd.stdin.take() {
+        if std::io::copy(&mut decoder, &mut stdin).is_err() {
+            let _ = tar_cmd.kill();
+            let _ = tar_cmd.wait();
+            return false;
+        }
+        drop(stdin);
+    }
+
+    tar_cmd.wait().map(|status| status.success()).unwrap_or(false)
 }
 
 fn find_in_resources(name: &str) -> Option<PathBuf> {
@@ -1881,6 +2102,7 @@ mod tests {
             "metalsharp-runtime.tar.zst",
             "metalsharp-graphics-dll.tar.zst",
             "metalsharp-assets.tar.zst",
+            "fnalibs.tar.zst",
             "metalsharp-scripts-tools.tar.zst",
             "metalsharp-steam.tar.zst",
         ] {
@@ -1913,6 +2135,8 @@ mod tests {
         assert!(!bundled_artifact_valid("metalsharp-graphics-dll.tar.zst", &stale));
         assert!(!bundled_artifact_valid("metalsharp-assets", &stale));
         assert!(!bundled_artifact_valid("metalsharp-assets.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("fnalibs", &stale));
+        assert!(!bundled_artifact_valid("fnalibs.tar.zst", &stale));
         assert!(!bundled_artifact_valid("metalsharp-scripts-tools", &stale));
         assert!(!bundled_artifact_valid("metalsharp-scripts-tools.tar.zst", &stale));
         assert!(!bundled_artifact_valid("metalsharp-steam", &stale));

@@ -254,6 +254,11 @@ def build_staging(tmp: Path) -> dict[str, Path]:
             else:
                 copy_tree(extracted, roots["assets"] / target_name)
 
+    fnalibs = roots["assets"] / "fnalibs"
+    kickstart_osx = roots["assets"] / "fna-kickstart" / "osx"
+    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib", "libtheorafile.dylib"]:
+        copy_file(fnalibs / name, kickstart_osx / name)
+
     copy_tree(APP_DIR / "updater", roots["scripts"] / "updater")
     copy_tree(PROJECT_ROOT / "configs", roots["scripts"] / "configs")
     copy_tree(APP_DIR / "native", roots["scripts"] / "native", ignore=lambda rel, is_dir: rel.parts[:1] == ("host",))
