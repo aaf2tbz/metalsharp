@@ -159,7 +159,8 @@ static OSStatus audioRenderCallback(void* inRefCon, AudioUnitRenderActionFlags*,
         } else if (available > 0) {
             impl->ringRead(outPtr, available);
             uint32_t remaining = framesNeeded - available;
-            memset(outPtr + available * impl->channels, 0, static_cast<size_t>(remaining) * impl->channels * sizeof(float));
+            memset(outPtr + available * impl->channels, 0,
+                   static_cast<size_t>(remaining) * impl->channels * sizeof(float));
             if (impl->fadeOutRemaining.load(std::memory_order_acquire) == 0) {
                 impl->underrunCount.fetch_add(1, std::memory_order_relaxed);
             }
