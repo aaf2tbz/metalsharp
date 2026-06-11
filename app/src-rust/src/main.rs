@@ -1628,7 +1628,16 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match sharp_library::get_cover_path(id) {
                 Some(path) => {
                     let data = std::fs::read(&path).unwrap_or_default();
-                    let mime = if path.to_string_lossy().ends_with(".png") { "image/png" } else { "image/jpeg" };
+                    let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+                    let mime = if ext.eq_ignore_ascii_case("png") {
+                        "image/png"
+                    } else if ext.eq_ignore_ascii_case("svg") {
+                        "image/svg+xml"
+                    } else if ext.eq_ignore_ascii_case("webp") {
+                        "image/webp"
+                    } else {
+                        "image/jpeg"
+                    };
                     resp_raw(200, data, mime)
                 },
                 None => resp(404, json!({"ok": false, "error": "cover not found"})),

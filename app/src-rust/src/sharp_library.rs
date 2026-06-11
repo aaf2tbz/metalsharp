@@ -9,6 +9,9 @@ use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
 const MANIFEST_FILE: &str = "library.json";
+const DEFAULT_EPIC_COVER: &str = "default-cover-epic-games-launcher.svg";
+const DEFAULT_ROCKSTAR_COVER: &str = "default-cover-rockstar-games-launcher.svg";
+const DEFAULT_UBISOFT_COVER: &str = "default-cover-ubisoft-connect.svg";
 
 fn base_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_default();
@@ -81,11 +84,11 @@ pub fn load_library() -> Result<Vec<SharpApp>, Box<dyn std::error::Error>> {
         Vec::new()
     };
 
-    let before_prune = apps.len();
-    apps.retain(|app| !is_unwanted_wine_prefix_app(app));
-    let mut changed = apps.len() != before_prune;
+    let mut changed = prune_library_apps(&mut apps);
     changed |= sync_non_steam_shortcuts(&mut apps);
     changed |= sync_wine_prefix_apps(&mut apps);
+    changed |= prune_library_apps(&mut apps);
+    changed |= apply_default_launcher_covers(&mut apps)?;
     if changed {
         save_library(&apps)?;
     }
@@ -98,6 +101,12 @@ fn save_library(apps: &[SharpApp]) -> Result<(), Box<dyn std::error::Error>> {
     let data = serde_json::to_string_pretty(apps)?;
     fs::write(manifest_path(), data)?;
     Ok(())
+}
+
+fn prune_library_apps(apps: &mut Vec<SharpApp>) -> bool {
+    let before_prune = apps.len();
+    apps.retain(|app| !is_hidden_sharp_library_app(app) && !is_unwanted_wine_prefix_app(app));
+    apps.len() != before_prune
 }
 
 fn sync_non_steam_shortcuts(apps: &mut Vec<SharpApp>) -> bool {
@@ -312,6 +321,9 @@ fn should_skip_wine_app_dir(path: &Path) -> bool {
                 | "microsoft shared"
                 | "wine mono"
                 | "wine gecko"
+                | "lobby_connect"
+                | "experimental_steamclient"
+                | "tools"
                 | "$recycle.bin"
         )
     })
@@ -328,7 +340,15 @@ fn should_skip_wine_app_name(name: &str) -> bool {
     let lower = name.trim().to_lowercase();
     matches!(
         lower.as_str(),
-        "windows media player" | "windows nt" | "wine internet explorer" | "internet explorer" | "notepad" | "wordpad"
+        "windows media player"
+            | "windows nt"
+            | "wine internet explorer"
+            | "internet explorer"
+            | "notepad"
+            | "wordpad"
+            | "lobby_connect"
+            | "experimental_steamclient"
+            | "tools"
     )
 }
 
@@ -345,7 +365,83 @@ fn should_skip_wine_app_exe(path: &Path) -> bool {
             | "regedit.exe"
             | "winecfg.exe"
             | "winver.exe"
+            | "lobby_connect.exe"
+            | "experimental_steamclient.exe"
+            | "tools.exe"
     )
+}
+
+fn is_hidden_sharp_library_app(app: &SharpApp) -> bool {
+    let name = app.name.trim().to_lowercase();
+    if matches!(name.as_str(), "lobby_connect" | "experimental_steamclient" | "tools") {
+        return true;
+    }
+
+    let exe =
+        Path::new(&app.exe_path).file_name().map(|value| value.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if matches!(exe.as_str(), "lobby_connect.exe" | "experimental_steamclient.exe" | "tools.exe") {
+        return true;
+    }
+
+    path_has_component(&app.install_dir, "lobby_connect")
+        || path_has_component(&app.install_dir, "experimental_steamclient")
+        || path_has_component(&app.install_dir, "tools")
+}
+
+fn path_has_component(path: &str, wanted: &str) -> bool {
+    Path::new(path).components().any(|component| {
+        let Component::Normal(value) = component else {
+            return false;
+        };
+        value.to_string_lossy().eq_ignore_ascii_case(wanted)
+    })
+}
+
+fn apply_default_launcher_covers(apps: &mut [SharpApp]) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut changed = false;
+    for app in apps {
+        if app.cover.is_some() {
+            continue;
+        }
+        let Some(cover) = default_launcher_cover(app) else {
+            continue;
+        };
+        ensure_default_cover_asset(cover)?;
+        app.cover = Some(cover.to_string());
+        changed = true;
+    }
+    Ok(changed)
+}
+
+fn default_launcher_cover(app: &SharpApp) -> Option<&'static str> {
+    let name = app.name.trim().to_lowercase();
+    let exe =
+        Path::new(&app.exe_path).file_name().map(|value| value.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let install_dir = app.install_dir.to_lowercase();
+
+    if name.contains("epic games launcher") || exe == "epicgameslauncher.exe" {
+        return Some(DEFAULT_EPIC_COVER);
+    }
+
+    if name.contains("ubisoft connect")
+        || name.contains("ubisoft game launcher")
+        || exe == "ubisoftconnect.exe"
+        || exe == "ubisoftgamelauncher.exe"
+    {
+        return Some(DEFAULT_UBISOFT_COVER);
+    }
+
+    if name.contains("rockstar games launcher")
+        || name == "rockstar launcher"
+        || (name.contains("rockstar") && name.contains("launcher"))
+        || exe == "rockstargameslauncher.exe"
+        || exe == "rockstar-games-launcher.exe"
+        || (exe == "launcher.exe" && install_dir.contains("rockstar games"))
+    {
+        return Some(DEFAULT_ROCKSTAR_COVER);
+    }
+
+    None
 }
 
 fn sync_non_steam_shortcut(apps: &mut Vec<SharpApp>, shortcut: crate::scan::NonSteamShortcut) -> bool {
@@ -1118,9 +1214,61 @@ pub fn get_cover_path(id: &str) -> Option<PathBuf> {
     let path = base_dir().join(cover_name);
     if path.exists() {
         Some(path)
+    } else if is_default_cover_asset(cover_name) {
+        ensure_default_cover_asset(cover_name).ok()
     } else {
         None
     }
+}
+
+fn is_default_cover_asset(cover_name: &str) -> bool {
+    matches!(cover_name, DEFAULT_EPIC_COVER | DEFAULT_ROCKSTAR_COVER | DEFAULT_UBISOFT_COVER)
+}
+
+fn ensure_default_cover_asset(cover_name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    ensure_base_dir()?;
+    let path = base_dir().join(cover_name);
+    if path.exists() {
+        return Ok(path);
+    }
+
+    let svg = match cover_name {
+        DEFAULT_EPIC_COVER => {
+            default_cover_svg("#111827", "#2563eb", "EPIC", "Games Launcher", "Storefront and library")
+        },
+        DEFAULT_ROCKSTAR_COVER => {
+            default_cover_svg("#111111", "#facc15", "ROCKSTAR", "Games Launcher", "Social Club runtime")
+        },
+        DEFAULT_UBISOFT_COVER => default_cover_svg("#0f172a", "#06b6d4", "UBISOFT", "Connect", "Launcher runtime"),
+        _ => return Err("unknown default cover asset".into()),
+    };
+    fs::write(&path, svg)?;
+    Ok(path)
+}
+
+fn default_cover_svg(background: &str, accent: &str, title: &str, subtitle: &str, caption: &str) -> String {
+    format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 900" role="img" aria-label="{title} {subtitle}">
+  <defs>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="{accent}" stop-opacity="0.34"/>
+      <stop offset="0.52" stop-color="{background}" stop-opacity="0.94"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="900" rx="42" fill="{background}"/>
+  <rect x="28" y="28" width="544" height="844" rx="36" fill="url(#panel)" stroke="{accent}" stroke-opacity="0.55" stroke-width="3"/>
+  <circle cx="472" cy="162" r="96" fill="{accent}" opacity="0.18"/>
+  <circle cx="134" cy="720" r="138" fill="{accent}" opacity="0.12"/>
+  <rect x="74" y="112" width="452" height="154" rx="28" fill="#ffffff" opacity="0.08"/>
+  <text x="300" y="192" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="50" font-weight="800" text-anchor="middle">{title}</text>
+  <text x="300" y="252" fill="{accent}" font-family="Inter, Arial, sans-serif" font-size="30" font-weight="700" text-anchor="middle">{subtitle}</text>
+  <path d="M118 544h364M118 590h292M118 636h336" stroke="#ffffff" stroke-opacity="0.30" stroke-width="18" stroke-linecap="round"/>
+  <rect x="120" y="374" width="360" height="78" rx="18" fill="{accent}" opacity="0.86"/>
+  <text x="300" y="424" fill="#ffffff" font-family="Inter, Arial, sans-serif" font-size="27" font-weight="800" text-anchor="middle">{caption}</text>
+  <text x="300" y="806" fill="#ffffff" fill-opacity="0.68" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="700" text-anchor="middle">MetalSharp</text>
+</svg>"##
+    )
 }
 
 fn chrono_now() -> String {
@@ -1540,6 +1688,58 @@ mod tests {
     }
 
     #[test]
+    fn default_launcher_cover_matches_known_store_launchers() {
+        assert_eq!(
+            default_launcher_cover(&test_app(
+                "Epic Games Launcher",
+                "Portal/Binaries/Win64/EpicGamesLauncher.exe",
+                "/tmp/Epic Games/Launcher"
+            )),
+            Some(DEFAULT_EPIC_COVER)
+        );
+        assert_eq!(
+            default_launcher_cover(&test_app(
+                "Ubisoft Connect",
+                "UbisoftConnect.exe",
+                "/tmp/Ubisoft/Ubisoft Game Launcher"
+            )),
+            Some(DEFAULT_UBISOFT_COVER)
+        );
+        assert_eq!(
+            default_launcher_cover(&test_app(
+                "Rockstar Games Launcher",
+                "Launcher.exe",
+                "/tmp/Rockstar Games/Launcher"
+            )),
+            Some(DEFAULT_ROCKSTAR_COVER)
+        );
+        assert_eq!(
+            default_launcher_cover(&test_app("Grand Theft Auto V", "GTA5.exe", "/tmp/Rockstar Games/GTAV")),
+            None
+        );
+    }
+
+    #[test]
+    fn hidden_sharp_library_apps_match_internal_helpers() {
+        assert!(is_hidden_sharp_library_app(&test_app(
+            "lobby_connect",
+            "lobby_connect.exe",
+            "/tmp/prefix/drive_c/lobby_connect"
+        )));
+        assert!(is_hidden_sharp_library_app(&test_app(
+            "Steam Client Experiment",
+            "experimental_steamclient.exe",
+            "/tmp/prefix/drive_c/experimental_steamclient"
+        )));
+        assert!(is_hidden_sharp_library_app(&test_app("Tools", "tools.exe", "/tmp/prefix/drive_c/tools")));
+        assert!(!is_hidden_sharp_library_app(&test_app(
+            "Ubisoft Connect",
+            "UbisoftConnect.exe",
+            "/tmp/prefix/drive_c/Program Files/Ubisoft"
+        )));
+    }
+
+    #[test]
     fn non_steam_shortcut_sync_updates_existing_launch_args_by_path() {
         let root = test_dir("shortcut-args");
         let exe = root.join("Game.exe");
@@ -1858,6 +2058,24 @@ mod tests {
         let mut dir = std::env::temp_dir();
         dir.push(format!("metalsharp-sharp-library-{}-{}-{}", name, std::process::id(), unique_suffix()));
         dir
+    }
+
+    fn test_app(name: &str, exe_path: &str, install_dir: &str) -> SharpApp {
+        SharpApp {
+            id: stable_hash_hex(name, Some(Path::new(exe_path)), Some(Path::new(install_dir))),
+            name: name.into(),
+            exe_path: exe_path.into(),
+            install_dir: install_dir.into(),
+            cover: None,
+            cover_position_x: default_cover_position(),
+            cover_position_y: default_cover_position(),
+            engine: "auto".into(),
+            launch_args: Vec::new(),
+            user_launch_args: Vec::new(),
+            bottle_id: None,
+            installed_at: chrono_now(),
+            size_bytes: 0,
+        }
     }
 
     fn unique_suffix() -> u128 {
