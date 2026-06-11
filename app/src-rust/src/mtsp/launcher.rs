@@ -871,6 +871,13 @@ fn launch_d3dmetal_gptk_with_context(
 
     let prefix = gptk_prefix;
     let prefix_str = prefix.to_string_lossy().to_string();
+    let offline_mode = extra_env.iter().any(|(key, value)| key == "METALSHARP_OFFLINE_MODE" && value == "1");
+    if offline_mode {
+        disable_gptk_steam_launcher_for_offline(&prefix)?;
+        let _ = Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
+    } else {
+        restore_gptk_steam_launcher(&prefix)?;
+    }
 
     deploy_steam_appid(game_dir, appid);
 
@@ -938,6 +945,39 @@ fn launch_d3dmetal_gptk_with_context(
     )?;
     let child = cmd.spawn()?;
     Ok((child.id(), node.id.to_legacy_method()))
+}
+
+fn gptk_steam_exe_path(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steam.exe")
+}
+
+fn gptk_disabled_steam_exe_path(prefix: &Path) -> PathBuf {
+    prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("steam.exe.metalsharp-offline-disabled")
+}
+
+fn disable_gptk_steam_launcher_for_offline(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let steam_exe = gptk_steam_exe_path(prefix);
+    let disabled = gptk_disabled_steam_exe_path(prefix);
+    if disabled.exists() {
+        return Ok(());
+    }
+    if steam_exe.exists() {
+        std::fs::rename(&steam_exe, &disabled)
+            .map_err(|e| format!("disable GPTK Steam launcher {}: {}", steam_exe.display(), e))?;
+        eprintln!("d3dmetal offline: disabled GPTK Steam launcher at {}", disabled.display());
+    }
+    Ok(())
+}
+
+fn restore_gptk_steam_launcher(prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let steam_exe = gptk_steam_exe_path(prefix);
+    let disabled = gptk_disabled_steam_exe_path(prefix);
+    if steam_exe.exists() || !disabled.exists() {
+        return Ok(());
+    }
+    std::fs::rename(&disabled, &steam_exe)
+        .map_err(|e| format!("restore GPTK Steam launcher {}: {}", steam_exe.display(), e))?;
+    Ok(())
 }
 
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -4364,6 +4404,29 @@ mod tests {
         assert_eq!(aliases, vec![dosdevices.join("c:").join("Games").join("Portal 2")]);
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn d3dmetal_offline_disables_and_restores_gptk_steam_launcher() {
+        let home = test_dir("gptk-offline-steam-exe");
+        let prefix = crate::platform::gptk_prefix_path(&home);
+        let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        let steam_exe = gptk_steam_exe_path(&prefix);
+        let disabled = gptk_disabled_steam_exe_path(&prefix);
+        std::fs::write(&steam_exe, b"steam").expect("write steam exe");
+
+        disable_gptk_steam_launcher_for_offline(&prefix).expect("disable steam exe");
+
+        assert!(!steam_exe.exists());
+        assert_eq!(std::fs::read(&disabled).expect("read disabled"), b"steam");
+
+        restore_gptk_steam_launcher(&prefix).expect("restore steam exe");
+
+        assert!(steam_exe.exists());
+        assert!(!disabled.exists());
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

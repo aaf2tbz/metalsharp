@@ -777,6 +777,9 @@ fn steam_compatdata_record(
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> SteamCompatdataRecord {
     let appid = manifest.steam_app_id.unwrap_or_default();
+    let recipe = crate::mtsp::rules::get_game_recipe(appid);
+    let offline_d3dmetal = matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
+        && recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false);
     SteamCompatdataRecord {
         appid,
         name: manifest.name.clone(),
@@ -787,13 +790,21 @@ fn steam_compatdata_record(
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
         launch_pipeline: pipeline_preference_id(pipeline).to_string(),
-        steam_identity_mode: "wine_steam_background".to_string(),
+        steam_identity_mode: if offline_d3dmetal {
+            "offline_steam_emulation".to_string()
+        } else {
+            "wine_steam_background".to_string()
+        },
         compat_tool_name: "MetalSharp".to_string(),
-        launch_command_template: format!(
-            "POST /steam/launch-game {{\"appid\":{},\"launchMethod\":\"{}\"}}",
-            appid,
-            pipeline_preference_id(pipeline)
-        ),
+        launch_command_template: if offline_d3dmetal {
+            format!("POST /steam/launch-offline {{\"appid\":{}}}", appid)
+        } else {
+            format!(
+                "POST /steam/launch-game {{\"appid\":{},\"launchMethod\":\"{}\"}}",
+                appid,
+                pipeline_preference_id(pipeline)
+            )
+        },
         log_dir: steam_compatdata_dir(appid).join("logs").to_string_lossy().to_string(),
         runtime_assets: manifest.runtime_assets.clone(),
         required_components: manifest.installed_components.clone(),
@@ -6446,6 +6457,41 @@ mod tests {
         assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
         assert_eq!(record.last_launch_pid, Some(1234));
         assert_eq!(record.last_launch_status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn d3dmetal_offline_titles_advertise_offline_compatdata_route() {
+        let manifest = BottleManifest {
+            id: "steam_2050650".into(),
+            name: "Resident Evil 4".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(2050650),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Win64,
+            runtime_profile: RuntimeProfile::D3DMetal,
+            preferred_pipeline: Some("d3dmetal".into()),
+            installed_components: default_components_for(RuntimeProfile::D3DMetal),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some("/games/Resident Evil 4".into()),
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::D3DMetal);
+
+        assert_eq!(record.launch_pipeline, "d3dmetal");
+        assert_eq!(record.steam_identity_mode, "offline_steam_emulation");
+        assert!(record.launch_command_template.contains("/steam/launch-offline"));
+        assert!(record.launch_command_template.contains("2050650"));
     }
 
     #[test]
