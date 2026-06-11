@@ -134,9 +134,15 @@ const GPTK_WINEBOOT_REQUIRED_PATHS: &[(&str, bool)] = &[
     ("drive_c/windows/system32", true),
     ("drive_c/windows/system32/kernel32.dll", false),
     ("drive_c/windows/system32/ntdll.dll", false),
+    ("drive_c/windows/system32/d3d10.dll", false),
+    ("drive_c/windows/system32/d3d11.dll", false),
+    ("drive_c/windows/system32/d3d12.dll", false),
+    ("drive_c/windows/system32/dxgi.dll", false),
     ("dosdevices", true),
     ("dosdevices/c:", false),
 ];
+
+const GPTK_4_PE_DLLS: &[&str] = &["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll"];
 
 fn missing_gptk_wineboot_paths(prefix: &Path) -> Vec<String> {
     GPTK_WINEBOOT_REQUIRED_PATHS
@@ -155,6 +161,51 @@ fn missing_gptk_wineboot_paths(prefix: &Path) -> Vec<String> {
 
 fn gptk_wineboot_runtime_ready(prefix: &Path) -> bool {
     missing_gptk_wineboot_paths(prefix).is_empty()
+}
+
+fn gptk_runtime_wine_root(home: &Path) -> PathBuf {
+    metalsharp_home_dir_for(home).join("runtime").join("wine")
+}
+
+fn gptk_runtime_pe_dir(home: &Path) -> PathBuf {
+    gptk_runtime_wine_root(home).join("lib").join("gptk").join("x86_64-windows")
+}
+
+fn file_nonempty(path: &Path) -> bool {
+    path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
+}
+
+fn gptk_seed_winedllpath(home: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let gptk_pe_dir = gptk_runtime_pe_dir(home);
+    let missing: Vec<&str> =
+        GPTK_4_PE_DLLS.iter().copied().filter(|dll| !file_nonempty(&gptk_pe_dir.join(dll))).collect();
+    if !missing.is_empty() {
+        return Err(format!(
+            "MetalSharp GPTK 4 runtime DLLs missing ({}): repair the GPTK D3DMetal runtime first",
+            missing.join(", ")
+        )
+        .into());
+    }
+
+    let metalsharp_pe_dir = gptk_runtime_wine_root(home).join("lib").join("metalsharp").join("x86_64-windows");
+    let mut dirs = vec![gptk_pe_dir.to_string_lossy().to_string()];
+    if metalsharp_pe_dir.is_dir() {
+        dirs.push(metalsharp_pe_dir.to_string_lossy().to_string());
+    }
+    Ok(dirs.join(":"))
+}
+
+fn gptk_seed_dyld(home: &Path) -> String {
+    let ms_root = gptk_runtime_wine_root(home);
+    let mut parts = vec![
+        gptk_wine_root().join("lib"),
+        gptk_wine_root().join("lib").join("wine").join("x86_64-unix"),
+        ms_root.join("lib").join("gptk").join("x86_64-unix"),
+        ms_root.join("lib").join("external"),
+        gptk_wine_root().join("lib").join("external"),
+    ];
+    parts.retain(|path| path.is_dir());
+    parts.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -697,6 +748,22 @@ fn reset_gptk_prefix_for_seed(prefix: &Path, seeding_marker: &Path) -> Result<()
     Ok(())
 }
 
+fn stage_gptk_4_dlls_into_prefix(home: &Path, prefix: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let source_dir = gptk_runtime_pe_dir(home);
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    std::fs::create_dir_all(&system32)?;
+    for dll in GPTK_4_PE_DLLS {
+        let source = source_dir.join(dll);
+        let dest = system32.join(dll);
+        if !file_nonempty(&source) {
+            return Err(format!("missing GPTK 4 DLL source: {}", source.display()).into());
+        }
+        std::fs::copy(&source, &dest)
+            .map_err(|e| format!("stage GPTK 4 DLL {} -> {}: {}", source.display(), dest.display(), e))?;
+    }
+    Ok(())
+}
+
 pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     match seed_gptk_prefix_sync_inner(home) {
         Ok(()) => Ok(()),
@@ -715,6 +782,7 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
     if !gptk_wine64.is_file() {
         return Err("GPTK wine64 not found".into());
     }
+    let gptk_winedllpath = gptk_seed_winedllpath(home)?;
 
     let seeding_marker = gptk_prefix.join(".gptk-seeding");
     let _ = std::fs::create_dir_all(&gptk_prefix);
@@ -731,12 +799,7 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
     reset_gptk_prefix_for_seed(&gptk_prefix, &seeding_marker)?;
     std::fs::write(&seeding_marker, "seeding")?;
 
-    let dyld = format!(
-        "{}:{}:{}",
-        gptk_wine_root().join("lib").display(),
-        gptk_wine_root().join("lib").join("wine").join("x86_64-unix").display(),
-        gptk_wine_root().join("lib").join("external").display(),
-    );
+    let dyld = gptk_seed_dyld(home);
 
     append_gptk_seed_log(home, "running wineboot --init");
     let wineboot_cwd = if home.is_dir() { home } else { Path::new("/") };
@@ -746,6 +809,8 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
         .env("WINEARCH", "win64")
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+        .env("WINEDLLPATH", &gptk_winedllpath)
+        .env("WINEDLLOVERRIDES", "d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         .arg("wineboot")
         .arg("--init")
         .output()?;
@@ -765,6 +830,9 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
         return Err(format!("GPTK wineserver -w failed after wineboot with {:?}", wait_status.code()).into());
     }
     append_gptk_seed_log(home, "wineserver idle after wineboot");
+
+    append_gptk_seed_log(home, "staging GPTK 4 D3DMetal DLLs into prefix");
+    stage_gptk_4_dlls_into_prefix(home, &gptk_prefix)?;
 
     let missing_wineboot_paths = missing_gptk_wineboot_paths(&gptk_prefix);
     if !missing_wineboot_paths.is_empty() {
@@ -925,12 +993,8 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
     let gptk_wine64 = gptk_wine64_binary();
     let gptk_wineserver = gptk_wineserver_binary();
     let prefix_str = gptk_prefix.to_string_lossy().to_string();
-    let dyld = format!(
-        "{}:{}:{}",
-        gptk_wine_root().join("lib").display(),
-        gptk_wine_root().join("lib").join("wine").join("x86_64-unix").display(),
-        gptk_wine_root().join("lib").join("external").display(),
-    );
+    let gptk_winedllpath = gptk_seed_winedllpath(home)?;
+    let dyld = gptk_seed_dyld(home);
 
     let redist_dir = metalsharp_home_dir_for(home).join("runtime").join("redist").join("vcredist");
     let _ = std::fs::create_dir_all(&redist_dir);
@@ -943,8 +1007,11 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
         let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-p").status();
         let output = std::process::Command::new(&gptk_wine64)
             .env("WINEPREFIX", &prefix_str)
+            .env("WINEARCH", "win64")
             .env("WINEDEBUG", "-all")
             .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
+            .env("WINEDLLPATH", &gptk_winedllpath)
+            .env("WINEDLLOVERRIDES", "d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
             .arg(path)
             .args(["/install"])
             .output()?;
@@ -1082,7 +1149,19 @@ mod tests {
         fs::create_dir_all(prefix.join("dosdevices")).expect("create dosdevices");
         fs::write(system32.join("kernel32.dll"), "kernel32").expect("write kernel32");
         fs::write(system32.join("ntdll.dll"), "ntdll").expect("write ntdll");
+        for dll in GPTK_4_PE_DLLS {
+            fs::write(system32.join(dll), format!("gptk-{dll}")).expect("write gptk dll");
+        }
         std::os::unix::fs::symlink("../drive_c", prefix.join("dosdevices").join("c:")).expect("link c drive");
+    }
+
+    fn create_gptk_4_runtime_sources(home: &Path) {
+        let pe_dir =
+            metalsharp_home_dir_for(home).join("runtime").join("wine").join("lib").join("gptk").join("x86_64-windows");
+        fs::create_dir_all(&pe_dir).expect("create gptk pe dir");
+        for dll in GPTK_4_PE_DLLS {
+            fs::write(pe_dir.join(dll), format!("source-{dll}")).expect("write gptk source dll");
+        }
     }
 
     #[test]
@@ -1123,12 +1202,15 @@ mod tests {
         fs::write(prefix.join(".gptk-ready"), "ready").expect("write ready");
         let failed = prefix.join(".gptk-seed-failed");
 
-        assert_eq!(
-            gptk_prefix_status_for_prefix(&prefix, &failed),
-            GptkPrefixStatus::Partial(
-                "GPTK prefix is incomplete: missing Wine runtime files (drive_c/windows/system32/kernel32.dll, drive_c/windows/system32/ntdll.dll, dosdevices/c:)".to_string()
-            )
-        );
+        let status = gptk_prefix_status_for_prefix(&prefix, &failed);
+        let GptkPrefixStatus::Partial(detail) = status else {
+            panic!("expected partial status, got {:?}", status);
+        };
+        assert!(detail.contains("drive_c/windows/system32/kernel32.dll"));
+        assert!(detail.contains("drive_c/windows/system32/ntdll.dll"));
+        assert!(detail.contains("drive_c/windows/system32/d3d12.dll"));
+        assert!(detail.contains("drive_c/windows/system32/dxgi.dll"));
+        assert!(detail.contains("dosdevices/c:"));
 
         let _ = fs::remove_dir_all(prefix);
     }
@@ -1152,6 +1234,45 @@ mod tests {
         assert!(!prefix.join("user.reg").exists());
         assert!(!prefix.join(".gptk-ready").exists());
 
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gptk_seed_winedllpath_prefers_gptk_4_route_dlls() {
+        let home = test_prefix("gptk-winedllpath-home");
+        create_gptk_4_runtime_sources(&home);
+        let metalsharp_pe = metalsharp_home_dir_for(&home)
+            .join("runtime")
+            .join("wine")
+            .join("lib")
+            .join("metalsharp")
+            .join("x86_64-windows");
+        fs::create_dir_all(&metalsharp_pe).expect("create metalsharp pe dir");
+
+        let winedllpath = gptk_seed_winedllpath(&home).expect("build winedllpath");
+        let parts: Vec<&str> = winedllpath.split(':').collect();
+
+        assert_eq!(parts[0], gptk_runtime_pe_dir(&home).to_string_lossy());
+        assert_eq!(parts[1], metalsharp_pe.to_string_lossy());
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn stage_gptk_4_dlls_into_prefix_copies_route_dlls_to_system32() {
+        let home = test_prefix("gptk-stage-home");
+        let prefix = test_prefix("gptk-stage-prefix");
+        fs::create_dir_all(prefix.join("drive_c").join("windows").join("system32")).expect("create system32");
+        create_gptk_4_runtime_sources(&home);
+
+        stage_gptk_4_dlls_into_prefix(&home, &prefix).expect("stage gptk dlls");
+
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        for dll in GPTK_4_PE_DLLS {
+            assert_eq!(fs::read_to_string(system32.join(dll)).unwrap(), format!("source-{dll}"));
+        }
+
+        let _ = fs::remove_dir_all(home);
         let _ = fs::remove_dir_all(prefix);
     }
 
