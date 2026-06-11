@@ -166,8 +166,20 @@ const componentDisplayName: Record<string, string> = {
   "battleye": "BattlEye",
 };
 
+const runtimeProfileDisplayName: Record<string, string> = {
+  fna_arm64: "FNA / Mono ARM64",
+  fna_x86: "FNA / Mono x86_64",
+  d3dmetal: "D3DMetal (GPTK)",
+  game_install: "Game Installer",
+  winebare: "Plain Wine",
+};
+
 function componentLabel(id: string): string {
   return componentDisplayName[id] ?? id;
+}
+
+function runtimeProfileLabel(id: string): string {
+  return runtimeProfileDisplayName[id] ?? id;
 }
 
 function componentStateIcon(state: string): string {
@@ -375,7 +387,8 @@ async function repairRuntimeComponent(component: string) {
     },
   );
   if (result?.ok && result.repair) {
-    toast.show(`${component}: ${result.repair.status}`, result.repair.status === "asset_missing" ? "error" : "success");
+    const failed = ["asset_missing", "failed", "install_failed"].includes(result.repair.status);
+    toast.show(failed ? result.repair.detail : `${component}: ${result.repair.status}`, failed ? "error" : "success");
     if (result.repair.status === "started" || result.repair.status === "seeding") {
       await pollRuntimeRepairDone(runtimeReport.value.bottle_id, component);
     } else {
@@ -404,14 +417,20 @@ async function pollRuntimeRepairDone(bottleId: string, component: string) {
     );
     if (!poll?.ok || !poll.repair) break;
     const status = poll.repair.status;
-    if (status === "already_installed" || status === "repair_available") {
-      toast.show(`${component}: ${status === "already_installed" ? "ready" : status}`, "success");
+    if (status === "already_installed") {
+      toast.show(`${component}: ready`, "success");
+      await runRuntimeDoctor();
+      runtimeLoading.value = false;
+      return;
+    }
+    if (["asset_missing", "failed", "install_failed"].includes(status)) {
+      toast.show(poll.repair.detail || `${component}: ${status}`, "error");
       await runRuntimeDoctor();
       runtimeLoading.value = false;
       return;
     }
   }
-  toast.show(`${component}: seeding is taking longer than expected — check back`, "info");
+  toast.show(`${component}: repair is taking longer than expected — check back`);
   await runRuntimeDoctor();
   runtimeLoading.value = false;
 }
@@ -609,7 +628,7 @@ function formatBytes(bytes: number): string {
                 <span class="badge" :class="runtimeReport.actions.length ? 'badge-warn' : 'badge-ok'">
                   {{ runtimeReport.actions.length ? "Bottle Repair" : "Bottle Ready" }}
                 </span>
-                <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeReport.runtime_profile }}</span>
+                <span>{{ runtimeReport.bottle_id ?? "steam prefix" }} / {{ runtimeProfileLabel(runtimeReport.runtime_profile) }}</span>
               </div>
               <div class="bottle-edit-row">
                 <span>Bottle Name</span>

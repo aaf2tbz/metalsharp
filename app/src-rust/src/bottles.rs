@@ -879,7 +879,7 @@ fn ensure_steam_game_bottle_inner(
     let existing = load_bottle(&id).ok();
     let effective_pipeline =
         effective_pipeline_for_bottle_refresh(existing.as_ref(), pipeline, respect_preferred_pipeline);
-    let runtime_profile = runtime_profile_for_pipeline(effective_pipeline);
+    let runtime_profile = runtime_profile_for_app_pipeline(appid, effective_pipeline);
     let mut manifest = existing.unwrap_or_else(|| BottleManifest {
         id: id.clone(),
         name: name.to_string(),
@@ -1231,7 +1231,8 @@ pub fn edit_bottle(
         if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
             manifest.preferred_pipeline = None;
             if let Some(appid) = manifest.steam_app_id {
-                manifest.runtime_profile = runtime_profile_for_pipeline(crate::mtsp::rules::resolve_pipeline(appid));
+                manifest.runtime_profile =
+                    runtime_profile_for_app_pipeline(appid, crate::mtsp::rules::resolve_pipeline(appid));
             }
         } else {
             let pipeline =
@@ -1242,7 +1243,11 @@ pub fn edit_bottle(
                 pipeline
             };
             manifest.preferred_pipeline = Some(pipeline_preference_id(pipeline).to_string());
-            manifest.runtime_profile = runtime_profile_for_pipeline(pipeline);
+            manifest.runtime_profile = if let Some(appid) = manifest.steam_app_id {
+                runtime_profile_for_app_pipeline(appid, pipeline)
+            } else {
+                runtime_profile_for_pipeline(pipeline)
+            };
         }
         manifest.arch = runtime_profile_definition(manifest.runtime_profile).arch;
         manifest.installed_components =
@@ -1627,7 +1632,9 @@ pub fn repair_component(
 
     if component_id == "fna" {
         if dry_run {
-            let state = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+            let state = inspect_fna_game_component_for_manifest(&manifest, component_id)
+                .or_else(inspect_fna_runtime_component)
+                .unwrap_or(ComponentState::Unknown);
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
@@ -1637,7 +1644,8 @@ pub fn repair_component(
                 }
                 .to_string(),
                 detail: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
-                    "FNA native macOS shims can be rebuilt from MetalSharp runtime sources".to_string()
+                    "FNA native macOS shims and game-local dylibs can be restaged from MetalSharp runtime sources"
+                        .to_string()
                 } else {
                     "FNA runtime assemblies are not staged locally".to_string()
                 },
@@ -1648,8 +1656,22 @@ pub fn repair_component(
         }
 
         let repaired = crate::mtsp::launcher::repair_fna_native_runtime_shims()?;
-        let state = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+        let staged =
+            if let (Some(appid), Some(game_dir)) = (manifest.steam_app_id, manifest.game_install_path.as_deref()) {
+                Some(crate::mtsp::launcher::repair_fna_game_runtime_assets(appid, &PathBuf::from(game_dir))?)
+            } else {
+                None
+            };
+        let state = inspect_fna_game_component_for_manifest(&manifest, component_id)
+            .or_else(inspect_fna_runtime_component)
+            .unwrap_or(ComponentState::Unknown);
         mark_component_state(&mut manifest, component_id, state);
+        if manifest.installed_components.iter().any(|component| component.id == "fmod") {
+            let fmod_state = inspect_fna_game_component_for_manifest(&manifest, "fmod")
+                .or_else(inspect_fmod_component)
+                .unwrap_or(ComponentState::Unknown);
+            mark_component_state(&mut manifest, "fmod", fmod_state);
+        }
         manifest.health = if components_ready(&manifest.installed_components) {
             BottleHealth::Ready
         } else {
@@ -1660,8 +1682,72 @@ pub fn repair_component(
         return Ok(ComponentRepairReport {
             id: component_id.to_string(),
             status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
-            detail: format!("Repaired {} FNA native macOS shim(s) in MetalSharp runtime", repaired),
+            detail: match staged {
+                Some(staged) => {
+                    format!("Repaired {} shared FNA shim(s) and staged {} game-local FNA asset(s)", repaired, staged)
+                },
+                None => format!("Repaired {} FNA native macOS shim(s) in MetalSharp runtime", repaired),
+            },
             asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
+    if component_id == "fmod" {
+        if dry_run {
+            let state = inspect_fna_game_component_for_manifest(&manifest, component_id)
+                .or_else(inspect_fmod_component)
+                .unwrap_or(ComponentState::Unknown);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
+                    "runtime_repair_available"
+                } else {
+                    "asset_missing"
+                }
+                .to_string(),
+                detail: if matches!(state, ComponentState::Installed | ComponentState::NeedsRepair) {
+                    "Real FMOD dylibs can be restaged into the game folder from MetalSharp runtime/fnalibs/fmod"
+                        .to_string()
+                } else {
+                    "Real FMOD dylibs are not staged locally".to_string()
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        let appid = manifest.steam_app_id.ok_or("FMOD repair requires a Steam app id")?;
+        let game_dir = manifest
+            .game_install_path
+            .as_deref()
+            .map(PathBuf::from)
+            .ok_or("FMOD repair requires a game install path")?;
+        let staged = crate::mtsp::launcher::repair_fna_game_runtime_assets(appid, &game_dir)?;
+        let state = inspect_fna_game_component_for_manifest(&manifest, component_id)
+            .or_else(inspect_fmod_component)
+            .unwrap_or(ComponentState::Unknown);
+        mark_component_state(&mut manifest, component_id, state);
+        if manifest.installed_components.iter().any(|component| component.id == "fna") {
+            let fna_state = inspect_fna_game_component_for_manifest(&manifest, "fna")
+                .or_else(inspect_fna_runtime_component)
+                .unwrap_or(ComponentState::Unknown);
+            mark_component_state(&mut manifest, "fna", fna_state);
+        }
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: format!("Staged {} FNA/FMOD game-local runtime asset(s)", staged),
+            asset_path: Some(game_dir.to_string_lossy().to_string()),
             log_path: None,
             pid: None,
         });
@@ -1815,50 +1901,59 @@ pub fn repair_component(
 
     if component_id == "gptk_prefix" {
         let home = dirs::home_dir().ok_or("no home dir")?;
-        let seeding = crate::platform::gptk_prefix_seeding(&home);
-        let ready = crate::platform::gptk_prefix_ready(&home);
+        let status = crate::platform::gptk_prefix_status(&home);
+        let log_path = crate::platform::gptk_seed_log_path(&home);
 
         if dry_run {
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
-                status: if ready {
-                    "already_installed".to_string()
-                } else if seeding {
-                    "seeding".to_string()
-                } else {
-                    "repair_available".to_string()
-                },
-                detail: if ready {
-                    "GPTK prefix is seeded and ready".to_string()
-                } else if seeding {
-                    "GPTK prefix is currently being prepared".to_string()
-                } else {
-                    "GPTK prefix will be created: wineboot init, Steam data copy, vcrun install (~2GB, may take a few minutes)".to_string()
+                status: match &status {
+                    crate::platform::GptkPrefixStatus::Ready => "already_installed",
+                    crate::platform::GptkPrefixStatus::Seeding => "seeding",
+                    crate::platform::GptkPrefixStatus::Failed(_) => "failed",
+                    crate::platform::GptkPrefixStatus::Partial(_) => "partial",
+                    crate::platform::GptkPrefixStatus::Missing => "repair_available",
+                }
+                .to_string(),
+                detail: match &status {
+                    crate::platform::GptkPrefixStatus::Ready => "GPTK prefix is seeded and ready".to_string(),
+                    crate::platform::GptkPrefixStatus::Seeding => {
+                        "GPTK prefix is currently being prepared".to_string()
+                    },
+                    crate::platform::GptkPrefixStatus::Failed(detail) => {
+                        format!("GPTK prefix seed failed: {}", detail)
+                    },
+                    crate::platform::GptkPrefixStatus::Partial(detail) => {
+                        format!("{}; repair will reseed it", detail)
+                    },
+                    crate::platform::GptkPrefixStatus::Missing => {
+                        "GPTK prefix will be created: wineboot init, Steam data copy, vcrun install (~2GB, may take a few minutes)".to_string()
+                    },
                 },
                 asset_path: None,
-                log_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
         }
 
-        if ready {
+        if matches!(&status, crate::platform::GptkPrefixStatus::Ready) {
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: "already_installed".to_string(),
                 detail: "GPTK prefix is seeded and ready".to_string(),
                 asset_path: None,
-                log_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
         }
 
-        if seeding {
+        if matches!(&status, crate::platform::GptkPrefixStatus::Seeding) {
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: "seeding".to_string(),
                 detail: "GPTK prefix is already being prepared — check back in a moment".to_string(),
                 asset_path: None,
-                log_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
         }
@@ -1883,6 +1978,10 @@ pub fn repair_component(
                     eprintln!("gptk_prefix: seed complete");
                     if let Ok(mut m) = load_bottle(&bottle_id) {
                         mark_component_state(&mut m, "gptk_prefix", ComponentState::Installed);
+                        if crate::platform::gptk_vcrun_installed(&home) {
+                            mark_component_state(&mut m, "vcrun2019_x64", ComponentState::Installed);
+                            mark_component_state(&mut m, "vcrun2019_x86", ComponentState::Installed);
+                        }
                         m.health = if components_ready(&m.installed_components) {
                             BottleHealth::Ready
                         } else {
@@ -1898,7 +1997,7 @@ pub fn repair_component(
                         crate::platform::gptk_prefix_path(&dirs::home_dir().unwrap_or_default()).join(".gptk-seeding");
                     let _ = std::fs::remove_file(&marker);
                     if let Ok(mut m) = load_bottle(&bottle_id) {
-                        mark_component_state(&mut m, "gptk_prefix", ComponentState::Missing);
+                        mark_component_state(&mut m, "gptk_prefix", ComponentState::NeedsRepair);
                         m.health = BottleHealth::NeedsRepair;
                         m.updated_at = timestamp_secs();
                         let _ = save_bottle(&m);
@@ -1912,7 +2011,7 @@ pub fn repair_component(
             status: "started".to_string(),
             detail: "GPTK prefix seeding started in background — use dry-run to poll progress".to_string(),
             asset_path: None,
-            log_path: None,
+            log_path: Some(log_path.to_string_lossy().to_string()),
             pid: None,
         });
     }
@@ -2498,7 +2597,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     let requested_pipeline =
         body.get("pipeline").and_then(|v| v.as_str()).and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
     let pipeline = resolve_steam_pipeline_for_request(appid, requested_pipeline);
-    let profile = runtime_profile_for_pipeline(pipeline);
+    let profile = runtime_profile_for_app_pipeline(appid, pipeline);
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let bottle = ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline).ok();
@@ -2831,6 +2930,16 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
     }
 }
 
+fn runtime_profile_for_app_pipeline(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
+    if pipeline == crate::mtsp::engine::PipelineId::FnaArm64 {
+        return match crate::mtsp::launcher::find_fna_profile(appid).mono_arch {
+            crate::mtsp::launcher::MonoArch::X86 => RuntimeProfile::FnaX86,
+            crate::mtsp::launcher::MonoArch::Native => RuntimeProfile::FnaArm64,
+        };
+    }
+    runtime_profile_for_pipeline(pipeline)
+}
+
 fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
     match value.to_ascii_lowercase().replace('-', "_").as_str() {
         "plain" => Some(RuntimeProfile::Plain),
@@ -3111,6 +3220,8 @@ fn inspect_components_for_manifest(
             let fallback = inspect_component_state(prefix, &component.id, component.state);
             let state = if component.id == "d3d12_agility" {
                 inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
+            } else if matches!(component.id.as_str(), "fna" | "fmod") {
+                inspect_fna_game_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
             } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
                 && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
             {
@@ -3371,12 +3482,12 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         "gptk_prefix" => {
             let home = dirs::home_dir().unwrap_or_default();
-            if crate::platform::gptk_prefix_ready(&home) {
-                ComponentState::Installed
-            } else if crate::platform::gptk_prefix_seeding(&home) {
-                ComponentState::NeedsRepair
-            } else {
-                ComponentState::Missing
+            match crate::platform::gptk_prefix_status(&home) {
+                crate::platform::GptkPrefixStatus::Ready => ComponentState::Installed,
+                crate::platform::GptkPrefixStatus::Seeding
+                | crate::platform::GptkPrefixStatus::Failed(_)
+                | crate::platform::GptkPrefixStatus::Partial(_) => ComponentState::NeedsRepair,
+                crate::platform::GptkPrefixStatus::Missing => ComponentState::Missing,
             }
         },
         "rosetta" => {
@@ -3449,13 +3560,71 @@ fn inspect_fmod_component() -> Option<ComponentState> {
     let fmod_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("fnalibs").join("fmod");
     let core = fmod_dir.join("libfmod.dylib");
     let studio = fmod_dir.join("libfmodstudio.dylib");
-    Some(if core.exists() && studio.exists() {
+    let core_ok = crate::mtsp::launcher::fna_native_lib_source_valid("libfmod.dylib", &core);
+    let studio_ok = crate::mtsp::launcher::fna_native_lib_source_valid("libfmodstudio.dylib", &studio);
+    Some(if core_ok && studio_ok {
         ComponentState::Installed
     } else if core.exists() || studio.exists() {
         ComponentState::NeedsRepair
     } else {
         ComponentState::Missing
     })
+}
+
+fn inspect_fna_game_component_for_manifest(manifest: &BottleManifest, component_id: &str) -> Option<ComponentState> {
+    if !matches!(manifest.runtime_profile, RuntimeProfile::FnaArm64 | RuntimeProfile::FnaX86) {
+        return None;
+    }
+    let game_dir = PathBuf::from(manifest.game_install_path.as_ref()?);
+    if !game_dir.is_dir() {
+        return Some(ComponentState::Missing);
+    }
+
+    match component_id {
+        "fna" => Some(inspect_fna_game_local_runtime(&game_dir)),
+        "fmod" if matches!(manifest.runtime_profile, RuntimeProfile::FnaX86) => {
+            Some(inspect_fna_game_local_fmod(&game_dir))
+        },
+        "fmod" => inspect_fmod_component(),
+        _ => None,
+    }
+}
+
+fn inspect_fna_game_local_runtime(game_dir: &Path) -> ComponentState {
+    let shared = inspect_fna_runtime_component().unwrap_or(ComponentState::Unknown);
+    let file_ok = |name: &str| game_dir.join(name).metadata().map(|metadata| metadata.len() > 0).unwrap_or(false);
+    let dylib_ok = |name: &str| crate::mtsp::launcher::fna_native_lib_source_valid(name, &game_dir.join(name));
+
+    let required = [
+        file_ok("FNA.dll"),
+        file_ok("steam_appid.txt"),
+        dylib_ok("libSystem.Native.dylib"),
+        dylib_ok("libSDL2-2.0.0.dylib"),
+        dylib_ok("libFNA3D.0.dylib"),
+        dylib_ok("libFAudio.0.dylib"),
+    ];
+    if shared == ComponentState::Installed && required.iter().all(|ok| *ok) {
+        ComponentState::Installed
+    } else if shared != ComponentState::Missing || required.iter().any(|ok| *ok) {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    }
+}
+
+fn inspect_fna_game_local_fmod(game_dir: &Path) -> ComponentState {
+    let shared = inspect_fmod_component().unwrap_or(ComponentState::Unknown);
+    let core = game_dir.join("libfmod.dylib");
+    let studio = game_dir.join("libfmodstudio.dylib");
+    let core_ok = crate::mtsp::launcher::fna_native_lib_source_valid("libfmod.dylib", &core);
+    let studio_ok = crate::mtsp::launcher::fna_native_lib_source_valid("libfmodstudio.dylib", &studio);
+    if shared == ComponentState::Installed && core_ok && studio_ok {
+        ComponentState::Installed
+    } else if shared != ComponentState::Missing || core.exists() || studio.exists() {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    }
 }
 
 fn inspect_d3d12_agility_component() -> Option<ComponentState> {
@@ -4384,11 +4553,15 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: None,
         };
     }
-    if matches!(id, "mono-arm64" | "mono-x86" | "fna" | "d3d12_agility") {
+    if matches!(id, "mono-arm64" | "mono-x86" | "fna" | "fmod" | "sdl2" | "fna3d" | "faudio" | "d3d12_agility") {
         let state = match id {
             "mono-arm64" => inspect_host_mono_component("mono-arm64"),
             "mono-x86" => inspect_host_mono_component("mono-x86"),
             "fna" => inspect_fna_runtime_component(),
+            "fmod" => inspect_fmod_component(),
+            "sdl2" => inspect_fnalibs_file("libSDL2-2.0.0.dylib"),
+            "fna3d" => inspect_fnalibs_file("libFNA3D.0.dylib"),
+            "faudio" => inspect_fnalibs_file("libFAudio.0.dylib"),
             "d3d12_agility" => inspect_d3d12_agility_component(),
             _ => None,
         }
@@ -4397,6 +4570,10 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "mono-arm64" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-arm64/bin/mono"),
             "mono-x86" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/mono-x86/bin/mono"),
             "fna" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fna"),
+            "fmod" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fnalibs/fmod"),
+            "sdl2" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fnalibs/libSDL2-2.0.0.dylib"),
+            "fna3d" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fnalibs/libFNA3D.0.dylib"),
+            "faudio" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/fnalibs/libFAudio.0.dylib"),
             "d3d12_agility" => crate::platform::metalsharp_home_dir_for(&home).join("runtime/redist/agility"),
             _ => crate::platform::metalsharp_home_dir_for(&home).join("runtime"),
         });
@@ -4414,6 +4591,10 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
                 "mono-arm64" => "Native ARM64 Mono runtime for Terraria/FNA-style macOS launch wrappers",
                 "mono-x86" => "Native x86_64 Mono runtime for legacy Celeste/FNA-style launch wrappers under Rosetta",
                 "fna" => "FNA/XNA compatibility assemblies and native shims staged in MetalSharp runtime",
+                "fmod" => "Real FMOD dylibs used by the x86_64 Mono/FNA lane for game audio",
+                "sdl2" => "SDL2 dylib used by FNA3D and game-local FNA launch",
+                "fna3d" => "SDL2-linked FNA3D dylib staged for native FNA rendering",
+                "faudio" => "FAudio dylib staged for XAudio compatibility in native FNA games",
                 "d3d12_agility" => "D3D12 Agility SDK x64 runtime payload staged for M12/D3D12 games",
                 _ => "MetalSharp native runtime component",
             }
@@ -5279,6 +5460,7 @@ mod tests {
         assert!(arm64.components.contains(&"mono-arm64".to_string()));
         assert_eq!(arm64.mono_runtime.as_ref().expect("arm64 mono profile").known_version, "6.14.1");
         assert!(x86.components.contains(&"mono-x86".to_string()));
+        assert!(x86.components.contains(&"fmod".to_string()));
         assert_eq!(x86.mono_runtime.as_ref().expect("x86 mono profile").known_version, "6.12.0.122");
     }
 
@@ -5723,6 +5905,18 @@ mod tests {
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M9), RuntimeProfile::M9);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::M12), RuntimeProfile::M12);
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::FnaArm64), RuntimeProfile::FnaArm64);
+        assert_eq!(
+            runtime_profile_for_app_pipeline(504230, crate::mtsp::engine::PipelineId::FnaArm64),
+            RuntimeProfile::FnaX86
+        );
+        assert_eq!(
+            runtime_profile_for_app_pipeline(413150, crate::mtsp::engine::PipelineId::FnaArm64),
+            RuntimeProfile::FnaArm64
+        );
+        assert_eq!(
+            runtime_profile_for_app_pipeline(999999, crate::mtsp::engine::PipelineId::FnaArm64),
+            RuntimeProfile::FnaX86
+        );
         assert_eq!(runtime_profile_for_pipeline(crate::mtsp::engine::PipelineId::WineBare), RuntimeProfile::Plain);
     }
 

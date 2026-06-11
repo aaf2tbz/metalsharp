@@ -221,6 +221,10 @@ const visibleRuntimeProfiles = computed(() =>
     })),
 );
 
+function sharpAppNameSort(a: SharpApp, b: SharpApp) {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+}
+
 async function load() {
   const [result, bottleResult, profileResult, matrixResult, redistResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
@@ -230,8 +234,8 @@ async function load() {
     api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
   ]);
   if (result?.ok) {
-    apps.value = result.apps;
-    for (const app of result.apps) {
+    apps.value = [...result.apps].sort(sharpAppNameSort);
+    for (const app of apps.value) {
       if (launchArgDrafts.value[app.id] === undefined) {
         launchArgDrafts.value[app.id] = (app.user_launch_args ?? []).join(" ");
       }
@@ -315,8 +319,8 @@ async function repairBottleComponent(id: string, component: string) {
   });
   if (result?.ok && result.repair) {
     const repair = result.repair;
-    const missing = repair.status === "asset_missing";
-    toast.show(missing ? repair.detail : `${repair.id}: ${repair.status}`, missing ? "error" : "success");
+    const failed = ["asset_missing", "failed", "install_failed"].includes(repair.status);
+    toast.show(failed ? repair.detail : `${repair.id}: ${repair.status}`, failed ? "error" : "success");
     if (repair.status === "started" || repair.status === "seeding") {
       await pollRepairDone(id, component);
     } else {
@@ -340,13 +344,18 @@ async function pollRepairDone(id: string, component: string) {
     });
     if (!poll?.ok || !poll.repair) break;
     const status = poll.repair.status;
-    if (status === "already_installed" || status === "repair_available") {
-      toast.show(`${component}: ${status === "already_installed" ? "ready" : status}`, "success");
+    if (status === "already_installed") {
+      toast.show(`${component}: ready`, "success");
+      await doctorBottle(id);
+      return;
+    }
+    if (["asset_missing", "failed", "install_failed"].includes(status)) {
+      toast.show(poll.repair.detail || `${component}: ${status}`, "error");
       await doctorBottle(id);
       return;
     }
   }
-  toast.show(`${component}: seeding is taking longer than expected — check back`, "info");
+  toast.show(`${component}: repair is taking longer than expected — check back`);
   await doctorBottle(id);
 }
 

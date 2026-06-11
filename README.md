@@ -45,6 +45,15 @@ For building from source, see [Install from Source](docs/guides/install-from-sou
 - About 2 GB free space
 - Homebrew (installed by setup wizard)
 
+## Developer Setup
+
+Current maintainer validation is happening on this hardware/software setup. This is not the recommended baseline or minimum requirement; it is here so readers know what MetalSharp is actively running on during development.
+
+- MacBook Air (Mac16,12)
+- Apple M4, 10-core CPU (4 performance, 6 efficiency)
+- 16 GB memory
+- macOS Golden Gate beta, version 27.0 (build 26A5353q)
+
 ## Documentation
 
 - [Install from Source](docs/guides/install-from-source.md)

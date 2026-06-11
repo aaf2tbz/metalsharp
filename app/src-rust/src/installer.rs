@@ -634,10 +634,44 @@ fn split_bundle_marker_path(home: &Path, bundle: &str) -> PathBuf {
 }
 
 fn split_bundle_current(home: &Path, bundle: &str, archive: &Path) -> bool {
+    if bundle == ASSETS_BUNDLE && !fna_support_assets_current(home) {
+        return false;
+    }
     let Some(hash) = archive_sha256(archive) else {
         return false;
     };
     fs::read_to_string(split_bundle_marker_path(home, bundle)).map(|existing| existing.trim() == hash).unwrap_or(false)
+}
+
+fn fna_support_assets_current(home: &Path) -> bool {
+    let runtime = crate::platform::metalsharp_home_dir_for(home).join("runtime");
+    let fna3d = runtime.join("fnalibs").join("libFNA3D.0.dylib");
+    let kick_fna3d = runtime.join("fna-kickstart").join("osx").join("libFNA3D.0.dylib");
+    let sdl2 = runtime.join("fnalibs").join("libSDL2-2.0.0.dylib");
+    let fmod = runtime.join("fnalibs").join("fmod").join("libfmod.dylib");
+    let fmodstudio = runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib");
+    fna_dylib_uses_sdl2(&fna3d)
+        && fna_dylib_uses_sdl2(&kick_fna3d)
+        && sdl2.exists()
+        && fmod.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
+        && fmodstudio.metadata().map(|metadata| metadata.len() >= 256 * 1024).unwrap_or(false)
+}
+
+fn fna_dylib_uses_sdl2(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    if crate::platform::current() != crate::platform::HostPlatform::Macos {
+        return true;
+    }
+    let Ok(output) = Command::new("/usr/bin/otool").args(["-L", "-arch", "x86_64"]).arg(path).output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let deps = String::from_utf8_lossy(&output.stdout);
+    deps.contains("libSDL2") && !deps.contains("libSDL3")
 }
 
 fn mark_split_bundle_installed(home: &Path, bundle: &str, archive: &Path) {
