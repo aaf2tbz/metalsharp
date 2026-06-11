@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, watch, computed, type Ref } from "vue";
+import { ref, inject, onMounted, onUnmounted, watch, computed, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
@@ -53,8 +53,15 @@ const runningPid = ref<number | null>(null);
 const launchingAppId = ref<number | null>(null);
 const expandedAppId = ref<number | null>(null);
 const gameGridRef = ref<HTMLElement | null>(null);
+const gameGridColumns = ref(1);
+let gameGridResizeObserver: ResizeObserver | null = null;
+let gameGridResizeListenerAttached = false;
 
 const filteredGames = ref<SteamGame[]>([]);
+
+function gameNameSort(a: SteamGame, b: SteamGame) {
+  return a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+}
 
 function isMacSteamLaunch(launchMethod: string) {
   return launchMethod === "mac_steam" || launchMethod === "macos_steam" || launchMethod === "native_steam";
@@ -112,61 +119,43 @@ function applyFilter() {
     const q = search.value.toLowerCase();
     games = games.filter((g) => g.name.toLowerCase().includes(q));
   }
-  filteredGames.value = games;
+  filteredGames.value = [...games].sort(gameNameSort);
 }
 
 function onCardExpanded(appid: number, open: boolean) {
   expandedAppId.value = open ? appid : null;
-  // After Vue updates the DOM, compute per-row heights so only the
-  // row containing the expanded card grows.
-  requestAnimationFrame(() => applyGridRowHeights());
 }
 
-function applyGridRowHeights() {
+function updateGameGridColumns() {
   const grid = gameGridRef.value;
   if (!grid) return;
-  const cards = [...grid.children] as HTMLElement[];
-  if (cards.length === 0) return;
+  const minColumnWidth = 300;
+  const gap = 18;
+  const width = grid.clientWidth;
+  const availableColumns = Math.max(1, Math.floor((width + gap) / (minColumnWidth + gap)));
+  const visibleColumns = Math.max(1, filteredGames.value.length);
+  gameGridColumns.value = Math.min(availableColumns, visibleColumns);
+}
 
-  const expandedIdx = expandedAppId.value
-    ? filteredGames.value.findIndex((g) => g.appid === expandedAppId.value)
-    : -1;
-
-  if (expandedIdx < 0) {
-    // No card expanded — reset to uniform rows.
-    grid.style.gridTemplateRows = "";
-    for (const card of cards) card.style.gridRow = "";
-    return;
-  }
-
-  // Determine how many columns the grid has by checking the first row.
-  const gridStyle = getComputedStyle(grid);
-  const gridWidth = grid.clientWidth;
-  const columnGap = parseFloat(gridStyle.columnGap) || 0;
-  const colCount = gridStyle.gridTemplateColumns.split(" ").length;
-  if (colCount <= 1) {
-    // Single column — nothing to isolate.
-    grid.style.gridTemplateRows = "";
-    return;
-  }
-
-  const expandedRow = Math.floor(expandedIdx / colCount);
-  const rowCount = Math.ceil(cards.length / colCount);
-
-  // Build explicit row sizes: min-content for all rows except the expanded one.
-  const rowSizes = Array.from({ length: rowCount }, (_, i) =>
-    i === expandedRow ? "auto" : "min-content",
-  );
-  grid.style.gridTemplateRows = rowSizes.join(" ");
-
-  // Place each card into its explicit row.
-  for (let i = 0; i < cards.length; i++) {
-    const row = Math.floor(i / colCount) + 1;
-    const col = (i % colCount) + 1;
-    cards[i].style.gridRow = `${row}`;
-    cards[i].style.gridColumn = `${col}`;
+function observeGameGrid() {
+  const grid = gameGridRef.value;
+  if (!grid || gameGridResizeObserver) return;
+  if (typeof ResizeObserver !== "undefined") {
+    gameGridResizeObserver = new ResizeObserver(updateGameGridColumns);
+    gameGridResizeObserver.observe(grid);
+  } else if (!gameGridResizeListenerAttached) {
+    window.addEventListener("resize", updateGameGridColumns);
+    gameGridResizeListenerAttached = true;
   }
 }
+
+const gameColumns = computed(() => {
+  const columns = Array.from({ length: gameGridColumns.value }, () => [] as SteamGame[]);
+  filteredGames.value.forEach((game, index) => {
+    columns[index % gameGridColumns.value].push(game);
+  });
+  return columns;
+});
 
 async function toggleSteam() {
   if (wineSteamRunning.value) {
@@ -304,9 +293,26 @@ async function uninstallGame(game: SteamGame) {
 
 onMounted(() => {
   applyFilter();
+  requestAnimationFrame(() => {
+    observeGameGrid();
+    updateGameGridColumns();
+  });
 });
 
-watch([library, search, filter], applyFilter);
+onUnmounted(() => {
+  gameGridResizeObserver?.disconnect();
+  gameGridResizeObserver = null;
+  window.removeEventListener("resize", updateGameGridColumns);
+  gameGridResizeListenerAttached = false;
+});
+
+watch([library, search, filter], () => {
+  applyFilter();
+  requestAnimationFrame(() => {
+    observeGameGrid();
+    updateGameGridColumns();
+  });
+});
 </script>
 
 <template>
@@ -373,20 +379,22 @@ watch([library, search, filter], applyFilter);
     </div>
 
     <div v-else ref="gameGridRef" class="game-grid">
-      <GameCard
-        v-for="game in filteredGames"
-        :key="game.appid"
-        :game="game"
-        :running="runningAppId === game.appid"
-        :launching="launchingAppId === game.appid"
-        :steam-installed="wineSteamInstalled"
-        :developer-mode="developerMode"
-        @play="launchGame(game, $event)"
-        @stop="stopGame(game)"
-        @install="installGame(game)"
-        @uninstall="uninstallGame(game)"
-        @expanded="onCardExpanded"
-      />
+      <div v-for="(column, index) in gameColumns" :key="index" class="game-grid-column">
+        <GameCard
+          v-for="game in column"
+          :key="game.appid"
+          :game="game"
+          :running="runningAppId === game.appid"
+          :launching="launchingAppId === game.appid"
+          :steam-installed="wineSteamInstalled"
+          :developer-mode="developerMode"
+          @play="launchGame(game, $event)"
+          @stop="stopGame(game)"
+          @install="installGame(game)"
+          @uninstall="uninstallGame(game)"
+          @expanded="onCardExpanded"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -529,9 +537,16 @@ watch([library, search, filter], applyFilter);
 
 .game-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 18px;
   align-items: start;
+}
+
+.game-grid-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .empty-state {

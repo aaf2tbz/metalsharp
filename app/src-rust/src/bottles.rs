@@ -1815,50 +1815,59 @@ pub fn repair_component(
 
     if component_id == "gptk_prefix" {
         let home = dirs::home_dir().ok_or("no home dir")?;
-        let seeding = crate::platform::gptk_prefix_seeding(&home);
-        let ready = crate::platform::gptk_prefix_ready(&home);
+        let status = crate::platform::gptk_prefix_status(&home);
+        let log_path = crate::platform::gptk_seed_log_path(&home);
 
         if dry_run {
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
-                status: if ready {
-                    "already_installed".to_string()
-                } else if seeding {
-                    "seeding".to_string()
-                } else {
-                    "repair_available".to_string()
-                },
-                detail: if ready {
-                    "GPTK prefix is seeded and ready".to_string()
-                } else if seeding {
-                    "GPTK prefix is currently being prepared".to_string()
-                } else {
-                    "GPTK prefix will be created: wineboot init, Steam data copy, vcrun install (~2GB, may take a few minutes)".to_string()
+                status: match &status {
+                    crate::platform::GptkPrefixStatus::Ready => "already_installed",
+                    crate::platform::GptkPrefixStatus::Seeding => "seeding",
+                    crate::platform::GptkPrefixStatus::Failed(_) => "failed",
+                    crate::platform::GptkPrefixStatus::Partial(_) => "partial",
+                    crate::platform::GptkPrefixStatus::Missing => "repair_available",
+                }
+                .to_string(),
+                detail: match &status {
+                    crate::platform::GptkPrefixStatus::Ready => "GPTK prefix is seeded and ready".to_string(),
+                    crate::platform::GptkPrefixStatus::Seeding => {
+                        "GPTK prefix is currently being prepared".to_string()
+                    },
+                    crate::platform::GptkPrefixStatus::Failed(detail) => {
+                        format!("GPTK prefix seed failed: {}", detail)
+                    },
+                    crate::platform::GptkPrefixStatus::Partial(detail) => {
+                        format!("{}; repair will reseed it", detail)
+                    },
+                    crate::platform::GptkPrefixStatus::Missing => {
+                        "GPTK prefix will be created: wineboot init, Steam data copy, vcrun install (~2GB, may take a few minutes)".to_string()
+                    },
                 },
                 asset_path: None,
-                log_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
         }
 
-        if ready {
+        if matches!(&status, crate::platform::GptkPrefixStatus::Ready) {
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: "already_installed".to_string(),
                 detail: "GPTK prefix is seeded and ready".to_string(),
                 asset_path: None,
-                log_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
         }
 
-        if seeding {
+        if matches!(&status, crate::platform::GptkPrefixStatus::Seeding) {
             return Ok(ComponentRepairReport {
                 id: component_id.to_string(),
                 status: "seeding".to_string(),
                 detail: "GPTK prefix is already being prepared — check back in a moment".to_string(),
                 asset_path: None,
-                log_path: None,
+                log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
         }
@@ -1883,6 +1892,10 @@ pub fn repair_component(
                     eprintln!("gptk_prefix: seed complete");
                     if let Ok(mut m) = load_bottle(&bottle_id) {
                         mark_component_state(&mut m, "gptk_prefix", ComponentState::Installed);
+                        if crate::platform::gptk_vcrun_installed(&home) {
+                            mark_component_state(&mut m, "vcrun2019_x64", ComponentState::Installed);
+                            mark_component_state(&mut m, "vcrun2019_x86", ComponentState::Installed);
+                        }
                         m.health = if components_ready(&m.installed_components) {
                             BottleHealth::Ready
                         } else {
@@ -1898,7 +1911,7 @@ pub fn repair_component(
                         crate::platform::gptk_prefix_path(&dirs::home_dir().unwrap_or_default()).join(".gptk-seeding");
                     let _ = std::fs::remove_file(&marker);
                     if let Ok(mut m) = load_bottle(&bottle_id) {
-                        mark_component_state(&mut m, "gptk_prefix", ComponentState::Missing);
+                        mark_component_state(&mut m, "gptk_prefix", ComponentState::NeedsRepair);
                         m.health = BottleHealth::NeedsRepair;
                         m.updated_at = timestamp_secs();
                         let _ = save_bottle(&m);
@@ -1912,7 +1925,7 @@ pub fn repair_component(
             status: "started".to_string(),
             detail: "GPTK prefix seeding started in background — use dry-run to poll progress".to_string(),
             asset_path: None,
-            log_path: None,
+            log_path: Some(log_path.to_string_lossy().to_string()),
             pid: None,
         });
     }
@@ -3371,12 +3384,12 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         "gptk_prefix" => {
             let home = dirs::home_dir().unwrap_or_default();
-            if crate::platform::gptk_prefix_ready(&home) {
-                ComponentState::Installed
-            } else if crate::platform::gptk_prefix_seeding(&home) {
-                ComponentState::NeedsRepair
-            } else {
-                ComponentState::Missing
+            match crate::platform::gptk_prefix_status(&home) {
+                crate::platform::GptkPrefixStatus::Ready => ComponentState::Installed,
+                crate::platform::GptkPrefixStatus::Seeding
+                | crate::platform::GptkPrefixStatus::Failed(_)
+                | crate::platform::GptkPrefixStatus::Partial(_) => ComponentState::NeedsRepair,
+                crate::platform::GptkPrefixStatus::Missing => ComponentState::Missing,
             }
         },
         "rosetta" => {

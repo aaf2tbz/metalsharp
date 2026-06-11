@@ -375,7 +375,8 @@ async function repairRuntimeComponent(component: string) {
     },
   );
   if (result?.ok && result.repair) {
-    toast.show(`${component}: ${result.repair.status}`, result.repair.status === "asset_missing" ? "error" : "success");
+    const failed = ["asset_missing", "failed", "install_failed"].includes(result.repair.status);
+    toast.show(failed ? result.repair.detail : `${component}: ${result.repair.status}`, failed ? "error" : "success");
     if (result.repair.status === "started" || result.repair.status === "seeding") {
       await pollRuntimeRepairDone(runtimeReport.value.bottle_id, component);
     } else {
@@ -404,14 +405,20 @@ async function pollRuntimeRepairDone(bottleId: string, component: string) {
     );
     if (!poll?.ok || !poll.repair) break;
     const status = poll.repair.status;
-    if (status === "already_installed" || status === "repair_available") {
-      toast.show(`${component}: ${status === "already_installed" ? "ready" : status}`, "success");
+    if (status === "already_installed") {
+      toast.show(`${component}: ready`, "success");
+      await runRuntimeDoctor();
+      runtimeLoading.value = false;
+      return;
+    }
+    if (["asset_missing", "failed", "install_failed"].includes(status)) {
+      toast.show(poll.repair.detail || `${component}: ${status}`, "error");
       await runRuntimeDoctor();
       runtimeLoading.value = false;
       return;
     }
   }
-  toast.show(`${component}: seeding is taking longer than expected — check back`, "info");
+  toast.show(`${component}: repair is taking longer than expected — check back`);
   await runRuntimeDoctor();
   runtimeLoading.value = false;
 }
