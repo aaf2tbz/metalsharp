@@ -4,6 +4,7 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const GPTK_SEED_TIMEOUT: Duration = Duration::from_secs(2 * 60 * 60);
+const GPTK_VCRUN_MIN_SIZE: u64 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HostPlatform {
@@ -968,15 +969,28 @@ fn count_dir_entries(path: &Path) -> std::io::Result<u64> {
 
 pub fn gptk_vcrun_installed(home: &Path) -> bool {
     let gptk_prefix = gptk_prefix_path(home);
+    gptk_vcrun_x64_installed(&gptk_prefix)
+}
+
+fn gptk_vcrun_x64_installed(gptk_prefix: &Path) -> bool {
     let system32 = gptk_prefix.join("drive_c").join("windows").join("system32");
+    has_runtime_dll(&system32, "vcruntime140.dll")
+        && has_runtime_dll(&system32, "vcruntime140_1.dll")
+        && has_runtime_dll(&system32, "msvcp140.dll")
+}
+
+fn gptk_vcrun_x86_installed(gptk_prefix: &Path) -> bool {
     let syswow64 = gptk_prefix.join("drive_c").join("windows").join("syswow64");
-    let has = |dir: &std::path::Path, dll: &str| -> bool {
-        let p = dir.join(dll);
-        p.is_file() && p.metadata().map(|m| m.len()).unwrap_or(0) > 10_000
-    };
-    let x64_ok = has(&system32, "vcruntime140.dll") && has(&system32, "msvcp140.dll");
-    let x86_ok = has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll");
-    x64_ok && x86_ok
+    has_runtime_dll(&syswow64, "vcruntime140.dll") && has_runtime_dll(&syswow64, "msvcp140.dll")
+}
+
+fn has_runtime_dll(dir: &Path, dll: &str) -> bool {
+    let p = dir.join(dll);
+    p.is_file() && p.metadata().map(|m| m.len()).unwrap_or(0) > 10_000
+}
+
+fn valid_gptk_vcrun_redist(path: &Path) -> bool {
+    path.is_file() && path.metadata().map(|m| m.len()).unwrap_or(0) > GPTK_VCRUN_MIN_SIZE
 }
 
 pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -986,57 +1000,82 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
     }
 
     if gptk_vcrun_installed(home) {
-        append_gptk_seed_log(home, "vcrun already installed in prefix (x64 + x86)");
+        append_gptk_seed_log(home, "vcrun already installed in GPTK prefix (x64)");
         return Ok(());
     }
 
     let gptk_wine64 = gptk_wine64_binary();
     let gptk_wineserver = gptk_wineserver_binary();
-    let prefix_str = gptk_prefix.to_string_lossy().to_string();
     let gptk_winedllpath = gptk_seed_winedllpath(home)?;
     let dyld = gptk_seed_dyld(home);
 
     let redist_dir = metalsharp_home_dir_for(home).join("runtime").join("redist").join("vcredist");
     let _ = std::fs::create_dir_all(&redist_dir);
 
+    append_gptk_seed_log(home, "checking VC++ redist payloads before GPTK install");
     let x64 = resolve_or_download_vcrun(home, &redist_dir, "x64")?;
-    let x86 = resolve_or_download_vcrun(home, &redist_dir, "x86")?;
 
-    for (arch, path) in [("x64", &x64), ("x86", &x86)] {
-        append_gptk_seed_log(home, &format!("installing VC++ {} redist from {}", arch, path.display()));
-        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-p").status();
-        let output = std::process::Command::new(&gptk_wine64)
-            .env("WINEPREFIX", &prefix_str)
+    for (arch, path, already_installed) in [("x64", &x64, gptk_vcrun_x64_installed(&gptk_prefix))] {
+        if already_installed {
+            append_gptk_seed_log(home, &format!("VC++ {} runtime already present, skipping installer", arch));
+            continue;
+        }
+
+        append_gptk_seed_log(
+            home,
+            &format!("launching interactive VC++ {} redist /install from {}", arch, path.display()),
+        );
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &gptk_prefix).arg("-p").status();
+        let status = std::process::Command::new(&gptk_wine64)
+            .current_dir(if home.is_dir() { home } else { Path::new("/") })
+            .env("WINEPREFIX", &gptk_prefix)
             .env("WINEARCH", "win64")
             .env("WINEDEBUG", "-all")
             .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
             .env("WINEDLLPATH", &gptk_winedllpath)
             .env("WINEDLLOVERRIDES", "d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .arg("start")
+            .arg("/wait")
+            .arg("/unix")
             .arg(path)
-            .args(["/install"])
-            .output()?;
-        if !output.status.success() {
-            let output_text = command_output_text(&output);
+            .arg("/install")
+            .status()?;
+        let arch_installed = wait_for_gptk_vcrun_arch(&gptk_prefix, arch, Duration::from_secs(45));
+        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &gptk_prefix).arg("-k").status();
+        if !status.success() {
             append_gptk_seed_log(
                 home,
                 &format!(
-                    "VC++ {} installer exited with {:?}{}",
+                    "VC++ {} interactive installer exited with {:?}, installed={}",
                     arch,
-                    output.status.code(),
-                    if output_text.is_empty() { String::new() } else { format!(": {}", output_text) }
+                    status.code(),
+                    arch_installed
                 ),
             );
         }
-        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-w").status();
-        let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
     }
 
     let installed = gptk_vcrun_installed(home);
     append_gptk_seed_log(home, &format!("VC++ redist install complete, installed={}", installed));
     if !installed {
-        return Err("GPTK VC++ redist install did not verify x64 + x86 runtime DLLs".into());
+        return Err("GPTK VC++ redist install did not verify x64 runtime DLLs".into());
     }
     Ok(())
+}
+
+fn wait_for_gptk_vcrun_arch(gptk_prefix: &Path, arch: &str, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let installed =
+            if arch == "x64" { gptk_vcrun_x64_installed(gptk_prefix) } else { gptk_vcrun_x86_installed(gptk_prefix) };
+        if installed || std::time::Instant::now() >= deadline {
+            return installed;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
 
 fn resolve_or_download_vcrun(
@@ -1046,7 +1085,7 @@ fn resolve_or_download_vcrun(
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let filename = format!("vc_redist.{}.exe", arch);
     let staged = redist_dir.join(&filename);
-    if staged.is_file() && staged.metadata().map(|m| m.len()).unwrap_or(0) > 100_000 {
+    if valid_gptk_vcrun_redist(&staged) {
         append_gptk_seed_log(home, &format!("using staged {} redist", arch));
         return Ok(staged);
     }
@@ -1063,7 +1102,7 @@ fn resolve_or_download_vcrun(
 
     for ver in &["2022", "2019", "2017", "2015"] {
         let candidate = steam_redist.join("vcredist").join(ver).join(&filename);
-        if candidate.is_file() {
+        if valid_gptk_vcrun_redist(&candidate) {
             append_gptk_seed_log(home, &format!("found {} redist in Steam CommonRedist/{}", arch, ver));
             return Ok(candidate);
         }
@@ -1079,6 +1118,11 @@ fn resolve_or_download_vcrun(
     let mut input = resp.into_body().into_reader();
     let mut output = std::fs::File::create(&tmp)?;
     std::io::copy(&mut input, &mut output)?;
+    drop(output);
+    if !valid_gptk_vcrun_redist(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("VC++ {} download was missing or too small", arch).into());
+    }
     std::fs::rename(&tmp, &staged)?;
     append_gptk_seed_log(home, &format!("downloaded {} redist to {}", arch, staged.display()));
     Ok(staged)
@@ -1273,6 +1317,55 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gptk_vcrun_x64_requires_vcruntime140_1() {
+        let prefix = test_prefix("gptk-vcrun-x64");
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32).expect("create system32");
+        let dll_payload = vec![0u8; 20_000];
+        fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write vcruntime");
+        fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write msvcp");
+
+        assert!(!gptk_vcrun_x64_installed(&prefix));
+
+        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write vcruntime140_1");
+
+        assert!(gptk_vcrun_x64_installed(&prefix));
+
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gptk_vcrun_installed_is_x64_route_ready() {
+        let home = test_prefix("gptk-vcrun-home");
+        let prefix = gptk_prefix_path(&home);
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32).expect("create system32");
+        let dll_payload = vec![0u8; 20_000];
+        fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write vcruntime");
+        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write vcruntime140_1");
+        fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write msvcp");
+
+        assert!(gptk_vcrun_installed(&home));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn gptk_vcrun_redist_validation_rejects_tiny_files() {
+        let prefix = test_prefix("gptk-vcrun-redist");
+        let tiny = prefix.join("vc_redist.x64.exe");
+        fs::write(&tiny, vec![0u8; 100_000]).expect("write tiny redist");
+
+        assert!(!valid_gptk_vcrun_redist(&tiny));
+
+        fs::write(&tiny, vec![0u8; (GPTK_VCRUN_MIN_SIZE + 1) as usize]).expect("write valid redist");
+
+        assert!(valid_gptk_vcrun_redist(&tiny));
+
         let _ = fs::remove_dir_all(prefix);
     }
 
