@@ -1282,6 +1282,11 @@ fn is_valid_app_exe(name: &str) -> bool {
         && !lower.contains("vcredist")
         && !lower.contains("crashhandler")
         && !lower.contains("server")
+        && !lower.contains("service")
+        && !lower.contains("helper")
+        && !lower.contains("webcore")
+        && !lower.contains("cefsubprocess")
+        && !lower.contains("extension")
 }
 
 fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
@@ -1304,10 +1309,16 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
         if lower.contains("launcher") {
             score += 50;
         }
+        score += known_launcher_exe_score(&lower);
         if lower.ends_with("_real.exe") {
             score += 30;
         }
-        if lower.contains("helper") || lower.contains("crash") || lower.contains("service") {
+        if lower.contains("helper")
+            || lower.contains("crash")
+            || lower.contains("service")
+            || lower.contains("webcore")
+            || lower.contains("cefsubprocess")
+        {
             score -= 50;
         }
         if best.as_ref().map(|(best_score, _)| score > *best_score).unwrap_or(true) {
@@ -1315,6 +1326,15 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
         }
     }
     best.map(|(_, path)| path)
+}
+
+fn known_launcher_exe_score(lower_name: &str) -> i32 {
+    match lower_name {
+        "epicgameslauncher.exe" | "epicgameslauncher_real.exe" => 90,
+        "ubisoftconnect.exe" | "ubisoftconnect_real.exe" => 140,
+        "ubisoftgamelauncher.exe" | "ubisoftgamelauncher_real.exe" => 40,
+        _ => 0,
+    }
 }
 
 fn dir_size(dir: &PathBuf) -> u64 {
@@ -1756,6 +1776,32 @@ mod tests {
 
         assert_eq!(found, dir.join("MinecraftLauncher_real.exe"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn refresh_setup_reference_prefers_epic_and_ubisoft_launchers() {
+        let epic_dir = test_dir("epic-launcher-refresh");
+        fs::create_dir_all(epic_dir.join("Portal").join("Binaries")).expect("create epic dirs");
+        fs::write(epic_dir.join("EpicGamesLauncher.exe"), b"not pe").expect("write epic launcher");
+        fs::write(epic_dir.join("EpicWebHelper.exe"), b"not pe").expect("write epic helper");
+        fs::write(epic_dir.join("Portal").join("Binaries").join("UnrealCEFSubProcess.exe"), b"not pe")
+            .expect("write cef subprocess");
+
+        let epic = find_real_exe(&epic_dir).expect("find epic launcher");
+        assert_eq!(epic, epic_dir.join("EpicGamesLauncher.exe"));
+
+        let ubisoft_dir = test_dir("ubisoft-launcher-refresh");
+        fs::create_dir_all(ubisoft_dir.join("logs")).expect("create ubisoft dirs");
+        fs::write(ubisoft_dir.join("UbisoftConnect.exe"), b"not pe").expect("write ubisoft connect");
+        fs::write(ubisoft_dir.join("UbisoftGameLauncher.exe"), b"not pe").expect("write ubisoft launcher");
+        fs::write(ubisoft_dir.join("UplayService.exe"), b"not pe").expect("write uplay service");
+        fs::write(ubisoft_dir.join("UplayWebCore.exe"), b"not pe").expect("write uplay webcore");
+
+        let ubisoft = find_real_exe(&ubisoft_dir).expect("find ubisoft launcher");
+        assert_eq!(ubisoft, ubisoft_dir.join("UbisoftConnect.exe"));
+
+        let _ = fs::remove_dir_all(epic_dir);
+        let _ = fs::remove_dir_all(ubisoft_dir);
     }
 
     #[test]

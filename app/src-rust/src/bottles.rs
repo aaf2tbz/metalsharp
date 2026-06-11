@@ -2905,7 +2905,16 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "WebView",
             BottleArch::Wow64,
             true,
-            &["gecko", "webview2", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
+            &[
+                "gecko",
+                "webview2",
+                "dotnet48",
+                "vcrun2019_x64",
+                "vcrun2019_x86",
+                "directx_jun2010",
+                "openal",
+                "corefonts",
+            ][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::JavaLauncher => (
@@ -3040,7 +3049,15 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
         KnownLauncherRecipe {
             id: "ubisoft_connect",
             label: "Ubisoft Connect",
-            tokens: &["ubisoft connect", "ubisoftconnect", "uplay", "ubisoftgamelauncher"],
+            tokens: &[
+                "ubisoft connect",
+                "ubisoft connect installer",
+                "ubisoftconnect",
+                "ubisoftconnectinstaller",
+                "uplay",
+                "uplayinstaller",
+                "ubisoftgamelauncher",
+            ],
             installer_kind: InstallerKind::Webview,
             runtime_profile: RuntimeProfile::Webview,
             forced_pipeline: None,
@@ -3056,7 +3073,15 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
         KnownLauncherRecipe {
             id: "epic_games",
             label: "Epic Games Launcher",
-            tokens: &["epic games launcher", "epicgameslauncher", "epic installer", "epic online services"],
+            tokens: &[
+                "epic games launcher",
+                "epic games launcher installer",
+                "epicgameslauncher",
+                "epicgameslauncherinstaller",
+                "epic installer",
+                "epicinstaller",
+                "epic online services",
+            ],
             installer_kind: InstallerKind::Webview,
             runtime_profile: RuntimeProfile::Webview,
             forced_pipeline: None,
@@ -5406,6 +5431,7 @@ fn is_probable_app_exe(name: &str) -> bool {
         "msedgewebview2.exe",
         "upc.exe",
         "uc_connector.exe",
+        "unrealcefsubprocess.exe",
     ];
     lower.ends_with(".exe")
         && !builtins.contains(&lower.as_str())
@@ -5421,6 +5447,7 @@ fn is_probable_app_exe(name: &str) -> bool {
         && !lower.contains("shareplay")
         && !lower.contains("update")
         && !lower.contains("webcore")
+        && !lower.contains("cefsubprocess")
 }
 
 fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
@@ -5580,6 +5607,8 @@ mod tests {
         let webview = runtime_profile_definition(RuntimeProfile::Webview);
         assert_eq!(webview.launch_pipeline, crate::mtsp::engine::PipelineId::WineBare);
         assert!(webview.components.contains(&"dotnet48".to_string()));
+        assert!(webview.components.contains(&"directx_jun2010".to_string()));
+        assert!(webview.components.contains(&"openal".to_string()));
     }
 
     #[test]
@@ -5677,8 +5706,10 @@ mod tests {
         let cases = [
             ("EAappInstaller.exe", RuntimeProfile::Webview, "known_launcher:ea_app"),
             ("UbisoftConnectInstaller.exe", RuntimeProfile::Webview, "known_launcher:ubisoft_connect"),
+            ("UplayInstaller.exe", RuntimeProfile::Webview, "known_launcher:ubisoft_connect"),
             ("Battle.net-Setup.exe", RuntimeProfile::Webview, "known_launcher:battle_net"),
             ("EpicGamesLauncherInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
+            ("EpicInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("Rockstar-Games-Launcher.exe", RuntimeProfile::Webview, "known_launcher:rockstar"),
             ("GOG_Galaxy_2.0.exe", RuntimeProfile::Launcher, "known_launcher:gog_galaxy"),
         ];
@@ -6132,10 +6163,14 @@ mod tests {
         assert!(!is_probable_app_exe("UplayService.exe"));
         assert!(!is_probable_app_exe("UplayWebCore.exe"));
         assert!(!is_probable_app_exe("UpcElevationService.exe"));
+        assert!(!is_probable_app_exe("EpicWebHelper.exe"));
+        assert!(!is_probable_app_exe("UnrealCEFSubProcess.exe"));
         assert!(!is_probable_app_exe("UbisoftExtension.exe"));
         assert!(!is_probable_app_exe("upc.exe"));
         assert!(is_probable_app_exe("MinecraftLauncher.exe"));
+        assert!(is_probable_app_exe("EpicGamesLauncher.exe"));
         assert!(is_probable_app_exe("UbisoftConnect.exe"));
+        assert!(is_probable_app_exe("UbisoftGameLauncher.exe"));
     }
 
     #[test]
