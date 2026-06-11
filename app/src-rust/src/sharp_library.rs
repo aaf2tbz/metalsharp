@@ -13,6 +13,14 @@ const DEFAULT_EPIC_COVER: &str = "default-cover-epic-games-launcher.svg";
 const DEFAULT_ROCKSTAR_COVER: &str = "default-cover-rockstar-games-launcher.svg";
 const DEFAULT_UBISOFT_COVER: &str = "default-cover-ubisoft-connect.svg";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StoreLauncherKind {
+    Epic,
+    Gog,
+    Rockstar,
+    Ubisoft,
+}
+
 fn base_dir() -> PathBuf {
     let home = dirs::home_dir().unwrap_or_default();
     crate::platform::metalsharp_home_dir_for(&home).join(LIBRARY_DIR)
@@ -89,6 +97,7 @@ pub fn load_library() -> Result<Vec<SharpApp>, Box<dyn std::error::Error>> {
     changed |= sync_wine_prefix_apps(&mut apps);
     changed |= prune_library_apps(&mut apps);
     changed |= apply_default_launcher_covers(&mut apps)?;
+    changed |= apply_default_launcher_launch_args(&mut apps);
     if changed {
         save_library(&apps)?;
     }
@@ -414,21 +423,119 @@ fn apply_default_launcher_covers(apps: &mut [SharpApp]) -> Result<bool, Box<dyn 
 }
 
 fn default_launcher_cover(app: &SharpApp) -> Option<&'static str> {
-    let name = app.name.trim().to_lowercase();
-    let exe =
-        Path::new(&app.exe_path).file_name().map(|value| value.to_string_lossy().to_lowercase()).unwrap_or_default();
-    let install_dir = app.install_dir.to_lowercase();
+    match store_launcher_kind_for_app(app) {
+        Some(StoreLauncherKind::Epic) => Some(DEFAULT_EPIC_COVER),
+        Some(StoreLauncherKind::Rockstar) => Some(DEFAULT_ROCKSTAR_COVER),
+        Some(StoreLauncherKind::Ubisoft) => Some(DEFAULT_UBISOFT_COVER),
+        Some(StoreLauncherKind::Gog) | None => None,
+    }
+}
 
-    if name.contains("epic games launcher") || exe == "epicgameslauncher.exe" {
-        return Some(DEFAULT_EPIC_COVER);
+fn apply_default_launcher_launch_args(apps: &mut [SharpApp]) -> bool {
+    let mut changed = false;
+    for app in apps {
+        changed |= apply_default_launcher_launch_args_to_app(app);
+    }
+    changed
+}
+
+fn apply_default_launcher_launch_args_to_app(app: &mut SharpApp) -> bool {
+    let defaults = default_launcher_launch_args_for_app(app);
+    if defaults.is_empty() {
+        return false;
+    }
+    append_unique_launch_args(&mut app.launch_args, defaults)
+}
+
+fn default_launcher_launch_args_for_app(app: &SharpApp) -> &'static [&'static str] {
+    store_launcher_kind_for_app(app).map(default_launcher_launch_args).unwrap_or(&[])
+}
+
+fn default_installer_launch_args(src: &Path, classification: &crate::bottles::InstallerClassification) -> Vec<String> {
+    if classification.installer_kind == crate::bottles::InstallerKind::Msi {
+        return Vec::new();
+    }
+
+    let Some(kind) = store_launcher_kind_for_installer(src, classification) else {
+        return Vec::new();
+    };
+    default_launcher_launch_args(kind).iter().map(|arg| arg.to_string()).collect()
+}
+
+fn default_launcher_launch_args(kind: StoreLauncherKind) -> &'static [&'static str] {
+    match kind {
+        StoreLauncherKind::Epic => {
+            &["-SkipBuildPatchPrereq", "-OpenGL", "--disable-gpu-sandbox", "--disable-direct-composition"]
+        },
+        StoreLauncherKind::Gog | StoreLauncherKind::Rockstar | StoreLauncherKind::Ubisoft => {
+            &["--disable-gpu", "--disable-gpu-compositing", "--disable-direct-composition", "--disable-gpu-sandbox"]
+        },
+    }
+}
+
+fn append_unique_launch_args(target: &mut Vec<String>, defaults: &[&str]) -> bool {
+    let mut changed = false;
+    for default in defaults {
+        if target.iter().any(|existing| existing.eq_ignore_ascii_case(default)) {
+            continue;
+        }
+        target.push((*default).to_string());
+        changed = true;
+    }
+    changed
+}
+
+fn store_launcher_kind_for_app(app: &SharpApp) -> Option<StoreLauncherKind> {
+    store_launcher_kind_for_identity(&app.name, Path::new(&app.exe_path), &app.install_dir)
+}
+
+fn store_launcher_kind_for_installer(
+    src: &Path,
+    classification: &crate::bottles::InstallerClassification,
+) -> Option<StoreLauncherKind> {
+    for hint in &classification.hints {
+        match hint.as_str() {
+            "known_launcher:epic_games" => return Some(StoreLauncherKind::Epic),
+            "known_launcher:gog_galaxy" => return Some(StoreLauncherKind::Gog),
+            "known_launcher:rockstar" => return Some(StoreLauncherKind::Rockstar),
+            "known_launcher:ubisoft_connect" => return Some(StoreLauncherKind::Ubisoft),
+            _ => {},
+        }
+    }
+    store_launcher_kind_for_identity("", src, "")
+}
+
+fn store_launcher_kind_for_identity(name: &str, exe_path: &Path, install_dir: &str) -> Option<StoreLauncherKind> {
+    let name = name.trim().to_lowercase();
+    let exe = exe_path.file_name().map(|value| value.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let install_dir = install_dir.to_lowercase();
+
+    if name.contains("epic games launcher")
+        || name.contains("epic games installer")
+        || exe == "epicgameslauncher.exe"
+        || exe == "epicgameslauncherinstaller.exe"
+        || exe == "epicinstaller.exe"
+    {
+        return Some(StoreLauncherKind::Epic);
+    }
+
+    if name.contains("gog galaxy")
+        || exe == "galaxyclient.exe"
+        || exe == "goggalaxy.exe"
+        || exe.starts_with("gog_galaxy")
+    {
+        return Some(StoreLauncherKind::Gog);
     }
 
     if name.contains("ubisoft connect")
         || name.contains("ubisoft game launcher")
+        || name.contains("uplay")
         || exe == "ubisoftconnect.exe"
+        || exe == "ubisoftconnectinstaller.exe"
         || exe == "ubisoftgamelauncher.exe"
+        || exe == "uplayinstaller.exe"
     {
-        return Some(DEFAULT_UBISOFT_COVER);
+        return Some(StoreLauncherKind::Ubisoft);
     }
 
     if name.contains("rockstar games launcher")
@@ -438,7 +545,7 @@ fn default_launcher_cover(app: &SharpApp) -> Option<&'static str> {
         || exe == "rockstar-games-launcher.exe"
         || (exe == "launcher.exe" && install_dir.contains("rockstar games"))
     {
-        return Some(DEFAULT_ROCKSTAR_COVER);
+        return Some(StoreLauncherKind::Rockstar);
     }
 
     None
@@ -611,7 +718,7 @@ fn install_exe_with_options(
 
     let installed_at = chrono_now();
 
-    let app = SharpApp {
+    let mut app = SharpApp {
         id,
         name: app_name,
         exe_path,
@@ -626,6 +733,7 @@ fn install_exe_with_options(
         installed_at,
         size_bytes,
     };
+    apply_default_launcher_launch_args_to_app(&mut app);
 
     let mut library = load_library()?;
     library.push(app.clone());
@@ -686,6 +794,7 @@ fn start_wine_installer_in_bottle(
     let launch_id = installer_launch_id(src, pipeline);
     let log_path = crate::bottles::next_launch_log_path(&bottle.id);
     let prefix_path = PathBuf::from(&bottle.prefix_path);
+    let installer_launch_args = default_installer_launch_args(src, classification);
 
     let pid = if classification.installer_kind == crate::bottles::InstallerKind::Msi {
         launch_msi_installer(&staged_exe, &prefix_path, &log_path)?
@@ -695,7 +804,7 @@ fn start_wine_installer_in_bottle(
             &work_dir,
             &staged_exe,
             pipeline,
-            &[],
+            &installer_launch_args,
             crate::mtsp::launcher::CustomLaunchOptions {
                 prefix_path: Some(prefix_path),
                 log_path: Some(log_path.clone()),
@@ -797,7 +906,7 @@ pub fn import_bottle_app(
     let exe_path = relative_path_string(&install_dir, &exe)?;
     let install_dir_string = install_dir.to_string_lossy().to_string();
 
-    let app = SharpApp {
+    let mut app = SharpApp {
         id,
         name: app_name,
         exe_path,
@@ -812,6 +921,7 @@ pub fn import_bottle_app(
         installed_at: chrono_now(),
         size_bytes: dir_size(&install_dir),
     };
+    apply_default_launcher_launch_args_to_app(&mut app);
 
     let mut library = load_library()?;
     let absolute = app_absolute_exe_path(&app);
@@ -823,6 +933,7 @@ pub fn import_bottle_app(
         existing.install_dir = app.install_dir.clone();
         existing.bottle_id = app.bottle_id.clone();
         existing.size_bytes = app.size_bytes;
+        apply_default_launcher_launch_args_to_app(existing);
         let updated = existing.clone();
         save_library(&library)?;
         return Ok(updated);
@@ -1717,6 +1828,76 @@ mod tests {
             default_launcher_cover(&test_app("Grand Theft Auto V", "GTA5.exe", "/tmp/Rockstar Games/GTAV")),
             None
         );
+        assert_eq!(default_launcher_cover(&test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/GOG Galaxy")), None);
+    }
+
+    #[test]
+    fn default_launcher_launch_args_match_known_store_launchers() {
+        let epic = default_launcher_launch_args_for_app(&test_app(
+            "Epic Games Launcher",
+            "Portal/Binaries/Win64/EpicGamesLauncher.exe",
+            "/tmp/Epic Games/Launcher",
+        ));
+        assert_eq!(epic, ["-SkipBuildPatchPrereq", "-OpenGL", "--disable-gpu-sandbox", "--disable-direct-composition"]);
+
+        for app in [
+            test_app("Ubisoft Connect", "UbisoftConnect.exe", "/tmp/Ubisoft/Ubisoft Game Launcher"),
+            test_app("Rockstar Games Launcher", "Launcher.exe", "/tmp/Rockstar Games/Launcher"),
+            test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/GOG Galaxy"),
+        ] {
+            assert_eq!(
+                default_launcher_launch_args_for_app(&app),
+                ["--disable-gpu", "--disable-gpu-compositing", "--disable-direct-composition", "--disable-gpu-sandbox"]
+            );
+        }
+    }
+
+    #[test]
+    fn known_store_launcher_installers_get_default_launch_args() {
+        let dir = test_dir("store-launcher-installer-args");
+        fs::create_dir_all(&dir).expect("create test dir");
+        let cases = [
+            (
+                "EpicGamesLauncherInstaller.exe",
+                vec!["-SkipBuildPatchPrereq", "-OpenGL", "--disable-gpu-sandbox", "--disable-direct-composition"],
+            ),
+            (
+                "UbisoftConnectInstaller.exe",
+                vec![
+                    "--disable-gpu",
+                    "--disable-gpu-compositing",
+                    "--disable-direct-composition",
+                    "--disable-gpu-sandbox",
+                ],
+            ),
+            (
+                "Rockstar-Games-Launcher.exe",
+                vec![
+                    "--disable-gpu",
+                    "--disable-gpu-compositing",
+                    "--disable-direct-composition",
+                    "--disable-gpu-sandbox",
+                ],
+            ),
+            (
+                "GOG_Galaxy_2.0.exe",
+                vec![
+                    "--disable-gpu",
+                    "--disable-gpu-compositing",
+                    "--disable-direct-composition",
+                    "--disable-gpu-sandbox",
+                ],
+            ),
+        ];
+
+        for (filename, expected) in cases {
+            let exe = dir.join(filename);
+            write_test_pe(&exe, 0x8664, 0x20b);
+            let classification = crate::bottles::classify_installer(&exe);
+            assert_eq!(default_installer_launch_args(&exe, &classification), expected);
+        }
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
