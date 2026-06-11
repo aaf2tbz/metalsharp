@@ -195,7 +195,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
-    if matches!(appid, 440 | 620 | 1260320) {
+    if matches!(appid, 440 | 620 | 4000 | 252490 | 292030 | 1172380 | 1260320 | 3241660) {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
@@ -1052,7 +1052,7 @@ mod tests {
 
     #[test]
     fn source_style_titles_get_steam_secure_launch_args() {
-        for appid in [440, 620, 1260320] {
+        for appid in [440, 620, 4000, 252490, 292030, 1172380, 1260320, 3241660] {
             let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
 
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
