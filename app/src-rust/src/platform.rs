@@ -128,6 +128,35 @@ fn gptk_steam_exe(prefix: &Path) -> PathBuf {
     prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe")
 }
 
+const GPTK_WINEBOOT_REQUIRED_PATHS: &[(&str, bool)] = &[
+    ("drive_c", true),
+    ("drive_c/windows", true),
+    ("drive_c/windows/system32", true),
+    ("drive_c/windows/system32/kernel32.dll", false),
+    ("drive_c/windows/system32/ntdll.dll", false),
+    ("dosdevices", true),
+    ("dosdevices/c:", false),
+];
+
+fn missing_gptk_wineboot_paths(prefix: &Path) -> Vec<String> {
+    GPTK_WINEBOOT_REQUIRED_PATHS
+        .iter()
+        .filter_map(|(relative, is_dir)| {
+            let path = prefix.join(relative);
+            let exists = if *is_dir { path.is_dir() } else { path.exists() };
+            if exists {
+                None
+            } else {
+                Some((*relative).to_string())
+            }
+        })
+        .collect()
+}
+
+fn gptk_wineboot_runtime_ready(prefix: &Path) -> bool {
+    missing_gptk_wineboot_paths(prefix).is_empty()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GptkPrefixStatus {
     Ready,
@@ -144,7 +173,7 @@ pub fn gptk_prefix_ready(home: &Path) -> bool {
     }
     let steam_exe = gptk_steam_exe(&prefix);
     let dosdevices = prefix.join("dosdevices");
-    let ready = steam_exe.is_file() && dosdevices.is_dir();
+    let ready = steam_exe.is_file() && dosdevices.is_dir() && gptk_wineboot_runtime_ready(&prefix);
     if ready {
         if prefix.join(".gptk-seeding").exists() {
             let _ = std::fs::remove_file(prefix.join(".gptk-seeding"));
@@ -187,7 +216,7 @@ fn gptk_prefix_status_for_prefix(prefix: &Path, failed_marker: &Path) -> GptkPre
     let ready_marker = prefix.join(".gptk-ready");
     let steam_exe = gptk_steam_exe(prefix);
     let dosdevices = prefix.join("dosdevices");
-    if ready_marker.is_file() && steam_exe.is_file() && dosdevices.is_dir() {
+    if ready_marker.is_file() && steam_exe.is_file() && dosdevices.is_dir() && gptk_wineboot_runtime_ready(prefix) {
         let _ = std::fs::remove_file(prefix.join(".gptk-seeding"));
         let _ = std::fs::remove_file(failed_marker);
         return GptkPrefixStatus::Ready;
@@ -213,6 +242,13 @@ fn gptk_prefix_status_for_prefix(prefix: &Path, failed_marker: &Path) -> GptkPre
     }
     if !dosdevices.is_dir() {
         return GptkPrefixStatus::Partial("GPTK prefix is incomplete: missing dosdevices".to_string());
+    }
+    let missing_runtime = missing_gptk_wineboot_paths(prefix);
+    if !missing_runtime.is_empty() {
+        return GptkPrefixStatus::Partial(format!(
+            "GPTK prefix is incomplete: missing Wine runtime files ({})",
+            missing_runtime.join(", ")
+        ));
     }
     if !steam_exe.is_file() {
         return GptkPrefixStatus::Partial("GPTK prefix is incomplete: missing Steam.exe".to_string());
@@ -641,6 +677,26 @@ fn copy_dir_tolerant(src: &Path, dst: &Path) -> (u64, u64) {
     (copied, skipped)
 }
 
+fn reset_gptk_prefix_for_seed(prefix: &Path, seeding_marker: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(prefix)?;
+    for entry in std::fs::read_dir(prefix)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path == seeding_marker {
+            continue;
+        }
+        let meta = std::fs::symlink_metadata(&path)?;
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("reset GPTK prefix: remove dir {}: {}", path.display(), e))?;
+        } else {
+            std::fs::remove_file(&path)
+                .map_err(|e| format!("reset GPTK prefix: remove file {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     match seed_gptk_prefix_sync_inner(home) {
         Ok(()) => Ok(()),
@@ -671,10 +727,8 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
     let _ = std::process::Command::new(&gptk_wineserver).env("WINEPREFIX", &gptk_prefix).arg("-k").status();
     append_gptk_seed_log(home, "wineserver killed before seed");
 
-    if gptk_prefix.join("drive_c").is_dir() {
-        append_gptk_seed_log(home, "removing existing drive_c before reseed");
-        let _ = std::fs::remove_dir_all(gptk_prefix.join("drive_c"));
-    }
+    append_gptk_seed_log(home, "resetting GPTK prefix before wineboot");
+    reset_gptk_prefix_for_seed(&gptk_prefix, &seeding_marker)?;
     std::fs::write(&seeding_marker, "seeding")?;
 
     let dyld = format!(
@@ -685,8 +739,11 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
     );
 
     append_gptk_seed_log(home, "running wineboot --init");
+    let wineboot_cwd = if home.is_dir() { home } else { Path::new("/") };
     let output = std::process::Command::new(&gptk_wine64)
+        .current_dir(wineboot_cwd)
         .env("WINEPREFIX", &gptk_prefix)
+        .env("WINEARCH", "win64")
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .arg("wineboot")
@@ -709,24 +766,16 @@ fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Er
     }
     append_gptk_seed_log(home, "wineserver idle after wineboot");
 
-    // Validate that wineboot actually created the prefix skeleton.
-    let drive_c = gptk_prefix.join("drive_c");
-    let windows = drive_c.join("windows");
-    let dosdevices = gptk_prefix.join("dosdevices");
-    if !drive_c.is_dir() || !windows.is_dir() || !dosdevices.is_dir() {
-        let missing: Vec<&str> =
-            [("drive_c", drive_c.is_dir()), ("drive_c/windows", windows.is_dir()), ("dosdevices", dosdevices.is_dir())]
-                .iter()
-                .filter(|(_, exists)| !exists)
-                .map(|(name, _)| *name)
-                .collect();
+    let missing_wineboot_paths = missing_gptk_wineboot_paths(&gptk_prefix);
+    if !missing_wineboot_paths.is_empty() {
         return Err(format!(
             "gptk: wineboot --init succeeded but prefix is incomplete (missing: {})",
-            missing.join(", ")
+            missing_wineboot_paths.join(", ")
         )
         .into());
     }
 
+    let drive_c = gptk_prefix.join("drive_c");
     if !steam_prefix.join("drive_c").join("Program Files (x86)").join("Steam").exists() {
         return Err("MetalSharp Wine Steam not installed — install Steam first".into());
     }
@@ -1027,6 +1076,15 @@ mod tests {
         dir
     }
 
+    fn create_gptk_wineboot_runtime(prefix: &Path) {
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(prefix.join("dosdevices")).expect("create dosdevices");
+        fs::write(system32.join("kernel32.dll"), "kernel32").expect("write kernel32");
+        fs::write(system32.join("ntdll.dll"), "ntdll").expect("write ntdll");
+        std::os::unix::fs::symlink("../drive_c", prefix.join("dosdevices").join("c:")).expect("link c drive");
+    }
+
     #[test]
     fn gptk_seeding_marker_is_active_before_drive_c_exists() {
         let prefix = test_prefix("gptk-marker-before-drive-c");
@@ -1055,11 +1113,54 @@ mod tests {
     }
 
     #[test]
+    fn gptk_partial_prefix_reports_missing_wineboot_runtime_files() {
+        let prefix = test_prefix("gptk-partial-no-kernel32");
+        let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+        fs::create_dir_all(&steam_dir).expect("create steam dir");
+        fs::create_dir_all(prefix.join("drive_c").join("windows").join("system32")).expect("create system32");
+        fs::create_dir_all(prefix.join("dosdevices")).expect("create dosdevices");
+        fs::write(steam_dir.join("Steam.exe"), "steam").expect("write steam exe");
+        fs::write(prefix.join(".gptk-ready"), "ready").expect("write ready");
+        let failed = prefix.join(".gptk-seed-failed");
+
+        assert_eq!(
+            gptk_prefix_status_for_prefix(&prefix, &failed),
+            GptkPrefixStatus::Partial(
+                "GPTK prefix is incomplete: missing Wine runtime files (drive_c/windows/system32/kernel32.dll, drive_c/windows/system32/ntdll.dll, dosdevices/c:)".to_string()
+            )
+        );
+
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn reset_gptk_prefix_for_seed_removes_stale_wineboot_state() {
+        let prefix = test_prefix("gptk-reset-prefix");
+        create_gptk_wineboot_runtime(&prefix);
+        fs::write(prefix.join("system.reg"), "stale registry").expect("write system reg");
+        fs::write(prefix.join("user.reg"), "stale user reg").expect("write user reg");
+        fs::write(prefix.join(".gptk-ready"), "ready").expect("write ready");
+        let marker = prefix.join(".gptk-seeding");
+        fs::write(&marker, "seeding").expect("write marker");
+
+        reset_gptk_prefix_for_seed(&prefix, &marker).expect("reset prefix");
+
+        assert!(marker.is_file());
+        assert!(!prefix.join("drive_c").exists());
+        assert!(!prefix.join("dosdevices").exists());
+        assert!(!prefix.join("system.reg").exists());
+        assert!(!prefix.join("user.reg").exists());
+        assert!(!prefix.join(".gptk-ready").exists());
+
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
     fn gptk_ready_status_clears_transient_markers() {
         let prefix = test_prefix("gptk-ready-clears-markers");
         let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
         fs::create_dir_all(&steam_dir).expect("create steam dir");
-        fs::create_dir_all(prefix.join("dosdevices")).expect("create dosdevices");
+        create_gptk_wineboot_runtime(&prefix);
         fs::write(steam_dir.join("Steam.exe"), "steam").expect("write steam exe");
         fs::write(prefix.join(".gptk-ready"), "ready").expect("write ready");
         fs::write(prefix.join(".gptk-seeding"), "seeding").expect("write seeding");
