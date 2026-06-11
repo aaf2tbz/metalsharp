@@ -1,6 +1,6 @@
 # Games Supported
 
-Updated: 2026-06-09
+Updated: 2026-06-11
 
 Tested and working games organized by pipeline. Only games confirmed playable are listed.
 
@@ -43,6 +43,7 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 | Hollow Knight: Silksong | 1030300 | |
 | Schedule I | 3164500 | |
 | Ghostrunner | 1139900 | |
+| Yu-Gi-Oh! Master Duel | 1449850 | |
 | Dark Deception | 332950 | Runtime bootstrap required on first launch. |
 
 ---
@@ -52,6 +53,7 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 | Game | AppID | Notes |
 |---|---:|---|
 | Repo | 3241660 | |
+| Cult of the Lamb | 1313140 | |
 | The Witcher 3: Wild Hunt | 292030 | |
 | The Wilds | 1028590 | |
 | The Long Dark | 305620 | Ultra settings verified. |
@@ -74,9 +76,10 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 |---|---:|---|
 | Dave the Diver | 1868140 | 32-bit. Requires vcrun2019 + DX Jun2010. |
 | Mirror's Edge | 17410 | Sync-loading mitigation active. |
+| Half-Life 2 | 220 | |
+| Portal 2 | 620 | Steam Emu supported. |
 | Among Us | 945360 | Steam online play. |
-| Team Fortress 2 | 440 | Steam online play. |
-| Portal 2 | 620 | Steam Emu. |
+| Team Fortress 2 | 440 | Steam online play. VAC works. |
 
 ---
 
@@ -84,7 +87,7 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 
 | Game | AppID | Notes |
 |---|---:|---|
-| Celeste | 504230 | FNA/XNA assets, FMOD shims, Steamworks shim. x86_64 Mono. |
+| Celeste | 504230 | FNA/XNA assets, FMOD shims, Steamworks shim. x86_64 Mono. Install wizard fallback paths for `steam_api` detection. |
 | Terraria | 105600 | TerrariaLauncher/patcher support, x86_64 Mono, XNA/FNA assemblies. |
 | DREDGE | 1562430 | Auto-detected as FNA flavor. Generic FNA config. |
 
