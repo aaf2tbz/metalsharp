@@ -3078,9 +3078,7 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
     let steam_settings = game_dir.join("steam_settings");
     let interfaces_file = steam_settings.join("steam_interfaces.txt");
     let needs_interfaces = !interfaces_file.exists()
-        || std::fs::read_to_string(&interfaces_file)
-            .map(|content| content.trim().lines().count() < 3)
-            .unwrap_or(true);
+        || std::fs::read_to_string(&interfaces_file).map(|content| content.trim().lines().count() < 3).unwrap_or(true);
     if needs_interfaces {
         eprintln!("steam_emu: steam_interfaces.txt missing or incomplete, regenerating");
         generate_steam_interfaces(game_dir);

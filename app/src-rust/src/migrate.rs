@@ -587,10 +587,7 @@ fn wait_for_steam_update_windows(ms_dir: &Path, timeout_secs: u64) {
     let mut saw_steam = false;
 
     while start.elapsed().as_secs() < timeout_secs {
-        let output = match Command::new("ps")
-            .args(["axo", "pid=,command="])
-            .output()
-        {
+        let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
             _ => break,
         };
@@ -1054,10 +1051,7 @@ fn restore_steam_library_drive_links(prefix: &Path, links: &[SteamLibraryDriveLi
 fn verify_prefix_dosdevices_integrity(prefix: &Path) {
     let dosdevices = prefix.join("dosdevices");
     if !dosdevices.is_dir() {
-        log_to_file(&format!(
-            "Migration: dosdevices directory missing after wineboot for {}",
-            prefix.display()
-        ));
+        log_to_file(&format!("Migration: dosdevices directory missing after wineboot for {}", prefix.display()));
         let _ = fs::create_dir_all(&dosdevices);
     }
 
@@ -1067,11 +1061,7 @@ fn verify_prefix_dosdevices_integrity(prefix: &Path) {
     let c_ok = match fs::read_link(&c_drive) {
         Ok(target) => {
             // Wine may use relative (../drive_c) or absolute path.
-            let resolved = if target.is_relative() {
-                dosdevices.join(&target)
-            } else {
-                target
-            };
+            let resolved = if target.is_relative() { dosdevices.join(&target) } else { target };
             match fs::canonicalize(&resolved) {
                 Ok(resolved) => match fs::canonicalize(&expected_c) {
                     Ok(expected) => resolved == expected,
@@ -1088,15 +1078,10 @@ fn verify_prefix_dosdevices_integrity(prefix: &Path) {
             let _ = fs::remove_file(&c_drive);
         }
         match std::os::unix::fs::symlink("../drive_c", &c_drive) {
-            Ok(()) => log_to_file(&format!(
-                "Migration: recreated c: -> drive_c for {}",
-                prefix.display()
-            )),
-            Err(e) => log_to_file(&format!(
-                "Migration: failed to recreate c: dosdevice for {}: {}",
-                prefix.display(),
-                e
-            )),
+            Ok(()) => log_to_file(&format!("Migration: recreated c: -> drive_c for {}", prefix.display())),
+            Err(e) => {
+                log_to_file(&format!("Migration: failed to recreate c: dosdevice for {}: {}", prefix.display(), e))
+            },
         }
     }
 }
@@ -1459,11 +1444,7 @@ fn discover_external_steam_libraries_from(volumes_dir: &Path) -> Vec<ExternalSte
             // steamapps is a valid directory (some installs are in-progress
             // or have manifest files in non-standard locations).
             let has_manifests = fs::read_dir(&steamapps)
-                .map(|entries| {
-                    entries
-                        .flatten()
-                        .any(|e| e.file_name().to_string_lossy().starts_with("appmanifest_"))
-                })
+                .map(|entries| entries.flatten().any(|e| e.file_name().to_string_lossy().starts_with("appmanifest_")))
                 .unwrap_or(false);
             if has_manifests {
                 // Deduplicate — skip if we already found this path
@@ -1632,10 +1613,7 @@ fn resolve_unix_path_to_windows(unix_path: &Path, dosdevices: &Path) -> Option<S
     let unix_str = unix_path.to_string_lossy();
     if unix_str.starts_with('/') {
         let windows_path = format!("Z:{}", unix_str.replace('/', "\\\\"));
-        log_to_file(&format!(
-            "Migration: resolved external library to Z: path: {}",
-            windows_path
-        ));
+        log_to_file(&format!("Migration: resolved external library to Z: path: {}", windows_path));
         return Some(windows_path);
     }
     None

@@ -1504,10 +1504,7 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
-            return Err(format!(
-                "Steam installer crashed (pid {}). Check Wine setup and retry.",
-                install_pid
-            ).into());
+            return Err(format!("Steam installer crashed (pid {}). Check Wine setup and retry.", install_pid).into());
         }
     }
 
