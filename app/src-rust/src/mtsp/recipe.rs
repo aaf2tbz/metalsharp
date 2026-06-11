@@ -195,7 +195,9 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
-    if appid == 440 || appid == 620 {
+    append_database_default_launch_args(appid, pipeline, launch_args);
+
+    if uses_steam_secure_launch_model(appid, pipeline) {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
@@ -211,6 +213,34 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         },
         _ => {},
     }
+}
+
+fn append_database_default_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Vec<String>) {
+    for arg in database_default_launch_args(appid, pipeline) {
+        append_unique_launch_arg(launch_args, arg);
+    }
+}
+
+fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&'static str] {
+    match appid {
+        379720 | 275850 | 892970 | 252490 | 570 | 548430 | 526870 | 1272080 => &["-vulkan"],
+        949230 => &["-force-vulkan"],
+        1174180 => &["-api", "Vulkan"],
+        400 | 620 if pipeline == PipelineId::M9 => &["-dxlevel", "90", "-novid"],
+        240 | 500 | 550 if pipeline == PipelineId::M9 => &["-dxlevel", "90"],
+        7670 if pipeline == PipelineId::M9 => &["-dx9"],
+        12210 if pipeline == PipelineId::M10 => &["-d3d10"],
+        17300 if pipeline == PipelineId::M10 => &["-dx10"],
+        _ => &[],
+    }
+}
+
+pub(crate) fn requires_steam_secure_launch_args(appid: u32) -> bool {
+    matches!(appid, 440 | 620 | 4000 | 252490 | 271590 | 284160 | 292030 | 1172380 | 1260320 | 3241660)
+}
+
+pub(crate) fn uses_steam_secure_launch_model(appid: u32, pipeline: PipelineId) -> bool {
+    requires_steam_secure_launch_args(appid) && !matches!(pipeline, PipelineId::M13 | PipelineId::D3DMetal)
 }
 
 fn append_unique_launch_arg(launch_args: &mut Vec<String>, arg: &str) {
@@ -1048,6 +1078,117 @@ mod tests {
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")), "appid {appid}");
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")), "appid {appid}");
         }
+    }
+
+    #[test]
+    fn source_style_titles_get_steam_secure_launch_args() {
+        for appid in [440, 620, 4000, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "appid {appid}");
+            assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
+            assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn d3dmetal_launches_skip_steam_secure_args() {
+        for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
+            for appid in [440, 620, 4000, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
+                let args = effective_launch_args(appid, super::super::engine::get_pipeline(pipeline));
+
+                assert!(!uses_steam_secure_launch_model(appid, pipeline), "appid {appid} pipeline {pipeline:?}");
+                assert!(
+                    !args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")),
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+                assert!(
+                    !args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")),
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn d3dmetal_launches_keep_game_specific_defaults() {
+        for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
+            let rust_args = effective_launch_args(252490, super::super::engine::get_pipeline(pipeline));
+            assert!(rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-vulkan")), "pipeline {pipeline:?}");
+            assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+            assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
+
+            let rdr2_args = effective_launch_args(1174180, super::super::engine::get_pipeline(pipeline));
+            assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-api")), "pipeline {pipeline:?}");
+            assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("Vulkan")), "pipeline {pipeline:?}");
+            assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+            assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
+        }
+    }
+
+    #[test]
+    fn database_vulkan_titles_get_default_renderer_args() {
+        for (appid, expected_args) in [
+            (379720, vec!["-vulkan"]),
+            (275850, vec!["-vulkan"]),
+            (892970, vec!["-vulkan"]),
+            (252490, vec!["-vulkan"]),
+            (570, vec!["-vulkan"]),
+            (548430, vec!["-vulkan"]),
+            (526870, vec!["-vulkan"]),
+            (1272080, vec!["-vulkan"]),
+            (949230, vec!["-force-vulkan"]),
+            (1174180, vec!["-api", "Vulkan"]),
+        ] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+
+            for expected in expected_args {
+                assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case(expected)), "appid {appid} missing {expected}");
+                assert_eq!(
+                    args.iter().filter(|arg| arg.eq_ignore_ascii_case(expected)).count(),
+                    1,
+                    "appid {appid} duplicated {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn database_source_titles_get_default_dxlevel_args() {
+        for appid in [400, 620] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M9));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg == "90"), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")), "appid {appid}");
+        }
+
+        for appid in [240, 500, 550] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M9));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg == "90"), "appid {appid}");
+            assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")), "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn database_pipeline_specific_renderer_args_stay_on_matching_routes() {
+        let bioshock_m9 = effective_launch_args(7670, super::super::engine::get_pipeline(PipelineId::M9));
+        assert!(bioshock_m9.iter().any(|arg| arg.eq_ignore_ascii_case("-dx9")));
+        let bioshock_m10 = effective_launch_args(7670, super::super::engine::get_pipeline(PipelineId::M10));
+        assert!(!bioshock_m10.iter().any(|arg| arg.eq_ignore_ascii_case("-dx9")));
+
+        let gta_iv_m10 = effective_launch_args(12210, super::super::engine::get_pipeline(PipelineId::M10));
+        assert!(gta_iv_m10.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d10")));
+        let gta_iv_m9 = effective_launch_args(12210, super::super::engine::get_pipeline(PipelineId::M9));
+        assert!(!gta_iv_m9.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d10")));
+
+        let crysis_m10 = effective_launch_args(17300, super::super::engine::get_pipeline(PipelineId::M10));
+        assert!(crysis_m10.iter().any(|arg| arg.eq_ignore_ascii_case("-dx10")));
+        let crysis_m9 = effective_launch_args(17300, super::super::engine::get_pipeline(PipelineId::M9));
+        assert!(!crysis_m9.iter().any(|arg| arg.eq_ignore_ascii_case("-dx10")));
     }
 
     #[test]

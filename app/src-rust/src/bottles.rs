@@ -626,16 +626,72 @@ pub fn load_bottle(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error
 
 pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::Error>> {
     validate_bottle_id(&manifest.id)?;
+    let mut persisted = manifest.clone();
+    refresh_mono_fna_components_before_save(&mut persisted);
     let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
     fs::create_dir_all(dir.join("installers"))?;
     fs::create_dir_all(dir.join("logs"))?;
     fs::create_dir_all(dir.join("assets"))?;
-    let data = serde_json::to_string_pretty(manifest)?;
+    let data = serde_json::to_string_pretty(&persisted)?;
     let manifest_path = bottle_manifest_path(&manifest.id);
     write_bottle_manifest_atomic(&manifest_path, data.as_bytes())?;
     Ok(())
+}
+
+fn refresh_mono_fna_components_before_save(manifest: &mut BottleManifest) {
+    if !matches!(manifest.runtime_profile, RuntimeProfile::FnaArm64 | RuntimeProfile::FnaX86) {
+        return;
+    }
+
+    manifest.installed_components =
+        merge_components(manifest.installed_components.clone(), default_components_for(manifest.runtime_profile));
+
+    let prefix = PathBuf::from(&manifest.prefix_path);
+    manifest.installed_components = inspect_components_for_manifest(manifest, &prefix, &manifest.installed_components);
+
+    let needs_runtime_repair = manifest.installed_components.iter().any(|component| {
+        matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod")
+            && !component_ready(component)
+    });
+
+    if needs_runtime_repair {
+        match crate::mtsp::launcher::repair_fna_native_runtime_shims() {
+            Ok(repaired) => {
+                eprintln!("bottle: refreshed {} shared Mono/FNA runtime asset(s) before save", repaired);
+            },
+            Err(e) => {
+                eprintln!("bottle: shared Mono/FNA runtime refresh failed before save: {}", e);
+                for id in ["fna", "xna", "sdl2", "fna3d", "faudio"] {
+                    mark_component_state(manifest, id, ComponentState::NeedsRepair);
+                }
+            },
+        }
+
+        if let (Some(appid), Some(game_dir)) = (manifest.steam_app_id, manifest.game_install_path.as_deref()) {
+            let game_dir = PathBuf::from(game_dir);
+            if game_dir.is_dir() {
+                match crate::mtsp::launcher::repair_fna_game_runtime_assets(appid, &game_dir) {
+                    Ok(staged) => {
+                        eprintln!("bottle: staged {} game-local Mono/FNA runtime asset(s) before save", staged);
+                    },
+                    Err(e) => {
+                        eprintln!("bottle: game-local Mono/FNA runtime refresh failed before save: {}", e);
+                        for id in ["fna", "xna", "sdl2", "fna3d", "faudio", "fmod"] {
+                            mark_component_state(manifest, id, ComponentState::NeedsRepair);
+                        }
+                    },
+                }
+            }
+        }
+
+        manifest.installed_components =
+            inspect_components_for_manifest(manifest, &prefix, &manifest.installed_components);
+    }
+
+    manifest.health =
+        if components_ready(&manifest.installed_components) { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
 }
 
 fn manifest_preferred_pipeline(manifest: &BottleManifest) -> Option<crate::mtsp::engine::PipelineId> {
@@ -694,6 +750,10 @@ pub fn resolve_steam_pipeline_for_request(
     }
 }
 
+pub fn steam_pipeline_defaults_offline(pipeline: crate::mtsp::engine::PipelineId) -> bool {
+    matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
+}
+
 pub fn load_steam_compatdata(appid: u32) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
     let data = fs::read_to_string(steam_compatdata_manifest_path(appid))?;
     Ok(serde_json::from_str(&data)?)
@@ -703,8 +763,10 @@ pub fn save_steam_compatdata(
     manifest: &BottleManifest,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
-    let appid = manifest.steam_app_id.ok_or("steam compatdata requires steam appid")?;
-    let record = steam_compatdata_record(manifest, pipeline);
+    let mut persisted = manifest.clone();
+    refresh_mono_fna_components_before_save(&mut persisted);
+    let appid = persisted.steam_app_id.ok_or("steam compatdata requires steam appid")?;
+    let record = steam_compatdata_record(&persisted, pipeline);
     let dir = steam_compatdata_dir(appid);
     fs::create_dir_all(dir.join("logs"))?;
     fs::create_dir_all(dir.join("assets"))?;
@@ -719,6 +781,7 @@ fn steam_compatdata_record(
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> SteamCompatdataRecord {
     let appid = manifest.steam_app_id.unwrap_or_default();
+    let offline_default = steam_pipeline_defaults_offline(pipeline);
     SteamCompatdataRecord {
         appid,
         name: manifest.name.clone(),
@@ -729,13 +792,21 @@ fn steam_compatdata_record(
         game_install_path: manifest.game_install_path.clone(),
         runtime_profile: manifest.runtime_profile,
         launch_pipeline: pipeline_preference_id(pipeline).to_string(),
-        steam_identity_mode: "wine_steam_background".to_string(),
+        steam_identity_mode: if offline_default {
+            "offline_steam_emulation".to_string()
+        } else {
+            "wine_steam_background".to_string()
+        },
         compat_tool_name: "MetalSharp".to_string(),
-        launch_command_template: format!(
-            "POST /steam/launch-game {{\"appid\":{},\"launchMethod\":\"{}\"}}",
-            appid,
-            pipeline_preference_id(pipeline)
-        ),
+        launch_command_template: if offline_default {
+            format!("POST /steam/launch-offline {{\"appid\":{}}}", appid)
+        } else {
+            format!(
+                "POST /steam/launch-game {{\"appid\":{},\"launchMethod\":\"{}\"}}",
+                appid,
+                pipeline_preference_id(pipeline)
+            )
+        },
         log_dir: steam_compatdata_dir(appid).join("logs").to_string_lossy().to_string(),
         runtime_assets: manifest.runtime_assets.clone(),
         required_components: manifest.installed_components.clone(),
@@ -2847,7 +2918,16 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "WebView",
             BottleArch::Wow64,
             true,
-            &["gecko", "webview2", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "corefonts"][..],
+            &[
+                "gecko",
+                "webview2",
+                "dotnet48",
+                "vcrun2019_x64",
+                "vcrun2019_x86",
+                "directx_jun2010",
+                "openal",
+                "corefonts",
+            ][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
         RuntimeProfile::JavaLauncher => (
@@ -2982,7 +3062,15 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
         KnownLauncherRecipe {
             id: "ubisoft_connect",
             label: "Ubisoft Connect",
-            tokens: &["ubisoft connect", "ubisoftconnect", "uplay", "ubisoftgamelauncher"],
+            tokens: &[
+                "ubisoft connect",
+                "ubisoft connect installer",
+                "ubisoftconnect",
+                "ubisoftconnectinstaller",
+                "uplay",
+                "uplayinstaller",
+                "ubisoftgamelauncher",
+            ],
             installer_kind: InstallerKind::Webview,
             runtime_profile: RuntimeProfile::Webview,
             forced_pipeline: None,
@@ -2998,7 +3086,15 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
         KnownLauncherRecipe {
             id: "epic_games",
             label: "Epic Games Launcher",
-            tokens: &["epic games launcher", "epicgameslauncher", "epic installer", "epic online services"],
+            tokens: &[
+                "epic games launcher",
+                "epic games launcher installer",
+                "epicgameslauncher",
+                "epicgameslauncherinstaller",
+                "epic installer",
+                "epicinstaller",
+                "epic online services",
+            ],
             installer_kind: InstallerKind::Webview,
             runtime_profile: RuntimeProfile::Webview,
             forced_pipeline: None,
@@ -3220,8 +3316,8 @@ fn inspect_components_for_manifest(
             let fallback = inspect_component_state(prefix, &component.id, component.state);
             let state = if component.id == "d3d12_agility" {
                 inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
-            } else if matches!(component.id.as_str(), "fna" | "fmod") {
-                inspect_fna_game_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
+            } else if matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod") {
+                inspect_mono_fna_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
             } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
                 && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
             {
@@ -3571,6 +3667,39 @@ fn inspect_fmod_component() -> Option<ComponentState> {
     })
 }
 
+fn inspect_mono_fna_component_for_manifest(manifest: &BottleManifest, component_id: &str) -> Option<ComponentState> {
+    if !matches!(manifest.runtime_profile, RuntimeProfile::FnaArm64 | RuntimeProfile::FnaX86) {
+        return None;
+    }
+    let game_dir = manifest.game_install_path.as_deref().map(PathBuf::from);
+    match component_id {
+        "fna" | "fmod" => inspect_fna_game_component_for_manifest(manifest, component_id),
+        "xna" => game_dir.as_deref().map(inspect_fna_game_local_xna_assemblies),
+        "sdl2" => game_dir.as_deref().map(|dir| {
+            inspect_fna_game_local_native_component(
+                dir,
+                "libSDL2-2.0.0.dylib",
+                inspect_fnalibs_file("libSDL2-2.0.0.dylib").unwrap_or(ComponentState::Unknown),
+            )
+        }),
+        "fna3d" => game_dir.as_deref().map(|dir| {
+            inspect_fna_game_local_native_component(
+                dir,
+                "libFNA3D.0.dylib",
+                inspect_fnalibs_file("libFNA3D.0.dylib").unwrap_or(ComponentState::Unknown),
+            )
+        }),
+        "faudio" => game_dir.as_deref().map(|dir| {
+            inspect_fna_game_local_native_component(
+                dir,
+                "libFAudio.0.dylib",
+                inspect_fnalibs_file("libFAudio.0.dylib").unwrap_or(ComponentState::Unknown),
+            )
+        }),
+        _ => None,
+    }
+}
+
 fn inspect_fna_game_component_for_manifest(manifest: &BottleManifest, component_id: &str) -> Option<ComponentState> {
     if !matches!(manifest.runtime_profile, RuntimeProfile::FnaArm64 | RuntimeProfile::FnaX86) {
         return None;
@@ -3587,6 +3716,46 @@ fn inspect_fna_game_component_for_manifest(manifest: &BottleManifest, component_
         },
         "fmod" => inspect_fmod_component(),
         _ => None,
+    }
+}
+
+fn inspect_fna_game_local_xna_assemblies(game_dir: &Path) -> ComponentState {
+    if !game_dir.is_dir() {
+        return ComponentState::Missing;
+    }
+    let required = [
+        "Microsoft.Xna.Framework.dll",
+        "Microsoft.Xna.Framework.Game.dll",
+        "Microsoft.Xna.Framework.Graphics.dll",
+        "Microsoft.Xna.Framework.Audio.dll",
+        "Microsoft.Xna.Framework.Input.dll",
+        "Microsoft.Xna.Framework.Media.dll",
+        "Microsoft.Xna.Framework.Storage.dll",
+    ];
+    let present = required
+        .iter()
+        .filter(|name| game_dir.join(name).metadata().map(|metadata| metadata.len() > 0).unwrap_or(false))
+        .count();
+    if present == required.len() {
+        ComponentState::Installed
+    } else if present > 0 || game_dir.join("FNA.dll").exists() {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    }
+}
+
+fn inspect_fna_game_local_native_component(game_dir: &Path, filename: &str, shared: ComponentState) -> ComponentState {
+    if !game_dir.is_dir() {
+        return ComponentState::Missing;
+    }
+    let path = game_dir.join(filename);
+    if crate::mtsp::launcher::fna_native_lib_source_valid(filename, &path) {
+        ComponentState::Installed
+    } else if shared != ComponentState::Missing || path.exists() {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
     }
 }
 
@@ -5275,6 +5444,7 @@ fn is_probable_app_exe(name: &str) -> bool {
         "msedgewebview2.exe",
         "upc.exe",
         "uc_connector.exe",
+        "unrealcefsubprocess.exe",
     ];
     lower.ends_with(".exe")
         && !builtins.contains(&lower.as_str())
@@ -5290,6 +5460,7 @@ fn is_probable_app_exe(name: &str) -> bool {
         && !lower.contains("shareplay")
         && !lower.contains("update")
         && !lower.contains("webcore")
+        && !lower.contains("cefsubprocess")
 }
 
 fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
@@ -5449,6 +5620,8 @@ mod tests {
         let webview = runtime_profile_definition(RuntimeProfile::Webview);
         assert_eq!(webview.launch_pipeline, crate::mtsp::engine::PipelineId::WineBare);
         assert!(webview.components.contains(&"dotnet48".to_string()));
+        assert!(webview.components.contains(&"directx_jun2010".to_string()));
+        assert!(webview.components.contains(&"openal".to_string()));
     }
 
     #[test]
@@ -5546,8 +5719,10 @@ mod tests {
         let cases = [
             ("EAappInstaller.exe", RuntimeProfile::Webview, "known_launcher:ea_app"),
             ("UbisoftConnectInstaller.exe", RuntimeProfile::Webview, "known_launcher:ubisoft_connect"),
+            ("UplayInstaller.exe", RuntimeProfile::Webview, "known_launcher:ubisoft_connect"),
             ("Battle.net-Setup.exe", RuntimeProfile::Webview, "known_launcher:battle_net"),
             ("EpicGamesLauncherInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
+            ("EpicInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("Rockstar-Games-Launcher.exe", RuntimeProfile::Webview, "known_launcher:rockstar"),
             ("GOG_Galaxy_2.0.exe", RuntimeProfile::Launcher, "known_launcher:gog_galaxy"),
         ];
@@ -5780,6 +5955,60 @@ mod tests {
     }
 
     #[test]
+    fn fna_manifest_xna_state_requires_game_local_assemblies() {
+        let game_dir = test_dir("fna-xna-game-local");
+        fs::create_dir_all(&game_dir).expect("create game dir");
+        let mut manifest = BottleManifest {
+            id: steam_game_bottle_id(504230),
+            name: "Celeste".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(504230),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::FnaX86,
+            preferred_pipeline: Some("fna_arm64".into()),
+            installed_components: default_components_for(RuntimeProfile::FnaX86),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some(game_dir.to_string_lossy().to_string()),
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(inspect_mono_fna_component_for_manifest(&manifest, "xna"), Some(ComponentState::Missing));
+
+        fs::write(game_dir.join("FNA.dll"), b"fna").expect("write fna");
+        assert_eq!(inspect_mono_fna_component_for_manifest(&manifest, "xna"), Some(ComponentState::NeedsRepair));
+
+        for name in [
+            "Microsoft.Xna.Framework.dll",
+            "Microsoft.Xna.Framework.Game.dll",
+            "Microsoft.Xna.Framework.Graphics.dll",
+            "Microsoft.Xna.Framework.Audio.dll",
+            "Microsoft.Xna.Framework.Input.dll",
+            "Microsoft.Xna.Framework.Media.dll",
+            "Microsoft.Xna.Framework.Storage.dll",
+        ] {
+            fs::write(game_dir.join(name), b"xna").expect("write xna assembly");
+        }
+
+        assert_eq!(inspect_mono_fna_component_for_manifest(&manifest, "xna"), Some(ComponentState::Installed));
+
+        manifest.runtime_profile = RuntimeProfile::M11;
+        assert_eq!(inspect_mono_fna_component_for_manifest(&manifest, "xna"), None);
+
+        let _ = fs::remove_dir_all(game_dir);
+    }
+
+    #[test]
     fn resolver_uses_sharp_library_xna_installer_bottle_payload() {
         let root = test_dir("sharp-xna-installer-source");
         let bottle_id = "installer_xna_test";
@@ -5947,10 +6176,14 @@ mod tests {
         assert!(!is_probable_app_exe("UplayService.exe"));
         assert!(!is_probable_app_exe("UplayWebCore.exe"));
         assert!(!is_probable_app_exe("UpcElevationService.exe"));
+        assert!(!is_probable_app_exe("EpicWebHelper.exe"));
+        assert!(!is_probable_app_exe("UnrealCEFSubProcess.exe"));
         assert!(!is_probable_app_exe("UbisoftExtension.exe"));
         assert!(!is_probable_app_exe("upc.exe"));
         assert!(is_probable_app_exe("MinecraftLauncher.exe"));
+        assert!(is_probable_app_exe("EpicGamesLauncher.exe"));
         assert!(is_probable_app_exe("UbisoftConnect.exe"));
+        assert!(is_probable_app_exe("UbisoftGameLauncher.exe"));
     }
 
     #[test]
@@ -6226,6 +6459,41 @@ mod tests {
         assert_eq!(record.last_launch_log.as_deref(), Some("/tmp/steam_620.log"));
         assert_eq!(record.last_launch_pid, Some(1234));
         assert_eq!(record.last_launch_status.as_deref(), Some("running"));
+    }
+
+    #[test]
+    fn d3dmetal_offline_titles_advertise_offline_compatdata_route() {
+        let manifest = BottleManifest {
+            id: "steam_999999".into(),
+            name: "D3DMetal Game".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(999999),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Win64,
+            runtime_profile: RuntimeProfile::D3DMetal,
+            preferred_pipeline: Some("d3dmetal".into()),
+            installed_components: default_components_for(RuntimeProfile::D3DMetal),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some("/games/D3DMetal Game".into()),
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: timestamp_secs(),
+            updated_at: timestamp_secs(),
+        };
+
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::D3DMetal);
+
+        assert_eq!(record.launch_pipeline, "d3dmetal");
+        assert_eq!(record.steam_identity_mode, "offline_steam_emulation");
+        assert!(record.launch_command_template.contains("/steam/launch-offline"));
+        assert!(record.launch_command_template.contains("999999"));
     }
 
     #[test]

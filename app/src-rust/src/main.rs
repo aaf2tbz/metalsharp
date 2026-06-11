@@ -462,10 +462,24 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            let (env, recipe) = match mtsp::launcher::prepare_steam_pipeline_env(id, pipeline) {
-                                Ok(prepared) => prepared,
-                                Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
-                            };
+                            let (mut env, launch_recipe) =
+                                match mtsp::launcher::prepare_steam_pipeline_env(id, pipeline) {
+                                    Ok(prepared) => prepared,
+                                    Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
+                                };
+                            let offline_direct = bottles::steam_pipeline_defaults_offline(pipeline);
+                            if offline_direct {
+                                let Some(game_dir) = launch_recipe.game_dir.as_ref() else {
+                                    return resp(404, json!({"ok": false, "error": "Game directory not found"}));
+                                };
+                                crate::mtsp::launcher::deploy_eac_toggle(game_dir);
+                                if let Some(home) = dirs::home_dir() {
+                                    crate::mtsp::launcher::deploy_goldberg_for_pipeline(&home, game_dir, id, pipeline);
+                                }
+                                env.push(("SteamAppId".to_string(), id.to_string()));
+                                env.push(("SteamGameId".to_string(), id.to_string()));
+                                env.push(("METALSHARP_OFFLINE_MODE".to_string(), "1".to_string()));
+                            }
                             let compatdata = bottles::load_steam_compatdata(id).ok();
                             let is_gptk_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetal);
                             let steam_started = if is_gptk_direct {
@@ -494,9 +508,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "launch_log": log_path.to_string_lossy().to_string(),
                                         "compatdata": compatdata,
                                         "pipeline": pipeline,
-                                        "recipe": recipe,
+                                        "recipe": launch_recipe,
                                         "steam_started": steam_started,
-                                        "steam_runtime": "background",
+                                        "steam_runtime": if offline_direct { "offline" } else { "background" },
+                                        "offline_mode": offline_direct,
+                                        "eac_toggle_deployed": offline_direct,
                                         "env_applied_to": "game_process",
                                         "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
                                     })
@@ -536,13 +552,15 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     let pipeline = bottles::resolve_steam_pipeline_for_request(id, None);
                     let node = mtsp::engine::get_pipeline(pipeline);
 
-                    if !recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false) {
+                    if !bottles::steam_pipeline_defaults_offline(pipeline)
+                        && !recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false)
+                    {
                         return resp(
                             400,
                             json!({
                                 "ok": false,
                                 "error": "Game is not marked as offline-capable",
-                                "hint": "Set offline_capable = true in mtsp-rules.toml for this appid"
+                                "hint": "Use D3DMetal or set offline_capable = true in mtsp-rules.toml for this appid"
                             }),
                         );
                     }
@@ -553,6 +571,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     };
 
                     crate::mtsp::launcher::deploy_eac_toggle(&std::path::PathBuf::from(dir));
+                    if let Some(home) = dirs::home_dir() {
+                        crate::mtsp::launcher::deploy_goldberg_for_pipeline(
+                            &home,
+                            &std::path::PathBuf::from(dir),
+                            id,
+                            pipeline,
+                        );
+                    }
 
                     let bottle = match bottles::prepare_steam_game_launch(id, pipeline) {
                         Ok(bottle) => bottle,
@@ -1602,7 +1628,16 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             match sharp_library::get_cover_path(id) {
                 Some(path) => {
                     let data = std::fs::read(&path).unwrap_or_default();
-                    let mime = if path.to_string_lossy().ends_with(".png") { "image/png" } else { "image/jpeg" };
+                    let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default();
+                    let mime = if ext.eq_ignore_ascii_case("png") {
+                        "image/png"
+                    } else if ext.eq_ignore_ascii_case("svg") {
+                        "image/svg+xml"
+                    } else if ext.eq_ignore_ascii_case("webp") {
+                        "image/webp"
+                    } else {
+                        "image/jpeg"
+                    };
                     resp_raw(200, data, mime)
                 },
                 None => resp(404, json!({"ok": false, "error": "cover not found"})),

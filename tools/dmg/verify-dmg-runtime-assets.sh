@@ -41,6 +41,7 @@ for required in \
   "$BUNDLES/metalsharp-graphics-dll.tar.zst" \
   "$BUNDLES/metalsharp-runtime.tar.zst" \
   "$BUNDLES/metalsharp-assets.tar.zst" \
+  "$BUNDLES/fnalibs.tar.zst" \
   "$BUNDLES/metalsharp-scripts-tools.tar.zst" \
   "$BUNDLES/metalsharp-steam.tar.zst" \
   "$BUNDLES/metalsharp-d3d12-developer-sdk.tar.zst"
@@ -58,7 +59,7 @@ if [ ! -s "$HOST/libmetalsharp_host_runtime.dylib" ] \
   exit 1
 fi
 
-cp "$BUNDLES"/metalsharp-*.tar.zst "$LIST_DIR"/
+cp "$BUNDLES"/*.tar.zst "$LIST_DIR"/
 "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$LIST_DIR" --require mac
 
 echo "DMG runtime assets verified: $DMG"

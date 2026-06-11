@@ -871,6 +871,18 @@ fn launch_d3dmetal_gptk_with_context(
 
     let prefix = gptk_prefix;
     let prefix_str = prefix.to_string_lossy().to_string();
+    let offline_mode = extra_env.iter().any(|(key, value)| key == "METALSHARP_OFFLINE_MODE" && value == "1");
+    if offline_mode {
+        if crate::platform::disable_gptk_steam_launcher_for_offline(&prefix)? {
+            eprintln!(
+                "d3dmetal offline: disabled GPTK Steam launcher at {}",
+                crate::platform::gptk_disabled_steam_exe(&prefix).display()
+            );
+        }
+        let _ = Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
+    } else {
+        crate::platform::restore_gptk_steam_launcher(&prefix)?;
+    }
 
     deploy_steam_appid(game_dir, appid);
 
@@ -2240,6 +2252,7 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
     let game_dir = game_dir.to_path_buf();
     repair_fna_native_runtime_shims()?;
     deploy_fna_assemblies(appid, &game_dir);
+    deploy_offline_steamworks_net(&game_dir, &crate::platform::metalsharp_home_dir())?;
 
     let profile = find_fna_profile(appid);
     let mut required = vec![
@@ -2248,11 +2261,22 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
         "libFNA3D.0.dylib",
         "libFAudio.0.dylib",
         "FNA.dll",
+        "Microsoft.Xna.Framework.dll",
+        "Microsoft.Xna.Framework.Game.dll",
+        "Microsoft.Xna.Framework.Graphics.dll",
+        "Microsoft.Xna.Framework.Audio.dll",
+        "Microsoft.Xna.Framework.Input.dll",
+        "Microsoft.Xna.Framework.Media.dll",
+        "Microsoft.Xna.Framework.Storage.dll",
         "steam_appid.txt",
     ];
     if profile.mono_arch == MonoArch::X86 {
         required.push("libfmod.dylib");
         required.push("libfmodstudio.dylib");
+    }
+    if game_dir.join("Steamworks.NET.dll.metalsharp-original").exists() || game_dir.join("Steamworks.NET.dll").exists()
+    {
+        required.push("Steamworks.NET.dll");
     }
 
     let ready = required
@@ -2278,6 +2302,14 @@ pub fn repair_fna_game_runtime_assets(appid: u32, game_dir: &Path) -> Result<usi
         if path.exists() && !fna_native_lib_source_valid(lib, &path) {
             return Err(format!("{} runtime asset is invalid: {}", name, path.display()).into());
         }
+    }
+    if game_dir.join("Steamworks.NET.dll.metalsharp-original").exists()
+        && !offline_steamworks_net_deployed(
+            &game_dir.join("Steamworks.NET.dll"),
+            &game_dir.join("Steamworks.NET.dll.metalsharp-original"),
+        )
+    {
+        return Err(format!("offline Steamworks.NET.dll repair did not replace {}", game_dir.display()).into());
     }
 
     Ok(ready)
@@ -2305,6 +2337,7 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
     let fna_dir = ms_home.join("runtime").join("fna");
     std::fs::create_dir_all(&shims_dir)?;
     std::fs::create_dir_all(&fna_dir)?;
+    let refreshed = crate::installer::repair_fna_support_assets().unwrap_or(0);
 
     for spec in FNA_NATIVE_SHIMS {
         ensure_fna_native_shim_in_cache(spec, &shims_dir);
@@ -2376,7 +2409,7 @@ pub fn repair_fna_native_runtime_shims() -> Result<usize, Box<dyn std::error::Er
             return Err(format!("FNA3D runtime asset is not SDL2-linked: {}", path.display()).into());
         }
     }
-    Ok(present)
+    Ok(present + refreshed)
 }
 
 pub fn precompile_all_fna_shims() -> Result<usize, String> {
@@ -2970,7 +3003,12 @@ fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
     if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
         ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
     } else {
-        ensure_real_steam_dlls(&home, &game_dir, appid);
+        ensure_real_steam_dlls(
+            &home,
+            &game_dir,
+            appid,
+            super::recipe::uses_steam_secure_launch_model(appid, pipeline_id),
+        );
     }
 }
 
@@ -3351,7 +3389,7 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
 /// For non-Goldberg launches: ensure the game directory has real Steam DLLs,
 /// not leftover Goldberg emulator files. Restores .orig backups if they exist,
 /// or deploys from the user's Wine Steam installation.
-fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32) {
+fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32, deploy_secure_components: bool) {
     let targets = goldberg_deploy_targets(game_dir);
     let mut restored_any = false;
 
@@ -3448,8 +3486,33 @@ fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32) {
         }
     }
 
+    if deploy_secure_components {
+        for filename in ["steamclient64.dll", "steamclient.dll", "GameOverlayRenderer64.dll", "GameOverlayRenderer.dll"]
+        {
+            deploy_real_steam_component(&wine_steam_dir, &targets, filename);
+        }
+    }
+
     // Always ensure steam_appid.txt is correct for the real Steam runtime.
     deploy_steam_appid(game_dir, appid);
+}
+
+fn deploy_real_steam_component(wine_steam_dir: &Path, targets: &[PathBuf], filename: &str) {
+    let source = wine_steam_dir.join(filename);
+    if !source.exists() {
+        return;
+    }
+
+    for target in targets {
+        if !target.exists() {
+            continue;
+        }
+        let dest = target.join(filename);
+        if !dest.exists() {
+            let _ = std::fs::copy(&source, &dest);
+            eprintln!("real_steam: deployed Wine Steam {} to {}", filename, target.display());
+        }
+    }
 }
 
 fn start_protected_game_real_exe(appid: u32) -> Option<&'static str> {
@@ -4313,6 +4376,103 @@ mod tests {
         assert_eq!(aliases, vec![dosdevices.join("c:").join("Games").join("Portal 2")]);
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn d3dmetal_offline_disables_and_restores_gptk_steam_launcher() {
+        let home = test_dir("gptk-offline-steam-exe");
+        let prefix = crate::platform::gptk_prefix_path(&home);
+        let steam_dir = prefix.join("drive_c").join("Program Files (x86)").join("Steam");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        let steam_exe = steam_dir.join("Steam.exe");
+        let disabled = crate::platform::gptk_disabled_steam_exe(&prefix);
+        std::fs::write(&steam_exe, b"steam").expect("write steam exe");
+
+        assert!(crate::platform::disable_gptk_steam_launcher_for_offline(&prefix).expect("disable steam exe"));
+
+        assert!(!steam_exe.exists());
+        assert_eq!(std::fs::read(&disabled).expect("read disabled"), b"steam");
+
+        assert!(crate::platform::restore_gptk_steam_launcher(&prefix).expect("restore steam exe"));
+
+        assert!(steam_exe.exists());
+        assert!(!disabled.exists());
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn secure_steam_launch_deploys_real_steam_client_components() {
+        let home = test_dir("secure-real-steam");
+        let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam");
+        let game_dir = home.join("SteamLibrary").join("steamapps").join("common").join("Team Fortress 2");
+        let bin_dir = game_dir.join("bin");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        std::fs::create_dir_all(&bin_dir).expect("create game bin");
+
+        for filename in [
+            "steam_api64.dll",
+            "steam_api.dll",
+            "steamclient64.dll",
+            "steamclient.dll",
+            "GameOverlayRenderer64.dll",
+            "GameOverlayRenderer.dll",
+        ] {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+
+        ensure_real_steam_dlls(&home, &game_dir, 440, true);
+
+        for target in [&game_dir, &bin_dir] {
+            assert_eq!(std::fs::read(target.join("steam_api64.dll")).expect("read api64"), b"steam_api64.dll");
+            assert_eq!(std::fs::read(target.join("steam_api.dll")).expect("read api"), b"steam_api.dll");
+            assert_eq!(
+                std::fs::read(target.join("steamclient64.dll")).expect("read steamclient64"),
+                b"steamclient64.dll"
+            );
+            assert_eq!(std::fs::read(target.join("steamclient.dll")).expect("read steamclient"), b"steamclient.dll");
+            assert_eq!(
+                std::fs::read(target.join("GameOverlayRenderer64.dll")).expect("read overlay64"),
+                b"GameOverlayRenderer64.dll"
+            );
+            assert_eq!(
+                std::fs::read(target.join("GameOverlayRenderer.dll")).expect("read overlay"),
+                b"GameOverlayRenderer.dll"
+            );
+            assert_eq!(std::fs::read_to_string(target.join("steam_appid.txt")).expect("read appid"), "440");
+        }
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn ordinary_real_steam_launch_keeps_client_components_conservative() {
+        let home = test_dir("ordinary-real-steam");
+        let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam");
+        let game_dir = home.join("SteamLibrary").join("steamapps").join("common").join("Ordinary Game");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+
+        for filename in ["steam_api64.dll", "steamclient64.dll", "GameOverlayRenderer64.dll"] {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+
+        ensure_real_steam_dlls(&home, &game_dir, 999999, false);
+
+        assert!(game_dir.join("steam_api64.dll").exists());
+        assert!(!game_dir.join("steamclient64.dll").exists());
+        assert!(!game_dir.join("GameOverlayRenderer64.dll").exists());
+        assert_eq!(std::fs::read_to_string(game_dir.join("steam_appid.txt")).expect("read appid"), "999999");
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
