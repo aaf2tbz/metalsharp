@@ -391,15 +391,7 @@ pub fn launch_with_pipeline(
     let pipeline_id = super::rules::resolve_requested_pipeline(appid, Some(pipeline_id));
     let node = get_pipeline(pipeline_id);
 
-    if let Some(home) = dirs::home_dir() {
-        if let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) {
-            if goldberg_status(&game_dir.to_path_buf()) {
-                ensure_steam_emu_if_active(&home, &game_dir, appid);
-            } else {
-                ensure_real_steam_dlls(&home, &game_dir, appid);
-            }
-        }
-    }
+    prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
         PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
@@ -425,15 +417,7 @@ pub fn launch_steam_bottle_with_pipeline(
     let node = get_pipeline(pipeline_id);
     let log_path = crate::bottles::steam_compatdata_launch_log_path(appid);
 
-    if let Some(home) = dirs::home_dir() {
-        if let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) {
-            if goldberg_status(&game_dir.to_path_buf()) {
-                ensure_steam_emu_if_active(&home, &game_dir, appid);
-            } else {
-                ensure_real_steam_dlls(&home, &game_dir, appid);
-            }
-        }
-    }
+    prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
         PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
@@ -2975,6 +2959,21 @@ fn deploy_goldberg(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
     deploy_goldberg_internal(home, game_dir, appid);
 }
 
+fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
+    let Some(home) = dirs::home_dir() else {
+        return;
+    };
+    let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) else {
+        return;
+    };
+
+    if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
+        ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
+    } else {
+        ensure_real_steam_dlls(&home, &game_dir, appid);
+    }
+}
+
 fn goldberg_deploy_targets(game_dir: &Path) -> Vec<PathBuf> {
     let mut targets: Vec<PathBuf> = vec![
         game_dir.to_path_buf(),
@@ -2994,6 +2993,79 @@ fn goldberg_deploy_targets(game_dir: &Path) -> Vec<PathBuf> {
     }
     targets.dedup();
     targets
+}
+
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if paths.iter().any(|path| path == &candidate) {
+        return;
+    }
+    paths.push(candidate);
+}
+
+fn push_unique_physical_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    let candidate_canon = std::fs::canonicalize(&candidate).ok();
+    if let Some(candidate_canon) = candidate_canon.as_ref() {
+        if paths.iter().any(|path| std::fs::canonicalize(path).ok().as_ref() == Some(candidate_canon)) {
+            return;
+        }
+    } else if paths.iter().any(|path| path == &candidate) {
+        return;
+    }
+
+    paths.push(candidate);
+}
+
+fn resolve_dosdevice_target(dosdevices: &Path, target: PathBuf) -> PathBuf {
+    if target.is_absolute() {
+        target
+    } else {
+        dosdevices.join(target)
+    }
+}
+
+fn gptk_prefix_game_dir_aliases(prefix: &Path, game_dir: &Path) -> Vec<PathBuf> {
+    let dosdevices = prefix.join("dosdevices");
+    let Ok(game_dir_canon) = std::fs::canonicalize(game_dir) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dosdevices) else {
+        return Vec::new();
+    };
+
+    let mut aliases = Vec::new();
+    for entry in entries.flatten() {
+        let link_path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.len() != 2 || !name.ends_with(':') {
+            continue;
+        }
+        let Ok(link_target) = std::fs::read_link(&link_path) else {
+            continue;
+        };
+        let resolved_target = resolve_dosdevice_target(&dosdevices, link_target);
+        let Ok(target_canon) = std::fs::canonicalize(&resolved_target) else {
+            continue;
+        };
+        if !game_dir_canon.starts_with(&target_canon) {
+            continue;
+        }
+        let Ok(relative) = game_dir_canon.strip_prefix(&target_canon) else {
+            continue;
+        };
+        push_unique_path(&mut aliases, link_path.join(relative));
+    }
+    aliases
+}
+
+fn goldberg_dirs_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) -> Vec<PathBuf> {
+    let mut dirs = vec![game_dir.to_path_buf()];
+    if matches!(pipeline_id, PipelineId::D3DMetal) {
+        let prefix = crate::platform::gptk_prefix_path(home);
+        for alias in gptk_prefix_game_dir_aliases(&prefix, game_dir) {
+            push_unique_physical_path(&mut dirs, alias);
+        }
+    }
+    dirs
 }
 
 fn goldberg_deploy_settings(steam_settings: &Path, appid: u32) {
@@ -3173,6 +3245,46 @@ pub fn goldberg_status(game_dir: &PathBuf) -> bool {
         }
     }
     false
+}
+
+pub fn goldberg_status_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) -> bool {
+    if goldberg_status(&game_dir.to_path_buf()) {
+        return true;
+    }
+    if !matches!(pipeline_id, PipelineId::D3DMetal) {
+        return false;
+    }
+
+    let prefix = crate::platform::gptk_prefix_path(home);
+    gptk_prefix_game_dir_aliases(&prefix, game_dir).iter().any(|dir| goldberg_status(&dir.to_path_buf()))
+}
+
+pub fn deploy_goldberg_for_pipeline(home: &PathBuf, game_dir: &PathBuf, appid: u32, pipeline_id: PipelineId) {
+    for dir in goldberg_dirs_for_pipeline(home, game_dir, pipeline_id) {
+        deploy_goldberg_internal(home, &dir, appid);
+    }
+}
+
+pub fn cleanup_goldberg_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) {
+    for dir in goldberg_dirs_for_pipeline(home, game_dir, pipeline_id) {
+        cleanup_goldberg(&dir);
+    }
+}
+
+pub fn ensure_steam_emu_for_pipeline_if_active(home: &Path, game_dir: &Path, appid: u32, pipeline_id: PipelineId) {
+    let dirs = goldberg_dirs_for_pipeline(home, game_dir, pipeline_id);
+    if !dirs.iter().any(|dir| goldberg_status(&dir.to_path_buf())) {
+        return;
+    }
+
+    let home_buf = home.to_path_buf();
+    for dir in dirs {
+        if goldberg_status(&dir.to_path_buf()) {
+            ensure_steam_emu_if_active(home, &dir, appid);
+        } else {
+            deploy_goldberg_internal(&home_buf, &dir, appid);
+        }
+    }
 }
 
 pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
@@ -4161,6 +4273,46 @@ mod tests {
         assert!(!outside_path.exists());
         assert!(!injection_dir.exists());
         let _ = std::fs::remove_dir_all(&game_dir);
+    }
+
+    #[test]
+    fn d3dmetal_goldberg_dirs_include_gptk_dosdevice_alias() {
+        let home = test_dir("gptk-goldberg-alias");
+        let library = home.join("SteamLibrary");
+        let game_dir = library.join("steamapps").join("common").join("Celeste");
+        let prefix = crate::platform::gptk_prefix_path(&home);
+        let dosdevices = prefix.join("dosdevices");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        std::os::unix::fs::symlink(&library, dosdevices.join("d:")).expect("create library drive");
+
+        let aliases = gptk_prefix_game_dir_aliases(&prefix, &game_dir);
+        let dirs = goldberg_dirs_for_pipeline(&home, &game_dir, PipelineId::D3DMetal);
+
+        assert!(aliases.contains(&dosdevices.join("d:").join("steamapps").join("common").join("Celeste")));
+        assert_eq!(dirs, vec![game_dir.clone()]);
+
+        let m9_dirs = goldberg_dirs_for_pipeline(&home, &game_dir, PipelineId::M9);
+        assert_eq!(m9_dirs, vec![game_dir]);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn gptk_dosdevice_alias_resolves_relative_c_drive() {
+        let home = test_dir("gptk-relative-c");
+        let prefix = crate::platform::gptk_prefix_path(&home);
+        let dosdevices = prefix.join("dosdevices");
+        let game_dir = prefix.join("drive_c").join("Games").join("Portal 2");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        std::os::unix::fs::symlink("../drive_c", dosdevices.join("c:")).expect("create c drive");
+
+        let aliases = gptk_prefix_game_dir_aliases(&prefix, &game_dir);
+
+        assert_eq!(aliases, vec![dosdevices.join("c:").join("Games").join("Portal 2")]);
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

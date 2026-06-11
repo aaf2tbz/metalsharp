@@ -853,8 +853,15 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .unwrap_or(0);
             let game_dir =
                 crate::setup::resolve_windows_game_dir(appid).or_else(|| crate::setup::resolve_game_dir(appid));
-            let active = game_dir.as_ref().map(|d| mtsp::launcher::goldberg_status(&d.to_path_buf())).unwrap_or(false);
-            resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active}))
+            let pipeline = bottles::resolve_steam_pipeline_for_request(appid, None);
+            let active = game_dir
+                .as_ref()
+                .and_then(|d| {
+                    dirs::home_dir().map(|home| mtsp::launcher::goldberg_status_for_pipeline(&home, d, pipeline))
+                })
+                .unwrap_or(false);
+            let pipeline_id = pipeline.user_selectable_id().unwrap_or_else(|| pipeline.to_legacy_method());
+            resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active, "pipeline": pipeline_id}))
         },
         (Method::Post, "/goldberg/toggle") => {
             let body = read_body(req);
@@ -867,15 +874,19 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         crate::setup::resolve_windows_game_dir(aid).or_else(|| crate::setup::resolve_game_dir(aid));
                     match game_dir {
                         Some(dir) if dir.exists() => {
+                            let pipeline = bottles::resolve_steam_pipeline_for_request(aid, None);
+                            let pipeline_id =
+                                pipeline.user_selectable_id().unwrap_or_else(|| pipeline.to_legacy_method());
                             if enable {
                                 let home = dirs::home_dir().unwrap_or_default();
-                                mtsp::launcher::deploy_goldberg_internal(&home, &dir.to_path_buf(), aid);
+                                mtsp::launcher::deploy_goldberg_for_pipeline(&home, &dir.to_path_buf(), aid, pipeline);
                                 app_log(&format!("[STEAM_EMU] enabled for appid {}", aid));
-                                resp(200, json!({"ok": true, "goldberg_active": true}))
+                                resp(200, json!({"ok": true, "goldberg_active": true, "pipeline": pipeline_id}))
                             } else {
-                                mtsp::launcher::cleanup_goldberg(&dir.to_path_buf());
+                                let home = dirs::home_dir().unwrap_or_default();
+                                mtsp::launcher::cleanup_goldberg_for_pipeline(&home, &dir, pipeline);
                                 app_log(&format!("[STEAM_EMU] disabled for appid {}", aid));
-                                resp(200, json!({"ok": true, "goldberg_active": false}))
+                                resp(200, json!({"ok": true, "goldberg_active": false, "pipeline": pipeline_id}))
                             }
                         },
                         _ => resp(404, json!({"ok": false, "error": "game directory not found"})),
