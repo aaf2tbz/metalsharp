@@ -493,6 +493,7 @@ mod tests {
             (2358720, PipelineId::M12),
             (2456740, PipelineId::M12),
             (275850, PipelineId::WineBare),
+            (284160, PipelineId::M11),
             (1326470, PipelineId::M11),
             (1583230, PipelineId::M12),
             (3164500, PipelineId::M11),

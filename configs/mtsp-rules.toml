@@ -455,6 +455,10 @@ name = "Warframe"
 pipeline = "m11"
 name = "Rust"
 
+[overrides.284160]
+pipeline = "m11"
+name = "BeamNG.drive"
+
 [overrides.220]
 pipeline = "m9"
 name = "Half-Life 2"
