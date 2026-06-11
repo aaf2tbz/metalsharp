@@ -546,6 +546,7 @@ function registerIpc() {
       detail:
         "This will permanently delete all Wine prefixes, bottles, game data, " +
         "Steam installation, Wine runtime, shader caches, and all settings. " +
+        "MetalSharp will also be removed from Applications and moved to Trash. " +
         "This action cannot be undone.",
       buttons: ["Cancel", "Uninstall"],
       defaultId: 0,
@@ -561,6 +562,20 @@ function registerIpc() {
       fs.rmSync(msDir, { recursive: true, force: true });
     } catch (e) {
       console.error("Failed to remove MetalSharp data:", e);
+    }
+
+    // Spawn a detached shell that waits for this process to exit, then
+    // moves the app bundle to the macOS Trash.
+    const exePath = app.getPath("exe");
+    const appBundle = exePath.match(/^(\/Applications\/[^/]+\.app)\//)?.[1];
+    if (appBundle && fs.existsSync(appBundle)) {
+      const pid = process.pid;
+      const script = `
+        while kill -0 ${pid} 2>/dev/null; do sleep 0.5; done
+        osascript -e 'tell application "Finder" to delete POSIX file "${appBundle}"'
+      `;
+      const { spawn } = require("child_process");
+      spawn("/bin/bash", ["-c", script], { detached: true, stdio: "ignore" }).unref();
     }
 
     app.quit();
