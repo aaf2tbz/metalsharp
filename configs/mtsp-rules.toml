@@ -213,6 +213,16 @@ name = "Shadow of the Tomb Raider: Definitive Edition"
 pipeline = "m11"
 name = "STAR WARS Jedi: Fallen Order"
 
+[overrides.271590]
+pipeline = "m11"
+name = "Grand Theft Auto V Legacy"
+
+[overrides.271590.dependencies]
+components = ["gecko", "webview2", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "vcrun2013", "directx_jun2010", "corefonts"]
+
+[overrides.271590.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"]
+
 [overrides.870780]
 pipeline = "m11"
 name = "CONTROL Ultimate Edition"

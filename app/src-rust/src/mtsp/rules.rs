@@ -238,14 +238,24 @@ fn recipe_component_satisfied(component_id: &str, prefix: &Path) -> bool {
     let syswow64 = windows.join("syswow64");
     let has_system_dll = |dll: &str| -> bool { system32.join(dll).exists() || syswow64.join(dll).exists() };
     let has_system32_dll = |dll: &str| -> bool { system32.join(dll).exists() };
+    let has_syswow64_dll = |dll: &str| -> bool { syswow64.join(dll).exists() };
 
     match component_id {
         "vcrun2019" => ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system_dll(dll)),
+        "vcrun2019_x64" => {
+            ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"].iter().all(|dll| has_system32_dll(dll))
+        },
+        "vcrun2019_x86" => ["vcruntime140.dll", "msvcp140.dll"].iter().all(|dll| has_syswow64_dll(dll)),
         "vcrun2010" => ["msvcr100.dll", "msvcp100.dll"].iter().all(|dll| has_system_dll(dll)),
         "vcrun2013" => ["msvcr120.dll", "msvcp120.dll"].iter().all(|dll| has_system_dll(dll)),
         "dotnet40" | "dotnet48" => {
             windows.join("Microsoft.NET").join("Framework").join("v4.0.30319").join("clr.dll").exists()
                 || windows.join("Microsoft.NET").join("Framework64").join("v4.0.30319").join("clr.dll").exists()
+        },
+        "gecko" => windows.join("gecko").exists() || system32.join("gecko").exists() || syswow64.join("gecko").exists(),
+        "webview2" => {
+            drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
+                || drive_c.join("Program Files").join("Microsoft").join("EdgeWebView").exists()
         },
         "directx_jun2010" => {
             ["d3dx9_43.dll", "d3dx10_43.dll", "d3dx11_43.dll", "xinput1_3.dll"].iter().all(|dll| has_system_dll(dll))
@@ -537,16 +547,42 @@ mod tests {
     }
 
     #[test]
+    fn game_recipes_parse_gta_v_rockstar_runtime() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let gta = recipes.get(&271590).expect("gta v recipe");
+        assert_eq!(gta.pipeline, PipelineId::M11);
+        assert_eq!(gta.name, "Grand Theft Auto V Legacy");
+        assert!(gta.components.contains(&"gecko".to_string()));
+        assert!(gta.components.contains(&"webview2".to_string()));
+        assert!(gta.components.contains(&"dotnet48".to_string()));
+        assert!(gta.components.contains(&"vcrun2019_x64".to_string()));
+        assert!(gta.components.contains(&"vcrun2019_x86".to_string()));
+        assert!(gta.components.contains(&"vcrun2013".to_string()));
+        assert!(gta.components.contains(&"directx_jun2010".to_string()));
+        assert!(gta.components.contains(&"corefonts".to_string()));
+        assert!(gta.check_dlls.contains(&"d3d11.dll".to_string()));
+        assert!(gta.check_dlls.contains(&"dxgi.dll".to_string()));
+    }
+
+    #[test]
     fn recipe_component_detection_requires_complete_runtime_sets() {
         let root = test_prefix("recipe-component-completeness");
         let system32 = root.join("drive_c/windows/system32");
+        let syswow64 = root.join("drive_c/windows/syswow64");
         std::fs::create_dir_all(&system32).expect("create system32");
+        std::fs::create_dir_all(&syswow64).expect("create syswow64");
 
         std::fs::write(system32.join("vcruntime140.dll"), b"dll").expect("write partial vcrun");
         assert!(!recipe_component_satisfied("vcrun2019", &root));
+        assert!(!recipe_component_satisfied("vcrun2019_x64", &root));
         std::fs::write(system32.join("vcruntime140_1.dll"), b"dll").expect("write vcrun dll");
         std::fs::write(system32.join("msvcp140.dll"), b"dll").expect("write vcrun dll");
         assert!(recipe_component_satisfied("vcrun2019", &root));
+        assert!(recipe_component_satisfied("vcrun2019_x64", &root));
+        assert!(!recipe_component_satisfied("vcrun2019_x86", &root));
+        std::fs::write(syswow64.join("vcruntime140.dll"), b"dll").expect("write x86 vcrun dll");
+        std::fs::write(syswow64.join("msvcp140.dll"), b"dll").expect("write x86 vcrun dll");
+        assert!(recipe_component_satisfied("vcrun2019_x86", &root));
 
         std::fs::write(system32.join("msvcr100.dll"), b"dll").expect("write partial vcrun2010");
         assert!(!recipe_component_satisfied("vcrun2010", &root));
@@ -561,6 +597,15 @@ mod tests {
         std::fs::write(framework.join("clr.dll"), b"dll").expect("write native clr");
         assert!(recipe_component_satisfied("dotnet48", &root));
         assert!(recipe_component_satisfied("dotnet40", &root));
+
+        assert!(!recipe_component_satisfied("gecko", &root));
+        std::fs::create_dir_all(system32.join("gecko")).expect("create gecko dir");
+        assert!(recipe_component_satisfied("gecko", &root));
+
+        assert!(!recipe_component_satisfied("webview2", &root));
+        std::fs::create_dir_all(root.join("drive_c/Program Files (x86)/Microsoft/EdgeWebView"))
+            .expect("create webview dir");
+        assert!(recipe_component_satisfied("webview2", &root));
 
         std::fs::write(system32.join("d3dx9_43.dll"), b"dll").expect("write partial directx");
         assert!(!recipe_component_satisfied("directx_jun2010", &root));
