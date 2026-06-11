@@ -195,6 +195,8 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         );
     }
 
+    append_database_default_launch_args(appid, pipeline, launch_args);
+
     if requires_steam_secure_launch_args(appid) {
         append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
@@ -210,6 +212,26 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
             append_unique_launch_arg(launch_args, "-d3d11");
         },
         _ => {},
+    }
+}
+
+fn append_database_default_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Vec<String>) {
+    for arg in database_default_launch_args(appid, pipeline) {
+        append_unique_launch_arg(launch_args, arg);
+    }
+}
+
+fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&'static str] {
+    match appid {
+        379720 | 275850 | 892970 | 252490 | 570 | 548430 | 526870 | 1272080 => &["-vulkan"],
+        949230 => &["-force-vulkan"],
+        1174180 => &["-api", "Vulkan"],
+        400 | 620 if pipeline == PipelineId::M9 => &["-dxlevel", "90", "-novid"],
+        240 | 500 | 550 if pipeline == PipelineId::M9 => &["-dxlevel", "90"],
+        7670 if pipeline == PipelineId::M9 => &["-dx9"],
+        12210 if pipeline == PipelineId::M10 => &["-d3d10"],
+        17300 if pipeline == PipelineId::M10 => &["-dx10"],
+        _ => &[],
     }
 }
 
@@ -1064,6 +1086,70 @@ mod tests {
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
         }
+    }
+
+    #[test]
+    fn database_vulkan_titles_get_default_renderer_args() {
+        for (appid, expected_args) in [
+            (379720, vec!["-vulkan"]),
+            (275850, vec!["-vulkan"]),
+            (892970, vec!["-vulkan"]),
+            (252490, vec!["-vulkan"]),
+            (570, vec!["-vulkan"]),
+            (548430, vec!["-vulkan"]),
+            (526870, vec!["-vulkan"]),
+            (1272080, vec!["-vulkan"]),
+            (949230, vec!["-force-vulkan"]),
+            (1174180, vec!["-api", "Vulkan"]),
+        ] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+
+            for expected in expected_args {
+                assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case(expected)), "appid {appid} missing {expected}");
+                assert_eq!(
+                    args.iter().filter(|arg| arg.eq_ignore_ascii_case(expected)).count(),
+                    1,
+                    "appid {appid} duplicated {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn database_source_titles_get_default_dxlevel_args() {
+        for appid in [400, 620] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M9));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg == "90"), "appid {appid}");
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")), "appid {appid}");
+        }
+
+        for appid in [240, 500, 550] {
+            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M9));
+
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")), "appid {appid}");
+            assert!(args.iter().any(|arg| arg == "90"), "appid {appid}");
+            assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")), "appid {appid}");
+        }
+    }
+
+    #[test]
+    fn database_pipeline_specific_renderer_args_stay_on_matching_routes() {
+        let bioshock_m9 = effective_launch_args(7670, super::super::engine::get_pipeline(PipelineId::M9));
+        assert!(bioshock_m9.iter().any(|arg| arg.eq_ignore_ascii_case("-dx9")));
+        let bioshock_m10 = effective_launch_args(7670, super::super::engine::get_pipeline(PipelineId::M10));
+        assert!(!bioshock_m10.iter().any(|arg| arg.eq_ignore_ascii_case("-dx9")));
+
+        let gta_iv_m10 = effective_launch_args(12210, super::super::engine::get_pipeline(PipelineId::M10));
+        assert!(gta_iv_m10.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d10")));
+        let gta_iv_m9 = effective_launch_args(12210, super::super::engine::get_pipeline(PipelineId::M9));
+        assert!(!gta_iv_m9.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d10")));
+
+        let crysis_m10 = effective_launch_args(17300, super::super::engine::get_pipeline(PipelineId::M10));
+        assert!(crysis_m10.iter().any(|arg| arg.eq_ignore_ascii_case("-dx10")));
+        let crysis_m9 = effective_launch_args(17300, super::super::engine::get_pipeline(PipelineId::M9));
+        assert!(!crysis_m9.iter().any(|arg| arg.eq_ignore_ascii_case("-dx10")));
     }
 
     #[test]
