@@ -4,8 +4,8 @@
 
 1. Download the latest MetalSharp DMG from [GitHub Releases](https://github.com/aaf2tbz/metalsharp/releases).
 2. Drag MetalSharp into `/Applications`.
-3. Open it. If macOS blocks the unsigned app, go to **System Settings -> Privacy & Security** and choose **Open Anyway**.
-4. Run setup from inside MetalSharp so it can install the Wine runtime.
+3. Open it. If macOS blocks the unsigned app, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
+4. Run setup from inside MetalSharp — it will install Homebrew dependencies, the Wine runtime, and VC++ 2015-2022 redistributables (x64 and x86).
 5. Start Wine Steam, sign in, and download a Windows game.
 
 ## Steam Games
@@ -30,6 +30,12 @@ Click **Play** from the Library page. Use the launch mode dropdown when you want
 
 Use **Runtime Doctor** on a game card when a game needs VC runtime, DirectX, .NET, WebView2, fonts, or other launch assets.
 
+### Goldberg Steam Emulator
+
+The Goldberg toggle enables offline play for supported games without Wine Steam running. Toggle it on from the game card — MetalSharp saves the original Steam DLLs as `.orig` and deploys the emulator with the correct appid. Toggle off to restore the originals.
+
+Supported games include Portal 2 (appid 620) and others that work without Steam DRM validation.
+
 ## Sharp Library
 
 Sharp Library is for Windows apps, demos, launchers, installers, and non-Steam programs.
@@ -43,6 +49,10 @@ Apps imported from a bottle keep their `bottle_id`, launch through that bottle, 
 Use **Logs** when something fails. The page has drawer sections for live logs, crash reports, and recent log files.
 
 Use **Settings** to manage Steam API sync, backend restart, cache cleanup, and runtime maintenance.
+
+### Uninstall
+
+Settings includes a **Danger Zone** section at the bottom with an **Uninstall MetalSharp** button. This removes all Wine prefixes, bottles, Steam, runtime, caches, and settings, then moves the app to Trash.
 
 ## Useful Docs
 
