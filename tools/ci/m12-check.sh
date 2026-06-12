@@ -105,6 +105,12 @@ assert_m12_contract() {
     "$WINE_ROOT/lib/dxmt/x86_64-windows/winemetal.dll"
     "$WINE_ROOT/lib/dxmt/x86_64-unix/winemetal.so"
     "$WINE_ROOT/lib/wine/x86_64-unix/winemetal.so"
+    "$WINE_ROOT/lib/dxmt/x86_64-unix/libc++.1.dylib"
+    "$WINE_ROOT/lib/dxmt/x86_64-unix/libc++abi.1.dylib"
+    "$WINE_ROOT/lib/dxmt/x86_64-unix/libunwind.1.dylib"
+    "$WINE_ROOT/lib/wine/x86_64-unix/libc++.1.dylib"
+    "$WINE_ROOT/lib/wine/x86_64-unix/libc++abi.1.dylib"
+    "$WINE_ROOT/lib/wine/x86_64-unix/libunwind.1.dylib"
   )
 
   for path in "${built_files[@]}" "${runtime_files[@]}"; do

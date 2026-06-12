@@ -50,8 +50,10 @@ The script stages the PR-built `m12_game.exe`, `d3d12.dll`, `dxgi.dll`,
 local Unix-side WineMetal dependency folder under
 `$HOME/.metalsharp/tmp/m12_game_run`. For the standalone live harness it also
 copies `winemetal.so`, `winemac.so`, and `ntdll.so` beside the executable and
-uses `DXMT_WINEMETAL_UNIXLIB=winemetal.so`, matching the native-override shape
-that made the cube path run independently of a game install. It writes:
+stages the LLVM x86_64 dylibs required by WineMetal (`libc++.1.dylib`,
+`libc++abi.1.dylib`, and `libunwind.1.dylib`). It uses
+`DXMT_WINEMETAL_UNIXLIB=winemetal.so`, matching the native-override shape that
+made the cube path run independently of a game install. It writes:
 
 - `$HOME/.metalsharp/tmp/m12_game_run/m12_game.log`
 - `/tmp/winemetal_pe_debug.log` when `DXMT_WINEMETAL_DEBUG=1`

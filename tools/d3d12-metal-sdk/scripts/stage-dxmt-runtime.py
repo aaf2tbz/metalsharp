@@ -123,13 +123,13 @@ def main() -> int:
         )
 
     unix_src = build_dir / "src/winemetal/unix/winemetal.so"
-    for dep in UNIX_DYLIB_DEPS:
-        try:
-            linked = subprocess.check_output(["otool", "-L", str(unix_src)], text=True, stderr=subprocess.DEVNULL)
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            linked = ""
-        if dep not in linked:
-            continue
+    try:
+        linked = subprocess.check_output(["otool", "-L", str(unix_src)], text=True, stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        linked = ""
+    linked_deps = [dep for dep in UNIX_DYLIB_DEPS if dep in linked]
+    deps_to_stage = UNIX_DYLIB_DEPS if linked_deps else []
+    for dep in deps_to_stage:
         dep_candidates = [
             build_dir / "src/winemetal/unix" / dep,
             build_dir / "src/winemetal" / dep,
@@ -141,6 +141,7 @@ def main() -> int:
             root = os.environ.get(root_var)
             if root:
                 dep_candidates.extend(Path(root).glob(f"*/lib/{dep}"))
+        dep_candidates.extend(Path(os.path.expanduser("~/.metalsharp/toolchains")).glob(f"*/lib/{dep}"))
         dep_candidates.extend(Path("/Volumes/AverySSD/toolchains").glob(f"*/lib/{dep}"))
         dep_src = next((candidate for candidate in dep_candidates if candidate.exists()), None)
         if dep_src is None:

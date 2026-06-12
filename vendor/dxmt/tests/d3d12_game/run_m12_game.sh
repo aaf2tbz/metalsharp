@@ -13,6 +13,31 @@ run_root="${M12_GAME_RUN_ROOT:-$HOME/.metalsharp/tmp/m12_game_run}"
 prefix="${M12_GAME_WINEPREFIX:-$HOME/.metalsharp/tmp/m12_game_prefix}"
 loops="${M12_GAME_LOOPS:-1}"
 timeout_seconds="${M12_GAME_TIMEOUT:-45}"
+toolchain_root="${METALSHARP_X86_LLVM_ROOT:-$HOME/.metalsharp/toolchains}"
+llvm_name="clang+llvm-15.0.7-x86_64-apple-darwin21.0"
+
+copy_llvm_dylib() {
+  local dep="$1"
+  local candidate
+  local candidates=(
+    "$build_dir/src/winemetal/unix/$dep"
+    "$build_dir/src/winemetal/$dep"
+    "$build_dir/$dep"
+    "$toolchain_root/$llvm_name/lib/$dep"
+    "/Volumes/AverySSD/toolchains/$llvm_name/lib/$dep"
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      cp "$candidate" "$run_root/unix/$dep"
+      cp "$candidate" "$run_root/$dep"
+      return
+    fi
+  done
+
+  echo "Missing LLVM dylib required by winemetal.so: $dep" >&2
+  exit 1
+}
 
 mkdir -p "$run_root" "$run_root/unix" "$(dirname "$prefix")"
 
@@ -39,6 +64,9 @@ cp "$wine_root/lib/wine/x86_64-unix/ntdll.so" "$run_root/unix/"
 cp "$run_root/unix/winemetal.so" "$run_root/"
 cp "$run_root/unix/winemac.so" "$run_root/"
 cp "$run_root/unix/ntdll.so" "$run_root/"
+copy_llvm_dylib "libc++.1.dylib"
+copy_llvm_dylib "libc++abi.1.dylib"
+copy_llvm_dylib "libunwind.1.dylib"
 
 cd "$run_root"
 rm -f m12_game.log /tmp/winemetal_debug.log /tmp/winemetal_pe_debug.log
@@ -51,7 +79,7 @@ export DXMT_WINEMETAL_UNIXLIB="${DXMT_WINEMETAL_UNIXLIB:-winemetal.so}"
 export DXMT_D3D12_TRACE="${DXMT_D3D12_TRACE:-1}"
 export DXMT_DXGI_TRACE="${DXMT_DXGI_TRACE:-1}"
 export DXMT_SHADER_CACHE_PATH="${DXMT_SHADER_CACHE_PATH:-$run_root/shader-cache}"
-export DYLD_LIBRARY_PATH="/Volumes/AverySSD/toolchains/clang+llvm-15.0.7-x86_64-apple-darwin21.0/lib:$run_root/unix:$wine_root/lib/wine/x86_64-unix:${DYLD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="$toolchain_root/$llvm_name/lib:/Volumes/AverySSD/toolchains/$llvm_name/lib:$run_root/unix:$wine_root/lib/wine/x86_64-unix:${DYLD_LIBRARY_PATH:-}"
 
 /usr/bin/perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" \
   "$wine_bin" ./m12_game.exe --loops "$loops" "$@" > "$run_root/m12_game.log" 2>&1
