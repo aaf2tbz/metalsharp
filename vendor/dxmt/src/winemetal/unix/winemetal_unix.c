@@ -1396,23 +1396,50 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
       }
       case WMTRenderCommandDraw: {
         struct wmtcmd_render_draw *body = (struct wmtcmd_render_draw *)next;
-        [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
-                    vertexStart:body->vertex_start
-                    vertexCount:body->vertex_count
-                  instanceCount:body->instance_count
-                   baseInstance:body->base_instance];
+        if (body->instance_count <= 1 && body->base_instance == 0) {
+          [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
+                      vertexStart:body->vertex_start
+                      vertexCount:body->vertex_count];
+        } else if (body->base_instance == 0) {
+          [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
+                      vertexStart:body->vertex_start
+                      vertexCount:body->vertex_count
+                    instanceCount:body->instance_count];
+        } else {
+          [encoder drawPrimitives:(MTLPrimitiveType)body->primitive_type
+                      vertexStart:body->vertex_start
+                      vertexCount:body->vertex_count
+                    instanceCount:body->instance_count
+                     baseInstance:body->base_instance];
+        }
         break;
       }
       case WMTRenderCommandDrawIndexed: {
         struct wmtcmd_render_draw_indexed *body = (struct wmtcmd_render_draw_indexed *)next;
-        [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
-                            indexCount:body->index_count
-                             indexType:(MTLIndexType)body->index_type
-                           indexBuffer:(id<MTLBuffer>)body->index_buffer
-                     indexBufferOffset:body->index_buffer_offset
-                         instanceCount:body->instance_count
-                            baseVertex:body->base_vertex
-                          baseInstance:body->base_instance];
+        if (body->instance_count <= 1 && body->base_vertex == 0 &&
+            body->base_instance == 0) {
+          [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
+                              indexCount:body->index_count
+                               indexType:(MTLIndexType)body->index_type
+                             indexBuffer:(id<MTLBuffer>)body->index_buffer
+                       indexBufferOffset:body->index_buffer_offset];
+        } else if (body->base_vertex == 0 && body->base_instance == 0) {
+          [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
+                              indexCount:body->index_count
+                               indexType:(MTLIndexType)body->index_type
+                             indexBuffer:(id<MTLBuffer>)body->index_buffer
+                       indexBufferOffset:body->index_buffer_offset
+                           instanceCount:body->instance_count];
+        } else {
+          [encoder drawIndexedPrimitives:(MTLPrimitiveType)body->primitive_type
+                              indexCount:body->index_count
+                               indexType:(MTLIndexType)body->index_type
+                             indexBuffer:(id<MTLBuffer>)body->index_buffer
+                       indexBufferOffset:body->index_buffer_offset
+                           instanceCount:body->instance_count
+                              baseVertex:body->base_vertex
+                            baseInstance:body->base_instance];
+        }
         break;
       }
       case WMTRenderCommandDrawIndirect: {

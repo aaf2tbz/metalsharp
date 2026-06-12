@@ -47,6 +47,45 @@ winemetal_debug_enabled(void) {
   return value && value[0] && strcmp(value, "0") != 0;
 }
 
+static void
+winemetal_log_render_encode_call(obj_handle_t encoder, const struct wmtcmd_base *cmd_head) {
+  if (!winemetal_debug_enabled())
+    return;
+
+  FILE *f = fopen("/tmp/winemetal_debug.log", "a");
+  if (!f)
+    return;
+
+  fprintf(f, "PE render_encode_call encoder=%llu cmd=%p",
+          (unsigned long long)encoder, (const void *)cmd_head);
+  if (cmd_head) {
+    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type,
+            (void *)cmd_head->next.ptr);
+    if (cmd_head->type == WMTRenderCommandDraw) {
+      const struct wmtcmd_render_draw *body =
+          (const struct wmtcmd_render_draw *)cmd_head;
+      fprintf(f,
+              " prim=%u start=%llu count=%llu inst=%u base_inst=%u",
+              (unsigned)body->primitive_type,
+              (unsigned long long)body->vertex_start,
+              (unsigned long long)body->vertex_count,
+              body->instance_count, body->base_instance);
+    } else if (cmd_head->type == WMTRenderCommandDrawIndexed) {
+      const struct wmtcmd_render_draw_indexed *body =
+          (const struct wmtcmd_render_draw_indexed *)cmd_head;
+      fprintf(f,
+              " prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
+              (unsigned)body->primitive_type, (unsigned)body->index_type,
+              (unsigned long long)body->index_count,
+              (unsigned long long)body->index_buffer,
+              (unsigned long long)body->index_buffer_offset,
+              body->instance_count, body->base_vertex, body->base_instance);
+    }
+  }
+  fprintf(f, "\n");
+  fclose(f);
+}
+
 WINEMETAL_API void
 NSObject_retain(obj_handle_t obj) {
   UNIX_CALL(0, &obj);
@@ -454,6 +493,7 @@ MTLRenderCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd
   struct unixcall_generic_obj_cmd_noret params;
   params.encoder = encoder;
   WMT_MEMPTR_SET(params.cmd_head, cmd_head);
+  winemetal_log_render_encode_call(encoder, cmd_head);
   return winemetal_unix_call_ok(38, &params);
 }
 

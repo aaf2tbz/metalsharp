@@ -441,11 +441,8 @@ static void WriteMSCTextureArgument(uint64_t *data,
                                     uint64_t texture_view_id,
                                     uint32_t array_length,
                                     float min_lod = 0.0f) {
-  // Apple MetalShaderConverter uses IRDescriptorTableEntry:
-  // { gpuVA, textureViewID, metadata }.
-  data[arg.StructurePtrOffset] = 0;
-  data[arg.StructurePtrOffset + 1] = texture_view_id;
-  data[arg.StructurePtrOffset + 2] = TextureMetadata(array_length, min_lod);
+  data[arg.StructurePtrOffset] = texture_view_id;
+  data[arg.StructurePtrOffset + 1] = TextureMetadata(array_length, min_lod);
 }
 
 static bool MSCArgumentAcceptsBuffer(const MTL_SM50_SHADER_ARGUMENT &arg,
@@ -1693,10 +1690,14 @@ struct ReplayState {
                                  bool fallback = false) {
     if (slot > 0xffu)
       return false;
-    bool ok = render_enc.setFragmentSamplerState(sampler, (uint8_t)slot);
-    if (ok)
-      MarkFragmentSamplerBound(slot, fallback);
-    return ok;
+    if (!sampler.handle)
+      return false;
+
+    bool ok = render_enc.setFragmentSamplerState(sampler, slot);
+    if (!ok)
+      return false;
+    MarkFragmentSamplerBound(slot, fallback);
+    return true;
   }
 
   bool EnsureNullDirectTexture(MTLD3D12Device *device) {
