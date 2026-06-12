@@ -68,6 +68,26 @@ real mesh/object pipeline-state-stream probe. Keeping it as a runnable mini-app
 prevents future UE5/Nanite work from being described as supported without a
 repeatable proof.
 
+For the M12 render pipeline check used by PR CI, run:
+
+```bash
+tools/ci/m12-check.sh
+```
+
+This stages the released MetalSharp Wine runtime, rebuilds the PR DXMT D3D12
+artifacts with tests enabled, builds `m12_game.exe`, stages the rebuilt M12
+DLL/Unix bridge layout, and verifies the shared `winemetal.so` contract. PR CI
+exposes this as the `M12 Check` job so the core Wine/DXMT/WineMetal layout is
+proven independently of Steam or a title. For a local live render pass, opt in:
+
+```bash
+M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh
+```
+
+The executable is a 10-second RGB cube scene with dynamic vertices, indexed
+draws, a depth target, a lit ground plane, a projected shadow, and readback
+validation.
+
 For DXIL semantic coverage, run the reduced SM6 opcode-group probe:
 
 ```bash
@@ -441,6 +461,12 @@ x86_64-unix/
   winemetal.so
 ```
 
+For the MetalSharp profile, `runtime/wine/lib/wine/x86_64-unix/winemetal.so`
+must also match the rebuilt DXMT Unix bridge. Wine resolves
+`DXMT_WINEMETAL_UNIXLIB=winemetal.so` by name, so the shared Wine Unix location
+can be the file that actually loads even when the DXMT runtime directory is
+present.
+
 The runtime preflight intentionally treats Winemetal as two routes:
 
 - Steam/global Wine copies must preserve legacy wrapper exports such as
@@ -450,10 +476,11 @@ The runtime preflight intentionally treats Winemetal as two routes:
   event, counter sample, and bootstrap exports.
 
 Do not manually copy stale or ad hoc `winemetal.dll`/`winemetal.so` artifacts
-into `system32`, `syswow64`, or `runtime/wine/lib/wine`. Use
-`stage-dxmt-runtime.py`, which mirrors the verified rebuilt bridge into the
-runtime and prefix surfaces expected by the ABI checker. The preflight is
-designed to catch stale-copy regressions before Steam is launched.
+into `system32`, `syswow64`, or Wine runtime directories. Use
+`stage-dxmt-runtime.py`, which stages the rebuilt D3D12/DXGI/WineMetal PE DLLs,
+the DXMT Unix bridge, and the shared Wine Unix bridge location as one manifest.
+The preflight is designed to catch stale-copy regressions before Steam is
+launched.
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 

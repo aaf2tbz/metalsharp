@@ -91,7 +91,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 wine_overrides: Some(
                     "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
-                dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
@@ -593,9 +593,7 @@ mod tests {
     fn m12_is_stronger_than_other_dxmt_d3d_paths() {
         let m12 = get_pipeline(PipelineId::M12);
 
-        for required in ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"] {
-            assert!(m12.dyld_paths.contains(&required));
-        }
+        assert_eq!(m12.dyld_paths[..2], ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"]);
 
         let m12_dlls: std::collections::HashSet<_> = m12.deploy_dlls.iter().map(|dll| dll.filename).collect();
         for required in ["d3d12.dll", "d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"] {

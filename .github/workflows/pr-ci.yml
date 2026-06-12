@@ -202,3 +202,26 @@ jobs:
           test -s app/native/host/HostRuntimeABI.h
           test -s app/native/host/manifest.json
           test -s app/native/host/libmetalsharp_host_runtime.dylib
+
+  m12-check:
+    name: M12 Check
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache M12 runtime inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.metalsharp/toolchains
+            app/bundles
+          key: m12-check-${{ runner.os }}-llvm15-bundles-v1
+
+      - name: Install M12 build tools
+        run: brew install meson ninja mingw-w64 zstd
+
+      - name: Run M12 cube pipeline check
+        env:
+          M12_CHECK_SECONDS: "10"
+          M12_CHECK_RUN_LIVE: "0"
+        run: tools/ci/m12-check.sh

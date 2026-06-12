@@ -47,6 +47,25 @@ scripts/preflight-runtime-layout.py --dxmt-runtime "$METALSHARP_DXMT_RUNTIME"
 scripts/run-probes.sh --wine "$WINE" --prefix "$WINEPREFIX" --dxmt-runtime "$METALSHARP_DXMT_RUNTIME" --mini-only
 ```
 
+In a full MetalSharp repository checkout, use the M12 cube pipeline check before
+launching Steam or a game:
+
+```bash
+tools/ci/m12-check.sh
+```
+
+That check rebuilds the current DXMT D3D12 artifacts, stages the same
+WineMetal layout used by the MetalSharp M12 route, builds `m12_game.exe`, and
+verifies the staged runtime contract. Pull requests expose this gate as
+`M12 Check`. For a local live render pass, run:
+
+```bash
+M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh
+```
+
+The live executable is a 10-second RGB cube scene with depth, lighting, shadows,
+indexed draws, and readback validation.
+
 PowerShell users can initialize equivalent environment variables with:
 
 ```powershell

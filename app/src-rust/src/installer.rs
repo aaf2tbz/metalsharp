@@ -1040,6 +1040,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         }
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
+        sync_dxmt_winemetal_unixlib(&dxmt_dir)?;
         write_dxmt_runtime_manifest(&dxmt_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
         mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
@@ -1059,6 +1060,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
                 }
             }
             ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
+            sync_dxmt_winemetal_unixlib(&dxmt_dir)?;
             write_dxmt_runtime_manifest(&dxmt_dir, "fallback:~/metalsharp/runtime/dxmt")?;
         }
     }
@@ -1127,6 +1129,7 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
         "requiredFiles": {
             "x86_64-unix": ["winemetal.so"],
             "x86_64-windows": DXMT_REQUIRED_PE,
+            "wine/x86_64-unix": ["winemetal.so"],
         },
     });
     fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), serde_json::to_string_pretty(&manifest).unwrap_or_default())
@@ -1147,9 +1150,35 @@ fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn sync_dxmt_winemetal_unixlib(dxmt_dir: &Path) -> Result<(), String> {
+    let src = dxmt_dir.join("x86_64-unix").join("winemetal.so");
+    if !file_nonempty(&src) {
+        return Ok(());
+    }
+
+    let wine_unix_dir = dxmt_dir
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join("wine")
+        .join("x86_64-unix");
+    fs::create_dir_all(&wine_unix_dir)
+        .map_err(|e| format!("create shared WineMetal unix dir {}: {}", wine_unix_dir.display(), e))?;
+    let dst = wine_unix_dir.join("winemetal.so");
+    fs::copy(&src, &dst)
+        .map_err(|e| format!("copy DXMT winemetal.so to shared Wine unix lib: {} -> {}: {}", src.display(), dst.display(), e))?;
+    Ok(())
+}
+
 fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
     let pe_dir = dxmt_dir.join("x86_64-windows");
+    let wine_unix_winemetal = dxmt_dir
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join("wine")
+        .join("x86_64-unix")
+        .join("winemetal.so");
     file_nonempty(&dxmt_dir.join("x86_64-unix").join("winemetal.so"))
+        && file_nonempty(&wine_unix_winemetal)
         && DXMT_REQUIRED_PE.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
 }
 
@@ -2181,11 +2210,17 @@ mod tests {
         assert!(!dxmt_runtime_ready(&dxmt_dir));
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir).expect("normalize legacy DXMT bundle");
+        sync_dxmt_winemetal_unixlib(&dxmt_dir).expect("sync shared WineMetal unixlib");
 
         assert!(dxmt_runtime_ready(&dxmt_dir));
         assert_eq!(
             fs::read(pe_dir.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"),
             fs::read(pe_dir.join("dxgi.dll")).expect("read dxgi")
+        );
+        assert_eq!(
+            fs::read(dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix").join("winemetal.so"))
+                .expect("read shared winemetal"),
+            fs::read(unix_dir.join("winemetal.so")).expect("read dxmt winemetal")
         );
         let _ = fs::remove_dir_all(home);
     }
@@ -2299,10 +2334,13 @@ mod tests {
 
     fn write_dxmt_runtime_files(dxmt_dir: &Path) {
         let unix_dir = dxmt_dir.join("x86_64-unix");
+        let wine_unix_dir = dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix");
         let pe_dir = dxmt_dir.join("x86_64-windows");
         fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
+        fs::create_dir_all(&wine_unix_dir).expect("create Wine unix dir");
         fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
         fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
+        fs::write(wine_unix_dir.join("winemetal.so"), b"so").expect("write shared winemetal");
         for dll in DXMT_REQUIRED_PE {
             fs::write(pe_dir.join(dll), b"dll").expect("write DXMT DLL");
         }

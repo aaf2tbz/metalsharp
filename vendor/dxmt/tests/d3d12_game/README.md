@@ -48,12 +48,21 @@ vendor/dxmt/tests/d3d12_game/run_m12_game.sh --quick-checks --seconds 1
 The script stages the PR-built `m12_game.exe`, `d3d12.dll`, `dxgi.dll`,
 `dxgi_dxmt.dll`, the deployed DXMT `winemetal.dll`, `d3dcompiler_47.dll`, and a
 local Unix-side WineMetal dependency folder under
-`$HOME/.metalsharp/tmp/m12_game_run`. It also copies the Unix libraries beside
-the executable and uses `DXMT_WINEMETAL_UNIXLIB=winemetal.so`, which is the
-standalone native-override shape Wine resolves correctly. It writes:
+`$HOME/.metalsharp/tmp/m12_game_run`. It keeps Unix dylibs out of the executable
+directory and resolves them through Wine's shared `lib/wine/x86_64-unix`
+location first, then the staged DXMT Unix folder. It uses
+`DXMT_WINEMETAL_UNIXLIB=winemetal.so`, which is the native-override shape the
+M12 route expects. It writes:
 
 - `$HOME/.metalsharp/tmp/m12_game_run/m12_game.log`
 - `/tmp/winemetal_pe_debug.log` when `DXMT_WINEMETAL_DEBUG=1`
+
+Repository PR CI runs this harness through `tools/ci/m12-check.sh` as the
+`M12 Check` job. That CI path downloads the released Wine/DXMT runtime inputs,
+rebuilds the PR DXMT artifacts with tests enabled, stages the corrected M12
+WineMetal layout, builds `m12_game.exe`, and verifies the staged runtime
+contract. Set `M12_CHECK_RUN_LIVE=1` to run the quick checks plus the cube scene
+locally.
 
 Current observed PR state: draw-bearing command lists are recorded, encoded,
 submitted, presented, and read back successfully. The focused smoke suite
