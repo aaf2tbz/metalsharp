@@ -22,12 +22,54 @@ download_asset() {
   curl -fL --retry 3 -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$asset"
 }
 
+repair_assets_fnalibs_bundle() {
+  local assets_archive="$BUNDLE_DIR/metalsharp-assets.tar.zst"
+  local fnalibs_archive="$BUNDLE_DIR/fnalibs.tar.zst"
+  if [ ! -s "$assets_archive" ] || [ ! -s "$fnalibs_archive" ]; then
+    return 0
+  fi
+
+  local tmp assets_root fnalibs_root
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-assets-fnalibs.XXXXXX")"
+  assets_root="$tmp/assets"
+  fnalibs_root="$tmp/fnalibs"
+  mkdir -p "$assets_root" "$fnalibs_root"
+
+  tar --use-compress-program=unzstd -xf "$assets_archive" -C "$assets_root"
+  tar --use-compress-program=unzstd -xf "$fnalibs_archive" -C "$fnalibs_root"
+
+  if [ ! -d "$assets_root/assets" ] || [ ! -d "$fnalibs_root/fnalibs" ]; then
+    echo "Unable to repair assets fnalibs payload: unexpected bundle layout" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+
+  rm -rf "$assets_root/assets/fnalibs"
+  mkdir -p "$assets_root/assets"
+  cp -R -p "$fnalibs_root/fnalibs" "$assets_root/assets/fnalibs"
+  mkdir -p "$assets_root/assets/fna-kickstart/osx"
+  for dylib in libFNA3D.0.dylib libSDL2-2.0.0.dylib libFAudio.0.dylib libtheorafile.dylib; do
+    cp -p "$fnalibs_root/fnalibs/$dylib" "$assets_root/assets/fna-kickstart/osx/$dylib"
+  done
+
+  (
+    cd "$assets_root"
+    tar -cf "$tmp/metalsharp-assets.tar" assets
+  )
+  zstd -q -19 -T0 -f "$tmp/metalsharp-assets.tar" -o "$assets_archive"
+  chmod 0644 "$assets_archive"
+  rm -rf "$tmp"
+  echo "repaired assets fnalibs payload: $assets_archive"
+}
+
 while IFS=$'\t' read -r asset _root _platforms _notes; do
   case "$asset" in
     ""|\#*) continue ;;
   esac
   download_asset "$asset" "$BUNDLE_DIR/$asset"
 done < "$MANIFEST"
+
+repair_assets_fnalibs_bundle
 
 "$PROJECT_ROOT/tools/dmg/repair-runtime-bundle.py" \
   --archive "$BUNDLE_DIR/metalsharp-runtime.tar.zst" \

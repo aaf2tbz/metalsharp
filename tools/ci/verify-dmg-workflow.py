@@ -86,6 +86,7 @@ def check_bundle_scripts() -> None:
     create_bundles = read("tools/dmg/create-bundles.sh")
     for needle in [
         "tools/dmg/repair-runtime-bundle.py",
+        "repair_assets_fnalibs_bundle",
         "tools/bundles/verify-bundles.sh",
         "metalsharp-bundle-manifest.tsv",
     ]:
