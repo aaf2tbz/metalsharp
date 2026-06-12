@@ -531,14 +531,45 @@ static void emitFunctionPrologue(LowerContext &ctx) {
 
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "struct m12_vertex_buffer_entry { ulong buffer_handle; uint stride; uint length; };\n";
-        os << "static inline float4 m12_load_vertex_attr(uint table_index, uint vid, device char* table_bytes, device char* vb) {\n";
+        os << "struct m12_draw_argument { uint vertexCountPerInstance; uint instanceCount; uint startVertexLocation; uint startInstanceLocation; };\n";
+        os << "struct m12_draw_indexed_argument { uint indexCountPerInstance; uint instanceCount; uint startIndexLocation; int baseVertexLocation; uint startInstanceLocation; };\n";
+        os << "static inline bool m12_is_indexed_draw(device char* draw_info_bytes) {\n";
+        os << "  if (draw_info_bytes == nullptr) return false;\n";
+        os << "  return *reinterpret_cast<device ushort*>(draw_info_bytes) != 0;\n";
+        os << "}\n";
+        os << "static inline uint m12_vertex_fetch_index(uint vid, device char* draw_bytes, device char* draw_info_bytes) {\n";
+        os << "  if (draw_bytes == nullptr || !m12_is_indexed_draw(draw_info_bytes)) return vid;\n";
+        os << "  device m12_draw_indexed_argument* draw = reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes);\n";
+        os << "  int indexed_vertex = int(vid) + draw->baseVertexLocation;\n";
+        os << "  return indexed_vertex < 0 ? 0u : uint(indexed_vertex);\n";
+        os << "}\n";
+        os << "static inline uint m12_instance_fetch_index(uint iid, uint step_rate, device char* draw_bytes, device char* draw_info_bytes) {\n";
+        os << "  uint start_instance = 0;\n";
+        os << "  if (draw_bytes != nullptr) {\n";
+        os << "    if (m12_is_indexed_draw(draw_info_bytes)) start_instance = reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes)->startInstanceLocation;\n";
+        os << "    else start_instance = reinterpret_cast<device m12_draw_argument*>(draw_bytes)->startInstanceLocation;\n";
+        os << "  }\n";
+        os << "  if (step_rate == 0) return start_instance;\n";
+        os << "  return start_instance + (iid / step_rate);\n";
+        os << "}\n";
+        os << "static inline float4 m12_load_vertex_attr(uint table_index, uint aligned_byte_offset, uint dxgi_format, uint per_instance, uint step_rate, uint vid, uint iid, device char* table_bytes, device char* vb, device char* draw_bytes, device char* draw_info_bytes) {\n";
         os << "  if (table_bytes == nullptr || vb == nullptr) return float4(0.0);\n";
         os << "  device m12_vertex_buffer_entry* table = reinterpret_cast<device m12_vertex_buffer_entry*>(table_bytes);\n";
         os << "  uint stride = table[table_index].stride;\n";
         os << "  uint length = table[table_index].length;\n";
         os << "  if (stride == 0) stride = 16;\n";
-        os << "  uint offset = vid * stride;\n";
-        os << "  if (length != 0 && offset + 16 > length) return float4(0.0);\n";
+        os << "  uint element_index = per_instance != 0 ? m12_instance_fetch_index(iid, step_rate, draw_bytes, draw_info_bytes) : m12_vertex_fetch_index(vid, draw_bytes, draw_info_bytes);\n";
+        os << "  uint offset = element_index * stride + aligned_byte_offset;\n";
+        os << "  uint required = (dxgi_format == 41 || dxgi_format == 42 || dxgi_format == 43) ? 4u : ((dxgi_format == 16 || dxgi_format == 17 || dxgi_format == 18) ? 8u : ((dxgi_format == 6 || dxgi_format == 7 || dxgi_format == 8) ? 12u : 16u));\n";
+        os << "  if (length != 0 && offset + required > length) return float4(0.0);\n";
+        os << "  if (dxgi_format == 41) return float4(*reinterpret_cast<device float*>(vb + offset), 0.0, 0.0, 1.0);\n";
+        os << "  if (dxgi_format == 16) return float4(*reinterpret_cast<device float2*>(vb + offset), 0.0, 1.0);\n";
+        os << "  if (dxgi_format == 6) return float4(*reinterpret_cast<device float3*>(vb + offset), 1.0);\n";
+        os << "  if (dxgi_format == 2) return *reinterpret_cast<device float4*>(vb + offset);\n";
+        os << "  if (dxgi_format == 28) return float4(*reinterpret_cast<device uchar4*>(vb + offset)) / 255.0;\n";
+        os << "  if (dxgi_format == 30) return float4(*reinterpret_cast<device uchar4*>(vb + offset));\n";
+        os << "  if (dxgi_format == 42) return float4(*reinterpret_cast<device uint*>(vb + offset), 0.0, 0.0, 1.0);\n";
+        os << "  if (dxgi_format == 43) return float4(*reinterpret_cast<device int*>(vb + offset), 0.0, 0.0, 1.0);\n";
         os << "  return *reinterpret_cast<device float4*>(vb + offset);\n";
         os << "}\n\n";
     } else {
@@ -561,6 +592,7 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
         os << "  uint vid [[vertex_id]],\n";
+        os << "  uint iid [[instance_id]],\n";
         std::vector<std::string> params;
         for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
             params.push_back("  device char* buf" + std::to_string(i) +
@@ -1444,6 +1476,13 @@ static bool shouldLowerLoadInputI32AsVertexId(const LowerContext &ctx, uint32_t 
            ctx.vertex_input_ids.count(0) != 0;
 }
 
+static bool shouldLowerArgumentlessLoadInputI32AsVertexId(const LowerContext &ctx) {
+    return ctx.shader.kind == DxilShaderKind::Vertex &&
+           ctx.options.vertex_inputs.empty() &&
+           !ctx.vertex_has_float_load_input &&
+           ctx.vertex_input_ids.empty();
+}
+
 static DescriptorRangePlan::Kind descriptorKindForResourceClass(uint32_t resource_class) {
     switch (resource_class) {
     case 0: return DescriptorRangePlan::Kind::SRV;
@@ -1631,18 +1670,15 @@ static void analyzeVertexInputs(LowerContext &ctx, const LLVMFunction &fn) {
             std::vector<uint32_t> call_args;
             for (size_t i = 2; i < inst.operands.size(); i++)
                 call_args.push_back(inst.operands[i]);
-            uint32_t input_id = literalFromValue(ctx, call_args[0], 0);
-            if (input_id < 16)
-                ctx.vertex_input_ids.insert(input_id);
-            if (call_args.size() > 1) {
-                input_id = literalFromValue(ctx, call_args[1], 0);
+            if (!call_args.empty())
+                call_args.erase(call_args.begin());
+            if (!call_args.empty()) {
+                uint32_t input_id = literalFromValue(ctx, call_args[0], 0);
                 if (input_id < 16)
                     ctx.vertex_input_ids.insert(input_id);
             }
         }
     }
-    if (!ctx.vertex_input_ids.empty())
-        ctx.vertex_input_ids.insert(0);
 }
 
 static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_id,
@@ -2619,10 +2655,18 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         }
 
         if (intrinsic_id != 0 && call_args.empty()) {
-            ctx.unsupported_intrinsics++;
             ensureValueTable(value_counter);
-            ctx.value_table[value_counter] = result;
-            ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+            if (intrinsic_id == DXOP_LoadInput && isLoadInputI32(callee_name) &&
+                shouldLowerArgumentlessLoadInputI32AsVertexId(ctx)) {
+                MSLType result_type = {MSLTypeKind::UInt, 0, {}};
+                emitTypedLine(result_type, result, "vid");
+                ctx.value_table[value_counter] = result;
+                ctx.value_types[value_counter] = result_type;
+            } else {
+                ctx.unsupported_intrinsics++;
+                ctx.value_table[value_counter] = result;
+                ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+            }
         } else if (intrinsic_id != 0) {
             std::vector<uint32_t> fn_args;
             if (opcode_prefixed_intrinsic)

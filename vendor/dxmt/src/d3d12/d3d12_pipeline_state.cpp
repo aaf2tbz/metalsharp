@@ -966,6 +966,11 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                 element.shader_register = input.shader_register;
                 element.table_index = input.table_index;
                 element.input_slot = input.input_slot;
+                element.aligned_byte_offset = input.aligned_byte_offset;
+                element.dxgi_format = static_cast<uint32_t>(input.dxgi_format);
+                element.metal_format = static_cast<uint32_t>(input.metal_format);
+                element.per_instance = input.per_instance;
+                element.instance_step_rate = input.instance_step_rate;
                 element.table_indexing_mode =
                     input.table_indexing_mode ==
                             D3D12VertexTableIndexingMode::RawSlot

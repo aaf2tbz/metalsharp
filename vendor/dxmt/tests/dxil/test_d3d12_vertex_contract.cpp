@@ -139,6 +139,12 @@ int main() {
     input.shader_register = element.shader_register;
     input.table_index = element.table_index;
     input.input_slot = element.input_slot;
+    input.aligned_byte_offset = element.aligned_byte_offset;
+    input.dxgi_format = element.dxgi_format;
+    input.metal_format = element.metal_format;
+    input.per_instance =
+        element.input_slot_class == dxmt::D3D12VertexInputSlotClass::PerInstance;
+    input.instance_step_rate = element.instance_step_rate;
     input.table_indexing_mode =
         dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
     input.system_value = element.system_value;
@@ -156,23 +162,37 @@ int main() {
                dxmt::dxil::MSLResolveVertexInputTableIndex(
                    9, sparse_msl_options),
                2);
-  expect_true("MSL sparse register 5 emits compact table constant",
+  expect_true("MSL sparse register 5 emits compact table, offset, format, step",
               dxmt::dxil::MSLVertexPullExpression(5, sparse_msl_options) ==
-                  "m12_load_vertex_attr(1, vid, buf16, buf1)");
-  expect_true("MSL sparse register 9 emits compact table constant",
+                  "m12_load_vertex_attr(1, 0, 16, 1, 2, vid, iid, buf16, "
+                  "buf1, buf29, buf30)");
+  expect_true("MSL sparse register 6 emits duplicate-slot offset",
+              dxmt::dxil::MSLVertexPullExpression(6, sparse_msl_options) ==
+                  "m12_load_vertex_attr(1, 8, 16, 1, 2, vid, iid, buf16, "
+                  "buf1, buf29, buf30)");
+  expect_true("MSL sparse register 9 emits compact table and float4 format",
               dxmt::dxil::MSLVertexPullExpression(9, sparse_msl_options) ==
-                  "m12_load_vertex_attr(2, vid, buf16, buf2)");
+                  "m12_load_vertex_attr(2, 0, 2, 0, 1, vid, iid, buf16, "
+                  "buf2, buf29, buf30)");
 
   dxmt::dxil::MSLLoweringOptions raw_msl_options = {};
-  raw_msl_options.vertex_inputs.push_back(
-      {5, 1, 3, dxmt::dxil::MSLVertexTableIndexingMode::RawSlot, false});
+  dxmt::dxil::MSLVertexInputElement raw_input = {};
+  raw_input.shader_register = 5;
+  raw_input.table_index = 1;
+  raw_input.input_slot = 3;
+  raw_input.aligned_byte_offset = 12;
+  raw_input.dxgi_format = kFmtFloat2;
+  raw_input.table_indexing_mode =
+      dxmt::dxil::MSLVertexTableIndexingMode::RawSlot;
+  raw_msl_options.vertex_inputs.push_back(raw_input);
   expect_equal("MSL explicit raw slot mode uses input slot",
                dxmt::dxil::MSLResolveVertexInputTableIndex(
                    5, raw_msl_options),
                3);
-  expect_true("MSL explicit raw slot expression is marked by raw slot",
+  expect_true("MSL explicit raw slot expression carries metadata",
               dxmt::dxil::MSLVertexPullExpression(5, raw_msl_options) ==
-                  "m12_load_vertex_attr(3, vid, buf16, buf3)");
+                  "m12_load_vertex_attr(3, 12, 16, 0, 1, vid, iid, buf16, "
+                  "buf3, buf29, buf30)");
 
   std::vector<dxmt::D3D12VertexBufferViewMetadata> sparse_views = {
       {0, 0x10000000, 256, 12},
@@ -288,6 +308,32 @@ int main() {
                instance.elements[1].instance_step_rate, 1);
   expect_equal("per-instance step rate >1",
                instance.elements[2].instance_step_rate, 5);
+
+  dxmt::dxil::MSLLoweringOptions instance_msl_options = {};
+  for (const auto &element : instance.elements) {
+    dxmt::dxil::MSLVertexInputElement input = {};
+    input.shader_register = element.shader_register;
+    input.table_index = element.table_index;
+    input.input_slot = element.input_slot;
+    input.dxgi_format = element.dxgi_format;
+    input.per_instance = true;
+    input.instance_step_rate = element.instance_step_rate;
+    input.table_indexing_mode =
+        dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
+    instance_msl_options.vertex_inputs.push_back(input);
+  }
+  expect_true("MSL per-instance step rate 0 is explicit",
+              dxmt::dxil::MSLVertexPullExpression(0, instance_msl_options) ==
+                  "m12_load_vertex_attr(0, 0, 2, 1, 0, vid, iid, buf16, "
+                  "buf0, buf29, buf30)");
+  expect_true("MSL per-instance step rate 1 is explicit",
+              dxmt::dxil::MSLVertexPullExpression(1, instance_msl_options) ==
+                  "m12_load_vertex_attr(1, 0, 2, 1, 1, vid, iid, buf16, "
+                  "buf1, buf29, buf30)");
+  expect_true("MSL per-instance step rate >1 is explicit",
+              dxmt::dxil::MSLVertexPullExpression(2, instance_msl_options) ==
+                  "m12_load_vertex_attr(2, 0, 2, 1, 5, vid, iid, buf16, "
+                  "buf2, buf29, buf30)");
 
   std::printf("\n=== Results: %s ===\n", g_fail ? "FAIL" : "PASS");
   return g_fail ? 1 : 0;

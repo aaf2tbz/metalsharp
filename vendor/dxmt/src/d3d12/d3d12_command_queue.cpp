@@ -621,6 +621,8 @@ struct ReplayState {
   static constexpr uint32_t kMSCDrawArgumentsSlot = 4;
   static constexpr uint32_t kMSCUniformsSlot = 5;
   static constexpr uint32_t kMSCVertexBufferBindPoint = 6;
+  static constexpr uint32_t kM12VertexPullDrawArgumentsSlot = 29;
+  static constexpr uint32_t kM12VertexPullDrawInfoSlot = 30;
   static constexpr uint16_t kMSCNonIndexedDraw = 0;
 
   struct VertexBufferEntry {
@@ -3356,10 +3358,15 @@ struct ReplayState {
                              uint32_t instance_count, uint32_t start_element,
                              int32_t base_vertex, uint32_t start_instance,
                              bool indexed, WMTIndexType index_type) {
-    if (!render_enc_open || !pso || !pso->UsesStageInVertexDescriptor())
+    if (!render_enc_open || !pso)
       return;
 
-    if (pso->RequiresMSCStageInFunction() && !vs_arg_buf.handle) {
+    const bool stage_in = pso->UsesStageInVertexDescriptor();
+    const bool vertex_pull = pso->GetIAInputSlotMask() != 0 && !stage_in;
+    if (!stage_in && !vertex_pull)
+      return;
+
+    if (stage_in && pso->RequiresMSCStageInFunction() && !vs_arg_buf.handle) {
       uint64_t zero_ab[1] = {};
       msc_vertex_arg_buf = MakeTransientBuffer(device, sizeof(zero_ab));
       if (msc_vertex_arg_buf.handle) {
@@ -3393,26 +3400,32 @@ struct ReplayState {
         indexed ? (uint16_t)((uint16_t)index_type + 1u) : kMSCNonIndexedDraw;
 
     msc_draw_args_buf = MakeTransientBuffer(device, sizeof(params));
+    const uint32_t draw_args_slot =
+        stage_in ? kMSCDrawArgumentsSlot : kM12VertexPullDrawArgumentsSlot;
     if (msc_draw_args_buf.handle) {
       msc_draw_args_buf.updateContents(0, &params, sizeof(params));
-      render_enc.setVertexBuffer(msc_draw_args_buf, 0, kMSCDrawArgumentsSlot);
+      render_enc.setVertexBuffer(msc_draw_args_buf, 0, draw_args_slot);
       render_enc.useResource(msc_draw_args_buf, WMTResourceUsageRead,
                              WMTRenderStageVertex);
     }
 
     msc_uniforms_buf = MakeTransientBuffer(device, sizeof(draw_info));
+    const uint32_t draw_info_slot =
+        stage_in ? kMSCUniformsSlot : kM12VertexPullDrawInfoSlot;
     if (msc_uniforms_buf.handle) {
       msc_uniforms_buf.updateContents(0, &draw_info, sizeof(draw_info));
-      render_enc.setVertexBuffer(msc_uniforms_buf, 0, kMSCUniformsSlot);
+      render_enc.setVertexBuffer(msc_uniforms_buf, 0, draw_info_slot);
       render_enc.useResource(msc_uniforms_buf, WMTResourceUsageRead,
                              WMTRenderStageVertex);
     }
 
     QTRACE("BindMSCDrawParameters: indexed=%u count=%u inst=%u start=%u "
-           "msc_start=0 base=%d start_inst=%u index_type=%u slots=%u/%u",
+           "msc_start=0 base=%d start_inst=%u index_type=%u slots=%u/%u "
+           "stage_in=%u vertex_pull=%u",
            indexed ? 1u : 0u, element_count, instance_count, start_element,
            base_vertex, start_instance, (unsigned)index_type,
-           kMSCDrawArgumentsSlot, kMSCUniformsSlot);
+           draw_args_slot, draw_info_slot, stage_in ? 1u : 0u,
+           vertex_pull ? 1u : 0u);
   }
 
   void ApplyVertexBuffers(MTLD3D12Device *device) {
