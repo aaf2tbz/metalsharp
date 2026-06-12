@@ -148,6 +148,19 @@ The current honest shader feature posture is:
 `dxil_to_msl_proven`, and the contract comparator fails if shader compliance
 depends only on semantic coverage.
 
+The M12 shader engine is defined as its own contract because shader correctness
+spans DXIL parsing, MSL lowering, binding manifests, PSO creation, descriptor
+binding, shader cache behavior, offline corpus replay, and live render probes.
+Run the structural shader-engine gate before relying on game captures:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/validate-shader-engine.py \
+  --json tools/d3d12-metal-sdk/results/shader-engine-audit-metalsharp.json
+```
+
+The contract is `contracts/d3d12-shader-engine-contract.json`, with the
+reader-facing map in `docs/architecture/m12-shader-engine.md`.
+
 The default required probe groups prove:
 
 - `probe-loader`: the Wine process resolves the intended DXMT D3D12/DXGI route.
