@@ -252,6 +252,61 @@ def audit_pipeline(
     return row, failures, warnings, access_issues
 
 
+def count_by_kind(items: list[dict[str, str]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        kind = item.get("kind", "unknown")
+        counts[kind] = counts.get(kind, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def build_replayability(
+    rows: list[dict[str, Any]], access_issues: list[dict[str, str]]
+) -> dict[str, Any]:
+    input_layout_pso_count = sum(1 for row in rows if row["input_elements"] > 0)
+    captured_input_layout_pso_count = sum(
+        1 for row in rows if row["input_elements"] > 0 and row["metadata_source"] == "captured"
+    )
+    missing_input_layout_pso_count = sum(
+        1 for row in rows if row["input_elements"] > 0 and row["metadata_source"] == "missing"
+    )
+    legacy_capture_count = sum(
+        1 for issue in access_issues if issue.get("kind") == "missing-captured-input-layout"
+    )
+
+    if input_layout_pso_count == 0:
+        vertex_status = "not-applicable"
+        recommendation = "Cache has no render PSOs with D3D12 input-layout elements."
+    elif missing_input_layout_pso_count == 0:
+        vertex_status = "complete"
+        recommendation = "Cache can prove D3D12 vertex/PSO metadata ordering offline."
+    elif captured_input_layout_pso_count == 0:
+        vertex_status = "legacy-cache"
+        recommendation = (
+            "Cache predates captured input_layout.elements for all input-layout PSOs; "
+            "use this for shader sidecar checks only, or recapture PSO metadata before "
+            "requiring exact vertex replay proof."
+        )
+    else:
+        vertex_status = "partial"
+        recommendation = (
+            "Cache has mixed PSO metadata coverage; captured PSOs can prove vertex "
+            "metadata ordering, older PSOs need an offline recapture before strict replay."
+        )
+
+    return {
+        "vertex_metadata_status": vertex_status,
+        "input_layout_pso_count": input_layout_pso_count,
+        "captured_input_layout_pso_count": captured_input_layout_pso_count,
+        "missing_input_layout_pso_count": missing_input_layout_pso_count,
+        "legacy_capture_count": legacy_capture_count,
+        "can_strictly_replay_vertex_metadata": input_layout_pso_count > 0
+        and missing_input_layout_pso_count == 0,
+        "needs_offline_recapture_for_strict_vertex_replay": missing_input_layout_pso_count > 0,
+        "recommendation": recommendation,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", required=True, help="Directory containing pso-render JSON and shader sidecars.")
@@ -292,6 +347,7 @@ def main() -> int:
             warnings.extend(row_warnings)
             access_issues.extend(row_access)
 
+    replayability = build_replayability(rows, access_issues)
     report = {
         "schema": "metalsharp.d3d12-metal.offline-pso-shader-replay.v1",
         "cache": str(cache),
@@ -306,6 +362,10 @@ def main() -> int:
         "metadata_missing_count": sum(1 for row in rows if row["metadata_source"] == "missing" and row["input_elements"] > 0),
         "vertex_pull_pso_count": sum(1 for row in rows if row["vertex_pull_calls"] > 0),
         "fullscreen_vertex_id_count": sum(1 for row in rows if row["input_elements"] == 0 and row["vid_assignment"]),
+        "failure_kinds": count_by_kind(failures),
+        "warning_kinds": count_by_kind(warnings),
+        "access_issue_kinds": count_by_kind(access_issues),
+        "replayability": replayability,
         "failures": failures,
         "warnings": warnings,
         "access_issues": access_issues,

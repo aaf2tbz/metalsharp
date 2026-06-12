@@ -35,6 +35,13 @@ harness therefore cannot prove exact table metadata for those older manifests
 without a new offline-only capture/dump artifact. It did not find unexplained
 vertex metadata failures in the artifacts it could inspect.
 
+Phase 8 follow-up: `docs/roadmaps/d3d12-offline-cache-preflight.md` records the
+same cache with the replay tool's machine-readable `replayability` summary. The
+current RE4 cache is classified as `legacy-cache`: shader sidecar checks are
+still useful, but strict vertex/PSO metadata replay needs a new offline
+capture/dump artifact because all 537 input-layout PSOs are missing captured
+`input_layout.elements`.
+
 ## Result
 
 The offline gates required for phases 0-7 are complete for this PR branch. The
