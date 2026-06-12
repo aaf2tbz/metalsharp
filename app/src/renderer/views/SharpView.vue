@@ -184,6 +184,7 @@ const componentDisplayName: Record<string, string> = {
   "faudio": "FAudio",
   "fmod": "FMOD Audio",
   "d3d12_agility": "D3D12 Agility",
+  "m12_native_fallback_assets": "M12 Build Fallback",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
@@ -267,6 +268,8 @@ function m12BottleItems(bottle: BottleManifest): M12BottleItem[] {
     ?? "D3D12, DXGI, Winemetal, NVAPI/NVNGX, and prefix route DLLs";
   const agilityDetail = reportAction(report, "d3d12_agility")?.detail
     ?? "D3D12 Agility and DXIL payload staged for the selected game";
+  const nativeFallbackDetail = reportAction(report, "m12_native_fallback_assets")?.detail
+    ?? "Xcode CLI fallback can rebuild missing M12 native shader/shim assets";
   const steamDetail = reportAction(report, "steam_identity")?.detail
     ?? "steam_appid, real Steam DLLs, or active Goldberg files refreshed";
 
@@ -277,6 +280,14 @@ function m12BottleItems(bottle: BottleManifest): M12BottleItem[] {
       detail: "M12 shader contract, cache paths, and launch env",
       state: report ? "ready" : "unknown",
       repair: "doctor",
+    },
+    {
+      id: "native_fallback",
+      label: "Build Fallback",
+      detail: nativeFallbackDetail,
+      state: m12ItemState(bottle, report, ["m12_native_fallback_assets"]),
+      repair: "component",
+      component: "m12_native_fallback_assets",
     },
     {
       id: "dxmt_runtime",

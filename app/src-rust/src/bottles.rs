@@ -13,6 +13,10 @@ use walkdir::WalkDir;
 
 const BOTTLES_DIR: &str = "bottles";
 const COMPATDATA_DIR: &str = "compatdata";
+const M12_NATIVE_FALLBACK_COMPONENT_ID: &str = "m12_native_fallback_assets";
+const M12_NATIVE_FALLBACK_MARKER: &str = "m12-native-fallback.json";
+const M12_NATIVE_FALLBACK_DYLIB: &str = "libm12-native-fallback.dylib";
+const M12_NATIVE_FALLBACK_METALLIB: &str = "m12-native-fallback.metallib";
 
 const VCPP_X64_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
 const VCPP_X86_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x86.exe";
@@ -1970,6 +1974,62 @@ pub fn repair_component(
         });
     }
 
+    if component_id == M12_NATIVE_FALLBACK_COMPONENT_ID {
+        let asset_dir = m12_native_fallback_assets_dir_for_manifest(&manifest);
+        let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
+        let toolchain_available = xcode_metal_toolchain_available();
+        if dry_run {
+            let state = inspect_m12_native_fallback_assets_for_manifest(&manifest).unwrap_or(ComponentState::Missing);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if state == ComponentState::Installed {
+                    "already_installed"
+                } else if toolchain_available {
+                    "build_available"
+                } else {
+                    "asset_missing"
+                }
+                .to_string(),
+                detail: if state == ComponentState::Installed {
+                    "M12 native fallback assets are already built and staged for this bottle".to_string()
+                } else if toolchain_available {
+                    "Xcode command-line tools can build and stage missing M12 native fallback assets".to_string()
+                } else {
+                    "Xcode command-line build tools are missing; run xcode-select --install and install the Metal Toolchain"
+                        .to_string()
+                },
+                asset_path: Some(asset_dir.to_string_lossy().to_string()),
+                log_path: Some(log_path.to_string_lossy().to_string()),
+                pid: None,
+            });
+        }
+
+        let staged = stage_m12_native_fallback_assets(&manifest, &log_path)?;
+        let state = inspect_m12_native_fallback_assets_for_manifest(&manifest).unwrap_or(ComponentState::Missing);
+        if state != ComponentState::Installed {
+            return Err("M12 native fallback asset repair did not verify after staging".into());
+        }
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: "installed".to_string(),
+            detail: format!(
+                "Built and staged {} M12 native fallback shim/shader asset(s) via Xcode command-line tools",
+                staged
+            ),
+            asset_path: Some(asset_dir.to_string_lossy().to_string()),
+            log_path: Some(log_path.to_string_lossy().to_string()),
+            pid: None,
+        });
+    }
+
     if component_id == "gptk_prefix" {
         let home = dirs::home_dir().ok_or("no home dir")?;
         let status = crate::platform::gptk_prefix_status(&home);
@@ -2882,6 +2942,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
                 "vcrun2019_x64",
                 "vcrun2019_x86",
                 "gpu_vendor_stubs",
+                M12_NATIVE_FALLBACK_COMPONENT_ID,
                 "corefonts",
             ][..],
             crate::mtsp::engine::PipelineId::M12,
@@ -3316,6 +3377,8 @@ fn inspect_components_for_manifest(
             let fallback = inspect_component_state(prefix, &component.id, component.state);
             let state = if component.id == "d3d12_agility" {
                 inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
+            } else if component.id == M12_NATIVE_FALLBACK_COMPONENT_ID {
+                inspect_m12_native_fallback_assets_for_manifest(manifest).unwrap_or(fallback)
             } else if matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod") {
                 inspect_mono_fna_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
             } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
@@ -3523,6 +3586,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "d3d9" | "d3d10" | "d3d10_1" | "d3d11" | "d3d12" | "dxgi" => {
             inspect_runtime_dll_component(id).unwrap_or(fallback)
         },
+        M12_NATIVE_FALLBACK_COMPONENT_ID => fallback,
         "webview2" => {
             if drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
                 || drive_c.join("Program Files").join("Microsoft").join("EdgeWebView").exists()
@@ -3819,6 +3883,156 @@ fn inspect_d3d12_agility_component_for_manifest(manifest: &BottleManifest) -> Op
         Ok(inspection) if inspection.partially_staged() => Some(ComponentState::NeedsRepair),
         Ok(_) => Some(ComponentState::Missing),
         Err(_) => Some(ComponentState::Missing),
+    }
+}
+
+fn m12_native_fallback_assets_dir_for_manifest(manifest: &BottleManifest) -> PathBuf {
+    if let Some(game_dir) = manifest.game_install_path.as_deref() {
+        return PathBuf::from(game_dir).join(".metalsharp").join("m12-native-fallback");
+    }
+    bottle_dir(&manifest.id).join("assets").join("m12-native-fallback")
+}
+
+fn inspect_m12_native_fallback_assets_for_manifest(manifest: &BottleManifest) -> Option<ComponentState> {
+    if !matches!(manifest.runtime_profile, RuntimeProfile::M12) && manifest.preferred_pipeline.as_deref() != Some("m12")
+    {
+        return None;
+    }
+    let dir = m12_native_fallback_assets_dir_for_manifest(manifest);
+    let metallib = dir.join(M12_NATIVE_FALLBACK_METALLIB);
+    let dylib = dir.join(M12_NATIVE_FALLBACK_DYLIB);
+    let marker = dir.join(M12_NATIVE_FALLBACK_MARKER);
+    let metallib_ok = file_nonempty(&metallib);
+    let dylib_ok = file_nonempty(&dylib);
+    let marker_ok = file_nonempty(&marker);
+    Some(if metallib_ok && dylib_ok && marker_ok {
+        ComponentState::Installed
+    } else if metallib.exists() || dylib.exists() || marker.exists() {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    })
+}
+
+fn file_nonempty(path: &Path) -> bool {
+    path.metadata().map(|metadata| metadata.len() > 0).unwrap_or(false)
+}
+
+fn xcode_metal_toolchain_available() -> bool {
+    xcrun_tool_available("clang") && xcrun_tool_available("metal") && xcrun_tool_available("metallib")
+}
+
+fn xcrun_tool_available(tool: &str) -> bool {
+    Command::new("xcrun")
+        .args(["--find", tool])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn stage_m12_native_fallback_assets(
+    manifest: &BottleManifest,
+    log_path: &Path,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    if !xcode_metal_toolchain_available() {
+        return Err(
+            "Xcode Metal toolchain is not available; run xcode-select --install and install the Metal Toolchain".into(),
+        );
+    }
+
+    let asset_dir = m12_native_fallback_assets_dir_for_manifest(manifest);
+    fs::create_dir_all(&asset_dir)?;
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let source = asset_dir.join("m12-native-fallback.metal");
+    let shim_source = asset_dir.join("m12-native-fallback.c");
+    let air = asset_dir.join("m12-native-fallback.air");
+    let metallib = asset_dir.join(M12_NATIVE_FALLBACK_METALLIB);
+    let dylib = asset_dir.join(M12_NATIVE_FALLBACK_DYLIB);
+    let marker = asset_dir.join(M12_NATIVE_FALLBACK_MARKER);
+    fs::write(
+        &source,
+        r#"#include <metal_stdlib>
+using namespace metal;
+
+kernel void m12_native_fallback_probe(device uint *out [[buffer(0)]], uint id [[thread_position_in_grid]]) {
+    if (id == 0) {
+        out[0] = 0x4d313246u;
+    }
+}
+"#,
+    )?;
+    fs::write(
+        &shim_source,
+        r#"#include <stdint.h>
+
+__attribute__((visibility("default"))) uint32_t m12_native_fallback_probe(void) {
+    return 0x4d313246u;
+}
+"#,
+    )?;
+
+    let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
+    writeln!(log, "M12 native fallback asset build")?;
+    writeln!(log, "asset_dir={}", asset_dir.display())?;
+
+    let mut clang = Command::new("xcrun");
+    clang
+        .arg("clang")
+        .arg("-dynamiclib")
+        .arg("-fvisibility=hidden")
+        .arg("-install_name")
+        .arg("@rpath/libm12-native-fallback.dylib")
+        .arg(&shim_source)
+        .arg("-o")
+        .arg(&dylib);
+    run_logged_command(&mut log, &mut clang, "xcrun clang", log_path)?;
+    let mut metal = Command::new("xcrun");
+    metal.arg("metal").arg("-c").arg(&source).arg("-o").arg(&air);
+    run_logged_command(&mut log, &mut metal, "xcrun metal", log_path)?;
+    let mut metallib_cmd = Command::new("xcrun");
+    metallib_cmd.arg("metallib").arg(&air).arg("-o").arg(&metallib);
+    run_logged_command(&mut log, &mut metallib_cmd, "xcrun metallib", log_path)?;
+
+    fs::write(
+        &marker,
+        serde_json::to_vec_pretty(&json!({
+            "component": M12_NATIVE_FALLBACK_COMPONENT_ID,
+            "built_at": timestamp_secs(),
+            "source": source.to_string_lossy(),
+            "shim_source": shim_source.to_string_lossy(),
+            "dylib": dylib.to_string_lossy(),
+            "metallib": metallib.to_string_lossy(),
+            "builder": "xcrun clang + xcrun metal + xcrun metallib",
+        }))?,
+    )?;
+
+    Ok(3)
+}
+
+fn run_logged_command(
+    log: &mut fs::File,
+    command: &mut Command,
+    label: &str,
+    log_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    writeln!(log, "running: {}", label)?;
+    let output = command.output()?;
+    writeln!(log, "status={}", output.status)?;
+    if !output.stdout.is_empty() {
+        writeln!(log, "stdout:\n{}", String::from_utf8_lossy(&output.stdout))?;
+    }
+    if !output.stderr.is_empty() {
+        writeln!(log, "stderr:\n{}", String::from_utf8_lossy(&output.stderr))?;
+    }
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{} failed; see {}", label, log_path.display()).into())
     }
 }
 
@@ -4667,6 +4881,24 @@ fn component_source_policies_for_manifest(manifest: &BottleManifest) -> Vec<Comp
         .installed_components
         .iter()
         .map(|component| {
+            if component.id == M12_NATIVE_FALLBACK_COMPONENT_ID {
+                let state = inspect_m12_native_fallback_assets_for_manifest(manifest).unwrap_or(component.state);
+                let available = state == ComponentState::Installed || xcode_metal_toolchain_available();
+                return ComponentSourcePolicy {
+                    id: component.id.clone(),
+                    source: if available { "xcode_cli_build_fallback" } else { "missing_local_asset" }.to_string(),
+                    available,
+                    detail: if state == ComponentState::Installed {
+                        "M12 native fallback assets are built and staged for this bottle"
+                    } else if available {
+                        "Repair can invoke Xcode command-line tools to rebuild missing M12 shims/assets"
+                    } else {
+                        "Requires Xcode command-line build tools before M12 fallback assets can be rebuilt"
+                    }
+                    .to_string(),
+                    path: Some(m12_native_fallback_assets_dir_for_manifest(manifest).to_string_lossy().to_string()),
+                };
+            }
             if matches!(component.id.as_str(), "easyanticheat_eos" | "battleye") {
                 if let Some(installer) = resolve_game_runtime_asset_installer(manifest, &component.id) {
                     return ComponentSourcePolicy {
@@ -4771,6 +5003,21 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             path: path.map(|p| p.to_string_lossy().to_string()),
         };
     }
+    if id == M12_NATIVE_FALLBACK_COMPONENT_ID {
+        let available = xcode_metal_toolchain_available();
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: if available { "xcode_cli_build_fallback" } else { "missing_local_asset" }.to_string(),
+            available,
+            detail: if available {
+                "Uses Xcode command-line tools as the M12 fallback path for rebuilding missing native shims/assets"
+            } else {
+                "Requires Xcode command-line build tools before M12 fallback assets can be rebuilt"
+            }
+            .to_string(),
+            path: None,
+        };
+    }
     let installer = resolve_component_installer(id, arch);
     let source = installer
         .as_ref()
@@ -4795,6 +5042,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
             "d3d12_agility" => "Uses NuGet Microsoft.Direct3D.D3D12 x64 runtime payload for the game-declared D3D12SDKVersion",
+            M12_NATIVE_FALLBACK_COMPONENT_ID => "Uses Xcode command-line tools to rebuild missing M12 native fallback assets",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
             "xna" => {
                 "Uses Steam CommonRedist, Sharp Library installer bottles, or ~/.metalsharp/runtime/redist XNA 4.0 installer"
@@ -4825,6 +5073,9 @@ fn component_action_detail(id: &str) -> String {
         "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
         "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
         "d3d12_agility" => "Download and stage the D3D12 Agility SDK payload".to_string(),
+        M12_NATIVE_FALLBACK_COMPONENT_ID => {
+            "Build and stage M12 native fallback assets with Xcode command-line tools".to_string()
+        },
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet40" => "Install the native .NET Framework 4.0 runtime for CLR v4 titles".to_string(),
         "dotnet48" => "Install a compatible .NET 4.x runtime strategy for this bottle".to_string(),
@@ -6706,12 +6957,59 @@ mod tests {
         assert!(m12_ids.contains(&"gpu_vendor_stubs"));
         assert!(m12_ids.contains(&"corefonts"));
         assert!(m12_ids.contains(&"d3d12_agility"));
+        assert!(m12_ids.contains(&M12_NATIVE_FALLBACK_COMPONENT_ID));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
 
         let m13 = default_components_for(RuntimeProfile::M13);
         let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m13_ids.contains(&"gpu_vendor_stubs"));
         assert!(!m13_ids.contains(&"gptk_amd_stub"));
+    }
+
+    #[test]
+    fn m12_native_fallback_assets_are_game_local_and_repairable() {
+        let game_dir = test_dir("m12-native-fallback-assets");
+        let now = timestamp_secs();
+        let manifest = BottleManifest {
+            id: "steam_1245620".into(),
+            name: "M12 Game".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(1245620),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Win64,
+            runtime_profile: RuntimeProfile::M12,
+            preferred_pipeline: Some("m12".into()),
+            installed_components: default_components_for(RuntimeProfile::M12),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: Some(game_dir.to_string_lossy().to_string()),
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::NeedsRepair,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let asset_dir = game_dir.join(".metalsharp").join("m12-native-fallback");
+        assert_eq!(m12_native_fallback_assets_dir_for_manifest(&manifest), asset_dir);
+        assert_eq!(inspect_m12_native_fallback_assets_for_manifest(&manifest), Some(ComponentState::Missing));
+
+        fs::create_dir_all(&asset_dir).expect("create fallback asset dir");
+        fs::write(asset_dir.join(M12_NATIVE_FALLBACK_MARKER), b"{}").expect("write marker");
+        assert_eq!(inspect_m12_native_fallback_assets_for_manifest(&manifest), Some(ComponentState::NeedsRepair));
+
+        fs::write(asset_dir.join(M12_NATIVE_FALLBACK_METALLIB), b"metallib").expect("write metallib");
+        assert_eq!(inspect_m12_native_fallback_assets_for_manifest(&manifest), Some(ComponentState::NeedsRepair));
+
+        fs::write(asset_dir.join(M12_NATIVE_FALLBACK_DYLIB), b"dylib").expect("write dylib");
+        assert_eq!(inspect_m12_native_fallback_assets_for_manifest(&manifest), Some(ComponentState::Installed));
+
+        let _ = fs::remove_dir_all(&game_dir);
     }
 
     #[test]
