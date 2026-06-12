@@ -287,6 +287,7 @@ struct LaunchLogContext<'a> {
     exe_name: &'a str,
     args: &'a [String],
     cache_paths: Option<&'a CachePaths>,
+    m12_unix_sidecars: &'a [PathBuf],
 }
 
 #[derive(Default)]
@@ -724,6 +725,7 @@ pub fn launch_custom_with_options(
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
+    let m12_unix_sidecars = stage_m12_unix_sidecars(node, &ms_root, exe_dir)?;
     let cache_paths = build_cache_paths(&home, node, launch_id);
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -750,6 +752,7 @@ pub fn launch_custom_with_options(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    apply_m12_unix_sidecar_env(&mut cmd, node, exe_dir);
 
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
@@ -769,6 +772,8 @@ pub fn launch_custom_with_options(
             writeln!(log, "shader_cache={}/", cache.shader)?;
             writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
         }
+        write_m12_unix_sidecar_log(&mut log, &m12_unix_sidecars)?;
+        write_launch_env_log(&mut log, &cmd)?;
         writeln!(log, "--- wine output ---")?;
         let stdout = log.try_clone()?;
         cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
@@ -958,6 +963,7 @@ fn launch_d3dmetal_gptk_with_context(
             exe_name: &exe_name,
             args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
+            m12_unix_sidecars: &[],
         },
     )?;
     let child = cmd.spawn()?;
@@ -1010,6 +1016,7 @@ fn launch_dxmt_metal_with_context(
     deploy_prefix_route_dlls(&recipe, &prefix)?;
 
     deploy_d3d12_agility_sidecars(appid, node, game_dir)?;
+    let m12_unix_sidecars = stage_m12_unix_sidecars(node, &ms_root, exe_dir)?;
 
     if !recipe.anti_cheat.is_empty() {
         deploy_steam_appid(game_dir, appid);
@@ -1057,6 +1064,7 @@ fn launch_dxmt_metal_with_context(
     for (key, value) in extra_env {
         cmd.env(key, value);
     }
+    apply_m12_unix_sidecar_env(&mut cmd, node, exe_dir);
 
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
@@ -1071,6 +1079,7 @@ fn launch_dxmt_metal_with_context(
             exe_name: &exe_name,
             args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
+            m12_unix_sidecars: &m12_unix_sidecars,
         },
     )?;
     let child = cmd.spawn()?;
@@ -1161,6 +1170,7 @@ fn launch_wine_bare_with_context(
             exe_name: &exe_name,
             args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
+            m12_unix_sidecars: &[],
         },
     )?;
     let child = cmd.spawn()?;
@@ -1191,10 +1201,60 @@ fn attach_launch_log(
         writeln!(log, "shader_cache={}/", cache.shader)?;
         writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
     }
+    write_m12_unix_sidecar_log(&mut log, context.m12_unix_sidecars)?;
+    write_launch_env_log(&mut log, cmd)?;
     writeln!(log, "--- wine output ---")?;
     let stdout = log.try_clone()?;
     cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
     Ok(())
+}
+
+fn write_m12_unix_sidecar_log(log: &mut dyn Write, sidecars: &[PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+    if sidecars.is_empty() {
+        return Ok(());
+    }
+
+    writeln!(log, "m12_unix_sidecars=[")?;
+    for path in sidecars {
+        writeln!(log, "  {}", path.display())?;
+    }
+    writeln!(log, "]")?;
+    Ok(())
+}
+
+fn write_launch_env_log(log: &mut dyn Write, cmd: &Command) -> Result<(), Box<dyn std::error::Error>> {
+    let mut entries = Vec::new();
+    for (key, value) in cmd.get_envs() {
+        let key = key.to_string_lossy();
+        if !launch_log_env_key_allowed(&key) {
+            continue;
+        }
+        let Some(value) = value else {
+            continue;
+        };
+        entries.push((key.to_string(), value.to_string_lossy().to_string()));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (key, value) in entries {
+        writeln!(log, "env.{}={}", key, value)?;
+    }
+    Ok(())
+}
+
+fn launch_log_env_key_allowed(key: &str) -> bool {
+    key == "WINEPREFIX"
+        || key == "WINEDLLOVERRIDES"
+        || key == "WINEDLLPATH"
+        || key == "WINEDEBUG"
+        || key == "WINEDEBUGGER"
+        || key == "WINEMSYNC"
+        || key == "DYLD_LIBRARY_PATH"
+        || key == "DYLD_FALLBACK_LIBRARY_PATH"
+        || key == "MS_GRAPHICS_BACKEND"
+        || key.starts_with("DXMT_")
+        || key.starts_with("METALSHARP_")
+        || key.starts_with("SteamApp")
+        || key.starts_with("SteamGame")
 }
 
 fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>) -> std::io::Result<()> {
@@ -1591,6 +1651,75 @@ fn dxmt_winemetal_unixlib_path(ms_root: &Path) -> String {
         return ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so").to_string_lossy().to_string();
     }
     "winemetal.so".to_string()
+}
+
+const M12_UNIX_SIDECARS: &[&str] =
+    &["winemetal.so", "winemac.so", "ntdll.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+
+fn stage_m12_unix_sidecars(
+    node: &PipelineNode,
+    ms_root: &Path,
+    exe_dir: &Path,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    if node.id != PipelineId::M12 {
+        return Ok(Vec::new());
+    }
+
+    let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
+    std::fs::create_dir_all(&sidecar_dir)?;
+    let mut staged = Vec::new();
+
+    for filename in M12_UNIX_SIDECARS {
+        let source = m12_unix_sidecar_source(ms_root, filename)?;
+        for dest_dir in [exe_dir, sidecar_dir.as_path()] {
+            let dest = dest_dir.join(filename);
+            std::fs::copy(&source, &dest).map_err(|e| {
+                format!("failed to stage M12 Unix sidecar {} to {}: {}", source.display(), dest.display(), e)
+            })?;
+            staged.push(dest);
+        }
+    }
+
+    Ok(staged)
+}
+
+fn m12_unix_sidecar_source(ms_root: &Path, filename: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let candidates = [
+        ms_root.join("lib").join("dxmt").join("x86_64-unix").join(filename),
+        ms_root.join("lib").join("wine").join("x86_64-unix").join(filename),
+    ];
+
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .ok_or_else(|| format!("missing M12 Unix sidecar {} in DXMT/Wine runtime", filename).into())
+}
+
+fn apply_m12_unix_sidecar_env(cmd: &mut Command, node: &PipelineNode, exe_dir: &Path) {
+    if node.id != PipelineId::M12 {
+        return;
+    }
+
+    cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
+    if crate::platform::current() == crate::platform::HostPlatform::Macos {
+        let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
+        prepend_command_path_env(cmd, "DYLD_LIBRARY_PATH", &[exe_dir, sidecar_dir.as_path()]);
+        prepend_command_path_env(cmd, "DYLD_FALLBACK_LIBRARY_PATH", &[exe_dir, sidecar_dir.as_path()]);
+    }
+}
+
+fn prepend_command_path_env(cmd: &mut Command, key: &str, prefixes: &[&Path]) {
+    let prefix = prefixes.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>().join(":");
+    let existing = cmd
+        .get_envs()
+        .find(|(env_key, _)| env_key.to_string_lossy() == key)
+        .and_then(|(_, value)| value.map(|value| value.to_string_lossy().to_string()));
+    let value = match existing {
+        Some(existing) if !existing.is_empty() => format!("{}:{}", prefix, existing),
+        _ => prefix,
+    };
+    cmd.env(key, value);
 }
 
 fn route_library_env_pairs(ms_root: &PathBuf, paths: &[&str]) -> Vec<(String, String)> {
@@ -4141,6 +4270,56 @@ mod tests {
     }
 
     #[test]
+    fn m12_stages_cube_style_unix_sidecars_and_forces_basename_unixlib() {
+        let home = test_dir("m12-unix-sidecars");
+        let ms_root = home.join(".metalsharp").join("runtime").join("wine");
+        let dxmt_unix = ms_root.join("lib").join("dxmt").join("x86_64-unix");
+        let wine_unix = ms_root.join("lib").join("wine").join("x86_64-unix");
+        let exe_dir = home.join("Game");
+        std::fs::create_dir_all(&dxmt_unix).expect("create dxmt unix");
+        std::fs::create_dir_all(&wine_unix).expect("create wine unix");
+        std::fs::create_dir_all(&exe_dir).expect("create game dir");
+
+        for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+            std::fs::write(dxmt_unix.join(filename), filename.as_bytes()).expect("write dxmt sidecar");
+        }
+        for filename in ["winemac.so", "ntdll.so"] {
+            std::fs::write(wine_unix.join(filename), filename.as_bytes()).expect("write wine sidecar");
+        }
+
+        let node = get_pipeline(PipelineId::M12);
+        let staged = stage_m12_unix_sidecars(node, &ms_root, &exe_dir).expect("stage sidecars");
+
+        assert_eq!(staged.len(), M12_UNIX_SIDECARS.len() * 2);
+        for filename in M12_UNIX_SIDECARS {
+            assert!(exe_dir.join(filename).is_file(), "missing root sidecar {}", filename);
+            assert!(
+                exe_dir.join(".metalsharp").join("unix").join(filename).is_file(),
+                "missing unix sidecar {}",
+                filename
+            );
+        }
+
+        let mut cmd = Command::new("wine");
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", "/old/runtime/winemetal.so");
+        cmd.env("DYLD_LIBRARY_PATH", "/runtime/lib");
+        apply_m12_unix_sidecar_env(&mut cmd, node, &exe_dir);
+
+        let env = command_env_map(&cmd);
+        assert_eq!(env.get("DXMT_WINEMETAL_UNIXLIB").map(String::as_str), Some("winemetal.so"));
+        if crate::platform::current() == crate::platform::HostPlatform::Macos {
+            let dyld = env.get("DYLD_LIBRARY_PATH").expect("dyld path");
+            assert!(dyld.starts_with(&format!(
+                "{}:{}:",
+                exe_dir.display(),
+                exe_dir.join(".metalsharp").join("unix").display()
+            )));
+        }
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn steam_pipeline_env_allows_plain_wine_fallback_context() {
         let home = test_dir("steam-wine-env");
         let node = get_pipeline(PipelineId::WineBare);
@@ -4742,6 +4921,14 @@ mod tests {
 
     fn last_env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
         env.iter().rev().find(|(env_key, _)| env_key == key).map(|(_, value)| value.as_str())
+    }
+
+    fn command_env_map(cmd: &Command) -> std::collections::HashMap<String, String> {
+        cmd.get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| (key.to_string_lossy().to_string(), value.to_string_lossy().to_string()))
+            })
+            .collect()
     }
 
     fn unique_suffix() -> u128 {
