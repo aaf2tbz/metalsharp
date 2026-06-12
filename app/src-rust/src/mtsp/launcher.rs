@@ -287,6 +287,7 @@ struct LaunchLogContext<'a> {
     exe_name: &'a str,
     args: &'a [String],
     cache_paths: Option<&'a CachePaths>,
+    m12_launch_path: Option<&'static str>,
     m12_unix_sidecars: &'a [PathBuf],
 }
 
@@ -502,6 +503,7 @@ pub fn prepare_steam_pipeline_env(
     }
     if let Some(game_dir) = recipe.game_dir.as_ref() {
         cleanup_legacy_injections(game_dir)?;
+        prepare_steam_identity_for_pipeline(&home, game_dir, appid, pipeline_id);
         if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
             crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
         }
@@ -513,7 +515,7 @@ pub fn prepare_steam_pipeline_env(
     }
     deploy_recipe_dlls(&recipe)?;
 
-    let env = steam_pipeline_env_pairs(&home, node, appid);
+    let env = steam_pipeline_env_pairs(&home, node, appid, recipe.exe_path.as_deref());
     Ok((env, recipe))
 }
 
@@ -605,15 +607,40 @@ fn deploy_prefix_route_dlls(
         if !deploy.source_present {
             continue;
         }
-        if !matches!(
-            deploy.filename.as_str(),
-            "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll"
-        ) {
-            continue;
-        }
         std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
     }
+    verify_m12_prefix_route_surface(recipe, &system32)?;
     Ok(())
+}
+
+fn verify_m12_prefix_route_surface(
+    recipe: &super::recipe::LaunchRecipe,
+    system32: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let missing = required_m12_prefix_dlls(recipe)
+        .into_iter()
+        .filter(|filename| !system32.join(filename).is_file())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("M12 prefix route surface is incomplete: {}", missing.join(", ")).into())
+    }
+}
+
+fn required_m12_prefix_dlls(recipe: &super::recipe::LaunchRecipe) -> Vec<String> {
+    recipe
+        .dlls
+        .iter()
+        .filter(|dll| {
+            matches!(
+                dll.filename.as_str(),
+                "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll" | "winemetal.dll"
+            ) || dll.filename.starts_with("nvapi")
+                || dll.filename.starts_with("nvngx")
+        })
+        .map(|dll| dll.filename.clone())
+        .collect()
 }
 
 fn wine_debug_value() -> String {
@@ -713,7 +740,10 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
-    if node.uses_winedllpath_routing() || node.deploy_dlls.is_empty() {
+    if node.id == PipelineId::M12 {
+        validate_recipe_runtime(&recipe)?;
+        deploy_recipe_dlls(&recipe)?;
+    } else if node.uses_winedllpath_routing() || node.deploy_dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {
         deploy_recipe_dlls(&recipe)?;
@@ -725,7 +755,11 @@ pub fn launch_custom_with_options(
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
     let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
+    deploy_d3d12_agility_sidecars(launch_id, node, game_dir)?;
     let m12_unix_sidecars = stage_m12_unix_sidecars(node, &ms_root, exe_dir)?;
+    verify_m12_game_local_launch_path(node, &ms_root, exe_dir, &m12_unix_sidecars)?;
+    prepare_steam_identity_for_pipeline(&home, game_dir, launch_id, node.id);
     let cache_paths = build_cache_paths(&home, node, launch_id);
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -771,6 +805,9 @@ pub fn launch_custom_with_options(
         if let Some(cache) = cache_paths.as_ref() {
             writeln!(log, "shader_cache={}/", cache.shader)?;
             writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
+        }
+        if let Some(path) = m12_launch_path_name(node) {
+            writeln!(log, "m12_launch_path={}", path)?;
         }
         write_m12_unix_sidecar_log(&mut log, &m12_unix_sidecars)?;
         write_launch_env_log(&mut log, &cmd)?;
@@ -963,6 +1000,7 @@ fn launch_d3dmetal_gptk_with_context(
             exe_name: &exe_name,
             args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
+            m12_launch_path: None,
             m12_unix_sidecars: &[],
         },
     )?;
@@ -1017,10 +1055,9 @@ fn launch_dxmt_metal_with_context(
 
     deploy_d3d12_agility_sidecars(appid, node, game_dir)?;
     let m12_unix_sidecars = stage_m12_unix_sidecars(node, &ms_root, exe_dir)?;
+    verify_m12_game_local_launch_path(node, &ms_root, exe_dir, &m12_unix_sidecars)?;
 
-    if !recipe.anti_cheat.is_empty() {
-        deploy_steam_appid(game_dir, appid);
-    }
+    prepare_steam_identity_for_pipeline(&home, game_dir, appid, node.id);
 
     let cache_paths = build_cache_paths(&home, node, appid);
     if node.id == PipelineId::M12
@@ -1079,6 +1116,7 @@ fn launch_dxmt_metal_with_context(
             exe_name: &exe_name,
             args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
+            m12_launch_path: m12_launch_path_name(node),
             m12_unix_sidecars: &m12_unix_sidecars,
         },
     )?;
@@ -1131,7 +1169,7 @@ fn launch_wine_bare_with_context(
     validate_recipe_runtime(&recipe)?;
 
     if !recipe.anti_cheat.is_empty() {
-        deploy_steam_appid(game_dir, appid);
+        prepare_steam_identity_for_pipeline(&home, game_dir, appid, node.id);
     }
 
     let mut cmd = Command::new(&wine);
@@ -1170,6 +1208,7 @@ fn launch_wine_bare_with_context(
             exe_name: &exe_name,
             args: &recipe.launch_args,
             cache_paths: cache_paths.as_ref(),
+            m12_launch_path: None,
             m12_unix_sidecars: &[],
         },
     )?;
@@ -1197,6 +1236,9 @@ fn attach_launch_log(
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
     writeln!(log, "graphics_backend={}", context.node.graphics_backend)?;
+    if let Some(path) = context.m12_launch_path {
+        writeln!(log, "m12_launch_path={}", path)?;
+    }
     if let Some(cache) = context.cache_paths {
         writeln!(log, "shader_cache={}/", cache.shader)?;
         writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
@@ -1653,6 +1695,14 @@ fn dxmt_winemetal_unixlib_path(ms_root: &Path) -> String {
     "winemetal.so".to_string()
 }
 
+fn m12_launch_path_name(node: &PipelineNode) -> Option<&'static str> {
+    if node.id == PipelineId::M12 {
+        Some("game_local_dxmt_runtime")
+    } else {
+        None
+    }
+}
+
 const M12_UNIX_SIDECARS: &[&str] =
     &["winemetal.so", "winemac.so", "ntdll.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
 
@@ -1702,22 +1752,65 @@ fn apply_m12_unix_sidecar_env(cmd: &mut Command, node: &PipelineNode, exe_dir: &
     }
 
     cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
-    if crate::platform::current() == crate::platform::HostPlatform::Macos {
-        let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
-        prepend_command_path_env(cmd, "DYLD_LIBRARY_PATH", &[exe_dir, sidecar_dir.as_path()]);
-        prepend_command_path_env(cmd, "DYLD_FALLBACK_LIBRARY_PATH", &[exe_dir, sidecar_dir.as_path()]);
+    for (key, value) in m12_game_local_env_pairs(exe_dir) {
+        prepend_command_path_value_env(cmd, &key, &value);
+    }
+}
+
+fn m12_game_local_env_pairs(exe_dir: &Path) -> Vec<(String, String)> {
+    if crate::platform::current() != crate::platform::HostPlatform::Macos {
+        return Vec::new();
+    }
+    let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
+    let value = [exe_dir, sidecar_dir.as_path()]
+        .iter()
+        .map(|path| path.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(":");
+    vec![("DYLD_LIBRARY_PATH".to_string(), value.clone()), ("DYLD_FALLBACK_LIBRARY_PATH".to_string(), value)]
+}
+
+fn verify_m12_game_local_launch_path(
+    node: &PipelineNode,
+    ms_root: &Path,
+    exe_dir: &Path,
+    staged_sidecars: &[PathBuf],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if node.id != PipelineId::M12 {
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+    for filename in M12_UNIX_SIDECARS {
+        if !staged_sidecars.iter().any(|path| path == &exe_dir.join(filename)) {
+            missing.push(format!("game-local {}", exe_dir.join(filename).display()));
+        }
+        if !staged_sidecars.iter().any(|path| path == &exe_dir.join(".metalsharp").join("unix").join(filename)) {
+            missing.push(format!("sidecar {}", exe_dir.join(".metalsharp").join("unix").join(filename).display()));
+        }
+        let _ = m12_unix_sidecar_source(ms_root, filename)?;
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("M12 game-local launch path is incomplete: {}", missing.join(", ")).into())
     }
 }
 
 fn prepend_command_path_env(cmd: &mut Command, key: &str, prefixes: &[&Path]) {
     let prefix = prefixes.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>().join(":");
+    prepend_command_path_value_env(cmd, key, &prefix);
+}
+
+fn prepend_command_path_value_env(cmd: &mut Command, key: &str, prefix: &str) {
     let existing = cmd
         .get_envs()
         .find(|(env_key, _)| env_key.to_string_lossy() == key)
         .and_then(|(_, value)| value.map(|value| value.to_string_lossy().to_string()));
     let value = match existing {
         Some(existing) if !existing.is_empty() => format!("{}:{}", prefix, existing),
-        _ => prefix,
+        _ => prefix.to_string(),
     };
     cmd.env(key, value);
 }
@@ -1883,7 +1976,12 @@ fn shader_cache_has_runtime_artifacts(path: &PathBuf) -> bool {
     })
 }
 
-fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> Vec<(String, String)> {
+fn steam_pipeline_env_pairs(
+    home: &PathBuf,
+    node: &PipelineNode,
+    appid: u32,
+    exe_path: Option<&Path>,
+) -> Vec<(String, String)> {
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let cache_paths = build_cache_paths(home, node, appid);
     let appid_string = appid.to_string();
@@ -1903,6 +2001,12 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     if node.backend == "dxmt" {
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
         env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), dxmt_winemetal_unixlib_path(&ms_root)));
+    }
+    if node.id == PipelineId::M12 {
+        if let Some(exe_dir) = exe_path.and_then(Path::parent) {
+            env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
+            env.extend(m12_game_local_env_pairs(exe_dir));
+        }
     }
     env.push(("MS_GRAPHICS_BACKEND".to_string(), node.graphics_backend.to_string()));
     env.push(("WINEMSYNC".to_string(), "1".to_string()));
@@ -3169,16 +3273,21 @@ fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
         return;
     };
 
-    if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
-        ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
+    prepare_steam_identity_for_pipeline(&home, &game_dir, appid, pipeline_id);
+}
+
+fn prepare_steam_identity_for_pipeline(home: &Path, game_dir: &Path, appid: u32, pipeline_id: PipelineId) {
+    if goldberg_status_for_pipeline(home, game_dir, pipeline_id) {
+        ensure_steam_emu_for_pipeline_if_active(home, game_dir, appid, pipeline_id);
     } else {
         ensure_real_steam_dlls(
-            &home,
-            &game_dir,
+            home,
+            game_dir,
             appid,
             super::recipe::uses_steam_secure_launch_model(appid, pipeline_id),
         );
     }
+    deploy_steam_appid(game_dir, appid);
 }
 
 fn goldberg_deploy_targets(game_dir: &Path) -> Vec<PathBuf> {
@@ -3279,9 +3388,10 @@ fn goldberg_deploy_settings(steam_settings: &Path, appid: u32) {
     if !steam_settings.exists() {
         let _ = std::fs::create_dir_all(steam_settings);
     }
+    let steam_id = crate::steam::get_steam_id().unwrap_or_else(|| "76561198000000000".to_string());
     let _ = std::fs::write(steam_settings.join("force_steam_appid.txt"), appid.to_string());
     let _ = std::fs::write(steam_settings.join("account_name.txt"), "Player\n");
-    let _ = std::fs::write(steam_settings.join("user_steam_id.txt"), "76561198000000000\n");
+    let _ = std::fs::write(steam_settings.join("user_steam_id.txt"), format!("{}\n", steam_id));
 }
 
 pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) {
@@ -3541,10 +3651,20 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
                 }
             }
         }
+
+        if target == game_dir
+            || target.join("steam_api64.dll.orig").exists()
+            || target.join("steam_api.dll.orig").exists()
+            || target.join("steamclient64.dll.orig").exists()
+            || target.join("steamclient.dll.orig").exists()
+        {
+            goldberg_deploy_settings(&target.join("steam_settings"), appid);
+        }
     }
 
     // Validate steam_interfaces.txt — regenerate if missing or empty.
-    // This is the only repair we do at launch time; appid was set at toggle.
+    // Launch repair also refreshes appid/user settings above; interfaces still
+    // need DLL content, so regenerate after DLL repair.
     let steam_settings = game_dir.join("steam_settings");
     let interfaces_file = steam_settings.join("steam_interfaces.txt");
     let needs_interfaces = !interfaces_file.exists()
@@ -4127,7 +4247,7 @@ mod tests {
             let home = test_dir(&format!("dxmt-env-{:?}", pipeline_id));
             let node = get_pipeline(pipeline_id);
 
-            let env = steam_pipeline_env_pairs(&home, node, 42);
+            let env = steam_pipeline_env_pairs(&home, node, 42, None);
             let config = env.iter().find(|(key, _)| key == "DXMT_CONFIG").map(|(_, value)| value.as_str());
             let summary =
                 env.iter().find(|(key, _)| key == "METALSHARP_CACHE_SUMMARY").map(|(_, value)| value.as_str());
@@ -4213,7 +4333,7 @@ mod tests {
         let home = test_dir("m9-stuck-loading-env");
         let node = get_pipeline(PipelineId::M9);
 
-        let env = steam_pipeline_env_pairs(&home, node, 774361);
+        let env = steam_pipeline_env_pairs(&home, node, 774361, None);
 
         assert_eq!(last_env_value(&env, "DXMT_ASYNC_PIPELINE_COMPILE"), Some("0"));
         assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
@@ -4227,7 +4347,7 @@ mod tests {
         let home = test_dir("m32-env");
         let node = get_pipeline(PipelineId::M32);
 
-        let env = steam_pipeline_env_pairs(&home, node, 77);
+        let env = steam_pipeline_env_pairs(&home, node, 77, None);
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
         assert!(keys.contains("METALSHARP_SHADER_CACHE_PATH"));
@@ -4245,7 +4365,8 @@ mod tests {
         let home = test_dir("steam-env");
         let node = get_pipeline(PipelineId::M12);
 
-        let env = steam_pipeline_env_pairs(&home, node, 1583230);
+        let exe = home.join("Game").join("game.exe");
+        let env = steam_pipeline_env_pairs(&home, node, 1583230, Some(&exe));
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
         assert!(keys.contains("WINEDLLOVERRIDES"));
@@ -4324,7 +4445,7 @@ mod tests {
         let home = test_dir("steam-wine-env");
         let node = get_pipeline(PipelineId::WineBare);
 
-        let env = steam_pipeline_env_pairs(&home, node, 1);
+        let env = steam_pipeline_env_pairs(&home, node, 1, None);
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
 
         let runtime_lib_key = crate::platform::runtime_library_env(
@@ -4532,7 +4653,7 @@ mod tests {
         for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
             let home = test_dir(&format!("winedllpath-env-{:?}", pipeline_id));
             let node = get_pipeline(pipeline_id);
-            let env = steam_pipeline_env_pairs(&home, node, 42);
+            let env = steam_pipeline_env_pairs(&home, node, 42, None);
             let winedllpath = env.iter().find(|(key, _)| key == "WINEDLLPATH");
             assert!(winedllpath.is_some(), "{:?} missing WINEDLLPATH in env pairs", pipeline_id);
             let path = winedllpath.unwrap().1.as_str();
@@ -4546,13 +4667,13 @@ mod tests {
     fn steam_pipeline_env_has_no_winedllpath_for_non_dxmt_pipelines() {
         let home = test_dir("no-winedllpath");
         let node = get_pipeline(PipelineId::WineBare);
-        let env = steam_pipeline_env_pairs(&home, node, 1);
+        let env = steam_pipeline_env_pairs(&home, node, 1, None);
         assert!(!env.iter().any(|(key, _)| key == "WINEDLLPATH"));
         let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
-    fn m12_prefix_route_deploys_dxmt_dlls_without_winemetal() {
+    fn m12_prefix_route_deploys_full_dxmt_runtime_surface() {
         let home = test_dir("m12-prefix-dlls");
         let source_dir = home.join("runtime");
         let game_dir = home.join("game");
@@ -4560,7 +4681,7 @@ mod tests {
         std::fs::create_dir_all(&source_dir).expect("create source dir");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
 
-        let dll_names = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"];
+        let dll_names = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll", "nvapi64.dll"];
         let dlls = dll_names
             .iter()
             .map(|filename| {
@@ -4599,7 +4720,33 @@ mod tests {
         assert_eq!(std::fs::read(system32.join("d3d12.dll")).expect("read d3d12"), b"d3d12.dll");
         assert_eq!(std::fs::read(system32.join("dxgi.dll")).expect("read dxgi"), b"dxgi.dll");
         assert_eq!(std::fs::read(system32.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"), b"dxgi_dxmt.dll");
-        assert!(!system32.join("winemetal.dll").exists());
+        assert_eq!(std::fs::read(system32.join("winemetal.dll")).expect("read winemetal"), b"winemetal.dll");
+        assert_eq!(std::fs::read(system32.join("nvapi64.dll")).expect("read nvapi64"), b"nvapi64.dll");
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn active_goldberg_launch_repair_refreshes_appid_and_missing_dlls() {
+        let home = test_dir("goldberg-active-refresh");
+        let game_dir = home.join("Game");
+        let emu_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("goldberg");
+        std::fs::create_dir_all(emu_dir.join("x64")).expect("create goldberg x64");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(emu_dir.join("x64").join("steam_api64.dll"), b"GOLDBERG64").expect("write emu dll");
+        std::fs::write(game_dir.join("steam_api64.dll.orig"), b"REAL64").expect("write orig dll");
+        std::fs::create_dir_all(game_dir.join("steam_settings")).expect("create steam settings");
+        std::fs::write(game_dir.join("steam_settings").join("force_steam_appid.txt"), b"1").expect("write old appid");
+
+        ensure_steam_emu_if_active(&home, &game_dir, 2050650);
+
+        assert_eq!(std::fs::read(game_dir.join("steam_api64.dll")).expect("read repaired dll"), b"GOLDBERG64");
+        assert_eq!(
+            std::fs::read_to_string(game_dir.join("steam_settings").join("force_steam_appid.txt"))
+                .expect("read force appid"),
+            "2050650"
+        );
+        assert!(game_dir.join("steam_settings").join("user_steam_id.txt").is_file());
 
         let _ = std::fs::remove_dir_all(home);
     }
