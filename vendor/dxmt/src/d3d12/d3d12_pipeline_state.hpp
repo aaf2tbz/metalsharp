@@ -143,6 +143,7 @@ public:
   bool UsesStageInVertexDescriptor() const { return m_vs_uses_stage_in; }
   bool RequiresMSCStageInFunction() const { return m_vs_requires_msc_stage_in; }
   bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }
+  bool UsesTessellationFallback() const { return m_uses_tessellation_fallback; }
 
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
 
@@ -188,6 +189,7 @@ private:
   bool m_vs_uses_stage_in = false;
   bool m_vs_requires_msc_stage_in = false;
   bool m_uses_geometry_mesh_pipeline = false;
+  bool m_uses_tessellation_fallback = false;
   uint32_t m_gs_passthrough = ~0u;
   D3D12_INDEX_BUFFER_STRIP_CUT_VALUE m_strip_cut_value = {};
   D3D12_PRIMITIVE_TOPOLOGY_TYPE m_topology = {};

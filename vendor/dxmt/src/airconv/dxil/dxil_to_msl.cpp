@@ -515,6 +515,16 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
   os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
   os << "};\n\n";
 
+  auto emit_default_vertex_varyings = [&]() {
+    os << "  out.position = float4(0.0, 0.0, 0.0, 1.0);\n";
+    for (uint32_t i = 0; i < 8; i++)
+      os << "  out.v" << i << " = float4(0.0);\n";
+    for (uint32_t i = 0; i < 4; i++)
+      os << "  out.uv" << i << " = float2(0.0);\n";
+    for (uint32_t i = 0; i < 4; i++)
+      os << "  out.color" << i << " = float4(0.0);\n";
+  };
+
   os << "struct vertex_input_v {\n";
   for (uint32_t i = 0; i < 16; i++)
     os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
@@ -561,6 +571,7 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
     os << "  device char* buf7 [[buffer(7)]]\n";
     os << ") {\n";
     os << "  output_v out = {};\n";
+    emit_default_vertex_varyings();
   } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
     os << "fragment float4 ps_main(\n";
     os << "  input_v in [[stage_in]],\n";
@@ -649,9 +660,10 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     bool non_uniform = literalArg(3, 0, "non-uniform index") != 0;
     (void)non_uniform;
     ctx.next_binding++;
+    (void)range_id;
     std::string res_name =
         std::string(bindingPrefixForClass(resource_class)) +
-        std::to_string(range_id);
+        std::to_string(index);
     DXTRACE("DXIL CreateHandle: class=%u range=%u index=%u -> %s", resource_class, range_id, index, res_name.c_str());
     return res_name;
   }

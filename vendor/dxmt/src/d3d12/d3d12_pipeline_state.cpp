@@ -172,7 +172,7 @@ size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
   size_t hash = 0;
   hash = hash * 131 + (size_t)type;
   if (type == ShaderType::Vertex)
-    hash = hash * 131 + 0x4d3132506832ull; // M12 Phase 2 vertex table contract.
+    hash = hash * 131 + 0x4d3132506833ull; // M12 Phase 3 explicit varying contract.
   if (bytecode && size > 0) {
     const uint8_t *p = (const uint8_t *)bytecode;
     for (SIZE_T i = 0; i < size; i++)
@@ -807,7 +807,8 @@ WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   case DXGI_FORMAT_R16_FLOAT: return WMTPixelFormatR16Float;
   case DXGI_FORMAT_R32_FLOAT: return WMTPixelFormatR32Float;
   case DXGI_FORMAT_D32_FLOAT: return WMTPixelFormatDepth32Float;
-  case DXGI_FORMAT_D24_UNORM_S8_UINT: return WMTPixelFormatDepth24Unorm_Stencil8;
+  case DXGI_FORMAT_D24_UNORM_S8_UINT:
+    return WMTPixelFormatDepth32Float_Stencil8;
   case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: return WMTPixelFormatDepth32Float_Stencil8;
   case DXGI_FORMAT_D16_UNORM: return WMTPixelFormatDepth16Unorm;
   case DXGI_FORMAT_R16G16_FLOAT: return WMTPixelFormatRG16Float;
@@ -1594,12 +1595,16 @@ bool MTLD3D12PipelineState::Compile() {
                        : ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
                                                 ShaderType::Geometry, nullptr);
 
-  if (!m_hs.empty() || !m_ds.empty()) {
-    return RecordCompileFailure(
-        "pso/unsupported_tessellation",
-        str::format("Graphics PSO uses HS bytes=", m_hs.size(),
-                    " DS bytes=", m_ds.size(),
-                    " but D3D12 tessellation is not implemented"));
+  const bool tessellation_fallback = !m_hs.empty() || !m_ds.empty();
+  m_uses_tessellation_fallback = tessellation_fallback;
+  if (tessellation_fallback) {
+    Logger::warn(str::format(
+        "D3D12 tessellation fallback: compiling VS/PS-only render PSO "
+        "HS bytes=",
+        m_hs.size(), " DS bytes=", m_ds.size(),
+        " topology=", (unsigned)m_topology));
+    PSTRACE("D3D12 tessellation fallback pso=%p hs=%zu ds=%zu topo=%u",
+            (void *)this, m_hs.size(), m_ds.size(), (unsigned)m_topology);
   }
 
   if (!m_gs.empty()) {
@@ -1701,6 +1706,9 @@ bool MTLD3D12PipelineState::Compile() {
   case D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT: info.input_primitive_topology = WMTPrimitiveTopologyClassPoint; break;
   case D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE: info.input_primitive_topology = WMTPrimitiveTopologyClassLine; break;
   case D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE: info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle; break;
+  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH:
+    info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
+    break;
   default: info.input_primitive_topology = WMTPrimitiveTopologyClassUnspecified; break;
   }
 

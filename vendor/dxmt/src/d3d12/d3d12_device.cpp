@@ -19,6 +19,7 @@
 #include "util_string.hpp"
 #include "d3d12_resource.hpp"
 #include <algorithm>
+#include <bit>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -2685,6 +2686,8 @@ MTLD3D12Device::CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *desc,
 
 UINT STDMETHODCALLTYPE MTLD3D12Device::GetDescriptorHandleIncrementSize(
     D3D12_DESCRIPTOR_HEAP_TYPE descriptor_heap_type) {
+  TRACE("GetDescriptorHandleIncrementSize type=%u -> %zu",
+        descriptor_heap_type, sizeof(D3D12Descriptor));
   return sizeof(D3D12Descriptor);
 }
 
@@ -3029,11 +3032,13 @@ MTLD3D12Device::GetResourceAllocationInfo(
   if (!__ret)
     return nullptr;
 
-  __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
   __ret->SizeInBytes = 0;
-  if (!resource_descs || !resource_desc_count)
+  if (!resource_descs || !resource_desc_count) {
+    __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     return __ret;
+  }
 
+  __ret->Alignment = 0;
   UINT64 cursor = 0;
   for (UINT i = 0; i < resource_desc_count; i++) {
     UINT64 alignment = ResourcePlacementAlignment(resource_descs[i]);
@@ -3062,11 +3067,13 @@ static D3D12_RESOURCE_ALLOCATION_INFO *FillResourceAllocationInfoWithSideband(
   if (!__ret)
     return nullptr;
 
-  __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
   __ret->SizeInBytes = 0;
-  if (!resource_descs || !resource_desc_count)
+  if (!resource_descs || !resource_desc_count) {
+    __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     return __ret;
+  }
 
+  __ret->Alignment = 0;
   UINT64 cursor = 0;
   for (UINT i = 0; i < resource_desc_count; i++) {
     UINT64 alignment = ResourcePlacementAlignment(resource_descs[i]);
@@ -3414,12 +3421,17 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateQueryHeap(
     const D3D12_QUERY_HEAP_DESC *desc, REFIID riid, void **heap) {
+  TRACE("CreateQueryHeap desc=%p type=%u count=%u node=0x%x heap_out=%p",
+        (void *)desc, desc ? desc->Type : 0xFFFFFFFFu,
+        desc ? desc->Count : 0, desc ? desc->NodeMask : 0, (void *)heap);
   if (!desc || !heap)
     return E_POINTER;
   InitReturnPtr(heap);
 
   auto qh = new MTLD3D12QueryHeap(this, *desc);
   HRESULT hr = qh->QueryInterface(riid, heap);
+  TRACE("CreateQueryHeap DONE qh=%p out=%p hr=0x%lx", (void *)qh,
+        heap ? *heap : nullptr, hr);
   if (FAILED(hr))
     qh->Release();
   return hr;
@@ -3453,11 +3465,28 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetResourceTiling(
     D3D12_PACKED_MIP_INFO *packed_mip_info,
     D3D12_TILE_SHAPE *standard_tile_shape, UINT *sub_resource_tiling_count,
     UINT first_sub_resource_tiling,
-    D3D12_SUBRESOURCE_TILING *sub_resource_tilings) {}
+    D3D12_SUBRESOURCE_TILING *sub_resource_tilings) {
+  TRACE("GetResourceTiling res=%p total=%p packed=%p shape=%p count=%p "
+        "first=%u tilings=%p",
+        (void *)resource, (void *)total_tile_count, (void *)packed_mip_info,
+        (void *)standard_tile_shape, (void *)sub_resource_tiling_count,
+        first_sub_resource_tiling, (void *)sub_resource_tilings);
+  if (total_tile_count)
+    *total_tile_count = 0;
+  if (packed_mip_info)
+    *packed_mip_info = {};
+  if (standard_tile_shape)
+    *standard_tile_shape = {};
+  if (sub_resource_tiling_count)
+    *sub_resource_tiling_count = 0;
+}
 
 LUID *STDMETHODCALLTYPE MTLD3D12Device::GetAdapterLuid(LUID *__ret) {
   TRACE("GetAdapterLuid ret=%p", (void *)__ret);
-  *__ret = {};
+  if (!__ret)
+    return nullptr;
+  *__ret = std::bit_cast<LUID>(__builtin_bswap64(GetMTLDevice().registryID()));
+  TRACE("GetAdapterLuid -> %08lx:%08lx", __ret->HighPart, __ret->LowPart);
   return __ret;
 }
 
@@ -3516,6 +3545,33 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineLibrary(
   return hr;
 }
 
+namespace {
+
+struct MultiFenceWait {
+  ID3D12Fence *fence;
+  UINT64 value;
+};
+
+struct MultiFenceWaitCtx {
+  std::vector<MultiFenceWait> waits;
+  HANDLE event;
+};
+
+DWORD WINAPI MultiFenceWaitThread(void *arg) {
+  auto *ctx = static_cast<MultiFenceWaitCtx *>(arg);
+  for (auto &wait : ctx->waits) {
+    wait.fence->SetEventOnCompletion(wait.value, nullptr);
+  }
+  for (auto &wait : ctx->waits) {
+    wait.fence->Release();
+  }
+  SetEvent(ctx->event);
+  delete ctx;
+  return 0;
+}
+
+} // namespace
+
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
     ID3D12Fence *const *fences, const UINT64 *values, UINT fence_count,
     D3D12_MULTIPLE_FENCE_WAIT_FLAGS flags, HANDLE event) {
@@ -3523,6 +3579,10 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
         fence_count, flags, (void *)(uintptr_t)event);
   if (!fences || !values || !event)
     return E_POINTER;
+  if (!fence_count) {
+    SetEvent(event);
+    return S_OK;
+  }
 
   bool all_signaled = true;
   for (UINT i = 0; i < fence_count; i++) {
@@ -3538,11 +3598,26 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
   }
 
   if (flags == D3D12_MULTIPLE_FENCE_WAIT_FLAG_ALL) {
+    auto *ctx = new MultiFenceWaitCtx{};
+    ctx->event = event;
+    ctx->waits.reserve(fence_count);
     for (UINT i = 0; i < fence_count; i++) {
-      HRESULT hr = fences[i]->SetEventOnCompletion(values[i], event);
-      if (FAILED(hr))
-        return hr;
+      if (!fences[i]) {
+        delete ctx;
+        return E_POINTER;
+      }
+      fences[i]->AddRef();
+      ctx->waits.push_back({fences[i], values[i]});
     }
+    HANDLE thread = CreateThread(nullptr, 0, MultiFenceWaitThread, ctx, 0,
+                                 nullptr);
+    if (!thread) {
+      for (auto &wait : ctx->waits)
+        wait.fence->Release();
+      delete ctx;
+      return E_FAIL;
+    }
+    CloseHandle(thread);
   } else {
     for (UINT i = 0; i < fence_count; i++) {
       if (fences[i]->GetCompletedValue() < values[i]) {
@@ -3556,6 +3631,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetResidencyPriority(
     UINT object_count, ID3D12Pageable *const *objects,
     const D3D12_RESIDENCY_PRIORITY *priorities) {
+  TRACE("SetResidencyPriority count=%u objects=%p priorities=%p",
+        object_count, (void *)objects, (void *)priorities);
   return S_OK;
 }
 

@@ -215,6 +215,36 @@ static LLVMInstruction::Opcode decodeBinop(uint32_t opcode) {
   }
 }
 
+static bool isFloatingBinopType(const LLVMModule &module, uint32_t type_id) {
+  if (type_id >= module.types.size())
+    return false;
+  const auto &type = module.types[type_id];
+  if (type.kind == LLVMType::Float || type.kind == LLVMType::Double)
+    return true;
+  if (type.kind == LLVMType::Vector && !type.subtypes.empty())
+    return type.subtypes[0].kind == LLVMType::Float ||
+           type.subtypes[0].kind == LLVMType::Double;
+  return false;
+}
+
+static LLVMInstruction::Opcode decodeBinopForType(const LLVMModule &module,
+                                                  uint32_t opcode,
+                                                  uint32_t type_id) {
+  if (!isFloatingBinopType(module, type_id))
+    return decodeBinop(opcode);
+
+  switch (opcode) {
+  case 0: return LLVMInstruction::FAdd;
+  case 1: return LLVMInstruction::FSub;
+  case 2: return LLVMInstruction::FMul;
+  case 3:
+  case 4: return LLVMInstruction::FDiv;
+  case 5:
+  case 6: return LLVMInstruction::FRem;
+  default: return decodeBinop(opcode);
+  }
+}
+
 static LLVMInstruction::Opcode decodeCast(uint32_t opcode) {
   switch (opcode) {
   case 0: return LLVMInstruction::Trunc;
@@ -1097,8 +1127,9 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         uint32_t type_id = 0;
         uint32_t lhs = valueTypePair(ops, slot, type_id);
         uint32_t rhs = popValue(ops, slot);
-        inst.opcode = slot < ops.size() ? decodeBinop((uint32_t)ops[slot])
-                                     : LLVMInstruction::Add;
+        inst.opcode = slot < ops.size()
+                          ? decodeBinopForType(ctx.module, (uint32_t)ops[slot], type_id)
+                          : LLVMInstruction::Add;
         inst.type_id = type_id;
         inst.operands.push_back(lhs);
         inst.operands.push_back(rhs);

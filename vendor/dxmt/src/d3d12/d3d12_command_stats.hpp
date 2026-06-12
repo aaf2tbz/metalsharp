@@ -17,6 +17,17 @@ struct D3D12CommandStreamStats {
   uint32_t clear_uav_count = 0;
   uint32_t set_pso_count = 0;
   uint32_t set_graphics_root_sig_count = 0;
+  uint32_t set_graphics_root_constants_count = 0;
+  uint32_t set_graphics_root_cbv_count = 0;
+  uint32_t set_graphics_root_srv_count = 0;
+  uint32_t set_graphics_root_uav_count = 0;
+  uint32_t set_graphics_root_table_count = 0;
+  uint32_t set_compute_root_sig_count = 0;
+  uint32_t set_compute_root_constants_count = 0;
+  uint32_t set_compute_root_cbv_count = 0;
+  uint32_t set_compute_root_srv_count = 0;
+  uint32_t set_compute_root_uav_count = 0;
+  uint32_t set_compute_root_table_count = 0;
   uint32_t om_set_render_targets_count = 0;
   uint32_t ia_set_vertex_buffers_count = 0;
   uint32_t ia_set_index_buffer_count = 0;
@@ -37,6 +48,9 @@ struct D3D12CommandStreamStats {
 
   bool HasGraphicsSetup() const {
     return set_pso_count || set_graphics_root_sig_count ||
+           set_graphics_root_constants_count || set_graphics_root_cbv_count ||
+           set_graphics_root_srv_count || set_graphics_root_uav_count ||
+           set_graphics_root_table_count ||
            om_set_render_targets_count || ia_set_vertex_buffers_count ||
            ia_set_index_buffer_count || rs_set_viewports_count ||
            rs_set_scissors_count;
@@ -87,6 +101,39 @@ inline void D3D12AccumulateCommandType(D3D12CommandStreamStats &stats,
     break;
   case CmdType::SetGraphicsRootSignature:
     stats.set_graphics_root_sig_count++;
+    break;
+  case CmdType::SetGraphicsRoot32BitConstants:
+    stats.set_graphics_root_constants_count++;
+    break;
+  case CmdType::SetGraphicsRootConstantBufferView:
+    stats.set_graphics_root_cbv_count++;
+    break;
+  case CmdType::SetGraphicsRootShaderResourceView:
+    stats.set_graphics_root_srv_count++;
+    break;
+  case CmdType::SetGraphicsRootUnorderedAccessView:
+    stats.set_graphics_root_uav_count++;
+    break;
+  case CmdType::SetGraphicsRootDescriptorTable:
+    stats.set_graphics_root_table_count++;
+    break;
+  case CmdType::SetComputeRootSignature:
+    stats.set_compute_root_sig_count++;
+    break;
+  case CmdType::SetComputeRoot32BitConstants:
+    stats.set_compute_root_constants_count++;
+    break;
+  case CmdType::SetComputeRootConstantBufferView:
+    stats.set_compute_root_cbv_count++;
+    break;
+  case CmdType::SetComputeRootShaderResourceView:
+    stats.set_compute_root_srv_count++;
+    break;
+  case CmdType::SetComputeRootUnorderedAccessView:
+    stats.set_compute_root_uav_count++;
+    break;
+  case CmdType::SetComputeRootDescriptorTable:
+    stats.set_compute_root_table_count++;
     break;
   case CmdType::OMSetRenderTargets:
     stats.om_set_render_targets_count++;

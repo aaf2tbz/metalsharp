@@ -7,7 +7,7 @@ dxil_converter_test = executable('test_dxil_converter',
     '../src/airconv/dxil/dxil_to_msl.cpp',
     '../src/airconv/dxil/msl_lowering.cpp',
   ],
-  include_directories : [ dxmt_include_path ],
+  include_directories : [ dxmt_include_path, include_directories('../src') ],
   native : true,
 )
 

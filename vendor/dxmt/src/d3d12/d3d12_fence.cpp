@@ -1,26 +1,45 @@
 #include "d3d12_fence.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include <cstdlib>
-#include <thread>
 
 #define FTRACE(fmt, ...)                                                       \
-  do {                                                                         \
-    static bool _trace_enabled = [] {                                          \
-      const char *_raw = std::getenv("DXMT_D3D12_FENCE_TRACE");                \
-      return _raw && _raw[0] && _raw[0] != '0';                                \
-    }();                                                                       \
-    if (!_trace_enabled)                                                       \
-      break;                                                                   \
-    FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");                    \
-    if (_tf) {                                                                 \
-      fprintf(_tf, "Fence::" fmt "\n", ##__VA_ARGS__);                         \
-      fclose(_tf);                                                             \
-    }                                                                          \
-  } while (0)
+  DXMTD3D12Trace("Fence", fmt, ##__VA_ARGS__)
 
 namespace dxmt {
+
+namespace {
+
+struct FenceEventWaitCtx {
+  MTLD3D12Fence *self;
+  WMT::Reference<WMT::SharedEvent> shared_event;
+  uint64_t wait_value;
+  HANDLE wait_event;
+};
+
+DWORD WINAPI FenceEventWaitThread(void *arg) {
+  auto *ctx = static_cast<FenceEventWaitCtx *>(arg);
+  FTRACE("SetEventOnCompletion async wait begin value=%llu this=%p event=%p",
+         (unsigned long long)ctx->wait_value, (void *)ctx->self,
+         (void *)(uintptr_t)ctx->wait_event);
+  ctx->shared_event.waitUntilSignaledValue(ctx->wait_value, UINT64_MAX);
+  uint64_t shared_value = ctx->shared_event.signaledValue();
+  uint64_t current = ctx->self->GetCompletedValue();
+  if (shared_value > current)
+    ctx->self->Signal(shared_value);
+  FTRACE("SetEventOnCompletion async wait end value=%llu shared=%llu this=%p",
+         (unsigned long long)ctx->wait_value, (unsigned long long)shared_value,
+         (void *)ctx->self);
+  if (ctx->wait_event)
+    SetEvent(ctx->wait_event);
+  ctx->self->Release();
+  delete ctx;
+  return 0;
+}
+
+} // namespace
 
 MTLD3D12Fence::MTLD3D12Fence(MTLD3D12Device *device, uint64_t initial_value,
                              D3D12_FENCE_FLAGS flags)
@@ -116,26 +135,29 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Fence::SetEventOnCompletion(uint64_t value,
     return E_FAIL;
   }
 
+  if (!event) {
+    FTRACE("SetEventOnCompletion blocking wait begin value=%llu this=%p",
+           (unsigned long long)value, (void *)this);
+    m_shared_event.waitUntilSignaledValue(value, UINT64_MAX);
+    uint64_t shared_value = m_shared_event.signaledValue();
+    if (shared_value > m_value.load(std::memory_order_acquire))
+      m_value.store(shared_value, std::memory_order_release);
+    FTRACE("SetEventOnCompletion blocking wait end value=%llu shared=%llu "
+           "this=%p",
+           (unsigned long long)value, (unsigned long long)shared_value,
+           (void *)this);
+    return S_OK;
+  }
+
   AddRef();
-  auto shared_event = m_shared_event;
-  auto wait_value = value;
-  auto wait_event = event;
-  auto *self = this;
-  std::thread([self, shared_event, wait_value, wait_event]() mutable {
-    FTRACE("SetEventOnCompletion async wait begin value=%llu this=%p event=%p",
-           (unsigned long long)wait_value, (void *)self,
-           (void *)(uintptr_t)wait_event);
-    shared_event.waitUntilSignaledValue(wait_value, UINT64_MAX);
-    uint64_t shared_value = shared_event.signaledValue();
-    if (shared_value > self->m_value.load(std::memory_order_acquire))
-      self->m_value.store(shared_value, std::memory_order_release);
-    FTRACE("SetEventOnCompletion async wait end value=%llu shared=%llu this=%p",
-           (unsigned long long)wait_value, (unsigned long long)shared_value,
-           (void *)self);
-    if (wait_event)
-      SetEvent(wait_event);
-    self->Release();
-  }).detach();
+  auto *ctx = new FenceEventWaitCtx{this, m_shared_event, value, event};
+  HANDLE thread = CreateThread(nullptr, 0, FenceEventWaitThread, ctx, 0, nullptr);
+  if (!thread) {
+    delete ctx;
+    Release();
+    return E_FAIL;
+  }
+  CloseHandle(thread);
 
   return S_OK;
 }

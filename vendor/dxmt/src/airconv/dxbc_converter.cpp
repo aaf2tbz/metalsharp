@@ -14,9 +14,11 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #include <bit>
+#include <format>
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstdlib>
 
 #include "metallib_writer.hpp"
 #include "nt/air_builder.hpp"
@@ -37,6 +39,8 @@ public:
 };
 
 namespace dxmt::dxbc {
+
+static constexpr uint32_t kM12PaddedVertexOutputRegisters = 16;
 
 inline dxmt::shader::common::ResourceType
 to_shader_resource_type(microsoft::D3D10_SB_RESOURCE_DIMENSION dim) {
@@ -434,7 +438,6 @@ llvm::Error convert_dxbc_pixel_shader(
     metal_version = sm50_common->metal_version;
     shader_flags = sm50_common->flags;
   }
-
   IREffect prologue([](auto) { return std::monostate(); });
   IRValue epilogue([](struct context ctx) -> pvalue {
     auto retTy = ctx.function->getReturnType();
@@ -564,7 +567,6 @@ llvm::Error convert_dxbc_compute_shader(
     metal_version = sm50_common->metal_version;
     shader_flags = sm50_common->flags;
   }
-
   IREffect prologue([](auto) { return std::monostate(); });
   IRValue epilogue([](struct context ctx) -> pvalue {
     auto retTy = ctx.function->getReturnType();
@@ -666,6 +668,17 @@ llvm::Error convert_dxbc_vertex_shader(
     metal_version = sm50_common->metal_version;
     shader_flags = sm50_common->flags;
   }
+  if (!rasterization_disabled) {
+    max_output_register =
+      std::max(max_output_register, kM12PaddedVertexOutputRegisters);
+  }
+  if (std::getenv("DXMT_SM50_TRACE")) {
+    fprintf(stderr,
+            "DXMT_SM50_TRACE vertex raster_disabled=%u max_output=%u "
+            "declared_outputs=%zu\n",
+            rasterization_disabled ? 1u : 0u, max_output_register,
+            pShaderInternal->output_signature.size());
+  }
 
   IREffect prologue([](auto) { return std::monostate(); });
   IRValue epilogue([](struct context ctx) -> pvalue {
@@ -687,12 +700,37 @@ llvm::Error convert_dxbc_vertex_shader(
       p(sig_ctx);
     }
 
+    bool output_reg_declared[kM12PaddedVertexOutputRegisters] = {};
     for (auto& out : pShaderInternal->output_signature) {
       if(out.isSystemValue()) continue;
+      if (out.reg() < kM12PaddedVertexOutputRegisters)
+        output_reg_declared[out.reg()] = true;
       func_signature.DefineOutput(air::OutputVertex{
         .user = out.consistentAttributeName(),
         .type = to_msl_type(out.componentType()),
       });
+    }
+    if (!rasterization_disabled) {
+      for (uint32_t reg = 0; reg < kM12PaddedVertexOutputRegisters; reg++) {
+        if (output_reg_declared[reg])
+          continue;
+        uint32_t assigned_index = func_signature.DefineOutput(air::OutputVertex{
+          .user = std::format("reg{}_0", reg),
+          .type = air::msl_float4,
+        });
+        epilogue >> [=](pvalue ret) -> IRValue {
+          return make_irvalue([=](struct context ctx) {
+            auto src_ptr = ctx.builder.CreateGEP(
+              ctx.resource.output.ptr_float4->getType()
+                ->getNonOpaquePointerElementType(),
+              ctx.resource.output.ptr_float4,
+              {ctx.builder.getInt32(0), ctx.builder.getInt32(reg)}
+            );
+            auto value = ctx.builder.CreateLoad(ctx.types._float4, src_ptr, true);
+            return ctx.builder.CreateInsertValue(ret, value, {assigned_index});
+          });
+        };
+      }
     }
   }
   if (vertex_so) {
@@ -805,9 +843,13 @@ llvm::Error convert_dxbc_vertex_shader(
     llvm::ArrayType::get(types._float4, max_input_register)->getPointerTo()
   );
   resource_map.input_element_count = max_input_register;
-  resource_map.output.ptr_int4 =
-    builder.CreateAlloca(llvm::ArrayType::get(types._int4, max_output_register)
-    );
+  auto output_reg_type = llvm::ArrayType::get(types._int4, max_output_register);
+  resource_map.output.ptr_int4 = builder.CreateAlloca(output_reg_type);
+  builder.CreateStore(
+    llvm::ConstantAggregateZero::get(output_reg_type),
+    resource_map.output.ptr_int4,
+    true
+  );
   resource_map.output.ptr_float4 = builder.CreateBitCast(
     resource_map.output.ptr_int4,
     llvm::ArrayType::get(types._float4, max_output_register)->getPointerTo()

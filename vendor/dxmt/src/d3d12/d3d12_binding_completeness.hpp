@@ -5,15 +5,21 @@
 namespace dxmt {
 
 static constexpr uint32_t kD3D12M12DirectBufferSlots = 31;
-static constexpr uint32_t kD3D12M12DirectFragmentTextureSlots = 4;
+static constexpr uint32_t kD3D12M12DirectFragmentTextureSlots = 16;
 static constexpr uint32_t kD3D12M12DirectFragmentSamplerSlots = 4;
-static constexpr uint32_t kD3D12M12DirectComputeTextureSlots = 4;
+static constexpr uint32_t kD3D12M12DirectComputeTextureSlots = 8;
 static constexpr uint32_t kD3D12M12DirectComputeSamplerSlots = 4;
 
 struct D3D12ShaderBindingCompletenessDesc {
   uint32_t buffer_count = 0;
   uint32_t texture_count = 0;
   uint32_t sampler_count = 0;
+  uint64_t required_buffers = 0;
+  uint64_t required_textures = 0;
+  uint64_t required_samplers = 0;
+  bool use_required_buffers = false;
+  bool use_required_textures = false;
+  bool use_required_samplers = false;
   uint64_t bound_buffers = 0;
   uint64_t bound_textures = 0;
   uint64_t bound_samplers = 0;
@@ -61,9 +67,15 @@ inline D3D12ShaderBindingCompletenessSummary
 D3D12EvaluateShaderBindingCompleteness(
     const D3D12ShaderBindingCompletenessDesc &desc) {
   D3D12ShaderBindingCompletenessSummary summary = {};
-  summary.required_buffers = D3D12DirectBindingMask(desc.buffer_count);
-  summary.required_textures = D3D12DirectBindingMask(desc.texture_count);
-  summary.required_samplers = D3D12DirectBindingMask(desc.sampler_count);
+  summary.required_buffers =
+      desc.use_required_buffers ? desc.required_buffers
+                                : D3D12DirectBindingMask(desc.buffer_count);
+  summary.required_textures =
+      desc.use_required_textures ? desc.required_textures
+                                 : D3D12DirectBindingMask(desc.texture_count);
+  summary.required_samplers =
+      desc.use_required_samplers ? desc.required_samplers
+                                 : D3D12DirectBindingMask(desc.sampler_count);
 
   const uint64_t bound_buffers =
       desc.bound_buffers | desc.fallback_buffers;

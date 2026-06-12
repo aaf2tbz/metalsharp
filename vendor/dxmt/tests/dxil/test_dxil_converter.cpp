@@ -202,6 +202,73 @@ static bool runConverterTest(const TestCase &tc) {
         }
     }
 
+    bool is_procedural_fullscreen_fallback =
+        msl_source.find("m12_fullscreen_pos") != std::string::npos &&
+        msl_source.find("m12_fullscreen_uv") != std::string::npos;
+    if (is_procedural_fullscreen_fallback) {
+        if (msl_source.find("m12_draw_vertex_count(buf29, buf30)") == std::string::npos) {
+            report_fail(tc.name, "procedural fullscreen fallback does not read draw vertex count");
+            return false;
+        }
+        if (msl_source.find("m12_use_strip_quad") == std::string::npos ||
+            msl_source.find("m12_strip_vid") == std::string::npos ||
+            msl_source.find("m12_tri_vid") == std::string::npos) {
+            report_fail(tc.name, "procedural fullscreen fallback lacks quad/triangle selection");
+            return false;
+        }
+        if (msl_source.find("uint m12_fullscreen_vid = min(vid, 2u)") != std::string::npos) {
+            report_fail(tc.name, "procedural fullscreen fallback still clamps every draw to a 3-vertex triangle");
+            return false;
+        }
+    }
+
+    bool is_elden_present_vertex =
+        shader.kind == dxmt::dxil::DxilShaderKind::Vertex &&
+        tc.name.find("9211ad3b955bc80f") != std::string::npos;
+    if (is_elden_present_vertex) {
+        dxmt::dxil::MSLLoweringOptions pso_options = {};
+        pso_options.vertex_inputs = {
+            {0, 0, 0, 0, 2, 31, false, 1, dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask, false},
+            {1, 0, 0, 16, 2, 31, false, 1, dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask, false},
+            {2, 0, 0, 32, 16, 29, false, 1, dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask, false},
+        };
+        auto pso_msl = dxmt::dxil::MSLLowering::lower(*module, shader, pso_options);
+        if (!pso_msl) {
+            report_fail(tc.name, "Elden present VS did not lower with PSO vertex inputs");
+            return false;
+        }
+        if (!g_msl_dump_dir.empty()) {
+            std::ofstream pso_msl_file(g_msl_dump_dir + "/9211ad3b955bc80f.pso-inputs.metal");
+            if (pso_msl_file.is_open())
+                pso_msl_file << pso_msl->source;
+        }
+        if (pso_msl->source.find("m12_fullscreen_pos") != std::string::npos) {
+            report_fail(tc.name, "Elden present VS with PSO inputs still used procedural fullscreen fallback");
+            return false;
+        }
+        if (pso_msl->source.find("m12_load_vertex_attr(0, 0, 2") == std::string::npos ||
+            pso_msl->source.find("m12_load_vertex_attr(0, 16, 2") == std::string::npos ||
+            pso_msl->source.find("m12_load_vertex_attr(0, 32, 16") == std::string::npos) {
+            report_fail(tc.name, "Elden present VS did not pull POSITION/TEXCOORD inputs from the PSO layout");
+            return false;
+        }
+    }
+
+    bool is_elden_present_pixel =
+        shader.kind == dxmt::dxil::DxilShaderKind::Pixel &&
+        tc.name.find("6f0e7d2f3cfff83c") != std::string::npos;
+    if (is_elden_present_pixel) {
+        if (msl_source.find("tex0.sample(samp1") == std::string::npos ||
+            msl_source.find("tex1.sample(samp1") == std::string::npos) {
+            report_fail(tc.name, "Elden present PS did not sample the expected t0/t1 resources");
+            return false;
+        }
+        if (msl_source.find("tex2.sample") != std::string::npos) {
+            report_fail(tc.name, "Elden present PS still double-counted createHandle range/index into tex2");
+            return false;
+        }
+    }
+
     if (unsupported_opcodes > 0) {
         char buf[64];
         snprintf(buf, sizeof(buf), "%u unsupported opcodes", unsupported_opcodes);

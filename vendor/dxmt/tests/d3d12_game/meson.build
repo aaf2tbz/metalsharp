@@ -7,3 +7,10 @@ m12_game = executable('m12_game',
   link_args: ['-static', '-mconsole'],
   install: false,
 )
+
+m12_fence_sync = executable('m12_fence_sync',
+  'm12_fence_sync.cpp',
+  dependencies: [ d3d12_dep, lib_dxgi, lib_d3dcompiler ],
+  link_args: ['-static', '-mconsole'],
+  install: false,
+)
