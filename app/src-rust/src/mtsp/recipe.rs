@@ -166,6 +166,9 @@ pub fn effective_launch_args(appid: u32, node: &PipelineNode) -> Vec<String> {
     if appid == 1962700 && node.id == PipelineId::M12 {
         launch_args.retain(|arg| !arg.eq_ignore_ascii_case("-NOSPLASH"));
     }
+    if appid == 2050650 && node.id == PipelineId::M12 {
+        launch_args.clear();
+    }
     append_app_launch_args(appid, node.id, &mut launch_args);
     launch_args
 }
@@ -1058,6 +1061,13 @@ mod tests {
         assert!(!args.iter().any(|arg| arg.contains("r.PSOPrecaching=0")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dx12")));
         assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-d3d12")));
+    }
+
+    #[test]
+    fn re4_m12_uses_native_launch_args() {
+        let args = effective_launch_args(2050650, super::super::engine::get_pipeline(PipelineId::M12));
+
+        assert!(args.is_empty());
     }
 
     #[test]

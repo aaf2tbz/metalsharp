@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "../../src/airconv/dxil/msl_lowering.hpp"
+#include "../../src/d3d12/d3d12_binding_completeness.hpp"
 #include "../../src/d3d12/d3d12_vertex_input.hpp"
 
 static int g_fail = 0;
@@ -205,6 +206,48 @@ int main() {
               dxmt::dxil::MSLVertexPullExpression(5, raw_msl_options) ==
                   "m12_load_vertex_attr(3, 12, 16, 0, 1, vid, iid, buf16, "
                   "buf3, buf29, buf30)");
+
+  dxmt::D3D12ShaderBindingCompletenessDesc fragment_direct = {};
+  fragment_direct.buffer_count = dxmt::kD3D12M12DirectBufferSlots;
+  fragment_direct.texture_count = dxmt::kD3D12M12DirectFragmentTextureSlots;
+  fragment_direct.sampler_count = dxmt::kD3D12M12DirectFragmentSamplerSlots;
+  fragment_direct.bound_buffers = (1ull << 0) | (1ull << 16);
+  fragment_direct.bound_textures = 1ull << 0;
+  auto fragment_before =
+      dxmt::D3D12EvaluateShaderBindingCompleteness(fragment_direct);
+  expect_equal("fragment direct buffer required count",
+               fragment_before.required_buffer_count, 31);
+  expect_equal("fragment direct texture required count",
+               fragment_before.required_texture_count, 4);
+  expect_equal("fragment direct sampler required count",
+               fragment_before.required_sampler_count, 4);
+  expect_equal("fragment direct bound buffer count",
+               fragment_before.bound_buffer_count, 2);
+  expect_equal("fragment direct bound texture count",
+               fragment_before.bound_texture_count, 1);
+  expect_equal("fragment direct bound sampler count",
+               fragment_before.bound_sampler_count, 0);
+  expect_true("fragment direct reports missing samplers",
+              fragment_before.missing_samplers == 0xf);
+
+  fragment_direct.fallback_buffers =
+      dxmt::D3D12DirectBindingMask(dxmt::kD3D12M12DirectBufferSlots) &
+      ~fragment_direct.bound_buffers;
+  fragment_direct.fallback_textures =
+      dxmt::D3D12DirectBindingMask(
+          dxmt::kD3D12M12DirectFragmentTextureSlots) &
+      ~fragment_direct.bound_textures;
+  fragment_direct.fallback_samplers =
+      dxmt::D3D12DirectBindingMask(
+          dxmt::kD3D12M12DirectFragmentSamplerSlots);
+  auto fragment_after =
+      dxmt::D3D12EvaluateShaderBindingCompleteness(fragment_direct);
+  expect_true("fragment direct fallback closes buffer gaps",
+              fragment_after.missing_buffers == 0);
+  expect_true("fragment direct fallback closes texture gaps",
+              fragment_after.missing_textures == 0);
+  expect_true("fragment direct fallback closes sampler gaps",
+              fragment_after.missing_samplers == 0);
 
   std::vector<dxmt::D3D12VertexBufferViewMetadata> sparse_views = {
       {0, 0x10000000, 256, 12},
