@@ -508,17 +508,31 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
   auto base = resource->GetMTLTexture();
   if (!base.handle)
     return;
-  uint32_t total_mips = resource_desc.MipLevels ? resource_desc.MipLevels : 1;
-  uint32_t total_slices =
-      resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
-          ? 1
-          : std::max<UINT>(resource_desc.DepthOrArraySize, 1);
+  uint16_t requested_mip_start = mip_start;
+  uint16_t requested_mip_count = mip_count;
+  uint16_t requested_slice_start = slice_start;
+  uint16_t requested_slice_count = slice_count;
+  uint32_t total_mips = std::max<uint32_t>(
+      1, static_cast<uint32_t>(base.mipmapLevelCount()));
+  uint32_t total_slices = std::max<uint32_t>(
+      1, static_cast<uint32_t>(base.arrayLength()));
   mip_start = std::min<uint16_t>(mip_start, total_mips - 1);
   mip_count = std::min<uint16_t>(std::max<uint16_t>(1, mip_count),
                                  total_mips - mip_start);
   slice_start = std::min<uint16_t>(slice_start, total_slices - 1);
   slice_count = std::min<uint16_t>(std::max<uint16_t>(1, slice_count),
                                    total_slices - slice_start);
+  if (mip_start != requested_mip_start ||
+      mip_count != requested_mip_count ||
+      slice_start != requested_slice_start ||
+      slice_count != requested_slice_count) {
+    TRACE("CreateDescriptorTextureView clamp res=%p fmt=%u type=%u "
+          "mip=%u+%u->%u+%u slice=%u+%u->%u+%u metal_bounds=%ux%u",
+          (void *)resource, (unsigned)format, (unsigned)type,
+          requested_mip_start, requested_mip_count, mip_start, mip_count,
+          requested_slice_start, requested_slice_count, slice_start,
+          slice_count, total_mips, total_slices);
+  }
   uint64_t gpu_id = 0;
   descriptor->metal_texture_view = base.newTextureView(
       metal_format, type, mip_start, mip_count, slice_start, slice_count,
@@ -3227,7 +3241,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
     const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_STATES initial_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value, REFIID riid,
     void **resource) {
-  TRACE("CreateReservedResource dim=%u fmt=%u w=%llu -> E_NOTIMPL",
+  TRACE("CreateReservedResource dim=%u fmt=%u w=%llu",
         desc ? static_cast<unsigned>(desc->Dimension) : 0,
         desc ? static_cast<unsigned>(desc->Format) : 0,
         desc ? desc->Width : 0);
@@ -3237,7 +3251,25 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
   InitReturnPtr(resource);
   if (!desc)
     return E_INVALIDARG;
-  return E_NOTIMPL;
+
+  D3D12_HEAP_PROPERTIES heap_properties = {};
+  heap_properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+  heap_properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+  heap_properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  heap_properties.CreationNodeMask = 1;
+  heap_properties.VisibleNodeMask = 1;
+
+  auto res = new MTLD3D12Resource(this, *desc, initial_state, heap_properties,
+                                  D3D12_HEAP_FLAG_NONE);
+  HRESULT hr = res->QueryInterface(riid, resource);
+  TRACE("CreateReservedResource sparse-compat out=%p hr=0x%lx",
+        resource ? *resource : nullptr, hr);
+  Logger::info(str::format("M12 sparse reserved resource compat dim=",
+                           desc->Dimension, " width=", desc->Width,
+                           " flags=0x", (unsigned)desc->Flags));
+  if (FAILED(hr))
+    res->Release();
+  return hr;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateSharedHandle(

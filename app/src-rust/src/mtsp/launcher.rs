@@ -553,12 +553,24 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
             std::fs::copy(&deploy.dest_path, &backup_path)?;
         }
 
+        if deploy.dest_path.exists() && files_match(&deploy.source_path, &deploy.dest_path) {
+            manifest_dlls.push(serde_json::json!({
+                "filename": deploy.filename,
+                "source_path": deploy.source_path,
+                "dest_path": deploy.dest_path,
+                "backup_path": if backup_path.exists() { Some(backup_path) } else { None },
+                "unchanged": true,
+            }));
+            continue;
+        }
+
         std::fs::copy(&deploy.source_path, &deploy.dest_path)?;
         manifest_dlls.push(serde_json::json!({
             "filename": deploy.filename,
             "source_path": deploy.source_path,
             "dest_path": deploy.dest_path,
             "backup_path": if backup_path.exists() { Some(backup_path) } else { None },
+            "unchanged": false,
         }));
     }
 
@@ -594,7 +606,7 @@ fn deploy_prefix_route_dlls(
         }
         if !matches!(
             deploy.filename.as_str(),
-            "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll" | "winemetal.dll"
+            "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll"
         ) {
             continue;
         }
@@ -1574,7 +1586,10 @@ fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
-fn dxmt_winemetal_unixlib_path(_ms_root: &Path) -> String {
+fn dxmt_winemetal_unixlib_path(ms_root: &Path) -> String {
+    if env_flag_enabled("METALSHARP_M12_FORCE_DXMT_WINEMETAL_UNIXLIB") {
+        return ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so").to_string_lossy().to_string();
+    }
     "winemetal.so".to_string()
 }
 
@@ -1773,6 +1788,9 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     env
 }
 
+const M12_FOCUSED_TRACE_COMPONENTS: &str = "PSO";
+const M12_CAPTURE_TRACE_COMPONENTS: &str = "Entry,Device,Queue,SwapChain,Presenter,PSO,Resource,Heap";
+
 fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
     if pipeline_id == PipelineId::M9 && is_m9_stuck_loading_title(appid) {
         return vec![
@@ -1784,14 +1802,46 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         ];
     }
 
-    if appid == 1962700 && pipeline_id == PipelineId::M12 {
-        let mut env = vec![
-            ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
-            ("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Device,Queue,SwapChain,Presenter,PSO".to_string()),
-            ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
-            ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
+    if pipeline_id == PipelineId::M12 {
+        return m12_app_compat_env_pairs(appid, m12_diagnostic_capture_requested());
+    }
+    Vec::new()
+}
+
+fn is_m9_stuck_loading_title(appid: u32) -> bool {
+    matches!(appid, 774361 | 17410 | 49520)
+}
+
+fn m12_diagnostic_capture_requested() -> bool {
+    env_flag_enabled("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+}
+
+fn m12_app_compat_env_pairs(appid: u32, diagnostic_capture_requested: bool) -> Vec<(String, String)> {
+    let mut env = vec![("METALSHARP_NTDLL_HOOK_DISABLE".to_string(), "1".to_string())];
+
+    if !diagnostic_capture_requested && !is_m12_render_diagnostic_title(appid) {
+        return env;
+    }
+
+    env.extend([
+        ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
+        (
+            "DXMT_D3D12_TRACE_COMPONENTS".to_string(),
+            if diagnostic_capture_requested { M12_CAPTURE_TRACE_COMPONENTS } else { M12_FOCUSED_TRACE_COMPONENTS }
+                .to_string(),
+        ),
+        ("DXMT_D3D12_TRACE_MAX_MB".to_string(), if diagnostic_capture_requested { "16" } else { "8" }.to_string()),
+    ]);
+
+    if diagnostic_capture_requested {
+        env.push(("DXMT_DXGI_TRACE".to_string(), "1".to_string()));
+        env.push(("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()));
+        env.push(("DXMT_DUMP_MSL".to_string(), "1".to_string()));
+    }
+
+    if appid == 1962700 {
+        env.extend([
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
             ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()),
@@ -1804,49 +1854,39 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
             ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
-            ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
-        ];
-        if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
-            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
-            env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
-            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
-            env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_COLOR_WRITE_STATE")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
-        }
-        return env;
+        ]);
     }
-    Vec::new()
+
+    if diagnostic_capture_requested {
+        env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
+        env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+        env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
+    }
+
+    if env_flag_enabled("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR") {
+        env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
+    }
+    if env_flag_enabled("METALSHARP_M12_FORCE_COLOR_WRITE_STATE") {
+        env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
+    }
+    if env_flag_enabled("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT") {
+        env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
+    }
+    if env_flag_enabled("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN") {
+        env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
+    }
+
+    env
 }
 
-fn is_m9_stuck_loading_title(appid: u32) -> bool {
-    matches!(appid, 774361 | 17410 | 49520)
+fn is_m12_render_diagnostic_title(appid: u32) -> bool {
+    matches!(appid, 1962700 | 2050650)
+}
+
+fn env_flag_enabled(key: &str) -> bool {
+    std::env::var(key).map(|value| !value.is_empty() && value != "0").unwrap_or(false)
 }
 
 fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) {
@@ -3989,6 +4029,57 @@ mod tests {
     }
 
     #[test]
+    fn m12_re4_gets_trace_only_diagnostics_by_default() {
+        let env = m12_app_compat_env_pairs(2050650, false);
+
+        assert_eq!(env_value(&env, "METALSHARP_NTDLL_HOOK_DISABLE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE_COMPONENTS"), Some(M12_FOCUSED_TRACE_COMPONENTS));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE_MAX_MB"), Some("8"));
+        assert_eq!(env_value(&env, "DXMT_DXGI_TRACE"), None);
+        assert_eq!(env_value(&env, "DXMT_WINEMETAL_DEBUG"), None);
+        assert_eq!(env_value(&env, "DXMT_DUMP_MSL"), None);
+        assert_eq!(env_value(&env, "DXMT_D3D12_SWAPCHAIN_READBACK"), None);
+        assert_eq!(env_value(&env, "DXMT_D3D12_FORCE_COLOR_WRITE_STATE"), None);
+        assert_eq!(env_value(&env, "DXMT_D3D12_FORCE_SWAPCHAIN_BLIT"), None);
+    }
+
+    #[test]
+    fn m12_subnautica_keeps_stabilized_render_profile() {
+        let env = m12_app_compat_env_pairs(1962700, false);
+
+        assert_eq!(env_value(&env, "METALSHARP_NTDLL_HOOK_DISABLE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE_COMPONENTS"), Some(M12_FOCUSED_TRACE_COMPONENTS));
+        assert_eq!(env_value(&env, "DXMT_D3D12_ENABLE_GEOMETRY_MESH"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_FORCE_SWAPCHAIN_BLIT"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_FORCE_COLOR_WRITE_STATE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
+        assert_eq!(env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_SWAPCHAIN_READBACK"), None);
+    }
+
+    #[test]
+    fn m12_diagnostic_capture_can_be_enabled_for_any_title() {
+        let default_env = m12_app_compat_env_pairs(1583230, false);
+        assert_eq!(default_env, vec![("METALSHARP_NTDLL_HOOK_DISABLE".to_string(), "1".to_string())]);
+
+        let env = m12_app_compat_env_pairs(1583230, true);
+
+        assert_eq!(env_value(&env, "METALSHARP_NTDLL_HOOK_DISABLE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE_COMPONENTS"), Some(M12_CAPTURE_TRACE_COMPONENTS));
+        assert_eq!(env_value(&env, "DXMT_D3D12_TRACE_MAX_MB"), Some("16"));
+        assert_eq!(env_value(&env, "DXMT_DXGI_TRACE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_WINEMETAL_DEBUG"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_DUMP_MSL"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_SWAPCHAIN_READBACK"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_FINAL_RENDER_SNAPSHOT"), Some("1"));
+        assert_eq!(last_env_value(&env, "DXMT_D3D12_LIVE_PRESENT"), Some("0"));
+        assert_eq!(last_env_value(&env, "DXMT_D3D12_PRESENT_LOG_INTERVAL"), Some("30"));
+    }
+
+    #[test]
     fn steam_pipeline_env_applies_m9_stuck_loading_overrides_after_defaults() {
         let home = test_dir("m9-stuck-loading-env");
         let node = get_pipeline(PipelineId::M9);
@@ -4037,6 +4128,7 @@ mod tests {
         assert!(keys.contains("DXMT_LOG_PATH"));
         assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
         assert!(keys.contains("DXMT_CONFIG"));
+        assert!(keys.contains("METALSHARP_NTDLL_HOOK_DISABLE"));
         let unixlib =
             env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()).unwrap();
         assert_eq!(unixlib, "winemetal.so");
@@ -4278,6 +4370,59 @@ mod tests {
         let env = steam_pipeline_env_pairs(&home, node, 1);
         assert!(!env.iter().any(|(key, _)| key == "WINEDLLPATH"));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn m12_prefix_route_deploys_dxmt_dlls_without_winemetal() {
+        let home = test_dir("m12-prefix-dlls");
+        let source_dir = home.join("runtime");
+        let game_dir = home.join("game");
+        let prefix = home.join("prefix");
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+
+        let dll_names = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"];
+        let dlls = dll_names
+            .iter()
+            .map(|filename| {
+                let source_path = source_dir.join(filename);
+                std::fs::write(&source_path, filename.as_bytes()).expect("write source dll");
+                super::super::recipe::RecipeDll {
+                    source_subpath: filename.to_string(),
+                    filename: filename.to_string(),
+                    source_path,
+                    dest_path: game_dir.join(filename),
+                    source_present: true,
+                }
+            })
+            .collect();
+
+        let recipe = super::super::recipe::LaunchRecipe {
+            appid: 2050650,
+            pipeline: PipelineId::M12,
+            pipeline_name: "M12".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir),
+            exe_path: None,
+            exe_name: None,
+            launch_args: vec![],
+            env: vec![],
+            dlls,
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            anti_cheat_status: vec![],
+            warnings: vec![],
+        };
+
+        deploy_prefix_route_dlls(&recipe, &prefix).expect("deploy prefix route dlls");
+
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        assert_eq!(std::fs::read(system32.join("d3d12.dll")).expect("read d3d12"), b"d3d12.dll");
+        assert_eq!(std::fs::read(system32.join("dxgi.dll")).expect("read dxgi"), b"dxgi.dll");
+        assert_eq!(std::fs::read(system32.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"), b"dxgi_dxmt.dll");
+        assert!(!system32.join("winemetal.dll").exists());
+
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

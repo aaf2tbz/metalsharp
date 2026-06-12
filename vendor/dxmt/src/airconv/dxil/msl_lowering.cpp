@@ -1236,6 +1236,18 @@ static std::string textureCoordComponent(LowerContext &ctx,
     return "static_cast<uint>(" + ensureScalarIndex(sanitized) + ")";
 }
 
+static std::string sampleCoordComponent(LowerContext &ctx,
+                                        const std::string &value,
+                                        uint32_t component) {
+    std::string sanitized = sanitizeThreadVectorCasts(value);
+    MSLType source_type = typeForResolvedExpression(ctx, sanitized);
+    if (DXILIRBuilder::isVectorType(source_type))
+        sanitized = componentAccess(sanitized, component, source_type);
+    else if (exprLooksVectorValue(sanitized))
+        sanitized = "(" + sanitized + ")" + componentSuffix(component);
+    return ensureScalarIndex(sanitized);
+}
+
 static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr) {
     std::string out;
     for (size_t i = 0; i < expr.size();) {
@@ -1482,10 +1494,6 @@ static void recordDescriptorRange(BindingPlan &plan, DescriptorRangePlan range) 
 
 static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
     BindingPlan plan;
-    if (ctx.shader.kind == DxilShaderKind::Vertex) {
-        plan.direct_texture_count = 0;
-        plan.direct_sampler_count = 0;
-    }
 
     auto calleeName = [&](uint32_t callee) -> std::string {
         auto decl_it = ctx.function_decls.find(callee);
@@ -1559,6 +1567,8 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
     if (has_texture) {
         uint32_t texture_limit = ctx.shader.kind == DxilShaderKind::Compute ? 8 : 16;
         plan.direct_texture_count = std::max<uint32_t>(1, std::min<uint32_t>(max_texture, texture_limit));
+        if (ctx.shader.kind != DxilShaderKind::Compute)
+            plan.direct_sampler_count = std::max<uint32_t>(plan.direct_sampler_count, 1);
     }
     if (has_sampler)
         plan.direct_sampler_count = std::max<uint32_t>(1, std::min<uint32_t>(max_sampler, 4));
@@ -1983,8 +1993,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "float4(0)";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cx = sampleCoordComponent(ctx, valueArg(2, "0.0"), 0);
+        auto cy = sampleCoordComponent(ctx, valueArg(3, "0.0"), 1);
         if (ctx.shader.kind == DxilShaderKind::Compute)
             return handle + ".read(uint2(" +
                    textureCoordComponent(ctx, valueArg(2, "0"), 0) + ", " +
@@ -1995,8 +2005,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "float4(0)";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cx = sampleCoordComponent(ctx, valueArg(2, "0.0"), 0);
+        auto cy = sampleCoordComponent(ctx, valueArg(3, "0.0"), 1);
         uint32_t ch = args.size() > 8 ? literalArg(8, 0, "ch") : 0;
         if (ctx.shader.kind == DxilShaderKind::Compute) {
             auto texel = handle + ".read(uint2(" +
@@ -2004,14 +2014,15 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
                          textureCoordComponent(ctx, valueArg(3, "0"), 1) + "))";
             return "float4((" + texel + ")." + componentName(ch) + ")";
         }
-        return handle + ".gather(" + samp + ", float2(" + cx + ", " + cy + "), component::" + componentName(ch) + ")";
+        auto sample = handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + "))";
+        return "float4((" + sample + ")." + componentName(ch) + ")";
     }
     case DXOP_TextureSampleCmp: case DXOP_TextureSampleCmpLevelZero: case 224: {
         if (args.size() < 5) return "0.0";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cx = sampleCoordComponent(ctx, valueArg(2, "0.0"), 0);
+        auto cy = sampleCoordComponent(ctx, valueArg(3, "0.0"), 1);
         auto cmp = valueArg(4, "0.0");
         if (ctx.shader.kind == DxilShaderKind::Compute)
             return "((" + handle + ".read(uint2((uint)(" + cx + "), (uint)(" + cy + "))).r) < (" + cmp + ") ? 1.0 : 0.0)";
@@ -2029,7 +2040,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "0.0";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        return handle + ".calculate_unclamped_lod(" + samp + ", float2(" + ensureScalarIndex(valueArg(2, "0.0")) + ", " + ensureScalarIndex(valueArg(3, "0.0")) + "))";
+        return handle + ".calculate_unclamped_lod(" + samp + ", float2(" +
+               sampleCoordComponent(ctx, valueArg(2, "0.0"), 0) + ", " +
+               sampleCoordComponent(ctx, valueArg(3, "0.0"), 1) + "))";
     }
     case 78: {
         if (args.size() < 4) return "0";
@@ -2456,6 +2469,52 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         return value;
     };
 
+    auto coerceShiftOperand = [&](uint32_t idx, const MSLType &target) -> std::string {
+        std::string raw_value = getValue(idx);
+        MSLType raw_source = operandType(idx);
+        uint32_t resolved_id = 0;
+        if (!typeLooksResourceHandle(raw_source) &&
+            parseEmittedValueName(raw_value, resolved_id) &&
+            resolved_id < ctx.value_types.size())
+            raw_source = ctx.value_types[resolved_id];
+        auto pre_it = ctx.predeclared_types.find(raw_value);
+        if (!typeLooksResourceHandle(raw_source) && pre_it != ctx.predeclared_types.end())
+            raw_source = pre_it->second;
+
+        if (DXILIRBuilder::isVectorType(target)) {
+            if (DXILIRBuilder::isVectorType(raw_source)) {
+                if (DXILIRBuilder::vectorWidth(raw_source) != DXILIRBuilder::vectorWidth(target) ||
+                    DXILIRBuilder::scalarType(raw_source).kind != DXILIRBuilder::scalarType(target).kind)
+                    return coerceVectorWidth(raw_value, raw_source, target);
+                return castExpr(raw_value, target);
+            }
+            MSLType raw_inferred = inferTypeFromExpr(raw_value);
+            if (DXILIRBuilder::isVectorType(raw_inferred)) {
+                if (DXILIRBuilder::vectorWidth(raw_inferred) != DXILIRBuilder::vectorWidth(target) ||
+                    DXILIRBuilder::scalarType(raw_inferred).kind != DXILIRBuilder::scalarType(target).kind)
+                    return coerceVectorWidth(raw_value, raw_inferred, target);
+                return castExpr(raw_value, target);
+            }
+            if (exprLooksVectorValue(raw_value))
+                return castExpr(raw_value, target);
+        }
+
+        std::string value = coerceOperand(idx, target);
+        if (!DXILIRBuilder::isVectorType(target))
+            return value;
+        MSLType inferred = inferTypeFromExpr(value);
+        if (DXILIRBuilder::isVectorType(inferred))
+            return value;
+        std::string type_name = emitTypeName(target);
+        if (type_name.empty() || type_name == "auto")
+            return value;
+        MSLType scalar = DXILIRBuilder::scalarType(target);
+        std::string scalar_name = emitTypeName(scalar);
+        if (!scalar_name.empty() && scalar_name != "auto")
+            return type_name + "(static_cast<" + scalar_name + ">(" + value + "))";
+        return type_name + "(" + value + ")";
+    };
+
     auto chooseBinaryType = [&](const MSLType &declared, const MSLType &lhs,
                                 const MSLType &rhs, MSLTypeKind pointer_scalar) -> MSLType {
         MSLType result_type = demotePointerType(declared, pointer_scalar);
@@ -2675,9 +2734,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
              inst.opcode == LLVMInstruction::AShr) &&
             !DXILIRBuilder::isVectorType(result_type))
             result_type = {MSLTypeKind::Int, 0, {}};
-        std::string expr = coerceOperand(inst.operands[0], result_type) + " " +
-                           std::string(op_str) + " " +
-                           coerceOperand(inst.operands[1], result_type);
+        bool is_shift = inst.opcode == LLVMInstruction::Shl ||
+                        inst.opcode == LLVMInstruction::LShr ||
+                        inst.opcode == LLVMInstruction::AShr;
+        std::string lhs = is_shift ? coerceShiftOperand(inst.operands[0], result_type)
+                                   : coerceOperand(inst.operands[0], result_type);
+        std::string rhs = is_shift ? coerceShiftOperand(inst.operands[1], result_type)
+                                   : coerceOperand(inst.operands[1], result_type);
+        std::string expr = lhs + " " + std::string(op_str) + " " + rhs;
         emitTypedLine(result_type, result, expr);
         ctx.value_table[value_counter] = result;
         ctx.value_types[value_counter] = result_type;

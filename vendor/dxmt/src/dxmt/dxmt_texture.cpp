@@ -26,6 +26,34 @@ namespace dxmt {
 
 std::atomic_uint64_t global_texture_seq = {0};
 
+static TextureViewDescriptor
+NormalizeTextureViewDescriptor(WMTTextureType texture_type, unsigned mip_count,
+                               unsigned array_length,
+                               TextureViewDescriptor descriptor) {
+  mip_count = std::max(mip_count, 1u);
+  descriptor.firstMiplevel = std::min<uint32_t>(descriptor.firstMiplevel, mip_count - 1);
+  descriptor.miplevelCount = std::min<uint32_t>(
+      std::max<uint32_t>(descriptor.miplevelCount, 1),
+      mip_count - descriptor.firstMiplevel);
+
+  switch (texture_type) {
+  case WMTTextureType3D:
+    array_length = 1;
+    descriptor.firstArraySlice = 0;
+    descriptor.arraySize = 1;
+    break;
+  default:
+    array_length = std::max(array_length, 1u);
+    break;
+  }
+
+  descriptor.firstArraySlice = std::min<uint32_t>(descriptor.firstArraySlice, array_length - 1);
+  descriptor.arraySize = std::min<uint32_t>(
+      std::max<uint32_t>(descriptor.arraySize, 1),
+      array_length - descriptor.firstArraySlice);
+  return descriptor;
+}
+
 void
 TextureView::incRef() {
   refcount_.fetch_add(1u, std::memory_order_acquire);
@@ -46,7 +74,15 @@ TextureView::TextureView(TextureAllocation *allocation) :
 TextureView::TextureView(TextureAllocation *allocation, unsigned index, TextureViewDescriptor descriptor) :
     gpuResourceID(0),
     allocation(allocation),
-    key(descriptor, index, allocation->descriptor->miplevelCount()) {
+    key(NormalizeTextureViewDescriptor(allocation->descriptor->textureType(),
+                                       allocation->descriptor->miplevelCount(),
+                                       allocation->descriptor->arrayLength(),
+                                       descriptor),
+        index, allocation->descriptor->miplevelCount()) {
+  descriptor = NormalizeTextureViewDescriptor(allocation->descriptor->textureType(),
+                                             allocation->descriptor->miplevelCount(),
+                                             allocation->descriptor->arrayLength(),
+                                             descriptor);
   auto parent = allocation->texture();
   texture = parent.newTextureView(
       descriptor.format, descriptor.type, descriptor.firstMiplevel, descriptor.miplevelCount,
@@ -111,26 +147,28 @@ Texture::prepareAllocationViews(TextureAllocation *allocation) {
 
 TextureViewKey
 Texture::createView(TextureViewDescriptor const &descriptor) {
+  auto normalized_descriptor = NormalizeTextureViewDescriptor(
+      info_.type, info_.mipmap_level_count, arrayLength(), descriptor);
   std::unique_lock<dxmt::shared_mutex> lock(mutex_);
   unsigned i = 0;
   for (; i < version_; i++) {
-    if (viewDescriptors_[i].format != descriptor.format)
+    if (viewDescriptors_[i].format != normalized_descriptor.format)
       continue;
-    if (viewDescriptors_[i].type != descriptor.type)
+    if (viewDescriptors_[i].type != normalized_descriptor.type)
       continue;
-    if (viewDescriptors_[i].firstMiplevel != descriptor.firstMiplevel)
+    if (viewDescriptors_[i].firstMiplevel != normalized_descriptor.firstMiplevel)
       continue;
-    if (viewDescriptors_[i].miplevelCount != descriptor.miplevelCount)
+    if (viewDescriptors_[i].miplevelCount != normalized_descriptor.miplevelCount)
       continue;
-    if (viewDescriptors_[i].firstArraySlice != descriptor.firstArraySlice)
+    if (viewDescriptors_[i].firstArraySlice != normalized_descriptor.firstArraySlice)
       continue;
-    if (viewDescriptors_[i].arraySize != descriptor.arraySize)
+    if (viewDescriptors_[i].arraySize != normalized_descriptor.arraySize)
       continue;
-    return TextureViewKey(descriptor, i, info_.mipmap_level_count);
+    return TextureViewKey(normalized_descriptor, i, info_.mipmap_level_count);
   }
-  viewDescriptors_.push_back(descriptor);
+  viewDescriptors_.push_back(normalized_descriptor);
   version_ = version_ + 1;
-  return TextureViewKey(descriptor, i, info_.mipmap_level_count);
+  return TextureViewKey(normalized_descriptor, i, info_.mipmap_level_count);
 }
 
 Texture::Texture(const WMTTextureInfo &descriptor, WMT::Device device) :

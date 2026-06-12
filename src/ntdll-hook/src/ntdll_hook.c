@@ -12,6 +12,12 @@ static MS_HOOK_CONTEXT g_ctx = {0};
 static SOCKET g_sock = INVALID_SOCKET;
 static WSADATA g_wsa = {0};
 
+static int hook_disabled(void) {
+    char value[16] = {0};
+    DWORD len = GetEnvironmentVariableA("METALSHARP_NTDLL_HOOK_DISABLE", value, sizeof(value));
+    return len > 0 && value[0] && value[0] != '0';
+}
+
 static UINT32 get_next_request_id(void) {
     return (UINT32)InterlockedIncrement((LONG*)&g_ctx.next_request_id);
 }
@@ -684,6 +690,10 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
 
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH:
+        if (hook_disabled()) {
+            OutputDebugStringA("[metalsharp_ntdll_hook] disabled by METALSHARP_NTDLL_HOOK_DISABLE");
+            return TRUE;
+        }
         InitializeCriticalSection(&g_ctx.lock);
         load_real_functions();
         g_ctx.ipc_connected = ms_ipc_connect() ? 1 : 0;
@@ -695,8 +705,10 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
         }
         break;
     case DLL_PROCESS_DETACH:
-        ms_ipc_disconnect();
-        DeleteCriticalSection(&g_ctx.lock);
+        if (g_fns_loaded || g_ctx.ipc_connected) {
+            ms_ipc_disconnect();
+            DeleteCriticalSection(&g_ctx.lock);
+        }
         break;
     }
     return TRUE;

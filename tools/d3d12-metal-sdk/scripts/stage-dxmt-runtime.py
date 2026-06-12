@@ -22,7 +22,9 @@ ARTIFACTS = [
     ("src/d3d12/d3d12.dll", "x86_64-windows/d3d12.dll"),
     ("src/dxgi/dxgi.dll", "x86_64-windows/dxgi.dll"),
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
-    ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
+]
+
+DXMT_WINEMETAL_ARTIFACTS = [
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
 ]
 
@@ -54,6 +56,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--profile", default="metalsharp")
     parser.add_argument("--dry-run", action="store_true", help="Write the manifest without copying files.")
+    parser.add_argument(
+        "--include-winemetal",
+        action="store_true",
+        help="Also stage the isolated DXMT Unix winemetal.so. Does not stage winemetal.dll.",
+    )
+    parser.add_argument(
+        "--include-shared-winemetal",
+        action="store_true",
+        help="Dangerous diagnostic: also overwrite shared Wine/prefix Winemetal. Do not use for normal M12 testing.",
+    )
     return parser.parse_args()
 
 
@@ -69,13 +81,16 @@ def main() -> int:
     failures: list[str] = []
 
     artifacts = list(ARTIFACTS)
-    artifacts.extend(
-        [
-            ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
-            ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
-            ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
-        ]
-    )
+    if args.include_winemetal:
+        artifacts.extend(DXMT_WINEMETAL_ARTIFACTS)
+    if args.include_shared_winemetal:
+        artifacts.extend(
+            [
+                ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
+                ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
+                ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
+            ]
+        )
 
     for src_rel, dst_rel in artifacts:
         src = build_dir / src_rel
@@ -115,6 +130,8 @@ def main() -> int:
         "build_dir": str(build_dir),
         "runtime_dir": str(runtime_dir),
         "dry_run": args.dry_run,
+        "include_winemetal": args.include_winemetal,
+        "include_shared_winemetal": args.include_shared_winemetal,
         "ok": not failures and not mismatches,
         "failure_count": len(failures) + len(mismatches),
         "failures": failures,
