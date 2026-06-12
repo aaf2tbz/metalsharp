@@ -370,13 +370,15 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
     const auto &element = ia_elements[i];
     fprintf(df, "        { \"semantic\": ");
     WriteJsonString(df, element.semantic_name);
-    fprintf(df, ", \"semantic_index\": %u, \"register\": %u, \"slot\": %u, \"table_index\": %u, \"offset\": %u, \"dxgi_format\": %u, \"metal_format\": %u, \"class\": \"%s\", \"step_rate\": %u }%s\n",
+    fprintf(df, ", \"semantic_index\": %u, \"register\": %u, \"slot\": %u, \"table_index\": %u, \"table_indexing_mode\": \"%s\", \"offset\": %u, \"dxgi_format\": %u, \"metal_format\": %u, \"class\": \"%s\", \"step_rate\": %u, \"system_value\": %s }%s\n",
             element.semantic_index, element.shader_register,
             element.input_slot, element.table_index,
+            D3D12VertexTableIndexingModeName(element.table_indexing_mode),
             element.aligned_byte_offset, (unsigned)element.dxgi_format,
             (unsigned)element.metal_format,
             element.per_instance ? "per_instance" : "per_vertex",
             element.instance_step_rate,
+            element.system_value ? "true" : "false",
             i + 1 == ia_elements.size() ? "" : ",");
   }
   fprintf(df, "      ] },\n");
@@ -675,12 +677,6 @@ constexpr WMTStencilOperation kStencilOperationMap[] = {
     WMTStencilOperationDecrementWrap,
 };
 
-uint32_t AlignD3D12InputOffset(uint32_t offset, uint32_t size) {
-  uint32_t alignment = size < 4 ? size : 4;
-  if (alignment <= 1)
-    return offset;
-  return (offset + alignment - 1) & ~(alignment - 1);
-}
 } // namespace
 
 std::mutex MTLD3D12PipelineState::s_shader_mutex;
@@ -1362,8 +1358,8 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
 
     uint32_t aligned_offset =
         desc.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
-            ? AlignD3D12InputOffset(append_offset[desc.InputSlot],
-                                    metal_format.BytesPerTexel)
+            ? D3D12ResolveAlignedInputOffset(append_offset[desc.InputSlot],
+                                             metal_format.BytesPerTexel)
             : desc.AlignedByteOffset;
     append_offset[desc.InputSlot] = aligned_offset + metal_format.BytesPerTexel;
 
@@ -1386,12 +1382,15 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
     info.semantic_index = desc.SemanticIndex;
     info.shader_register = sig->Register;
     info.input_slot = desc.InputSlot;
+    info.table_indexing_mode =
+        D3D12VertexTableIndexingMode::CompactBySlotMask;
     info.aligned_byte_offset = aligned_offset;
     info.dxgi_format = desc.Format;
     info.metal_format = metal_format.AttributeFormat;
     info.per_instance =
         desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
     info.instance_step_rate = info.per_instance ? desc.InstanceDataStepRate : 1;
+    info.system_value = false;
     input_elements.push_back(std::move(info));
 
     PSTRACE("BuildIAInputLayout element[%zu]: semantic=%s%u reg=%u slot=%u offset=%u fmt=%u step=%u/%u",
@@ -1718,8 +1717,8 @@ bool MTLD3D12PipelineState::Compile() {
 
       uint32_t aligned_offset =
           el.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
-              ? AlignD3D12InputOffset(append_offset[el.InputSlot],
-                                      metal_format.BytesPerTexel)
+              ? D3D12ResolveAlignedInputOffset(append_offset[el.InputSlot],
+                                               metal_format.BytesPerTexel)
               : el.AlignedByteOffset;
       uint32_t end = aligned_offset + metal_format.BytesPerTexel;
       append_offset[el.InputSlot] = end;

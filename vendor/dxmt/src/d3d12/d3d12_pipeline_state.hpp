@@ -2,6 +2,7 @@
 
 #include "com/com_pointer.hpp"
 #include "d3d12.h"
+#include "d3d12_vertex_input.hpp"
 #include "Metal.hpp"
 #include "airconv_public.h"
 #include <atomic>
@@ -28,11 +29,14 @@ struct D3D12IAInputElementInfo {
   uint32_t shader_register = 0;
   uint32_t input_slot = 0;
   uint32_t table_index = 0;
+  D3D12VertexTableIndexingMode table_indexing_mode =
+      D3D12VertexTableIndexingMode::CompactBySlotMask;
   uint32_t aligned_byte_offset = 0;
   DXGI_FORMAT dxgi_format = DXGI_FORMAT_UNKNOWN;
   WMTAttributeFormat metal_format = WMTAttributeFormatInvalid;
   bool per_instance = false;
   uint32_t instance_step_rate = 1;
+  bool system_value = false;
 };
 
 struct CompiledShader {
