@@ -9,8 +9,7 @@
 
 static int g_fail = 0;
 
-static void expect_equal(const char *name, uint32_t actual,
-                         uint32_t expected) {
+static void expect_equal(const char *name, uint32_t actual, uint32_t expected) {
   if (actual == expected) {
     std::printf("  [PASS] %s = %u\n", name, actual);
     return;
@@ -30,9 +29,24 @@ static void expect_true(const char *name, bool actual) {
   g_fail++;
 }
 
-static const dxmt::D3D12ResolvedIAInputElementMetadata *find_semantic(
-    const dxmt::D3D12IAInputLayoutMetadata &metadata, const char *semantic,
-    uint32_t index) {
+static void expect_skip(const char *name,
+                        const dxmt::D3D12DrawSafetyResult &result,
+                        dxmt::D3D12DrawSafetySkipReason expected) {
+  if (result.reason == expected) {
+    std::printf("  [PASS] %s = %s\n", name,
+                dxmt::D3D12DrawSafetySkipReasonName(result.reason));
+    return;
+  }
+
+  std::printf("  [FAIL] %s: expected %s, got %s\n", name,
+              dxmt::D3D12DrawSafetySkipReasonName(expected),
+              dxmt::D3D12DrawSafetySkipReasonName(result.reason));
+  g_fail++;
+}
+
+static const dxmt::D3D12ResolvedIAInputElementMetadata *
+find_semantic(const dxmt::D3D12IAInputLayoutMetadata &metadata,
+              const char *semantic, uint32_t index) {
   for (const auto &element : metadata.elements) {
     if (element.semantic_index == index &&
         dxmt::D3D12SemanticNameEquals(element.semantic_name, semantic))
@@ -80,7 +94,9 @@ int main() {
       {"TEXCOORD", 0, 2, 0, kFmtFloat2, kFloat2, 8},
   };
   std::vector<dxmt::D3D12IAInputSignatureElementMetadata> dense_signature = {
-      {"POSITION", 0, 0}, {"NORMAL", 0, 1}, {"TEXCOORD", 0, 2},
+      {"POSITION", 0, 0},
+      {"NORMAL", 0, 1},
+      {"TEXCOORD", 0, 2},
   };
   auto dense = dxmt::D3D12BuildIAInputLayoutMetadata(
       dense_layout, dense_signature, kSlotCap, kAppend);
@@ -142,26 +158,23 @@ int main() {
     input.aligned_byte_offset = element.aligned_byte_offset;
     input.dxgi_format = element.dxgi_format;
     input.metal_format = element.metal_format;
-    input.per_instance =
-        element.input_slot_class == dxmt::D3D12VertexInputSlotClass::PerInstance;
+    input.per_instance = element.input_slot_class ==
+                         dxmt::D3D12VertexInputSlotClass::PerInstance;
     input.instance_step_rate = element.instance_step_rate;
     input.table_indexing_mode =
         dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
     input.system_value = element.system_value;
     sparse_msl_options.vertex_inputs.push_back(input);
   }
-  expect_equal("MSL sparse register 5 table index",
-               dxmt::dxil::MSLResolveVertexInputTableIndex(
-                   5, sparse_msl_options),
-               1);
-  expect_equal("MSL sparse register 6 duplicate table index",
-               dxmt::dxil::MSLResolveVertexInputTableIndex(
-                   6, sparse_msl_options),
-               1);
-  expect_equal("MSL sparse register 9 table index",
-               dxmt::dxil::MSLResolveVertexInputTableIndex(
-                   9, sparse_msl_options),
-               2);
+  expect_equal(
+      "MSL sparse register 5 table index",
+      dxmt::dxil::MSLResolveVertexInputTableIndex(5, sparse_msl_options), 1);
+  expect_equal(
+      "MSL sparse register 6 duplicate table index",
+      dxmt::dxil::MSLResolveVertexInputTableIndex(6, sparse_msl_options), 1);
+  expect_equal(
+      "MSL sparse register 9 table index",
+      dxmt::dxil::MSLResolveVertexInputTableIndex(9, sparse_msl_options), 2);
   expect_true("MSL sparse register 5 emits compact table, offset, format, step",
               dxmt::dxil::MSLVertexPullExpression(5, sparse_msl_options) ==
                   "m12_load_vertex_attr(1, 0, 16, 1, 2, vid, iid, buf16, "
@@ -186,8 +199,7 @@ int main() {
       dxmt::dxil::MSLVertexTableIndexingMode::RawSlot;
   raw_msl_options.vertex_inputs.push_back(raw_input);
   expect_equal("MSL explicit raw slot mode uses input slot",
-               dxmt::dxil::MSLResolveVertexInputTableIndex(
-                   5, raw_msl_options),
+               dxmt::dxil::MSLResolveVertexInputTableIndex(5, raw_msl_options),
                3);
   expect_true("MSL explicit raw slot expression carries metadata",
               dxmt::dxil::MSLVertexPullExpression(5, raw_msl_options) ==
@@ -224,7 +236,10 @@ int main() {
       {"D", 0, 5, kAppend, kFmtFloat, kFloat, 1},
   };
   std::vector<dxmt::D3D12IAInputSignatureElementMetadata> append_signature = {
-      {"A", 0, 0}, {"B", 0, 1}, {"C", 0, 2}, {"D", 0, 3},
+      {"A", 0, 0},
+      {"B", 0, 1},
+      {"C", 0, 2},
+      {"D", 0, 3},
   };
   auto append = dxmt::D3D12BuildIAInputLayoutMetadata(
       append_layout, append_signature, kSlotCap, kAppend);
@@ -247,12 +262,8 @@ int main() {
       {"BINORMAL", 0, 29, 0, kFmtFloat4, kFloat4, 16},
   };
   std::vector<dxmt::D3D12IAInputSignatureElementMetadata> filtered_signature = {
-      {"POSITION", 0, 0},
-      {"NORMAL", 0, 1},
-      {"COLOR", 0, 2},
-      {"TANGENT", 0, 4},
-      {"BINORMAL", 0, 5},
-      {"SV_VERTEXID", 0, 6, true},
+      {"POSITION", 0, 0}, {"NORMAL", 0, 1},   {"COLOR", 0, 2},
+      {"TANGENT", 0, 4},  {"BINORMAL", 0, 5}, {"SV_VERTEXID", 0, 6, true},
   };
   auto filtered = dxmt::D3D12BuildIAInputLayoutMetadata(
       filtered_layout, filtered_signature, kSlotCap, kAppend);
@@ -298,7 +309,9 @@ int main() {
        dxmt::D3D12VertexInputSlotClass::PerInstance, 5},
   };
   std::vector<dxmt::D3D12IAInputSignatureElementMetadata> instance_signature = {
-      {"I0", 0, 0}, {"I1", 0, 1}, {"I5", 0, 2},
+      {"I0", 0, 0},
+      {"I1", 0, 1},
+      {"I5", 0, 2},
   };
   auto instance = dxmt::D3D12BuildIAInputLayoutMetadata(
       instance_layout, instance_signature, kSlotCap, kAppend);
@@ -334,6 +347,103 @@ int main() {
               dxmt::dxil::MSLVertexPullExpression(2, instance_msl_options) ==
                   "m12_load_vertex_attr(2, 0, 2, 1, 5, vid, iid, buf16, "
                   "buf2, buf29, buf30)");
+
+  dxmt::D3D12DrawSafetyDesc safety = {};
+  safety.pso_present = true;
+  safety.pso_compiled = true;
+  safety.render_pso_ready = true;
+  safety.expect_compact_vertex_table = true;
+  safety.element_count = 3;
+  safety.instance_count = 2;
+  safety.start_element = 0;
+  safety.start_instance = 0;
+  safety.inputs = sparse.elements;
+  for (const auto &view : sparse_views) {
+    dxmt::D3D12DrawSafetyVertexBuffer safe_view = {};
+    safe_view.input_slot = view.input_slot;
+    safe_view.buffer_location = view.buffer_location;
+    safe_view.size_in_bytes = view.size_in_bytes;
+    safe_view.stride_in_bytes = view.stride_in_bytes;
+    safe_view.view_supplied = true;
+    safe_view.gpu_address_resolved = true;
+    safety.vertex_buffers.push_back(safe_view);
+  }
+  expect_skip("draw safety valid draw encodes",
+              dxmt::D3D12ValidateDrawSafety(safety),
+              dxmt::D3D12DrawSafetySkipReason::None);
+
+  auto failed_pso = safety;
+  failed_pso.pso_compiled = false;
+  expect_skip("draw safety skips failed PSO",
+              dxmt::D3D12ValidateDrawSafety(failed_pso),
+              dxmt::D3D12DrawSafetySkipReason::PipelineStateCompileFailed);
+
+  auto missing_vb = safety;
+  missing_vb.vertex_buffers[1].view_supplied = false;
+  missing_vb.vertex_buffers[1].buffer_location = 0;
+  expect_skip("draw safety skips missing required VB",
+              dxmt::D3D12ValidateDrawSafety(missing_vb),
+              dxmt::D3D12DrawSafetySkipReason::MissingVertexBuffer);
+
+  auto unresolved_vb = safety;
+  unresolved_vb.vertex_buffers[1].gpu_address_resolved = false;
+  expect_skip("draw safety skips unresolved required VB",
+              dxmt::D3D12ValidateDrawSafety(unresolved_vb),
+              dxmt::D3D12DrawSafetySkipReason::UnresolvedVertexBuffer);
+
+  auto zero_stride = safety;
+  zero_stride.vertex_buffers[1].stride_in_bytes = 0;
+  expect_skip("draw safety skips zero-stride required VB",
+              dxmt::D3D12ValidateDrawSafety(zero_stride),
+              dxmt::D3D12DrawSafetySkipReason::ZeroStrideVertexBuffer);
+
+  auto raw_table = safety;
+  raw_table.inputs[1].table_indexing_mode =
+      dxmt::D3D12VertexTableIndexingMode::RawSlot;
+  expect_skip("draw safety skips raw table mismatch",
+              dxmt::D3D12ValidateDrawSafety(raw_table),
+              dxmt::D3D12DrawSafetySkipReason::UnsupportedVertexTableMode);
+
+  auto index_missing = safety;
+  index_missing.index_range.indexed = true;
+  expect_skip("draw safety skips missing IB",
+              dxmt::D3D12ValidateDrawSafety(index_missing),
+              dxmt::D3D12DrawSafetySkipReason::MissingIndexBuffer);
+
+  auto index_unresolved = safety;
+  index_unresolved.index_range.indexed = true;
+  index_unresolved.index_range.index_buffer_supplied = true;
+  index_unresolved.index_range.index_buffer_location = 0x90000000;
+  index_unresolved.index_range.index_size = 2;
+  expect_skip("draw safety skips unresolved IB",
+              dxmt::D3D12ValidateDrawSafety(index_unresolved),
+              dxmt::D3D12DrawSafetySkipReason::UnresolvedIndexBuffer);
+
+  auto index_oob = safety;
+  index_oob.index_range.indexed = true;
+  index_oob.index_range.index_buffer_supplied = true;
+  index_oob.index_range.index_buffer_resolved = true;
+  index_oob.index_range.index_buffer_location = 0x90000000;
+  index_oob.index_range.index_buffer_size = 6;
+  index_oob.index_range.index_size = 2;
+  index_oob.element_count = 4;
+  expect_skip("draw safety skips proven index byte OOB",
+              dxmt::D3D12ValidateDrawSafety(index_oob),
+              dxmt::D3D12DrawSafetySkipReason::IndexRangeOutOfBounds);
+
+  auto vertex_oob = safety;
+  vertex_oob.index_range.indexed = true;
+  vertex_oob.index_range.index_buffer_supplied = true;
+  vertex_oob.index_range.index_buffer_resolved = true;
+  vertex_oob.index_range.index_buffer_location = 0x90000000;
+  vertex_oob.index_range.index_buffer_size = 6;
+  vertex_oob.index_range.index_size = 2;
+  vertex_oob.index_range.has_min_max_index = true;
+  vertex_oob.index_range.min_index = 0;
+  vertex_oob.index_range.max_index = 64;
+  expect_skip("draw safety skips proven vertex range OOB",
+              dxmt::D3D12ValidateDrawSafety(vertex_oob),
+              dxmt::D3D12DrawSafetySkipReason::VertexRangeOutOfBounds);
 
   std::printf("\n=== Results: %s ===\n", g_fail ? "FAIL" : "PASS");
   return g_fail ? 1 : 0;

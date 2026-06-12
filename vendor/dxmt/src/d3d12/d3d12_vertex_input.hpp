@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace dxmt {
@@ -140,6 +141,249 @@ struct D3D12VertexTableRowMetadata {
   uint32_t stride_in_bytes = 0;
 };
 
+enum class D3D12DrawSafetySkipReason : uint32_t {
+  None = 0,
+  MissingPipelineState,
+  PipelineStateCompileFailed,
+  PipelineStateNotRenderable,
+  UnsupportedVertexTableMode,
+  MissingVertexBuffer,
+  UnresolvedVertexBuffer,
+  ZeroStrideVertexBuffer,
+  MissingIndexBuffer,
+  UnresolvedIndexBuffer,
+  InvalidIndexFormat,
+  IndexRangeOutOfBounds,
+  VertexRangeOutOfBounds,
+};
+
+inline const char *
+D3D12DrawSafetySkipReasonName(D3D12DrawSafetySkipReason reason) {
+  switch (reason) {
+  case D3D12DrawSafetySkipReason::None:
+    return "none";
+  case D3D12DrawSafetySkipReason::MissingPipelineState:
+    return "missing_pso";
+  case D3D12DrawSafetySkipReason::PipelineStateCompileFailed:
+    return "pso_compile_failed";
+  case D3D12DrawSafetySkipReason::PipelineStateNotRenderable:
+    return "pso_not_renderable";
+  case D3D12DrawSafetySkipReason::UnsupportedVertexTableMode:
+    return "unsupported_vertex_table_mode";
+  case D3D12DrawSafetySkipReason::MissingVertexBuffer:
+    return "missing_vertex_buffer";
+  case D3D12DrawSafetySkipReason::UnresolvedVertexBuffer:
+    return "unresolved_vertex_buffer";
+  case D3D12DrawSafetySkipReason::ZeroStrideVertexBuffer:
+    return "zero_stride_vertex_buffer";
+  case D3D12DrawSafetySkipReason::MissingIndexBuffer:
+    return "missing_index_buffer";
+  case D3D12DrawSafetySkipReason::UnresolvedIndexBuffer:
+    return "unresolved_index_buffer";
+  case D3D12DrawSafetySkipReason::InvalidIndexFormat:
+    return "invalid_index_format";
+  case D3D12DrawSafetySkipReason::IndexRangeOutOfBounds:
+    return "index_range_oob";
+  case D3D12DrawSafetySkipReason::VertexRangeOutOfBounds:
+    return "vertex_range_oob";
+  }
+  return "unknown";
+}
+
+struct D3D12DrawSafetyVertexBuffer {
+  uint32_t input_slot = 0;
+  uint64_t buffer_location = 0;
+  uint32_t size_in_bytes = 0;
+  uint32_t stride_in_bytes = 0;
+  bool view_supplied = false;
+  bool gpu_address_resolved = false;
+  bool allow_zero_stride = false;
+};
+
+struct D3D12DrawSafetyIndexRange {
+  bool indexed = false;
+  bool index_buffer_supplied = false;
+  bool index_buffer_resolved = false;
+  uint64_t index_buffer_location = 0;
+  uint64_t index_buffer_size = 0;
+  uint64_t index_buffer_offset = 0;
+  uint32_t index_size = 0;
+  bool has_min_max_index = false;
+  uint32_t min_index = 0;
+  uint32_t max_index = 0;
+};
+
+struct D3D12DrawSafetyDesc {
+  bool pso_present = false;
+  bool pso_compiled = false;
+  bool pso_is_compute = false;
+  bool render_pso_ready = false;
+  bool expect_compact_vertex_table = true;
+  uint32_t element_count = 0;
+  uint32_t instance_count = 0;
+  uint32_t start_element = 0;
+  int32_t base_vertex = 0;
+  uint32_t start_instance = 0;
+  D3D12DrawSafetyIndexRange index_range = {};
+  std::vector<D3D12ResolvedIAInputElementMetadata> inputs;
+  std::vector<D3D12DrawSafetyVertexBuffer> vertex_buffers;
+};
+
+struct D3D12DrawSafetyResult {
+  D3D12DrawSafetySkipReason reason = D3D12DrawSafetySkipReason::None;
+  uint32_t input_slot = std::numeric_limits<uint32_t>::max();
+  uint32_t table_index = std::numeric_limits<uint32_t>::max();
+  uint64_t gpu_address = 0;
+  uint32_t size_in_bytes = 0;
+  uint32_t stride_in_bytes = 0;
+  uint64_t required_vertices = 0;
+  uint64_t available_vertices = 0;
+};
+
+inline bool D3D12DrawSafetySkipped(const D3D12DrawSafetyResult &result) {
+  return result.reason != D3D12DrawSafetySkipReason::None;
+}
+
+inline const D3D12DrawSafetyVertexBuffer *D3D12FindSafetyVertexBuffer(
+    const std::vector<D3D12DrawSafetyVertexBuffer> &views, uint32_t slot) {
+  auto view = std::find_if(views.begin(), views.end(),
+                           [&](const D3D12DrawSafetyVertexBuffer &candidate) {
+                             return candidate.input_slot == slot;
+                           });
+  return view == views.end() ? nullptr : &*view;
+}
+
+inline D3D12DrawSafetyResult
+D3D12ValidateDrawSafety(const D3D12DrawSafetyDesc &desc) {
+  D3D12DrawSafetyResult result;
+
+  if (!desc.element_count || !desc.instance_count)
+    return result;
+
+  if (!desc.pso_present) {
+    result.reason = D3D12DrawSafetySkipReason::MissingPipelineState;
+    return result;
+  }
+  if (!desc.pso_compiled) {
+    result.reason = D3D12DrawSafetySkipReason::PipelineStateCompileFailed;
+    return result;
+  }
+  if (desc.pso_is_compute || !desc.render_pso_ready) {
+    result.reason = D3D12DrawSafetySkipReason::PipelineStateNotRenderable;
+    return result;
+  }
+
+  const auto &index = desc.index_range;
+  if (index.indexed) {
+    if (!index.index_buffer_supplied) {
+      result.reason = D3D12DrawSafetySkipReason::MissingIndexBuffer;
+      result.gpu_address = index.index_buffer_location;
+      return result;
+    }
+    if (!index.index_buffer_resolved) {
+      result.reason = D3D12DrawSafetySkipReason::UnresolvedIndexBuffer;
+      result.gpu_address = index.index_buffer_location;
+      return result;
+    }
+    if (index.index_size != 2 && index.index_size != 4) {
+      result.reason = D3D12DrawSafetySkipReason::InvalidIndexFormat;
+      result.gpu_address = index.index_buffer_location;
+      return result;
+    }
+    const uint64_t index_bytes =
+        uint64_t(desc.element_count) * uint64_t(index.index_size);
+    if (index.index_buffer_offset > index.index_buffer_size ||
+        index_bytes > index.index_buffer_size - index.index_buffer_offset) {
+      result.reason = D3D12DrawSafetySkipReason::IndexRangeOutOfBounds;
+      result.gpu_address = index.index_buffer_location;
+      result.size_in_bytes = static_cast<uint32_t>(std::min<uint64_t>(
+          index.index_buffer_size, std::numeric_limits<uint32_t>::max()));
+      result.required_vertices = index.index_buffer_offset + index_bytes;
+      result.available_vertices = index.index_buffer_size;
+      return result;
+    }
+  }
+
+  uint64_t max_vertex_id =
+      uint64_t(desc.start_element) + uint64_t(desc.element_count) - 1ull;
+  if (index.indexed && index.has_min_max_index) {
+    const int64_t min_index =
+        int64_t(desc.base_vertex) + int64_t(index.min_index);
+    const int64_t max_index =
+        int64_t(desc.base_vertex) + int64_t(index.max_index);
+    if (min_index < 0 || max_index < 0) {
+      result.reason = D3D12DrawSafetySkipReason::VertexRangeOutOfBounds;
+      result.required_vertices = max_index < 0 ? 0 : uint64_t(max_index) + 1ull;
+      return result;
+    }
+    max_vertex_id = uint64_t(max_index);
+  }
+
+  for (const auto &input : desc.inputs) {
+    if (input.system_value)
+      continue;
+
+    result.input_slot = input.input_slot;
+    result.table_index = input.table_index;
+
+    if (input.input_slot >= 32 ||
+        input.table_index == std::numeric_limits<uint32_t>::max()) {
+      result.reason = D3D12DrawSafetySkipReason::MissingVertexBuffer;
+      return result;
+    }
+
+    if (desc.expect_compact_vertex_table &&
+        input.table_indexing_mode !=
+            D3D12VertexTableIndexingMode::CompactBySlotMask) {
+      result.reason = D3D12DrawSafetySkipReason::UnsupportedVertexTableMode;
+      return result;
+    }
+
+    const auto *view =
+        D3D12FindSafetyVertexBuffer(desc.vertex_buffers, input.input_slot);
+    if (!view || !view->view_supplied || !view->buffer_location) {
+      result.reason = D3D12DrawSafetySkipReason::MissingVertexBuffer;
+      return result;
+    }
+
+    result.gpu_address = view->buffer_location;
+    result.size_in_bytes = view->size_in_bytes;
+    result.stride_in_bytes = view->stride_in_bytes;
+
+    if (!view->gpu_address_resolved) {
+      result.reason = D3D12DrawSafetySkipReason::UnresolvedVertexBuffer;
+      return result;
+    }
+    if (!view->stride_in_bytes && !view->allow_zero_stride) {
+      result.reason = D3D12DrawSafetySkipReason::ZeroStrideVertexBuffer;
+      return result;
+    }
+
+    uint64_t required = max_vertex_id + 1ull;
+    if (input.input_slot_class == D3D12VertexInputSlotClass::PerInstance) {
+      if (!input.instance_step_rate) {
+        required = uint64_t(desc.start_instance) + 1ull;
+      } else {
+        required =
+            uint64_t(desc.start_instance) +
+            (uint64_t(desc.instance_count) + input.instance_step_rate - 1ull) /
+                input.instance_step_rate;
+      }
+    }
+
+    const uint64_t available =
+        view->stride_in_bytes ? view->size_in_bytes / view->stride_in_bytes : 0;
+    if (required > available) {
+      result.reason = D3D12DrawSafetySkipReason::VertexRangeOutOfBounds;
+      result.required_vertices = required;
+      result.available_vertices = available;
+      return result;
+    }
+  }
+
+  return result;
+}
+
 inline D3D12IAInputLayoutMetadata D3D12BuildIAInputLayoutMetadata(
     const std::vector<D3D12IAInputLayoutElementMetadata> &layout,
     const std::vector<D3D12IAInputSignatureElementMetadata> &signature,
@@ -233,11 +477,11 @@ inline std::vector<D3D12VertexTableRowMetadata> D3D12BuildVertexTableRows(
         emitted[input.table_index])
       continue;
 
-    auto view = std::find_if(
-        views.begin(), views.end(),
-        [&](const D3D12VertexBufferViewMetadata &candidate) {
-          return candidate.input_slot == input.input_slot;
-        });
+    auto view =
+        std::find_if(views.begin(), views.end(),
+                     [&](const D3D12VertexBufferViewMetadata &candidate) {
+                       return candidate.input_slot == input.input_slot;
+                     });
     if (view == views.end())
       continue;
 
