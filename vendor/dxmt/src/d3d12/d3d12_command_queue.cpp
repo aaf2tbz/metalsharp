@@ -136,6 +136,7 @@ static uint32_t g_swapchain_vertex_sample_logs = 0;
 static uint32_t g_swapchain_render_readback_captures = 0;
 static uint32_t g_swapchain_final_snapshot_logs = 0;
 static uint32_t g_swapchain_fragment_completeness_logs = 0;
+static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
 
 static uint32_t g_quarantine_zero_vb_offscreen = 0;
@@ -1574,8 +1575,8 @@ struct ReplayState {
   WMT::Reference<WMT::Buffer> msc_draw_args_buf;
   WMT::Reference<WMT::Buffer> msc_uniforms_buf;
   WMT::Reference<WMT::Buffer> null_vertex_arg_buf;
-  WMT::Reference<WMT::Texture> null_fragment_texture;
-  WMT::Reference<WMT::SamplerState> null_fragment_sampler;
+  WMT::Reference<WMT::Texture> null_direct_texture;
+  WMT::Reference<WMT::SamplerState> null_direct_sampler;
   VertexBufferEntry vertex_table_data[kVertexBufferSlotCount] = {};
   WMT::Reference<WMT::Buffer> vertex_table_buf;
   std::vector<WMT::Reference<WMT::Buffer>> transient_buffers;
@@ -1674,8 +1675,8 @@ struct ReplayState {
     return ok;
   }
 
-  bool EnsureNullFragmentTexture(MTLD3D12Device *device) {
-    if (null_fragment_texture.handle)
+  bool EnsureNullDirectTexture(MTLD3D12Device *device) {
+    if (null_direct_texture.handle)
       return true;
 
     WMTTextureInfo info = {};
@@ -1688,12 +1689,12 @@ struct ReplayState {
     info.mipmap_level_count = 1;
     info.sample_count = 1;
     info.usage = WMTTextureUsageShaderRead;
-    null_fragment_texture = device->GetMTLDevice().newTexture(info);
-    return null_fragment_texture.handle != 0;
+    null_direct_texture = device->GetMTLDevice().newTexture(info);
+    return null_direct_texture.handle != 0;
   }
 
-  bool EnsureNullFragmentSampler(MTLD3D12Device *device) {
-    if (null_fragment_sampler.handle)
+  bool EnsureNullDirectSampler(MTLD3D12Device *device) {
+    if (null_direct_sampler.handle)
       return true;
 
     WMTSamplerInfo info = {};
@@ -1707,8 +1708,8 @@ struct ReplayState {
     info.lod_max_clamp = 1000.0f;
     info.normalized_coords = true;
     info.support_argument_buffers = true;
-    null_fragment_sampler = device->GetMTLDevice().newSamplerState(info);
-    return null_fragment_sampler.handle != 0;
+    null_direct_sampler = device->GetMTLDevice().newSamplerState(info);
+    return null_direct_sampler.handle != 0;
   }
 
   void BindMissingNonStageInVertexBuffers(MTLD3D12Device *device) {
@@ -1788,7 +1789,7 @@ struct ReplayState {
                                WMTRenderStageFragment);
     }
 
-    if (EnsureNullFragmentTexture(device)) {
+    if (EnsureNullDirectTexture(device)) {
       uint64_t missing =
           D3D12DirectBindingMask(kD3D12M12DirectFragmentTextureSlots) &
           ~bound_fragment_texture_slots;
@@ -1796,17 +1797,17 @@ struct ReplayState {
            slot++) {
         if (!(missing & (1ull << slot)))
           continue;
-        SetFragmentTextureTracked(null_fragment_texture, slot, true);
+        SetFragmentTextureTracked(null_direct_texture, slot, true);
       }
       if (fallback_fragment_texture_slots) {
-        render_enc.useResource(null_fragment_texture,
+        render_enc.useResource(null_direct_texture,
                                (WMTResourceUsage)(WMTResourceUsageRead |
                                                   WMTResourceUsageSample),
                                WMTRenderStageFragment);
       }
     }
 
-    if (EnsureNullFragmentSampler(device)) {
+    if (EnsureNullDirectSampler(device)) {
       uint64_t missing =
           D3D12DirectBindingMask(kD3D12M12DirectFragmentSamplerSlots) &
           ~bound_fragment_sampler_slots;
@@ -1814,7 +1815,7 @@ struct ReplayState {
            slot++) {
         if (!(missing & (1ull << slot)))
           continue;
-        SetFragmentSamplerTracked(null_fragment_sampler, slot, true);
+        SetFragmentSamplerTracked(null_direct_sampler, slot, true);
       }
     }
 
@@ -4271,12 +4272,23 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     return;
   }
 
-  uint8_t cmd_buf[4096];
+  uint8_t cmd_buf[8192];
   uint8_t *cmd_ptr = cmd_buf;
   wmtcmd_compute_nop *chain_head = nullptr;
   wmtcmd_base *chain_tail = nullptr;
+  bool compute_cmd_overflow = false;
+  uint64_t bound_compute_buffer_slots = 0;
+  uint64_t bound_compute_texture_slots = 0;
+  uint64_t bound_compute_sampler_slots = 0;
+  uint64_t fallback_compute_buffer_slots = 0;
+  uint64_t fallback_compute_texture_slots = 0;
+  uint64_t fallback_compute_sampler_slots = 0;
 
   auto append_cmd = [&](void *data, size_t sz) -> wmtcmd_base * {
+    if (cmd_ptr + sz > cmd_buf + sizeof(cmd_buf)) {
+      compute_cmd_overflow = true;
+      return nullptr;
+    }
     auto *c = (wmtcmd_base *)cmd_ptr;
     memcpy(cmd_ptr, data, sz);
     cmd_ptr += sz;
@@ -4287,6 +4299,79 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
       chain_head = (wmtcmd_compute_nop *)c;
     chain_tail = c;
     return c;
+  };
+
+  auto mark_compute_buffer = [&](uint32_t slot, bool fallback = false) {
+    if (slot >= 64)
+      return;
+    bound_compute_buffer_slots |= 1ull << slot;
+    if (fallback)
+      fallback_compute_buffer_slots |= 1ull << slot;
+  };
+  auto mark_compute_texture = [&](uint32_t slot, bool fallback = false) {
+    if (slot >= 64)
+      return;
+    bound_compute_texture_slots |= 1ull << slot;
+    if (fallback)
+      fallback_compute_texture_slots |= 1ull << slot;
+  };
+  auto mark_compute_sampler = [&](uint32_t slot, bool fallback = false) {
+    if (slot >= 64)
+      return;
+    bound_compute_sampler_slots |= 1ull << slot;
+    if (fallback)
+      fallback_compute_sampler_slots |= 1ull << slot;
+  };
+  auto append_compute_setbuffer = [&](obj_handle_t buffer, uint64_t offset,
+                                      uint32_t index,
+                                      bool fallback = false) -> bool {
+    if (!buffer || index > 0xffu)
+      return false;
+    struct wmtcmd_compute_setbuffer sbuf = {};
+    sbuf.type = WMTComputeCommandSetBuffer;
+    sbuf.buffer = buffer;
+    sbuf.offset = offset;
+    sbuf.index = index;
+    if (!append_cmd(&sbuf, sizeof(sbuf)))
+      return false;
+    mark_compute_buffer(index, fallback);
+    return true;
+  };
+  auto append_compute_settexture = [&](obj_handle_t texture, uint32_t index,
+                                       bool fallback = false) -> bool {
+    if (!texture || index > 0xffu)
+      return false;
+    struct wmtcmd_compute_settexture stex = {};
+    stex.type = WMTComputeCommandSetTexture;
+    stex.texture = texture;
+    stex.index = index;
+    if (!append_cmd(&stex, sizeof(stex)))
+      return false;
+    mark_compute_texture(index, fallback);
+    return true;
+  };
+  auto append_compute_setsampler = [&](obj_handle_t sampler, uint32_t index,
+                                       bool fallback = false) -> bool {
+    if (!sampler || index > 0xffu)
+      return false;
+    struct wmtcmd_compute_setsamplerstate ssamp = {};
+    ssamp.type = WMTComputeCommandSetSamplerState;
+    ssamp.sampler = sampler;
+    ssamp.index = index;
+    if (!append_cmd(&ssamp, sizeof(ssamp)))
+      return false;
+    mark_compute_sampler(index, fallback);
+    return true;
+  };
+  auto append_compute_useresource = [&](obj_handle_t resource,
+                                        WMTResourceUsage usage) -> bool {
+    if (!resource)
+      return false;
+    struct wmtcmd_compute_useresource use = {};
+    use.type = WMTComputeCommandUseResource;
+    use.resource = resource;
+    use.usage = usage;
+    return append_cmd(&use, sizeof(use)) != nullptr;
   };
 
   struct wmtcmd_compute_setpso setpso = {};
@@ -4300,12 +4385,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     uint32_t bind_index = st.BindIndexOrFallback(
         st.pso->GetCSReflection().ConstanttBufferTableBindIndex,
         st.kConstantBufferTableSlot);
-    struct wmtcmd_compute_setbuffer sbuf = {};
-    sbuf.type = WMTComputeCommandSetBuffer;
-    sbuf.buffer = st.comp_cbv_table_buf.handle;
-    sbuf.offset = 0;
-    sbuf.index = bind_index;
-    append_cmd(&sbuf, sizeof(sbuf));
+    append_compute_setbuffer(st.comp_cbv_table_buf.handle, 0, bind_index);
     QTRACE("%s: bound compute CBV table slot=%u qwords=%u handle=%llu",
            trace_prefix, bind_index, comp_cb_qwords,
            (unsigned long long)st.comp_cbv_table_buf.handle);
@@ -4315,12 +4395,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
   if (comp_arg_qwords > 0 && st.comp_arg_buf.handle) {
     uint32_t bind_index = st.BindIndexOrFallback(
         st.pso->GetCSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
-    struct wmtcmd_compute_setbuffer sbuf = {};
-    sbuf.type = WMTComputeCommandSetBuffer;
-    sbuf.buffer = st.comp_arg_buf.handle;
-    sbuf.offset = 0;
-    sbuf.index = bind_index;
-    append_cmd(&sbuf, sizeof(sbuf));
+    append_compute_setbuffer(st.comp_arg_buf.handle, 0, bind_index);
     QTRACE("%s: bound compute arg table slot=%u qwords=%u handle=%llu",
            trace_prefix, bind_index, comp_arg_qwords,
            (unsigned long long)st.comp_arg_buf.handle);
@@ -4356,11 +4431,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
               s, 0, D3D12_SHADER_VISIBILITY_ALL)) {
         if (!sampler->sampler.handle)
           continue;
-        struct wmtcmd_compute_setsamplerstate ssamp = {};
-        ssamp.type = WMTComputeCommandSetSamplerState;
-        ssamp.sampler = sampler->sampler.handle;
-        ssamp.index = s;
-        append_cmd(&ssamp, sizeof(ssamp));
+        append_compute_setsampler(sampler->sampler.handle, s);
         QTRACE("%s: static sampler s%u", trace_prefix, s);
       }
     }
@@ -4416,19 +4487,13 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         uint32_t slot = compute_root_register(type);
         if (slot >= 31)
           return;
-        struct wmtcmd_compute_setbuffer sbuf = {};
-        sbuf.type = WMTComputeCommandSetBuffer;
-        sbuf.buffer = res->GetMTLBuffer().handle;
-        sbuf.offset = address - res->GetGPUVirtualAddress();
-        sbuf.index = slot;
-        append_cmd(&sbuf, sizeof(sbuf));
+        append_compute_setbuffer(res->GetMTLBuffer().handle,
+                                 address - res->GetGPUVirtualAddress(), slot);
         if (writable) {
-          struct wmtcmd_compute_useresource use = {};
-          use.type = WMTComputeCommandUseResource;
-          use.resource = res->GetMTLBuffer().handle;
-          use.usage =
-              (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite);
-          append_cmd(&use, sizeof(use));
+          append_compute_useresource(
+              res->GetMTLBuffer().handle,
+              (WMTResourceUsage)(WMTResourceUsageRead |
+                                 WMTResourceUsageWrite));
         }
         QTRACE("%s: root %s param=%u -> slot=%u gpu=0x%llx", trace_prefix,
                label, i, slot, (unsigned long long)address);
@@ -4452,11 +4517,8 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         return;
       if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER) {
         if (shader_register < 4 && desc->metal_sampler.handle) {
-          struct wmtcmd_compute_setsamplerstate ssamp = {};
-          ssamp.type = WMTComputeCommandSetSamplerState;
-          ssamp.sampler = desc->metal_sampler.handle;
-          ssamp.index = shader_register;
-          append_cmd(&ssamp, sizeof(ssamp));
+          append_compute_setsampler(desc->metal_sampler.handle,
+                                    shader_register);
           QTRACE("%s: table sampler s%u", trace_prefix, shader_register);
         }
         return;
@@ -4469,44 +4531,30 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
       auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
       bool writable = range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
       if (res->GetMTLBuffer().handle) {
-        struct wmtcmd_compute_setbuffer sbuf = {};
-        sbuf.type = WMTComputeCommandSetBuffer;
-        sbuf.buffer = res->GetMTLBuffer().handle;
-        sbuf.offset = 0;
+        uint64_t offset = 0;
         if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_CBV &&
             desc->cbv.BufferLocation) {
           auto *cbv_res =
               device->LookupResourceByGPUAddress(desc->cbv.BufferLocation);
           if (cbv_res)
-            sbuf.offset =
-                desc->cbv.BufferLocation - cbv_res->GetGPUVirtualAddress();
+            offset = desc->cbv.BufferLocation - cbv_res->GetGPUVirtualAddress();
         } else if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_UAV) {
-          sbuf.offset = UAVBufferByteOffset(desc);
+          offset = UAVBufferByteOffset(desc);
         } else if (range_type == D3D12_DESCRIPTOR_RANGE_TYPE_SRV) {
-          sbuf.offset = SRVBufferByteOffset(desc);
+          offset = SRVBufferByteOffset(desc);
         }
-        sbuf.index = buf_slot;
-        append_cmd(&sbuf, sizeof(sbuf));
-        struct wmtcmd_compute_useresource use = {};
-        use.type = WMTComputeCommandUseResource;
-        use.resource = res->GetMTLBuffer().handle;
-        use.usage = writable ? (WMTResourceUsage)(WMTResourceUsageRead |
-                                                  WMTResourceUsageWrite)
-                             : WMTResourceUsageRead;
-        append_cmd(&use, sizeof(use));
+        append_compute_setbuffer(res->GetMTLBuffer().handle, offset, buf_slot);
+        append_compute_useresource(
+            res->GetMTLBuffer().handle,
+            writable ? (WMTResourceUsage)(WMTResourceUsageRead |
+                                          WMTResourceUsageWrite)
+                     : WMTResourceUsageRead);
       } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-        struct wmtcmd_compute_settexture stex = {};
-        stex.type = WMTComputeCommandSetTexture;
-        stex.texture = tex.handle;
-        stex.index = shader_register;
-        append_cmd(&stex, sizeof(stex));
-        struct wmtcmd_compute_useresource use = {};
-        use.type = WMTComputeCommandUseResource;
-        use.resource = tex.handle;
-        use.usage = writable ? (WMTResourceUsage)(WMTResourceUsageRead |
-                                                  WMTResourceUsageWrite)
-                             : WMTResourceUsageRead;
-        append_cmd(&use, sizeof(use));
+        append_compute_settexture(tex.handle, shader_register);
+        append_compute_useresource(
+            tex.handle, writable ? (WMTResourceUsage)(WMTResourceUsageRead |
+                                                      WMTResourceUsageWrite)
+                                 : WMTResourceUsageRead);
       }
     };
 
@@ -4548,35 +4596,21 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
           if (desc && desc->resource) {
             auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
             if (res->GetMTLBuffer().handle) {
-              struct wmtcmd_compute_setbuffer sbuf = {};
-              sbuf.type = WMTComputeCommandSetBuffer;
-              sbuf.buffer = res->GetMTLBuffer().handle;
-              sbuf.offset = 0;
-              sbuf.index = i;
-              append_cmd(&sbuf, sizeof(sbuf));
+              append_compute_setbuffer(res->GetMTLBuffer().handle, 0, i);
               if (is_uav_slot[i]) {
-                struct wmtcmd_compute_useresource use = {};
-                use.type = WMTComputeCommandUseResource;
-                use.resource = res->GetMTLBuffer().handle;
-                use.usage = (WMTResourceUsage)(WMTResourceUsageRead |
-                                               WMTResourceUsageWrite);
-                append_cmd(&use, sizeof(use));
+                append_compute_useresource(
+                    res->GetMTLBuffer().handle,
+                    (WMTResourceUsage)(WMTResourceUsageRead |
+                                       WMTResourceUsageWrite));
               }
             } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
-              struct wmtcmd_compute_settexture stex = {};
-              stex.type = WMTComputeCommandSetTexture;
-              stex.texture = tex.handle;
-              stex.index = i;
-              append_cmd(&stex, sizeof(stex));
+              append_compute_settexture(tex.handle, i);
               if (is_uav_slot[i]) {
                 QTRACE("  UAV UseResource tex slot=%u handle=%llu", i,
                        (unsigned long long)tex.handle);
-                struct wmtcmd_compute_useresource use = {};
-                use.type = WMTComputeCommandUseResource;
-                use.resource = tex.handle;
-                use.usage = (WMTResourceUsage)(WMTResourceUsageRead |
-                                               WMTResourceUsageWrite);
-                append_cmd(&use, sizeof(use));
+                append_compute_useresource(
+                    tex.handle, (WMTResourceUsage)(WMTResourceUsageRead |
+                                                   WMTResourceUsageWrite));
               }
             }
           }
@@ -4601,13 +4635,99 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
          st.pso->GetThreadgroupSize().height,
          st.pso->GetThreadgroupSize().depth);
 
+  if (!st.null_vertex_arg_buf.handle) {
+    uint64_t zero_data[4] = {};
+    st.null_vertex_arg_buf = st.MakeTransientBuffer(device, sizeof(zero_data));
+    if (st.null_vertex_arg_buf.handle)
+      st.null_vertex_arg_buf.updateContents(0, zero_data, sizeof(zero_data));
+  }
+  if (st.null_vertex_arg_buf.handle) {
+    uint64_t missing =
+        D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
+        ~bound_compute_buffer_slots;
+    for (uint32_t slot = 0; slot < kD3D12M12DirectBufferSlots; slot++) {
+      if (!(missing & (1ull << slot)))
+        continue;
+      append_compute_setbuffer(st.null_vertex_arg_buf.handle, 0, slot, true);
+    }
+    if (fallback_compute_buffer_slots)
+      append_compute_useresource(st.null_vertex_arg_buf.handle,
+                                 WMTResourceUsageRead);
+  }
+  if (st.EnsureNullDirectTexture(device)) {
+    uint64_t missing =
+        D3D12DirectBindingMask(kD3D12M12DirectComputeTextureSlots) &
+        ~bound_compute_texture_slots;
+    for (uint32_t slot = 0; slot < kD3D12M12DirectComputeTextureSlots; slot++) {
+      if (!(missing & (1ull << slot)))
+        continue;
+      append_compute_settexture(st.null_direct_texture.handle, slot, true);
+    }
+    if (fallback_compute_texture_slots) {
+      append_compute_useresource(
+          st.null_direct_texture.handle,
+          (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageSample));
+    }
+  }
+  if (st.EnsureNullDirectSampler(device)) {
+    uint64_t missing =
+        D3D12DirectBindingMask(kD3D12M12DirectComputeSamplerSlots) &
+        ~bound_compute_sampler_slots;
+    for (uint32_t slot = 0; slot < kD3D12M12DirectComputeSamplerSlots; slot++) {
+      if (!(missing & (1ull << slot)))
+        continue;
+      append_compute_setsampler(st.null_direct_sampler.handle, slot, true);
+    }
+  }
+
+  if (TakeLogBudget(&g_compute_completeness_logs, 128)) {
+    D3D12ShaderBindingCompletenessDesc desc = {};
+    desc.buffer_count = kD3D12M12DirectBufferSlots;
+    desc.texture_count = kD3D12M12DirectComputeTextureSlots;
+    desc.sampler_count = kD3D12M12DirectComputeSamplerSlots;
+    desc.bound_buffers = bound_compute_buffer_slots;
+    desc.bound_textures = bound_compute_texture_slots;
+    desc.bound_samplers = bound_compute_sampler_slots;
+    desc.fallback_buffers = fallback_compute_buffer_slots;
+    desc.fallback_textures = fallback_compute_texture_slots;
+    desc.fallback_samplers = fallback_compute_sampler_slots;
+    auto summary = D3D12EvaluateShaderBindingCompleteness(desc);
+    Logger::info(str::format(
+        "M12 compute completeness label=", trace_prefix, " pso=", (void *)st.pso,
+        " dispatch=", x, "x", y, "x", z, " buffers ",
+        summary.bound_buffer_count, "+", summary.fallback_buffer_count, "/",
+        summary.required_buffer_count, " missing=0x", std::hex,
+        summary.missing_buffers, " textures ", std::dec,
+        summary.bound_texture_count, "+", summary.fallback_texture_count, "/",
+        summary.required_texture_count, " missing=0x", std::hex,
+        summary.missing_textures, " samplers ", std::dec,
+        summary.bound_sampler_count, "+", summary.fallback_sampler_count, "/",
+        summary.required_sampler_count, " missing=0x", std::hex,
+        summary.missing_samplers, std::dec, " cs_args=",
+        st.pso->GetCSArguments().size(), " cs_cb=",
+        st.pso->GetCSConstantBuffers().size(), " cs_qwords=",
+        st.pso->GetCSReflection().ArgumentTableQwords));
+  }
+
   struct wmtcmd_compute_dispatch disp = {};
   disp.type = WMTComputeCommandDispatch;
   disp.size = {(uint64_t)x, (uint64_t)y, (uint64_t)z};
   append_cmd(&disp, sizeof(disp));
 
-  if (chain_head)
-    comp.encodeCommands(chain_head);
+  if (compute_cmd_overflow) {
+    Logger::err(str::format(
+        "M12 compute command chain overflow label=", trace_prefix, " pso=",
+        (void *)st.pso, " used=", (uint64_t)(cmd_ptr - cmd_buf), " cap=",
+        (uint64_t)sizeof(cmd_buf), " dispatch=", x, "x", y, "x", z));
+    EndMetalEncoder(comp, "compute_dispatch");
+    return;
+  }
+
+  if (chain_head && !comp.encodeCommands(chain_head)) {
+    Logger::info(str::format("M12 compute encoder encode failed label=",
+                             trace_prefix, " pso=", (void *)st.pso,
+                             " dispatch=", x, "x", y, "x", z));
+  }
   EndMetalEncoder(comp, "compute_dispatch");
 }
 

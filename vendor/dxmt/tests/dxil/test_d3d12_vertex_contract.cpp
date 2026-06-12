@@ -249,6 +249,30 @@ int main() {
   expect_true("fragment direct fallback closes sampler gaps",
               fragment_after.missing_samplers == 0);
 
+  dxmt::D3D12ShaderBindingCompletenessDesc compute_direct = {};
+  compute_direct.buffer_count = dxmt::kD3D12M12DirectBufferSlots;
+  compute_direct.texture_count = dxmt::kD3D12M12DirectComputeTextureSlots;
+  compute_direct.sampler_count = dxmt::kD3D12M12DirectComputeSamplerSlots;
+  compute_direct.bound_buffers = (1ull << 16);
+  compute_direct.bound_textures = 0;
+  compute_direct.bound_samplers = 1ull << 1;
+  compute_direct.fallback_buffers =
+      dxmt::D3D12DirectBindingMask(dxmt::kD3D12M12DirectBufferSlots) &
+      ~compute_direct.bound_buffers;
+  compute_direct.fallback_textures =
+      dxmt::D3D12DirectBindingMask(dxmt::kD3D12M12DirectComputeTextureSlots);
+  compute_direct.fallback_samplers =
+      dxmt::D3D12DirectBindingMask(dxmt::kD3D12M12DirectComputeSamplerSlots) &
+      ~compute_direct.bound_samplers;
+  auto compute_after =
+      dxmt::D3D12EvaluateShaderBindingCompleteness(compute_direct);
+  expect_true("compute direct fallback closes buffer gaps",
+              compute_after.missing_buffers == 0);
+  expect_true("compute direct fallback closes texture gaps",
+              compute_after.missing_textures == 0);
+  expect_true("compute direct fallback closes sampler gaps",
+              compute_after.missing_samplers == 0);
+
   std::vector<dxmt::D3D12VertexBufferViewMetadata> sparse_views = {
       {0, 0x10000000, 256, 12},
       {3, 0x30000000, 512, 8},
