@@ -2,6 +2,7 @@
 #include "d3d12_device.hpp"
 #include "d3d12_root_signature.hpp"
 #include "d3d12_trace.hpp"
+#include "d3d12_vertex_input.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
@@ -239,6 +240,7 @@ size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
                                     DXGI_FORMAT dsv_format,
                                     UINT sample_count,
                                     UINT input_elements,
+                                    uint32_t ia_slot_mask,
                                     bool uses_stage_in) {
   size_t hash = vs_hash;
   hash = hash * 131 + ps_hash;
@@ -249,8 +251,24 @@ size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
   hash = hash * 131 + (size_t)dsv_format;
   hash = hash * 131 + (size_t)sample_count;
   hash = hash * 131 + (size_t)input_elements;
+  hash = hash * 131 + (size_t)ia_slot_mask;
   hash = hash * 131 + (uses_stage_in ? 1 : 0);
   return hash;
+}
+
+void WriteJsonString(FILE *df, const std::string &value) {
+  fputc('"', df);
+  for (char ch : value) {
+    switch (ch) {
+    case '\\': fputs("\\\\", df); break;
+    case '"': fputs("\\\"", df); break;
+    case '\n': fputs("\\n", df); break;
+    case '\r': fputs("\\r", df); break;
+    case '\t': fputs("\\t", df); break;
+    default: fputc(ch, df); break;
+    }
+  }
+  fputc('"', df);
 }
 
 void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
@@ -296,7 +314,9 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
                            SIZE_T gs_size, UINT num_render_targets,
                            const DXGI_FORMAT *rtv_formats,
                            DXGI_FORMAT dsv_format, UINT sample_count,
-                           UINT input_elements, bool uses_stage_in,
+                           UINT input_elements, uint32_t ia_slot_mask,
+                           const std::vector<D3D12IAInputElementInfo> &ia_elements,
+                           bool uses_stage_in,
                            bool uses_geometry_mesh,
                            bool rasterization_enabled,
                            uintptr_t vertex_function,
@@ -344,6 +364,22 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
   fprintf(df, "      \"stencil_format\": \"%s\",\n",
           PixelFormatManifestName(stencil_format));
   fprintf(df, "      \"sample_count\": %u,\n", sample_count ? sample_count : 1);
+  fprintf(df, "      \"input_layout\": { \"slot_mask\": \"0x%08x\", \"elements\": [\n",
+          ia_slot_mask);
+  for (size_t i = 0; i < ia_elements.size(); i++) {
+    const auto &element = ia_elements[i];
+    fprintf(df, "        { \"semantic\": ");
+    WriteJsonString(df, element.semantic_name);
+    fprintf(df, ", \"semantic_index\": %u, \"register\": %u, \"slot\": %u, \"table_index\": %u, \"offset\": %u, \"dxgi_format\": %u, \"metal_format\": %u, \"class\": \"%s\", \"step_rate\": %u }%s\n",
+            element.semantic_index, element.shader_register,
+            element.input_slot, element.table_index,
+            element.aligned_byte_offset, (unsigned)element.dxgi_format,
+            (unsigned)element.metal_format,
+            element.per_instance ? "per_instance" : "per_vertex",
+            element.instance_step_rate,
+            i + 1 == ia_elements.size() ? "" : ",");
+  }
+  fprintf(df, "      ] },\n");
   fprintf(df, "      \"vertex\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"vs_main\" },\n",
           vs_hash, vs_metallib_path);
   if (ps_size > 0) {
@@ -849,6 +885,12 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   sm50_error_t sm50_err = nullptr;
   sm50_shader_t shader = nullptr;
   MTL_SHADER_REFLECTION reflection = {};
+  std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
+  uint32_t ia_slot_mask = 0;
+  if (type == ShaderType::Vertex) {
+    BuildIAInputLayout(bytecode, size, ia_elements, ia_slot_mask);
+    m_ia_slot_mask = ia_slot_mask;
+  }
 
   if (SM50Initialize(bytecode, size, &shader, &reflection, &sm50_err)) {
     char err_buf[256] = {};
@@ -1158,18 +1200,14 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             func_name, tgx, tgy, tgz);
   }
 
-  std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
   SM50_SHADER_IA_INPUT_LAYOUT_DATA ia_layout = {};
   SM50_SHADER_COMPILATION_ARGUMENT_DATA *compile_args =
       (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&common;
   if (type == ShaderType::Vertex) {
-    uint32_t slot_mask = 0;
-    BuildIAInputLayout(bytecode, size, ia_elements, slot_mask);
-    m_ia_slot_mask = slot_mask;
     ia_layout.next = &common;
     ia_layout.type = SM50_SHADER_IA_INPUT_LAYOUT;
     ia_layout.index_buffer_format = SM50_INDEX_BUFFER_FORMAT_NONE;
-    ia_layout.slot_mask = slot_mask;
+    ia_layout.slot_mask = ia_slot_mask;
     ia_layout.num_elements = (uint32_t)ia_elements.size();
     ia_layout.elements = ia_elements.data();
     compile_args = (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&ia_layout;
@@ -1270,9 +1308,10 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
 void MTLD3D12PipelineState::BuildIAInputLayout(
     const void *bytecode, SIZE_T size,
     std::vector<SM50_IA_INPUT_ELEMENT> &elements,
-    uint32_t &slot_mask) const {
+    uint32_t &slot_mask) {
   slot_mask = 0;
   elements.clear();
+  m_ia_input_elements.clear();
 
   if (!bytecode || !size || !m_input_layout.NumElements ||
       !m_input_layout.pInputElementDescs)
@@ -1289,6 +1328,7 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
   const D3D11_SIGNATURE_PARAMETER *params = nullptr;
   uint32_t param_count = parser.GetParameters(&params);
   uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
+  std::vector<D3D12IAInputElementInfo> input_elements;
 
   for (UINT i = 0; i < m_input_layout.NumElements; i++) {
     const auto &desc = m_input_layout.pInputElementDescs[i];
@@ -1341,12 +1381,29 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
     elements.push_back(element);
     slot_mask |= 1u << desc.InputSlot;
 
+    D3D12IAInputElementInfo info = {};
+    info.semantic_name = desc.SemanticName ? desc.SemanticName : "";
+    info.semantic_index = desc.SemanticIndex;
+    info.shader_register = sig->Register;
+    info.input_slot = desc.InputSlot;
+    info.aligned_byte_offset = aligned_offset;
+    info.dxgi_format = desc.Format;
+    info.metal_format = metal_format.AttributeFormat;
+    info.per_instance =
+        desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
+    info.instance_step_rate = info.per_instance ? desc.InstanceDataStepRate : 1;
+    input_elements.push_back(std::move(info));
+
     PSTRACE("BuildIAInputLayout element[%zu]: semantic=%s%u reg=%u slot=%u offset=%u fmt=%u step=%u/%u",
             elements.size() - 1, desc.SemanticName ? desc.SemanticName : "?",
             desc.SemanticIndex, element.reg, element.slot,
             element.aligned_byte_offset, element.format,
             element.step_function, element.step_rate);
   }
+
+  for (auto &info : input_elements)
+    info.table_index = D3D12CompactVertexTableIndex(slot_mask, info.input_slot);
+  m_ia_input_elements = std::move(input_elements);
 }
 
 bool MTLD3D12PipelineState::Compile() {
@@ -1757,11 +1814,12 @@ bool MTLD3D12PipelineState::Compile() {
     size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
         vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
         m_dsv_format, m_sample_count ? m_sample_count : 1,
-        m_input_layout.NumElements, m_vs_uses_stage_in);
+        m_input_layout.NumElements, m_ia_slot_mask, m_vs_uses_stage_in);
     DumpRenderPSOManifest(
         pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
         m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
         m_sample_count ? m_sample_count : 1, m_input_layout.NumElements,
+        m_ia_slot_mask, m_ia_input_elements,
         m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
         info.rasterization_enabled, (uintptr_t)vs_func.handle,
         (uintptr_t)ps_func.handle);
@@ -1915,6 +1973,8 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
                         desc.StreamOutput.pSODeclaration ||
                         desc.StreamOutput.pBufferStrides;
   m_vs_uses_stage_in = false;
+  m_ia_slot_mask = 0;
+  m_ia_input_elements.clear();
   m_input_elements.clear();
   m_input_semantic_names.clear();
   m_input_layout = {};
@@ -1949,6 +2009,8 @@ void MTLD3D12PipelineState::SetComputeDesc(
     m_cs.resize(desc.CS.BytecodeLength);
     memcpy(m_cs.data(), desc.CS.pShaderBytecode, desc.CS.BytecodeLength);
   }
+  m_ia_slot_mask = 0;
+  m_ia_input_elements.clear();
 }
 
 HRESULT STDMETHODCALLTYPE

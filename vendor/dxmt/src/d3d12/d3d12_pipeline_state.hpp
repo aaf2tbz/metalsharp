@@ -22,6 +22,19 @@ struct StageInVertexAttributeInfo {
   std::string semantic_name;
 };
 
+struct D3D12IAInputElementInfo {
+  std::string semantic_name;
+  uint32_t semantic_index = 0;
+  uint32_t shader_register = 0;
+  uint32_t input_slot = 0;
+  uint32_t table_index = 0;
+  uint32_t aligned_byte_offset = 0;
+  DXGI_FORMAT dxgi_format = DXGI_FORMAT_UNKNOWN;
+  WMTAttributeFormat metal_format = WMTAttributeFormatInvalid;
+  bool per_instance = false;
+  uint32_t instance_step_rate = 1;
+};
+
 struct CompiledShader {
   sm50_shader_t handle = nullptr;
   MTL_SHADER_REFLECTION reflection = {};
@@ -117,6 +130,9 @@ public:
   std::string GetGSCacheHash() const;
   uint32_t GetPSArgumentBufferSize() const { return m_ps_reflection.ArgumentTableQwords * 8; }
   uint32_t GetIAInputSlotMask() const { return m_ia_slot_mask; }
+  const std::vector<D3D12IAInputElementInfo> &GetIAInputElements() const {
+    return m_ia_input_elements;
+  }
   const D3D12_INPUT_LAYOUT_DESC &GetInputLayout() const { return m_input_layout; }
   bool UsesStageInVertexDescriptor() const { return m_vs_uses_stage_in; }
   bool RequiresMSCStageInFunction() const { return m_vs_requires_msc_stage_in; }
@@ -142,7 +158,7 @@ private:
   bool RecordCompileFailure(const char *stage, const std::string &detail);
   void BuildIAInputLayout(const void *bytecode, SIZE_T size,
                           std::vector<SM50_IA_INPUT_ELEMENT> &elements,
-                          uint32_t &slot_mask) const;
+                          uint32_t &slot_mask);
 
   static std::mutex s_shader_mutex;
   static std::unordered_map<size_t, WMT::Reference<WMT::Function>> s_shader_cache;
@@ -198,6 +214,7 @@ private:
   std::vector<MTL_SM50_SHADER_ARGUMENT> m_gs_cb_args;
   sm50_shader_t m_gs_shader = nullptr;
   uint32_t m_ia_slot_mask = 0;
+  std::vector<D3D12IAInputElementInfo> m_ia_input_elements;
   std::unordered_map<uint32_t, StageInVertexAttributeInfo> m_vs_stage_in_register_map;
   std::vector<StageInVertexAttributeInfo> m_vs_stage_in_attribute_order;
 

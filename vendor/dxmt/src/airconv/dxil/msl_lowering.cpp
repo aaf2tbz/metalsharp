@@ -449,6 +449,7 @@ struct LowerContext {
     bool uses_group_thread_id = false;
     bool uses_group_size = false;
     std::set<uint32_t> vertex_input_ids;
+    bool vertex_has_float_load_input = false;
 };
 
 static void recordDiagnostic(LowerContext &ctx, const char *fmt, ...) {
@@ -1428,6 +1429,22 @@ static uint32_t literalFromValue(const LowerContext &ctx, uint32_t idx, uint32_t
     return fallback;
 }
 
+static bool isLoadInputI32(const std::string &callee_name) {
+    return callee_name.find("loadInput.i32") != std::string::npos;
+}
+
+static bool isLoadInputF32(const std::string &callee_name) {
+    return callee_name.find("loadInput.f32") != std::string::npos;
+}
+
+static bool shouldLowerLoadInputI32AsVertexId(const LowerContext &ctx, uint32_t input_id) {
+    return ctx.shader.kind == DxilShaderKind::Vertex &&
+           input_id == 0 &&
+           !ctx.vertex_has_float_load_input &&
+           ctx.vertex_input_ids.size() == 1 &&
+           ctx.vertex_input_ids.count(0) != 0;
+}
+
 static DescriptorRangePlan::Kind descriptorKindForResourceClass(uint32_t resource_class) {
     switch (resource_class) {
     case 0: return DescriptorRangePlan::Kind::SRV;
@@ -1604,7 +1621,11 @@ static void analyzeVertexInputs(LowerContext &ctx, const LLVMFunction &fn) {
             if (inst.opcode != LLVMInstruction::Call || inst.operands.size() < 4)
                 continue;
 
-            uint32_t intrinsic_id = intrinsicIdFromCalleeName(calleeName(inst.operands[0]));
+            std::string callee_name = calleeName(inst.operands[0]);
+            if (isLoadInputF32(callee_name))
+                ctx.vertex_has_float_load_input = true;
+
+            uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
             if (intrinsic_id != DXOP_LoadInput)
                 continue;
 
@@ -1627,7 +1648,8 @@ static void analyzeVertexInputs(LowerContext &ctx, const LLVMFunction &fn) {
 
 static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_id,
                                           const std::vector<uint32_t> &args,
-                                          MSLType declared = {}) {
+                                          MSLType declared = {},
+                                          const std::string &callee_name = {}) {
     switch (intrinsic_id) {
     case DXOP_CreateHandle:
     case DXOP_CreateHandleForLib:
@@ -1738,7 +1760,9 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
         return promoteNumericType(promoteNumericType(a, b, declared), c, {MSLTypeKind::Int, 0, {}});
     }
     case DXOP_LoadInput:
-        return {MSLTypeKind::Float, 0, {}};
+        if (isLoadInputI32(callee_name))
+            return {MSLTypeKind::Int, 0, {}};
+        return usableType(declared) ? declared : MSLType{MSLTypeKind::Float, 0, {}};
     case DXOP_StoreOutput:
         return {MSLTypeKind::Void, 0, {}};
     default:
@@ -1763,7 +1787,8 @@ static std::string resolveBindingName(const std::string &handle, const char *tar
 }
 
 static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id,
-                                          const std::vector<uint32_t> &args) {
+                                          const std::vector<uint32_t> &args,
+                                          const std::string &callee_name = {}) {
     ctx.pending_handle.reset();
 
     auto valueArg = [&](size_t arg, const char *fallback) -> std::string {
@@ -2159,7 +2184,11 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t input_id = literalArg(0, 0, "input");
         uint32_t comp = literalArg(2, 0, "comp");
         if (ctx.shader.kind == DxilShaderKind::Pixel) return varyingField("in", input_id) + componentSuffix(comp);
-        if (ctx.shader.kind == DxilShaderKind::Vertex) return vertexPullField(input_id) + componentSuffix(comp);
+        if (ctx.shader.kind == DxilShaderKind::Vertex) {
+            if (isLoadInputI32(callee_name) && shouldLowerLoadInputI32AsVertexId(ctx, input_id))
+                return comp == 0 ? "vid" : "0u";
+            return vertexPullField(input_id) + componentSuffix(comp);
+        }
         return "0.0";
     }
     case DXOP_StoreOutput: {
@@ -2604,9 +2633,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             else
                 fn_args.assign(call_args.begin() + 1, call_args.end());
 
-            std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
+            std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args, callee_name);
             MSLType result_type = inferDXIntrinsicResultType(
-                ctx, intrinsic_id, fn_args, bestType(getTypeForInst(inst.type_id), translated));
+                ctx, intrinsic_id, fn_args, bestType(getTypeForInst(inst.type_id), translated),
+                callee_name);
             ensureValueTable(value_counter);
             ctx.value_types[value_counter] = result_type;
 
@@ -3501,7 +3531,8 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                     else
                         fn_args.assign(inst.operands.begin() + 3, inst.operands.end());
                     MSLType declared = DXILIRBuilder::resolveType(inst.type_id, module);
-                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared);
+                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared,
+                                                                  callee_name);
                     if (inferred.kind != MSLTypeKind::Unknown && inferred.kind != MSLTypeKind::Void)
                         return inferred;
                 }

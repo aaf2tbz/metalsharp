@@ -12,6 +12,7 @@
 #include "airconv/dxil/dxil_container.hpp"
 #include "airconv/dxil/llvm_bitcode.hpp"
 #include "airconv/dxil/dxil_to_msl.hpp"
+#include "airconv/dxil/msl_lowering.hpp"
 
 namespace fs = std::filesystem;
 
@@ -150,36 +151,60 @@ static bool runConverterTest(const TestCase &tc) {
         return false;
     }
 
-    auto msl = dxmt::dxil::DXILToMSL::convert(*module, shader);
-    if (!msl) {
+    auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader);
+    auto fallback_msl = typed_msl ? std::optional<dxmt::dxil::MSLShader>{}
+                                  : dxmt::dxil::DXILToMSL::convert(*module, shader);
+    if (!typed_msl && !fallback_msl) {
         report_fail(tc.name, "MSL conversion failed");
         return false;
     }
 
-    if (tc.expect_msl_nonempty && msl->source.empty()) {
+    const std::string &msl_source = typed_msl ? typed_msl->source : fallback_msl->source;
+    const std::string &entry_point = typed_msl ? typed_msl->entry_point : fallback_msl->entry_point;
+    const uint32_t unsupported_opcodes = typed_msl ? typed_msl->unsupported_opcodes
+                                                   : fallback_msl->unsupported_opcodes;
+
+    if (tc.expect_msl_nonempty && msl_source.empty()) {
         report_fail(tc.name, "MSL source is empty");
         return false;
     }
 
-    bool has_entry = msl->source.find(msl->entry_point) != std::string::npos;
+    bool has_entry = msl_source.find(entry_point) != std::string::npos;
     if (!has_entry) {
         char buf[256];
         snprintf(buf, sizeof(buf), "entry point '%s' not in MSL source",
-                 msl->entry_point.c_str());
+                 entry_point.c_str());
         report_fail(tc.name, buf);
         return false;
     }
 
     if (shader.kind == dxmt::dxil::DxilShaderKind::Compute) {
-        if (msl->tg_size[0] == 0 || msl->tg_size[1] == 0 || msl->tg_size[2] == 0) {
+        const uint32_t *tg_size = typed_msl ? typed_msl->tg_size : fallback_msl->tg_size;
+        if (tg_size[0] == 0 || tg_size[1] == 0 || tg_size[2] == 0) {
             report_fail(tc.name, "compute shader has zero threadgroup size");
             return false;
         }
     }
 
-    if (msl->unsupported_opcodes > 0) {
+    bool is_fullscreen_triangle =
+        shader.kind == dxmt::dxil::DxilShaderKind::Vertex &&
+        (tc.name.find("570793ee26c3a8a4") != std::string::npos ||
+         tc.name.find("374a58899b67eefd") != std::string::npos);
+    if (is_fullscreen_triangle) {
+        if (msl_source.find("[[vertex_id]]") == std::string::npos ||
+            msl_source.find("= vid") == std::string::npos) {
+            report_fail(tc.name, "fullscreen triangle loadInput.i32 did not lower from vertex_id");
+            return false;
+        }
+        if (msl_source.find("m12_load_vertex_attr(0, vid") != std::string::npos) {
+            report_fail(tc.name, "fullscreen triangle loadInput.i32 still pulls vertex attribute 0");
+            return false;
+        }
+    }
+
+    if (unsupported_opcodes > 0) {
         char buf[64];
-        snprintf(buf, sizeof(buf), "%u unsupported opcodes", msl->unsupported_opcodes);
+        snprintf(buf, sizeof(buf), "%u unsupported opcodes", unsupported_opcodes);
     }
 
     if (!g_msl_dump_dir.empty()) {
@@ -191,7 +216,7 @@ static bool runConverterTest(const TestCase &tc) {
         std::string msl_path = g_msl_dump_dir + "/" + stem + ".metal";
         std::ofstream msl_file(msl_path);
         if (msl_file.is_open()) {
-            msl_file << msl->source;
+            msl_file << msl_source;
             msl_file.close();
         }
     }
