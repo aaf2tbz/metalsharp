@@ -286,6 +286,15 @@ int main() {
   dxmt::CmdSetPipelineState set_pso = {};
   set_pso.header = {dxmt::CmdType::SetPipelineState, sizeof(set_pso)};
   append_command(zero_draw_stream, set_pso);
+  auto pso_only_stats = dxmt::D3D12CollectCommandStreamStats(
+      zero_draw_stream.data(), zero_draw_stream.size());
+  expect_true("command stats pso-only is graphics setup",
+              pso_only_stats.HasGraphicsSetup());
+  expect_true("command stats pso-only is zero-draw graphics",
+              pso_only_stats.IsZeroDrawGraphicsList());
+  expect_true("command stats pso-only is frame-progress candidate",
+              pso_only_stats.IsFrameProgressCandidate());
+
   dxmt::CmdSetRootSignature set_graphics_root = {};
   set_graphics_root.header = {dxmt::CmdType::SetGraphicsRootSignature,
                               sizeof(set_graphics_root)};
@@ -314,6 +323,8 @@ int main() {
               zero_draw_stats.HasClearOrComputeWork());
   expect_true("command stats classifies zero-draw graphics list",
               zero_draw_stats.IsZeroDrawGraphicsList());
+  expect_true("command stats zero-draw is frame-progress candidate",
+              zero_draw_stats.IsFrameProgressCandidate());
   expect_equal("command stats zero direct draw count",
                zero_draw_stats.DirectDrawCount(), 0);
 
@@ -326,6 +337,10 @@ int main() {
       zero_draw_stream.data(), zero_draw_stream.size());
   expect_equal("command stats drawn stream draw count",
                drawn_stats.draw_count, 1);
+  expect_true("command stats drawn stream is draw-bearing",
+              drawn_stats.IsDrawBearing());
+  expect_true("command stats drawn stream is frame-progress candidate",
+              drawn_stats.IsFrameProgressCandidate());
   expect_true("command stats drawn stream is not zero-draw",
               !drawn_stats.IsZeroDrawGraphicsList());
 

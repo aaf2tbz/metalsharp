@@ -50,6 +50,12 @@ struct D3D12CommandStreamStats {
   bool IsZeroDrawGraphicsList() const {
     return command_count && AnyDrawCount() == 0 && HasGraphicsSetup();
   }
+
+  bool IsDrawBearing() const { return AnyDrawCount() != 0; }
+
+  bool IsFrameProgressCandidate() const {
+    return IsDrawBearing() || IsZeroDrawGraphicsList() || HasClearOrComputeWork();
+  }
 };
 
 inline void D3D12AccumulateCommandType(D3D12CommandStreamStats &stats,

@@ -266,6 +266,7 @@ public:
 
   const std::vector<uint8_t> &GetCommands() const { return m_cmds; }
   void ClearCommands() { m_cmds.clear(); }
+  uint64_t GetDebugId() const { return m_debug_id; }
 
 private:
   template <typename T> void Emit(const T &cmd) {
@@ -287,6 +288,7 @@ private:
   MTLD3D12CommandAllocator *m_allocator;
   D3D12_COMMAND_LIST_TYPE m_type;
   bool m_closed = false;
+  uint64_t m_debug_id = 0;
   std::vector<uint8_t> m_cmds;
   std::atomic<uint32_t> m_refCount = {1ul};
   std::atomic<uint32_t> m_refPrivate = {1ul};

@@ -4887,6 +4887,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       QTRACE("ECL: list %u is null, skipping", li);
       continue;
     }
+    const uint64_t command_list_id = list->GetDebugId();
 
     QTRACE("ECL: creating cmdbuf from m_wmt_queue");
     auto cmdbuf = m_wmt_queue.commandBuffer();
@@ -6900,7 +6901,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         TakeLogBudget(&g_zero_draw_graphics_logs, 96)) {
       Logger::info(str::format(
           "M12 zero-draw graphics command list queue=", (unsigned)m_desc.Type,
-          " list=", li, " serial=", (unsigned long long)queue_serial,
+          " list=", li, " cmdlist_id=",
+          (unsigned long long)command_list_id,
+          " serial=", (unsigned long long)queue_serial,
           " cmds=", stream_stats.command_count,
           " pso_sets=", stream_stats.set_pso_count,
           " gfx_roots=", stream_stats.set_graphics_root_sig_count,
@@ -6919,7 +6922,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     if (stream_stats.corrupt && TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::warn(str::format(
           "M12 command list corrupt stream queue=", (unsigned)m_desc.Type,
-          " list=", li, " cmds=", stream_stats.command_count,
+          " list=", li, " cmdlist_id=",
+          (unsigned long long)command_list_id,
+          " cmds=", stream_stats.command_count,
           " offset=", (unsigned long long)stream_stats.corrupt_offset,
           " type=", stream_stats.corrupt_type,
           " size=", stream_stats.corrupt_size,
@@ -6929,7 +6934,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::info(str::format(
           "M12 command list summary queue=", (unsigned)m_desc.Type,
-          " list=", li, " serial=", (unsigned long long)queue_serial,
+          " list=", li, " cmdlist_id=",
+          (unsigned long long)command_list_id,
+          " serial=", (unsigned long long)queue_serial,
           " cmds=", stream_stats.command_count, " draws=", draw_count,
           " indexed=", indexed_draw_count, " indirect=", indirect_count,
           " dispatch=", dispatch_count, " clear_rtv=", clear_rtv_count,
