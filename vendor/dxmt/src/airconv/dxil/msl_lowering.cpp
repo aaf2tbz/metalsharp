@@ -179,9 +179,10 @@ static std::string varyingField(const char *base, uint32_t sig_id) {
     return std::string(base) + ".v7";
 }
 
-static std::string vertexInputField(const char *base, uint32_t sig_id) {
-    if (sig_id <= 15) return std::string(base) + ".a" + std::to_string(sig_id);
-    return std::string(base) + ".a0";
+static std::string vertexPullField(uint32_t sig_id) {
+    uint32_t slot = sig_id < 16 ? sig_id : 0;
+    return "m12_load_vertex_attr(" + std::to_string(slot) + ", vid, buf16, buf" +
+           std::to_string(slot) + ")";
 }
 
 static std::string escapeName(const std::string &s) {
@@ -528,12 +529,22 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
     os << "};\n\n";
 
-    os << "struct vertex_input_v {\n";
-    if (ctx.shader.kind == DxilShaderKind::Vertex && ctx.vertex_input_ids.empty())
-        os << "  float4 a0 [[attribute(0)]];\n";
-    for (uint32_t i : ctx.vertex_input_ids)
-        os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
-    os << "};\n\n";
+    if (ctx.shader.kind == DxilShaderKind::Vertex) {
+        os << "struct m12_vertex_buffer_entry { ulong buffer_handle; uint stride; uint length; };\n";
+        os << "static inline float4 m12_load_vertex_attr(uint attr, uint vid, device char* table_bytes, device char* vb) {\n";
+        os << "  if (table_bytes == nullptr || vb == nullptr) return float4(0.0);\n";
+        os << "  device m12_vertex_buffer_entry* table = reinterpret_cast<device m12_vertex_buffer_entry*>(table_bytes);\n";
+        os << "  uint stride = table[attr].stride;\n";
+        os << "  uint length = table[attr].length;\n";
+        os << "  if (stride == 0) stride = 16;\n";
+        os << "  uint offset = vid * stride;\n";
+        os << "  if (length != 0 && offset + 16 > length) return float4(0.0);\n";
+        os << "  return *reinterpret_cast<device float4*>(vb + offset);\n";
+        os << "}\n\n";
+    } else {
+        os << "struct vertex_input_v {\n";
+        os << "};\n\n";
+    }
 
     if (ctx.shader.kind == DxilShaderKind::Compute) {
         os << "kernel void cs_main(\n";
@@ -549,7 +560,7 @@ static void emitFunctionPrologue(LowerContext &ctx) {
         os << "  uint3 gsz [[threads_per_threadgroup]]\n) {\n";
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
-        os << "  vertex_input_v vin [[stage_in]],\n  uint vid [[vertex_id]],\n";
+        os << "  uint vid [[vertex_id]],\n";
         std::vector<std::string> params;
         for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
             params.push_back("  device char* buf" + std::to_string(i) +
@@ -2148,7 +2159,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t input_id = literalArg(0, 0, "input");
         uint32_t comp = literalArg(2, 0, "comp");
         if (ctx.shader.kind == DxilShaderKind::Pixel) return varyingField("in", input_id) + componentSuffix(comp);
-        if (ctx.shader.kind == DxilShaderKind::Vertex) return vertexInputField("vin", input_id) + componentSuffix(comp);
+        if (ctx.shader.kind == DxilShaderKind::Vertex) return vertexPullField(input_id) + componentSuffix(comp);
         return "0.0";
     }
     case DXOP_StoreOutput: {

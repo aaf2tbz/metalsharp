@@ -1011,7 +1011,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               }
 
               if (type == ShaderType::Vertex)
-                m_vs_uses_stage_in = true;
+                m_vs_uses_stage_in = false;
 
               if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
                 m_threadgroup_size.width = msl_result->tg_size[0];
@@ -1081,7 +1081,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                   s_shader_cache[hash] = out_func;
                 }
                 if (type == ShaderType::Vertex)
-                  m_vs_uses_stage_in = true;
+                  m_vs_uses_stage_in = false;
                 char *tg = strstr(rbuf, "\"tg_size\"");
                 if (tg) {
                   int tw=1,th=1,td=1;
@@ -1699,7 +1699,7 @@ bool MTLD3D12PipelineState::Compile() {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
   }
-  {
+  if (m_vs_uses_stage_in) {
     constexpr uint32_t kSyntheticStageInAttributes = 16;
     constexpr uint32_t kSyntheticStageInStride = 16 * kSyntheticStageInAttributes;
     for (uint32_t i = 0; i < kSyntheticStageInAttributes && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {

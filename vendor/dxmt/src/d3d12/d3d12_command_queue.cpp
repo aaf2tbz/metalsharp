@@ -3516,7 +3516,7 @@ struct ReplayState {
       }
 
       memset(vertex_table_data, 0, sizeof(vertex_table_data));
-      uint32_t table_index = 0;
+      uint32_t table_entries = 0;
       for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
         if (!(slot_mask & (1u << slot)))
           continue;
@@ -3527,20 +3527,22 @@ struct ReplayState {
                 ? device->LookupResourceByGPUAddress(view.BufferLocation)
                 : nullptr;
         if (res && res->GetMTLBuffer().handle) {
-          vertex_table_data[table_index].buffer_handle = view.BufferLocation;
-          vertex_table_data[table_index].stride = view.StrideInBytes;
-          vertex_table_data[table_index].length = view.SizeInBytes;
+          uint64_t offset = view.BufferLocation - res->GetGPUVirtualAddress();
+          vertex_table_data[slot].buffer_handle = view.BufferLocation;
+          vertex_table_data[slot].stride = view.StrideInBytes;
+          vertex_table_data[slot].length = view.SizeInBytes;
+          render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
           render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                  VertexInputStages());
-          QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u gpu=0x%llx size=%u "
+          QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u gpu=0x%llx offset=%llu size=%u "
                  "stride=%u",
-                 table_index, slot, (unsigned long long)view.BufferLocation,
-                 view.SizeInBytes, view.StrideInBytes);
+                 slot, slot, (unsigned long long)view.BufferLocation,
+                 (unsigned long long)offset, view.SizeInBytes, view.StrideInBytes);
         } else {
           QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u unresolved gpu=0x%llx",
-                 table_index, slot, (unsigned long long)view.BufferLocation);
+                 slot, slot, (unsigned long long)view.BufferLocation);
         }
-        table_index++;
+        table_entries = std::max<uint32_t>(table_entries, slot + 1);
       }
 
       vertex_table_buf = MakeTransientBuffer(device, sizeof(vertex_table_data));
@@ -3552,12 +3554,12 @@ struct ReplayState {
                                WMTRenderStageVertex);
         QTRACE("ApplyVertexBuffers: bound IA vertex table slot=%u mask=0x%x "
                "entries=%u",
-               kVertexBufferTableSlot, slot_mask, table_index);
+               kVertexBufferTableSlot, slot_mask, table_entries);
       }
       last_vertex_table_summary =
           str::format("vb_table mask=0x", std::hex, slot_mask, std::dec,
-                      " entries=", table_index);
-      last_bound_vertex_buffers = table_index;
+                      " entries=", table_entries);
+      last_bound_vertex_buffers = table_entries;
       return;
     }
 
