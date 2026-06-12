@@ -48,11 +48,10 @@ vendor/dxmt/tests/d3d12_game/run_m12_game.sh --quick-checks --seconds 1
 The script stages the PR-built `m12_game.exe`, `d3d12.dll`, `dxgi.dll`,
 `dxgi_dxmt.dll`, the deployed DXMT `winemetal.dll`, `d3dcompiler_47.dll`, and a
 local Unix-side WineMetal dependency folder under
-`$HOME/.metalsharp/tmp/m12_game_run`. It keeps Unix dylibs out of the executable
-directory and resolves them through Wine's shared `lib/wine/x86_64-unix`
-location first, then the staged DXMT Unix folder. It uses
-`DXMT_WINEMETAL_UNIXLIB=winemetal.so`, which is the native-override shape the
-M12 route expects. It writes:
+`$HOME/.metalsharp/tmp/m12_game_run`. For the standalone live harness it also
+copies `winemetal.so`, `winemac.so`, and `ntdll.so` beside the executable and
+uses `DXMT_WINEMETAL_UNIXLIB=winemetal.so`, matching the native-override shape
+that made the cube path run independently of a game install. It writes:
 
 - `$HOME/.metalsharp/tmp/m12_game_run/m12_game.log`
 - `/tmp/winemetal_pe_debug.log` when `DXMT_WINEMETAL_DEBUG=1`

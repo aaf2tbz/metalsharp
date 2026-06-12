@@ -8,14 +8,7 @@ if [[ $# -gt 0 && "$1" != --* ]]; then
   shift
 fi
 wine_root="${WINE_ROOT:-$HOME/.metalsharp/runtime/wine}"
-wine_bin="${WINE_BIN:-}"
-if [[ -z "$wine_bin" ]]; then
-  if [[ -x "$wine_root/bin/metalsharp-wine" ]]; then
-    wine_bin="$wine_root/bin/metalsharp-wine"
-  else
-    wine_bin="$wine_root/bin/wine"
-  fi
-fi
+wine_bin="${WINE_BIN:-$wine_root/bin/wine}"
 run_root="${M12_GAME_RUN_ROOT:-$HOME/.metalsharp/tmp/m12_game_run}"
 prefix="${M12_GAME_WINEPREFIX:-$HOME/.metalsharp/tmp/m12_game_prefix}"
 loops="${M12_GAME_LOOPS:-1}"
@@ -41,6 +34,11 @@ if [[ -f "$build_dir/src/winemetal/unix/winemetal.so" ]]; then
 else
   cp "$wine_root/lib/dxmt/x86_64-unix/winemetal.so" "$run_root/unix/"
 fi
+cp "$wine_root/lib/wine/x86_64-unix/winemac.so" "$run_root/unix/"
+cp "$wine_root/lib/wine/x86_64-unix/ntdll.so" "$run_root/unix/"
+cp "$run_root/unix/winemetal.so" "$run_root/"
+cp "$run_root/unix/winemac.so" "$run_root/"
+cp "$run_root/unix/ntdll.so" "$run_root/"
 
 cd "$run_root"
 rm -f m12_game.log /tmp/winemetal_debug.log /tmp/winemetal_pe_debug.log
@@ -53,8 +51,7 @@ export DXMT_WINEMETAL_UNIXLIB="${DXMT_WINEMETAL_UNIXLIB:-winemetal.so}"
 export DXMT_D3D12_TRACE="${DXMT_D3D12_TRACE:-1}"
 export DXMT_DXGI_TRACE="${DXMT_DXGI_TRACE:-1}"
 export DXMT_SHADER_CACHE_PATH="${DXMT_SHADER_CACHE_PATH:-$run_root/shader-cache}"
-export DYLD_LIBRARY_PATH="/Volumes/AverySSD/toolchains/clang+llvm-15.0.7-x86_64-apple-darwin21.0/lib:$wine_root/lib/wine/x86_64-unix:$run_root/unix:${DYLD_LIBRARY_PATH:-}"
-export DYLD_FALLBACK_LIBRARY_PATH="$wine_root/lib/wine/x86_64-unix:$run_root/unix:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="/Volumes/AverySSD/toolchains/clang+llvm-15.0.7-x86_64-apple-darwin21.0/lib:$run_root/unix:$wine_root/lib/wine/x86_64-unix:${DYLD_LIBRARY_PATH:-}"
 
 /usr/bin/perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" \
   "$wine_bin" ./m12_game.exe --loops "$loops" "$@" > "$run_root/m12_game.log" 2>&1
