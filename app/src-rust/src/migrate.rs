@@ -2502,6 +2502,10 @@ mod tests {
 
         for path in [
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join(".keep"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemetal.so"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++.1.dylib"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++abi.1.dylib"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libunwind.1.dylib"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
@@ -2516,6 +2520,9 @@ mod tests {
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
             runtime_wine.join("lib").join("metalsharp").join("x86_64-windows").join("metalsharp_ntdll_hook.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("libc++.1.dylib"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("libc++abi.1.dylib"),
+            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("libunwind.1.dylib"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d12.dll"),

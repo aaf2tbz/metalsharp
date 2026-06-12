@@ -22,7 +22,7 @@ fn mac_cmd(name: &str) -> Command {
     Command::new(path)
 }
 
-pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase17-pr129");
+pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-m12-cube-runtime-v1");
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
 const RUNTIME_BUNDLE: &str = "metalsharp-runtime";
@@ -42,6 +42,7 @@ const DXMT_REQUIRED_PE: &[&str] = &[
     "nvapi64.dll",
     "nvngx.dll",
 ];
+const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
 const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/wine/bin/metalsharp-wine",
     "runtime/metalsharp-backend",
@@ -1091,12 +1092,14 @@ pub fn dxmt_runtime_status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let dxmt_dir = dxmt_runtime_dir_for_home(&home);
     let installed_version = dxmt_runtime_installed_version(&dxmt_dir);
-    let files_ready = dxmt_runtime_ready(&dxmt_dir);
+    let missing_files = dxmt_runtime_missing_files(&dxmt_dir);
+    let files_ready = missing_files.is_empty();
     let current = files_ready && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
 
     json!({
         "current": current,
         "filesReady": files_ready,
+        "missingFiles": missing_files.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
         "installedVersion": installed_version,
         "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
         "manifestPath": dxmt_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
@@ -1127,9 +1130,9 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
         "source": source,
         "installedAtUnix": installed_at,
         "requiredFiles": {
-            "x86_64-unix": ["winemetal.so"],
+            "x86_64-unix": DXMT_REQUIRED_UNIX,
             "x86_64-windows": DXMT_REQUIRED_PE,
-            "wine/x86_64-unix": ["winemetal.so"],
+            "wine/x86_64-unix": DXMT_REQUIRED_UNIX,
         },
     });
     fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), serde_json::to_string_pretty(&manifest).unwrap_or_default())
@@ -1151,35 +1154,56 @@ fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
 }
 
 fn sync_dxmt_winemetal_unixlib(dxmt_dir: &Path) -> Result<(), String> {
-    let src = dxmt_dir.join("x86_64-unix").join("winemetal.so");
-    if !file_nonempty(&src) {
-        return Ok(());
-    }
-
-    let wine_unix_dir = dxmt_dir
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join("wine")
-        .join("x86_64-unix");
+    let dxmt_unix_dir = dxmt_dir.join("x86_64-unix");
+    let wine_unix_dir = dxmt_shared_wine_unix_dir(dxmt_dir);
     fs::create_dir_all(&wine_unix_dir)
         .map_err(|e| format!("create shared WineMetal unix dir {}: {}", wine_unix_dir.display(), e))?;
-    let dst = wine_unix_dir.join("winemetal.so");
-    fs::copy(&src, &dst)
-        .map_err(|e| format!("copy DXMT winemetal.so to shared Wine unix lib: {} -> {}: {}", src.display(), dst.display(), e))?;
+    for file in DXMT_REQUIRED_UNIX {
+        let src = dxmt_unix_dir.join(file);
+        if !file_nonempty(&src) {
+            return Err(format!("missing DXMT Unix runtime file: {}", src.display()));
+        }
+        let dst = wine_unix_dir.join(file);
+        fs::copy(&src, &dst).map_err(|e| {
+            format!(
+                "copy DXMT Unix runtime file to shared Wine unix lib: {} -> {}: {}",
+                src.display(),
+                dst.display(),
+                e
+            )
+        })?;
+    }
     Ok(())
 }
 
 fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
+    dxmt_runtime_missing_files(dxmt_dir).is_empty()
+}
+
+fn dxmt_runtime_missing_files(dxmt_dir: &Path) -> Vec<PathBuf> {
     let pe_dir = dxmt_dir.join("x86_64-windows");
-    let wine_unix_winemetal = dxmt_dir
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join("wine")
-        .join("x86_64-unix")
-        .join("winemetal.so");
-    file_nonempty(&dxmt_dir.join("x86_64-unix").join("winemetal.so"))
-        && file_nonempty(&wine_unix_winemetal)
-        && DXMT_REQUIRED_PE.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
+    let dxmt_unix_dir = dxmt_dir.join("x86_64-unix");
+    let wine_unix_dir = dxmt_shared_wine_unix_dir(dxmt_dir);
+    let mut missing = Vec::new();
+    for dll in DXMT_REQUIRED_PE {
+        let path = pe_dir.join(dll);
+        if !file_nonempty(&path) {
+            missing.push(path);
+        }
+    }
+    for file in DXMT_REQUIRED_UNIX {
+        for dir in [&dxmt_unix_dir, &wine_unix_dir] {
+            let path = dir.join(file);
+            if !file_nonempty(&path) {
+                missing.push(path);
+            }
+        }
+    }
+    missing
+}
+
+fn dxmt_shared_wine_unix_dir(dxmt_dir: &Path) -> PathBuf {
+    dxmt_dir.parent().unwrap_or_else(|| Path::new("")).join("wine").join("x86_64-unix")
 }
 
 fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -2203,6 +2227,9 @@ mod tests {
         fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
         fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
         fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
+        for dylib in DXMT_REQUIRED_UNIX.iter().copied().filter(|file| *file != "winemetal.so") {
+            fs::write(unix_dir.join(dylib), dylib.as_bytes()).expect("write DXMT Unix dylib");
+        }
         for dll in DXMT_REQUIRED_PE.iter().copied().filter(|dll| *dll != "dxgi_dxmt.dll") {
             fs::write(pe_dir.join(dll), dll.as_bytes()).expect("write DXMT DLL");
         }
@@ -2222,6 +2249,30 @@ mod tests {
                 .expect("read shared winemetal"),
             fs::read(unix_dir.join("winemetal.so")).expect("read dxmt winemetal")
         );
+        for dylib in DXMT_REQUIRED_UNIX.iter().copied().filter(|file| *file != "winemetal.so") {
+            assert_eq!(
+                fs::read(dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix").join(dylib))
+                    .expect("read shared Unix dylib"),
+                fs::read(unix_dir.join(dylib)).expect("read DXMT Unix dylib")
+            );
+        }
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_readiness_reports_missing_unix_loader_deps() {
+        let home = test_home("dxmt-missing-unix-loader-deps");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        write_dxmt_runtime_files(&dxmt_dir);
+
+        fs::remove_file(dxmt_dir.join("x86_64-unix").join("libc++abi.1.dylib")).expect("remove DXMT Unix dylib");
+        fs::remove_file(dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix").join("libunwind.1.dylib"))
+            .expect("remove shared Unix dylib");
+
+        let missing = dxmt_runtime_missing_files(&dxmt_dir);
+        assert!(missing.iter().any(|path| path.ends_with("x86_64-unix/libc++abi.1.dylib")));
+        assert!(missing.iter().any(|path| path.ends_with("x86_64-unix/libunwind.1.dylib")));
+        assert!(!dxmt_runtime_ready(&dxmt_dir));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -2339,8 +2390,10 @@ mod tests {
         fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
         fs::create_dir_all(&wine_unix_dir).expect("create Wine unix dir");
         fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
-        fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
-        fs::write(wine_unix_dir.join("winemetal.so"), b"so").expect("write shared winemetal");
+        for file in DXMT_REQUIRED_UNIX {
+            fs::write(unix_dir.join(file), file.as_bytes()).expect("write DXMT Unix runtime file");
+            fs::write(wine_unix_dir.join(file), file.as_bytes()).expect("write shared Unix runtime file");
+        }
         for dll in DXMT_REQUIRED_PE {
             fs::write(pe_dir.join(dll), b"dll").expect("write DXMT DLL");
         }

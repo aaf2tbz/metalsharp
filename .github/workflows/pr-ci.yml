@@ -168,8 +168,12 @@ jobs:
             tar --use-compress-program=unzstd -xf app/bundles/metalsharp-graphics-dll.tar.zst -C "$tmp_dxmt"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows"
+            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix"
             cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-unix"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/"
             cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-windows"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/"
+            for unix_asset in winemetal.so libc++.1.dylib libc++abi.1.dylib libunwind.1.dylib; do
+              cp "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/$unix_asset" "$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix/$unix_asset"
+            done
           }
 
           python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py

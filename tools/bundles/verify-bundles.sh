@@ -152,6 +152,9 @@ verify_runtime_core() {
 verify_graphics_core() {
   verify_required_files "$1" "GRAPHICS" \
     Graphics/dll/dxmt/x86_64-unix/winemetal.so \
+    Graphics/dll/dxmt/x86_64-unix/libc++.1.dylib \
+    Graphics/dll/dxmt/x86_64-unix/libc++abi.1.dylib \
+    Graphics/dll/dxmt/x86_64-unix/libunwind.1.dylib \
     Graphics/dll/dxmt/x86_64-windows/d3d10core.dll \
     Graphics/dll/dxmt/x86_64-windows/d3d11.dll \
     Graphics/dll/dxmt/x86_64-windows/d3d12.dll \
