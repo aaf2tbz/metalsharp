@@ -62,14 +62,9 @@ def parse_args() -> argparse.Namespace:
         help="Also stage the isolated DXMT Unix winemetal.so. Does not stage winemetal.dll.",
     )
     parser.add_argument(
-        "--include-shared-winemetal-so",
-        action="store_true",
-        help="Also stage rebuilt Unix winemetal.so into the shared Wine unixlib path. Does not stage winemetal.dll.",
-    )
-    parser.add_argument(
         "--include-shared-winemetal",
         action="store_true",
-        help="Dangerous diagnostic: also overwrite shared Wine/prefix Winemetal DLLs. Do not use for normal M12 testing.",
+        help="Dangerous diagnostic: also overwrite shared Wine/prefix Winemetal. Do not use for normal M12 testing.",
     )
     return parser.parse_args()
 
@@ -88,8 +83,6 @@ def main() -> int:
     artifacts = list(ARTIFACTS)
     if args.include_winemetal:
         artifacts.extend(DXMT_WINEMETAL_ARTIFACTS)
-    if args.include_shared_winemetal_so:
-        artifacts.append(("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")))
     if args.include_shared_winemetal:
         artifacts.extend(
             [
@@ -138,7 +131,6 @@ def main() -> int:
         "runtime_dir": str(runtime_dir),
         "dry_run": args.dry_run,
         "include_winemetal": args.include_winemetal,
-        "include_shared_winemetal_so": args.include_shared_winemetal_so,
         "include_shared_winemetal": args.include_shared_winemetal,
         "ok": not failures and not mismatches,
         "failure_count": len(failures) + len(mismatches),
