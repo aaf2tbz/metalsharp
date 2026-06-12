@@ -749,15 +749,35 @@ struct ReplayState {
     return nullptr;
   }
 
-  void MarkSwapchainWorkEncoded() {
+  void TrackSwapchainResource(MTLD3D12Resource *resource) {
+    if (!resource || !resource->IsSwapchainBackBuffer())
+      return;
+
     if (!swapchain_rt_for_present)
-      swapchain_rt_for_present = SwapchainRenderTargetResource();
+      swapchain_rt_for_present = resource;
+
+    for (uint32_t i = 0; i < swapchain_touched_count; i++) {
+      if (swapchain_touched_resources[i] == resource)
+        return;
+    }
+    if (swapchain_touched_count < 4)
+      swapchain_touched_resources[swapchain_touched_count++] = resource;
+  }
+
+  void MarkSwapchainWorkEncoded(MTLD3D12Resource *resource = nullptr) {
+    if (resource) {
+      TrackSwapchainResource(resource);
+    } else {
+      TrackSwapchainResource(SwapchainRenderTargetResource());
+    }
     if (swapchain_rt_for_present)
       swapchain_work_encoded = true;
   }
 
   bool swapchain_work_encoded = false;
   MTLD3D12Resource *swapchain_rt_for_present = nullptr;
+  MTLD3D12Resource *swapchain_touched_resources[4] = {};
+  uint32_t swapchain_touched_count = 0;
   static constexpr uint32_t kFaultBreadcrumbCount = 16;
   std::string fault_breadcrumbs[kFaultBreadcrumbCount] = {};
   uint32_t fault_breadcrumb_cursor = 0;
@@ -6293,7 +6313,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               rp.colors[0].clear_color = {cmd->color[0], cmd->color[1],
                                           cmd->color[2], cmd->color[3]};
               if (res->IsSwapchainBackBuffer())
-                st.MarkSwapchainWorkEncoded();
+                st.MarkSwapchainWorkEncoded(res);
               if (res->IsSwapchainBackBuffer() &&
                   TakeLogBudget(&g_swapchain_clear_logs, 24)) {
                 Logger::info(str::format(
@@ -6849,8 +6869,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     auto *swapchain_backbuffer = st.swapchain_rt_for_present
                                      ? st.swapchain_rt_for_present
                                      : st.SwapchainRenderTargetResource();
+    if (swapchain_backbuffer)
+      st.TrackSwapchainResource(swapchain_backbuffer);
+    const bool has_swapchain_work_target =
+        st.HasSwapchainRenderTarget() || st.swapchain_touched_count;
     uint64_t queue_serial = 0;
-    if (swapchain_backbuffer) {
+    if (st.swapchain_touched_count) {
       queue_serial =
           __atomic_add_fetch(&g_queue_submit_serial, 1, __ATOMIC_RELAXED);
       D3D12SwapchainBackbufferWork work = {};
@@ -6865,11 +6889,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       work.clear_uav_count = clear_uav_count;
       work.graphics_setup = stream_stats.HasGraphicsSetup() ? 1u : 0u;
       work.swapchain_work = st.swapchain_work_encoded ? 1u : 0u;
-      work.has_swapchain_rt = st.HasSwapchainRenderTarget() ? 1u : 0u;
+      work.has_swapchain_rt = has_swapchain_work_target ? 1u : 0u;
       work.command_buffer_status = (int32_t)status;
       work.replay_ms = replay_ms;
       work.wait_ms = wait_ms;
-      swapchain_backbuffer->RecordSwapchainQueueWork(work);
+      for (uint32_t i = 0; i < st.swapchain_touched_count; i++)
+        st.swapchain_touched_resources[i]->RecordSwapchainQueueWork(work);
     }
     if (stream_stats.IsZeroDrawGraphicsList() && interesting_list &&
         TakeLogBudget(&g_zero_draw_graphics_logs, 96)) {
@@ -6887,7 +6912,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           " dispatch=", dispatch_count, " clear_rtv=", clear_rtv_count,
           " clear_uav=", clear_uav_count,
           " swapchain_work=", st.swapchain_work_encoded,
-          " has_swapchain_rt=", st.HasSwapchainRenderTarget(), " status=",
+          " has_swapchain_rt=", has_swapchain_work_target, " status=",
           (int)status, " replay_ms=", (long long)replay_ms,
           " wait_ms=", (long long)wait_ms));
     }
@@ -6911,7 +6936,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           " clear_dsv=", clear_dsv_count, " clear_uav=", clear_uav_count,
           " graphics_setup=", stream_stats.HasGraphicsSetup(),
           " swapchain_work=", st.swapchain_work_encoded,
-          " has_swapchain_rt=", st.HasSwapchainRenderTarget(), " status=",
+          " has_swapchain_rt=", has_swapchain_work_target, " status=",
           (int)status, " replay_ms=", (long long)replay_ms, " wait_ms=",
           (long long)wait_ms, " pso=", (void *)st.pso, " ",
           TracePsoShaderSummary(st.pso)));
