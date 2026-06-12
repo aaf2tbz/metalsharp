@@ -171,6 +171,8 @@ size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
                               const D3D12_INPUT_LAYOUT_DESC *input_layout) {
   size_t hash = 0;
   hash = hash * 131 + (size_t)type;
+  if (type == ShaderType::Vertex)
+    hash = hash * 131 + 0x4d3132506832ull; // M12 Phase 2 vertex table contract.
   if (bytecode && size > 0) {
     const uint8_t *p = (const uint8_t *)bytecode;
     for (SIZE_T i = 0; i < size; i++)
@@ -954,7 +956,33 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             DumpDXILModuleSummary(module_summary_path, *module, shader_info);
             PSTRACE("  DXIL module summary written to %s", module_summary_path);
 
-            auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader_info);
+            dxmt::dxil::MSLLoweringOptions lowering_options = {};
+            if (type == ShaderType::Vertex) {
+              lowering_options.vertex_inputs.reserve(m_ia_input_elements.size());
+              for (const auto &input : m_ia_input_elements) {
+                if (input.table_index >= kMetalD3D12VertexBufferSlotCount)
+                  continue;
+                dxmt::dxil::MSLVertexInputElement element = {};
+                element.shader_register = input.shader_register;
+                element.table_index = input.table_index;
+                element.input_slot = input.input_slot;
+                element.table_indexing_mode =
+                    input.table_indexing_mode ==
+                            D3D12VertexTableIndexingMode::RawSlot
+                        ? dxmt::dxil::MSLVertexTableIndexingMode::RawSlot
+                        : dxmt::dxil::MSLVertexTableIndexingMode::
+                              CompactBySlotMask;
+                element.system_value = input.system_value;
+                lowering_options.vertex_inputs.push_back(element);
+                PSTRACE("  M12 vertex input map reg=%u slot=%u table=%u system=%u",
+                        element.shader_register, element.input_slot,
+                        element.table_index, element.system_value ? 1u : 0u);
+              }
+            }
+
+            auto typed_msl =
+                dxmt::dxil::MSLLowering::lower(*module, shader_info,
+                                               lowering_options);
             auto msl_result = typed_msl
                 ? std::optional<dxmt::dxil::MSLShader>(std::in_place, ToRuntimeMSLShader(std::move(*typed_msl)))
                 : dxmt::dxil::DXILToMSL::convert(*module, shader_info);

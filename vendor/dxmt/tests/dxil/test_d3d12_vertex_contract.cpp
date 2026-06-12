@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "../../src/airconv/dxil/msl_lowering.hpp"
 #include "../../src/d3d12/d3d12_vertex_input.hpp"
 
 static int g_fail = 0;
@@ -131,6 +132,70 @@ int main() {
               std::string(dxmt::D3D12VertexTableIndexingModeName(
                   sparse.elements[1].table_indexing_mode)) ==
                   "compact_by_slot_mask");
+
+  dxmt::dxil::MSLLoweringOptions sparse_msl_options = {};
+  for (const auto &element : sparse.elements) {
+    dxmt::dxil::MSLVertexInputElement input = {};
+    input.shader_register = element.shader_register;
+    input.table_index = element.table_index;
+    input.input_slot = element.input_slot;
+    input.table_indexing_mode =
+        dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
+    input.system_value = element.system_value;
+    sparse_msl_options.vertex_inputs.push_back(input);
+  }
+  expect_equal("MSL sparse register 5 table index",
+               dxmt::dxil::MSLResolveVertexInputTableIndex(
+                   5, sparse_msl_options),
+               1);
+  expect_equal("MSL sparse register 6 duplicate table index",
+               dxmt::dxil::MSLResolveVertexInputTableIndex(
+                   6, sparse_msl_options),
+               1);
+  expect_equal("MSL sparse register 9 table index",
+               dxmt::dxil::MSLResolveVertexInputTableIndex(
+                   9, sparse_msl_options),
+               2);
+  expect_true("MSL sparse register 5 emits compact table constant",
+              dxmt::dxil::MSLVertexPullExpression(5, sparse_msl_options) ==
+                  "m12_load_vertex_attr(1, vid, buf16, buf1)");
+  expect_true("MSL sparse register 9 emits compact table constant",
+              dxmt::dxil::MSLVertexPullExpression(9, sparse_msl_options) ==
+                  "m12_load_vertex_attr(2, vid, buf16, buf2)");
+
+  dxmt::dxil::MSLLoweringOptions raw_msl_options = {};
+  raw_msl_options.vertex_inputs.push_back(
+      {5, 1, 3, dxmt::dxil::MSLVertexTableIndexingMode::RawSlot, false});
+  expect_equal("MSL explicit raw slot mode uses input slot",
+               dxmt::dxil::MSLResolveVertexInputTableIndex(
+                   5, raw_msl_options),
+               3);
+  expect_true("MSL explicit raw slot expression is marked by raw slot",
+              dxmt::dxil::MSLVertexPullExpression(5, raw_msl_options) ==
+                  "m12_load_vertex_attr(3, vid, buf16, buf3)");
+
+  std::vector<dxmt::D3D12VertexBufferViewMetadata> sparse_views = {
+      {0, 0x10000000, 256, 12},
+      {3, 0x30000000, 512, 8},
+      {7, 0x70000000, 1024, 16},
+  };
+  auto sparse_rows =
+      dxmt::D3D12BuildVertexTableRows(sparse.elements, sparse_views, kSlotCap);
+  expect_equal("queue replay sparse table row count",
+               static_cast<uint32_t>(sparse_rows.size()), 3);
+  if (sparse_rows.size() == 3) {
+    expect_equal("queue replay table row 0 index", sparse_rows[0].table_index,
+                 0);
+    expect_equal("queue replay table row 0 slot", sparse_rows[0].input_slot, 0);
+    expect_equal("queue replay table row 1 index", sparse_rows[1].table_index,
+                 1);
+    expect_equal("queue replay table row 1 slot", sparse_rows[1].input_slot, 3);
+    expect_equal("queue replay table row 2 index", sparse_rows[2].table_index,
+                 2);
+    expect_equal("queue replay table row 2 slot", sparse_rows[2].input_slot, 7);
+    expect_equal("queue replay table row 1 stride",
+                 sparse_rows[1].stride_in_bytes, 8);
+  }
 
   std::vector<dxmt::D3D12IAInputLayoutElementMetadata> append_layout = {
       {"A", 0, 2, kAppend, kFmtFloat3, kFloat3, 12},

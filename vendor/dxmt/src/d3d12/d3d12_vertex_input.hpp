@@ -125,6 +125,21 @@ struct D3D12IAInputLayoutMetadata {
   std::vector<D3D12ResolvedIAInputElementMetadata> elements;
 };
 
+struct D3D12VertexBufferViewMetadata {
+  uint32_t input_slot = 0;
+  uint64_t buffer_location = 0;
+  uint32_t size_in_bytes = 0;
+  uint32_t stride_in_bytes = 0;
+};
+
+struct D3D12VertexTableRowMetadata {
+  uint32_t table_index = std::numeric_limits<uint32_t>::max();
+  uint32_t input_slot = std::numeric_limits<uint32_t>::max();
+  uint64_t buffer_location = 0;
+  uint32_t size_in_bytes = 0;
+  uint32_t stride_in_bytes = 0;
+};
+
 inline D3D12IAInputLayoutMetadata D3D12BuildIAInputLayoutMetadata(
     const std::vector<D3D12IAInputLayoutElementMetadata> &layout,
     const std::vector<D3D12IAInputSignatureElementMetadata> &signature,
@@ -197,6 +212,46 @@ inline D3D12IAInputLayoutMetadata D3D12BuildIAInputLayoutMetadata(
   }
 
   return result;
+}
+
+inline std::vector<D3D12VertexTableRowMetadata> D3D12BuildVertexTableRows(
+    const std::vector<D3D12ResolvedIAInputElementMetadata> &inputs,
+    const std::vector<D3D12VertexBufferViewMetadata> &views,
+    uint32_t table_cap) {
+  std::vector<D3D12VertexTableRowMetadata> rows;
+  if (!table_cap)
+    return rows;
+
+  table_cap = std::min<uint32_t>(table_cap, 32);
+  std::vector<bool> emitted(table_cap);
+
+  for (const auto &input : inputs) {
+    if (input.system_value ||
+        input.table_indexing_mode !=
+            D3D12VertexTableIndexingMode::CompactBySlotMask ||
+        input.input_slot >= 32 || input.table_index >= table_cap ||
+        emitted[input.table_index])
+      continue;
+
+    auto view = std::find_if(
+        views.begin(), views.end(),
+        [&](const D3D12VertexBufferViewMetadata &candidate) {
+          return candidate.input_slot == input.input_slot;
+        });
+    if (view == views.end())
+      continue;
+
+    D3D12VertexTableRowMetadata row;
+    row.table_index = input.table_index;
+    row.input_slot = input.input_slot;
+    row.buffer_location = view->buffer_location;
+    row.size_in_bytes = view->size_in_bytes;
+    row.stride_in_bytes = view->stride_in_bytes;
+    rows.push_back(row);
+    emitted[input.table_index] = true;
+  }
+
+  return rows;
 }
 
 } // namespace dxmt

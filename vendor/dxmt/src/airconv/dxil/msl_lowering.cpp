@@ -179,12 +179,6 @@ static std::string varyingField(const char *base, uint32_t sig_id) {
     return std::string(base) + ".v7";
 }
 
-static std::string vertexPullField(uint32_t sig_id) {
-    uint32_t slot = sig_id < 16 ? sig_id : 0;
-    return "m12_load_vertex_attr(" + std::to_string(slot) + ", vid, buf16, buf" +
-           std::to_string(slot) + ")";
-}
-
 static std::string escapeName(const std::string &s) {
     if (s.empty()) return "_";
     std::string r;
@@ -425,6 +419,7 @@ struct LowerContext {
     std::ostringstream &os;
     const LLVMModule &mod;
     const DxilParsedShader &shader;
+    const MSLLoweringOptions &options;
     std::vector<std::string> value_table;
     std::vector<MSLType> value_types;
     std::vector<ValueRole> value_roles;
@@ -451,6 +446,10 @@ struct LowerContext {
     std::set<uint32_t> vertex_input_ids;
     bool vertex_has_float_load_input = false;
 };
+
+static std::string vertexPullField(LowerContext &ctx, uint32_t sig_id) {
+    return MSLVertexPullExpression(sig_id, ctx.options);
+}
 
 static void recordDiagnostic(LowerContext &ctx, const char *fmt, ...) {
     va_list args;
@@ -532,11 +531,11 @@ static void emitFunctionPrologue(LowerContext &ctx) {
 
     if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "struct m12_vertex_buffer_entry { ulong buffer_handle; uint stride; uint length; };\n";
-        os << "static inline float4 m12_load_vertex_attr(uint attr, uint vid, device char* table_bytes, device char* vb) {\n";
+        os << "static inline float4 m12_load_vertex_attr(uint table_index, uint vid, device char* table_bytes, device char* vb) {\n";
         os << "  if (table_bytes == nullptr || vb == nullptr) return float4(0.0);\n";
         os << "  device m12_vertex_buffer_entry* table = reinterpret_cast<device m12_vertex_buffer_entry*>(table_bytes);\n";
-        os << "  uint stride = table[attr].stride;\n";
-        os << "  uint length = table[attr].length;\n";
+        os << "  uint stride = table[table_index].stride;\n";
+        os << "  uint length = table[table_index].length;\n";
         os << "  if (stride == 0) stride = 16;\n";
         os << "  uint offset = vid * stride;\n";
         os << "  if (length != 0 && offset + 16 > length) return float4(0.0);\n";
@@ -2187,7 +2186,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (ctx.shader.kind == DxilShaderKind::Vertex) {
             if (isLoadInputI32(callee_name) && shouldLowerLoadInputI32AsVertexId(ctx, input_id))
                 return comp == 0 ? "vid" : "0u";
-            return vertexPullField(input_id) + componentSuffix(comp);
+            return vertexPullField(ctx, input_id) + componentSuffix(comp);
         }
         return "0.0";
     }
@@ -3305,12 +3304,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     }
 }
 
-std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
-                                                   const DxilParsedShader &shader) {
+std::optional<TypedMSLShader> MSLLowering::lower(
+    const LLVMModule &module, const DxilParsedShader &shader,
+    const MSLLoweringOptions &options) {
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader};
+    LowerContext ctx{os, module, shader, options};
 
     const LLVMFunction *entry_fn = nullptr;
     for (auto &fn : module.functions) {

@@ -3518,51 +3518,50 @@ struct ReplayState {
 
       memset(vertex_table_data, 0, sizeof(vertex_table_data));
       uint32_t table_entries = 0;
-      for (uint32_t slot = 0; slot < kVertexBufferSlotCount; slot++) {
-        if (!(slot_mask & (1u << slot)))
-          continue;
+      bool table_bound[kVertexBufferSlotCount] = {};
+      if (pso) {
+        for (const auto &input : pso->GetIAInputElements()) {
+          if (input.system_value ||
+              input.table_indexing_mode !=
+                  D3D12VertexTableIndexingMode::CompactBySlotMask ||
+              input.input_slot >= kVertexBufferSlotCount ||
+              input.table_index >= kVertexBufferSlotCount ||
+              table_bound[input.table_index])
+            continue;
 
-        auto &view = vbs[slot];
-        uint32_t table_index = D3D12CompactVertexTableIndex(slot_mask, slot);
-        if (table_index >= kVertexBufferSlotCount)
-          continue;
-        auto *res =
-            view.BufferLocation
-                ? device->LookupResourceByGPUAddress(view.BufferLocation)
-                : nullptr;
-        if (res && res->GetMTLBuffer().handle) {
-          uint64_t offset = view.BufferLocation - res->GetGPUVirtualAddress();
-          vertex_table_data[table_index].buffer_handle = view.BufferLocation;
-          vertex_table_data[table_index].stride = view.StrideInBytes;
-          vertex_table_data[table_index].length = view.SizeInBytes;
-          render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
-          if (pso) {
-            for (const auto &input : pso->GetIAInputElements()) {
-              if (input.system_value || input.input_slot != slot ||
-                  input.shader_register >= kVertexBufferSlotCount)
-                continue;
-              vertex_table_data[input.shader_register] =
-                  vertex_table_data[table_index];
-              table_entries =
-                  std::max<uint32_t>(table_entries, input.shader_register + 1);
-              if (input.shader_register != slot)
-                render_enc.setVertexBuffer(res->GetMTLBuffer(), offset,
-                                           input.shader_register);
-              QTRACE("ApplyVertexBuffers: alias register=%u slot=%u table[%u]",
-                     input.shader_register, slot, input.shader_register);
-            }
+          auto &view = vbs[input.input_slot];
+          auto *res =
+              view.BufferLocation
+                  ? device->LookupResourceByGPUAddress(view.BufferLocation)
+                  : nullptr;
+          if (res && res->GetMTLBuffer().handle) {
+            uint64_t offset =
+                view.BufferLocation - res->GetGPUVirtualAddress();
+            vertex_table_data[input.table_index].buffer_handle =
+                view.BufferLocation;
+            vertex_table_data[input.table_index].stride = view.StrideInBytes;
+            vertex_table_data[input.table_index].length = view.SizeInBytes;
+            render_enc.setVertexBuffer(res->GetMTLBuffer(), offset,
+                                       input.table_index);
+            render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
+                                   VertexInputStages());
+            table_bound[input.table_index] = true;
+            table_entries =
+                std::max<uint32_t>(table_entries, input.table_index + 1);
+            QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u reg=%u gpu=0x%llx "
+                   "offset=%llu size=%u stride=%u fmt=%u",
+                   input.table_index, input.input_slot, input.shader_register,
+                   (unsigned long long)view.BufferLocation,
+                   (unsigned long long)offset, view.SizeInBytes,
+                   view.StrideInBytes, (unsigned)input.dxgi_format);
+          } else {
+            QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u reg=%u "
+                   "unresolved gpu=0x%llx size=%u stride=%u fmt=%u",
+                   input.table_index, input.input_slot, input.shader_register,
+                   (unsigned long long)view.BufferLocation, view.SizeInBytes,
+                   view.StrideInBytes, (unsigned)input.dxgi_format);
           }
-          render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
-                                 VertexInputStages());
-          QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u gpu=0x%llx offset=%llu size=%u "
-                 "stride=%u",
-                 table_index, slot, (unsigned long long)view.BufferLocation,
-                 (unsigned long long)offset, view.SizeInBytes, view.StrideInBytes);
-        } else {
-          QTRACE("ApplyVertexBuffers: table[%u]<-slot=%u unresolved gpu=0x%llx",
-                 table_index, slot, (unsigned long long)view.BufferLocation);
         }
-        table_entries = std::max<uint32_t>(table_entries, table_index + 1);
       }
 
       vertex_table_buf = MakeTransientBuffer(device, sizeof(vertex_table_data));
