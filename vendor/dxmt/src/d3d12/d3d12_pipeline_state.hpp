@@ -34,6 +34,8 @@ struct D3D12IAInputElementInfo {
   uint32_t aligned_byte_offset = 0;
   DXGI_FORMAT dxgi_format = DXGI_FORMAT_UNKNOWN;
   WMTAttributeFormat metal_format = WMTAttributeFormatInvalid;
+  D3D12_INPUT_CLASSIFICATION input_slot_class =
+      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
   bool per_instance = false;
   uint32_t instance_step_rate = 1;
   bool system_value = false;

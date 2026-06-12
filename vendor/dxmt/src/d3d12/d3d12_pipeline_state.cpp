@@ -370,12 +370,12 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
     const auto &element = ia_elements[i];
     fprintf(df, "        { \"semantic\": ");
     WriteJsonString(df, element.semantic_name);
-    fprintf(df, ", \"semantic_index\": %u, \"register\": %u, \"slot\": %u, \"table_index\": %u, \"table_indexing_mode\": \"%s\", \"offset\": %u, \"dxgi_format\": %u, \"metal_format\": %u, \"class\": \"%s\", \"step_rate\": %u, \"system_value\": %s }%s\n",
+    fprintf(df, ", \"semantic_index\": %u, \"register\": %u, \"slot\": %u, \"table_index\": %u, \"table_indexing_mode\": \"%s\", \"offset\": %u, \"dxgi_format\": %u, \"metal_format\": %u, \"input_slot_class\": %u, \"class\": \"%s\", \"step_rate\": %u, \"system_value\": %s }%s\n",
             element.semantic_index, element.shader_register,
             element.input_slot, element.table_index,
             D3D12VertexTableIndexingModeName(element.table_indexing_mode),
             element.aligned_byte_offset, (unsigned)element.dxgi_format,
-            (unsigned)element.metal_format,
+            (unsigned)element.metal_format, (unsigned)element.input_slot_class,
             element.per_instance ? "per_instance" : "per_vertex",
             element.instance_step_rate,
             element.system_value ? "true" : "false",
@@ -1323,86 +1323,121 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
 
   const D3D11_SIGNATURE_PARAMETER *params = nullptr;
   uint32_t param_count = parser.GetParameters(&params);
-  uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
-  std::vector<D3D12IAInputElementInfo> input_elements;
+  std::vector<D3D12IAInputLayoutElementMetadata> layout_metadata;
+  std::vector<D3D12IAInputSignatureElementMetadata> signature_metadata;
+  layout_metadata.reserve(m_input_layout.NumElements);
+  signature_metadata.reserve(param_count);
 
   for (UINT i = 0; i < m_input_layout.NumElements; i++) {
     const auto &desc = m_input_layout.pInputElementDescs[i];
     if (desc.InputSlot >= kMetalD3D12VertexBufferSlotCount) {
       PSTRACE("BuildIAInputLayout skip[%u]: slot %u outside cap %u",
               i, desc.InputSlot, kMetalD3D12VertexBufferSlotCount);
-      continue;
     }
 
     MTL_DXGI_FORMAT_DESC metal_format = {};
-    if (FAILED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), desc.Format, metal_format)) ||
-        !metal_format.AttributeFormat || !metal_format.BytesPerTexel) {
+    bool supported_format =
+        SUCCEEDED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), desc.Format,
+                                     metal_format)) &&
+        metal_format.AttributeFormat && metal_format.BytesPerTexel;
+    if (!supported_format) {
       PSTRACE("BuildIAInputLayout skip[%u]: unsupported fmt=%u",
               i, (unsigned)desc.Format);
-      continue;
     }
 
-    auto *sig = std::find_if(
-        params, params + param_count,
-        [&](const D3D11_SIGNATURE_PARAMETER &input_sig) {
-          return input_sig.SystemValue == D3D10_SB_NAME_UNDEFINED &&
-                 desc.SemanticIndex == input_sig.SemanticIndex &&
-                 desc.SemanticName && input_sig.SemanticName &&
-                 strcasecmp(desc.SemanticName, input_sig.SemanticName) == 0;
-        });
-    if (sig == params + param_count) {
-      PSTRACE("BuildIAInputLayout skip[%u]: semantic %s%u not consumed by VS",
-              i, desc.SemanticName ? desc.SemanticName : "?", desc.SemanticIndex);
-      continue;
-    }
-
-    uint32_t aligned_offset =
-        desc.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
-            ? D3D12ResolveAlignedInputOffset(append_offset[desc.InputSlot],
-                                             metal_format.BytesPerTexel)
-            : desc.AlignedByteOffset;
-    append_offset[desc.InputSlot] = aligned_offset + metal_format.BytesPerTexel;
-
-    SM50_IA_INPUT_ELEMENT element = {};
-    element.reg = sig->Register;
-    element.slot = desc.InputSlot;
-    element.aligned_byte_offset = aligned_offset;
-    element.format = metal_format.AttributeFormat;
-    element.step_function =
-        desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
-    element.step_rate =
+    D3D12IAInputLayoutElementMetadata element = {};
+    element.semantic_name = desc.SemanticName ? desc.SemanticName : "";
+    element.semantic_index = desc.SemanticIndex;
+    element.input_slot = desc.InputSlot;
+    element.aligned_byte_offset = desc.AlignedByteOffset;
+    element.dxgi_format = desc.Format;
+    element.metal_format = metal_format.AttributeFormat;
+    element.bytes_per_texel = metal_format.BytesPerTexel;
+    element.input_slot_class =
+        desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+            ? D3D12VertexInputSlotClass::PerInstance
+            : D3D12VertexInputSlotClass::PerVertex;
+    element.instance_step_rate =
         desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
             ? desc.InstanceDataStepRate
             : 1;
-    elements.push_back(element);
-    slot_mask |= 1u << desc.InputSlot;
+    element.supported_format = supported_format;
+    layout_metadata.push_back(std::move(element));
+  }
 
+  for (uint32_t i = 0; i < param_count; i++) {
+    D3D12IAInputSignatureElementMetadata input_sig = {};
+    input_sig.semantic_name = params[i].SemanticName ? params[i].SemanticName : "";
+    input_sig.semantic_index = params[i].SemanticIndex;
+    input_sig.shader_register = params[i].Register;
+    input_sig.system_value = params[i].SystemValue != D3D10_SB_NAME_UNDEFINED;
+    signature_metadata.push_back(std::move(input_sig));
+  }
+
+  auto metadata = D3D12BuildIAInputLayoutMetadata(
+      layout_metadata, signature_metadata, kMetalD3D12VertexBufferSlotCount,
+      D3D12_APPEND_ALIGNED_ELEMENT);
+  slot_mask = metadata.slot_mask;
+
+  for (UINT i = 0; i < m_input_layout.NumElements; i++) {
+    const auto &desc = m_input_layout.pInputElementDescs[i];
+    bool consumed = std::any_of(
+        metadata.elements.begin(), metadata.elements.end(),
+        [&](const D3D12ResolvedIAInputElementMetadata &input) {
+          return !input.system_value &&
+                 input.semantic_index == desc.SemanticIndex &&
+                 input.input_slot == desc.InputSlot && desc.SemanticName &&
+                 D3D12SemanticNameEquals(input.semantic_name, desc.SemanticName);
+        });
+    if (!consumed && desc.InputSlot < kMetalD3D12VertexBufferSlotCount)
+      PSTRACE("BuildIAInputLayout skip[%u]: semantic %s%u not consumed by VS",
+              i, desc.SemanticName ? desc.SemanticName : "?",
+              desc.SemanticIndex);
+  }
+
+  for (const auto &resolved : metadata.elements) {
     D3D12IAInputElementInfo info = {};
-    info.semantic_name = desc.SemanticName ? desc.SemanticName : "";
-    info.semantic_index = desc.SemanticIndex;
-    info.shader_register = sig->Register;
-    info.input_slot = desc.InputSlot;
-    info.table_indexing_mode =
-        D3D12VertexTableIndexingMode::CompactBySlotMask;
-    info.aligned_byte_offset = aligned_offset;
-    info.dxgi_format = desc.Format;
-    info.metal_format = metal_format.AttributeFormat;
+    info.semantic_name = resolved.semantic_name;
+    info.semantic_index = resolved.semantic_index;
+    info.shader_register = resolved.shader_register;
+    info.input_slot = resolved.input_slot;
+    info.table_index = resolved.table_index;
+    info.table_indexing_mode = resolved.table_indexing_mode;
+    info.aligned_byte_offset = resolved.aligned_byte_offset;
+    info.dxgi_format = static_cast<DXGI_FORMAT>(resolved.dxgi_format);
+    info.metal_format = static_cast<WMTAttributeFormat>(resolved.metal_format);
+    info.input_slot_class =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance
+            ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+            : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
     info.per_instance =
-        desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
-    info.instance_step_rate = info.per_instance ? desc.InstanceDataStepRate : 1;
-    info.system_value = false;
-    input_elements.push_back(std::move(info));
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance;
+    info.instance_step_rate = resolved.instance_step_rate;
+    info.system_value = resolved.system_value;
+    m_ia_input_elements.push_back(std::move(info));
+
+    if (resolved.system_value)
+      continue;
+
+    SM50_IA_INPUT_ELEMENT element = {};
+    element.reg = resolved.shader_register;
+    element.slot = resolved.input_slot;
+    element.aligned_byte_offset = resolved.aligned_byte_offset;
+    element.format = resolved.metal_format;
+    element.step_function =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance;
+    element.step_rate =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance
+            ? resolved.instance_step_rate
+            : 1;
+    elements.push_back(element);
 
     PSTRACE("BuildIAInputLayout element[%zu]: semantic=%s%u reg=%u slot=%u offset=%u fmt=%u step=%u/%u",
-            elements.size() - 1, desc.SemanticName ? desc.SemanticName : "?",
-            desc.SemanticIndex, element.reg, element.slot,
+            elements.size() - 1, resolved.semantic_name.c_str(),
+            resolved.semantic_index, element.reg, element.slot,
             element.aligned_byte_offset, element.format,
             element.step_function, element.step_rate);
   }
-
-  for (auto &info : input_elements)
-    info.table_index = D3D12CompactVertexTableIndex(slot_mask, info.input_slot);
-  m_ia_input_elements = std::move(input_elements);
 }
 
 bool MTLD3D12PipelineState::Compile() {

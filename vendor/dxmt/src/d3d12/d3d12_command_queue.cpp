@@ -3538,7 +3538,7 @@ struct ReplayState {
           render_enc.setVertexBuffer(res->GetMTLBuffer(), offset, slot);
           if (pso) {
             for (const auto &input : pso->GetIAInputElements()) {
-              if (input.input_slot != slot ||
+              if (input.system_value || input.input_slot != slot ||
                   input.shader_register >= kVertexBufferSlotCount)
                 continue;
               vertex_table_data[input.shader_register] =
