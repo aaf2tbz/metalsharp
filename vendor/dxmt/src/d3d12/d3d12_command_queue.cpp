@@ -137,6 +137,7 @@ static uint32_t g_swapchain_render_readback_captures = 0;
 static uint32_t g_swapchain_final_snapshot_logs = 0;
 static uint32_t g_swapchain_fragment_completeness_logs = 0;
 static uint32_t g_compute_completeness_logs = 0;
+static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
 
 static uint32_t g_quarantine_zero_vb_offscreen = 0;
@@ -6811,6 +6812,11 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       if (type_counts[i])
         QTRACE("  type[%d]=%u", i, type_counts[i]);
 
+    auto type_count = [&](CmdType type) {
+      uint32_t index = static_cast<uint32_t>(type);
+      return index < 40 ? type_counts[index] : 0u;
+    };
+
     st.CloseRenderEncoder();
     st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
     st.ForceSwapchainDiagnosticColor(cmdbuf);
@@ -6829,6 +6835,35 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     auto status = cmdbuf.status();
     QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld queue_type=%u",
            (int)status, (long long)wait_ms, m_desc.Type);
+    const uint32_t draw_count = type_count(CmdType::DrawInstanced);
+    const uint32_t indexed_draw_count =
+        type_count(CmdType::DrawIndexedInstanced);
+    const uint32_t indirect_count = type_count(CmdType::ExecuteIndirect);
+    const uint32_t dispatch_count = type_count(CmdType::Dispatch);
+    const uint32_t clear_rtv_count =
+        type_count(CmdType::ClearRenderTargetView);
+    const uint32_t clear_dsv_count =
+        type_count(CmdType::ClearDepthStencilView);
+    const uint32_t clear_uav_count =
+        type_count(CmdType::ClearUnorderedAccessView);
+    const bool interesting_list =
+        draw_count || indexed_draw_count || indirect_count || dispatch_count ||
+        clear_rtv_count || clear_dsv_count || clear_uav_count ||
+        st.swapchain_work_encoded || st.HasSwapchainRenderTarget();
+    if (interesting_list &&
+        TakeLogBudget(&g_command_list_summary_logs, 192)) {
+      Logger::info(str::format(
+          "M12 command list summary queue=", (unsigned)m_desc.Type,
+          " list=", li, " cmds=", cmd_count, " draws=", draw_count,
+          " indexed=", indexed_draw_count, " indirect=", indirect_count,
+          " dispatch=", dispatch_count, " clear_rtv=", clear_rtv_count,
+          " clear_dsv=", clear_dsv_count, " clear_uav=", clear_uav_count,
+          " swapchain_work=", st.swapchain_work_encoded,
+          " has_swapchain_rt=", st.HasSwapchainRenderTarget(), " status=",
+          (int)status, " replay_ms=", (long long)replay_ms, " wait_ms=",
+          (long long)wait_ms, " pso=", (void *)st.pso, " ",
+          TracePsoShaderSummary(st.pso)));
+    }
     if (status != WMTCommandBufferStatusCompleted) {
       auto err = cmdbuf.error();
       auto err_desc_string =

@@ -798,6 +798,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
   if (!m_backbuffers[m_current_buffer]) {
     SCTRACE("SwapChain::Present sync=%u flags=0x%x NO BACKBUFFER idx=%u",
             sync_interval, flags, m_current_buffer);
+    if (m_present_count <= 20 ||
+        (m_present_count % PresentLogInterval()) == 0) {
+      Logger::info(str::format(
+          "M12 present entry count=", m_present_count, " sync=",
+          sync_interval, " flags=0x", std::hex, flags, std::dec, " idx=",
+          m_current_buffer, " backbuffer=0 fmt=", (unsigned)m_desc.Format,
+          " size=", m_desc.Width, "x", m_desc.Height));
+    }
     return S_OK;
   }
 
@@ -811,6 +819,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
   auto *res =
       static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
   auto src_texture = res->GetMTLTexture();
+  if (m_present_count <= 20 ||
+      (m_present_count % PresentLogInterval()) == 0) {
+    Logger::info(str::format(
+        "M12 present entry count=", m_present_count, " sync=", sync_interval,
+        " flags=0x", std::hex, flags, std::dec, " idx=", m_current_buffer,
+        " backbuffer=", (void *)res, " src=",
+        (unsigned long long)src_texture.handle, " fmt=",
+        (unsigned)m_desc.Format, " size=", m_desc.Width, "x", m_desc.Height));
+  }
   if (!EnsureMetalView()) {
     Logger::err("D3D12SwapChain::Present: failed to create Metal view/layer");
     SCTRACE("SwapChain::Present sync=%u flags=0x%x NO METAL VIEW",
