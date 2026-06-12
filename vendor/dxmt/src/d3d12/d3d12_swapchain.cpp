@@ -142,6 +142,23 @@ static bool ShouldReadbackPresent(uint64_t present_count) {
          (present_count % SwapchainReadbackInterval()) == 0;
 }
 
+static const char *
+SwapchainWorkClassification(const D3D12SwapchainBackbufferWork &work) {
+  if (!work.serial)
+    return "no_queue_work";
+  if (work.draw_count || work.indexed_draw_count || work.indirect_count)
+    return "drawn";
+  if (work.clear_rtv_count && work.dispatch_count)
+    return "compute_clear_no_draw";
+  if (work.clear_rtv_count)
+    return "clear_only_no_draw";
+  if (work.dispatch_count)
+    return "compute_only_no_draw";
+  if (work.graphics_setup)
+    return "graphics_setup_no_draw";
+  return "no_draw";
+}
+
 static uint32_t AlignTo(uint32_t value, uint32_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -821,12 +838,28 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
   auto src_texture = res->GetMTLTexture();
   if (m_present_count <= 20 ||
       (m_present_count % PresentLogInterval()) == 0) {
+    auto work = res->GetSwapchainQueueWork();
     Logger::info(str::format(
         "M12 present entry count=", m_present_count, " sync=", sync_interval,
         " flags=0x", std::hex, flags, std::dec, " idx=", m_current_buffer,
         " backbuffer=", (void *)res, " src=",
         (unsigned long long)src_texture.handle, " fmt=",
         (unsigned)m_desc.Format, " size=", m_desc.Width, "x", m_desc.Height));
+    Logger::info(str::format(
+        "M12 present backbuffer work count=", m_present_count, " idx=",
+        m_current_buffer, " serial=", (unsigned long long)work.serial,
+        " cmds=", work.command_count, " draws=", work.draw_count,
+        " indexed=", work.indexed_draw_count,
+        " indirect=", work.indirect_count, " dispatch=",
+        work.dispatch_count, " clear_rtv=", work.clear_rtv_count,
+        " clear_dsv=", work.clear_dsv_count, " clear_uav=",
+        work.clear_uav_count, " graphics_setup=", work.graphics_setup,
+        " swapchain_work=", work.swapchain_work,
+        " has_swapchain_rt=", work.has_swapchain_rt,
+        " status=", work.command_buffer_status,
+        " replay_ms=", (long long)work.replay_ms, " wait_ms=",
+        (long long)work.wait_ms, " classification=",
+        SwapchainWorkClassification(work)));
   }
   if (!EnsureMetalView()) {
     Logger::err("D3D12SwapChain::Present: failed to create Metal view/layer");

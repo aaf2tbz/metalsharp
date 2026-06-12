@@ -1,11 +1,13 @@
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
 
 #include "../../src/airconv/dxil/msl_lowering.hpp"
 #include "../../src/d3d12/d3d12_binding_completeness.hpp"
+#include "../../src/d3d12/d3d12_command_stats.hpp"
 #include "../../src/d3d12/d3d12_vertex_input.hpp"
 
 static int g_fail = 0;
@@ -54,6 +56,13 @@ find_semantic(const dxmt::D3D12IAInputLayoutMetadata &metadata,
       return &element;
   }
   return nullptr;
+}
+
+template <typename T>
+static void append_command(std::vector<uint8_t> &stream, const T &cmd) {
+  auto offset = stream.size();
+  stream.resize(offset + sizeof(T));
+  memcpy(stream.data() + offset, &cmd, sizeof(T));
 }
 
 int main() {
@@ -272,6 +281,64 @@ int main() {
               compute_after.missing_textures == 0);
   expect_true("compute direct fallback closes sampler gaps",
               compute_after.missing_samplers == 0);
+
+  std::vector<uint8_t> zero_draw_stream;
+  dxmt::CmdSetPipelineState set_pso = {};
+  set_pso.header = {dxmt::CmdType::SetPipelineState, sizeof(set_pso)};
+  append_command(zero_draw_stream, set_pso);
+  dxmt::CmdSetRootSignature set_graphics_root = {};
+  set_graphics_root.header = {dxmt::CmdType::SetGraphicsRootSignature,
+                              sizeof(set_graphics_root)};
+  append_command(zero_draw_stream, set_graphics_root);
+  dxmt::CmdOMSetRenderTargets om_rt = {};
+  om_rt.header = {dxmt::CmdType::OMSetRenderTargets, sizeof(om_rt)};
+  om_rt.rt_count = 1;
+  append_command(zero_draw_stream, om_rt);
+  dxmt::CmdDispatch dispatch = {};
+  dispatch.header = {dxmt::CmdType::Dispatch, sizeof(dispatch)};
+  dispatch.x = 16;
+  dispatch.y = 1;
+  dispatch.z = 1;
+  append_command(zero_draw_stream, dispatch);
+  dxmt::CmdClearRTV clear_rtv = {};
+  clear_rtv.header = {dxmt::CmdType::ClearRenderTargetView,
+                      sizeof(clear_rtv)};
+  append_command(zero_draw_stream, clear_rtv);
+  auto zero_draw_stats = dxmt::D3D12CollectCommandStreamStats(
+      zero_draw_stream.data(), zero_draw_stream.size());
+  expect_equal("command stats zero-draw command count",
+               zero_draw_stats.command_count, 5);
+  expect_true("command stats detects graphics setup",
+              zero_draw_stats.HasGraphicsSetup());
+  expect_true("command stats detects clear or compute work",
+              zero_draw_stats.HasClearOrComputeWork());
+  expect_true("command stats classifies zero-draw graphics list",
+              zero_draw_stats.IsZeroDrawGraphicsList());
+  expect_equal("command stats zero direct draw count",
+               zero_draw_stats.DirectDrawCount(), 0);
+
+  dxmt::CmdDrawInstanced draw = {};
+  draw.header = {dxmt::CmdType::DrawInstanced, sizeof(draw)};
+  draw.vertex_count = 3;
+  draw.instance_count = 1;
+  append_command(zero_draw_stream, draw);
+  auto drawn_stats = dxmt::D3D12CollectCommandStreamStats(
+      zero_draw_stream.data(), zero_draw_stream.size());
+  expect_equal("command stats drawn stream draw count",
+               drawn_stats.draw_count, 1);
+  expect_true("command stats drawn stream is not zero-draw",
+              !drawn_stats.IsZeroDrawGraphicsList());
+
+  std::vector<uint8_t> corrupt_stream(sizeof(dxmt::CmdHeader), 0);
+  auto *corrupt_header =
+      reinterpret_cast<dxmt::CmdHeader *>(corrupt_stream.data());
+  corrupt_header->type = dxmt::CmdType::DrawInstanced;
+  corrupt_header->size = 65537;
+  auto corrupt_stats = dxmt::D3D12CollectCommandStreamStats(
+      corrupt_stream.data(), corrupt_stream.size());
+  expect_true("command stats detects corrupt stream", corrupt_stats.corrupt);
+  expect_equal("command stats corrupt command count",
+               corrupt_stats.command_count, 0);
 
   std::vector<dxmt::D3D12VertexBufferViewMetadata> sparse_views = {
       {0, 0x10000000, 256, 12},

@@ -1,6 +1,7 @@
 #include "d3d12_command_queue.hpp"
 #include "d3d12_binding_completeness.hpp"
 #include "d3d12_command_list.hpp"
+#include "d3d12_command_stats.hpp"
 #include "d3d12_descriptor_heap.hpp"
 #include "d3d12_device.hpp"
 #include "d3d12_fence.hpp"
@@ -138,7 +139,9 @@ static uint32_t g_swapchain_final_snapshot_logs = 0;
 static uint32_t g_swapchain_fragment_completeness_logs = 0;
 static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_command_list_summary_logs = 0;
+static uint32_t g_zero_draw_graphics_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
+static uint64_t g_queue_submit_serial = 0;
 
 static uint32_t g_quarantine_zero_vb_offscreen = 0;
 static uint32_t g_quarantine_r16_dsv = 0;
@@ -4874,6 +4877,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     }
 
     const auto cmds = list->GetCommands();
+    const auto stream_stats =
+        D3D12CollectCommandStreamStats(cmds.data(), cmds.size());
     QTRACE("ExecuteCommandLists: cmds.size=%zu empty=%d", cmds.size(),
            cmds.empty());
     list_timer.SetDetail("index=%u queue_type=%u cmds=%zu", li, m_desc.Type,
@@ -6812,11 +6817,6 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       if (type_counts[i])
         QTRACE("  type[%d]=%u", i, type_counts[i]);
 
-    auto type_count = [&](CmdType type) {
-      uint32_t index = static_cast<uint32_t>(type);
-      return index < 40 ? type_counts[index] : 0u;
-    };
-
     st.CloseRenderEncoder();
     st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
     st.ForceSwapchainDiagnosticColor(cmdbuf);
@@ -6835,29 +6835,81 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     auto status = cmdbuf.status();
     QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld queue_type=%u",
            (int)status, (long long)wait_ms, m_desc.Type);
-    const uint32_t draw_count = type_count(CmdType::DrawInstanced);
-    const uint32_t indexed_draw_count =
-        type_count(CmdType::DrawIndexedInstanced);
-    const uint32_t indirect_count = type_count(CmdType::ExecuteIndirect);
-    const uint32_t dispatch_count = type_count(CmdType::Dispatch);
-    const uint32_t clear_rtv_count =
-        type_count(CmdType::ClearRenderTargetView);
-    const uint32_t clear_dsv_count =
-        type_count(CmdType::ClearDepthStencilView);
-    const uint32_t clear_uav_count =
-        type_count(CmdType::ClearUnorderedAccessView);
+    const uint32_t draw_count = stream_stats.draw_count;
+    const uint32_t indexed_draw_count = stream_stats.indexed_draw_count;
+    const uint32_t indirect_count = stream_stats.indirect_count;
+    const uint32_t dispatch_count = stream_stats.dispatch_count;
+    const uint32_t clear_rtv_count = stream_stats.clear_rtv_count;
+    const uint32_t clear_dsv_count = stream_stats.clear_dsv_count;
+    const uint32_t clear_uav_count = stream_stats.clear_uav_count;
     const bool interesting_list =
         draw_count || indexed_draw_count || indirect_count || dispatch_count ||
         clear_rtv_count || clear_dsv_count || clear_uav_count ||
         st.swapchain_work_encoded || st.HasSwapchainRenderTarget();
+    auto *swapchain_backbuffer = st.swapchain_rt_for_present
+                                     ? st.swapchain_rt_for_present
+                                     : st.SwapchainRenderTargetResource();
+    uint64_t queue_serial = 0;
+    if (swapchain_backbuffer) {
+      queue_serial =
+          __atomic_add_fetch(&g_queue_submit_serial, 1, __ATOMIC_RELAXED);
+      D3D12SwapchainBackbufferWork work = {};
+      work.serial = queue_serial;
+      work.command_count = stream_stats.command_count;
+      work.draw_count = draw_count;
+      work.indexed_draw_count = indexed_draw_count;
+      work.indirect_count = indirect_count;
+      work.dispatch_count = dispatch_count;
+      work.clear_rtv_count = clear_rtv_count;
+      work.clear_dsv_count = clear_dsv_count;
+      work.clear_uav_count = clear_uav_count;
+      work.graphics_setup = stream_stats.HasGraphicsSetup() ? 1u : 0u;
+      work.swapchain_work = st.swapchain_work_encoded ? 1u : 0u;
+      work.has_swapchain_rt = st.HasSwapchainRenderTarget() ? 1u : 0u;
+      work.command_buffer_status = (int32_t)status;
+      work.replay_ms = replay_ms;
+      work.wait_ms = wait_ms;
+      swapchain_backbuffer->RecordSwapchainQueueWork(work);
+    }
+    if (stream_stats.IsZeroDrawGraphicsList() && interesting_list &&
+        TakeLogBudget(&g_zero_draw_graphics_logs, 96)) {
+      Logger::info(str::format(
+          "M12 zero-draw graphics command list queue=", (unsigned)m_desc.Type,
+          " list=", li, " serial=", (unsigned long long)queue_serial,
+          " cmds=", stream_stats.command_count,
+          " pso_sets=", stream_stats.set_pso_count,
+          " gfx_roots=", stream_stats.set_graphics_root_sig_count,
+          " om_rt=", stream_stats.om_set_render_targets_count,
+          " ia_vb=", stream_stats.ia_set_vertex_buffers_count,
+          " ia_ib=", stream_stats.ia_set_index_buffer_count,
+          " viewports=", stream_stats.rs_set_viewports_count,
+          " scissors=", stream_stats.rs_set_scissors_count,
+          " dispatch=", dispatch_count, " clear_rtv=", clear_rtv_count,
+          " clear_uav=", clear_uav_count,
+          " swapchain_work=", st.swapchain_work_encoded,
+          " has_swapchain_rt=", st.HasSwapchainRenderTarget(), " status=",
+          (int)status, " replay_ms=", (long long)replay_ms,
+          " wait_ms=", (long long)wait_ms));
+    }
+    if (stream_stats.corrupt && TakeLogBudget(&g_command_list_summary_logs, 192)) {
+      Logger::warn(str::format(
+          "M12 command list corrupt stream queue=", (unsigned)m_desc.Type,
+          " list=", li, " cmds=", stream_stats.command_count,
+          " offset=", (unsigned long long)stream_stats.corrupt_offset,
+          " type=", stream_stats.corrupt_type,
+          " size=", stream_stats.corrupt_size,
+          " byte_size=", (unsigned long long)cmds.size()));
+    }
     if (interesting_list &&
         TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::info(str::format(
           "M12 command list summary queue=", (unsigned)m_desc.Type,
-          " list=", li, " cmds=", cmd_count, " draws=", draw_count,
+          " list=", li, " serial=", (unsigned long long)queue_serial,
+          " cmds=", stream_stats.command_count, " draws=", draw_count,
           " indexed=", indexed_draw_count, " indirect=", indirect_count,
           " dispatch=", dispatch_count, " clear_rtv=", clear_rtv_count,
           " clear_dsv=", clear_dsv_count, " clear_uav=", clear_uav_count,
+          " graphics_setup=", stream_stats.HasGraphicsSetup(),
           " swapchain_work=", st.swapchain_work_encoded,
           " has_swapchain_rt=", st.HasSwapchainRenderTarget(), " status=",
           (int)status, " replay_ms=", (long long)replay_ms, " wait_ms=",
