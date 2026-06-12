@@ -65,6 +65,7 @@ interface BottleManifest {
   steam_app_id?: number | null;
   arch: string;
   runtime_profile: string;
+  preferred_pipeline?: string | null;
   health: string;
   prefix_path: string;
   source_installer_path?: string | null;
@@ -118,6 +119,15 @@ interface RedistSourceGuide {
   local_targets: string[];
   policy: string;
   notes: string;
+}
+
+interface M12BottleItem {
+  id: string;
+  label: string;
+  detail: string;
+  state: string;
+  repair: "doctor" | "prepare" | "component" | "scan";
+  component?: string;
 }
 
 const toast = useToast();
@@ -211,6 +221,115 @@ function componentStateClass(state: string): string {
 function isFnaProfile(profile: string): boolean {
   return profile === "fna_arm64" || profile === "fna_x86";
 }
+
+function isM12Bottle(bottle: BottleManifest): boolean {
+  return bottle.runtime_profile === "m12" || bottle.preferred_pipeline === "m12";
+}
+
+function reportAction(report: BottleDiagnostic | null | undefined, id: string): BottleAction | undefined {
+  return report?.actions.find((action) => action.id === id);
+}
+
+function reportCheck(report: BottleDiagnostic | null | undefined, ids: string[]): { id: string; ok: boolean; detail: string } | undefined {
+  return report?.checks.find((check) => ids.includes(check.id));
+}
+
+function componentState(bottle: BottleManifest, id: string): string {
+  return bottle.installed_components.find((component) => component.id === id)?.state ?? "unknown";
+}
+
+function m12ItemState(bottle: BottleManifest, report: BottleDiagnostic | null | undefined, ids: string[]): string {
+  if (ids.some((id) => reportAction(report, id))) return "needs_repair";
+  const matchingCheck = reportCheck(report, ids);
+  if (matchingCheck) return matchingCheck.ok ? "ready" : "needs_repair";
+  const states = ids.map((id) => componentState(bottle, id)).filter((state) => state !== "unknown");
+  if (states.length && states.every((state) => state === "installed" || state === "ready")) return "ready";
+  if (states.some((state) => state === "missing" || state === "needs_repair" || state === "partial")) return "needs_repair";
+  return report ? "ready" : "unknown";
+}
+
+function m12StateLabel(state: string): string {
+  if (state === "ready" || state === "installed") return "Ready";
+  if (state === "needs_repair" || state === "missing" || state === "partial") return "Repair";
+  return "Check";
+}
+
+function m12StateClass(state: string): string {
+  if (state === "ready" || state === "installed") return "badge-ok";
+  if (state === "needs_repair" || state === "missing" || state === "partial") return "badge-warn";
+  return "badge-warn";
+}
+
+function m12BottleItems(bottle: BottleManifest): M12BottleItem[] {
+  const report = bottleReports.value[bottle.id];
+  const dxmtDetail = reportAction(report, "gpu_vendor_stubs")?.detail
+    ?? reportCheck(report, ["runtime_assets", "dll_sources"])?.detail
+    ?? "D3D12, DXGI, Winemetal, NVAPI/NVNGX, and prefix route DLLs";
+  const agilityDetail = reportAction(report, "d3d12_agility")?.detail
+    ?? "D3D12 Agility and DXIL payload staged for the selected game";
+  const steamDetail = reportAction(report, "steam_identity")?.detail
+    ?? "steam_appid, real Steam DLLs, or active Goldberg files refreshed";
+
+  return [
+    {
+      id: "shader_engine",
+      label: "Shader Engine",
+      detail: "M12 shader contract, cache paths, and launch env",
+      state: report ? "ready" : "unknown",
+      repair: "doctor",
+    },
+    {
+      id: "dxmt_runtime",
+      label: "DXMT Runtime",
+      detail: dxmtDetail,
+      state: m12ItemState(bottle, report, ["runtime_assets", "dll_sources", "gpu_vendor_stubs"]),
+      repair: "prepare",
+    },
+    {
+      id: "unix_sidecars",
+      label: "Unix Sidecars",
+      detail: "winemetal.so is game-local and .metalsharp/unix mirrored",
+      state: report ? "ready" : "unknown",
+      repair: "prepare",
+    },
+    {
+      id: "agility",
+      label: "Agility/DXIL",
+      detail: agilityDetail,
+      state: m12ItemState(bottle, report, ["d3d12_agility"]),
+      repair: "component",
+      component: "d3d12_agility",
+    },
+    {
+      id: "steam_identity",
+      label: "Steam Identity",
+      detail: steamDetail,
+      state: report ? "ready" : "unknown",
+      repair: "prepare",
+    },
+    {
+      id: "shader_cache",
+      label: "Shader Cache",
+      detail: "M12 shader and pipeline cache folders are created",
+      state: report ? "ready" : "unknown",
+      repair: "scan",
+    },
+  ];
+}
+
+async function repairM12BottleItem(bottle: BottleManifest, item: M12BottleItem) {
+  if (item.repair === "component" && item.component) {
+    await repairBottleComponent(bottle.id, item.component);
+  } else if (item.repair === "prepare") {
+    await prepareBottle(bottle.id);
+  } else if (item.repair === "scan") {
+    await refreshBottle(bottle.id);
+    await doctorBottle(bottle.id);
+  } else {
+    await doctorBottle(bottle.id);
+  }
+}
+
 const selectableRuntimeProfileIds = new Set(["m12", "d3dmetal", "m11", "m10", "m9", "fna_arm64"]);
 const visibleRuntimeProfiles = computed(() =>
   runtimeProfiles.value
@@ -786,6 +905,30 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   <button v-for="candidate in bottle.installed_app_detections.slice(0, 3)" :key="candidate.exe_path" class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="addBottleApp(bottle, candidate)">Add {{ candidate.name }}</button>
                 </div>
               </div>
+              <div v-if="isM12Bottle(bottle)" class="m12-bottle-panel">
+                <div class="m12-panel-header">
+                  <span>M12 Path</span>
+                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
+                    {{ bottleReports[bottle.id] ? "Recheck" : "Check" }}
+                  </button>
+                </div>
+                <div class="m12-repair-list">
+                  <div v-for="item in m12BottleItems(bottle)" :key="item.id" class="m12-repair-row">
+                    <span class="badge m12-state" :class="m12StateClass(item.state)">{{ m12StateLabel(item.state) }}</span>
+                    <div class="m12-repair-copy">
+                      <strong>{{ item.label }}</strong>
+                      <small>{{ item.detail }}</small>
+                    </div>
+                    <button
+                      class="btn btn-secondary btn-sm"
+                      :disabled="bottleLoading[bottle.id]"
+                      @click="repairM12BottleItem(bottle, item)"
+                    >
+                      {{ item.state === "ready" ? "Refresh" : "Repair" }}
+                    </button>
+                  </div>
+                </div>
+              </div>
               <div v-if="bottleReports[bottle.id]" class="bottle-report">
                 <div class="doctor-summary">
                   <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">{{ bottleReports[bottle.id]?.ready ? "Ready" : "Repair" }}</span>
@@ -1314,6 +1457,59 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 .bottle-action-row span {
   overflow-wrap: anywhere;
 }
+.m12-bottle-panel {
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-surface) 84%, var(--accent) 4%);
+}
+.m12-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.m12-repair-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.m12-repair-row {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+.m12-state {
+  justify-self: start;
+}
+.m12-repair-copy {
+  min-width: 0;
+}
+.m12-repair-copy strong,
+.m12-repair-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.m12-repair-copy strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.m12-repair-copy small {
+  margin-top: 2px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
 @media (max-width: 980px) {
   .bottle-card-main {
     grid-template-columns: minmax(0, 1fr);
@@ -1327,6 +1523,13 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
   }
   .bottle-control-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .m12-repair-row {
+    grid-template-columns: 62px minmax(0, 1fr);
+  }
+  .m12-repair-row .btn {
+    grid-column: 2;
+    justify-self: start;
   }
 }
 .compatibility-table {
