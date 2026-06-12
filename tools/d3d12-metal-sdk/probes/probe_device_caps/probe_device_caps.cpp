@@ -299,8 +299,7 @@ int main() {
     print_hr("create_state_object", create_state_object_hr);
     std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
     std::printf("    \"tiled_resources_not_advertised\": %s,\n", tiled_resources_not_advertised ? "true" : "false");
-    std::printf("    \"reserved_resource_sparse_compat\": %s,\n",
-                reserved_resource_sparse_compat ? "true" : "false");
+    std::printf("    \"reserved_resource_sparse_compat\": %s,\n", reserved_resource_sparse_compat ? "true" : "false");
     std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"requirements\": {\n");
@@ -312,10 +311,8 @@ int main() {
     std::printf("    \"atomic64_conservative\": %s,\n", atomic64_conservative ? "true" : "false");
     std::printf("    \"advanced_features_conservative\": %s,\n", advanced_conservative ? "true" : "false");
     std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
-    std::printf("    \"tiled_resources_not_advertised\": %s,\n",
-                tiled_resources_not_advertised ? "true" : "false");
-    std::printf("    \"reserved_resource_sparse_compat\": %s,\n",
-                reserved_resource_sparse_compat ? "true" : "false");
+    std::printf("    \"tiled_resources_not_advertised\": %s,\n", tiled_resources_not_advertised ? "true" : "false");
+    std::printf("    \"reserved_resource_sparse_compat\": %s,\n", reserved_resource_sparse_compat ? "true" : "false");
     std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  }\n");
     std::printf("}\n");
