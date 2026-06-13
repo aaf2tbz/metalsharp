@@ -44,11 +44,15 @@ jobs:
       - name: Build D3D12 Metal shader corpus
         run: python3 tools/d3d12-metal-sdk/scripts/build-metal-shader-corpus.py --clean
 
+      - name: Verify staged D3D12 Metal shader corpus
+        run: python3 tools/d3d12-metal-sdk/scripts/verify-built-metal-shader-corpus.py dist/d3d12-metal-shaders
+
       - name: Upload D3D12 Metal shader corpus
         uses: actions/upload-artifact@v4
         with:
           name: d3d12-metal-shaders-pr-${{ github.event.pull_request.number }}
           path: dist/d3d12-metal-shaders
+          if-no-files-found: error
 
   vue:
     name: Vue CI
