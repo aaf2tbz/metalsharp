@@ -15,9 +15,30 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include <bit>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <format>
 #include <memory>
 #include <string>
+
+static FILE *
+dxmt_airconv_open_trace_log(const char *fallback_name) {
+  const char *root = std::getenv("METALSHARP_M12_LOG_DIR");
+  const char *file = std::getenv("DXMT_LOG_FILE");
+  char path[4096];
+
+  if (!root || !root[0])
+    root = std::getenv("DXMT_LOG_PATH");
+  if (!file || !file[0])
+    file = fallback_name && fallback_name[0] ? fallback_name : "dxmt-airconv.log";
+  if (!root || !root[0])
+    return std::fopen(file, "a");
+
+  std::snprintf(path, sizeof(path), "%s%s%s", root, (root[std::strlen(root) - 1] == '/' || root[std::strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return std::fopen(path, "a");
+}
 #include <vector>
 #include <cstdlib>
 #include <cstdio>
@@ -1482,7 +1503,7 @@ AIRCONV_API int SM50InitializeWithOptions(
   uint32_t old_options = dxmt::dxbc::g_sm50_initialize_options;
   dxmt::dxbc::g_sm50_initialize_options = Options;
   if (Options) {
-    if (FILE *f = std::fopen("/tmp/dxmt_inline_options.log", "a")) {
+    if (FILE *f = dxmt_airconv_open_trace_log("dxmt-inline-options.log")) {
       std::fprintf(f, "SM50InitializeWithOptions options=0x%x\n", Options);
       std::fclose(f);
     }

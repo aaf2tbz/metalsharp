@@ -9,7 +9,25 @@
 #include <map>
 #include <set>
 
-#define DXTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxil_trace.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+static FILE *
+dxmt_dxil_open_trace_log(const char *fallback_name) {
+  const char *root = std::getenv("METALSHARP_M12_LOG_DIR");
+  const char *file = std::getenv("DXMT_LOG_FILE");
+  char path[4096];
+
+  if (!root || !root[0])
+    root = std::getenv("DXMT_LOG_PATH");
+  if (!file || !file[0])
+    file = fallback_name && fallback_name[0] ? fallback_name : "dxmt-dxil-trace.log";
+  if (!root || !root[0])
+    return std::fopen(file, "a");
+
+  std::snprintf(path, sizeof(path), "%s%s%s", root, (root[std::strlen(root) - 1] == '/' || root[std::strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return std::fopen(path, "a");
+}
+
+#define DXTRACE(fmt, ...) do { FILE *_tf = dxmt_dxil_open_trace_log("dxmt-dxil-trace.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
 namespace dxmt::dxil {
 

@@ -128,6 +128,8 @@ assert_m12_contract() {
 
 prepare_runtime
 
+python3 "$ROOT_DIR/tools/d3d12-metal-sdk/scripts/validate-m12-pipeline-contract.py"
+
 export METALSHARP_WINE_ROOT="$WINE_ROOT"
 export WINE_ROOT
 export METALSHARP_X86_LLVM_ROOT="$TOOLCHAIN_ROOT"

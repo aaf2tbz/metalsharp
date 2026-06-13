@@ -80,6 +80,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9],
                 shader_cache_subdir: None,
             },
+            // M12 is the DXMT D3D12 contract path. It deploys the D3D12/DXGI
+            // Windows DLLs, the WineMetal PE/unix bridge, DXMT's D3D11 fallback
+            // DLLs for mixed-engine games, and MetalSharp's app-local shims into
+            // the game directory before launch. The launcher then pins the
+            // cube-proven unix sidecar loading surface and a per-title log file.
             PipelineNode {
                 id: PipelineId::M12,
                 name: "M12",

@@ -18,6 +18,7 @@ REQUIRED_CONTRACTS = [
     "agility-1.619.3-contract.json",
     "feature-support-contract.json",
     "dxgi-contract.json",
+    "m12-pipeline-contract.json",
     "unsupported-api-ledger.json",
     "risky-stub-ledger.json",
     "contract-waivers.json",

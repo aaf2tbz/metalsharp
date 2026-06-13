@@ -1,5 +1,6 @@
 #pragma once
 
+#include "log/log.hpp"
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -75,7 +76,7 @@ static inline void DXMTD3D12Trace(const char *component, const char *fmt, ...) {
     fflush(stderr);
   }
 
-  FILE *f = fopen("Z:\\tmp\\dxmt_d3d12_trace.log", "a+");
+  FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
   if (!f) {
     va_end(args);
     return;

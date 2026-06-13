@@ -212,7 +212,7 @@ public:
     pDesc->ComputePreemptionGranularity = DXGI_COMPUTE_PREEMPTION_DMA_BUFFER_BOUNDARY;
 
     if (DXMTDXGITraceEnabled()) {
-      FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+      FILE *f = dxmt::openDiagnosticLog("dxmt-dxgi-trace.log");
       if (f) {
         fwprintf(f, L"DXGIAdapter::GetDesc3: %s VendorId=0x%04x DeviceId=0x%04x VRAM=%lluMB Flags=0x%x\n",
                  pDesc->Description, pDesc->VendorId, pDesc->DeviceId,

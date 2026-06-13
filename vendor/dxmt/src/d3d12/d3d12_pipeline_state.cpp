@@ -7,7 +7,7 @@
 #include "util_string.hpp"
 #include "Metal.hpp"
 
-#define PTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_ps_args_debug.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define PTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-pso.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 #include "airconv_public.h"
 #include "dxmt_format.hpp"
 #include "dxil/dxil_container.hpp"

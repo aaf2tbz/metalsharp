@@ -12,9 +12,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+static FILE *
+winemetal_open_log(const char *fallback_name) {
+  const char *root = getenv("METALSHARP_M12_LOG_DIR");
+  const char *file = getenv("DXMT_LOG_FILE");
+  char path[4096];
+
+  if (!root || !root[0])
+    root = getenv("DXMT_LOG_PATH");
+  if (!file || !file[0])
+    file = fallback_name && fallback_name[0] ? fallback_name : "winemetal-pe.log";
+  if (!root || !root[0])
+    return fopen(file, "a");
+
+  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return fopen(path, "a");
+}
+
 static void
 winemetal_log_unix_status(unsigned int code, NTSTATUS status) {
-  FILE *f = fopen("/tmp/winemetal_debug.log", "a");
+  FILE *f = winemetal_open_log("winemetal-pe.log");
   if (f) {
     fprintf(f, "unix_call_failed code=%u status=0x%08lx\n", code, (unsigned long)status);
     fclose(f);
@@ -52,7 +70,7 @@ winemetal_log_render_encode_call(obj_handle_t encoder, const struct wmtcmd_base 
   if (!winemetal_debug_enabled())
     return;
 
-  FILE *f = fopen("/tmp/winemetal_debug.log", "a");
+  FILE *f = winemetal_open_log("winemetal-pe.log");
   if (!f)
     return;
 
@@ -349,7 +367,7 @@ MTLDevice_newLibraryWithSource(obj_handle_t device, const char *source, uint64_t
   assert(!st && "unix call failed");
 #endif
   if (winemetal_debug_enabled()) {
-    FILE *dl = fopen("Z:\\tmp\\winemetal_pe_debug.log", "a");
+    FILE *dl = winemetal_open_log("winemetal-pe.log");
     if (dl) {
       fprintf(
           dl, "PE: newLibraryWithSource dev=%llu src_len=%llu unix_status=%ld ret_lib=%llu ret_err=%llu\n",

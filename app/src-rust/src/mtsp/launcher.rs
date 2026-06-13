@@ -2066,6 +2066,30 @@ fn shader_cache_has_runtime_artifacts(path: &PathBuf) -> bool {
     })
 }
 
+fn path_with_trailing_slash(path: &Path) -> String {
+    let mut value = path.to_string_lossy().to_string();
+    if !value.ends_with('/') {
+        value.push('/');
+    }
+    value
+}
+
+fn m12_log_dir(home: &Path, appid: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home).join("logs").join("m12").join(appid.to_string())
+}
+
+fn m12_log_env_pairs(home: &Path, appid: u32) -> Vec<(String, String)> {
+    let log_dir = m12_log_dir(home, appid);
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_dir = path_with_trailing_slash(&log_dir);
+    vec![
+        ("METALSHARP_LOG_DIR".to_string(), log_dir.clone()),
+        ("METALSHARP_M12_LOG_DIR".to_string(), log_dir.clone()),
+        ("DXMT_LOG_PATH".to_string(), log_dir),
+        ("DXMT_LOG_FILE".to_string(), "m12.log".to_string()),
+    ]
+}
+
 fn steam_pipeline_env_pairs(
     home: &PathBuf,
     node: &PipelineNode,
@@ -2101,6 +2125,14 @@ fn steam_pipeline_env_pairs(
     env.push(("MS_GRAPHICS_BACKEND".to_string(), node.graphics_backend.to_string()));
     env.push(("WINEMSYNC".to_string(), "1".to_string()));
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
+    if node.id == PipelineId::M12 {
+        // M12 is the D3D12 contract path: the launcher stages game-local DXMT
+        // DLLs/Unix sidecars, feeds shader and pipeline caches to DXMT, then
+        // forces every DXGI/D3D12/Metal diagnostic stream into one per-title
+        // MetalSharp log file. Keep this after cache_env_pairs so the log root
+        // cannot drift back into the pipeline-cache directory.
+        env.extend(m12_log_env_pairs(home, appid));
+    }
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
     env.extend(app_compat_env_pairs(appid, node.id));
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
@@ -4149,9 +4181,7 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
         return;
     };
 
-    let log_dir = cache_paths
-        .map(|cache| PathBuf::from(&cache.pipeline))
-        .unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("logs"));
+    let log_dir = m12_log_dir(home, appid);
     let _ = std::fs::create_dir_all(&log_dir);
     let log_path = log_dir.join(format!("d3d12-metalshaderconverter-{}.log", appid));
     let cache_dir = cache_paths
@@ -4348,6 +4378,23 @@ mod tests {
             assert!(env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value.ends_with('/')));
             let _ = std::fs::remove_dir_all(home);
         }
+    }
+
+    #[test]
+    fn m12_env_routes_runtime_logs_to_single_metalsharp_log_file() {
+        let home = test_dir("m12-log-contract");
+        let node = get_pipeline(PipelineId::M12);
+
+        let env = steam_pipeline_env_pairs(&home, node, 1583230, None);
+        let log_dir = last_env_value(&env, "DXMT_LOG_PATH").unwrap_or_default();
+
+        assert!(log_dir.ends_with("/.metalsharp/logs/m12/1583230/"), "unexpected M12 log dir: {}", log_dir);
+        assert_eq!(last_env_value(&env, "METALSHARP_LOG_DIR"), Some(log_dir));
+        assert_eq!(last_env_value(&env, "METALSHARP_M12_LOG_DIR"), Some(log_dir));
+        assert_eq!(last_env_value(&env, "DXMT_LOG_FILE"), Some("m12.log"));
+        assert!(!log_dir.contains("/pipeline-cache/"));
+        assert!(home.join(".metalsharp").join("logs").join("m12").join("1583230").exists());
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

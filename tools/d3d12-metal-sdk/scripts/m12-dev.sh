@@ -18,6 +18,7 @@ Developer-first M12 entrypoints:
   preflight         Validate contracts, runtime layout, and shader-engine structure.
   mini              Run focused one-purpose D3D12 mini probes.
   probes            Run the full required D3D12 SDK probe matrix.
+  pipeline-contract Validate the M12 launch/logging contract against the tree.
   shader-engine     Validate the M12 shader-engine contract.
   shader-lab        Stage captured game shader corpora on AverySSD and Metal-compile them.
   stress-game       Build/stage/run the 15-second DX12-only M12 stress game.
@@ -73,6 +74,12 @@ run_layout() {
 run_shader_engine() {
   python3 "$SDK_DIR/scripts/validate-shader-engine.py" \
     --json "$RESULTS_DIR/shader-engine-audit-$PROFILE.json" \
+    "$@"
+}
+
+run_pipeline_contract() {
+  python3 "$SDK_DIR/scripts/validate-m12-pipeline-contract.py" \
+    --json "$RESULTS_DIR/m12-pipeline-contract-audit-$PROFILE.json" \
     "$@"
 }
 
@@ -138,6 +145,7 @@ case "$command" in
     ;;
   preflight)
     run_contracts
+    run_pipeline_contract
     run_layout "$@"
     run_shader_engine
     ;;
@@ -150,6 +158,9 @@ case "$command" in
   shader-engine)
     run_shader_engine "$@"
     ;;
+  pipeline-contract)
+    run_pipeline_contract "$@"
+    ;;
   shader-lab)
     run_shader_lab "$@"
     ;;
@@ -160,6 +171,7 @@ case "$command" in
     run_build_runtime
     run_stage_runtime
     run_contracts
+    run_pipeline_contract
     run_layout
     run_probes "$@"
     run_compare

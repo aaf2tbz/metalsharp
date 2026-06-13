@@ -40,7 +40,7 @@ static bool dxmt_d3d12_env_enabled(const char *name) {
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
   if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
       ep->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
-    FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       fprintf(f, "!!! EXCEPTION code=0x%lx addr=%p flags=0x%lx\n",
               ep->ExceptionRecord->ExceptionCode,
@@ -1582,7 +1582,7 @@ static void device_vtable_watcher() {
                            current_m_device != g_device_expected_m_device);
       if (vtable_bad || m_device_bad) {
         g_watcher_restore_count++;
-        FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+        FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
         if (f) {
           fprintf(f,
                   "!!! CORRUPTION #%d after %d checks: this=%p "
@@ -1620,7 +1620,7 @@ static void device_vtable_watcher() {
       check_count++;
       snapshot_count++;
       if (snapshot_count % 10000 == 0) {
-        FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+        FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
         if (f) {
           fprintf(f, "watcher snapshot #%d: vtable=%p m_device=0x%llx OK\n",
                   snapshot_count, current,
@@ -1668,7 +1668,7 @@ MTLD3D12Device::~MTLD3D12Device() {
     g_device_expected_m_device = 0;
   }
   void *current_vt = *(void **)this;
-  FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+  FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
   if (f) {
     fprintf(f, "Device REAL DTOR this=%p vtable=%p expected=%p m_refCount=%u\n",
             (void *)this, current_vt, m_expected_vtable, m_refCount.load());
