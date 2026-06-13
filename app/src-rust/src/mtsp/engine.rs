@@ -89,7 +89,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d12,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
@@ -617,7 +617,7 @@ mod tests {
 
         assert_eq!(
             m12.wine_overrides,
-            Some("winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("d3d12,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }

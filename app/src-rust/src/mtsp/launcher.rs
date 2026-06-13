@@ -1715,13 +1715,15 @@ fn stage_m12_unix_sidecars(
         return Ok(Vec::new());
     }
 
+    let unix_dir = exe_dir.join("unix");
     let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
+    std::fs::create_dir_all(&unix_dir)?;
     std::fs::create_dir_all(&sidecar_dir)?;
     let mut staged = Vec::new();
 
     for filename in M12_UNIX_SIDECARS {
         let source = m12_unix_sidecar_source(ms_root, filename)?;
-        for dest_dir in [exe_dir, sidecar_dir.as_path()] {
+        for dest_dir in [exe_dir, unix_dir.as_path(), sidecar_dir.as_path()] {
             let dest = dest_dir.join(filename);
             std::fs::copy(&source, &dest).map_err(|e| {
                 format!("failed to stage M12 Unix sidecar {} to {}: {}", source.display(), dest.display(), e)
@@ -1761,12 +1763,11 @@ fn m12_game_local_env_pairs(exe_dir: &Path) -> Vec<(String, String)> {
     if crate::platform::current() != crate::platform::HostPlatform::Macos {
         return Vec::new();
     }
+    let unix_dir = exe_dir.join("unix");
     let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
-    let value = [exe_dir, sidecar_dir.as_path()]
-        .iter()
-        .map(|path| path.to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join(":");
+    let mut paths = m12_toolchain_library_paths();
+    paths.extend([unix_dir, exe_dir.to_path_buf(), sidecar_dir]);
+    let value = paths.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>().join(":");
     vec![("DYLD_LIBRARY_PATH".to_string(), value.clone()), ("DYLD_FALLBACK_LIBRARY_PATH".to_string(), value)]
 }
 
@@ -1785,6 +1786,9 @@ fn verify_m12_game_local_launch_path(
         if !staged_sidecars.iter().any(|path| path == &exe_dir.join(filename)) {
             missing.push(format!("game-local {}", exe_dir.join(filename).display()));
         }
+        if !staged_sidecars.iter().any(|path| path == &exe_dir.join("unix").join(filename)) {
+            missing.push(format!("unix {}", exe_dir.join("unix").join(filename).display()));
+        }
         if !staged_sidecars.iter().any(|path| path == &exe_dir.join(".metalsharp").join("unix").join(filename)) {
             missing.push(format!("sidecar {}", exe_dir.join(".metalsharp").join("unix").join(filename).display()));
         }
@@ -1796,6 +1800,33 @@ fn verify_m12_game_local_launch_path(
     } else {
         Err(format!("M12 game-local launch path is incomplete: {}", missing.join(", ")).into())
     }
+}
+
+fn m12_toolchain_library_paths() -> Vec<PathBuf> {
+    if crate::platform::current() != crate::platform::HostPlatform::Macos {
+        return Vec::new();
+    }
+
+    let mut roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        roots.push(crate::platform::metalsharp_home_dir_for(&home).join("toolchains"));
+    }
+    roots.push(PathBuf::from("/Volumes/AverySSD/toolchains"));
+
+    let mut libs = Vec::new();
+    for root in roots {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let lib = entry.path().join("lib");
+            if lib.is_dir() && !libs.iter().any(|existing| existing == &lib) {
+                libs.push(lib);
+            }
+        }
+    }
+    libs.sort();
+    libs
 }
 
 fn prepend_command_path_env(cmd: &mut Command, key: &str, prefixes: &[&Path]) {
@@ -4411,9 +4442,10 @@ mod tests {
         let node = get_pipeline(PipelineId::M12);
         let staged = stage_m12_unix_sidecars(node, &ms_root, &exe_dir).expect("stage sidecars");
 
-        assert_eq!(staged.len(), M12_UNIX_SIDECARS.len() * 2);
+        assert_eq!(staged.len(), M12_UNIX_SIDECARS.len() * 3);
         for filename in M12_UNIX_SIDECARS {
             assert!(exe_dir.join(filename).is_file(), "missing root sidecar {}", filename);
+            assert!(exe_dir.join("unix").join(filename).is_file(), "missing cube-style unix sidecar {}", filename);
             assert!(
                 exe_dir.join(".metalsharp").join("unix").join(filename).is_file(),
                 "missing unix sidecar {}",
@@ -4430,11 +4462,45 @@ mod tests {
         assert_eq!(env.get("DXMT_WINEMETAL_UNIXLIB").map(String::as_str), Some("winemetal.so"));
         if crate::platform::current() == crate::platform::HostPlatform::Macos {
             let dyld = env.get("DYLD_LIBRARY_PATH").expect("dyld path");
-            assert!(dyld.starts_with(&format!(
-                "{}:{}:",
-                exe_dir.display(),
-                exe_dir.join(".metalsharp").join("unix").display()
-            )));
+            let parts = dyld.split(':').collect::<Vec<_>>();
+            let unix_path = exe_dir.join("unix").to_string_lossy().to_string();
+            let root_path = exe_dir.to_string_lossy().to_string();
+            let sidecar_path = exe_dir.join(".metalsharp").join("unix").to_string_lossy().to_string();
+            assert!(parts.contains(&unix_path.as_str()));
+            assert!(parts.contains(&root_path.as_str()));
+            assert!(parts.contains(&sidecar_path.as_str()));
+            let unix_index = parts.iter().position(|part| *part == unix_path).expect("unix index");
+            let root_index = parts.iter().position(|part| *part == root_path).expect("root index");
+            assert!(unix_index < root_index, "cube-style unix dir must precede game root in DYLD_LIBRARY_PATH");
+        }
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn m12_steam_env_keeps_cube_method_launch_surface() {
+        let home = test_dir("m12-cube-method-env");
+        let node = get_pipeline(PipelineId::M12);
+        let exe = home.join("Game").join("start_protected_game.exe");
+
+        let env = steam_pipeline_env_pairs(&home, node, 1245620, Some(&exe));
+
+        assert_eq!(last_env_value(&env, "DXMT_WINEMETAL_UNIXLIB"), Some("winemetal.so"));
+        assert_eq!(last_env_value(&env, "SteamAppId"), Some("1245620"));
+        assert_eq!(last_env_value(&env, "SteamGameId"), Some("1245620"));
+        assert_eq!(last_env_value(&env, "WINEMSYNC"), Some("1"));
+        assert!(last_env_value(&env, "DXMT_SHADER_CACHE_PATH")
+            .unwrap_or_default()
+            .contains("/shader-cache/m12/1245620/"));
+
+        let overrides = last_env_value(&env, "WINEDLLOVERRIDES").expect("overrides");
+        for required in ["d3d12", "dxgi", "dxgi_dxmt", "winemetal", "nvapi64"] {
+            assert!(overrides.contains(required), "M12 override surface missing {}", required);
+        }
+
+        if crate::platform::current() == crate::platform::HostPlatform::Macos {
+            let dyld = last_env_value(&env, "DYLD_LIBRARY_PATH").expect("dyld path");
+            assert!(dyld.contains(&exe.parent().unwrap().join("unix").to_string_lossy().to_string()));
         }
 
         let _ = std::fs::remove_dir_all(home);
