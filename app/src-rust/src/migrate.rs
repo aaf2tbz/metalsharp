@@ -480,7 +480,7 @@ fn run_migration() {
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Verifying MetalSharp update...", None);
-    if let Err(e) = verify_migration_ready(&ms_dir, post_update_marker.as_ref()) {
+    if let Err(e) = verify_migration_ready_with_repair(&ms_dir, post_update_marker.as_ref(), step, total_steps) {
         write_migrate_progress("error", step, total_steps, &format!("Update verification failed: {}", e), Some(&e));
         log_to_file(&format!("Migration to v{} failed verification: {}", MIGRATE_VERSION, e));
         return;
@@ -544,6 +544,35 @@ fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMark
     Ok(())
 }
 
+fn verify_migration_ready_with_repair(
+    ms_dir: &Path,
+    marker: Option<&PostUpdateMigrationMarker>,
+    step: usize,
+    total_steps: usize,
+) -> Result<(), String> {
+    match verify_migration_ready(ms_dir, marker) {
+        Ok(()) => Ok(()),
+        Err(first_error) => {
+            log_to_file(&format!(
+                "Migration: verification reported Wine init/runtime failure; attempting repair: {}",
+                first_error
+            ));
+            write_migrate_progress(
+                "running",
+                step,
+                total_steps,
+                "Repairing Wine prefix runtime surface...",
+                Some(&first_error),
+            );
+            repair_migration_wine_init_surface(ms_dir, &first_error)
+                .map_err(|repair_error| format!("{}; repair failed: {}", first_error, repair_error))?;
+            verify_migration_ready(ms_dir, marker).map_err(|second_error| {
+                format!("{}; repair attempted but verification still failed: {}", first_error, second_error)
+            })
+        },
+    }
+}
+
 fn validate_migration_wine_init_surface(ms_dir: &Path) -> Result<(), String> {
     let prefix = ms_dir.join("prefix-steam");
     if !prefix.exists() {
@@ -556,6 +585,16 @@ fn validate_migration_wine_init_surface(ms_dir: &Path) -> Result<(), String> {
         runtime.windows_files, runtime.unix_files, pipeline.material_files
     ));
     Ok(())
+}
+
+fn repair_migration_wine_init_surface(ms_dir: &Path, reason: &str) -> Result<(), String> {
+    let runtime_wine = ms_dir.join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&runtime_wine);
+    if !wine.exists() {
+        return Err(format!("MetalSharp Wine not found at {}", wine.display()));
+    }
+    let prefix = ms_dir.join("prefix-steam");
+    repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, reason)
 }
 
 fn migration_metadata_current(ms_dir: &Path) -> bool {
@@ -810,30 +849,19 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
 
         // Pre-check: dosdevices must exist and be a directory.
         let dosdevices = prefix.join("dosdevices");
-        if dosdevices.exists() && !dosdevices.is_dir() {
+        let refresh_result = if dosdevices.exists() && !dosdevices.is_dir() {
+            Err(format!("dosdevices exists but is not a directory for {}", prefix.display()))
+        } else {
+            refresh_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix)
+        };
+        if let Err(first_error) = refresh_result {
             log_to_file(&format!(
-                "Migration: dosdevices exists but is not a directory for {} — skipping prefix init",
-                prefix.display()
+                "Migration: prefix runtime init reported failure for {}; attempting repair: {}",
+                prefix.display(),
+                first_error
             ));
-            continue;
+            repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, &first_error)?;
         }
-
-        let staged = stage_updated_prefix_runtime_surface(&runtime_wine, &prefix)?;
-        log_to_file(&format!("Migration: staged {} refreshed runtime file(s) into {}", staged, prefix.display()));
-        run_prefix_runtime_init(&wine, &runtime_wine, &prefix)?;
-        let staged_after_init = stage_updated_prefix_runtime_surface(&runtime_wine, &prefix)?;
-        log_to_file(&format!(
-            "Migration: re-staged {} refreshed runtime file(s) into {} after prefix init",
-            staged_after_init,
-            prefix.display()
-        ));
-        let report = crate::prefix_runtime::validate_prefix_runtime_surface(&runtime_wine, &prefix)?;
-        log_to_file(&format!(
-            "Migration: validated refreshed prefix runtime surface for {} ({} Windows files, {} Unix files)",
-            prefix.display(),
-            report.windows_files,
-            report.unix_files
-        ));
         guard_against_steam_opening_during_prefix_init(&prefix);
 
         restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
@@ -846,6 +874,98 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
     }
 
     Ok(updated)
+}
+
+fn refresh_migration_wine_prefix_runtime_surface(
+    wine: &Path,
+    runtime_wine: &Path,
+    prefix: &Path,
+) -> Result<(), String> {
+    let staged = stage_updated_prefix_runtime_surface(runtime_wine, prefix)?;
+    log_to_file(&format!("Migration: staged {} refreshed runtime file(s) into {}", staged, prefix.display()));
+    run_prefix_runtime_init(wine, runtime_wine, prefix)?;
+    let staged_after_init = stage_updated_prefix_runtime_surface(runtime_wine, prefix)?;
+    log_to_file(&format!(
+        "Migration: re-staged {} refreshed runtime file(s) into {} after prefix init",
+        staged_after_init,
+        prefix.display()
+    ));
+    let report = crate::prefix_runtime::validate_prefix_runtime_surface(runtime_wine, prefix)?;
+    log_to_file(&format!(
+        "Migration: validated refreshed prefix runtime surface for {} ({} Windows files, {} Unix files)",
+        prefix.display(),
+        report.windows_files,
+        report.unix_files
+    ));
+    Ok(())
+}
+
+fn repair_migration_wine_prefix_runtime_surface(
+    wine: &Path,
+    runtime_wine: &Path,
+    prefix: &Path,
+    reason: &str,
+) -> Result<(), String> {
+    log_to_file(&format!(
+        "Migration: repairing Wine prefix runtime surface for {} after reported failure: {}",
+        prefix.display(),
+        reason
+    ));
+    let prefix_str = prefix.to_string_lossy().to_string();
+    force_kill_steam_update_processes_for_prefix(&prefix_str);
+    repair_prefix_runtime_layout(prefix)?;
+    clear_staged_prefix_runtime_surface(prefix);
+    refresh_migration_wine_prefix_runtime_surface(wine, runtime_wine, prefix)?;
+    log_to_file(&format!("Migration: Wine prefix runtime repair succeeded for {}", prefix.display()));
+    Ok(())
+}
+
+fn repair_prefix_runtime_layout(prefix: &Path) -> Result<(), String> {
+    fs::create_dir_all(prefix.join("drive_c").join("windows").join("system32"))
+        .map_err(|e| format!("repair prefix system32 for {}: {}", prefix.display(), e))?;
+    fs::create_dir_all(prefix.join(".metalsharp").join("unix"))
+        .map_err(|e| format!("repair prefix Unix surface for {}: {}", prefix.display(), e))?;
+    repair_prefix_dosdevices_dir(prefix)
+}
+
+fn repair_prefix_dosdevices_dir(prefix: &Path) -> Result<(), String> {
+    let drive_c = prefix.join("drive_c");
+    fs::create_dir_all(&drive_c).map_err(|e| format!("repair prefix drive_c for {}: {}", prefix.display(), e))?;
+
+    let dosdevices = prefix.join("dosdevices");
+    if dosdevices.exists() && !dosdevices.is_dir() {
+        let backup = prefix.join(format!("dosdevices.migration-repair-{}", temp_suffix()));
+        fs::rename(&dosdevices, &backup).map_err(|e| {
+            format!(
+                "backup invalid dosdevices path for {}: {} -> {}: {}",
+                prefix.display(),
+                dosdevices.display(),
+                backup.display(),
+                e
+            )
+        })?;
+        log_to_file(&format!("Migration: backed up invalid dosdevices path to {}", backup.display()));
+    }
+    fs::create_dir_all(&dosdevices).map_err(|e| format!("repair prefix dosdevices for {}: {}", prefix.display(), e))?;
+
+    let c_drive = dosdevices.join("c:");
+    if !c_drive.exists() {
+        std::os::unix::fs::symlink("../drive_c", &c_drive)
+            .map_err(|e| format!("repair prefix c: drive link for {}: {}", prefix.display(), e))?;
+    }
+    remove_root_dosdevice_mapping(prefix);
+    Ok(())
+}
+
+fn clear_staged_prefix_runtime_surface(prefix: &Path) {
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    for (_, filename) in prefix_runtime_dll_sources() {
+        let _ = fs::remove_file(system32.join(filename));
+    }
+    let unix_surface = prefix.join(".metalsharp").join("unix");
+    for filename in prefix_runtime_unix_sidecars() {
+        let _ = fs::remove_file(unix_surface.join(filename));
+    }
 }
 
 fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
@@ -2508,6 +2628,67 @@ mod tests {
     }
 
     #[test]
+    fn migration_prefix_runtime_repair_refreshes_stale_surface_after_reported_failure() {
+        let home = test_dir("prefix-runtime-repair-stale");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+        write_fake_migration_wine(&ms_dir);
+        let runtime_wine = ms_dir.join("runtime").join("wine");
+        let wine = crate::platform::runtime_wine_binary(&runtime_wine);
+        let prefix = ms_dir.join("prefix-steam");
+        stage_updated_prefix_runtime_surface(&runtime_wine, &prefix).expect("stage runtime surface");
+        fs::write(prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll"), b"stale")
+            .expect("write stale d3d12");
+
+        repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, "reported stale d3d12")
+            .expect("repair prefix runtime surface");
+
+        assert_eq!(
+            fs::read(prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll"))
+                .expect("read repaired d3d12"),
+            fs::read(runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"))
+                .expect("read runtime d3d12")
+        );
+        assert_eq!(
+            fs::read_to_string(prefix.join("migration-probe.args")).expect("read probe args"),
+            "cmd\n/c\nexit\n"
+        );
+        assert!(!prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe").exists());
+        crate::prefix_runtime::validate_prefix_runtime_surface(&runtime_wine, &prefix)
+            .expect("validate repaired prefix runtime");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_prefix_runtime_repair_recovers_invalid_dosdevices_without_steam_reinstall() {
+        let home = test_dir("prefix-runtime-repair-dosdevices");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+        write_fake_migration_wine(&ms_dir);
+        let runtime_wine = ms_dir.join("runtime").join("wine");
+        let wine = crate::platform::runtime_wine_binary(&runtime_wine);
+        let prefix = ms_dir.join("prefix-steam");
+        fs::create_dir_all(&prefix).expect("create prefix");
+        fs::write(prefix.join("dosdevices"), b"not-a-directory").expect("write invalid dosdevices");
+
+        repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, "reported invalid dosdevices")
+            .expect("repair invalid dosdevices");
+
+        assert!(prefix.join("dosdevices").is_dir());
+        assert!(prefix.join("dosdevices").join("c:").exists());
+        assert!(fs::read_dir(&prefix)
+            .expect("read prefix")
+            .flatten()
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("dosdevices.migration-repair-")));
+        assert!(!prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe").exists());
+        crate::prefix_runtime::validate_prefix_runtime_surface(&runtime_wine, &prefix)
+            .expect("validate repaired prefix runtime");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn post_update_marker_overrides_ready_runtime() {
         let home = test_dir("marker-override");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -2724,6 +2905,19 @@ mod tests {
         fs::write(host.join("manifest.json"), br#"{"abi":"metalsharp-host-runtime"}"#).expect("write manifest");
         fs::write(host.join("HostRuntimeABI.h"), b"header").expect("write header");
         fs::write(host.join("libmetalsharp_host_runtime.dylib"), b"dylib").expect("write dylib");
+    }
+
+    #[cfg(unix)]
+    fn write_fake_migration_wine(ms_dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let wine = ms_dir.join("runtime").join("wine").join("bin").join("metalsharp-wine");
+        fs::create_dir_all(wine.parent().unwrap()).expect("create fake Wine parent");
+        fs::write(&wine, b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$WINEPREFIX/migration-probe.args\"\nexit 0\n")
+            .expect("write fake Wine");
+        let mut permissions = fs::metadata(&wine).expect("fake Wine metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&wine, permissions).expect("chmod fake Wine");
     }
 
     fn write_steam_libraryfolders(prefix: &Path, path_line: &str) {
