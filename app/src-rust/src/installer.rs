@@ -51,6 +51,7 @@ const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/wine/lib/wine/x86_64-unix/mscompatdb.so",
     "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
+    "runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS",
 ];
 const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-unix/winemetal.so",
@@ -202,6 +203,7 @@ fn run_install_all() {
         ("Support Assets", Box::new(install_split_assets_bundle)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+        ("Wine Init Runtime Surface", Box::new(install_wine_init_runtime_surface)),
         ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("Steam Bridge Shim", Box::new(install_steam_bridge)),
@@ -1525,6 +1527,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         .join("Steam")
         .join("Steam.exe");
     if steam_exe.exists() {
+        validate_steam_prefix_runtime_surface(home)?;
         return Ok(false);
     }
 
@@ -1557,23 +1560,27 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let _ = fs::create_dir_all(&prefix);
 
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    stage_steam_prefix_runtime_surface(home)?;
     let mut wineboot_cmd = Command::new(&ms_wine);
     wineboot_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
+        .env("WINEDLLPATH", crate::prefix_runtime::prefix_runtime_winedllpath(&ms_root))
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut wineboot_cmd, &ms_root);
     let _ = wineboot_cmd.status();
+    validate_steam_prefix_runtime_surface(home)?;
 
     let mut install_cmd = Command::new(&ms_wine);
     install_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
+        .env("WINEDLLPATH", crate::prefix_runtime::prefix_runtime_winedllpath(&ms_root))
         .arg(&installer)
         .args(["/S"])
         .stdout(std::process::Stdio::null())
@@ -1590,6 +1597,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
                 .join("Program Files (x86)")
                 .join("Steam");
             crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+            validate_steam_prefix_runtime_surface(home)?;
             return Ok(true);
         }
     }
@@ -1601,10 +1609,44 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
             .join("Program Files (x86)")
             .join("Steam");
         crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+        validate_steam_prefix_runtime_surface(home)?;
         Ok(true)
     } else {
         Err("Steam.exe not found after installation — may need manual install".into())
     }
+}
+
+fn install_wine_init_runtime_surface(home: &PathBuf) -> Result<bool, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let runtime_wine = ms_home.join("runtime").join("wine");
+    let wine = metalsharp_wine_binary(home);
+    if !wine.exists() {
+        return Err(format!("MetalSharp Wine not found for prefix init: {}", wine.display()));
+    }
+
+    let prefix = ms_home.join("prefix-steam");
+    fs::create_dir_all(&prefix).map_err(|e| format!("create Steam prefix {}: {}", prefix.display(), e))?;
+
+    let staged_before = crate::prefix_runtime::stage_prefix_runtime_surface(&runtime_wine, &prefix)?;
+    crate::prefix_runtime::run_bounded_prefix_runtime_init(&wine, &runtime_wine, &prefix)?;
+    let staged_after = crate::prefix_runtime::stage_prefix_runtime_surface(&runtime_wine, &prefix)?;
+    crate::prefix_runtime::validate_install_wine_init_surface(&ms_home)?;
+
+    Ok(staged_before > 0 || staged_after > 0)
+}
+
+fn stage_steam_prefix_runtime_surface(home: &PathBuf) -> Result<usize, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let runtime_wine = ms_home.join("runtime").join("wine");
+    let prefix = ms_home.join("prefix-steam");
+    crate::prefix_runtime::stage_prefix_runtime_surface(&runtime_wine, &prefix)
+}
+
+fn validate_steam_prefix_runtime_surface(home: &PathBuf) -> Result<(), String> {
+    stage_steam_prefix_runtime_surface(home)?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    crate::prefix_runtime::validate_install_wine_init_surface(&ms_home)?;
+    Ok(())
 }
 
 fn check_command(cmd: &str) -> bool {
@@ -2165,6 +2207,16 @@ mod tests {
     }
 
     #[test]
+    fn runtime_archive_contract_requires_m12_shader_engine_material() {
+        assert!(
+            RUNTIME_REQUIRED_ARCHIVE_FILES
+                .iter()
+                .any(|path| path.contains("d3d12-metal-sdk/shader-corpus") && path.ends_with("SHA256SUMS")),
+            "runtime archive validation must require the M12 shader corpus proof material"
+        );
+    }
+
+    #[test]
     fn graphics_bundle_layout_matches_release_manifest() {
         let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
         let graphics_row = manifest
@@ -2328,6 +2380,59 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
+    #[test]
+    fn existing_steam_install_refreshes_wine_init_runtime_surface() {
+        let home = test_home("existing-steam-runtime-refresh");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_prefix_init_runtime_files(&ms_dir);
+        write_m12_pipeline_material(&ms_dir);
+
+        let steam_exe =
+            ms_dir.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe");
+        fs::create_dir_all(steam_exe.parent().unwrap()).expect("create Steam dir");
+        fs::write(&steam_exe, b"steam").expect("write Steam.exe");
+
+        let stale_d3d12 =
+            ms_dir.join("prefix-steam").join("drive_c").join("windows").join("system32").join("d3d12.dll");
+        fs::create_dir_all(stale_d3d12.parent().unwrap()).expect("create system32");
+        fs::write(&stale_d3d12, b"stale").expect("write stale d3d12");
+
+        let installed = install_windows_steam(&home).expect("refresh existing Steam install");
+
+        assert!(!installed);
+        assert_eq!(
+            fs::read(&stale_d3d12).expect("read refreshed d3d12"),
+            fs::read(
+                ms_dir.join("runtime").join("wine").join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll")
+            )
+            .expect("read runtime d3d12")
+        );
+        assert!(ms_dir.join("prefix-steam").join(".metalsharp").join("unix").join("winemetal.so").is_file());
+        crate::prefix_runtime::validate_install_wine_init_surface(&ms_dir).expect("validate refreshed install surface");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn install_wine_init_runtime_surface_runs_bounded_probe_with_current_runtime() {
+        let home = test_home("install-wine-init-surface");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_prefix_init_runtime_files(&ms_dir);
+        write_m12_pipeline_material(&ms_dir);
+        write_fake_metalsharp_wine(&ms_dir);
+
+        let installed = install_wine_init_runtime_surface(&home).expect("install wine init runtime surface");
+
+        assert!(installed);
+        let prefix = ms_dir.join("prefix-steam");
+        let probe_args = fs::read_to_string(prefix.join("probe.args")).expect("read probe args");
+        assert_eq!(probe_args, "cmd\n/c\nexit\n");
+        assert!(!probe_args.contains("wineboot"));
+        crate::prefix_runtime::validate_install_wine_init_surface(&ms_dir).expect("validate install surface");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
     fn test_home(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "metalsharp-installer-{}-{}-{}",
@@ -2335,6 +2440,49 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
         ))
+    }
+
+    fn write_prefix_init_runtime_files(ms_dir: &Path) {
+        let runtime_wine = ms_dir.join("runtime").join("wine");
+        for (subdir, filename) in crate::prefix_runtime::prefix_runtime_dll_sources() {
+            let path = runtime_wine.join(subdir).join(filename);
+            fs::create_dir_all(path.parent().unwrap()).expect("create prefix init DLL parent");
+            fs::write(path, format!("runtime-{}", filename)).expect("write prefix init DLL");
+        }
+        for filename in crate::prefix_runtime::prefix_runtime_unix_sidecars() {
+            let path = runtime_wine.join("lib").join("wine").join("x86_64-unix").join(filename);
+            fs::create_dir_all(path.parent().unwrap()).expect("create prefix init Unix parent");
+            fs::write(path, format!("wine-{}", filename)).expect("write prefix init Unix sidecar");
+        }
+        let dxmt_winemetal = runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
+        fs::create_dir_all(dxmt_winemetal.parent().unwrap()).expect("create DXMT Unix parent");
+        fs::write(dxmt_winemetal, b"dxmt-winemetal").expect("write DXMT winemetal");
+    }
+
+    fn write_m12_pipeline_material(ms_dir: &Path) {
+        let material = ms_dir
+            .join("runtime")
+            .join("wine")
+            .join("share")
+            .join("d3d12-metal-sdk")
+            .join("shader-corpus")
+            .join("baseline")
+            .join("seed.metallib");
+        fs::create_dir_all(material.parent().unwrap()).expect("create M12 material parent");
+        fs::write(material, b"metallib").expect("write M12 material");
+    }
+
+    #[cfg(unix)]
+    fn write_fake_metalsharp_wine(ms_dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let wine = ms_dir.join("runtime").join("wine").join("bin").join("metalsharp-wine");
+        fs::create_dir_all(wine.parent().unwrap()).expect("create fake wine parent");
+        fs::write(&wine, b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$WINEPREFIX/probe.args\"\nexit 0\n")
+            .expect("write fake metalsharp-wine");
+        let mut permissions = fs::metadata(&wine).expect("fake wine metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&wine, permissions).expect("chmod fake wine");
     }
 
     #[test]
