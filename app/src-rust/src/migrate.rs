@@ -463,7 +463,17 @@ fn run_migration() {
     );
     match update_existing_wine_prefixes(&ms_dir, step) {
         Ok(updated) => log_to_file(&format!("Migration: prefix runtime init completed for {} prefix(es)", updated)),
-        Err(e) => log_to_file(&format!("Migration: prefix runtime init failed (non-fatal): {}", e)),
+        Err(e) => {
+            write_migrate_progress(
+                "error",
+                step,
+                total_steps,
+                &format!("Wine prefix runtime validation failed: {}", e),
+                Some(&e),
+            );
+            log_to_file(&format!("Migration: prefix runtime init failed: {}", e));
+            return;
+        },
     }
     register_external_steam_libraries(&ms_dir);
     clear_steam_crash_marker(&ms_dir);
@@ -529,6 +539,22 @@ fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMark
         return Err("runtime bundle is still incomplete after install".into());
     }
 
+    validate_migration_wine_init_surface(ms_dir)?;
+
+    Ok(())
+}
+
+fn validate_migration_wine_init_surface(ms_dir: &Path) -> Result<(), String> {
+    let prefix = ms_dir.join("prefix-steam");
+    if !prefix.exists() {
+        return Err(format!("Steam prefix missing after migration install: {}", prefix.display()));
+    }
+
+    let (runtime, pipeline) = crate::prefix_runtime::validate_install_wine_init_surface(ms_dir)?;
+    log_to_file(&format!(
+        "Migration: verified Wine init runtime surface ({} Windows files, {} Unix files, {} M12 pipeline material files)",
+        runtime.windows_files, runtime.unix_files, pipeline.material_files
+    ));
     Ok(())
 }
 
@@ -795,6 +821,19 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
         let staged = stage_updated_prefix_runtime_surface(&runtime_wine, &prefix)?;
         log_to_file(&format!("Migration: staged {} refreshed runtime file(s) into {}", staged, prefix.display()));
         run_prefix_runtime_init(&wine, &runtime_wine, &prefix)?;
+        let staged_after_init = stage_updated_prefix_runtime_surface(&runtime_wine, &prefix)?;
+        log_to_file(&format!(
+            "Migration: re-staged {} refreshed runtime file(s) into {} after prefix init",
+            staged_after_init,
+            prefix.display()
+        ));
+        let report = crate::prefix_runtime::validate_prefix_runtime_surface(&runtime_wine, &prefix)?;
+        log_to_file(&format!(
+            "Migration: validated refreshed prefix runtime surface for {} ({} Windows files, {} Unix files)",
+            prefix.display(),
+            report.windows_files,
+            report.unix_files
+        ));
         guard_against_steam_opening_during_prefix_init(&prefix);
 
         restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
@@ -826,82 +865,19 @@ fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
 }
 
 fn stage_updated_prefix_runtime_surface(runtime_wine: &Path, prefix: &Path) -> Result<usize, String> {
-    let system32 = prefix.join("drive_c").join("windows").join("system32");
-    let unix_surface = prefix.join(".metalsharp").join("unix");
-    fs::create_dir_all(&system32).map_err(|e| format!("create prefix system32 for {}: {}", prefix.display(), e))?;
-    fs::create_dir_all(&unix_surface)
-        .map_err(|e| format!("create prefix unix surface for {}: {}", prefix.display(), e))?;
-
-    let mut copied = 0usize;
-    for (subdir, filename) in prefix_runtime_dll_sources() {
-        let source = runtime_wine.join(subdir).join(filename);
-        if !source.is_file() {
-            return Err(format!("required runtime DLL missing for prefix init: {}", source.display()));
-        }
-        let dest = system32.join(filename);
-        copy_runtime_file_if_changed(&source, &dest)
-            .map_err(|e| format!("stage {} to {}: {}", source.display(), dest.display(), e))?;
-        copied += 1;
-    }
-
-    for filename in prefix_runtime_unix_sidecars() {
-        let source = prefix_runtime_unix_source(runtime_wine, filename)
-            .ok_or_else(|| format!("required Unix sidecar missing for prefix init: {}", filename))?;
-        let dest = unix_surface.join(filename);
-        copy_runtime_file_if_changed(&source, &dest)
-            .map_err(|e| format!("stage {} to {}: {}", source.display(), dest.display(), e))?;
-        copied += 1;
-    }
-
-    Ok(copied)
+    crate::prefix_runtime::stage_prefix_runtime_surface(runtime_wine, prefix)
 }
 
 fn prefix_runtime_dll_sources() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("lib/wine/x86_64-windows", "d3d9.dll"),
-        ("lib/wine/x86_64-windows", "d3d10.dll"),
-        ("lib/wine/x86_64-windows", "d3d10_1.dll"),
-        ("lib/dxmt/x86_64-windows", "d3d10core.dll"),
-        ("lib/dxmt/x86_64-windows", "d3d11.dll"),
-        ("lib/dxmt/x86_64-windows", "d3d12.dll"),
-        ("lib/dxmt/x86_64-windows", "dxgi.dll"),
-        ("lib/dxmt/x86_64-windows", "dxgi_dxmt.dll"),
-        ("lib/dxmt/x86_64-windows", "winemetal.dll"),
-        ("lib/dxmt/x86_64-windows", "nvapi64.dll"),
-        ("lib/dxmt/x86_64-windows", "nvngx.dll"),
-        ("lib/metalsharp/x86_64-windows", "metalsharp_ntdll_hook.dll"),
-    ]
+    crate::prefix_runtime::prefix_runtime_dll_sources()
 }
 
 fn prefix_runtime_unix_sidecars() -> &'static [&'static str] {
-    &["winemetal.so", "winemac.so", "ntdll.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"]
+    crate::prefix_runtime::prefix_runtime_unix_sidecars()
 }
 
 fn prefix_runtime_unix_source(runtime_wine: &Path, filename: &str) -> Option<PathBuf> {
-    [
-        runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join(filename),
-        runtime_wine.join("lib").join("wine").join("x86_64-unix").join(filename),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-}
-
-fn copy_runtime_file_if_changed(source: &Path, dest: &Path) -> std::io::Result<()> {
-    if dest.is_file() && files_match(source, dest) {
-        return Ok(());
-    }
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(source, dest)?;
-    Ok(())
-}
-
-fn files_match(left: &Path, right: &Path) -> bool {
-    match (fs::read(left), fs::read(right)) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
+    crate::prefix_runtime::prefix_runtime_unix_source(runtime_wine, filename)
 }
 
 fn run_prefix_runtime_init(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Result<(), String> {
@@ -952,15 +928,7 @@ fn run_prefix_runtime_init(wine: &Path, runtime_wine: &Path, prefix: &Path) -> R
 }
 
 fn prefix_runtime_winedllpath(runtime_wine: &Path) -> String {
-    [
-        runtime_wine.join("lib").join("dxmt").join("x86_64-windows"),
-        runtime_wine.join("lib").join("wine").join("x86_64-windows"),
-        runtime_wine.join("lib").join("metalsharp").join("x86_64-windows"),
-    ]
-    .iter()
-    .map(|path| path.to_string_lossy().to_string())
-    .collect::<Vec<_>>()
-    .join(":")
+    crate::prefix_runtime::prefix_runtime_winedllpath(runtime_wine)
 }
 
 fn guard_against_steam_opening_during_prefix_init(prefix: &Path) {
@@ -2600,7 +2568,62 @@ mod tests {
         );
 
         write_runtime_core(&ms_dir);
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
+            .expect("stage prefix runtime");
         assert!(verify_migration_ready(&ms_dir, None).is_ok());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_ready_validates_prefix_runtime_without_requiring_steam_reinstall() {
+        let home = test_dir("verify-prefix-runtime-no-steam-reinstall");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+
+        let prefix = ms_dir.join("prefix-steam");
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &prefix)
+            .expect("stage prefix runtime");
+
+        assert!(!prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe").exists());
+        assert!(verify_migration_ready(&ms_dir, None).is_ok());
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_ready_rejects_stale_prefix_runtime_surface() {
+        let home = test_dir("verify-stale-prefix-runtime");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+
+        let prefix = ms_dir.join("prefix-steam");
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &prefix)
+            .expect("stage prefix runtime");
+        fs::write(prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll"), b"stale")
+            .expect("write stale d3d12");
+
+        let error = verify_migration_ready(&ms_dir, None).expect_err("stale prefix runtime should fail verification");
+
+        assert!(error.contains("d3d12.dll"));
+        assert!(error.contains("stale"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_ready_requires_m12_pipeline_material() {
+        let home = test_dir("verify-m12-pipeline-material");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+        fs::remove_dir_all(
+            ms_dir.join("runtime").join("wine").join("share").join("d3d12-metal-sdk").join("shader-corpus"),
+        )
+        .expect("remove shader corpus");
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
+            .expect("stage prefix runtime");
+
+        let error = verify_migration_ready(&ms_dir, None).expect_err("missing M12 pipeline material should fail");
+
+        assert!(error.contains("M12 pipeline material missing"));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -2673,6 +2696,12 @@ mod tests {
             ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
             ms_dir.join("configs").join("mtsp-rules.toml"),
             runtime_wine.join("etc").join("dxmt.conf"),
+            runtime_wine
+                .join("share")
+                .join("d3d12-metal-sdk")
+                .join("shader-corpus")
+                .join("baseline")
+                .join("seed.metallib"),
         ] {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
             fs::write(path, b"test").expect("write runtime file");
