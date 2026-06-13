@@ -1715,6 +1715,8 @@ fn stage_m12_unix_sidecars(
         return Ok(Vec::new());
     }
 
+    verify_safe_mscompatdb_unix_hook(ms_root)?;
+
     let unix_dir = exe_dir.join("unix");
     let sidecar_dir = exe_dir.join(".metalsharp").join("unix");
     std::fs::create_dir_all(&unix_dir)?;
@@ -1733,6 +1735,53 @@ fn stage_m12_unix_sidecars(
     }
 
     Ok(staged)
+}
+
+fn verify_safe_mscompatdb_unix_hook(ms_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let unix_dir = ms_root.join("lib").join("wine").join("x86_64-unix");
+    let ntdll = unix_dir.join("ntdll.so");
+    if ntdll.is_file() {
+        let ntdll_bytes = std::fs::read(&ntdll)?;
+        let hardcoded_loader = ntdll_bytes.windows(b"mscompatdb.so".len()).any(|window| window == b"mscompatdb.so");
+        if !hardcoded_loader {
+            return Ok(());
+        }
+        let skip_patch = ntdll_bytes.get(0x25a80..0x25a85) == Some(&[0xe9, 0x1a, 0x01, 0x00, 0x00]);
+        if skip_patch {
+            return Ok(());
+        }
+        let has_contract_export = ntdll_bytes
+            .windows(b"MetalSharpGetMscompatdbHookContract".len())
+            .any(|window| window == b"MetalSharpGetMscompatdbHookContract");
+        if !has_contract_export {
+            return Err(format!(
+                "M12 runtime ntdll has stale mscompatdb loader without skip patch or hook contract: {}",
+                ntdll.display()
+            )
+            .into());
+        }
+    }
+
+    let hook = unix_dir.join("mscompatdb.so");
+    if !hook.is_file() {
+        return Err(format!("M12 runtime missing safe mscompatdb shim: {}", hook.display()).into());
+    }
+    let bytes = std::fs::read(&hook)?;
+    let has_safe_marker = bytes
+        .windows(b"MetalSharp compatibility database v2.0".len())
+        .any(|window| window == b"MetalSharp compatibility database v2.0");
+    let has_legacy_marker = bytes
+        .windows(b"couldn't find KeServiceDescriptorTable".len())
+        .any(|window| window == b"couldn't find KeServiceDescriptorTable");
+    if !has_safe_marker || has_legacy_marker {
+        return Err(format!(
+            "M12 runtime has stale mscompatdb shim {}; repair the MetalSharp runtime before launch",
+            hook.display()
+        )
+        .into());
+    }
+
+    Ok(())
 }
 
 fn m12_unix_sidecar_source(ms_root: &Path, filename: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -4436,10 +4485,24 @@ mod tests {
         for filename in ["winemac.so", "ntdll.so"] {
             std::fs::write(wine_unix.join(filename), filename.as_bytes()).expect("write wine sidecar");
         }
-
         let node = get_pipeline(PipelineId::M12);
+        let mut bad_ntdll = vec![0u8; 0x25a85];
+        bad_ntdll[0x100..0x100 + b"mscompatdb.so".len()].copy_from_slice(b"mscompatdb.so");
+        bad_ntdll[0x25a80..0x25a85].copy_from_slice(&[0x48, 0x8d, 0x05, 0xef, 0x12]);
+        std::fs::write(wine_unix.join("ntdll.so"), &bad_ntdll).expect("write bad ntdll");
+        std::fs::write(wine_unix.join("mscompatdb.so"), b"couldn't find KeServiceDescriptorTable")
+            .expect("write stale mscompatdb hook");
+        let stale_error = stage_m12_unix_sidecars(node, &ms_root, &exe_dir).expect_err("stale mscompatdb should fail");
+        assert!(stale_error.to_string().contains("stale mscompatdb loader"));
+
+        let mut patched_ntdll = bad_ntdll;
+        patched_ntdll[0x25a80..0x25a85].copy_from_slice(&[0xe9, 0x1a, 0x01, 0x00, 0x00]);
+        std::fs::write(wine_unix.join("ntdll.so"), &patched_ntdll).expect("write patched ntdll");
+        std::fs::write(wine_unix.join("mscompatdb.so"), b"MetalSharp compatibility database v2.0")
+            .expect("write safe mscompatdb hook");
         let staged = stage_m12_unix_sidecars(node, &ms_root, &exe_dir).expect("stage sidecars");
 
+        assert!(wine_unix.join("mscompatdb.so").is_file(), "M12 must keep safe mscompatdb Unix hook available");
         assert_eq!(staged.len(), M12_UNIX_SIDECARS.len() * 3);
         for filename in M12_UNIX_SIDECARS {
             assert!(exe_dir.join(filename).is_file(), "missing root sidecar {}", filename);
@@ -4495,6 +4558,7 @@ mod tests {
         for required in ["d3d12", "dxgi", "dxgi_dxmt", "winemetal", "nvapi64"] {
             assert!(overrides.contains(required), "M12 override surface missing {}", required);
         }
+        assert!(!overrides.contains("mscompatdb"), "M12 should not reference stale mscompatdb routing");
 
         if crate::platform::current() == crate::platform::HostPlatform::Macos {
             let dyld = last_env_value(&env, "DYLD_LIBRARY_PATH").expect("dyld path");

@@ -267,6 +267,7 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
 
     [
         runtime_wine.join("lib").join("wine").join("x86_64-unix"),
+        runtime_wine.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
@@ -2102,6 +2103,22 @@ mod tests {
     }
 
     #[test]
+    fn missing_mscompatdb_shim_requests_runtime_repair() {
+        let home = test_dir("missing-mscompatdb-shim");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_runtime_core(&ms_dir);
+
+        fs::remove_file(
+            ms_dir.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
+        )
+        .expect("remove safe mscompatdb shim");
+
+        assert!(!runtime_core_ready(&ms_dir));
+        assert!(runtime_needs_repair(&home, true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_collects_existing_wine_prefixes_for_update() {
         let home = test_dir("prefix-update");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -2609,6 +2626,7 @@ mod tests {
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemetal.so"),
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemac.so"),
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join("ntdll.so"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++.1.dylib"),
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++abi.1.dylib"),
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libunwind.1.dylib"),

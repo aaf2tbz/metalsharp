@@ -49,6 +49,7 @@ const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/host/manifest.json",
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
+    "runtime/wine/lib/wine/x86_64-unix/mscompatdb.so",
     "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
 ];
 const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
