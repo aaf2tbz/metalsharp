@@ -2458,16 +2458,19 @@ mod tests {
     }
 
     fn write_m12_pipeline_material(ms_dir: &Path) {
-        let material = ms_dir
+        let corpus = ms_dir
             .join("runtime")
             .join("wine")
             .join("share")
             .join("d3d12-metal-sdk")
             .join("shader-corpus")
-            .join("baseline")
-            .join("seed.metallib");
+            .join("elden-ring-present-vb-pull-20260612");
+        let material = corpus.join("metallib").join("seed.metallib");
         fs::create_dir_all(material.parent().unwrap()).expect("create M12 material parent");
         fs::write(material, b"metallib").expect("write M12 material");
+        let proof = corpus.join("proof").join("SHA256SUMS");
+        fs::create_dir_all(proof.parent().unwrap()).expect("create M12 proof parent");
+        fs::write(proof, b"seed.metallib").expect("write M12 proof");
     }
 
     #[cfg(unix)]

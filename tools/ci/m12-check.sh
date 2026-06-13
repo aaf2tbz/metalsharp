@@ -99,10 +99,14 @@ assert_m12_contract() {
     "$DXMT_BUILD_DIR/tests/d3d12_game/m12_game.exe"
   )
   local runtime_files=(
+    "$WINE_ROOT/lib/dxmt/x86_64-windows/d3d10core.dll"
+    "$WINE_ROOT/lib/dxmt/x86_64-windows/d3d11.dll"
     "$WINE_ROOT/lib/dxmt/x86_64-windows/d3d12.dll"
     "$WINE_ROOT/lib/dxmt/x86_64-windows/dxgi.dll"
     "$WINE_ROOT/lib/dxmt/x86_64-windows/dxgi_dxmt.dll"
     "$WINE_ROOT/lib/dxmt/x86_64-windows/winemetal.dll"
+    "$WINE_ROOT/lib/dxmt/x86_64-windows/nvapi64.dll"
+    "$WINE_ROOT/lib/dxmt/x86_64-windows/nvngx.dll"
     "$WINE_ROOT/lib/dxmt/x86_64-unix/winemetal.so"
     "$WINE_ROOT/lib/wine/x86_64-unix/winemetal.so"
     "$WINE_ROOT/lib/dxmt/x86_64-unix/libc++.1.dylib"

@@ -447,16 +447,30 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let deployed_sources: Vec<String> = {
         validate_recipe_runtime(&recipe)?;
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_legacy_injections(game_dir)?;
+            prepare_steam_identity_for_pipeline(&home, game_dir, appid, pipeline_id);
+            deploy_d3d12_agility_sidecars(appid, node, game_dir)?;
         }
         let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
         deploy_recipe_dlls(&recipe)?;
         sources
     };
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+    std::fs::create_dir_all(&prefix)?;
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
+
+    let mut m12_unix_sidecars = Vec::new();
+    if let (Some(game_dir), Some(exe_path)) = (recipe.game_dir.as_ref(), recipe.exe_path.as_ref()) {
+        let exe_dir = launch_working_dir(game_dir, exe_path);
+        m12_unix_sidecars = stage_m12_unix_sidecars(node, &ms_root, exe_dir)?;
+        verify_m12_game_local_launch_path(node, &ms_root, exe_dir, &m12_unix_sidecars)?;
+    }
 
     Ok(serde_json::json!({
         "ok": true,
@@ -466,6 +480,9 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "recipe": recipe,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
+        "prefix_route": prefix,
+        "m12_launch_path": m12_launch_path_name(node),
+        "m12_unix_sidecars": m12_unix_sidecars,
     }))
 }
 
@@ -603,25 +620,31 @@ fn deploy_prefix_route_dlls(
         return Ok(());
     }
 
-    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    let windows = prefix.join("drive_c").join("windows");
+    let system32 = windows.join("system32");
+    let syswow64 = windows.join("syswow64");
     std::fs::create_dir_all(&system32)?;
+    std::fs::create_dir_all(&syswow64)?;
     for deploy in &recipe.dlls {
         if !deploy.source_present {
             continue;
         }
-        std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
+        let dest_dir = prefix_route_dir_for_deploy(&system32, &syswow64, deploy);
+        std::fs::copy(&deploy.source_path, dest_dir.join(&deploy.filename))?;
     }
-    verify_dxmt_prefix_route_surface(recipe, &system32)?;
+    verify_dxmt_prefix_route_surface(recipe, &system32, &syswow64)?;
     Ok(())
 }
 
 fn verify_dxmt_prefix_route_surface(
     recipe: &super::recipe::LaunchRecipe,
     system32: &Path,
+    syswow64: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let missing = required_dxmt_prefix_dlls(recipe)
         .into_iter()
-        .filter(|filename| !system32.join(filename).is_file())
+        .filter(|dll| !prefix_route_dir_for_deploy(system32, syswow64, dll).join(&dll.filename).is_file())
+        .map(|dll| dll.filename.clone())
         .collect::<Vec<_>>();
     if missing.is_empty() {
         Ok(())
@@ -630,7 +653,7 @@ fn verify_dxmt_prefix_route_surface(
     }
 }
 
-fn required_dxmt_prefix_dlls(recipe: &super::recipe::LaunchRecipe) -> Vec<String> {
+fn required_dxmt_prefix_dlls(recipe: &super::recipe::LaunchRecipe) -> Vec<&super::recipe::RecipeDll> {
     recipe
         .dlls
         .iter()
@@ -650,8 +673,19 @@ fn required_dxmt_prefix_dlls(recipe: &super::recipe::LaunchRecipe) -> Vec<String
             ) || dll.filename.starts_with("nvapi")
                 || dll.filename.starts_with("nvngx")
         })
-        .map(|dll| dll.filename.clone())
         .collect()
+}
+
+fn prefix_route_dir_for_deploy<'a>(
+    system32: &'a Path,
+    syswow64: &'a Path,
+    deploy: &super::recipe::RecipeDll,
+) -> &'a Path {
+    if deploy.source_subpath.contains("i386-windows") {
+        syswow64
+    } else {
+        system32
+    }
 }
 
 fn wine_debug_value() -> String {
@@ -1806,10 +1840,14 @@ fn verify_safe_mscompatdb_unix_hook(ms_root: &Path) -> Result<(), Box<dyn std::e
 }
 
 fn m12_unix_sidecar_source(ms_root: &Path, filename: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let candidates = [
-        ms_root.join("lib").join("dxmt").join("x86_64-unix").join(filename),
-        ms_root.join("lib").join("wine").join("x86_64-unix").join(filename),
-    ];
+    let candidates = if filename == "mscompatdb.so" {
+        vec![ms_root.join("lib").join("wine").join("x86_64-unix").join(filename)]
+    } else {
+        vec![
+            ms_root.join("lib").join("dxmt").join("x86_64-unix").join(filename),
+            ms_root.join("lib").join("wine").join("x86_64-unix").join(filename),
+        ]
+    };
 
     candidates
         .iter()
@@ -4976,6 +5014,51 @@ mod tests {
 
             let _ = std::fs::remove_dir_all(home);
         }
+    }
+
+    #[test]
+    fn dxmt_prefix_route_places_i386_dlls_in_syswow64() {
+        let home = test_dir("prefix-dlls-i386");
+        let source_dir = home.join("runtime").join("lib").join("wine").join("i386-windows");
+        let game_dir = home.join("game");
+        let prefix = home.join("prefix");
+        std::fs::create_dir_all(&source_dir).expect("create i386 source dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        let source_path = source_dir.join("d3d9.dll");
+        std::fs::write(&source_path, b"d3d9-i386").expect("write i386 d3d9");
+
+        let recipe = super::super::recipe::LaunchRecipe {
+            appid: 4000,
+            pipeline: PipelineId::M9,
+            pipeline_name: "M9".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: None,
+            exe_name: None,
+            launch_args: vec![],
+            env: vec![],
+            dlls: vec![super::super::recipe::RecipeDll {
+                source_subpath: "lib/wine/i386-windows".into(),
+                filename: "d3d9.dll".into(),
+                source_path,
+                dest_path: game_dir.join("d3d9.dll"),
+                source_present: true,
+            }],
+            runtime_assets: vec![],
+            anti_cheat: vec![],
+            anti_cheat_status: vec![],
+            warnings: vec![],
+        };
+
+        deploy_prefix_route_dlls(&recipe, &prefix).expect("deploy i386 prefix route dll");
+
+        assert_eq!(
+            std::fs::read(prefix.join("drive_c").join("windows").join("syswow64").join("d3d9.dll"))
+                .expect("read syswow64 d3d9"),
+            b"d3d9-i386"
+        );
+        assert!(!prefix.join("drive_c").join("windows").join("system32").join("d3d9.dll").exists());
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]

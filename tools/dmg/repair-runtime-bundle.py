@@ -15,6 +15,9 @@ DEFAULT_HOST = PROJECT_ROOT / "app" / "native" / "host"
 DEFAULT_BACKEND = PROJECT_ROOT / "app" / "src-rust" / "target" / "release" / "metalsharp-backend"
 DEFAULT_METALSHARP_LIB = PROJECT_ROOT / "lib" / "metalsharp"
 DEFAULT_MSCOMPATDB_BUILD_SCRIPT = PROJECT_ROOT / "tools" / "wine" / "build-mscompatdb-shim.sh"
+DEFAULT_SHADER_CORPUS = PROJECT_ROOT / "tools" / "d3d12-metal-sdk" / "shader-corpus"
+RUNTIME_SHADER_CORPUS = Path("wine/share/d3d12-metal-sdk/shader-corpus")
+REQUIRED_CORPUS_PROOF = Path("elden-ring-present-vb-pull-20260612/proof/SHA256SUMS")
 
 
 def require_file(path: Path, description: str) -> None:
@@ -40,6 +43,17 @@ def require_metalsharp_lib(lib_dir: Path) -> None:
         lib_dir / "x86_64-windows" / "metalsharp_ntdll_hook.dll",
         "MetalSharp ntdll hook DLL",
     )
+
+
+def require_shader_corpus(corpus_dir: Path) -> None:
+    require_file(corpus_dir / REQUIRED_CORPUS_PROOF, "M12 shader corpus checksum proof")
+    material_files = [
+        path
+        for path in corpus_dir.rglob("*")
+        if path.is_file() and path.suffix in {".msl", ".air", ".metallib", ".dxbc", ".dxil", ".cso", ".json"}
+    ]
+    if not material_files:
+        raise FileNotFoundError(f"M12 shader corpus has no material files: {corpus_dir}")
 
 
 def build_mscompatdb_shim(script: Path, out_dir: Path) -> Path:
@@ -156,11 +170,19 @@ def write_archive(source_root: Path, output: Path) -> None:
         tar_path.unlink(missing_ok=True)
 
 
-def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path, metalsharp_lib: Path, mscompatdb_script: Path) -> None:
+def repair_runtime_bundle(
+    archive: Path,
+    host_dir: Path,
+    backend: Path,
+    metalsharp_lib: Path,
+    mscompatdb_script: Path,
+    shader_corpus: Path,
+) -> None:
     require_file(archive, "runtime bundle archive")
     require_host_runtime(host_dir)
     require_file(backend, "runtime backend")
     require_metalsharp_lib(metalsharp_lib)
+    require_shader_corpus(shader_corpus)
 
     with tempfile.TemporaryDirectory(prefix="metalsharp-runtime-repair-") as tmp_name:
         tmp = Path(tmp_name)
@@ -176,11 +198,13 @@ def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path, metalsha
         copy_tree(host_dir, runtime_root / "host")
         shutil.copy2(backend, runtime_root / "metalsharp-backend")
         copy_tree(metalsharp_lib, runtime_root / "wine" / "lib" / "metalsharp")
+        copy_tree(shader_corpus, runtime_root / RUNTIME_SHADER_CORPUS)
         install_mscompatdb_shim(runtime_root, mscompatdb)
         patch_ntdll_mscompatdb_loader(runtime_root)
         require_host_runtime(runtime_root / "host")
         require_file(runtime_root / "metalsharp-backend", "runtime backend inside archive")
         require_metalsharp_lib(runtime_root / "wine" / "lib" / "metalsharp")
+        require_shader_corpus(runtime_root / RUNTIME_SHADER_CORPUS)
 
         repaired = tmp / archive.name
         write_archive(extracted, repaired)
@@ -194,9 +218,17 @@ def main() -> None:
     parser.add_argument("--backend", type=Path, default=DEFAULT_BACKEND)
     parser.add_argument("--metalsharp-lib", type=Path, default=DEFAULT_METALSHARP_LIB)
     parser.add_argument("--mscompatdb-script", type=Path, default=DEFAULT_MSCOMPATDB_BUILD_SCRIPT)
+    parser.add_argument("--shader-corpus", type=Path, default=DEFAULT_SHADER_CORPUS)
     args = parser.parse_args()
 
-    repair_runtime_bundle(args.archive, args.host_dir, args.backend, args.metalsharp_lib, args.mscompatdb_script)
+    repair_runtime_bundle(
+        args.archive,
+        args.host_dir,
+        args.backend,
+        args.metalsharp_lib,
+        args.mscompatdb_script,
+        args.shader_corpus,
+    )
     print(f"repaired runtime bundle: {args.archive}")
 
 

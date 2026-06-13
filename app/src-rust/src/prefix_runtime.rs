@@ -5,6 +5,7 @@ use std::time::Duration;
 
 pub(crate) const PREFIX_RUNTIME_INIT_TIMEOUT_SECS: u64 = 10;
 pub(crate) const PREFIX_RUNTIME_INIT_ARGS: &[&str] = &["cmd", "/c", "exit"];
+const M12_REQUIRED_CORPUS_PROOF: &[&str] = &["elden-ring-present-vb-pull-20260612", "proof", "SHA256SUMS"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PrefixRuntimeSurfaceReport {
@@ -81,13 +82,30 @@ pub(crate) fn validate_prefix_runtime_surface(
 pub(crate) fn validate_m12_pipeline_material(ms_home: &Path) -> Result<M12PipelineMaterialReport, String> {
     let sources = m12_pipeline_material_sources(ms_home);
     let mut material_files = 0usize;
+    let mut proof_sources = Vec::new();
     for source in &sources {
-        material_files += count_m12_pipeline_material(source);
+        if !source.is_dir() {
+            continue;
+        }
+        let proof = M12_REQUIRED_CORPUS_PROOF.iter().fold(source.clone(), |path, segment| path.join(segment));
+        if proof.is_file() {
+            proof_sources.push(source.clone());
+            material_files += count_m12_pipeline_material(source);
+        }
+    }
+
+    if proof_sources.is_empty() {
+        let searched = sources.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ");
+        return Err(format!(
+            "M12 pipeline material missing; expected shader-engine corpus proof {} under {}",
+            M12_REQUIRED_CORPUS_PROOF.join("/"),
+            searched
+        ));
     }
 
     if material_files == 0 {
-        let searched = sources.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ");
-        return Err(format!("M12 pipeline material missing; expected shader-engine corpus under {}", searched));
+        let searched = proof_sources.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(", ");
+        return Err(format!("M12 pipeline material incomplete; no shader-engine files found under {}", searched));
     }
 
     Ok(M12PipelineMaterialReport { material_files })
@@ -135,7 +153,11 @@ pub(crate) fn run_bounded_prefix_runtime_init(wine: &Path, runtime_wine: &Path, 
 
     let _ = child.kill();
     let _ = child.wait();
-    Ok(())
+    Err(format!(
+        "prefix runtime init exceeded {} seconds for {}; killed init process",
+        PREFIX_RUNTIME_INIT_TIMEOUT_SECS,
+        prefix.display()
+    ))
 }
 
 pub(crate) fn prefix_runtime_winedllpath(runtime_wine: &Path) -> String {
@@ -284,10 +306,22 @@ mod tests {
             .join("share")
             .join("d3d12-metal-sdk")
             .join("shader-corpus")
-            .join("baseline")
+            .join("elden-ring-present-vb-pull-20260612")
+            .join("metallib")
             .join("pso.json");
         fs::create_dir_all(pipeline_material.parent().unwrap()).expect("create pipeline material parent");
         fs::write(&pipeline_material, b"{}").expect("write pipeline material");
+        let proof = ms_home
+            .join("runtime")
+            .join("wine")
+            .join("share")
+            .join("d3d12-metal-sdk")
+            .join("shader-corpus")
+            .join("elden-ring-present-vb-pull-20260612")
+            .join("proof")
+            .join("SHA256SUMS");
+        fs::create_dir_all(proof.parent().unwrap()).expect("create pipeline proof parent");
+        fs::write(&proof, b"pso.json").expect("write pipeline proof");
 
         let prefix = ms_home.join("prefix-steam");
         let copied = stage_prefix_runtime_surface(&runtime_wine, &prefix).expect("stage prefix runtime");
@@ -336,6 +370,27 @@ mod tests {
         let error = validate_install_wine_init_surface(&ms_home).expect_err("missing pipeline material should fail");
 
         assert!(error.contains("M12 pipeline material missing"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn m12_pipeline_material_requires_corpus_proof() {
+        let home = test_dir("pipeline-material-proof");
+        let ms_home = home.join(".metalsharp");
+        let material = ms_home
+            .join("runtime")
+            .join("wine")
+            .join("share")
+            .join("d3d12-metal-sdk")
+            .join("shader-corpus")
+            .join("baseline")
+            .join("seed.metallib");
+        fs::create_dir_all(material.parent().unwrap()).expect("create material parent");
+        fs::write(&material, b"metallib").expect("write material");
+
+        let error = validate_m12_pipeline_material(&ms_home).expect_err("missing proof should fail");
+
+        assert!(error.contains("SHA256SUMS"));
         let _ = fs::remove_dir_all(home);
     }
 

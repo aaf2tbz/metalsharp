@@ -1462,8 +1462,15 @@ fn refresh_manifest_runtime_views(manifest: &mut BottleManifest) {
     if let Some(path) = manifest.game_install_path.as_deref() {
         manifest.runtime_assets = detect_game_runtime_assets(Path::new(path));
     }
-    manifest.health =
-        if manifest.installed_app_detections.is_empty() { BottleHealth::NeedsRepair } else { BottleHealth::Ready };
+    manifest.health = manifest_health_from_runtime_state(manifest);
+}
+
+fn manifest_health_from_runtime_state(manifest: &BottleManifest) -> BottleHealth {
+    if manifest.installed_app_detections.is_empty() || !components_ready(&manifest.installed_components) {
+        BottleHealth::NeedsRepair
+    } else {
+        BottleHealth::Ready
+    }
 }
 
 fn complete_bottle_launch(id: &str, pid: u32) -> Result<BottleManifest, Box<dyn std::error::Error>> {
@@ -1618,7 +1625,7 @@ pub fn repair_component(
             .iter()
             .any(|component| component.id == component_id && component.state == ComponentState::Installed)
     {
-        manifest.health = BottleHealth::Ready;
+        manifest.health = manifest_health_from_runtime_state(&manifest);
         manifest.updated_at = timestamp_secs();
         save_bottle(&manifest)?;
         return Ok(ComponentRepairReport {

@@ -180,7 +180,7 @@ pub fn needs_migration() -> serde_json::Value {
 
 fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-    if runtime_core_ready(&ms_dir) {
+    if runtime_ready_for_migration_skip(&ms_dir) {
         return false;
     }
 
@@ -302,6 +302,10 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         && framework_has_resource_dylib(&runtime_wine.join("lib").join("external").join("D3DMetal.framework"))
 }
 
+fn runtime_ready_for_migration_skip(ms_dir: &Path) -> bool {
+    runtime_core_ready(ms_dir) && crate::prefix_runtime::validate_install_wine_init_surface(ms_dir).is_ok()
+}
+
 fn framework_has_resource_dylib(framework: &Path) -> bool {
     for resources_dir in [framework.join("Resources"), framework.join("Versions").join("A").join("Resources")] {
         if let Ok(entries) = fs::read_dir(resources_dir) {
@@ -370,7 +374,7 @@ fn run_migration() {
     }
 
     let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
-    if runtime_core_ready(&ms_dir) && !marker_requested {
+    if runtime_ready_for_migration_skip(&ms_dir) && !marker_requested {
         update_migration_metadata(&ms_dir);
         let marker = post_update_marker_path(&ms_dir);
         let _ = fs::remove_file(&marker);
@@ -1037,14 +1041,14 @@ fn run_prefix_runtime_init(wine: &Path, runtime_wine: &Path, prefix: &Path) -> R
     }
 
     let error_msg = format!(
-        "prefix runtime init exceeded {} seconds for {}; continuing after killing init process",
+        "prefix runtime init exceeded {} seconds for {}; killed init process",
         MIGRATION_PREFIX_INIT_TIMEOUT_SECS,
         prefix.display()
     );
     log_to_file(&error_msg);
     let _ = child.kill();
     let _ = child.wait();
-    Ok(())
+    Err(error_msg)
 }
 
 fn prefix_runtime_winedllpath(runtime_wine: &Path) -> String {
@@ -2123,6 +2127,8 @@ mod tests {
         let home = test_dir("complete-runtime");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
+            .expect("stage prefix runtime");
 
         assert!(runtime_core_ready(&ms_dir));
         assert!(!runtime_needs_repair(&home, true));
@@ -2693,6 +2699,8 @@ mod tests {
         let home = test_dir("marker-override");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
+            .expect("stage prefix runtime");
         fs::write(
             ms_dir.join("setup.json"),
             serde_json::to_vec(&json!({"completed": true, "runtime_migration_schema": 3})).unwrap(),
@@ -2881,8 +2889,16 @@ mod tests {
                 .join("share")
                 .join("d3d12-metal-sdk")
                 .join("shader-corpus")
-                .join("baseline")
+                .join("elden-ring-present-vb-pull-20260612")
+                .join("metallib")
                 .join("seed.metallib"),
+            runtime_wine
+                .join("share")
+                .join("d3d12-metal-sdk")
+                .join("shader-corpus")
+                .join("elden-ring-present-vb-pull-20260612")
+                .join("proof")
+                .join("SHA256SUMS"),
         ] {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
             fs::write(path, b"test").expect("write runtime file");
