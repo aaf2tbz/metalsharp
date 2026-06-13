@@ -143,6 +143,25 @@ uint32_t ArgumentBufferBuilder::DefineInteger64(
   return element_index;
 };
 
+uint32_t ArgumentBufferBuilder::DefineConstantArray(
+  std::string name, MSLRepresentableType element_type, uint32_t array_size,
+  uint32_t location_index
+) {
+  auto element_index = fieldsType.size();
+  assert(!fields.count(name) && "otherwise duplicated field name");
+  fieldsType.push_back(ArgumentBindingIndirectConstant{
+    .location_index =
+      location_index == UINT32_MAX ? (uint32_t)element_index : location_index,
+    .array_size = array_size,
+    .type = MSLStaticArray{
+      .array_size = array_size,
+      .element_type = element_type,
+    },
+    .arg_name = name,
+  });
+  return element_index;
+};
+
 auto build_argument_binding_buffer(
   StreamMDHelper &md, const ArgumentBindingBuffer &buffer,
   llvm::LLVMContext &context, const llvm::DataLayout &layout

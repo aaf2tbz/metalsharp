@@ -73,7 +73,7 @@ extern "C" BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason,
 
   DisableThreadLibraryCalls(instance);
 
-  FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+  FILE *f = dxmt::openDiagnosticLog("dxmt-dxgi-trace.log");
   if (f) {
     char exe[MAX_PATH] = {};
     GetModuleFileNameA(nullptr, exe, MAX_PATH);

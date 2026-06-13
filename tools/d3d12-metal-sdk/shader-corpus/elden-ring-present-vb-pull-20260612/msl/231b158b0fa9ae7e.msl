@@ -1,0 +1,944 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// metalsharp.binding_manifest.v1
+// direct_buffers=31 direct_textures=8 direct_samplers=4
+// range kind=srv space=0 lower=0 count=8
+// range kind=srv space=0 lower=3 count=2
+// range kind=srv space=0 lower=2 count=2
+
+struct input_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct output_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct vertex_input_v {
+};
+
+fragment float4 ps_main(
+  input_v in [[stage_in]],
+  device char* buf0 [[buffer(0)]],
+  device char* buf1 [[buffer(1)]],
+  device char* buf2 [[buffer(2)]],
+  device char* buf3 [[buffer(3)]],
+  device char* buf4 [[buffer(4)]],
+  device char* buf5 [[buffer(5)]],
+  device char* buf6 [[buffer(6)]],
+  device char* buf7 [[buffer(7)]],
+  device char* buf8 [[buffer(8)]],
+  device char* buf9 [[buffer(9)]],
+  device char* buf10 [[buffer(10)]],
+  device char* buf11 [[buffer(11)]],
+  device char* buf12 [[buffer(12)]],
+  device char* buf13 [[buffer(13)]],
+  device char* buf14 [[buffer(14)]],
+  device char* buf15 [[buffer(15)]],
+  device char* buf16 [[buffer(16)]],
+  device char* buf17 [[buffer(17)]],
+  device char* buf18 [[buffer(18)]],
+  device char* buf19 [[buffer(19)]],
+  device char* buf20 [[buffer(20)]],
+  device char* buf21 [[buffer(21)]],
+  device char* buf22 [[buffer(22)]],
+  device char* buf23 [[buffer(23)]],
+  device char* buf24 [[buffer(24)]],
+  device char* buf25 [[buffer(25)]],
+  device char* buf26 [[buffer(26)]],
+  device char* buf27 [[buffer(27)]],
+  device char* buf28 [[buffer(28)]],
+  device char* buf29 [[buffer(29)]],
+  device char* buf30 [[buffer(30)]],
+  texture2d<float, access::sample> tex0 [[texture(0)]],
+  texture2d<float, access::sample> tex1 [[texture(1)]],
+  texture2d<float, access::sample> tex2 [[texture(2)]],
+  texture2d<float, access::sample> tex3 [[texture(3)]],
+  texture2d<float, access::sample> tex4 [[texture(4)]],
+  texture2d<float, access::sample> tex5 [[texture(5)]],
+  texture2d<float, access::sample> tex6 [[texture(6)]],
+  texture2d<float, access::sample> tex7 [[texture(7)]],
+  sampler samp0 [[sampler(0)]],
+  sampler samp1 [[sampler(1)]],
+  sampler samp2 [[sampler(2)]],
+  sampler samp3 [[sampler(3)]]
+) {
+  float4 result = float4(0,0,0,1);
+  int v0 = 0; // unresolved value pre-decl
+  int v1 = 0; // unresolved value pre-decl
+  int v2 = 0; // unresolved value pre-decl
+  int v3 = 0; // unresolved value pre-decl
+  int v4 = 0; // unresolved value pre-decl
+  float v738 = 0.0f; // unresolved value pre-decl
+  float v810 = 0.0f; // unresolved value pre-decl
+  float v812 = 0.0f; // unresolved value pre-decl
+  float v814 = 0.0f; // unresolved value pre-decl
+  float v816 = 0.0f; // unresolved value pre-decl
+  float v818 = 0.0f; // unresolved value pre-decl
+  float v820 = 0.0f; // unresolved value pre-decl
+  float v822 = 0.0f; // unresolved value pre-decl
+  device char* v81 = 0; // dispatch pre-decl
+  device char* v82 = 0; // dispatch pre-decl
+  device char* v83 = 0; // dispatch pre-decl
+  device char* v84 = 0; // dispatch pre-decl
+  device char* v85 = 0; // dispatch pre-decl
+  device char* v86 = 0; // dispatch pre-decl
+  device char* v87 = 0; // dispatch pre-decl
+  device char* v88 = 0; // dispatch pre-decl
+  device char* v89 = 0; // dispatch pre-decl
+  device char* v90 = 0; // dispatch pre-decl
+  device char* v91 = 0; // dispatch pre-decl
+  device char* v92 = 0; // dispatch pre-decl
+  float v93 = 0.0f; // dispatch pre-decl
+  float v94 = 0.0f; // dispatch pre-decl
+  float4 v95 = float4(0.0f); // dispatch pre-decl
+  float v96 = 0.0f; // dispatch pre-decl
+  float v97 = 0.0f; // dispatch pre-decl
+  int v98 = 0; // dispatch pre-decl
+  int v99 = 0; // dispatch pre-decl
+  float4 v100 = float4(0.0f); // dispatch pre-decl
+  float v101 = 0.0f; // dispatch pre-decl
+  int v102 = 0; // dispatch pre-decl
+  int v103 = 0; // dispatch pre-decl
+  int v104 = 0; // dispatch pre-decl
+  int v105 = 0; // dispatch pre-decl
+  int v106 = 0; // dispatch pre-decl
+  float v107 = 0.0f; // dispatch pre-decl
+  float4 v108 = float4(0.0f); // dispatch pre-decl
+  float v109 = 0.0f; // dispatch pre-decl
+  float v110 = 0.0f; // dispatch pre-decl
+  float v111 = 0.0f; // dispatch pre-decl
+  float v112 = 0.0f; // dispatch pre-decl
+  float4 v113 = float4(0.0f); // dispatch pre-decl
+  float v114 = 0.0f; // dispatch pre-decl
+  float v115 = 0.0f; // dispatch pre-decl
+  float v116 = 0.0f; // dispatch pre-decl
+  float v117 = 0.0f; // dispatch pre-decl
+  float4 v118 = float4(0.0f); // dispatch pre-decl
+  float v119 = 0.0f; // dispatch pre-decl
+  float v120 = 0.0f; // dispatch pre-decl
+  float v121 = 0.0f; // dispatch pre-decl
+  float v122 = 0.0f; // dispatch pre-decl
+  float4 v123 = float4(0.0f); // dispatch pre-decl
+  float v124 = 0.0f; // dispatch pre-decl
+  float v125 = 0.0f; // dispatch pre-decl
+  float v126 = 0.0f; // dispatch pre-decl
+  float v127 = 0.0f; // dispatch pre-decl
+  int v128 = 0; // dispatch pre-decl
+  float v129 = 0.0f; // dispatch pre-decl
+  float v130 = 0.0f; // dispatch pre-decl
+  int v131 = 0; // dispatch pre-decl
+  int v132 = 0; // dispatch pre-decl
+  float v133 = 0.0f; // dispatch pre-decl
+  float v134 = 0.0f; // dispatch pre-decl
+  int v135 = 0; // dispatch pre-decl
+  int v136 = 0; // dispatch pre-decl
+  float v137 = 0.0f; // dispatch pre-decl
+  float v138 = 0.0f; // dispatch pre-decl
+  int v139 = 0; // dispatch pre-decl
+  int v140 = 0; // dispatch pre-decl
+  float v141 = 0.0f; // dispatch pre-decl
+  float v142 = 0.0f; // dispatch pre-decl
+  int v143 = 0; // dispatch pre-decl
+  int v144 = 0; // dispatch pre-decl
+  int v145 = 0; // dispatch pre-decl
+  int v146 = 0; // dispatch pre-decl
+  float4 v147 = float4(0.0f); // dispatch pre-decl
+  float v148 = 0.0f; // dispatch pre-decl
+  float v149 = 0.0f; // dispatch pre-decl
+  float v150 = 0.0f; // dispatch pre-decl
+  float v151 = 0.0f; // dispatch pre-decl
+  float4 v152 = float4(0.0f); // dispatch pre-decl
+  float v153 = 0.0f; // dispatch pre-decl
+  float v154 = 0.0f; // dispatch pre-decl
+  float v155 = 0.0f; // dispatch pre-decl
+  float v156 = 0.0f; // dispatch pre-decl
+  float4 v157 = float4(0.0f); // dispatch pre-decl
+  float v158 = 0.0f; // dispatch pre-decl
+  float v159 = 0.0f; // dispatch pre-decl
+  float v160 = 0.0f; // dispatch pre-decl
+  float v161 = 0.0f; // dispatch pre-decl
+  int v162 = 0; // dispatch pre-decl
+  float v163 = 0.0f; // dispatch pre-decl
+  float v164 = 0.0f; // dispatch pre-decl
+  int v165 = 0; // dispatch pre-decl
+  int v166 = 0; // dispatch pre-decl
+  float v167 = 0.0f; // dispatch pre-decl
+  float v168 = 0.0f; // dispatch pre-decl
+  int v169 = 0; // dispatch pre-decl
+  int v170 = 0; // dispatch pre-decl
+  float v171 = 0.0f; // dispatch pre-decl
+  float v172 = 0.0f; // dispatch pre-decl
+  int v173 = 0; // dispatch pre-decl
+  int v174 = 0; // dispatch pre-decl
+  int v175 = 0; // dispatch pre-decl
+  int v176 = 0; // dispatch pre-decl
+  float v177 = 0.0f; // dispatch pre-decl
+  float v178 = 0.0f; // dispatch pre-decl
+  float v179 = 0.0f; // dispatch pre-decl
+  float4 v180 = float4(0.0f); // dispatch pre-decl
+  float v181 = 0.0f; // dispatch pre-decl
+  float v182 = 0.0f; // dispatch pre-decl
+  float v183 = 0.0f; // dispatch pre-decl
+  int v184 = 0; // dispatch pre-decl
+  int v185 = 0; // dispatch pre-decl
+  int v186 = 0; // dispatch pre-decl
+  int v187 = 0; // dispatch pre-decl
+  int v188 = 0; // dispatch pre-decl
+  bool v189 = false; // dispatch pre-decl
+  float4 v190 = float4(0.0f); // dispatch pre-decl
+  float v191 = 0.0f; // dispatch pre-decl
+  int v192 = 0; // dispatch pre-decl
+  int v193 = 0; // dispatch pre-decl
+  int v194 = 0; // dispatch pre-decl
+  float v195 = 0.0f; // dispatch pre-decl
+  int v196 = 0; // dispatch pre-decl
+  int v197 = 0; // dispatch pre-decl
+  float4 v198 = float4(0.0f); // dispatch pre-decl
+  float v199 = 0.0f; // dispatch pre-decl
+  float v200 = 0.0f; // dispatch pre-decl
+  float v201 = 0.0f; // dispatch pre-decl
+  float4 v202 = float4(0.0f); // dispatch pre-decl
+  float v203 = 0.0f; // dispatch pre-decl
+  int v204 = 0; // dispatch pre-decl
+  int v205 = 0; // dispatch pre-decl
+  int v206 = 0; // dispatch pre-decl
+  int v207 = 0; // dispatch pre-decl
+  int v208 = 0; // dispatch pre-decl
+  int v209 = 0; // dispatch pre-decl
+  float v210 = 0.0f; // dispatch pre-decl
+  float v211 = 0.0f; // dispatch pre-decl
+  int v212 = 0; // dispatch pre-decl
+  int v213 = 0; // dispatch pre-decl
+  int v214 = 0; // dispatch pre-decl
+  float4 v215 = float4(0.0f); // dispatch pre-decl
+  float v216 = 0.0f; // dispatch pre-decl
+  float v217 = 0.0f; // dispatch pre-decl
+  float v218 = 0.0f; // dispatch pre-decl
+  float v219 = 0.0f; // dispatch pre-decl
+  int v220 = 0; // dispatch pre-decl
+  int v221 = 0; // dispatch pre-decl
+  int v222 = 0; // dispatch pre-decl
+  int v223 = 0; // dispatch pre-decl
+  float v224 = 0.0f; // dispatch pre-decl
+  float v225 = 0.0f; // dispatch pre-decl
+  int v226 = 0; // dispatch pre-decl
+  int v227 = 0; // dispatch pre-decl
+  int v228 = 0; // dispatch pre-decl
+  float v229 = 0.0f; // dispatch pre-decl
+  int v230 = 0; // dispatch pre-decl
+  int v231 = 0; // dispatch pre-decl
+  int v232 = 0; // dispatch pre-decl
+  int v233 = 0; // dispatch pre-decl
+  int v234 = 0; // dispatch pre-decl
+  int v235 = 0; // dispatch pre-decl
+  int v236 = 0; // dispatch pre-decl
+  float4 v237 = float4(0.0f); // dispatch pre-decl
+  float v238 = 0.0f; // dispatch pre-decl
+  float v239 = 0.0f; // dispatch pre-decl
+  float4 v240 = float4(0.0f); // dispatch pre-decl
+  float v241 = 0.0f; // dispatch pre-decl
+  float v242 = 0.0f; // dispatch pre-decl
+  float v243 = 0.0f; // dispatch pre-decl
+  float v244 = 0.0f; // dispatch pre-decl
+  float4 v245 = float4(0.0f); // dispatch pre-decl
+  float v246 = 0.0f; // dispatch pre-decl
+  float v247 = 0.0f; // dispatch pre-decl
+  float v248 = 0.0f; // dispatch pre-decl
+  float v249 = 0.0f; // dispatch pre-decl
+  float4 v250 = float4(0.0f); // dispatch pre-decl
+  float v251 = 0.0f; // dispatch pre-decl
+  float v252 = 0.0f; // dispatch pre-decl
+  float v253 = 0.0f; // dispatch pre-decl
+  float v254 = 0.0f; // dispatch pre-decl
+  int v255 = 0; // dispatch pre-decl
+  float v256 = 0.0f; // dispatch pre-decl
+  float v257 = 0.0f; // dispatch pre-decl
+  int v258 = 0; // dispatch pre-decl
+  int v259 = 0; // dispatch pre-decl
+  float v260 = 0.0f; // dispatch pre-decl
+  float v261 = 0.0f; // dispatch pre-decl
+  int v262 = 0; // dispatch pre-decl
+  int v263 = 0; // dispatch pre-decl
+  float v264 = 0.0f; // dispatch pre-decl
+  float v265 = 0.0f; // dispatch pre-decl
+  int v266 = 0; // dispatch pre-decl
+  int v267 = 0; // dispatch pre-decl
+  int v268 = 0; // dispatch pre-decl
+  int v269 = 0; // dispatch pre-decl
+  int v270 = 0; // dispatch pre-decl
+  int v271 = 0; // dispatch pre-decl
+  int v272 = 0; // dispatch pre-decl
+  float4 v273 = float4(0.0f); // dispatch pre-decl
+  float v274 = 0.0f; // dispatch pre-decl
+  float v275 = 0.0f; // dispatch pre-decl
+  float v276 = 0.0f; // dispatch pre-decl
+  int v277 = 0; // dispatch pre-decl
+  int v278 = 0; // dispatch pre-decl
+  int v279 = 0; // dispatch pre-decl
+  int v280 = 0; // dispatch pre-decl
+  int v281 = 0; // dispatch pre-decl
+  int v282 = 0; // dispatch pre-decl
+  int v283 = 0; // dispatch pre-decl
+  int v284 = 0; // dispatch pre-decl
+  int v285 = 0; // dispatch pre-decl
+  float4 v286 = float4(0.0f); // dispatch pre-decl
+  float v287 = 0.0f; // dispatch pre-decl
+  float v288 = 0.0f; // dispatch pre-decl
+  float v289 = 0.0f; // dispatch pre-decl
+  float v290 = 0.0f; // dispatch pre-decl
+  float4 v291 = float4(0.0f); // dispatch pre-decl
+  float v292 = 0.0f; // dispatch pre-decl
+  float v293 = 0.0f; // dispatch pre-decl
+  float v294 = 0.0f; // dispatch pre-decl
+  float v295 = 0.0f; // dispatch pre-decl
+  float4 v296 = float4(0.0f); // dispatch pre-decl
+  float v297 = 0.0f; // dispatch pre-decl
+  float v298 = 0.0f; // dispatch pre-decl
+  float v299 = 0.0f; // dispatch pre-decl
+  float v300 = 0.0f; // dispatch pre-decl
+  int v301 = 0; // dispatch pre-decl
+  int v302 = 0; // dispatch pre-decl
+  int v303 = 0; // dispatch pre-decl
+  int v304 = 0; // dispatch pre-decl
+  float v305 = 0.0f; // dispatch pre-decl
+  float v306 = 0.0f; // dispatch pre-decl
+  int v307 = 0; // dispatch pre-decl
+  float v308 = 0.0f; // dispatch pre-decl
+  float v309 = 0.0f; // dispatch pre-decl
+  int v310 = 0; // dispatch pre-decl
+  float v311 = 0.0f; // dispatch pre-decl
+  float v312 = 0.0f; // dispatch pre-decl
+  int v313 = 0; // dispatch pre-decl
+  int v314 = 0; // dispatch pre-decl
+  int v315 = 0; // dispatch pre-decl
+  int v316 = 0; // dispatch pre-decl
+  int v317 = 0; // dispatch pre-decl
+  int v318 = 0; // dispatch pre-decl
+  float v319 = 0.0f; // dispatch pre-decl
+  float v320 = 0.0f; // dispatch pre-decl
+  int v321 = 0; // dispatch pre-decl
+  int v322 = 0; // dispatch pre-decl
+  int v323 = 0; // dispatch pre-decl
+  float4 v324 = float4(0.0f); // dispatch pre-decl
+  float v325 = 0.0f; // dispatch pre-decl
+  float v326 = 0.0f; // dispatch pre-decl
+  float v327 = 0.0f; // dispatch pre-decl
+  int v328 = 0; // dispatch pre-decl
+  int v329 = 0; // dispatch pre-decl
+  int v330 = 0; // dispatch pre-decl
+  int v331 = 0; // dispatch pre-decl
+  int v332 = 0; // dispatch pre-decl
+  int v333 = 0; // dispatch pre-decl
+  float4 v334 = float4(0.0f); // dispatch pre-decl
+  float v335 = 0.0f; // dispatch pre-decl
+  float v336 = 0.0f; // dispatch pre-decl
+  float v337 = 0.0f; // dispatch pre-decl
+  float v338 = 0.0f; // dispatch pre-decl
+  float4 v339 = float4(0.0f); // dispatch pre-decl
+  float v340 = 0.0f; // dispatch pre-decl
+  float v341 = 0.0f; // dispatch pre-decl
+  float v342 = 0.0f; // dispatch pre-decl
+  float v343 = 0.0f; // dispatch pre-decl
+  float4 v344 = float4(0.0f); // dispatch pre-decl
+  float v345 = 0.0f; // dispatch pre-decl
+  float v346 = 0.0f; // dispatch pre-decl
+  float v347 = 0.0f; // dispatch pre-decl
+  float v348 = 0.0f; // dispatch pre-decl
+  float4 v349 = float4(0.0f); // dispatch pre-decl
+  float v350 = 0.0f; // dispatch pre-decl
+  float v351 = 0.0f; // dispatch pre-decl
+  float v352 = 0.0f; // dispatch pre-decl
+  float v353 = 0.0f; // dispatch pre-decl
+  int v354 = 0; // dispatch pre-decl
+  int v355 = 0; // dispatch pre-decl
+  int v356 = 0; // dispatch pre-decl
+  int v357 = 0; // dispatch pre-decl
+  int v358 = 0; // dispatch pre-decl
+  int v359 = 0; // dispatch pre-decl
+  int v360 = 0; // dispatch pre-decl
+  int v361 = 0; // dispatch pre-decl
+  int v362 = 0; // dispatch pre-decl
+  int v363 = 0; // dispatch pre-decl
+  int v364 = 0; // dispatch pre-decl
+  int v365 = 0; // dispatch pre-decl
+  int v366 = 0; // dispatch pre-decl
+  int v367 = 0; // dispatch pre-decl
+  int v368 = 0; // dispatch pre-decl
+  int v369 = 0; // dispatch pre-decl
+  int v370 = 0; // dispatch pre-decl
+  int v371 = 0; // dispatch pre-decl
+  int v372 = 0; // dispatch pre-decl
+  int v373 = 0; // dispatch pre-decl
+  int v374 = 0; // dispatch pre-decl
+  int v375 = 0; // dispatch pre-decl
+  int v376 = 0; // dispatch pre-decl
+  int v377 = 0; // dispatch pre-decl
+  int v378 = 0; // dispatch pre-decl
+  int v379 = 0; // dispatch pre-decl
+  int v380 = 0; // dispatch pre-decl
+  int v381 = 0; // dispatch pre-decl
+  int v382 = 0; // dispatch pre-decl
+  int v383 = 0; // dispatch pre-decl
+  int v384 = 0; // dispatch pre-decl
+  int v385 = 0; // dispatch pre-decl
+  int v386 = 0; // dispatch pre-decl
+  int v387 = 0; // dispatch pre-decl
+  int v388 = 0; // dispatch pre-decl
+  int v389 = 0; // dispatch pre-decl
+  int v390 = 0; // dispatch pre-decl
+  int v391 = 0; // dispatch pre-decl
+  int v392 = 0; // dispatch pre-decl
+  int v393 = 0; // dispatch pre-decl
+  float v394 = 0.0f; // dispatch pre-decl
+  float v395 = 0.0f; // dispatch pre-decl
+  float v396 = 0.0f; // dispatch pre-decl
+  float v397 = 0.0f; // dispatch pre-decl
+  float v398 = 0.0f; // dispatch pre-decl
+  float v399 = 0.0f; // dispatch pre-decl
+  int v400 = 0; // dispatch pre-decl
+  int v401 = 0; // dispatch pre-decl
+  int v402 = 0; // dispatch pre-decl
+  float4 v403 = float4(0.0f); // dispatch pre-decl
+  float v404 = 0.0f; // dispatch pre-decl
+  float v405 = 0.0f; // dispatch pre-decl
+  float v406 = 0.0f; // dispatch pre-decl
+  float4 v407 = float4(0.0f); // dispatch pre-decl
+  float v408 = 0.0f; // dispatch pre-decl
+  float v409 = 0.0f; // dispatch pre-decl
+  float v410 = 0.0f; // dispatch pre-decl
+  float4 v411 = float4(0.0f); // dispatch pre-decl
+  float v412 = 0.0f; // dispatch pre-decl
+  float v413 = 0.0f; // dispatch pre-decl
+  float v414 = 0.0f; // dispatch pre-decl
+  int v415 = 0; // dispatch pre-decl
+  float v416 = 0.0f; // dispatch pre-decl
+  float v417 = 0.0f; // dispatch pre-decl
+  int v418 = 0; // dispatch pre-decl
+  float v419 = 0.0f; // dispatch pre-decl
+  float v420 = 0.0f; // dispatch pre-decl
+  int v421 = 0; // dispatch pre-decl
+  float v422 = 0.0f; // dispatch pre-decl
+  float v423 = 0.0f; // dispatch pre-decl
+  float v424 = 0.0f; // dispatch pre-decl
+  float v425 = 0.0f; // dispatch pre-decl
+  float v426 = 0.0f; // dispatch pre-decl
+  float4 v427 = float4(0.0f); // dispatch pre-decl
+  float v428 = 0.0f; // dispatch pre-decl
+  int v429 = 0; // dispatch pre-decl
+  int v430 = 0; // dispatch pre-decl
+  int v431 = 0; // dispatch pre-decl
+  bool v432 = false; // dispatch pre-decl
+  float v433 = 0.0f; // dispatch pre-decl
+  float v434 = 0.0f; // dispatch pre-decl
+  float v435 = 0.0f; // dispatch pre-decl
+  float v436 = 0.0f; // dispatch pre-decl
+  float v437 = 0.0f; // dispatch pre-decl
+  float v438 = 0.0f; // dispatch pre-decl
+  float v439 = 0.0f; // dispatch pre-decl
+  float v440 = 0.0f; // dispatch pre-decl
+  float v441 = 0.0f; // dispatch pre-decl
+  float v442 = 0.0f; // dispatch pre-decl
+  float v443 = 0.0f; // dispatch pre-decl
+  float v444 = 0.0f; // dispatch pre-decl
+  int v445 = 0; // dispatch pre-decl
+  int v446 = 0; // dispatch pre-decl
+  float v447 = 0.0f; // dispatch pre-decl
+  float4 v448 = float4(0.0f); // dispatch pre-decl
+  float v449 = 0.0f; // dispatch pre-decl
+  int v450 = 0; // dispatch pre-decl
+  int v451 = 0; // dispatch pre-decl
+  float v452 = 0.0f; // dispatch pre-decl
+  float4 v453 = float4(0.0f); // dispatch pre-decl
+  float v454 = 0.0f; // dispatch pre-decl
+  float v455 = 0.0f; // dispatch pre-decl
+  float v456 = 0.0f; // dispatch pre-decl
+  int v457 = 0; // dispatch pre-decl
+  int v458 = 0; // dispatch pre-decl
+  int v459 = 0; // dispatch pre-decl
+  int v460 = 0; // dispatch pre-decl
+  float v461 = 0.0f; // dispatch pre-decl
+  float v462 = 0.0f; // dispatch pre-decl
+  int v463 = 0; // dispatch pre-decl
+  float v464 = 0.0f; // dispatch pre-decl
+  float v465 = 0.0f; // dispatch pre-decl
+  int v466 = 0; // dispatch pre-decl
+  float v467 = 0.0f; // dispatch pre-decl
+  float v468 = 0.0f; // dispatch pre-decl
+  float v469 = 0.0f; // dispatch pre-decl
+  float v470 = 0.0f; // dispatch pre-decl
+  float v471 = 0.0f; // dispatch pre-decl
+  int v472 = 0; // dispatch pre-decl
+  int v473 = 0; // dispatch pre-decl
+  int v474 = 0; // dispatch pre-decl
+  float v475 = 0.0f; // dispatch pre-decl
+  int v476 = 0; // dispatch pre-decl
+  float4 v477 = float4(0.0f); // dispatch pre-decl
+  float v478 = 0.0f; // dispatch pre-decl
+  int v479 = 0; // dispatch pre-decl
+  int v480 = 0; // dispatch pre-decl
+  int v481 = 0; // dispatch pre-decl
+  int v482 = 0; // dispatch pre-decl
+  int v483 = 0; // dispatch pre-decl
+  int v484 = 0; // dispatch pre-decl
+  float v485 = 0.0f; // dispatch pre-decl
+  float v486 = 0.0f; // dispatch pre-decl
+  float v487 = 0.0f; // dispatch pre-decl
+  float v488 = 0.0f; // dispatch pre-decl
+  float v489 = 0.0f; // dispatch pre-decl
+  float v490 = 0.0f; // dispatch pre-decl
+  float v491 = 0.0f; // dispatch pre-decl
+  int v492 = 0; // dispatch pre-decl
+  int v493 = 0; // dispatch pre-decl
+  int v494 = 0; // dispatch pre-decl
+  int v495 = 0; // dispatch pre-decl
+  int v496 = 0; // dispatch pre-decl
+  int v497 = 0; // dispatch pre-decl
+  int v498 = 0; // dispatch pre-decl
+  int v499 = 0; // dispatch pre-decl
+  int _block_state = 0;
+  for (;;) {
+    switch (_block_state) {
+    case 0: {
+  v93 = in.position.x;
+  v94 = in.position.y;
+  v95 = float4((reinterpret_cast<device float4&>(buf8[((int)(1))*64])));
+  v96 = (v95).z;
+  v97 = (v95).w;
+  v98 = as_type<int>(v93);
+  v99 = as_type<int>(v94);
+  v101 = (tex3.read(uint2(static_cast<uint>(v98), static_cast<uint>(v99)))).x;
+  v102 = v93 * 2.0f;
+  v103 = static_cast<float>(v102) * v96;
+  v104 = v94 * 2.0f;
+  v105 = static_cast<float>(v104) * v97;
+  v106 = static_cast<float>(v103) + -1.0f;
+  v107 = 1.0f - static_cast<float>(v105);
+  v108 = float4((reinterpret_cast<device float4&>(buf8[((int)(8))*64])));
+  v109 = (v108).x;
+  v110 = (v108).y;
+  v111 = (v108).z;
+  v112 = (v108).w;
+  v113 = float4((reinterpret_cast<device float4&>(buf8[((int)(9))*64])));
+  v114 = (v113).x;
+  v115 = (v113).y;
+  v116 = (v113).z;
+  v117 = (v113).w;
+  v118 = float4((reinterpret_cast<device float4&>(buf8[((int)(10))*64])));
+  v119 = (v118).x;
+  v120 = (v118).y;
+  v121 = (v118).z;
+  v122 = (v118).w;
+  v123 = float4((reinterpret_cast<device float4&>(buf8[((int)(11))*64])));
+  v124 = (v123).x;
+  v125 = (v123).y;
+  v126 = (v123).z;
+  v127 = (v123).w;
+  v128 = v109 * static_cast<float>(v106);
+  v129 = fma(static_cast<float>(v107), static_cast<float>(v110), static_cast<float>(v128));
+  v130 = fma(static_cast<float>(v101), static_cast<float>(v111), static_cast<float>(v129));
+  v131 = v130 + v112;
+  v132 = v114 * static_cast<float>(v106);
+  v133 = fma(static_cast<float>(v107), static_cast<float>(v115), static_cast<float>(v132));
+  v134 = fma(static_cast<float>(v101), static_cast<float>(v116), static_cast<float>(v133));
+  v135 = v134 + v117;
+  v136 = v119 * static_cast<float>(v106);
+  v137 = fma(static_cast<float>(v107), static_cast<float>(v120), static_cast<float>(v136));
+  v138 = fma(static_cast<float>(v101), static_cast<float>(v121), static_cast<float>(v137));
+  v139 = v138 + v122;
+  v140 = v124 * static_cast<float>(v106);
+  v141 = fma(static_cast<float>(v107), static_cast<float>(v125), static_cast<float>(v140));
+  v142 = fma(static_cast<float>(v101), static_cast<float>(v126), static_cast<float>(v141));
+  v143 = v142 + v127;
+  v144 = v131 / v143;
+  v145 = v135 / v143;
+  v146 = v139 / v143;
+  v147 = float4((reinterpret_cast<device float4&>(buf4[((int)(4))*64])));
+  v148 = (v147).x;
+  v149 = (v147).y;
+  v150 = (v147).z;
+  v151 = (v147).w;
+  v152 = float4((reinterpret_cast<device float4&>(buf4[((int)(5))*64])));
+  v153 = (v152).x;
+  v154 = (v152).y;
+  v155 = (v152).z;
+  v156 = (v152).w;
+  v157 = float4((reinterpret_cast<device float4&>(buf4[((int)(6))*64])));
+  v158 = (v157).x;
+  v159 = (v157).y;
+  v160 = (v157).z;
+  v161 = (v157).w;
+  v162 = v148 * static_cast<float>(v144);
+  v163 = fma(static_cast<float>(v145), static_cast<float>(v149), static_cast<float>(v162));
+  v164 = fma(static_cast<float>(v146), static_cast<float>(v150), static_cast<float>(v163));
+  v165 = v164 + v151;
+  v166 = v153 * static_cast<float>(v144);
+  v167 = fma(static_cast<float>(v145), static_cast<float>(v154), static_cast<float>(v166));
+  v168 = fma(static_cast<float>(v146), static_cast<float>(v155), static_cast<float>(v167));
+  v169 = v168 + v156;
+  v170 = v158 * static_cast<float>(v144);
+  v171 = fma(static_cast<float>(v145), static_cast<float>(v159), static_cast<float>(v170));
+  v172 = fma(static_cast<float>(v146), static_cast<float>(v160), static_cast<float>(v171));
+  v173 = v172 + v161;
+  v174 = abs(static_cast<float>(v165));
+  v175 = abs(static_cast<float>(v169));
+  v176 = abs(static_cast<float>(v173));
+  v177 = 1.0f - static_cast<float>(v174);
+  v178 = 1.0f - static_cast<float>(v175);
+  v179 = 1.0f - static_cast<float>(v176);
+  v180 = float4((reinterpret_cast<device float4&>(buf4[((int)(8))*64])));
+  v181 = (v180).x;
+  v182 = (v180).y;
+  v183 = (v180).z;
+  v184 = v181 * v177;
+  v185 = v182 * v178;
+  v186 = v183 * v179;
+  v187 = min(static_cast<float>(v184), static_cast<float>(v185));
+  v188 = min(static_cast<float>(v187), static_cast<float>(v186));
+  v189 = (static_cast<float>(v188) < 0);
+    v485 = v810;
+    v486 = v812;
+    v487 = v814;
+    v488 = v816;
+    v489 = v818;
+    v490 = v820;
+    v491 = v822;
+    if ((v189 != false)) { _block_state = 4; continue; } else { _block_state = 1; continue; }
+    }
+    case 1: {
+  v190 = float4((reinterpret_cast<device float4&>(buf4[((int)(9))*64])));
+  v191 = (v190).z;
+  v192 = v191 * static_cast<float>(v188);
+  v193 = clamp(static_cast<float>(v192), 0.0, 1.0);
+  v194 = static_cast<float>(v193) * 2.0f;
+  v195 = 3.0f - static_cast<float>(v194);
+  v196 = v193 * v193;
+  v197 = static_cast<float>(v196) * v195;
+  v199 = (tex1.read(uint2(static_cast<uint>(v98), static_cast<uint>(v99)))).x;
+  v200 = (tex1.read(uint2(static_cast<uint>(v98), static_cast<uint>(v99)))).y;
+  v201 = (tex1.read(uint2(static_cast<uint>(v98), static_cast<uint>(v99)))).z;
+  v203 = (tex7.read(uint2(static_cast<uint>(v98), static_cast<uint>(v99)))).y;
+  v204 = v199 * 2.0f;
+  v205 = v200 * 2.0f;
+  v206 = v201 * 2.0f;
+  v207 = static_cast<float>(v204) + -1.0f;
+  v208 = static_cast<float>(v205) + -1.0f;
+  v209 = static_cast<float>(v206) + -1.0f;
+  v210 = ((v207)*(v207) + (v208)*(v208) + (v209)*(v209));
+  v211 = rsqrt(static_cast<float>(v210));
+  v212 = v211 * static_cast<float>(v207);
+  v213 = v211 * static_cast<float>(v208);
+  v214 = v211 * static_cast<float>(v209);
+  v215 = float4((reinterpret_cast<device float4&>(buf8[((int)(3))*64])));
+  v216 = (v215).x;
+  v217 = (v215).y;
+  v218 = (v215).z;
+  v219 = (v215).w;
+  v220 = v216 - static_cast<float>(v144);
+  v221 = v217 - static_cast<float>(v145);
+  v222 = v218 - static_cast<float>(v146);
+  v223 = v219 + -1.0f;
+  v224 = ((v220)*(v220) + (v221)*(v221) + (v222)*(v222) + (v223)*(v223));
+  v225 = rsqrt(static_cast<float>(v224));
+  v226 = static_cast<float>(v220) * v225;
+  v227 = static_cast<float>(v221) * v225;
+  v228 = static_cast<float>(v222) * v225;
+  v229 = ((v212)*(v226) + (v213)*(v227) + (v214)*(v228));
+  v230 = v229 * 2.0f;
+  v231 = v230 * v212;
+  v232 = v230 * v213;
+  v233 = v230 * v214;
+  v234 = v231 - v226;
+  v235 = v232 - v227;
+  v236 = v233 - v228;
+  v237 = float4((reinterpret_cast<device float4&>(buf4[((int)(20))*64])));
+  v238 = (v237).y;
+  v239 = (v190).x;
+  v240 = float4((reinterpret_cast<device float4&>(buf4[((int)(4))*64])));
+  v241 = (v240).x;
+  v242 = (v240).y;
+  v243 = (v240).z;
+  v244 = (v240).w;
+  v245 = float4((reinterpret_cast<device float4&>(buf4[((int)(5))*64])));
+  v246 = (v245).x;
+  v247 = (v245).y;
+  v248 = (v245).z;
+  v249 = (v245).w;
+  v250 = float4((reinterpret_cast<device float4&>(buf4[((int)(6))*64])));
+  v251 = (v250).x;
+  v252 = (v250).y;
+  v253 = (v250).z;
+  v254 = (v250).w;
+  v255 = v241 * static_cast<float>(v144);
+  v256 = fma(static_cast<float>(v145), static_cast<float>(v242), static_cast<float>(v255));
+  v257 = fma(static_cast<float>(v146), static_cast<float>(v243), static_cast<float>(v256));
+  v258 = v257 + v244;
+  v259 = v246 * static_cast<float>(v144);
+  v260 = fma(static_cast<float>(v145), static_cast<float>(v247), static_cast<float>(v259));
+  v261 = fma(static_cast<float>(v146), static_cast<float>(v248), static_cast<float>(v260));
+  v262 = v261 + v249;
+  v263 = v251 * static_cast<float>(v144);
+  v264 = fma(static_cast<float>(v145), static_cast<float>(v252), static_cast<float>(v263));
+  v265 = fma(static_cast<float>(v146), static_cast<float>(v253), static_cast<float>(v264));
+  v266 = v265 + v254;
+  v267 = static_cast<float>(v258) + 1.0f;
+  v268 = static_cast<float>(v262) + 1.0f;
+  v269 = static_cast<float>(v266) + 1.0f;
+  v270 = static_cast<float>(v267) * 0.5f;
+  v271 = static_cast<float>(v268) * 0.5f;
+  v272 = static_cast<float>(v269) * 0.5f;
+  v273 = float4((reinterpret_cast<device float4&>(buf4[((int)(32))*64])));
+  v274 = (v273).x;
+  v275 = (v273).y;
+  v276 = (v273).z;
+  v277 = static_cast<float>(v270) + -0.5f;
+  v278 = static_cast<float>(v271) + -0.5f;
+  v279 = static_cast<float>(v272) + -0.5f;
+  v280 = v274 * static_cast<float>(v277);
+  v281 = v275 * static_cast<float>(v278);
+  v282 = static_cast<float>(v279) * v276;
+  v283 = static_cast<float>(v280) + 0.5f;
+  v284 = static_cast<float>(v281) + 0.5f;
+  v285 = static_cast<float>(v282) + 0.5f;
+  v286 = float4((reinterpret_cast<device float4&>(buf4[((int)(21))*64])));
+  v287 = (v286).x;
+  v288 = (v286).y;
+  v289 = (v286).z;
+  v290 = (v286).w;
+  v291 = float4((reinterpret_cast<device float4&>(buf4[((int)(22))*64])));
+  v292 = (v291).x;
+  v293 = (v291).y;
+  v294 = (v291).z;
+  v295 = (v291).w;
+  v296 = float4((reinterpret_cast<device float4&>(buf4[((int)(23))*64])));
+  v297 = (v296).x;
+  v298 = (v296).y;
+  v299 = (v296).z;
+  v300 = (v296).w;
+  v301 = v212 + v144;
+  v302 = v213 + v145;
+  v303 = v214 + v146;
+  v304 = v287 * static_cast<float>(v301);
+  v305 = fma(static_cast<float>(v302), static_cast<float>(v288), static_cast<float>(v304));
+  v306 = fma(static_cast<float>(v303), static_cast<float>(v289), static_cast<float>(v305));
+  v307 = v292 * static_cast<float>(v301);
+  v308 = fma(static_cast<float>(v302), static_cast<float>(v293), static_cast<float>(v307));
+  v309 = fma(static_cast<float>(v303), static_cast<float>(v294), static_cast<float>(v308));
+  v310 = v297 * static_cast<float>(v301);
+  v311 = fma(static_cast<float>(v302), static_cast<float>(v298), static_cast<float>(v310));
+  v312 = fma(static_cast<float>(v303), static_cast<float>(v299), static_cast<float>(v311));
+  v313 = v290 - static_cast<float>(v258);
+  v314 = static_cast<float>(v313) + v306;
+  v315 = v295 - static_cast<float>(v262);
+  v316 = static_cast<float>(v315) + v309;
+  v317 = v300 - static_cast<float>(v266);
+  v318 = static_cast<float>(v317) + v312;
+  v319 = ((v314)*(v314) + (v316)*(v316) + (v318)*(v318));
+  v320 = rsqrt(static_cast<float>(v319));
+  v321 = v320 * static_cast<float>(v314);
+  v322 = v320 * static_cast<float>(v316);
+  v323 = v320 * static_cast<float>(v318);
+  v324 = float4((reinterpret_cast<device float4&>(buf4[((int)(25))*64])));
+  v325 = (v324).x;
+  v326 = (v324).y;
+  v327 = (v324).z;
+  v328 = static_cast<float>(v321) / v325;
+  v329 = static_cast<float>(v322) / v326;
+  v330 = static_cast<float>(v323) / v327;
+  v331 = v328 + v283;
+  v332 = v329 + v284;
+  v333 = v330 + v285;
+  v335 = (tex7.sample(samp3, float2(v331, v332))).x;
+  v336 = (tex7.sample(samp3, float2(v331, v332))).y;
+  v337 = (tex7.sample(samp3, float2(v331, v332))).z;
+  v338 = (tex7.sample(samp3, float2(v331, v332))).w;
+  v340 = (tex7.sample(samp3, float2(v331, v332))).x;
+  v341 = (tex7.sample(samp3, float2(v331, v332))).y;
+  v342 = (tex7.sample(samp3, float2(v331, v332))).z;
+  v343 = (tex7.sample(samp3, float2(v331, v332))).w;
+  v345 = (tex7.sample(samp3, float2(v331, v332))).x;
+  v346 = (tex7.sample(samp3, float2(v331, v332))).y;
+  v347 = (tex7.sample(samp3, float2(v331, v332))).z;
+  v348 = (tex7.sample(samp3, float2(v331, v332))).w;
+  v350 = (tex7.sample(samp3, float2(v331, v332))).x;
+  v351 = (tex7.sample(samp3, float2(v331, v332))).y;
+  v352 = (tex7.sample(samp3, float2(v331, v332))).z;
+  v353 = (tex7.sample(samp3, float2(v331, v332))).w;
+  v354 = v335 + -0.5f;
+  v355 = v336 + -0.5f;
+  v356 = v337 + -0.5f;
+  v357 = v338 + -0.5f;
+  v358 = static_cast<float>(v357) * 20.0f;
+  v359 = exp2(static_cast<float>(v358));
+  v360 = static_cast<float>(v359) * 2.0f;
+  v361 = v360 * v354;
+  v362 = v360 * v355;
+  v363 = v360 * v356;
+  v364 = v340 + -0.5f;
+  v365 = v341 + -0.5f;
+  v366 = v342 + -0.5f;
+  v367 = v343 + -0.5f;
+  v368 = static_cast<float>(v367) * 20.0f;
+  v369 = exp2(static_cast<float>(v368));
+  v370 = static_cast<float>(v369) * 2.0f;
+  v371 = v370 * v364;
+  v372 = v370 * v365;
+  v373 = v370 * v366;
+  v374 = v345 + -0.5f;
+  v375 = v346 + -0.5f;
+  v376 = v347 + -0.5f;
+  v377 = v348 + -0.5f;
+  v378 = static_cast<float>(v377) * 20.0f;
+  v379 = exp2(static_cast<float>(v378));
+  v380 = static_cast<float>(v379) * 2.0f;
+  v381 = v380 * v374;
+  v382 = v380 * v375;
+  v383 = v380 * v376;
+  v384 = v350 + -0.5f;
+  v385 = v351 + -0.5f;
+  v386 = v352 + -0.5f;
+  v387 = v353 + -0.5f;
+  v388 = static_cast<float>(v387) * 20.0f;
+  v389 = exp2(static_cast<float>(v388));
+  v390 = static_cast<float>(v389) * 2.0f;
+  v391 = v390 * v384;
+  v392 = v390 * v385;
+  v393 = v390 * v386;
+  v394 = ((v212)*(v361) + (v213)*(v371) + (v214)*(v381) + (0.0)*(v391));
+  v395 = ((v212)*(v362) + (v213)*(v372) + (v214)*(v382) + (0.0)*(v392));
+  v396 = ((v212)*(v363) + (v213)*(v373) + (v214)*(v383) + (0.0)*(v393));
+  v397 = max(static_cast<float>(v394), static_cast<float>(0));
+  v398 = max(static_cast<float>(v395), static_cast<float>(0));
+  v399 = max(static_cast<float>(v396), static_cast<float>(0));
+  v400 = v397 * v238;
+  v401 = v398 * v238;
+  v402 = v399 * v238;
+  v403 = float4((reinterpret_cast<device float4&>(buf8[((int)(89))*64])));
+  v404 = (v403).x;
+  v405 = (v403).y;
+  v406 = (v403).z;
+  v407 = float4((reinterpret_cast<device float4&>(buf8[((int)(90))*64])));
+  v408 = (v407).x;
+  v409 = (v407).y;
+  v410 = (v407).z;
+  v411 = float4((reinterpret_cast<device float4&>(buf8[((int)(91))*64])));
+  v412 = (v411).x;
+  v413 = (v411).y;
+  v414 = (v411).z;
+  v415 = v404 * static_cast<float>(v400);
+  v416 = fma(static_cast<float>(v401), static_cast<float>(v405), static_cast<float>(v415));
+  v417 = fma(static_cast<float>(v402), static_cast<float>(v406), static_cast<float>(v416));
+  v418 = v408 * static_cast<float>(v400);
+  v419 = fma(static_cast<float>(v401), static_cast<float>(v409), static_cast<float>(v418));
+  v420 = fma(static_cast<float>(v402), static_cast<float>(v410), static_cast<float>(v419));
+  v421 = v412 * static_cast<float>(v400);
+  v422 = fma(static_cast<float>(v401), static_cast<float>(v413), static_cast<float>(v421));
+  v423 = fma(static_cast<float>(v402), static_cast<float>(v414), static_cast<float>(v422));
+  v424 = max(static_cast<float>(v417), static_cast<float>(0));
+  v425 = max(static_cast<float>(v420), static_cast<float>(0));
+  v426 = max(static_cast<float>(v423), static_cast<float>(0));
+  v427 = float4((reinterpret_cast<device float4&>(buf4[((int)(34))*64])));
+  v428 = (v427).w;
+  v429 = static_cast<float>(v234) * 0.5f;
+  v430 = static_cast<float>(v235) * 0.5f;
+  v431 = static_cast<float>(v236) * 0.5f;
+  v432 = (v428 > 0);
+    v447 = v738;
+    if ((v432 != false)) { _block_state = 2; continue; } else { _block_state = 3; continue; }
+    }
+    case 2: {
+  v433 = ((v429)*(v363) + (v430)*(v373) + (v431)*(v383) + (0.0)*(v393));
+  v434 = max(static_cast<float>(v433), static_cast<float>(0));
+  v435 = ((v429)*(v362) + (v430)*(v372) + (v431)*(v382) + (0.0)*(v392));
+  v436 = max(static_cast<float>(v435), static_cast<float>(0));
+  v437 = ((v429)*(v361) + (v430)*(v371) + (v431)*(v381) + (0.0)*(v391));
+  v438 = max(static_cast<float>(v437), static_cast<float>(0));
+  v439 = (v427).z;
+  v440 = (v427).y;
+  v441 = (v427).x;
+  v442 = ((v441)*(v429) + (v440)*(v430) + (v439)*(v431) + (v428)*(0.0));
+  v443 = max(static_cast<float>(0), static_cast<float>(v442));
+  v444 = ((v438)*(0.0) + (v436)*(0.0) + (v434)*(0.0));
+  v445 = v443 + 9.99999975e-06f;
+  v446 = v444 / static_cast<float>(v445);
+    v447 = v445;
+    _block_state = 3; continue;
+    }
+    case 3: {
+  v448 = float4((reinterpret_cast<device float4&>(buf4[((int)(31))*64])));
+  v449 = (v448).x;
+  v450 = v449 * v203;
+  v451 = v449 - static_cast<float>(v450);
+  v452 = min(static_cast<float>(v449), static_cast<float>(v451));
+  v454 = (tex7.sample(samp3, float2(v234, v235))).x;
+  v455 = (tex7.sample(samp3, float2(v234, v235))).y;
+  v456 = (tex7.sample(samp3, float2(v234, v235))).z;
+  v457 = v454 * v239;
+  v458 = v455 * v239;
+  v459 = v456 * v239;
+  v460 = static_cast<float>(v457) * v404;
+  v461 = fma(static_cast<float>(v458), static_cast<float>(v405), static_cast<float>(v460));
+  v462 = fma(static_cast<float>(v459), static_cast<float>(v406), static_cast<float>(v461));
+  v463 = v408 * static_cast<float>(v457);
+  v464 = fma(static_cast<float>(v458), static_cast<float>(v409), static_cast<float>(v463));
+  v465 = fma(static_cast<float>(v459), static_cast<float>(v410), static_cast<float>(v464));
+  v466 = v412 * static_cast<float>(v457);
+  v467 = fma(static_cast<float>(v458), static_cast<float>(v413), static_cast<float>(v466));
+  v468 = fma(static_cast<float>(v459), static_cast<float>(v414), static_cast<float>(v467));
+  v469 = max(static_cast<float>(v462), static_cast<float>(0));
+  v470 = max(static_cast<float>(v465), static_cast<float>(0));
+  v471 = max(static_cast<float>(v468), static_cast<float>(0));
+  v472 = v469 * v447;
+  v473 = v470 * v447;
+  v474 = v471 * v447;
+  v475 = (v237).x;
+  v476 = v475 * static_cast<float>(v197);
+  v477 = float4((reinterpret_cast<device float4&>(buf8[((int)(72))*64])));
+  v478 = (v477).z;
+  v479 = static_cast<float>(v472) * v478;
+  v480 = static_cast<float>(v473) * v478;
+  v481 = static_cast<float>(v474) * v478;
+  v482 = v478 * v424;
+  v483 = v478 * v425;
+  v484 = v478 * v426;
+    v485 = v473;
+    v486 = v474;
+    v487 = v475;
+    v488 = v464;
+    v489 = v475;
+    v490 = v476;
+    v491 = (v477).x;
+    _block_state = 4; continue;
+    }
+    case 4: {
+  result.x = v485;
+  result.y = v486;
+  result.z = v487;
+  result.w = v488;
+  result.x = v489;
+  result.y = v490;
+  result.z = v491;
+  result.w = v488;
+    return result;
+    }
+    }
+    break;
+  }
+}

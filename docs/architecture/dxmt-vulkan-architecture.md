@@ -28,12 +28,21 @@ DXMT-family DLLs:
 |---|---|
 | `d3d12.dll` | M12 |
 | `d3d11.dll` | M12, M11, M10 |
-| `dxgi.dll` | M12, M11, M10 |
+| `dxgi.dll` | M12, M11, M10, M9 |
+| `dxgi_dxmt.dll` | M12, M11, M10, M9 |
 | `d3d10core.dll` | M12, M11, M10 |
 | `d3d10.dll`, `d3d10_1.dll` | M10 public Wine D3D10 entrypoints |
-| `winemetal.dll` | M12, M11, M10 |
+| `winemetal.dll` | M12, M11, M10, M9 |
 | `d3d9.dll` | M9 |
+| `nvapi64.dll`, `nvngx.dll` | M12, M11, M10, M9 |
 | `winemetal.so` | Unix Metal bridge |
+
+Prefix-route staging mirrors this family by architecture: x86_64 PE DLLs go to
+`prefix-steam/drive_c/windows/system32`, while i386 PE DLLs such as M9's
+32-bit `d3d9.dll` go to `prefix-steam/drive_c/windows/syswow64`. M12 also
+stages its Unix sidecars game-local, under `unix/`, and under
+`.metalsharp/unix/` so a normal game launch has the same bridge surface as the
+developer stress executables.
 
 Basic flow:
 
@@ -59,7 +68,7 @@ routes prefer the explicit M9/M10/M11/M12 cache namespaces.
 
 ## M9 D3D9
 
-M9 does not select DXVK/MoltenVK. The pipeline deploys the D3D9 DLL from the bundled Wine runtime and uses the same DXMT launch/cache environment family as the other Metal pipelines.
+M9 does not select DXVK/MoltenVK. The pipeline deploys the D3D9 DLL from the bundled Wine runtime, plus the shared DXGI/WineMetal/vendor-stub surface used by the other DXMT routes, and uses the same DXMT launch/cache environment family as the other Metal pipelines.
 
 Basic flow:
 
@@ -80,6 +89,11 @@ M9 cache path:
 
 | Game | Best/current pipeline |
 |---|---|
+| 9 Kings | M12 |
+| Balatro | M11 |
+| BeamNG.drive | M11 |
+| Garry's Mod | M9 |
+| PEAK | M12 |
 | Schedule 1 | M12 recommended |
 | Subnautica | M11 |
 | Subnautica: Below Zero | M12 recommended, M11 optimized |

@@ -179,11 +179,6 @@ static std::string varyingField(const char *base, uint32_t sig_id) {
     return std::string(base) + ".v7";
 }
 
-static std::string vertexInputField(const char *base, uint32_t sig_id) {
-    if (sig_id <= 15) return std::string(base) + ".a" + std::to_string(sig_id);
-    return std::string(base) + ".a0";
-}
-
 static std::string escapeName(const std::string &s) {
     if (s.empty()) return "_";
     std::string r;
@@ -294,6 +289,17 @@ static std::string defaultForType(const MSLType &t) {
     case MSLTypeKind::UInt2: return "uint2(0)";
     case MSLTypeKind::UInt3: return "uint3(0)";
     case MSLTypeKind::UInt4: return "uint4(0)";
+    case MSLTypeKind::Texture2D:
+    case MSLTypeKind::Texture2DArray:
+    case MSLTypeKind::Texture3D:
+    case MSLTypeKind::TextureCube:
+    case MSLTypeKind::Texture2DMS:
+    case MSLTypeKind::RWTexture2D:
+    case MSLTypeKind::RWTexture2DArray:
+    case MSLTypeKind::RWTexture3D:
+        return "tex0";
+    case MSLTypeKind::Sampler:
+        return "samp0";
     default: return "0";
     }
 }
@@ -351,9 +357,28 @@ static std::string aggregateConstructor(const std::string &literal, MSLType type
         type_name = emitTypeName(aggregateFallbackType(parts));
 
     std::string args;
+    auto scalarize_vector_part = [](const std::string &part) {
+        std::string trimmed = part;
+        while (!trimmed.empty() && std::isspace((unsigned char)trimmed.front()))
+            trimmed.erase(trimmed.begin());
+        while (!trimmed.empty() && std::isspace((unsigned char)trimmed.back()))
+            trimmed.pop_back();
+
+        static const char *constructors[] = {
+            "float2(", "float3(", "float4(",
+            "int2(", "int3(", "int4(",
+            "uint2(", "uint3(", "uint4("
+        };
+        for (const char *ctor : constructors) {
+            if (startsWith(trimmed, ctor))
+                return "(" + trimmed + ").x";
+        }
+        return part;
+    };
+
     for (size_t i = 0; i < parts.size(); i++) {
         if (i) args += ", ";
-        args += parts[i];
+        args += DXILIRBuilder::isVectorType(type) ? scalarize_vector_part(parts[i]) : parts[i];
     }
     return type_name + "(" + args + ")";
 }
@@ -424,6 +449,7 @@ struct LowerContext {
     std::ostringstream &os;
     const LLVMModule &mod;
     const DxilParsedShader &shader;
+    const MSLLoweringOptions &options;
     std::vector<std::string> value_table;
     std::vector<MSLType> value_types;
     std::vector<ValueRole> value_roles;
@@ -448,7 +474,13 @@ struct LowerContext {
     bool uses_group_thread_id = false;
     bool uses_group_size = false;
     std::set<uint32_t> vertex_input_ids;
+    bool vertex_has_float_load_input = false;
+    bool vertex_procedural_fullscreen_fallback = false;
 };
+
+static std::string vertexPullField(LowerContext &ctx, uint32_t sig_id) {
+    return MSLVertexPullExpression(sig_id, ctx.options);
+}
 
 static void recordDiagnostic(LowerContext &ctx, const char *fmt, ...) {
     va_list args;
@@ -499,6 +531,35 @@ static void emitBindingManifest(LowerContext &ctx) {
     os << "\n";
 }
 
+static void emitDefaultVertexVaryingWrites(std::ostream &os,
+                                           bool procedural_fullscreen,
+                                           bool has_draw_args) {
+    os << "  out.position = float4(0.0, 0.0, 0.0, 1.0);\n";
+    for (uint32_t i = 0; i < 8; i++)
+        os << "  out.v" << i << " = float4(0.0);\n";
+    for (uint32_t i = 0; i < 4; i++)
+        os << "  out.uv" << i << " = float2(0.0);\n";
+    for (uint32_t i = 0; i < 4; i++)
+        os << "  out.color" << i << " = float4(0.0);\n";
+    if (procedural_fullscreen) {
+        if (has_draw_args)
+            os << "  uint m12_draw_vcount = m12_draw_vertex_count(buf29, buf30);\n";
+        else
+            os << "  uint m12_draw_vcount = 0u;\n";
+        os << "  bool m12_use_strip_quad = m12_draw_vcount == 4u;\n";
+        os << "  uint m12_strip_vid = vid & 3u;\n";
+        os << "  uint m12_tri_vid = min(vid, 2u);\n";
+        os << "  float2 m12_strip_uv = m12_strip_vid == 0u ? float2(0.0, 0.0) : (m12_strip_vid == 1u ? float2(1.0, 0.0) : (m12_strip_vid == 2u ? float2(0.0, 1.0) : float2(1.0, 1.0)));\n";
+        os << "  float2 m12_strip_pos = m12_strip_vid == 0u ? float2(-1.0, 1.0) : (m12_strip_vid == 1u ? float2(1.0, 1.0) : (m12_strip_vid == 2u ? float2(-1.0, -1.0) : float2(1.0, -1.0)));\n";
+        os << "  float2 m12_tri_uv = m12_tri_vid == 0u ? float2(0.0, 0.0) : (m12_tri_vid == 1u ? float2(0.0, 2.0) : float2(2.0, 0.0));\n";
+        os << "  float2 m12_tri_pos = m12_tri_vid == 0u ? float2(-1.0, 1.0) : (m12_tri_vid == 1u ? float2(-1.0, -3.0) : float2(3.0, 1.0));\n";
+        os << "  float2 m12_fullscreen_uv = m12_use_strip_quad ? m12_strip_uv : m12_tri_uv;\n";
+        os << "  float2 m12_fullscreen_pos = m12_use_strip_quad ? m12_strip_pos : m12_tri_pos;\n";
+        os << "  out.position = float4(m12_fullscreen_pos, 0.0, 1.0);\n";
+        os << "  out.v1 = float4(m12_fullscreen_uv, 0.0, 0.0);\n";
+    }
+}
+
 static void emitFunctionPrologue(LowerContext &ctx) {
     auto &os = ctx.os;
     os << kMetalHeader;
@@ -528,12 +589,58 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     os << "  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];\n";
     os << "};\n\n";
 
-    os << "struct vertex_input_v {\n";
-    if (ctx.shader.kind == DxilShaderKind::Vertex && ctx.vertex_input_ids.empty())
-        os << "  float4 a0 [[attribute(0)]];\n";
-    for (uint32_t i : ctx.vertex_input_ids)
-        os << "  float4 a" << i << " [[attribute(" << i << ")]];\n";
-    os << "};\n\n";
+    if (ctx.shader.kind == DxilShaderKind::Vertex) {
+        os << "struct m12_vertex_buffer_entry { ulong buffer_handle; uint stride; uint length; };\n";
+        os << "struct m12_draw_argument { uint vertexCountPerInstance; uint instanceCount; uint startVertexLocation; uint startInstanceLocation; };\n";
+        os << "struct m12_draw_indexed_argument { uint indexCountPerInstance; uint instanceCount; uint startIndexLocation; int baseVertexLocation; uint startInstanceLocation; };\n";
+        os << "static inline bool m12_is_indexed_draw(device char* draw_info_bytes) {\n";
+        os << "  if (draw_info_bytes == nullptr) return false;\n";
+        os << "  return *reinterpret_cast<device ushort*>(draw_info_bytes) != 0;\n";
+        os << "}\n";
+        os << "static inline uint m12_draw_vertex_count(device char* draw_bytes, device char* draw_info_bytes) {\n";
+        os << "  if (draw_bytes == nullptr) return 0u;\n";
+        os << "  if (m12_is_indexed_draw(draw_info_bytes)) return reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes)->indexCountPerInstance;\n";
+        os << "  return reinterpret_cast<device m12_draw_argument*>(draw_bytes)->vertexCountPerInstance;\n";
+        os << "}\n";
+        os << "static inline uint m12_vertex_fetch_index(uint vid, device char* draw_bytes, device char* draw_info_bytes) {\n";
+        os << "  if (draw_bytes == nullptr || !m12_is_indexed_draw(draw_info_bytes)) return vid;\n";
+        os << "  device m12_draw_indexed_argument* draw = reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes);\n";
+        os << "  int indexed_vertex = int(vid) + draw->baseVertexLocation;\n";
+        os << "  return indexed_vertex < 0 ? 0u : uint(indexed_vertex);\n";
+        os << "}\n";
+        os << "static inline uint m12_instance_fetch_index(uint iid, uint step_rate, device char* draw_bytes, device char* draw_info_bytes) {\n";
+        os << "  uint start_instance = 0;\n";
+        os << "  if (draw_bytes != nullptr) {\n";
+        os << "    if (m12_is_indexed_draw(draw_info_bytes)) start_instance = reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes)->startInstanceLocation;\n";
+        os << "    else start_instance = reinterpret_cast<device m12_draw_argument*>(draw_bytes)->startInstanceLocation;\n";
+        os << "  }\n";
+        os << "  if (step_rate == 0) return start_instance;\n";
+        os << "  return start_instance + (iid / step_rate);\n";
+        os << "}\n";
+        os << "static inline float4 m12_load_vertex_attr(uint table_index, uint aligned_byte_offset, uint dxgi_format, uint per_instance, uint step_rate, uint vid, uint iid, device char* table_bytes, device char* vb, device char* draw_bytes, device char* draw_info_bytes) {\n";
+        os << "  if (table_bytes == nullptr || vb == nullptr) return float4(0.0);\n";
+        os << "  device m12_vertex_buffer_entry* table = reinterpret_cast<device m12_vertex_buffer_entry*>(table_bytes);\n";
+        os << "  uint stride = table[table_index].stride;\n";
+        os << "  uint length = table[table_index].length;\n";
+        os << "  if (stride == 0) stride = 16;\n";
+        os << "  uint element_index = per_instance != 0 ? m12_instance_fetch_index(iid, step_rate, draw_bytes, draw_info_bytes) : m12_vertex_fetch_index(vid, draw_bytes, draw_info_bytes);\n";
+        os << "  uint offset = element_index * stride + aligned_byte_offset;\n";
+        os << "  uint required = (dxgi_format == 41 || dxgi_format == 42 || dxgi_format == 43) ? 4u : ((dxgi_format == 16 || dxgi_format == 17 || dxgi_format == 18) ? 8u : ((dxgi_format == 6 || dxgi_format == 7 || dxgi_format == 8) ? 12u : 16u));\n";
+        os << "  if (length != 0 && offset + required > length) return float4(0.0);\n";
+        os << "  if (dxgi_format == 41) return float4(*reinterpret_cast<device float*>(vb + offset), 0.0, 0.0, 1.0);\n";
+        os << "  if (dxgi_format == 16) return float4(*reinterpret_cast<device float2*>(vb + offset), 0.0, 1.0);\n";
+        os << "  if (dxgi_format == 6) return float4(*reinterpret_cast<device float3*>(vb + offset), 1.0);\n";
+        os << "  if (dxgi_format == 2) return *reinterpret_cast<device float4*>(vb + offset);\n";
+        os << "  if (dxgi_format == 28) return float4(*reinterpret_cast<device uchar4*>(vb + offset)) / 255.0;\n";
+        os << "  if (dxgi_format == 30) return float4(*reinterpret_cast<device uchar4*>(vb + offset));\n";
+        os << "  if (dxgi_format == 42) return float4(*reinterpret_cast<device uint*>(vb + offset), 0.0, 0.0, 1.0);\n";
+        os << "  if (dxgi_format == 43) return float4(*reinterpret_cast<device int*>(vb + offset), 0.0, 0.0, 1.0);\n";
+        os << "  return *reinterpret_cast<device float4*>(vb + offset);\n";
+        os << "}\n\n";
+    } else {
+        os << "struct vertex_input_v {\n";
+        os << "};\n\n";
+    }
 
     if (ctx.shader.kind == DxilShaderKind::Compute) {
         os << "kernel void cs_main(\n";
@@ -549,7 +656,8 @@ static void emitFunctionPrologue(LowerContext &ctx) {
         os << "  uint3 gsz [[threads_per_threadgroup]]\n) {\n";
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
-        os << "  vertex_input_v vin [[stage_in]],\n  uint vid [[vertex_id]],\n";
+        os << "  uint vid [[vertex_id]],\n";
+        os << "  uint iid [[instance_id]],\n";
         std::vector<std::string> params;
         for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
             params.push_back("  device char* buf" + std::to_string(i) +
@@ -564,6 +672,9 @@ static void emitFunctionPrologue(LowerContext &ctx) {
             os << params[i] << (i + 1 == params.size() ? "\n" : ",\n");
         os << ") {\n";
         os << "  output_v out = {};\n";
+        emitDefaultVertexVaryingWrites(
+            os, ctx.vertex_procedural_fullscreen_fallback,
+            ctx.binding_plan.direct_buffer_count > 30);
     } else if (ctx.shader.kind == DxilShaderKind::Pixel) {
         os << "fragment float4 ps_main(\n";
         os << "  input_v in [[stage_in]],\n";
@@ -649,6 +760,47 @@ static bool isUsableMSLType(const MSLType &type) {
            type.kind != MSLTypeKind::Struct;
 }
 
+static MSLType mergePredeclType(const MSLType &current, const MSLType &incoming) {
+    if (!isUsableMSLType(current))
+        return incoming;
+    if (!isUsableMSLType(incoming))
+        return current;
+    if (current.kind == incoming.kind)
+        return current;
+
+    bool current_resource = typeLooksResourceHandle(current);
+    bool incoming_resource = typeLooksResourceHandle(incoming);
+    if (current_resource && !incoming_resource)
+        return incoming;
+    if (!current_resource && incoming_resource)
+        return current;
+    if (current_resource && incoming_resource) {
+        if (current.kind == MSLTypeKind::RWTexture2D || incoming.kind == MSLTypeKind::RWTexture2D)
+            return {MSLTypeKind::RWTexture2D, 0, {}};
+        if (current.kind == MSLTypeKind::RWTexture2DArray || incoming.kind == MSLTypeKind::RWTexture2DArray)
+            return {MSLTypeKind::RWTexture2DArray, 0, {}};
+        if (current.kind == MSLTypeKind::RWTexture3D || incoming.kind == MSLTypeKind::RWTexture3D)
+            return {MSLTypeKind::RWTexture3D, 0, {}};
+        return current;
+    }
+
+    if (DXILIRBuilder::isVectorType(current))
+        return current;
+    if (DXILIRBuilder::isVectorType(incoming))
+        return incoming;
+    if (DXILIRBuilder::isFloatType(current))
+        return current;
+    if (DXILIRBuilder::isFloatType(incoming))
+        return incoming;
+    if (current.kind == MSLTypeKind::Bool)
+        return current;
+    if (incoming.kind == MSLTypeKind::Bool)
+        return incoming;
+    if (current.kind == MSLTypeKind::UInt || incoming.kind == MSLTypeKind::UInt)
+        return {MSLTypeKind::UInt, 0, {}};
+    return current;
+}
+
 static bool splitTrailingComponentAccess(const std::string &value, std::string &base) {
     std::string stripped = stripEnclosingParens(value);
     if (stripped.size() < 3)
@@ -690,6 +842,63 @@ static bool exprContainsPointerTypedValue(const LowerContext &ctx, const std::st
             MSLType type = typeForResolvedValueName(ctx, value.substr(pos, end - pos));
             if (typeLooksResourceHandle(type))
                 return true;
+        }
+        pos = value.find('v', pos + 1);
+    }
+    return false;
+}
+
+static MSLType firstVectorTypedValueType(const LowerContext &ctx, const std::string &value) {
+    size_t pos = value.find('v');
+    while (pos != std::string::npos) {
+        bool start_ok = pos == 0 ||
+            (!std::isalnum((unsigned char)value[pos - 1]) && value[pos - 1] != '_');
+        size_t end = pos + 1;
+        while (end < value.size() && std::isdigit((unsigned char)value[end]))
+            end++;
+        bool has_digits = end > pos + 1;
+        bool end_ok = end >= value.size() ||
+            (!std::isalnum((unsigned char)value[end]) && value[end] != '_');
+        if (start_ok && has_digits && end_ok) {
+            MSLType type = typeForResolvedValueName(ctx, value.substr(pos, end - pos));
+            if (DXILIRBuilder::isVectorType(type))
+                return type;
+        }
+        pos = value.find('v', pos + 1);
+    }
+    return {};
+}
+
+static bool exprContainsVectorTypedValue(const LowerContext &ctx, const std::string &value) {
+    return DXILIRBuilder::isVectorType(firstVectorTypedValueType(ctx, value));
+}
+
+static bool exprContainsBareVectorTypedValue(const LowerContext &ctx, const std::string &value) {
+    size_t pos = value.find('v');
+    while (pos != std::string::npos) {
+        bool start_ok = pos == 0 ||
+            (!std::isalnum((unsigned char)value[pos - 1]) && value[pos - 1] != '_');
+        size_t end = pos + 1;
+        while (end < value.size() && std::isdigit((unsigned char)value[end]))
+            end++;
+        bool has_digits = end > pos + 1;
+        bool end_ok = end >= value.size() ||
+            (!std::isalnum((unsigned char)value[end]) && value[end] != '_');
+        if (start_ok && has_digits && end_ok) {
+            MSLType type = typeForResolvedValueName(ctx, value.substr(pos, end - pos));
+            if (DXILIRBuilder::isVectorType(type)) {
+                size_t lookahead = end;
+                while (lookahead < value.size() && std::isspace((unsigned char)value[lookahead]))
+                    lookahead++;
+                size_t wrapped = lookahead;
+                while (wrapped < value.size() && value[wrapped] == ')')
+                    wrapped++;
+                while (wrapped < value.size() && std::isspace((unsigned char)value[wrapped]))
+                    wrapped++;
+                if ((lookahead >= value.size() || value[lookahead] != '.') &&
+                    (wrapped >= value.size() || value[wrapped] != '.'))
+                    return true;
+            }
         }
         pos = value.find('v', pos + 1);
     }
@@ -915,6 +1124,83 @@ static bool exprContainsVectorConstructor(const std::string &value) {
     return false;
 }
 
+static bool parseConstructorArguments(const std::string &value,
+                                      const std::string &constructor,
+                                      std::vector<std::string> &args) {
+    std::string trimmed = value;
+    while (!trimmed.empty() && std::isspace((unsigned char)trimmed.front()))
+        trimmed.erase(trimmed.begin());
+    while (!trimmed.empty() && std::isspace((unsigned char)trimmed.back()))
+        trimmed.pop_back();
+
+    std::string prefix = constructor + "(";
+    if (!startsWith(trimmed, prefix.c_str()) || trimmed.back() != ')')
+        return false;
+
+    int depth = 0;
+    size_t arg_start = prefix.size();
+    for (size_t i = prefix.size(); i + 1 < trimmed.size(); i++) {
+        char c = trimmed[i];
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (depth > 0) depth--;
+        } else if (c == ',' && depth == 0) {
+            args.push_back(trimmed.substr(arg_start, i - arg_start));
+            arg_start = i + 1;
+        }
+    }
+    args.push_back(trimmed.substr(arg_start, trimmed.size() - arg_start - 1));
+    return true;
+}
+
+static bool startsWithVectorConstructor(std::string value) {
+    while (!value.empty() && std::isspace((unsigned char)value.front()))
+        value.erase(value.begin());
+    static const char *constructors[] = {
+        "float2(", "float3(", "float4(",
+        "int2(", "int3(", "int4(",
+        "uint2(", "uint3(", "uint4("
+    };
+    for (const char *ctor : constructors)
+        if (startsWith(value, ctor))
+            return true;
+    return false;
+}
+
+static std::string scalarizeNestedVectorConstructorArgs(const std::string &value,
+                                                        const MSLType &target) {
+    if (!DXILIRBuilder::isVectorType(target))
+        return value;
+
+    std::string type_name = emitTypeName(target);
+    if (type_name.empty() || type_name == "auto")
+        return value;
+
+    std::vector<std::string> args;
+    if (!parseConstructorArguments(value, type_name, args) || args.size() <= 1)
+        return value;
+
+    bool changed = false;
+    std::ostringstream out;
+    out << type_name << "(";
+    for (size_t i = 0; i < args.size(); i++) {
+        std::string arg = args[i];
+        while (!arg.empty() && std::isspace((unsigned char)arg.front()))
+            arg.erase(arg.begin());
+        while (!arg.empty() && std::isspace((unsigned char)arg.back()))
+            arg.pop_back();
+        if (startsWithVectorConstructor(arg)) {
+            arg = "(" + arg + ").x";
+            changed = true;
+        }
+        if (i) out << ", ";
+        out << arg;
+    }
+    out << ")";
+    return changed ? out.str() : value;
+}
+
 static bool splitTopLevelTernary(const std::string &value,
                                  std::string &then_branch,
                                  std::string &else_branch) {
@@ -942,6 +1228,88 @@ static bool splitTopLevelTernary(const std::string &value,
         }
     }
     return false;
+}
+
+static bool exprHasTopLevelComparison(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    int depth = 0;
+    for (size_t i = 0; i < stripped.size(); i++) {
+        char c = stripped[i];
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+            continue;
+        }
+        if (c == ')' || c == ']' || c == '}') {
+            if (depth > 0) depth--;
+            continue;
+        }
+        if (depth != 0)
+            continue;
+
+        if (i + 1 < stripped.size()) {
+            std::string op = stripped.substr(i, 2);
+            if (op == "==" || op == "!=" || op == "<=" || op == ">=")
+                return true;
+        }
+        if ((c == '<' || c == '>') &&
+            (i == 0 || stripped[i - 1] != '<') &&
+            (i + 1 >= stripped.size() || stripped[i + 1] != '>') &&
+            i > 0 && i + 1 < stripped.size() &&
+            std::isspace((unsigned char)stripped[i - 1]) &&
+            std::isspace((unsigned char)stripped[i + 1]))
+            return true;
+    }
+    return false;
+}
+
+static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr);
+
+static std::string coerceVectorBoolExpressionForAssignment(const LowerContext &ctx,
+                                                           const std::string &value) {
+    std::string resolved = sanitizeThreadVectorCasts(normalizeAggregateExpressions(value));
+    std::string then_branch;
+    std::string else_branch;
+    if (splitTopLevelTernary(resolved, then_branch, else_branch)) {
+        MSLType branch_type = typeForResolvedExpression(ctx, then_branch);
+        if (!DXILIRBuilder::isVectorType(branch_type))
+            branch_type = typeForResolvedExpression(ctx, else_branch);
+        if (DXILIRBuilder::isVectorType(branch_type)) {
+            std::string zero = vectorZeroForExpression(resolved);
+            if (zero.empty())
+                zero = defaultForType(branch_type);
+            return "any((" + resolved + ") != " + zero + ")";
+        }
+        return "";
+    }
+
+    MSLType vector_type = typeForResolvedExpression(ctx, resolved);
+    if (!DXILIRBuilder::isVectorType(vector_type))
+        vector_type = firstVectorTypedValueType(ctx, resolved);
+    if (!DXILIRBuilder::isVectorType(vector_type) && exprLooksVectorValue(resolved)) {
+        if (exprHasTopLevelComparison(resolved))
+            return "any((" + resolved + "))";
+        std::string zero = vectorZeroForExpression(resolved);
+        if (!zero.empty())
+            return "any((" + resolved + ") != " + zero + ")";
+    }
+    if (!DXILIRBuilder::isVectorType(vector_type))
+        return "";
+
+    if (!exprLooksVectorValue(resolved) && !exprContainsBareVectorTypedValue(ctx, resolved))
+        return "(" + resolved + " != 0)";
+
+    if (exprHasTopLevelComparison(resolved) || startsWith(stripEnclosingParens(resolved), "isnan(") ||
+        startsWith(stripEnclosingParens(resolved), "!isnan("))
+        return "any((" + resolved + "))";
+
+    std::string scalarized = scalarizeVectorOperands(ctx, resolved);
+    if (scalarized != resolved && !exprLooksVectorValue(scalarized))
+        return "(" + scalarized + " != 0)";
+
+    std::string zero = vectorZeroForExpression(resolved);
+    if (zero.empty())
+        zero = defaultForType(vector_type);
+    return "any((" + resolved + ") != " + zero + ")";
 }
 
 static bool exprContainsRawResourceHandle(const std::string &value) {
@@ -976,6 +1344,8 @@ static bool exprContainsRawResourceHandle(const std::string &value) {
 
 static std::string coerceResolvedValue(const std::string &value, const MSLType &target) {
     std::string resolved = sanitizeThreadVectorCasts(normalizeAggregateExpressions(value, target));
+    if (DXILIRBuilder::isVectorType(target))
+        resolved = scalarizeNestedVectorConstructorArgs(resolved, target);
     if (target.kind == MSLTypeKind::Bool) {
         if (exprLooksResourceHandle(resolved) || exprLooksSideEffectOnly(resolved)) return "false";
         if (exprLooksBoolValue(resolved)) return resolved;
@@ -997,6 +1367,29 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     }
     if ((target.kind == MSLTypeKind::DeviceCharPtr ||
          target.kind == MSLTypeKind::ThreadgroupCharPtr) &&
+        (startsWith(resolved, "tex") || startsWith(resolved, "samp")))
+        return defaultForType(target);
+    if ((target.kind == MSLTypeKind::Texture2D ||
+         target.kind == MSLTypeKind::Texture2DArray ||
+         target.kind == MSLTypeKind::Texture3D ||
+         target.kind == MSLTypeKind::TextureCube ||
+         target.kind == MSLTypeKind::Texture2DMS ||
+         target.kind == MSLTypeKind::RWTexture2D ||
+         target.kind == MSLTypeKind::RWTexture2DArray ||
+         target.kind == MSLTypeKind::RWTexture3D) &&
+        !startsWith(resolved, "tex"))
+        return defaultForType(target);
+    if (target.kind == MSLTypeKind::Sampler && !startsWith(resolved, "samp"))
+        return defaultForType(target);
+    if ((target.kind == MSLTypeKind::DeviceCharPtr ||
+         target.kind == MSLTypeKind::ThreadgroupCharPtr) &&
+        (resolved.find("*(") != std::string::npos ||
+         resolved.find("reinterpret_cast<device float") != std::string::npos ||
+         resolved.find("reinterpret_cast<device uint") != std::string::npos ||
+         resolved.find("reinterpret_cast<device int") != std::string::npos))
+        return defaultForType(target);
+    if ((target.kind == MSLTypeKind::DeviceCharPtr ||
+         target.kind == MSLTypeKind::ThreadgroupCharPtr) &&
         !exprLooksResourceHandle(resolved) &&
         resolved.find("char*") == std::string::npos &&
         resolved.find("char *") == std::string::npos &&
@@ -1007,7 +1400,10 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     if (exprLooksSideEffectOnly(resolved))
         return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
-        (exprContainsRawResourceHandle(resolved) || exprContainsPointerSyntax(resolved)))
+        (exprContainsRawResourceHandle(resolved) || exprContainsPointerSyntax(resolved)) &&
+        resolved.find("reinterpret_cast<device ") == std::string::npos &&
+        resolved.find("reinterpret_cast<thread ") == std::string::npos &&
+        resolved.find("reinterpret_cast<threadgroup ") == std::string::npos)
         return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved) &&
@@ -1057,7 +1453,8 @@ static bool ternaryBranchesLookScalar(const LowerContext &ctx, const std::string
 static std::string dropInvalidScalarComponentAccess(const LowerContext &ctx,
                                                     const std::string &value,
                                                     const MSLType &target) {
-    if (!(DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) ||
+    if (!(DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target) ||
+          target.kind == MSLTypeKind::Bool) ||
         DXILIRBuilder::isVectorType(target))
         return value;
 
@@ -1069,6 +1466,7 @@ static std::string dropInvalidScalarComponentAccess(const LowerContext &ctx,
     if ((isUsableMSLType(base_type) && !DXILIRBuilder::isVectorType(base_type)) ||
         exprLooksScalarCast(base) ||
         exprLooksScalarMathCall(base) ||
+        exprLooksBoolValue(base) ||
         ternaryBranchesLookScalar(ctx, base))
         return base;
 
@@ -1081,6 +1479,12 @@ static bool exprLooksScalarizedArithmetic(const std::string &value);
 static std::string coerceResolvedValue(const LowerContext &ctx, const std::string &value,
                                        const MSLType &target) {
     std::string sanitized_value = sanitizeThreadVectorCasts(value);
+    if (target.kind == MSLTypeKind::Bool) {
+        std::string coerced_bool = coerceVectorBoolExpressionForAssignment(ctx, sanitized_value);
+        if (!coerced_bool.empty())
+            return coerced_bool;
+    }
+
     std::string component_base;
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
@@ -1097,6 +1501,11 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
     }
 
     MSLType source_type = typeForResolvedExpression(ctx, sanitized_value);
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
+        DXILIRBuilder::isVectorType(source_type))
+        return "(" + sanitized_value + ").x";
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
@@ -1128,10 +1537,99 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
+        sanitized_value.find('?') != std::string::npos &&
+        exprLooksVectorValue(sanitized_value))
+        return "(" + sanitized_value + ").x";
+
+    std::string then_branch;
+    std::string else_branch;
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
+        splitTopLevelTernary(sanitized_value, then_branch, else_branch) &&
+        (exprLooksVectorValue(then_branch) || exprLooksVectorValue(else_branch) ||
+         DXILIRBuilder::isVectorType(typeForResolvedExpression(ctx, then_branch)) ||
+         DXILIRBuilder::isVectorType(typeForResolvedExpression(ctx, else_branch))))
+        return "(" + sanitized_value + ").x";
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target) &&
         ternaryBranchesLookScalar(ctx, sanitized_value))
         return sanitized_value;
 
     return coerceResolvedValue(sanitized_value, target);
+}
+
+static std::string hardenGeneratedBoolVectorAssignments(const std::string &source) {
+    std::set<std::string> bool_names;
+    std::vector<std::string> lines;
+    std::string line;
+    std::istringstream in(source);
+    while (std::getline(in, line)) {
+        std::string trimmed = line;
+        while (!trimmed.empty() && std::isspace((unsigned char)trimmed.front()))
+            trimmed.erase(trimmed.begin());
+        if (startsWith(trimmed, "bool v")) {
+            size_t name_start = 5;
+            size_t name_end = name_start;
+            while (name_end < trimmed.size() &&
+                   (std::isalnum((unsigned char)trimmed[name_end]) || trimmed[name_end] == '_'))
+                name_end++;
+            if (name_end > name_start)
+                bool_names.insert(trimmed.substr(name_start, name_end - name_start));
+        }
+        lines.push_back(line);
+    }
+
+    std::ostringstream out;
+    for (const auto &original : lines) {
+        std::string trimmed = original;
+        size_t leading = 0;
+        while (leading < trimmed.size() && std::isspace((unsigned char)trimmed[leading]))
+            leading++;
+        trimmed.erase(0, leading);
+
+        size_t eq = trimmed.find(" = ");
+        if (eq != std::string::npos && !startsWith(trimmed, "bool ")) {
+            std::string name = trimmed.substr(0, eq);
+            std::string rhs = trimmed.substr(eq + 3);
+            if (!rhs.empty() && rhs.back() == ';')
+                rhs.pop_back();
+
+            if (bool_names.find(name) != bool_names.end() &&
+                !startsWith(stripEnclosingParens(rhs), "any(") &&
+                exprHasTopLevelComparison(rhs) &&
+                exprLooksVectorValue(rhs)) {
+                std::string stripped_rhs = stripEnclosingParens(rhs);
+                bool bitwise_vector_test = (stripped_rhs.find(" & ") != std::string::npos ||
+                                            stripped_rhs.find(" | ") != std::string::npos ||
+                                            stripped_rhs.find(" ^ ") != std::string::npos) &&
+                                           stripped_rhs.size() > 5 &&
+                                           stripped_rhs.rfind(" != 0") == stripped_rhs.size() - 5;
+                if (bitwise_vector_test) {
+                    std::string base = stripped_rhs.substr(0, stripped_rhs.size() - 5);
+                    for (const auto &bool_name : bool_names) {
+                        std::string component = "(" + bool_name + ").x";
+                        std::string promoted = "int4(" + bool_name + ")";
+                        size_t pos = 0;
+                        while ((pos = base.find(component, pos)) != std::string::npos) {
+                            base.replace(pos, component.size(), promoted);
+                            pos += promoted.size();
+                        }
+                    }
+                    std::string zero = vectorZeroForExpression(base);
+                    if (zero.empty())
+                        zero = "int4(0)";
+                    out << original.substr(0, leading) << name << " = any(("
+                        << base << ") != " << zero << ");\n";
+                } else {
+                    out << original.substr(0, leading) << name << " = any((" << rhs << "));\n";
+                }
+                continue;
+            }
+        }
+        out << original << "\n";
+    }
+    return out.str();
 }
 
 static std::string stripEnclosingParens(std::string value) {
@@ -1234,6 +1732,18 @@ static std::string textureCoordComponent(LowerContext &ctx,
     else if (exprLooksVectorValue(sanitized))
         sanitized = "(" + sanitized + ")" + componentSuffix(component);
     return "static_cast<uint>(" + ensureScalarIndex(sanitized) + ")";
+}
+
+static std::string sampleCoordComponent(LowerContext &ctx,
+                                        const std::string &value,
+                                        uint32_t component) {
+    std::string sanitized = sanitizeThreadVectorCasts(value);
+    MSLType source_type = typeForResolvedExpression(ctx, sanitized);
+    if (DXILIRBuilder::isVectorType(source_type))
+        sanitized = componentAccess(sanitized, component, source_type);
+    else if (exprLooksVectorValue(sanitized))
+        sanitized = "(" + sanitized + ")" + componentSuffix(component);
+    return ensureScalarIndex(sanitized);
 }
 
 static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr) {
@@ -1405,6 +1915,76 @@ static uint32_t literalFromValue(const LowerContext &ctx, uint32_t idx, uint32_t
     return fallback;
 }
 
+static bool valueIsUnresolvedTemp(const LowerContext &ctx, uint32_t idx) {
+    if (hasConstantValue(ctx, idx))
+        return false;
+    if (idx >= ctx.value_table.size())
+        return true;
+    return ctx.value_table[idx].empty() || ctx.value_table[idx] == emitValue(idx);
+}
+
+static bool hasVertexInputForRegister(const LowerContext &ctx, uint32_t shader_register) {
+    for (const auto &input : ctx.options.vertex_inputs) {
+        if (!input.system_value && input.shader_register == shader_register)
+            return true;
+    }
+    return false;
+}
+
+static bool isLoadInputI32(const std::string &callee_name) {
+    return callee_name.find("loadInput.i32") != std::string::npos;
+}
+
+static bool isLoadInputF32(const std::string &callee_name) {
+    return callee_name.find("loadInput.f32") != std::string::npos;
+}
+
+static bool shouldLowerLoadInputI32AsVertexId(const LowerContext &ctx, uint32_t input_id) {
+    return ctx.shader.kind == DxilShaderKind::Vertex &&
+           input_id == 0 &&
+           !ctx.vertex_has_float_load_input &&
+           ctx.vertex_input_ids.size() == 1 &&
+           ctx.vertex_input_ids.count(0) != 0;
+}
+
+static bool shouldLowerArgumentlessLoadInputI32AsVertexId(const LowerContext &ctx) {
+    return ctx.shader.kind == DxilShaderKind::Vertex &&
+           ctx.options.vertex_inputs.empty() &&
+           !ctx.vertex_has_float_load_input &&
+           ctx.vertex_input_ids.empty();
+}
+
+static bool hasArgumentlessLoadInputF32(const LowerContext &ctx,
+                                        const LLVMFunction &fn) {
+    for (const auto &block : fn.blocks) {
+        for (const auto &inst : block.instructions) {
+            if (inst.opcode != LLVMInstruction::Call || inst.operands.empty())
+                continue;
+
+            std::string callee_name;
+            auto decl_it = ctx.function_decls.find(inst.operands[0]);
+            if (decl_it != ctx.function_decls.end())
+                callee_name = decl_it->second;
+            else if (inst.operands[0] < ctx.value_table.size())
+                callee_name = ctx.value_table[inst.operands[0]];
+
+            if (isLoadInputF32(callee_name) && inst.operands.size() <= 2)
+                return true;
+        }
+    }
+    return false;
+}
+
+static bool hasArgumentlessLoadInputF32Declaration(const LLVMModule &module) {
+    for (const auto &fn : module.functions) {
+        if (!fn.is_declaration || fn.name.empty())
+            continue;
+        if (isLoadInputF32(fn.name) && fn.param_count == 0)
+            return true;
+    }
+    return false;
+}
+
 static DescriptorRangePlan::Kind descriptorKindForResourceClass(uint32_t resource_class) {
     switch (resource_class) {
     case 0: return DescriptorRangePlan::Kind::SRV;
@@ -1427,8 +2007,24 @@ static const char *bindingPrefixForKind(DescriptorRangePlan::Kind kind) {
 }
 
 static MSLType typeForHandleKind(DescriptorRangePlan::Kind kind) {
-    (void)kind;
+    switch (kind) {
+    case DescriptorRangePlan::Kind::CBV:
+        return {MSLTypeKind::DeviceCharPtr, 0, {}};
+    case DescriptorRangePlan::Kind::Sampler:
+        return {MSLTypeKind::Sampler, 0, {}};
+    case DescriptorRangePlan::Kind::SRV:
+        return {MSLTypeKind::Texture2D, 0, {}};
+    case DescriptorRangePlan::Kind::UAV:
+        return {MSLTypeKind::RWTexture2D, 0, {}};
+    }
     return {MSLTypeKind::DeviceCharPtr, 0, {}};
+}
+
+static MSLType typeForHandleKind(const LowerContext &ctx, DescriptorRangePlan::Kind kind) {
+    MSLType type = typeForHandleKind(kind);
+    if (ctx.shader.kind == DxilShaderKind::Compute && type.kind == MSLTypeKind::Texture2D)
+        return {MSLTypeKind::RWTexture2D, 0, {}};
+    return type;
 }
 
 static ValueRole roleForHandleKind(DescriptorRangePlan::Kind kind) {
@@ -1482,10 +2078,6 @@ static void recordDescriptorRange(BindingPlan &plan, DescriptorRangePlan range) 
 
 static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
     BindingPlan plan;
-    if (ctx.shader.kind == DxilShaderKind::Vertex) {
-        plan.direct_texture_count = 0;
-        plan.direct_sampler_count = 0;
-    }
 
     auto calleeName = [&](uint32_t callee) -> std::string {
         auto decl_it = ctx.function_decls.find(callee);
@@ -1511,17 +2103,17 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
 
             std::vector<uint32_t> fn_args;
             if (intrinsic_id == DXOP_CreateHandle || intrinsic_id == DXOP_CreateHandleForLib ||
-                intrinsic_id == DXOP_AnnotateHandle)
-                fn_args = call_args;
-            else if (call_args.size() > 1)
+                intrinsic_id == DXOP_AnnotateHandle) {
+                if (call_args.size() > 1)
+                    fn_args.assign(call_args.begin() + 1, call_args.end());
+            } else if (call_args.size() > 1)
                 fn_args.assign(call_args.begin() + 1, call_args.end());
 
             if (intrinsic_id == DXOP_CreateHandle && fn_args.size() >= 3) {
                 uint32_t resource_class = literalFromValue(ctx, fn_args[0], 0);
-                uint32_t lower_bound = literalFromValue(ctx, fn_args[1], 0);
                 uint32_t index = literalFromValue(ctx, fn_args[2], 0);
                 recordDescriptorRange(plan, {descriptorKindForResourceClass(resource_class),
-                                             0, lower_bound, index + 1});
+                                             0, index, 1});
             } else if (intrinsic_id == DXOP_CreateHandleFromBinding && fn_args.size() >= 1) {
                 std::string binding = resolveValue(ctx, fn_args[0]);
                 auto parts = parseAggregateLiteral(binding);
@@ -1559,6 +2151,8 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
     if (has_texture) {
         uint32_t texture_limit = ctx.shader.kind == DxilShaderKind::Compute ? 8 : 16;
         plan.direct_texture_count = std::max<uint32_t>(1, std::min<uint32_t>(max_texture, texture_limit));
+        if (ctx.shader.kind != DxilShaderKind::Compute)
+            plan.direct_sampler_count = std::max<uint32_t>(plan.direct_sampler_count, 1);
     }
     if (has_sampler)
         plan.direct_sampler_count = std::max<uint32_t>(1, std::min<uint32_t>(max_sampler, 4));
@@ -1583,36 +2177,54 @@ static void analyzeVertexInputs(LowerContext &ctx, const LLVMFunction &fn) {
             if (inst.opcode != LLVMInstruction::Call || inst.operands.size() < 4)
                 continue;
 
-            uint32_t intrinsic_id = intrinsicIdFromCalleeName(calleeName(inst.operands[0]));
+            std::string callee_name = calleeName(inst.operands[0]);
+            if (isLoadInputF32(callee_name))
+                ctx.vertex_has_float_load_input = true;
+
+            uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
             if (intrinsic_id != DXOP_LoadInput)
                 continue;
 
             std::vector<uint32_t> call_args;
             for (size_t i = 2; i < inst.operands.size(); i++)
                 call_args.push_back(inst.operands[i]);
-            uint32_t input_id = literalFromValue(ctx, call_args[0], 0);
-            if (input_id < 16)
-                ctx.vertex_input_ids.insert(input_id);
-            if (call_args.size() > 1) {
-                input_id = literalFromValue(ctx, call_args[1], 0);
+            if (!call_args.empty())
+                call_args.erase(call_args.begin());
+            if (!call_args.empty()) {
+                uint32_t input_id = literalFromValue(ctx, call_args[0], 0);
                 if (input_id < 16)
                     ctx.vertex_input_ids.insert(input_id);
             }
         }
     }
-    if (!ctx.vertex_input_ids.empty())
-        ctx.vertex_input_ids.insert(0);
 }
 
 static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_id,
                                           const std::vector<uint32_t> &args,
-                                          MSLType declared = {}) {
+                                          MSLType declared = {},
+                                          const std::string &callee_name = {}) {
     switch (intrinsic_id) {
     case DXOP_CreateHandle:
-    case DXOP_CreateHandleForLib:
-    case DXOP_CreateHandleFromBinding:
-    case DXOP_CreateHandleFromHeap:
+    case DXOP_CreateHandleForLib: {
+        uint32_t resource_class = args.empty() ? 0 : literalFromValue(ctx, args[0], 0);
+        return typeForHandleKind(ctx, descriptorKindForResourceClass(resource_class));
+    }
+    case DXOP_CreateHandleFromBinding: {
+        if (!args.empty()) {
+            std::string binding = resolveValue(ctx, args[0]);
+            auto parts = parseAggregateLiteral(binding);
+            uint32_t resource_class = 0;
+            if (parts.size() > 3)
+                parseUnsignedLiteral(parts[3], resource_class);
+            return typeForHandleKind(ctx, descriptorKindForResourceClass(resource_class));
+        }
         return {MSLTypeKind::DeviceCharPtr, 0, {}};
+    }
+    case DXOP_CreateHandleFromHeap: {
+        bool sampler = args.size() >= 2 && literalFromValue(ctx, args[1], 0) != 0;
+        return typeForHandleKind(ctx, sampler ? DescriptorRangePlan::Kind::Sampler
+                                              : DescriptorRangePlan::Kind::SRV);
+    }
     case DXOP_AnnotateHandle: {
         if (!args.empty()) {
             MSLType annotated = valueTypeOrUnknown(ctx, args[0]);
@@ -1717,7 +2329,9 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
         return promoteNumericType(promoteNumericType(a, b, declared), c, {MSLTypeKind::Int, 0, {}});
     }
     case DXOP_LoadInput:
-        return {MSLTypeKind::Float, 0, {}};
+        if (isLoadInputI32(callee_name))
+            return {MSLTypeKind::Int, 0, {}};
+        return usableType(declared) ? declared : MSLType{MSLTypeKind::Float, 0, {}};
     case DXOP_StoreOutput:
         return {MSLTypeKind::Void, 0, {}};
     default:
@@ -1742,7 +2356,8 @@ static std::string resolveBindingName(const std::string &handle, const char *tar
 }
 
 static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id,
-                                          const std::vector<uint32_t> &args) {
+                                          const std::vector<uint32_t> &args,
+                                          const std::string &callee_name = {}) {
     ctx.pending_handle.reset();
 
     auto valueArg = [&](size_t arg, const char *fallback) -> std::string {
@@ -1840,10 +2455,12 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "0";
         uint32_t resource_class = literalArg(0, 0, "resource class");
         uint32_t range_id = literalArg(1, 0, "range id");
+        uint32_t index = literalArg(2, 0, "resource index");
         bool non_uniform = args.size() >= 4 && literalArg(3, 0, "non uniform") != 0;
         ctx.next_binding++;
+        (void)range_id;
         return recordHandle(descriptorKindForResourceClass(resource_class),
-                            resource_class, range_id, 0, 0, non_uniform);
+                            resource_class, 0, index, 0, non_uniform);
     }
     case DXOP_CreateHandleForLib: case DXOP_AnnotateHandle: {
         if (!args.empty()) {
@@ -1983,8 +2600,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "float4(0)";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cx = sampleCoordComponent(ctx, valueArg(2, "0.0"), 0);
+        auto cy = sampleCoordComponent(ctx, valueArg(3, "0.0"), 1);
         if (ctx.shader.kind == DxilShaderKind::Compute)
             return handle + ".read(uint2(" +
                    textureCoordComponent(ctx, valueArg(2, "0"), 0) + ", " +
@@ -1995,8 +2612,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "float4(0)";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cx = sampleCoordComponent(ctx, valueArg(2, "0.0"), 0);
+        auto cy = sampleCoordComponent(ctx, valueArg(3, "0.0"), 1);
         uint32_t ch = args.size() > 8 ? literalArg(8, 0, "ch") : 0;
         if (ctx.shader.kind == DxilShaderKind::Compute) {
             auto texel = handle + ".read(uint2(" +
@@ -2004,14 +2621,15 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
                          textureCoordComponent(ctx, valueArg(3, "0"), 1) + "))";
             return "float4((" + texel + ")." + componentName(ch) + ")";
         }
-        return handle + ".gather(" + samp + ", float2(" + cx + ", " + cy + "), component::" + componentName(ch) + ")";
+        auto sample = handle + ".sample(" + samp + ", float2(" + cx + ", " + cy + "))";
+        return "float4((" + sample + ")." + componentName(ch) + ")";
     }
     case DXOP_TextureSampleCmp: case DXOP_TextureSampleCmpLevelZero: case 224: {
         if (args.size() < 5) return "0.0";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        auto cx = ensureScalarIndex(valueArg(2, "0.0"));
-        auto cy = ensureScalarIndex(valueArg(3, "0.0"));
+        auto cx = sampleCoordComponent(ctx, valueArg(2, "0.0"), 0);
+        auto cy = sampleCoordComponent(ctx, valueArg(3, "0.0"), 1);
         auto cmp = valueArg(4, "0.0");
         if (ctx.shader.kind == DxilShaderKind::Compute)
             return "((" + handle + ".read(uint2((uint)(" + cx + "), (uint)(" + cy + "))).r) < (" + cmp + ") ? 1.0 : 0.0)";
@@ -2029,13 +2647,15 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "0.0";
         auto handle = handleArg(0, "tex", "tex0");
         auto samp = handleArg(1, "samp", "samp0");
-        return handle + ".calculate_unclamped_lod(" + samp + ", float2(" + ensureScalarIndex(valueArg(2, "0.0")) + ", " + ensureScalarIndex(valueArg(3, "0.0")) + "))";
+        return handle + ".calculate_unclamped_lod(" + samp + ", float2(" +
+               sampleCoordComponent(ctx, valueArg(2, "0.0"), 0) + ", " +
+               sampleCoordComponent(ctx, valueArg(3, "0.0"), 1) + "))";
     }
     case 78: {
         if (args.size() < 4) return "0";
         auto handle = handleArg(1, "buf", "buf0");
-        auto off = ensureScalarIndex(valueArg(2, "0"));
-        auto val = ensureScalarIndex(valueArg(3, "0"));
+        auto off = ensureScalarIndex(numericArg(2, "0"));
+        auto val = ensureScalarIndex(numericArg(3, "0"));
         return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + off + ")), (uint)(" + val + "), memory_order_relaxed)";
     }
     case 79: {
@@ -2135,7 +2755,11 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t input_id = literalArg(0, 0, "input");
         uint32_t comp = literalArg(2, 0, "comp");
         if (ctx.shader.kind == DxilShaderKind::Pixel) return varyingField("in", input_id) + componentSuffix(comp);
-        if (ctx.shader.kind == DxilShaderKind::Vertex) return vertexInputField("vin", input_id) + componentSuffix(comp);
+        if (ctx.shader.kind == DxilShaderKind::Vertex) {
+            if (isLoadInputI32(callee_name) && shouldLowerLoadInputI32AsVertexId(ctx, input_id))
+                return comp == 0 ? "vid" : "0u";
+            return vertexPullField(ctx, input_id) + componentSuffix(comp);
+        }
         return "0.0";
     }
     case DXOP_StoreOutput: {
@@ -2143,7 +2767,22 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t output_id = literalArg(0, 0, "output");
         uint32_t comp = literalArg(2, 0, "comp");
         auto val = numericArg(3, "0.0");
-        if (ctx.shader.kind == DxilShaderKind::Vertex) return varyingField("out", output_id) + componentSuffix(comp) + " = " + val;
+        if (ctx.shader.kind == DxilShaderKind::Vertex &&
+            ctx.vertex_procedural_fullscreen_fallback) {
+            recordDiagnostic(ctx,
+                             "storeOutput skipped procedural vertex default output=%u comp=%u value=%s",
+                             output_id, comp, val.c_str());
+            return "";
+        }
+        if (ctx.shader.kind == DxilShaderKind::Vertex) {
+            bool simple_input_passthrough =
+                ctx.current_fn && ctx.current_fn->name.find("SimpleVS") != std::string::npos;
+            if (!ctx.options.vertex_inputs.empty() &&
+                hasVertexInputForRegister(ctx, output_id) &&
+                (valueIsUnresolvedTemp(ctx, args[3]) || simple_input_passthrough))
+                val = vertexPullField(ctx, output_id) + componentSuffix(comp);
+            return varyingField("out", output_id) + componentSuffix(comp) + " = " + val;
+        }
         if (ctx.shader.kind == DxilShaderKind::Pixel) return std::string("result") + componentSuffix(comp) + " = " + val;
         return "";
     }
@@ -2257,15 +2896,46 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     };
 
     auto emitTypedLine = [&](MSLType &type, const std::string &name, const std::string &expr) {
+        auto scalarizeVectorSelectForScalar = [&](const std::string &value,
+                                                  const MSLType &target) -> std::string {
+            if (!(DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) ||
+                DXILIRBuilder::isVectorType(target))
+                return value;
+
+            std::string then_branch;
+            std::string else_branch;
+            if (!splitTopLevelTernary(value, then_branch, else_branch))
+                return value;
+
+            MSLType then_type = typeForResolvedExpression(ctx, then_branch);
+            MSLType else_type = typeForResolvedExpression(ctx, else_branch);
+            if (!DXILIRBuilder::isVectorType(then_type) && exprLooksVectorValue(then_branch))
+                then_type = inferTypeFromExpr(then_branch);
+            if (!DXILIRBuilder::isVectorType(else_type) && exprLooksVectorValue(else_branch))
+                else_type = inferTypeFromExpr(else_branch);
+            if (DXILIRBuilder::isVectorType(then_type) || DXILIRBuilder::isVectorType(else_type) ||
+                exprLooksVectorValue(then_branch) || exprLooksVectorValue(else_branch))
+                return "(" + value + ").x";
+            return value;
+        };
+
+        std::string source_expr = stripEnclosingParens(expr) == name
+            ? defaultForType(isUsableMSLType(type) ? type : MSLType{MSLTypeKind::Int, 0, {}})
+            : expr;
+        uint32_t forward_source_id = 0;
+        if (parseEmittedValueName(stripEnclosingParens(source_expr), forward_source_id) &&
+            forward_source_id < ctx.value_table.size() &&
+            ctx.value_table[forward_source_id].empty())
+            source_expr = defaultForType(isUsableMSLType(type) ? type : MSLType{MSLTypeKind::Int, 0, {}});
         if (ctx.shader.kind != DxilShaderKind::Compute &&
             type.kind == MSLTypeKind::RWTexture2D)
             type = {MSLTypeKind::Texture2D, 0, {}};
         if (type.kind == MSLTypeKind::Unknown || type.kind == MSLTypeKind::Void ||
             type.kind == MSLTypeKind::Struct) {
-            auto source_type = typeForResolvedExpression(ctx, expr);
-            auto inferred = isUsableMSLType(source_type) ? source_type : inferTypeFromExpr(expr);
+            auto source_type = typeForResolvedExpression(ctx, source_expr);
+            auto inferred = isUsableMSLType(source_type) ? source_type : inferTypeFromExpr(source_expr);
             if (inferred.kind != MSLTypeKind::Unknown) type = inferred;
-            else if (exprContainsRawResourceHandle(expr)) type = {MSLTypeKind::Int, 0, {}};
+            else if (exprContainsRawResourceHandle(source_expr)) type = {MSLTypeKind::Int, 0, {}};
         }
         if (ctx.predeclared_names.find(name) != ctx.predeclared_names.end()) {
             MSLType declared_type = type;
@@ -2275,40 +2945,44 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             if (ctx.shader.kind != DxilShaderKind::Compute &&
                 declared_type.kind == MSLTypeKind::RWTexture2D)
                 declared_type = {MSLTypeKind::Texture2D, 0, {}};
-            std::string assigned = coerceResolvedValue(ctx, expr, declared_type);
+            std::string assigned = coerceResolvedValue(ctx, source_expr, declared_type);
             if (DXILIRBuilder::isVectorType(declared_type)) {
                 MSLType assigned_type = inferTypeFromExpr(assigned);
                 if (DXILIRBuilder::isVectorType(assigned_type) &&
                     assigned_type.kind != declared_type.kind)
                     assigned = coerceVectorWidth(assigned, assigned_type, declared_type);
+                assigned = scalarizeNestedVectorConstructorArgs(assigned, declared_type);
             }
             uint32_t source_id = 0;
-            if (assigned == expr && parseEmittedValueName(expr, source_id) &&
+            if (assigned == source_expr && parseEmittedValueName(source_expr, source_id) &&
                 source_id < ctx.value_types.size() &&
                 DXILIRBuilder::isVectorType(ctx.value_types[source_id]) &&
                 (DXILIRBuilder::isFloatType(declared_type) || DXILIRBuilder::isIntType(declared_type)) &&
                 !DXILIRBuilder::isVectorType(declared_type)) {
-                assigned = "(" + expr + ").x";
+                assigned = "(" + source_expr + ").x";
             }
-            if (assigned == expr && DXILIRBuilder::isVectorType(type) &&
+            if (assigned == source_expr && DXILIRBuilder::isVectorType(type) &&
                 (DXILIRBuilder::isFloatType(declared_type) || DXILIRBuilder::isIntType(declared_type)) &&
                 !DXILIRBuilder::isVectorType(declared_type)) {
-                std::string scalarized = scalarizeVectorOperands(ctx, expr);
-                assigned = scalarized != expr ? scalarized :
-                    (exprLooksVectorValue(expr) ? "(" + expr + ").x" : expr);
+                std::string scalarized = scalarizeVectorOperands(ctx, source_expr);
+                assigned = scalarized != source_expr ? scalarized :
+                    (exprLooksVectorValue(source_expr) ? "(" + source_expr + ").x" : source_expr);
             }
+            assigned = scalarizeVectorSelectForScalar(assigned, declared_type);
             assigned = dropInvalidScalarComponentAccess(ctx, assigned, declared_type);
             type = declared_type;
             os << "  " << name << " = " << assigned << ";\n";
             return;
         }
-        std::string assigned = coerceResolvedValue(ctx, expr, type);
+        std::string assigned = coerceResolvedValue(ctx, source_expr, type);
         if (DXILIRBuilder::isVectorType(type)) {
             MSLType assigned_type = inferTypeFromExpr(assigned);
             if (DXILIRBuilder::isVectorType(assigned_type) &&
                 assigned_type.kind != type.kind)
                 assigned = coerceVectorWidth(assigned, assigned_type, type);
+            assigned = scalarizeNestedVectorConstructorArgs(assigned, type);
         }
+        assigned = scalarizeVectorSelectForScalar(assigned, type);
         assigned = dropInvalidScalarComponentAccess(ctx, assigned, type);
         if (type.kind != MSLTypeKind::Unknown && type.kind != MSLTypeKind::Void &&
             type.kind != MSLTypeKind::Struct)
@@ -2380,7 +3054,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (target.kind == MSLTypeKind::Bool)
             return coerceResolvedValue(ctx, expr, target);
         if (DXILIRBuilder::isVectorType(target)) {
-            MSLType source = inferTypeFromExpr(expr);
+            MSLType source = typeForResolvedExpression(ctx, expr);
+            if (!DXILIRBuilder::isVectorType(source))
+                source = inferTypeFromExpr(expr);
             if (DXILIRBuilder::isVectorType(source) &&
                 (DXILIRBuilder::vectorWidth(source) != DXILIRBuilder::vectorWidth(target) ||
                  DXILIRBuilder::scalarType(source).kind != DXILIRBuilder::scalarType(target).kind))
@@ -2394,6 +3070,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             }
             return type_name + "(" + expr + ")";
         }
+        MSLType source = typeForResolvedExpression(ctx, expr);
+        if (!DXILIRBuilder::isVectorType(source))
+            source = inferTypeFromExpr(expr);
+        if (DXILIRBuilder::isVectorType(source))
+            return "static_cast<" + type_name + ">(" + componentAccess(expr, 0, source) + ")";
         return "static_cast<" + type_name + ">(" + expr + ")";
     };
 
@@ -2408,6 +3089,22 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         auto pre_it = ctx.predeclared_types.find(value);
         if (!typeLooksResourceHandle(source) && pre_it != ctx.predeclared_types.end())
             source = pre_it->second;
+        if ((target.kind == MSLTypeKind::DeviceCharPtr ||
+             target.kind == MSLTypeKind::ThreadgroupCharPtr) &&
+            (startsWith(value, "tex") || startsWith(value, "samp")))
+            return defaultForType(target);
+        if ((target.kind == MSLTypeKind::Texture2D ||
+             target.kind == MSLTypeKind::Texture2DArray ||
+             target.kind == MSLTypeKind::Texture3D ||
+             target.kind == MSLTypeKind::TextureCube ||
+             target.kind == MSLTypeKind::Texture2DMS ||
+             target.kind == MSLTypeKind::RWTexture2D ||
+             target.kind == MSLTypeKind::RWTexture2DArray ||
+             target.kind == MSLTypeKind::RWTexture3D) &&
+            !startsWith(value, "tex"))
+            return defaultForType(target);
+        if (target.kind == MSLTypeKind::Sampler && !startsWith(value, "samp"))
+            return defaultForType(target);
         if ((exprLooksResourceHandle(value) || exprContainsRawResourceHandle(value) ||
              typeLooksResourceHandle(source)) &&
             (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)))
@@ -2456,6 +3153,52 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         return value;
     };
 
+    auto coerceShiftOperand = [&](uint32_t idx, const MSLType &target) -> std::string {
+        std::string raw_value = getValue(idx);
+        MSLType raw_source = operandType(idx);
+        uint32_t resolved_id = 0;
+        if (!typeLooksResourceHandle(raw_source) &&
+            parseEmittedValueName(raw_value, resolved_id) &&
+            resolved_id < ctx.value_types.size())
+            raw_source = ctx.value_types[resolved_id];
+        auto pre_it = ctx.predeclared_types.find(raw_value);
+        if (!typeLooksResourceHandle(raw_source) && pre_it != ctx.predeclared_types.end())
+            raw_source = pre_it->second;
+
+        if (DXILIRBuilder::isVectorType(target)) {
+            if (DXILIRBuilder::isVectorType(raw_source)) {
+                if (DXILIRBuilder::vectorWidth(raw_source) != DXILIRBuilder::vectorWidth(target) ||
+                    DXILIRBuilder::scalarType(raw_source).kind != DXILIRBuilder::scalarType(target).kind)
+                    return coerceVectorWidth(raw_value, raw_source, target);
+                return castExpr(raw_value, target);
+            }
+            MSLType raw_inferred = inferTypeFromExpr(raw_value);
+            if (DXILIRBuilder::isVectorType(raw_inferred)) {
+                if (DXILIRBuilder::vectorWidth(raw_inferred) != DXILIRBuilder::vectorWidth(target) ||
+                    DXILIRBuilder::scalarType(raw_inferred).kind != DXILIRBuilder::scalarType(target).kind)
+                    return coerceVectorWidth(raw_value, raw_inferred, target);
+                return castExpr(raw_value, target);
+            }
+            if (exprLooksVectorValue(raw_value))
+                return castExpr(raw_value, target);
+        }
+
+        std::string value = coerceOperand(idx, target);
+        if (!DXILIRBuilder::isVectorType(target))
+            return value;
+        MSLType inferred = inferTypeFromExpr(value);
+        if (DXILIRBuilder::isVectorType(inferred))
+            return value;
+        std::string type_name = emitTypeName(target);
+        if (type_name.empty() || type_name == "auto")
+            return value;
+        MSLType scalar = DXILIRBuilder::scalarType(target);
+        std::string scalar_name = emitTypeName(scalar);
+        if (!scalar_name.empty() && scalar_name != "auto")
+            return type_name + "(static_cast<" + scalar_name + ">(" + value + "))";
+        return type_name + "(" + value + ")";
+    };
+
     auto chooseBinaryType = [&](const MSLType &declared, const MSLType &lhs,
                                 const MSLType &rhs, MSLTypeKind pointer_scalar) -> MSLType {
         MSLType result_type = demotePointerType(declared, pointer_scalar);
@@ -2498,6 +3241,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
 
     case LLVMInstruction::Call: {
         if (inst.operands.empty()) break;
+        bool call_produces_value = true;
         uint32_t callee = inst.operands[0];
         std::vector<uint32_t> call_args;
         for (size_t i = 2; i < inst.operands.size(); i++) call_args.push_back(inst.operands[i]);
@@ -2521,10 +3265,18 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         }
 
         if (intrinsic_id != 0 && call_args.empty()) {
-            ctx.unsupported_intrinsics++;
             ensureValueTable(value_counter);
-            ctx.value_table[value_counter] = result;
-            ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+            if (intrinsic_id == DXOP_LoadInput && isLoadInputI32(callee_name) &&
+                shouldLowerArgumentlessLoadInputI32AsVertexId(ctx)) {
+                MSLType result_type = {MSLTypeKind::UInt, 0, {}};
+                emitTypedLine(result_type, result, "vid");
+                ctx.value_table[value_counter] = result;
+                ctx.value_types[value_counter] = result_type;
+            } else {
+                ctx.unsupported_intrinsics++;
+                ctx.value_table[value_counter] = result;
+                ctx.value_types[value_counter] = getTypeForInst(inst.type_id);
+            }
         } else if (intrinsic_id != 0) {
             std::vector<uint32_t> fn_args;
             if (opcode_prefixed_intrinsic)
@@ -2534,9 +3286,19 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             else
                 fn_args.assign(call_args.begin() + 1, call_args.end());
 
-            std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
+            std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args, callee_name);
             MSLType result_type = inferDXIntrinsicResultType(
-                ctx, intrinsic_id, fn_args, bestType(getTypeForInst(inst.type_id), translated));
+                ctx, intrinsic_id, fn_args, bestType(getTypeForInst(inst.type_id), translated),
+                callee_name);
+            if (intrinsic_id == DXOP_CBufferLoad || intrinsic_id == DXOP_CBufferLoadLegacy) {
+                const char *handle_value = "<missing>";
+                uint32_t handle_id = fn_args.empty() ? UINT32_MAX : fn_args[0];
+                if (handle_id < ctx.value_table.size() && !ctx.value_table[handle_id].empty())
+                    handle_value = ctx.value_table[handle_id].c_str();
+                recordDiagnostic(ctx,
+                                 "cbufferLoad value=%u handle_id=%u handle=%s translated=%s",
+                                 value_counter, handle_id, handle_value, translated.c_str());
+            }
             ensureValueTable(value_counter);
             ctx.value_types[value_counter] = result_type;
 
@@ -2544,7 +3306,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 ResourceHandleRecord handle = *ctx.pending_handle;
                 ctx.resource_handles[value_counter] = handle;
                 ctx.value_table[value_counter] = materializeHandleName(ctx, handle);
-                ctx.value_types[value_counter] = typeForHandleKind(handle.kind);
+                ctx.value_types[value_counter] = typeForHandleKind(ctx, handle.kind);
                 ctx.value_roles[value_counter] = roleForHandleKind(handle.kind);
                 ctx.pending_handle.reset();
             } else if (inst.type_id == 0 && result_type.kind != MSLTypeKind::Void &&
@@ -2561,19 +3323,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     ctx.value_types[value_counter] = {MSLTypeKind::Int, 0, {}};
                 }
             } else if (result_type.kind == MSLTypeKind::Void || exprLooksSideEffectOnly(translated)) {
+                call_produces_value = false;
                 if (!translated.empty())
                     os << "  " << translated << ";\n";
-                MSLType fallback_type = getTypeForInst(inst.type_id);
-                if (!isUsableType(fallback_type))
-                    fallback_type = {MSLTypeKind::Int, 0, {}};
-                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end()) {
-                    os << "  " << result << " = " << defaultForType(fallback_type) << ";\n";
-                } else {
-                    os << "  " << emitTypeName(fallback_type) << " " << result
-                       << " = " << defaultForType(fallback_type) << ";\n";
-                }
-                ctx.value_table[value_counter] = result;
-                ctx.value_types[value_counter] = fallback_type;
             } else if (translated.empty()) {
                 MSLType fallback_type = result_type;
                 if (!isUsableType(fallback_type))
@@ -2623,11 +3375,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 else
                     os << "  " << typedDecl(result, result_type) << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
             } else {
-                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
-                    os << "  " << result << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
-                else
-                    os << "  int " << result << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
                 result_type = {MSLTypeKind::Int, 0, {}};
+                call_produces_value = false;
             }
             for (size_t i = 0; i < call_args.size(); i++) {
                 if (i) os << ", ";
@@ -2637,7 +3387,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
         }
-        value_counter++;
+        if (call_produces_value)
+            value_counter++;
         break;
     }
 
@@ -2670,14 +3421,39 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             DXILIRBuilder::isVectorType(pre_it->second) &&
             (DXILIRBuilder::isFloatType(pre_it->second) || DXILIRBuilder::isIntType(pre_it->second)))
             result_type = pre_it->second;
-        result_type = integerTypeFor(result_type);
+        bool arithmetic_op = inst.opcode == LLVMInstruction::Add ||
+                             inst.opcode == LLVMInstruction::Sub ||
+                             inst.opcode == LLVMInstruction::Mul ||
+                             inst.opcode == LLVMInstruction::UDiv ||
+                             inst.opcode == LLVMInstruction::SDiv ||
+                             inst.opcode == LLVMInstruction::URem ||
+                             inst.opcode == LLVMInstruction::SRem;
+        bool preserve_float_arithmetic = arithmetic_op && DXILIRBuilder::isFloatType(result_type);
+        if (!preserve_float_arithmetic)
+            result_type = integerTypeFor(result_type);
         if ((inst.opcode == LLVMInstruction::Shl || inst.opcode == LLVMInstruction::LShr ||
              inst.opcode == LLVMInstruction::AShr) &&
             !DXILIRBuilder::isVectorType(result_type))
             result_type = {MSLTypeKind::Int, 0, {}};
-        std::string expr = coerceOperand(inst.operands[0], result_type) + " " +
-                           std::string(op_str) + " " +
-                           coerceOperand(inst.operands[1], result_type);
+        bool is_shift = inst.opcode == LLVMInstruction::Shl ||
+                        inst.opcode == LLVMInstruction::LShr ||
+                        inst.opcode == LLVMInstruction::AShr;
+        std::string lhs = is_shift ? coerceShiftOperand(inst.operands[0], result_type)
+                                   : coerceOperand(inst.operands[0], result_type);
+        std::string rhs = is_shift ? coerceShiftOperand(inst.operands[1], result_type)
+                                   : coerceOperand(inst.operands[1], result_type);
+        if (preserve_float_arithmetic &&
+            (inst.opcode == LLVMInstruction::URem ||
+             inst.opcode == LLVMInstruction::SRem) &&
+            !DXILIRBuilder::isVectorType(result_type)) {
+            lhs = castExpr(lhs, {MSLTypeKind::Float, 0, {}});
+            rhs = castExpr(rhs, {MSLTypeKind::Float, 0, {}});
+        }
+        std::string expr = preserve_float_arithmetic &&
+                           (inst.opcode == LLVMInstruction::URem ||
+                            inst.opcode == LLVMInstruction::SRem)
+            ? "fmod(" + lhs + ", " + rhs + ")"
+            : lhs + " " + std::string(op_str) + " " + rhs;
         emitTypedLine(result_type, result, expr);
         ctx.value_table[value_counter] = result;
         ctx.value_types[value_counter] = result_type;
@@ -2875,6 +3651,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                                            operandType(inst.operands[1]), MSLTypeKind::Float);
             std::string lhs = coerceOperand(inst.operands[0], result_type);
             std::string rhs = coerceOperand(inst.operands[1], result_type);
+            if (inst.opcode == LLVMInstruction::FRem &&
+                !DXILIRBuilder::isVectorType(result_type)) {
+                lhs = castExpr(lhs, {MSLTypeKind::Float, 0, {}});
+                rhs = castExpr(rhs, {MSLTypeKind::Float, 0, {}});
+            }
             std::string expr = inst.opcode == LLVMInstruction::FRem
                 ? "fmod(" + lhs + ", " + rhs + ")"
                 : lhs + std::string(" ") + fop + " " + rhs;
@@ -3015,26 +3796,27 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             auto lhs = coerceOperand(inst.operands[1], cmp_type);
             auto rhs = coerceOperand(inst.operands[2], cmp_type);
             const char *cmp = "==";
-            const char *decl = ctx.predeclared_names.find(result) != ctx.predeclared_names.end() ? "" : "bool ";
-            if (pred == 0) { os << "  " << decl << result << " = false;\n"; }
-            else if (pred >= 15) { os << "  " << decl << result << " = true;\n"; }
-            else if (pred == 7) {
+            MSLType result_type = {MSLTypeKind::Bool, 0, {}};
+            std::string cmp_result;
+            if (pred == 0) {
+                cmp_result = "false";
+            } else if (pred >= 15) {
+                cmp_result = "true";
+            } else if (pred == 7) {
                 std::string ilhs = coerceIsNanOperand(lhs, cmp_type);
                 std::string irhs = coerceIsNanOperand(rhs, cmp_type);
                 if (DXILIRBuilder::isVectorType(cmp_type))
-                    os << "  " << decl << result << " = all((!isnan(" << ilhs << ")) & (!isnan(" << irhs << ")));\n";
+                    cmp_result = "all((!isnan(" + ilhs + ")) & (!isnan(" + irhs + ")))";
                 else
-                    os << "  " << decl << result << " = (!isnan(" << ilhs << ") && !isnan(" << irhs << "));\n";
-            }
-            else if (pred == 14) {
+                    cmp_result = "(!isnan(" + ilhs + ") && !isnan(" + irhs + "))";
+            } else if (pred == 14) {
                 std::string ilhs = coerceIsNanOperand(lhs, cmp_type);
                 std::string irhs = coerceIsNanOperand(rhs, cmp_type);
                 if (DXILIRBuilder::isVectorType(cmp_type))
-                    os << "  " << decl << result << " = any((isnan(" << ilhs << ")) | (isnan(" << irhs << ")));\n";
+                    cmp_result = "any((isnan(" + ilhs + ")) | (isnan(" + irhs + ")))";
                 else
-                    os << "  " << decl << result << " = (isnan(" << ilhs << ") || isnan(" << irhs << "));\n";
-            }
-            else {
+                    cmp_result = "(isnan(" + ilhs + ") || isnan(" + irhs + "))";
+            } else {
                 if (pred == 1 || pred == 8) cmp = "==";
                 else if (pred == 2 || pred == 9) cmp = ">";
                 else if (pred == 3 || pred == 10) cmp = ">=";
@@ -3042,9 +3824,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 else if (pred == 5 || pred == 12) cmp = "<=";
                 else if (pred == 6 || pred == 13) cmp = "!=";
                 std::string cmp_expr = "(" + lhs + " " + cmp + " " + rhs + ")";
-                os << "  " << decl << result << " = "
-                   << scalarizeVectorBoolExpression(cmp_expr, cmp_type) << ";\n";
+                bool vector_cmp = DXILIRBuilder::isVectorType(cmp_type) ||
+                                  exprLooksVectorValue(lhs) ||
+                                  exprLooksVectorValue(rhs) ||
+                                  exprContainsBareVectorTypedValue(ctx, lhs) ||
+                                  exprContainsBareVectorTypedValue(ctx, rhs);
+                cmp_result = vector_cmp ? std::string("any((") + cmp_expr + "))" : cmp_expr;
             }
+            emitTypedLine(result_type, result, cmp_result);
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = {MSLTypeKind::Bool, 0, {}};
         }
@@ -3060,6 +3847,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             MSLType tv_type = operandType(inst.operands[1]);
             MSLType fv_type = operandType(inst.operands[2]);
             result_type = chooseBinaryType(result_type, tv_type, fv_type, MSLTypeKind::Int);
+            if (DXILIRBuilder::isVectorType(tv_type))
+                result_type = tv_type;
+            else if (DXILIRBuilder::isVectorType(fv_type))
+                result_type = fv_type;
+            auto pre_it = ctx.predeclared_types.find(result);
+            if (pre_it != ctx.predeclared_types.end() &&
+                (DXILIRBuilder::isFloatType(pre_it->second) || DXILIRBuilder::isIntType(pre_it->second)) &&
+                !DXILIRBuilder::isVectorType(pre_it->second))
+                result_type = pre_it->second;
             auto tv = coerceOperand(inst.operands[1], result_type);
             auto fv = coerceOperand(inst.operands[2], result_type);
             emitTypedLine(result_type, result, "(" + cond + " ? " + tv + " : " + fv + ")");
@@ -3200,12 +3996,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     }
 }
 
-std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
-                                                   const DxilParsedShader &shader) {
+std::optional<TypedMSLShader> MSLLowering::lower(
+    const LLVMModule &module, const DxilParsedShader &shader,
+    const MSLLoweringOptions &options) {
     if (module.functions.empty()) return std::nullopt;
 
     std::ostringstream os;
-    LowerContext ctx{os, module, shader};
+    LowerContext ctx{os, module, shader, options};
 
     const LLVMFunction *entry_fn = nullptr;
     for (auto &fn : module.functions) {
@@ -3258,6 +4055,18 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
 
     analyzeBindingPlan(ctx, fn);
     analyzeVertexInputs(ctx, fn);
+    bool has_argumentless_load_input_f32_decl =
+        hasArgumentlessLoadInputF32Declaration(module);
+    ctx.vertex_procedural_fullscreen_fallback =
+        shader.kind == DxilShaderKind::Vertex &&
+        ctx.options.vertex_inputs.empty() &&
+        (has_argumentless_load_input_f32_decl ||
+         hasArgumentlessLoadInputF32(ctx, fn));
+    if (ctx.vertex_procedural_fullscreen_fallback) {
+        recordDiagnostic(ctx,
+                         "vertex procedural fullscreen fallback active load_input_decl=%u",
+                         has_argumentless_load_input_f32_decl ? 1u : 0u);
+    }
     emitFunctionPrologue(ctx);
 
     for (auto &gv : module.globals) {
@@ -3426,7 +4235,8 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                     else
                         fn_args.assign(inst.operands.begin() + 3, inst.operands.end());
                     MSLType declared = DXILIRBuilder::resolveType(inst.type_id, module);
-                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared);
+                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared,
+                                                                  callee_name);
                     if (inferred.kind != MSLTypeKind::Unknown && inferred.kind != MSLTypeKind::Void)
                         return inferred;
                 }
@@ -3440,6 +4250,18 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                 : ctx.value_types[inst.operands[0]];
             if (DXILIRBuilder::isVectorType(source_type))
                 return DXILIRBuilder::scalarType(source_type);
+            break;
+        }
+        case LLVMInstruction::Select: {
+            MSLType true_type = inst.operands.size() > 1 && inst.operands[1] < ctx.value_types.size()
+                ? ctx.value_types[inst.operands[1]]
+                : MSLType{};
+            MSLType false_type = inst.operands.size() > 2 && inst.operands[2] < ctx.value_types.size()
+                ? ctx.value_types[inst.operands[2]]
+                : MSLType{};
+            MSLType selected = mergePredeclType(true_type, false_type);
+            if (DXILIRBuilder::isVectorType(selected))
+                return selected;
             break;
         }
         case LLVMInstruction::ShuffleVector:
@@ -3463,15 +4285,27 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         return type;
     };
 
+    auto instructionProducesValue = [&](const LLVMInstruction &inst) -> bool {
+        switch (inst.opcode) {
+        case LLVMInstruction::Ret:
+        case LLVMInstruction::Br:
+        case LLVMInstruction::Switch:
+        case LLVMInstruction::Unreachable:
+        case LLVMInstruction::Store:
+            return false;
+        default:
+            break;
+        }
+
+        MSLType type = resultTypeForPredecl(inst);
+        return type.kind != MSLTypeKind::Void;
+    };
+
     {
         uint32_t vc = fn.instruction_start_value;
         for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
             for (auto &inst : fn.blocks[bi].instructions) {
-                bool produces_value = inst.opcode != LLVMInstruction::Ret &&
-                                      inst.opcode != LLVMInstruction::Br &&
-                                      inst.opcode != LLVMInstruction::Switch &&
-                                      inst.opcode != LLVMInstruction::Unreachable &&
-                                      inst.opcode != LLVMInstruction::Store;
+                bool produces_value = instructionProducesValue(inst);
                 if (produces_value)
                     value_def_block[vc] = (uint32_t)bi;
                 if (inst.opcode == LLVMInstruction::PHI) {
@@ -3486,12 +4320,8 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
                     }
                     phi_info_per_block[(uint32_t)bi].push_back(pi);
                 }
-                switch (inst.opcode) {
-                case LLVMInstruction::Ret: case LLVMInstruction::Br:
-                case LLVMInstruction::Switch: case LLVMInstruction::Unreachable:
-                case LLVMInstruction::Store: break;
-                default: vc++; break;
-                }
+                if (produces_value)
+                    vc++;
             }
         }
     }
@@ -3516,8 +4346,13 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
             return;
         unresolved_referenced_values.insert(value_id);
         if (type_hint.kind != MSLTypeKind::Unknown && type_hint.kind != MSLTypeKind::Void &&
-            type_hint.kind != MSLTypeKind::Struct)
-            unresolved_reference_types[value_id] = type_hint;
+            type_hint.kind != MSLTypeKind::Struct) {
+            auto it = unresolved_reference_types.find(value_id);
+            if (it == unresolved_reference_types.end())
+                unresolved_reference_types[value_id] = type_hint;
+            else
+                it->second = mergePredeclType(it->second, type_hint);
+        }
     };
 
     for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
@@ -3560,11 +4395,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         uint32_t vc = fn.instruction_start_value;
         for (auto &block : fn.blocks) {
             for (auto &inst : block.instructions) {
-                bool produces_value = inst.opcode != LLVMInstruction::Ret &&
-                                      inst.opcode != LLVMInstruction::Br &&
-                                      inst.opcode != LLVMInstruction::Switch &&
-                                      inst.opcode != LLVMInstruction::Unreachable &&
-                                      inst.opcode != LLVMInstruction::Store;
+                bool produces_value = instructionProducesValue(inst);
                 if (produces_value && inst.opcode == LLVMInstruction::Alloca) {
                     std::string storage_class = "thread";
                     if (inst.type_id > 0 && inst.type_id < module.types.size()) {
@@ -3619,15 +4450,11 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
         uint32_t vc = fn.instruction_start_value;
         for (size_t bi = 0; bi < fn.blocks.size(); bi++) {
             for (auto &inst : fn.blocks[bi].instructions) {
-                bool produces_value = inst.opcode != LLVMInstruction::Ret &&
-                                      inst.opcode != LLVMInstruction::Br &&
-                                      inst.opcode != LLVMInstruction::Switch &&
-                                      inst.opcode != LLVMInstruction::Unreachable &&
-                                      inst.opcode != LLVMInstruction::Store;
+                bool produces_value = instructionProducesValue(inst);
                 MSLType static_type;
                 if (produces_value) {
                     if (ctx.value_types.size() <= vc) ctx.value_types.resize(vc + 1);
-                    static_type = resultTypeForPredecl(inst);
+                    static_type = mergePredeclType(ctx.value_types[vc], resultTypeForPredecl(inst));
                     ctx.value_types[vc] = static_type;
                 }
                 if (produces_value) {
@@ -3736,7 +4563,7 @@ std::optional<TypedMSLShader> MSLLowering::lower(const LLVMModule &module,
     os << "}\n";
 
     TypedMSLShader result;
-    result.source = os.str();
+    result.source = hardenGeneratedBoolVectorAssignments(os.str());
     result.entry_point = shader.entry_point;
     result.tg_size[0] = module.num_threads[0];
     result.tg_size[1] = module.num_threads[1];

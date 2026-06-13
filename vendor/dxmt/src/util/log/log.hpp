@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <cstdio>
 #include <fstream>
 #include <string>
 
@@ -68,6 +69,8 @@ private:
 
   static LogLevel getMinLogLevel();
 };
+
+FILE *openDiagnosticLog(const char *base);
 
 } // namespace dxmt
 

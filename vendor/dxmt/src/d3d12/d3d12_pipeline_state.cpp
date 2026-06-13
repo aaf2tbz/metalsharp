@@ -2,11 +2,12 @@
 #include "d3d12_device.hpp"
 #include "d3d12_root_signature.hpp"
 #include "d3d12_trace.hpp"
+#include "d3d12_vertex_input.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
 
-#define PTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_ps_args_debug.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define PTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-pso.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 #include "airconv_public.h"
 #include "dxmt_format.hpp"
 #include "dxil/dxil_container.hpp"
@@ -170,6 +171,8 @@ size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
                               const D3D12_INPUT_LAYOUT_DESC *input_layout) {
   size_t hash = 0;
   hash = hash * 131 + (size_t)type;
+  if (type == ShaderType::Vertex)
+    hash = hash * 131 + 0x4d3132506833ull; // M12 Phase 3 explicit varying contract.
   if (bytecode && size > 0) {
     const uint8_t *p = (const uint8_t *)bytecode;
     for (SIZE_T i = 0; i < size; i++)
@@ -239,6 +242,7 @@ size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
                                     DXGI_FORMAT dsv_format,
                                     UINT sample_count,
                                     UINT input_elements,
+                                    uint32_t ia_slot_mask,
                                     bool uses_stage_in) {
   size_t hash = vs_hash;
   hash = hash * 131 + ps_hash;
@@ -249,8 +253,24 @@ size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
   hash = hash * 131 + (size_t)dsv_format;
   hash = hash * 131 + (size_t)sample_count;
   hash = hash * 131 + (size_t)input_elements;
+  hash = hash * 131 + (size_t)ia_slot_mask;
   hash = hash * 131 + (uses_stage_in ? 1 : 0);
   return hash;
+}
+
+void WriteJsonString(FILE *df, const std::string &value) {
+  fputc('"', df);
+  for (char ch : value) {
+    switch (ch) {
+    case '\\': fputs("\\\\", df); break;
+    case '"': fputs("\\\"", df); break;
+    case '\n': fputs("\\n", df); break;
+    case '\r': fputs("\\r", df); break;
+    case '\t': fputs("\\t", df); break;
+    default: fputc(ch, df); break;
+    }
+  }
+  fputc('"', df);
 }
 
 void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
@@ -296,7 +316,9 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
                            SIZE_T gs_size, UINT num_render_targets,
                            const DXGI_FORMAT *rtv_formats,
                            DXGI_FORMAT dsv_format, UINT sample_count,
-                           UINT input_elements, bool uses_stage_in,
+                           UINT input_elements, uint32_t ia_slot_mask,
+                           const std::vector<D3D12IAInputElementInfo> &ia_elements,
+                           bool uses_stage_in,
                            bool uses_geometry_mesh,
                            bool rasterization_enabled,
                            uintptr_t vertex_function,
@@ -344,6 +366,24 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
   fprintf(df, "      \"stencil_format\": \"%s\",\n",
           PixelFormatManifestName(stencil_format));
   fprintf(df, "      \"sample_count\": %u,\n", sample_count ? sample_count : 1);
+  fprintf(df, "      \"input_layout\": { \"slot_mask\": \"0x%08x\", \"elements\": [\n",
+          ia_slot_mask);
+  for (size_t i = 0; i < ia_elements.size(); i++) {
+    const auto &element = ia_elements[i];
+    fprintf(df, "        { \"semantic\": ");
+    WriteJsonString(df, element.semantic_name);
+    fprintf(df, ", \"semantic_index\": %u, \"register\": %u, \"slot\": %u, \"table_index\": %u, \"table_indexing_mode\": \"%s\", \"offset\": %u, \"dxgi_format\": %u, \"metal_format\": %u, \"input_slot_class\": %u, \"class\": \"%s\", \"step_rate\": %u, \"system_value\": %s }%s\n",
+            element.semantic_index, element.shader_register,
+            element.input_slot, element.table_index,
+            D3D12VertexTableIndexingModeName(element.table_indexing_mode),
+            element.aligned_byte_offset, (unsigned)element.dxgi_format,
+            (unsigned)element.metal_format, (unsigned)element.input_slot_class,
+            element.per_instance ? "per_instance" : "per_vertex",
+            element.instance_step_rate,
+            element.system_value ? "true" : "false",
+            i + 1 == ia_elements.size() ? "" : ",");
+  }
+  fprintf(df, "      ] },\n");
   fprintf(df, "      \"vertex\": { \"hash\": \"%016zx\", \"metallib\": \"%s\", \"function\": \"vs_main\" },\n",
           vs_hash, vs_metallib_path);
   if (ps_size > 0) {
@@ -639,12 +679,6 @@ constexpr WMTStencilOperation kStencilOperationMap[] = {
     WMTStencilOperationDecrementWrap,
 };
 
-uint32_t AlignD3D12InputOffset(uint32_t offset, uint32_t size) {
-  uint32_t alignment = size < 4 ? size : 4;
-  if (alignment <= 1)
-    return offset;
-  return (offset + alignment - 1) & ~(alignment - 1);
-}
 } // namespace
 
 std::mutex MTLD3D12PipelineState::s_shader_mutex;
@@ -773,7 +807,8 @@ WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
   case DXGI_FORMAT_R16_FLOAT: return WMTPixelFormatR16Float;
   case DXGI_FORMAT_R32_FLOAT: return WMTPixelFormatR32Float;
   case DXGI_FORMAT_D32_FLOAT: return WMTPixelFormatDepth32Float;
-  case DXGI_FORMAT_D24_UNORM_S8_UINT: return WMTPixelFormatDepth24Unorm_Stencil8;
+  case DXGI_FORMAT_D24_UNORM_S8_UINT:
+    return WMTPixelFormatDepth32Float_Stencil8;
   case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: return WMTPixelFormatDepth32Float_Stencil8;
   case DXGI_FORMAT_D16_UNORM: return WMTPixelFormatDepth16Unorm;
   case DXGI_FORMAT_R16G16_FLOAT: return WMTPixelFormatRG16Float;
@@ -849,8 +884,16 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   sm50_error_t sm50_err = nullptr;
   sm50_shader_t shader = nullptr;
   MTL_SHADER_REFLECTION reflection = {};
+  std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
+  uint32_t ia_slot_mask = 0;
+  if (type == ShaderType::Vertex) {
+    BuildIAInputLayout(bytecode, size, ia_elements, ia_slot_mask);
+    m_ia_slot_mask = ia_slot_mask;
+  }
 
-  if (SM50Initialize(bytecode, size, &shader, &reflection, &sm50_err)) {
+  const uint32_t sm50_options = 0;
+  if (SM50InitializeWithOptions(bytecode, size, sm50_options,
+                                &shader, &reflection, &sm50_err)) {
     char err_buf[256] = {};
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
     SM50FreeError(sm50_err);
@@ -916,7 +959,38 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             DumpDXILModuleSummary(module_summary_path, *module, shader_info);
             PSTRACE("  DXIL module summary written to %s", module_summary_path);
 
-            auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader_info);
+            dxmt::dxil::MSLLoweringOptions lowering_options = {};
+            if (type == ShaderType::Vertex) {
+              lowering_options.vertex_inputs.reserve(m_ia_input_elements.size());
+              for (const auto &input : m_ia_input_elements) {
+                if (input.table_index >= kMetalD3D12VertexBufferSlotCount)
+                  continue;
+                dxmt::dxil::MSLVertexInputElement element = {};
+                element.shader_register = input.shader_register;
+                element.table_index = input.table_index;
+                element.input_slot = input.input_slot;
+                element.aligned_byte_offset = input.aligned_byte_offset;
+                element.dxgi_format = static_cast<uint32_t>(input.dxgi_format);
+                element.metal_format = static_cast<uint32_t>(input.metal_format);
+                element.per_instance = input.per_instance;
+                element.instance_step_rate = input.instance_step_rate;
+                element.table_indexing_mode =
+                    input.table_indexing_mode ==
+                            D3D12VertexTableIndexingMode::RawSlot
+                        ? dxmt::dxil::MSLVertexTableIndexingMode::RawSlot
+                        : dxmt::dxil::MSLVertexTableIndexingMode::
+                              CompactBySlotMask;
+                element.system_value = input.system_value;
+                lowering_options.vertex_inputs.push_back(element);
+                PSTRACE("  M12 vertex input map reg=%u slot=%u table=%u system=%u",
+                        element.shader_register, element.input_slot,
+                        element.table_index, element.system_value ? 1u : 0u);
+              }
+            }
+
+            auto typed_msl =
+                dxmt::dxil::MSLLowering::lower(*module, shader_info,
+                                               lowering_options);
             auto msl_result = typed_msl
                 ? std::optional<dxmt::dxil::MSLShader>(std::in_place, ToRuntimeMSLShader(std::move(*typed_msl)))
                 : dxmt::dxil::DXILToMSL::convert(*module, shader_info);
@@ -1011,7 +1085,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               }
 
               if (type == ShaderType::Vertex)
-                m_vs_uses_stage_in = true;
+                m_vs_uses_stage_in = false;
 
               if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
                 m_threadgroup_size.width = msl_result->tg_size[0];
@@ -1081,7 +1155,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                   s_shader_cache[hash] = out_func;
                 }
                 if (type == ShaderType::Vertex)
-                  m_vs_uses_stage_in = true;
+                  m_vs_uses_stage_in = false;
                 char *tg = strstr(rbuf, "\"tg_size\"");
                 if (tg) {
                   int tw=1,th=1,td=1;
@@ -1158,18 +1232,14 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             func_name, tgx, tgy, tgz);
   }
 
-  std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
   SM50_SHADER_IA_INPUT_LAYOUT_DATA ia_layout = {};
   SM50_SHADER_COMPILATION_ARGUMENT_DATA *compile_args =
       (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&common;
   if (type == ShaderType::Vertex) {
-    uint32_t slot_mask = 0;
-    BuildIAInputLayout(bytecode, size, ia_elements, slot_mask);
-    m_ia_slot_mask = slot_mask;
     ia_layout.next = &common;
     ia_layout.type = SM50_SHADER_IA_INPUT_LAYOUT;
     ia_layout.index_buffer_format = SM50_INDEX_BUFFER_FORMAT_NONE;
-    ia_layout.slot_mask = slot_mask;
+    ia_layout.slot_mask = ia_slot_mask;
     ia_layout.num_elements = (uint32_t)ia_elements.size();
     ia_layout.elements = ia_elements.data();
     compile_args = (SM50_SHADER_COMPILATION_ARGUMENT_DATA *)&ia_layout;
@@ -1270,9 +1340,10 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
 void MTLD3D12PipelineState::BuildIAInputLayout(
     const void *bytecode, SIZE_T size,
     std::vector<SM50_IA_INPUT_ELEMENT> &elements,
-    uint32_t &slot_mask) const {
+    uint32_t &slot_mask) {
   slot_mask = 0;
   elements.clear();
+  m_ia_input_elements.clear();
 
   if (!bytecode || !size || !m_input_layout.NumElements ||
       !m_input_layout.pInputElementDescs)
@@ -1288,62 +1359,118 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
 
   const D3D11_SIGNATURE_PARAMETER *params = nullptr;
   uint32_t param_count = parser.GetParameters(&params);
-  uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
+  std::vector<D3D12IAInputLayoutElementMetadata> layout_metadata;
+  std::vector<D3D12IAInputSignatureElementMetadata> signature_metadata;
+  layout_metadata.reserve(m_input_layout.NumElements);
+  signature_metadata.reserve(param_count);
 
   for (UINT i = 0; i < m_input_layout.NumElements; i++) {
     const auto &desc = m_input_layout.pInputElementDescs[i];
     if (desc.InputSlot >= kMetalD3D12VertexBufferSlotCount) {
       PSTRACE("BuildIAInputLayout skip[%u]: slot %u outside cap %u",
               i, desc.InputSlot, kMetalD3D12VertexBufferSlotCount);
-      continue;
     }
 
     MTL_DXGI_FORMAT_DESC metal_format = {};
-    if (FAILED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), desc.Format, metal_format)) ||
-        !metal_format.AttributeFormat || !metal_format.BytesPerTexel) {
+    bool supported_format =
+        SUCCEEDED(MTLQueryDXGIFormat(m_device->GetMTLDevice(), desc.Format,
+                                     metal_format)) &&
+        metal_format.AttributeFormat && metal_format.BytesPerTexel;
+    if (!supported_format) {
       PSTRACE("BuildIAInputLayout skip[%u]: unsupported fmt=%u",
               i, (unsigned)desc.Format);
-      continue;
     }
 
-    auto *sig = std::find_if(
-        params, params + param_count,
-        [&](const D3D11_SIGNATURE_PARAMETER &input_sig) {
-          return input_sig.SystemValue == D3D10_SB_NAME_UNDEFINED &&
-                 desc.SemanticIndex == input_sig.SemanticIndex &&
-                 desc.SemanticName && input_sig.SemanticName &&
-                 strcasecmp(desc.SemanticName, input_sig.SemanticName) == 0;
-        });
-    if (sig == params + param_count) {
-      PSTRACE("BuildIAInputLayout skip[%u]: semantic %s%u not consumed by VS",
-              i, desc.SemanticName ? desc.SemanticName : "?", desc.SemanticIndex);
-      continue;
-    }
-
-    uint32_t aligned_offset =
-        desc.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
-            ? AlignD3D12InputOffset(append_offset[desc.InputSlot],
-                                    metal_format.BytesPerTexel)
-            : desc.AlignedByteOffset;
-    append_offset[desc.InputSlot] = aligned_offset + metal_format.BytesPerTexel;
-
-    SM50_IA_INPUT_ELEMENT element = {};
-    element.reg = sig->Register;
-    element.slot = desc.InputSlot;
-    element.aligned_byte_offset = aligned_offset;
-    element.format = metal_format.AttributeFormat;
-    element.step_function =
-        desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA;
-    element.step_rate =
+    D3D12IAInputLayoutElementMetadata element = {};
+    element.semantic_name = desc.SemanticName ? desc.SemanticName : "";
+    element.semantic_index = desc.SemanticIndex;
+    element.input_slot = desc.InputSlot;
+    element.aligned_byte_offset = desc.AlignedByteOffset;
+    element.dxgi_format = desc.Format;
+    element.metal_format = metal_format.AttributeFormat;
+    element.bytes_per_texel = metal_format.BytesPerTexel;
+    element.input_slot_class =
+        desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+            ? D3D12VertexInputSlotClass::PerInstance
+            : D3D12VertexInputSlotClass::PerVertex;
+    element.instance_step_rate =
         desc.InputSlotClass == D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
             ? desc.InstanceDataStepRate
             : 1;
+    element.supported_format = supported_format;
+    layout_metadata.push_back(std::move(element));
+  }
+
+  for (uint32_t i = 0; i < param_count; i++) {
+    D3D12IAInputSignatureElementMetadata input_sig = {};
+    input_sig.semantic_name = params[i].SemanticName ? params[i].SemanticName : "";
+    input_sig.semantic_index = params[i].SemanticIndex;
+    input_sig.shader_register = params[i].Register;
+    input_sig.system_value = params[i].SystemValue != D3D10_SB_NAME_UNDEFINED;
+    signature_metadata.push_back(std::move(input_sig));
+  }
+
+  auto metadata = D3D12BuildIAInputLayoutMetadata(
+      layout_metadata, signature_metadata, kMetalD3D12VertexBufferSlotCount,
+      D3D12_APPEND_ALIGNED_ELEMENT);
+  slot_mask = metadata.slot_mask;
+
+  for (UINT i = 0; i < m_input_layout.NumElements; i++) {
+    const auto &desc = m_input_layout.pInputElementDescs[i];
+    bool consumed = std::any_of(
+        metadata.elements.begin(), metadata.elements.end(),
+        [&](const D3D12ResolvedIAInputElementMetadata &input) {
+          return !input.system_value &&
+                 input.semantic_index == desc.SemanticIndex &&
+                 input.input_slot == desc.InputSlot && desc.SemanticName &&
+                 D3D12SemanticNameEquals(input.semantic_name, desc.SemanticName);
+        });
+    if (!consumed && desc.InputSlot < kMetalD3D12VertexBufferSlotCount)
+      PSTRACE("BuildIAInputLayout skip[%u]: semantic %s%u not consumed by VS",
+              i, desc.SemanticName ? desc.SemanticName : "?",
+              desc.SemanticIndex);
+  }
+
+  for (const auto &resolved : metadata.elements) {
+    D3D12IAInputElementInfo info = {};
+    info.semantic_name = resolved.semantic_name;
+    info.semantic_index = resolved.semantic_index;
+    info.shader_register = resolved.shader_register;
+    info.input_slot = resolved.input_slot;
+    info.table_index = resolved.table_index;
+    info.table_indexing_mode = resolved.table_indexing_mode;
+    info.aligned_byte_offset = resolved.aligned_byte_offset;
+    info.dxgi_format = static_cast<DXGI_FORMAT>(resolved.dxgi_format);
+    info.metal_format = static_cast<WMTAttributeFormat>(resolved.metal_format);
+    info.input_slot_class =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance
+            ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
+            : D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+    info.per_instance =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance;
+    info.instance_step_rate = resolved.instance_step_rate;
+    info.system_value = resolved.system_value;
+    m_ia_input_elements.push_back(std::move(info));
+
+    if (resolved.system_value)
+      continue;
+
+    SM50_IA_INPUT_ELEMENT element = {};
+    element.reg = resolved.shader_register;
+    element.slot = resolved.input_slot;
+    element.aligned_byte_offset = resolved.aligned_byte_offset;
+    element.format = resolved.metal_format;
+    element.step_function =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance;
+    element.step_rate =
+        resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance
+            ? resolved.instance_step_rate
+            : 1;
     elements.push_back(element);
-    slot_mask |= 1u << desc.InputSlot;
 
     PSTRACE("BuildIAInputLayout element[%zu]: semantic=%s%u reg=%u slot=%u offset=%u fmt=%u step=%u/%u",
-            elements.size() - 1, desc.SemanticName ? desc.SemanticName : "?",
-            desc.SemanticIndex, element.reg, element.slot,
+            elements.size() - 1, resolved.semantic_name.c_str(),
+            resolved.semantic_index, element.reg, element.slot,
             element.aligned_byte_offset, element.format,
             element.step_function, element.step_rate);
   }
@@ -1470,12 +1597,16 @@ bool MTLD3D12PipelineState::Compile() {
                        : ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
                                                 ShaderType::Geometry, nullptr);
 
-  if (!m_hs.empty() || !m_ds.empty()) {
-    return RecordCompileFailure(
-        "pso/unsupported_tessellation",
-        str::format("Graphics PSO uses HS bytes=", m_hs.size(),
-                    " DS bytes=", m_ds.size(),
-                    " but D3D12 tessellation is not implemented"));
+  const bool tessellation_fallback = !m_hs.empty() || !m_ds.empty();
+  m_uses_tessellation_fallback = tessellation_fallback;
+  if (tessellation_fallback) {
+    Logger::warn(str::format(
+        "D3D12 tessellation fallback: compiling VS/PS-only render PSO "
+        "HS bytes=",
+        m_hs.size(), " DS bytes=", m_ds.size(),
+        " topology=", (unsigned)m_topology));
+    PSTRACE("D3D12 tessellation fallback pso=%p hs=%zu ds=%zu topo=%u",
+            (void *)this, m_hs.size(), m_ds.size(), (unsigned)m_topology);
   }
 
   if (!m_gs.empty()) {
@@ -1511,7 +1642,7 @@ bool MTLD3D12PipelineState::Compile() {
   if (ps_func.handle)
     info.fragment_function = ps_func.handle;
 
-  info.rasterization_enabled = (m_rasterizer_desc.FillMode != D3D12_FILL_MODE_WIREFRAME);
+  info.rasterization_enabled = true;
   info.raster_sample_count = m_sample_count ? m_sample_count : 1;
 
   for (UINT i = 0; i < m_num_render_targets && i < 8; i++) {
@@ -1577,6 +1708,9 @@ bool MTLD3D12PipelineState::Compile() {
   case D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT: info.input_primitive_topology = WMTPrimitiveTopologyClassPoint; break;
   case D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE: info.input_primitive_topology = WMTPrimitiveTopologyClassLine; break;
   case D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE: info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle; break;
+  case D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH:
+    info.input_primitive_topology = WMTPrimitiveTopologyClassTriangle;
+    break;
   default: info.input_primitive_topology = WMTPrimitiveTopologyClassUnspecified; break;
   }
 
@@ -1661,8 +1795,8 @@ bool MTLD3D12PipelineState::Compile() {
 
       uint32_t aligned_offset =
           el.AlignedByteOffset == D3D12_APPEND_ALIGNED_ELEMENT
-              ? AlignD3D12InputOffset(append_offset[el.InputSlot],
-                                      metal_format.BytesPerTexel)
+              ? D3D12ResolveAlignedInputOffset(append_offset[el.InputSlot],
+                                               metal_format.BytesPerTexel)
               : el.AlignedByteOffset;
       uint32_t end = aligned_offset + metal_format.BytesPerTexel;
       append_offset[el.InputSlot] = end;
@@ -1699,7 +1833,7 @@ bool MTLD3D12PipelineState::Compile() {
       PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
   }
-  {
+  if (m_vs_uses_stage_in) {
     constexpr uint32_t kSyntheticStageInAttributes = 16;
     constexpr uint32_t kSyntheticStageInStride = 16 * kSyntheticStageInAttributes;
     for (uint32_t i = 0; i < kSyntheticStageInAttributes && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
@@ -1757,57 +1891,57 @@ bool MTLD3D12PipelineState::Compile() {
     size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
         vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
         m_dsv_format, m_sample_count ? m_sample_count : 1,
-        m_input_layout.NumElements, m_vs_uses_stage_in);
+        m_input_layout.NumElements, m_ia_slot_mask, m_vs_uses_stage_in);
     DumpRenderPSOManifest(
         pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
         m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
         m_sample_count ? m_sample_count : 1, m_input_layout.NumElements,
+        m_ia_slot_mask, m_ia_input_elements,
         m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
         info.rasterization_enabled, (uintptr_t)vs_func.handle,
         (uintptr_t)ps_func.handle);
   }
 
-  if (m_depth_stencil_desc.DepthEnable || m_depth_stencil_desc.StencilEnable) {
-    struct WMTDepthStencilInfo ds_info = {};
-    ds_info.depth_compare_function = WMTCompareFunctionAlways;
-    ds_info.depth_write_enabled = false;
-    ds_info.front_stencil.enabled = false;
-    ds_info.back_stencil.enabled = false;
-    if (m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
-        m_depth_stencil_desc.DepthFunc <= D3D12_COMPARISON_FUNC_ALWAYS) {
-      ds_info.depth_compare_function =
-          kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
-    }
-    ds_info.depth_write_enabled =
-        m_depth_stencil_desc.DepthEnable &&
-        m_depth_stencil_desc.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL;
-    if (m_depth_stencil_desc.StencilEnable) {
-      ds_info.front_stencil.enabled = true;
-      ds_info.front_stencil.depth_stencil_pass_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilPassOp];
-      ds_info.front_stencil.stencil_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilFailOp];
-      ds_info.front_stencil.depth_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilDepthFailOp];
-      ds_info.front_stencil.stencil_compare_function =
-          kCompareFunctionMap[m_depth_stencil_desc.FrontFace.StencilFunc];
-      ds_info.front_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
-      ds_info.front_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
-
-      ds_info.back_stencil.enabled = true;
-      ds_info.back_stencil.depth_stencil_pass_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilPassOp];
-      ds_info.back_stencil.stencil_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilFailOp];
-      ds_info.back_stencil.depth_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilDepthFailOp];
-      ds_info.back_stencil.stencil_compare_function =
-          kCompareFunctionMap[m_depth_stencil_desc.BackFace.StencilFunc];
-      ds_info.back_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
-      ds_info.back_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
-    }
-    m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
+  struct WMTDepthStencilInfo ds_info = {};
+  ds_info.depth_compare_function = WMTCompareFunctionAlways;
+  ds_info.depth_write_enabled = false;
+  ds_info.front_stencil.enabled = false;
+  ds_info.back_stencil.enabled = false;
+  if (m_depth_stencil_desc.DepthEnable &&
+      m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
+      m_depth_stencil_desc.DepthFunc <= D3D12_COMPARISON_FUNC_ALWAYS) {
+    ds_info.depth_compare_function =
+        kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
   }
+  ds_info.depth_write_enabled =
+      m_depth_stencil_desc.DepthEnable &&
+      m_depth_stencil_desc.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL;
+  if (m_depth_stencil_desc.StencilEnable) {
+    ds_info.front_stencil.enabled = true;
+    ds_info.front_stencil.depth_stencil_pass_op =
+        kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilPassOp];
+    ds_info.front_stencil.stencil_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilFailOp];
+    ds_info.front_stencil.depth_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilDepthFailOp];
+    ds_info.front_stencil.stencil_compare_function =
+        kCompareFunctionMap[m_depth_stencil_desc.FrontFace.StencilFunc];
+    ds_info.front_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
+    ds_info.front_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
+
+    ds_info.back_stencil.enabled = true;
+    ds_info.back_stencil.depth_stencil_pass_op =
+        kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilPassOp];
+    ds_info.back_stencil.stencil_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilFailOp];
+    ds_info.back_stencil.depth_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilDepthFailOp];
+    ds_info.back_stencil.stencil_compare_function =
+        kCompareFunctionMap[m_depth_stencil_desc.BackFace.StencilFunc];
+    ds_info.back_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
+    ds_info.back_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
+  }
+  m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
 
   {
     PTRACE("VS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
@@ -1915,6 +2049,8 @@ void MTLD3D12PipelineState::SetGraphicsDesc(
                         desc.StreamOutput.pSODeclaration ||
                         desc.StreamOutput.pBufferStrides;
   m_vs_uses_stage_in = false;
+  m_ia_slot_mask = 0;
+  m_ia_input_elements.clear();
   m_input_elements.clear();
   m_input_semantic_names.clear();
   m_input_layout = {};
@@ -1949,6 +2085,8 @@ void MTLD3D12PipelineState::SetComputeDesc(
     m_cs.resize(desc.CS.BytecodeLength);
     memcpy(m_cs.data(), desc.CS.pShaderBytecode, desc.CS.BytecodeLength);
   }
+  m_ia_slot_mask = 0;
+  m_ia_input_elements.clear();
 }
 
 HRESULT STDMETHODCALLTYPE

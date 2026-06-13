@@ -21,12 +21,37 @@ static void append_hex(char *dst, unsigned long value) {
   dst[10] = '\0';
 }
 
+static void bootstrap_log_path(char *dst, DWORD size) {
+  char root[MAX_PATH * 4];
+  char file[MAX_PATH];
+  DWORD root_len = GetEnvironmentVariableA("DXMT_LOG_PATH", root, sizeof(root));
+  DWORD file_len = GetEnvironmentVariableA("DXMT_LOG_FILE", file, sizeof(file));
+
+  if (!file_len || file_len >= sizeof(file))
+    lstrcpynA(file, "dxmt-dxgi-bootstrap.log", sizeof(file));
+
+  if (!root_len || root_len >= sizeof(root)) {
+    lstrcpynA(dst, file, size);
+    return;
+  }
+
+  lstrcpynA(dst, root, size);
+  if (dst[0]) {
+    DWORD len = lstrlenA(dst);
+    if (len + 1 < size && dst[len - 1] != '\\' && dst[len - 1] != '/')
+      lstrcatA(dst, "/");
+  }
+  lstrcatA(dst, file);
+}
+
 static void bootstrap_trace(const char *message) {
   if (!bootstrap_trace_enabled())
     return;
 
+  char path[MAX_PATH * 4];
+  bootstrap_log_path(path, sizeof(path));
   HANDLE file = CreateFileA(
-      "Z:\\tmp\\dxmt_dxgi_bootstrap.log",
+      path,
       FILE_APPEND_DATA,
       FILE_SHARE_READ | FILE_SHARE_WRITE,
       NULL,
