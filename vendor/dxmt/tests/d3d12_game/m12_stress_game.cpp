@@ -21,6 +21,20 @@ static constexpr UINT kMaxSceneVertices = 20000;
 static constexpr UINT kRunSeconds = 15;
 static constexpr float kSplashSeconds = 5.0f;
 
+static bool envEnabled(const char *name) {
+  const char *value = std::getenv(name);
+  return value && value[0] && value[0] != '0';
+}
+
+static float envFloat(const char *name, float fallback) {
+  const char *value = std::getenv(name);
+  if (!value || !value[0])
+    return fallback;
+  char *end = nullptr;
+  float parsed = std::strtof(value, &end);
+  return end && end != value ? parsed : fallback;
+}
+
 static UINT alignUp(UINT value, UINT alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -1315,6 +1329,12 @@ static void barrier(ID3D12GraphicsCommandList *cmd, ID3D12Resource *resource,
 }
 
 static bool runStress(Harness &h, UINT seconds) {
+  float splashSeconds = envFloat("M12_STRESS_SPLASH_SECONDS", kSplashSeconds);
+  if (envEnabled("M12_STRESS_SCENE_ONLY"))
+    splashSeconds = 0.0f;
+  std::printf("[INFO] stress config splash_seconds=%.3f scene_only=%u\n",
+              splashSeconds, envEnabled("M12_STRESS_SCENE_ONLY") ? 1u : 0u);
+
   Vertex sceneVertices[kMaxSceneVertices] = {};
   UINT sceneVertexCount = makeBeachScene(sceneVertices);
   Vertex microTriangle[3] = {
@@ -1538,7 +1558,8 @@ static bool runStress(Harness &h, UINT seconds) {
     h.cmd->RSSetViewports(1, &viewport);
     h.cmd->RSSetScissorRects(1, &scissor);
 
-    if (elapsed < kSplashSeconds) {
+    const bool inSplash = elapsed < splashSeconds;
+    if (inSplash) {
       h.cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
       h.cmd->SetGraphicsRootSignature(splashRoot);
       h.cmd->SetPipelineState(splashPso);
@@ -1547,6 +1568,10 @@ static bool runStress(Harness &h, UINT seconds) {
       h.cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
       h.cmd->DrawInstanced(4, 1, 0, 0);
     } else {
+      if (frame == 0 || (frame % 30) == 0) {
+        std::printf("[INFO] stress scene record frame=%u elapsed=%.3f expected_draws=10 vertices=%u instances=%u\n",
+                    frame, elapsed, sceneVertexCount, kInstanceCount);
+      }
       h.cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
       h.cmd->SetGraphicsRootSignature(sceneRoot);
       h.cmd->SetPipelineState(scenePso);
@@ -1598,6 +1623,13 @@ static bool runStress(Harness &h, UINT seconds) {
       break;
     ID3D12CommandList *lists[] = {h.cmd};
     h.queue->ExecuteCommandLists(1, lists);
+    if (envEnabled("M12_STRESS_READBACK_BEFORE_PRESENT") && (frame % 30) == 0) {
+      ReadbackStats stats = analyzeReadback(readback, readbackPitch);
+      std::printf("[INFO] stress pre-present frame=%u phase=%s bright=%u chroma=%u checksum=0x%016llx\n",
+                  frame, inSplash ? "splash" : "scene", stats.brightPixels,
+                  stats.chromaPixels,
+                  static_cast<unsigned long long>(stats.checksum));
+    }
     hr = h.swapchain->Present(1, 0);
     ok = checkHr("Present", hr) && waitForGpu(h);
     if (!ok)
@@ -1605,7 +1637,6 @@ static bool runStress(Harness &h, UINT seconds) {
 
     if ((frame % 30) == 0) {
       ReadbackStats stats = analyzeReadback(readback, readbackPitch);
-      const bool inSplash = elapsed < kSplashSeconds;
       std::printf("[INFO] stress frame=%u phase=%s bright=%u chroma=%u checksum=0x%016llx\n",
                   frame, inSplash ? "splash" : "scene", stats.brightPixels, stats.chromaPixels,
                   static_cast<unsigned long long>(stats.checksum));
