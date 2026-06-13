@@ -344,12 +344,7 @@ fn bundled_file_valid_exists(name: &str) -> bool {
 }
 
 fn install_rosetta() -> Result<bool, String> {
-    let plist = PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist");
-    if plist.exists() {
-        return Ok(false);
-    }
-    let running = mac_cmd("pgrep").args(["-q", "oahd"]).status().map(|s| s.success()).unwrap_or(false);
-    if running {
+    if crate::platform::rosetta_is_installed() {
         return Ok(false);
     }
 
@@ -358,7 +353,10 @@ fn install_rosetta() -> Result<bool, String> {
         .output()
         .map_err(|e| format!("failed to run softwareupdate: {}", e))?;
 
-    if output.status.success() || String::from_utf8_lossy(&output.stderr).contains("already installed") {
+    if output.status.success()
+        || String::from_utf8_lossy(&output.stderr).contains("already installed")
+        || crate::platform::rosetta_is_installed()
+    {
         Ok(true)
     } else {
         Err(format!("rosetta install failed: {}", String::from_utf8_lossy(&output.stderr)))

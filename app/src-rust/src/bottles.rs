@@ -5037,7 +5037,7 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "gpu_vendor_stubs" => "DXMT open-source NVAPI/NVNGX stubs from lib/dxmt/x86_64-windows",
             "gptk_amd_stub" => "GPTK AMD vendor stub (deprecated — GPTK 4.0 no longer ships atidxx64.dll)",
             "gptk" => "Apple Game Porting Toolkit — provides Wine with D3DMetal.framework 4.0 (brew install game-porting-toolkit)",
-            "rosetta" => "Apple Rosetta 2 x86_64 emulation layer — required for GPTK Wine (softwareupdate --install-rosetta)",
+            "rosetta" => "Apple Rosetta 2 x86_64 emulation layer - required for MetalSharp Wine/DXMT routes, including M12",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
