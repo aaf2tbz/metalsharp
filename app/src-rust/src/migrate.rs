@@ -2296,6 +2296,7 @@ mod tests {
         )
         .expect("create bottle prefix payload");
         fs::write(bottle.join("bottle.json"), br#"{"id":"steam_620","profile":"m9"}"#).expect("write bottle settings");
+        fs::write(bottle.join("settings.toml"), b"pipeline = \"m12\"\n").expect("write bottle config");
         fs::write(
             bottle
                 .join("prefix")
@@ -2331,10 +2332,17 @@ mod tests {
         fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
         remove_old_runtime(&ms_dir);
         restore_user_data(&ms_dir, &preserved);
+        write_runtime_core(&ms_dir);
+        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
+            .expect("stage refreshed runtime after restore");
 
         assert_eq!(
             fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
             r#"{"id":"steam_620","profile":"m9"}"#
+        );
+        assert_eq!(
+            fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("settings.toml")).unwrap(),
+            "pipeline = \"m12\"\n"
         );
         assert!(!ms_dir.join("bottles").join("steam_620").join("prefix").exists());
         assert!(!find_descendant_named(&ms_dir.join("bottles"), "portal2.exe"));

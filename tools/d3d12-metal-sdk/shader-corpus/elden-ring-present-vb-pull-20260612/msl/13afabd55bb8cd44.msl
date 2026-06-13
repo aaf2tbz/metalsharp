@@ -1,0 +1,265 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// metalsharp.binding_manifest.v1
+// direct_buffers=31 direct_textures=4 direct_samplers=4
+// range kind=srv space=0 lower=0 count=3
+// range kind=srv space=0 lower=3 count=1
+// range kind=srv space=0 lower=2 count=2
+
+struct input_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct output_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct vertex_input_v {
+};
+
+fragment float4 ps_main(
+  input_v in [[stage_in]],
+  device char* buf0 [[buffer(0)]],
+  device char* buf1 [[buffer(1)]],
+  device char* buf2 [[buffer(2)]],
+  device char* buf3 [[buffer(3)]],
+  device char* buf4 [[buffer(4)]],
+  device char* buf5 [[buffer(5)]],
+  device char* buf6 [[buffer(6)]],
+  device char* buf7 [[buffer(7)]],
+  device char* buf8 [[buffer(8)]],
+  device char* buf9 [[buffer(9)]],
+  device char* buf10 [[buffer(10)]],
+  device char* buf11 [[buffer(11)]],
+  device char* buf12 [[buffer(12)]],
+  device char* buf13 [[buffer(13)]],
+  device char* buf14 [[buffer(14)]],
+  device char* buf15 [[buffer(15)]],
+  device char* buf16 [[buffer(16)]],
+  device char* buf17 [[buffer(17)]],
+  device char* buf18 [[buffer(18)]],
+  device char* buf19 [[buffer(19)]],
+  device char* buf20 [[buffer(20)]],
+  device char* buf21 [[buffer(21)]],
+  device char* buf22 [[buffer(22)]],
+  device char* buf23 [[buffer(23)]],
+  device char* buf24 [[buffer(24)]],
+  device char* buf25 [[buffer(25)]],
+  device char* buf26 [[buffer(26)]],
+  device char* buf27 [[buffer(27)]],
+  device char* buf28 [[buffer(28)]],
+  device char* buf29 [[buffer(29)]],
+  device char* buf30 [[buffer(30)]],
+  texture2d<float, access::sample> tex0 [[texture(0)]],
+  texture2d<float, access::sample> tex1 [[texture(1)]],
+  texture2d<float, access::sample> tex2 [[texture(2)]],
+  texture2d<float, access::sample> tex3 [[texture(3)]],
+  sampler samp0 [[sampler(0)]],
+  sampler samp1 [[sampler(1)]],
+  sampler samp2 [[sampler(2)]],
+  sampler samp3 [[sampler(3)]]
+) {
+  float4 result = float4(0,0,0,1);
+  int v0 = 0; // unresolved value pre-decl
+  int v1 = 0; // unresolved value pre-decl
+  int v2 = 0; // unresolved value pre-decl
+  int v3 = 0; // unresolved value pre-decl
+  float v62 = in.v0.x;
+  float v63 = in.v0.y;
+  float4 v64 = float4((reinterpret_cast<device float4&>(buf2[((int)(3))*64])));
+  float v65 = (v64).x;
+  float v66 = (v64).y;
+  float v67 = (v64).z;
+  float4 v68 = float4((reinterpret_cast<device float4&>(buf2[((int)(6))*64])));
+  float v69 = (v68).x;
+  float4 v70 = float4((reinterpret_cast<device float4&>(buf4[((int)(0))*64])));
+  float v71 = (v70).x;
+  float v72 = (v70).y;
+  float v73 = v71 * v62;
+  float v74 = v72 * v63;
+  float v76 = (tex3.sample(samp1, float2(v73, v74))).x;
+  float v77 = (tex3.sample(samp1, float2(v73, v74))).y;
+  float4 v78 = float4((reinterpret_cast<device float4&>(buf2[((int)(25))*64])));
+  float v79 = (v78).y;
+  float v80 = v79 * v76;
+  float v82 = (tex0.sample(samp1, float2(v73, v74))).x;
+  float v83 = (tex0.sample(samp1, float2(v73, v74))).y;
+  float v84 = (tex0.sample(samp1, float2(v73, v74))).z;
+  float v85 = v62 - v80;
+  float v86 = v63 - v77;
+  float4 v87 = float4((reinterpret_cast<device float4&>(buf4[((int)(2))*64])));
+  float v88 = (v87).x;
+  float v89 = (v87).y;
+  float v90 = (v87).z;
+  float v91 = (v87).w;
+  float v92 = v90 * 0.5f;
+  float v93 = v91 * 0.5f;
+  float v94 = v88 - v92;
+  float v95 = v89 - v93;
+  float v96 = v88 * v85;
+  float v97 = v89 * v86;
+  float v98 = min(static_cast<float>(v96), static_cast<float>(v94));
+  float v99 = min(static_cast<float>(v97), static_cast<float>(v95));
+  float v101 = (tex3.sample(samp1, float2(v98, v99))).x;
+  float v102 = (tex3.sample(samp1, float2(v98, v99))).y;
+  float v103 = (tex3.sample(samp1, float2(v98, v99))).z;
+  float4 v104 = float4((reinterpret_cast<device float4&>(buf2[((int)(10))*64])));
+  float v105 = (v104).z;
+  float v106 = v105 * v101;
+  float v107 = v105 * v102;
+  float v108 = v105 * v103;
+  float4 v109 = float4((reinterpret_cast<device float4&>(buf2[((int)(21))*64])));
+  float v110 = (v109).w;
+  float v111 = v110 * 2.0f;
+  float v112 = v74 - v111;
+  float v113 = (v70).z;
+  float v114 = (v70).w;
+  float v115 = v113 * 0.5f;
+  float v116 = v114 * 0.5f;
+  float v117 = v71 - v115;
+  float v118 = v72 - v116;
+  float v119 = min(static_cast<float>(v73), static_cast<float>(v117));
+  float v120 = min(static_cast<float>(v112), static_cast<float>(v118));
+  float v122 = (tex0.sample(samp1, float2(v119, v120))).x;
+  float v123 = (tex0.sample(samp1, float2(v119, v120))).y;
+  float v124 = (tex0.sample(samp1, float2(v119, v120))).z;
+  float v125 = v111 + v74;
+  float v126 = min(static_cast<float>(v125), static_cast<float>(v118));
+  float v128 = (tex0.sample(samp1, float2(v119, v126))).x;
+  float v129 = (tex0.sample(samp1, float2(v119, v126))).y;
+  float v130 = (tex0.sample(samp1, float2(v119, v126))).z;
+  float v131 = (v109).z;
+  float v132 = v131 * 2.0f;
+  float v133 = v73 - v132;
+  float v134 = min(static_cast<float>(v133), static_cast<float>(v117));
+  float v135 = min(static_cast<float>(v74), static_cast<float>(v118));
+  float v137 = (tex0.sample(samp1, float2(v134, v135))).x;
+  float v138 = (tex0.sample(samp1, float2(v134, v135))).y;
+  float v139 = (tex0.sample(samp1, float2(v134, v135))).z;
+  float v140 = v132 + v73;
+  float v141 = min(static_cast<float>(v140), static_cast<float>(v117));
+  float v143 = (tex0.sample(samp1, float2(v141, v135))).x;
+  float v144 = (tex0.sample(samp1, float2(v141, v135))).y;
+  float v145 = (tex0.sample(samp1, float2(v141, v135))).z;
+  float v146 = min(static_cast<float>(v137), static_cast<float>(v143));
+  float v147 = min(static_cast<float>(v138), static_cast<float>(v144));
+  float v148 = min(static_cast<float>(v139), static_cast<float>(v145));
+  float v149 = min(static_cast<float>(v122), static_cast<float>(v128));
+  float v150 = min(static_cast<float>(v123), static_cast<float>(v129));
+  float v151 = min(static_cast<float>(v124), static_cast<float>(v130));
+  float v152 = min(static_cast<float>(v149), static_cast<float>(v146));
+  float v153 = min(static_cast<float>(v150), static_cast<float>(v147));
+  float v154 = min(static_cast<float>(v151), static_cast<float>(v148));
+  float v155 = min(static_cast<float>(v152), static_cast<float>(v82));
+  float v156 = min(static_cast<float>(v153), static_cast<float>(v83));
+  float v157 = min(static_cast<float>(v154), static_cast<float>(v84));
+  float v158 = max(static_cast<float>(v137), static_cast<float>(v143));
+  float v159 = max(static_cast<float>(v138), static_cast<float>(v144));
+  float v160 = max(static_cast<float>(v139), static_cast<float>(v145));
+  float v161 = max(static_cast<float>(v122), static_cast<float>(v128));
+  float v162 = max(static_cast<float>(v123), static_cast<float>(v129));
+  float v163 = max(static_cast<float>(v124), static_cast<float>(v130));
+  float v164 = max(static_cast<float>(v161), static_cast<float>(v158));
+  float v165 = max(static_cast<float>(v162), static_cast<float>(v159));
+  float v166 = max(static_cast<float>(v163), static_cast<float>(v160));
+  float v167 = max(static_cast<float>(v164), static_cast<float>(v82));
+  float v168 = max(static_cast<float>(v165), static_cast<float>(v83));
+  float v169 = max(static_cast<float>(v166), static_cast<float>(v84));
+  float v170 = max(static_cast<float>(v106), static_cast<float>(v155));
+  float v171 = max(static_cast<float>(v107), static_cast<float>(v156));
+  float v172 = max(static_cast<float>(v108), static_cast<float>(v157));
+  float v173 = min(static_cast<float>(v170), static_cast<float>(v167));
+  float v174 = min(static_cast<float>(v171), static_cast<float>(v168));
+  float v175 = min(static_cast<float>(v172), static_cast<float>(v169));
+  float v176 = (v104).y;
+  float v177 = v173 + 9.99999975e-05f;
+  float v178 = v174 + 9.99999975e-05f;
+  float v179 = v175 + 9.99999975e-05f;
+  float v180 = log2(static_cast<float>(v177));
+  float v181 = log2(static_cast<float>(v178));
+  float v182 = log2(static_cast<float>(v179));
+  float v183 = v82 + 9.99999975e-05f;
+  float v184 = v83 + 9.99999975e-05f;
+  float v185 = v84 + 9.99999975e-05f;
+  float v186 = log2(static_cast<float>(v183));
+  float v187 = log2(static_cast<float>(v184));
+  float v188 = log2(static_cast<float>(v185));
+  float v189 = v180 - v186;
+  float v190 = v181 - v187;
+  float v191 = v182 - v188;
+  float v192 = v189 * v176;
+  float v193 = v190 * v176;
+  float v194 = v191 * v176;
+  float v195 = v192 + v186;
+  float v196 = v193 + v187;
+  float v197 = v194 + v188;
+  float v198 = exp2(static_cast<float>(v195));
+  float v199 = exp2(static_cast<float>(v196));
+  float v200 = exp2(static_cast<float>(v197));
+  float v201 = v198 + -9.99999975e-05f;
+  float v202 = v199 + -9.99999975e-05f;
+  float v203 = v200 + -9.99999975e-05f;
+  bool v204 = 0; // call dx.op.isSpecialFloat.f32(8, v201)
+  bool v205 = 0; // call dx.op.isSpecialFloat.f32(8, v202)
+  bool v206 = 0; // call dx.op.isSpecialFloat.f32(8, v203)
+  bool v207 = (v204 | v205 != 0);
+  bool v208 = (v207 | v206 != 0);
+  float v209 = (v208 ? 0 : v201);
+  float v210 = (v208 ? 0 : v202);
+  float v211 = (v208 ? 0 : v203);
+  float v212 = v209 * v65;
+  float v213 = v210 * v66;
+  float v214 = v211 * v67;
+  float v215 = ((v212)*(0.0) + (v213)*(0.0) + (v214)*(0.0));
+  float v216 = v215 - v69;
+  float v217 = max(static_cast<float>(0), static_cast<float>(v216));
+  float v218 = v215 + 9.99999975e-05f;
+  float v219 = v217 / v218;
+  float v220 = v212 * v219;
+  float v221 = v213 * v219;
+  float v222 = v214 * v219;
+  float4 v223 = float4((reinterpret_cast<device float4&>(buf2[((int)(8))*64])));
+  float v224 = (v223).w;
+  float v225 = ((v220)*(0.0) + (v221)*(0.0) + (v222)*(0.0));
+  float v226 = v225 - v220;
+  float v227 = v225 - v221;
+  float v228 = v225 - v222;
+  float v229 = v226 * v224;
+  float v230 = v227 * v224;
+  float v231 = v228 * v224;
+  float v232 = v229 + v220;
+  float v233 = v230 + v221;
+  float v234 = v231 + v222;
+  float v235 = (v223).x;
+  float v236 = (v223).y;
+  float v237 = (v223).z;
+  float v238 = v232 * v235;
+  float v239 = v233 * v236;
+  float v240 = v234 * v237;
+  result.x = v238;
+  result.y = v239;
+  result.z = v240;
+  result.w = 0.0;
+  result.x = v209;
+  result.y = v210;
+  result.z = v211;
+  result.w = 0.0;
+    return result;
+}

@@ -1,0 +1,145 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// metalsharp.binding_manifest.v1
+// direct_buffers=31 direct_textures=4 direct_samplers=4
+// range kind=srv space=0 lower=0 count=3
+// range kind=srv space=0 lower=3 count=1
+// range kind=srv space=0 lower=2 count=1
+
+struct input_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct output_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct vertex_input_v {
+};
+
+fragment float4 ps_main(
+  input_v in [[stage_in]],
+  device char* buf0 [[buffer(0)]],
+  device char* buf1 [[buffer(1)]],
+  device char* buf2 [[buffer(2)]],
+  device char* buf3 [[buffer(3)]],
+  device char* buf4 [[buffer(4)]],
+  device char* buf5 [[buffer(5)]],
+  device char* buf6 [[buffer(6)]],
+  device char* buf7 [[buffer(7)]],
+  device char* buf8 [[buffer(8)]],
+  device char* buf9 [[buffer(9)]],
+  device char* buf10 [[buffer(10)]],
+  device char* buf11 [[buffer(11)]],
+  device char* buf12 [[buffer(12)]],
+  device char* buf13 [[buffer(13)]],
+  device char* buf14 [[buffer(14)]],
+  device char* buf15 [[buffer(15)]],
+  device char* buf16 [[buffer(16)]],
+  device char* buf17 [[buffer(17)]],
+  device char* buf18 [[buffer(18)]],
+  device char* buf19 [[buffer(19)]],
+  device char* buf20 [[buffer(20)]],
+  device char* buf21 [[buffer(21)]],
+  device char* buf22 [[buffer(22)]],
+  device char* buf23 [[buffer(23)]],
+  device char* buf24 [[buffer(24)]],
+  device char* buf25 [[buffer(25)]],
+  device char* buf26 [[buffer(26)]],
+  device char* buf27 [[buffer(27)]],
+  device char* buf28 [[buffer(28)]],
+  device char* buf29 [[buffer(29)]],
+  device char* buf30 [[buffer(30)]],
+  texture2d<float, access::sample> tex0 [[texture(0)]],
+  texture2d<float, access::sample> tex1 [[texture(1)]],
+  texture2d<float, access::sample> tex2 [[texture(2)]],
+  texture2d<float, access::sample> tex3 [[texture(3)]],
+  sampler samp0 [[sampler(0)]],
+  sampler samp1 [[sampler(1)]],
+  sampler samp2 [[sampler(2)]],
+  sampler samp3 [[sampler(3)]]
+) {
+  float4 result = float4(0,0,0,1);
+  int v0 = 0; // unresolved value pre-decl
+  int v1 = 0; // unresolved value pre-decl
+  int v2 = 0; // unresolved value pre-decl
+  int v3 = 0; // unresolved value pre-decl
+  float v51 = in.position.x;
+  float v52 = in.position.y;
+  int v53 = as_type<int>(v51);
+  int v54 = as_type<int>(v52);
+  int v55 = v53;
+  int v56 = v54;
+  float4 v57 = float4((reinterpret_cast<device float4&>(buf0[((int)(0))*64])));
+  float v58 = (v57).z;
+  float v59 = (v57).w;
+  float v60 = v58 * static_cast<float>(v55);
+  float v61 = static_cast<float>(v56) * v59;
+  float4 v62 = float4((tex2.sample(samp3, float2(v60, v61))).x);
+  float v63 = (v62).x;
+  float v64 = (v62).y;
+  float v65 = (v62).z;
+  float4 v66 = float4((tex2.sample(samp3, float2(v60, v61))).x);
+  float v67 = (v66).x;
+  float v68 = (v66).z;
+  bool v69 = (v65 > v64);
+  float v71 = (v69 ? v65 : v64);
+  bool v72 = (v63 > v71);
+  int v74 = (v72 ? 0 : 0);
+  float v75 = (v72 ? v63 : v71);
+  bool v76 = (v67 > v75);
+  int v77 = (v76 ? 0 : 0);
+  int v78 = (v76 ? 1 : v74);
+  float v79 = (v76 ? v67 : v75);
+  bool v80 = (v68 > v79);
+  int v81 = (v80 ? 1 : v77);
+  int v82 = (v80 ? 0 : v78);
+  float v83 = (v80 ? v68 : v79);
+  int v84 = v81 + v53;
+  int v85 = v82 + v54;
+  float v87 = (tex3.read(uint2(static_cast<uint>(v84), static_cast<uint>(v85)))).x;
+  float v88 = (tex3.read(uint2(static_cast<uint>(v84), static_cast<uint>(v85)))).y;
+  result.x = v87;
+  result.y = v88;
+  float v90 = (tex2.read(uint2(static_cast<uint>(v84), static_cast<uint>(v85)))).y;
+  int v91 = static_cast<int>(v90) & 192;
+  bool v92 = true;
+  bool v93 = (v92 != 0);
+  bool v94 = true;
+  int v95 = (v94 ? 2 : static_cast<int>(v93));
+  bool v96 = true;
+  int v97 = (v96 ? 3 : v95);
+  float4 v98 = float4((reinterpret_cast<device float4&>(buf0[((int)(10))*64])));
+  float v99 = (v98).z;
+  bool v100 = (v99 > v83);
+  bool v101 = (v100 != 0);
+  float4 v102 = float4((reinterpret_cast<device float4&>(buf0[((int)(11))*64])));
+  float v103 = (v102).z;
+  bool v104 = (v103 > v83);
+  float4 v105 = float4((reinterpret_cast<device float4&>(buf0[((int)(12))*64])));
+  float v106 = (v105).z;
+  bool v107 = (v106 > v83);
+  int v108 = static_cast<int>(v101) << 2;
+  int v109 = (v104 ? 8 : v108);
+  int v110 = (v107 ? 12 : v109);
+  int v111 = v110 | v97;
+  result.x = v111;
+    return result;
+}
