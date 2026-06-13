@@ -2483,6 +2483,10 @@ mod tests {
         write_runtime_core(&ms_dir);
         let runtime_wine = ms_dir.join("runtime").join("wine");
         let prefix = ms_dir.join("prefix-steam");
+        let old_wine_winemetal = runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemetal.so");
+        let new_dxmt_winemetal = runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
+        fs::write(&old_wine_winemetal, b"old-wine-winemetal").expect("write old Wine winemetal");
+        fs::write(&new_dxmt_winemetal, b"new-dxmt-winemetal").expect("write new DXMT winemetal");
 
         let copied = stage_updated_prefix_runtime_surface(&runtime_wine, &prefix).expect("stage runtime surface");
 
@@ -2501,6 +2505,11 @@ mod tests {
                 filename
             );
         }
+        assert_eq!(
+            fs::read(prefix.join(".metalsharp").join("unix").join("winemetal.so")).expect("read staged winemetal"),
+            b"new-dxmt-winemetal"
+        );
+        assert_eq!(prefix_runtime_unix_source(&runtime_wine, "winemetal.so"), Some(new_dxmt_winemetal));
 
         let _ = fs::remove_dir_all(home);
     }
