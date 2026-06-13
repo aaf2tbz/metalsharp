@@ -9,7 +9,7 @@ D3D10 game
   -> Wine
   -> Wine d3d10.dll / d3d10_1.dll public entrypoints
   -> DXMT d3d10core.dll
-  -> DXMT d3d11.dll + dxgi.dll
+  -> DXMT d3d11.dll + dxgi.dll + dxgi_dxmt.dll
   -> winemetal.dll / winemetal.so
   -> Metal command buffers
   -> Apple GPU
@@ -26,8 +26,11 @@ M10 deploys these DXMT handoff DLLs from `~/.metalsharp/runtime/wine/lib/dxmt/x8
 
 - `d3d11.dll`
 - `dxgi.dll`
+- `dxgi_dxmt.dll`
 - `d3d10core.dll`
 - `winemetal.dll`
+- `nvapi64.dll`
+- `nvngx.dll`
 
 M10 deliberately does not deploy `d3d12.dll`.
 
@@ -38,7 +41,7 @@ M10 deliberately does not deploy `d3d12.dll`.
 | Pipeline | `M10` |
 | Backend | `dxmt` |
 | Launch args | none by default; `dx10`/`d3d10` select M10 as route aliases |
-| Wine overrides | `d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
+| Wine overrides | `winemetal,d3d10,d3d10_1,dxgi,dxgi_dxmt,d3d11,d3d10core,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
 | Shader cache subdir | `m10` |
 | Preset fallback family | `m10`, then `dxmt-metal` |
 

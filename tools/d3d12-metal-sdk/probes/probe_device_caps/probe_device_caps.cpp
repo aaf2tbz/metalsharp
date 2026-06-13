@@ -226,11 +226,13 @@ int main() {
         (!SUCCEEDED(options9_hr) || options9.WaveMMATier == D3D12_WAVE_MMA_TIER_NOT_SUPPORTED);
     bool stream_output_conservative =
         SUCCEEDED(stream_output_format_hr) && !(stream_output_format.Support1 & D3D12_FORMAT_SUPPORT1_SO_BUFFER);
-    bool reserved_resources_unsupported = FAILED(create_reserved_resource_hr);
+    bool tiled_resources_not_advertised =
+        SUCCEEDED(options_hr) && options.TiledResourcesTier == D3D12_TILED_RESOURCES_TIER_NOT_SUPPORTED;
+    bool reserved_resource_sparse_compat = SUCCEEDED(create_reserved_resource_hr);
     bool state_objects_unsupported = FAILED(query_device5_hr) || FAILED(create_state_object_hr);
     bool pass = SUCCEEDED(create_hr) && feature_level_ok && shader_model_target_ok && binding_tier_ok &&
                 wave_ops_not_reported && atomic64_conservative && advanced_conservative && stream_output_conservative &&
-                reserved_resources_unsupported && state_objects_unsupported;
+                tiled_resources_not_advertised && reserved_resource_sparse_compat && state_objects_unsupported;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-device-caps.v1\",\n");
@@ -257,6 +259,7 @@ int main() {
     std::printf("  \"options\": {\n");
     print_hr("check", options_hr);
     std::printf("    \"resource_binding_tier\": %u,\n", static_cast<unsigned>(options.ResourceBindingTier));
+    std::printf("    \"tiled_resources_tier\": %u,\n", static_cast<unsigned>(options.TiledResourcesTier));
     std::printf("    \"resource_heap_tier\": %u,\n", static_cast<unsigned>(options.ResourceHeapTier));
     std::printf("    \"rovs_supported\": %s,\n", options.ROVsSupported ? "true" : "false");
     std::printf("    \"conservative_rasterization_tier\": %u\n",
@@ -295,7 +298,8 @@ int main() {
     print_hr("query_device5", query_device5_hr);
     print_hr("create_state_object", create_state_object_hr);
     std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
-    std::printf("    \"reserved_resources_unsupported\": %s,\n", reserved_resources_unsupported ? "true" : "false");
+    std::printf("    \"tiled_resources_not_advertised\": %s,\n", tiled_resources_not_advertised ? "true" : "false");
+    std::printf("    \"reserved_resource_sparse_compat\": %s,\n", reserved_resource_sparse_compat ? "true" : "false");
     std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"requirements\": {\n");
@@ -307,7 +311,8 @@ int main() {
     std::printf("    \"atomic64_conservative\": %s,\n", atomic64_conservative ? "true" : "false");
     std::printf("    \"advanced_features_conservative\": %s,\n", advanced_conservative ? "true" : "false");
     std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
-    std::printf("    \"reserved_resources_unsupported\": %s,\n", reserved_resources_unsupported ? "true" : "false");
+    std::printf("    \"tiled_resources_not_advertised\": %s,\n", tiled_resources_not_advertised ? "true" : "false");
+    std::printf("    \"reserved_resource_sparse_compat\": %s,\n", reserved_resource_sparse_compat ? "true" : "false");
     std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  }\n");
     std::printf("}\n");

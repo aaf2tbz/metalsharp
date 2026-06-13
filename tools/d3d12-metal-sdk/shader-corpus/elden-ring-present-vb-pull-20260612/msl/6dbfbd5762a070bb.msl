@@ -1,0 +1,252 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// metalsharp.binding_manifest.v1
+// direct_buffers=31 direct_textures=6 direct_samplers=4
+// range kind=srv space=0 lower=0 count=1
+// range kind=srv space=0 lower=2 count=4
+
+struct input_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct output_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct m12_vertex_buffer_entry { ulong buffer_handle; uint stride; uint length; };
+struct m12_draw_argument { uint vertexCountPerInstance; uint instanceCount; uint startVertexLocation; uint startInstanceLocation; };
+struct m12_draw_indexed_argument { uint indexCountPerInstance; uint instanceCount; uint startIndexLocation; int baseVertexLocation; uint startInstanceLocation; };
+static inline bool m12_is_indexed_draw(device char* draw_info_bytes) {
+  if (draw_info_bytes == nullptr) return false;
+  return *reinterpret_cast<device ushort*>(draw_info_bytes) != 0;
+}
+static inline uint m12_draw_vertex_count(device char* draw_bytes, device char* draw_info_bytes) {
+  if (draw_bytes == nullptr) return 0u;
+  if (m12_is_indexed_draw(draw_info_bytes)) return reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes)->indexCountPerInstance;
+  return reinterpret_cast<device m12_draw_argument*>(draw_bytes)->vertexCountPerInstance;
+}
+static inline uint m12_vertex_fetch_index(uint vid, device char* draw_bytes, device char* draw_info_bytes) {
+  if (draw_bytes == nullptr || !m12_is_indexed_draw(draw_info_bytes)) return vid;
+  device m12_draw_indexed_argument* draw = reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes);
+  int indexed_vertex = int(vid) + draw->baseVertexLocation;
+  return indexed_vertex < 0 ? 0u : uint(indexed_vertex);
+}
+static inline uint m12_instance_fetch_index(uint iid, uint step_rate, device char* draw_bytes, device char* draw_info_bytes) {
+  uint start_instance = 0;
+  if (draw_bytes != nullptr) {
+    if (m12_is_indexed_draw(draw_info_bytes)) start_instance = reinterpret_cast<device m12_draw_indexed_argument*>(draw_bytes)->startInstanceLocation;
+    else start_instance = reinterpret_cast<device m12_draw_argument*>(draw_bytes)->startInstanceLocation;
+  }
+  if (step_rate == 0) return start_instance;
+  return start_instance + (iid / step_rate);
+}
+static inline float4 m12_load_vertex_attr(uint table_index, uint aligned_byte_offset, uint dxgi_format, uint per_instance, uint step_rate, uint vid, uint iid, device char* table_bytes, device char* vb, device char* draw_bytes, device char* draw_info_bytes) {
+  if (table_bytes == nullptr || vb == nullptr) return float4(0.0);
+  device m12_vertex_buffer_entry* table = reinterpret_cast<device m12_vertex_buffer_entry*>(table_bytes);
+  uint stride = table[table_index].stride;
+  uint length = table[table_index].length;
+  if (stride == 0) stride = 16;
+  uint element_index = per_instance != 0 ? m12_instance_fetch_index(iid, step_rate, draw_bytes, draw_info_bytes) : m12_vertex_fetch_index(vid, draw_bytes, draw_info_bytes);
+  uint offset = element_index * stride + aligned_byte_offset;
+  uint required = (dxgi_format == 41 || dxgi_format == 42 || dxgi_format == 43) ? 4u : ((dxgi_format == 16 || dxgi_format == 17 || dxgi_format == 18) ? 8u : ((dxgi_format == 6 || dxgi_format == 7 || dxgi_format == 8) ? 12u : 16u));
+  if (length != 0 && offset + required > length) return float4(0.0);
+  if (dxgi_format == 41) return float4(*reinterpret_cast<device float*>(vb + offset), 0.0, 0.0, 1.0);
+  if (dxgi_format == 16) return float4(*reinterpret_cast<device float2*>(vb + offset), 0.0, 1.0);
+  if (dxgi_format == 6) return float4(*reinterpret_cast<device float3*>(vb + offset), 1.0);
+  if (dxgi_format == 2) return *reinterpret_cast<device float4*>(vb + offset);
+  if (dxgi_format == 28) return float4(*reinterpret_cast<device uchar4*>(vb + offset)) / 255.0;
+  if (dxgi_format == 30) return float4(*reinterpret_cast<device uchar4*>(vb + offset));
+  if (dxgi_format == 42) return float4(*reinterpret_cast<device uint*>(vb + offset), 0.0, 0.0, 1.0);
+  if (dxgi_format == 43) return float4(*reinterpret_cast<device int*>(vb + offset), 0.0, 0.0, 1.0);
+  return *reinterpret_cast<device float4*>(vb + offset);
+}
+
+vertex output_v vs_main(
+  uint vid [[vertex_id]],
+  uint iid [[instance_id]],
+  device char* buf0 [[buffer(0)]],
+  device char* buf1 [[buffer(1)]],
+  device char* buf2 [[buffer(2)]],
+  device char* buf3 [[buffer(3)]],
+  device char* buf4 [[buffer(4)]],
+  device char* buf5 [[buffer(5)]],
+  device char* buf6 [[buffer(6)]],
+  device char* buf7 [[buffer(7)]],
+  device char* buf8 [[buffer(8)]],
+  device char* buf9 [[buffer(9)]],
+  device char* buf10 [[buffer(10)]],
+  device char* buf11 [[buffer(11)]],
+  device char* buf12 [[buffer(12)]],
+  device char* buf13 [[buffer(13)]],
+  device char* buf14 [[buffer(14)]],
+  device char* buf15 [[buffer(15)]],
+  device char* buf16 [[buffer(16)]],
+  device char* buf17 [[buffer(17)]],
+  device char* buf18 [[buffer(18)]],
+  device char* buf19 [[buffer(19)]],
+  device char* buf20 [[buffer(20)]],
+  device char* buf21 [[buffer(21)]],
+  device char* buf22 [[buffer(22)]],
+  device char* buf23 [[buffer(23)]],
+  device char* buf24 [[buffer(24)]],
+  device char* buf25 [[buffer(25)]],
+  device char* buf26 [[buffer(26)]],
+  device char* buf27 [[buffer(27)]],
+  device char* buf28 [[buffer(28)]],
+  device char* buf29 [[buffer(29)]],
+  device char* buf30 [[buffer(30)]],
+  texture2d<float, access::sample> tex0 [[texture(0)]],
+  texture2d<float, access::sample> tex1 [[texture(1)]],
+  texture2d<float, access::sample> tex2 [[texture(2)]],
+  texture2d<float, access::sample> tex3 [[texture(3)]],
+  texture2d<float, access::sample> tex4 [[texture(4)]],
+  texture2d<float, access::sample> tex5 [[texture(5)]],
+  sampler samp0 [[sampler(0)]],
+  sampler samp1 [[sampler(1)]],
+  sampler samp2 [[sampler(2)]],
+  sampler samp3 [[sampler(3)]]
+) {
+  output_v out = {};
+  out.position = float4(0.0, 0.0, 0.0, 1.0);
+  out.v0 = float4(0.0);
+  out.v1 = float4(0.0);
+  out.v2 = float4(0.0);
+  out.v3 = float4(0.0);
+  out.v4 = float4(0.0);
+  out.v5 = float4(0.0);
+  out.v6 = float4(0.0);
+  out.v7 = float4(0.0);
+  out.uv0 = float2(0.0);
+  out.uv1 = float2(0.0);
+  out.uv2 = float2(0.0);
+  out.uv3 = float2(0.0);
+  out.color0 = float4(0.0);
+  out.color1 = float4(0.0);
+  out.color2 = float4(0.0);
+  out.color3 = float4(0.0);
+  int v0 = 0; // unresolved value pre-decl
+  int v1 = 0; // unresolved value pre-decl
+  int v2 = 0; // unresolved value pre-decl
+  int v3 = 0; // unresolved value pre-decl
+  int v55 = 0;
+  int v56 = 0;
+  float v57 = 0.0f;
+  float v58 = 0.0f;
+  float v59 = 0.0f;
+  out.position.x = 0;
+  out.position.y = 0;
+  out.position.z = 0;
+  out.position.w = 0;
+  int v60 = v56;
+  float4 v61 = float4((reinterpret_cast<device float4&>(buf13[((int)(0))*64])));
+  float v62 = (v61).x;
+  float v63 = v62 + static_cast<float>(v55);
+  int v64 = static_cast<int>(v63) << 2;
+  float4 v65 = float4((reinterpret_cast<device float4&>(buf25[((int)(v64))*16])));
+  float v66 = (v65).x;
+  float v67 = as_type<float>(v60);
+  float v68 = v66 * static_cast<float>(13);
+  float v69 = v68 + static_cast<float>(4);
+  float4 v70 = float4((reinterpret_cast<device float4&>(buf5[((int)(v69))*64])));
+  float v71 = (v70).x;
+  float v72 = v71 + v67;
+  float v73 = v72 * static_cast<float>(3);
+  float4 v74 = float4((reinterpret_cast<device float4&>(buf7[((int)(v73))*64])));
+  float v75 = (v74).x;
+  float v76 = (v74).y;
+  float v77 = (v74).z;
+  float v78 = (v74).w;
+  float v79 = v73 + static_cast<float>(1);
+  float4 v80 = float4((reinterpret_cast<device float4&>(buf7[((int)(v79))*64])));
+  float v81 = (v80).x;
+  float v82 = (v80).y;
+  float v83 = (v80).z;
+  float v84 = (v80).w;
+  float v85 = v73 + static_cast<float>(2);
+  float4 v86 = float4((reinterpret_cast<device float4&>(buf7[((int)(v85))*64])));
+  float v87 = (v86).x;
+  float v88 = (v86).y;
+  float v89 = (v86).z;
+  float v90 = (v86).w;
+  float v91 = v75 * v57;
+  float v92 = fma(static_cast<float>(v58), static_cast<float>(v76), static_cast<float>(v91));
+  float v93 = fma(static_cast<float>(v59), static_cast<float>(v77), static_cast<float>(v92));
+  float v94 = v93 + v78;
+  float v95 = v81 * v57;
+  float v96 = fma(static_cast<float>(v58), static_cast<float>(v82), static_cast<float>(v95));
+  float v97 = fma(static_cast<float>(v59), static_cast<float>(v83), static_cast<float>(v96));
+  float v98 = v97 + v84;
+  float v99 = v87 * v57;
+  float v100 = fma(static_cast<float>(v58), static_cast<float>(v88), static_cast<float>(v99));
+  float v101 = fma(static_cast<float>(v59), static_cast<float>(v89), static_cast<float>(v100));
+  float v102 = v101 + v90;
+  float4 v103 = float4((reinterpret_cast<device float4&>(buf8[((int)(3))*64])));
+  float v104 = (v103).x;
+  float v105 = (v103).y;
+  float v106 = (v103).z;
+  float v107 = v94 - v104;
+  float v108 = v98 - v105;
+  float v109 = v102 - v106;
+  float4 v110 = float4((reinterpret_cast<device float4&>(buf8[((int)(24))*64])));
+  float v111 = (v110).x;
+  float v112 = (v110).y;
+  float v113 = (v110).z;
+  float v114 = (v110).w;
+  float4 v115 = float4((reinterpret_cast<device float4&>(buf8[((int)(25))*64])));
+  float v116 = (v115).x;
+  float v117 = (v115).y;
+  float v118 = (v115).z;
+  float v119 = (v115).w;
+  float4 v120 = float4((reinterpret_cast<device float4&>(buf8[((int)(26))*64])));
+  float v121 = (v120).x;
+  float v122 = (v120).y;
+  float v123 = (v120).z;
+  float v124 = (v120).w;
+  float4 v125 = float4((reinterpret_cast<device float4&>(buf8[((int)(27))*64])));
+  float v126 = (v125).x;
+  float v127 = (v125).y;
+  float v128 = (v125).z;
+  float v129 = (v125).w;
+  float v130 = v107 * v111;
+  float v131 = fma(static_cast<float>(v108), static_cast<float>(v112), static_cast<float>(v130));
+  float v132 = fma(static_cast<float>(v109), static_cast<float>(v113), static_cast<float>(v131));
+  float v133 = v132 + v114;
+  float v134 = v116 * v107;
+  float v135 = fma(static_cast<float>(v108), static_cast<float>(v117), static_cast<float>(v134));
+  float v136 = fma(static_cast<float>(v109), static_cast<float>(v118), static_cast<float>(v135));
+  float v137 = v136 + v119;
+  float v138 = v121 * v107;
+  float v139 = fma(static_cast<float>(v108), static_cast<float>(v122), static_cast<float>(v138));
+  float v140 = fma(static_cast<float>(v109), static_cast<float>(v123), static_cast<float>(v139));
+  float v141 = v140 + v124;
+  float v142 = v126 * v107;
+  float v143 = fma(static_cast<float>(v108), static_cast<float>(v127), static_cast<float>(v142));
+  float v144 = fma(static_cast<float>(v109), static_cast<float>(v128), static_cast<float>(v143));
+  float v145 = v144 + v129;
+  out.position.x = 0;
+  out.position.y = 0;
+  out.position.z = 0;
+  out.position.w = 0;
+  out.position.x = m12_load_vertex_attr(0, 0, 6, 0, 1, vid, iid, buf16, buf0, buf29, buf30).x;
+  out.position.y = m12_load_vertex_attr(0, 0, 6, 0, 1, vid, iid, buf16, buf0, buf29, buf30).y;
+  out.position.z = m12_load_vertex_attr(0, 0, 6, 0, 1, vid, iid, buf16, buf0, buf29, buf30).z;
+  out.position.w = m12_load_vertex_attr(0, 0, 6, 0, 1, vid, iid, buf16, buf0, buf29, buf30).w;
+    return out;
+}

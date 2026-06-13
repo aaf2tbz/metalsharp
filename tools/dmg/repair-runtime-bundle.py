@@ -14,6 +14,7 @@ DEFAULT_ARCHIVE = PROJECT_ROOT / "app" / "bundles" / "metalsharp-runtime.tar.zst
 DEFAULT_HOST = PROJECT_ROOT / "app" / "native" / "host"
 DEFAULT_BACKEND = PROJECT_ROOT / "app" / "src-rust" / "target" / "release" / "metalsharp-backend"
 DEFAULT_METALSHARP_LIB = PROJECT_ROOT / "lib" / "metalsharp"
+DEFAULT_MSCOMPATDB_BUILD_SCRIPT = PROJECT_ROOT / "tools" / "wine" / "build-mscompatdb-shim.sh"
 
 
 def require_file(path: Path, description: str) -> None:
@@ -39,6 +40,50 @@ def require_metalsharp_lib(lib_dir: Path) -> None:
         lib_dir / "x86_64-windows" / "metalsharp_ntdll_hook.dll",
         "MetalSharp ntdll hook DLL",
     )
+
+
+def build_mscompatdb_shim(script: Path, out_dir: Path) -> Path:
+    require_file(script, "mscompatdb shim build script")
+    subprocess.run([str(script), str(out_dir)], check=True)
+    shim = out_dir / "mscompatdb.so"
+    require_file(shim, "safe mscompatdb shim")
+    return shim
+
+
+def install_mscompatdb_shim(runtime_root: Path, shim: Path) -> None:
+    unix_dir = runtime_root / "wine" / "lib" / "wine" / "x86_64-unix"
+    unix_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(shim, unix_dir / "mscompatdb.so")
+    require_file(unix_dir / "mscompatdb.so", "safe mscompatdb shim inside archive")
+
+
+def patch_ntdll_mscompatdb_loader(runtime_root: Path) -> None:
+    ntdll = runtime_root / "wine" / "lib" / "wine" / "x86_64-unix" / "ntdll.so"
+    if not ntdll.is_file():
+        return
+
+    data = bytearray(ntdll.read_bytes())
+    if b"mscompatdb.so" not in data:
+        return
+
+    offset = 0x25A80
+    original = bytes.fromhex("488d05ef12")
+    patched = bytes.fromhex("e91a010000")
+    if len(data) < offset + len(patched):
+        raise RuntimeError(f"ntdll too small for mscompatdb loader patch: {ntdll}")
+    current = bytes(data[offset : offset + len(patched)])
+    if current == patched:
+        return
+    if current != original:
+        raise RuntimeError(
+            f"unexpected ntdll mscompatdb loader bytes at 0x{offset:x}: {current.hex()} in {ntdll}"
+        )
+
+    data[offset : offset + len(patched)] = patched
+    ntdll.write_bytes(data)
+    codesign = shutil.which("codesign")
+    if codesign:
+        subprocess.run([codesign, "--force", "--sign", "-", str(ntdll)], check=True, stdout=subprocess.DEVNULL)
 
 
 def copy_tree(src: Path, dst: Path) -> None:
@@ -111,7 +156,7 @@ def write_archive(source_root: Path, output: Path) -> None:
         tar_path.unlink(missing_ok=True)
 
 
-def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path, metalsharp_lib: Path) -> None:
+def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path, metalsharp_lib: Path, mscompatdb_script: Path) -> None:
     require_file(archive, "runtime bundle archive")
     require_host_runtime(host_dir)
     require_file(backend, "runtime backend")
@@ -127,9 +172,12 @@ def repair_runtime_bundle(archive: Path, host_dir: Path, backend: Path, metalsha
         if not runtime_root.is_dir():
             raise FileNotFoundError(f"runtime archive does not contain runtime/: {archive}")
 
+        mscompatdb = build_mscompatdb_shim(mscompatdb_script, tmp / "mscompatdb")
         copy_tree(host_dir, runtime_root / "host")
         shutil.copy2(backend, runtime_root / "metalsharp-backend")
         copy_tree(metalsharp_lib, runtime_root / "wine" / "lib" / "metalsharp")
+        install_mscompatdb_shim(runtime_root, mscompatdb)
+        patch_ntdll_mscompatdb_loader(runtime_root)
         require_host_runtime(runtime_root / "host")
         require_file(runtime_root / "metalsharp-backend", "runtime backend inside archive")
         require_metalsharp_lib(runtime_root / "wine" / "lib" / "metalsharp")
@@ -145,9 +193,10 @@ def main() -> None:
     parser.add_argument("--host-dir", type=Path, default=DEFAULT_HOST)
     parser.add_argument("--backend", type=Path, default=DEFAULT_BACKEND)
     parser.add_argument("--metalsharp-lib", type=Path, default=DEFAULT_METALSHARP_LIB)
+    parser.add_argument("--mscompatdb-script", type=Path, default=DEFAULT_MSCOMPATDB_BUILD_SCRIPT)
     args = parser.parse_args()
 
-    repair_runtime_bundle(args.archive, args.host_dir, args.backend, args.metalsharp_lib)
+    repair_runtime_bundle(args.archive, args.host_dir, args.backend, args.metalsharp_lib, args.mscompatdb_script)
     print(f"repaired runtime bundle: {args.archive}")
 
 

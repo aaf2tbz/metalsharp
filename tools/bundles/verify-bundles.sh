@@ -146,12 +146,17 @@ verify_runtime_core() {
     runtime/host/manifest.json \
     runtime/host/HostRuntimeABI.h \
     runtime/host/libmetalsharp_host_runtime.dylib \
+    runtime/wine/lib/wine/x86_64-unix/mscompatdb.so \
+    runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS \
     runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll
 }
 
 verify_graphics_core() {
   verify_required_files "$1" "GRAPHICS" \
     Graphics/dll/dxmt/x86_64-unix/winemetal.so \
+    Graphics/dll/dxmt/x86_64-unix/libc++.1.dylib \
+    Graphics/dll/dxmt/x86_64-unix/libc++abi.1.dylib \
+    Graphics/dll/dxmt/x86_64-unix/libunwind.1.dylib \
     Graphics/dll/dxmt/x86_64-windows/d3d10core.dll \
     Graphics/dll/dxmt/x86_64-windows/d3d11.dll \
     Graphics/dll/dxmt/x86_64-windows/d3d12.dll \

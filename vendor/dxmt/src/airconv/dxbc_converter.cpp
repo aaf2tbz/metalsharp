@@ -12,11 +12,36 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include <bit>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <format>
 #include <memory>
 #include <string>
+
+static FILE *
+dxmt_airconv_open_trace_log(const char *fallback_name) {
+  const char *root = std::getenv("METALSHARP_M12_LOG_DIR");
+  const char *file = std::getenv("DXMT_LOG_FILE");
+  char path[4096];
+
+  if (!root || !root[0])
+    root = std::getenv("DXMT_LOG_PATH");
+  if (!file || !file[0])
+    file = fallback_name && fallback_name[0] ? fallback_name : "dxmt-airconv.log";
+  if (!root || !root[0])
+    return std::fopen(file, "a");
+
+  std::snprintf(path, sizeof(path), "%s%s%s", root, (root[std::strlen(root) - 1] == '/' || root[std::strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return std::fopen(path, "a");
+}
 #include <vector>
+#include <cstdlib>
+#include <cstdio>
 
 #include "metallib_writer.hpp"
 #include "nt/air_builder.hpp"
@@ -36,7 +61,28 @@ public:
   llvm::SmallVector<char, 0> buf;
 };
 
+static void DumpSM50LLVMIRIfRequested(const llvm::Module &module,
+                                      const char *function_name) {
+  const char *dump_dir = std::getenv("DXMT_DUMP_SM50_LLVM");
+  if (!dump_dir || !dump_dir[0] || dump_dir[0] == '0')
+    return;
+  if (dump_dir[0] == '1' && dump_dir[1] == '\0')
+    dump_dir = "/tmp";
+
+  static unsigned dump_counter = 0;
+  char path[1024];
+  std::snprintf(path, sizeof(path), "%s/sm50_%s_%u.ll", dump_dir,
+                function_name ? function_name : "shader", dump_counter++);
+
+  std::error_code ec;
+  llvm::raw_fd_ostream out(path, ec, llvm::sys::fs::OF_Text);
+  if (!ec)
+    module.print(out, nullptr);
+}
+
 namespace dxmt::dxbc {
+
+static constexpr uint32_t kM12PaddedVertexOutputRegisters = 16;
 
 inline dxmt::shader::common::ResourceType
 to_shader_resource_type(microsoft::D3D10_SB_RESOURCE_DIMENSION dim) {
@@ -112,6 +158,32 @@ auto get_item_in_argbuf_binding_table(uint32_t argbuf_index, uint32_t index) {
   });
 };
 
+auto get_inline_cbuffer_in_argbuf_binding_table(uint32_t argbuf_index,
+                                                uint32_t index) {
+  return make_irvalue([=](context ctx) {
+    auto argbuf = ctx.function->getArg(argbuf_index);
+    auto argbuf_struct_type = llvm::cast<llvm::StructType>(
+      llvm::cast<llvm::PointerType>(argbuf->getType())
+        ->getNonOpaquePointerElementType()
+    );
+    auto field_ptr = ctx.builder.CreateStructGEP(
+      llvm::cast<llvm::PointerType>(argbuf->getType())
+        ->getNonOpaquePointerElementType(),
+      argbuf, index
+    );
+    auto field_type = argbuf_struct_type->getElementType(index);
+    return ctx.builder.CreateInBoundsGEP(
+      field_type, field_ptr, {ctx.builder.getInt32(0), ctx.builder.getInt32(0)}
+    );
+  });
+};
+
+static thread_local uint32_t g_sm50_initialize_options = 0;
+
+static bool inline_d3d12_cbuffers() {
+  return (g_sm50_initialize_options & SM50_INITIALIZE_INLINE_CBUFFERS) != 0;
+}
+
 void setup_binding_table(
   const ShaderInfo *shader_info, io_binding_map &resource_map,
   air::FunctionSignatureBuilder &func_signature, llvm::Module &module,
@@ -159,10 +231,17 @@ void setup_binding_table(
   for (auto &[range_id, cbv] : shader_info->cbufferMap) {
     // TODO: abstract SM 5.0 binding
     auto index = cbv.arg_index;
-    resource_map.cb_range_map[range_id] = [=](pvalue) {
-      // ignore index in SM 5.0
-      return get_item_in_argbuf_binding_table(cbuf_table_index, index);
-    };
+    if (inline_d3d12_cbuffers()) {
+      resource_map.cb_range_map[range_id] = [=](pvalue) {
+        return get_inline_cbuffer_in_argbuf_binding_table(cbuf_table_index,
+                                                          index);
+      };
+    } else {
+      resource_map.cb_range_map[range_id] = [=](pvalue) {
+        // ignore index in SM 5.0
+        return get_item_in_argbuf_binding_table(cbuf_table_index, index);
+      };
+    }
   }
   for (auto &[range_id, sampler] : shader_info->samplerMap) {
     // TODO: abstract SM 5.0 binding
@@ -434,7 +513,6 @@ llvm::Error convert_dxbc_pixel_shader(
     metal_version = sm50_common->metal_version;
     shader_flags = sm50_common->flags;
   }
-
   IREffect prologue([](auto) { return std::monostate(); });
   IRValue epilogue([](struct context ctx) -> pvalue {
     auto retTy = ctx.function->getReturnType();
@@ -564,7 +642,6 @@ llvm::Error convert_dxbc_compute_shader(
     metal_version = sm50_common->metal_version;
     shader_flags = sm50_common->flags;
   }
-
   IREffect prologue([](auto) { return std::monostate(); });
   IRValue epilogue([](struct context ctx) -> pvalue {
     auto retTy = ctx.function->getReturnType();
@@ -666,6 +743,17 @@ llvm::Error convert_dxbc_vertex_shader(
     metal_version = sm50_common->metal_version;
     shader_flags = sm50_common->flags;
   }
+  if (!rasterization_disabled) {
+    max_output_register =
+      std::max(max_output_register, kM12PaddedVertexOutputRegisters);
+  }
+  if (std::getenv("DXMT_SM50_TRACE")) {
+    fprintf(stderr,
+            "DXMT_SM50_TRACE vertex raster_disabled=%u max_output=%u "
+            "declared_outputs=%zu\n",
+            rasterization_disabled ? 1u : 0u, max_output_register,
+            pShaderInternal->output_signature.size());
+  }
 
   IREffect prologue([](auto) { return std::monostate(); });
   IRValue epilogue([](struct context ctx) -> pvalue {
@@ -687,12 +775,37 @@ llvm::Error convert_dxbc_vertex_shader(
       p(sig_ctx);
     }
 
+    bool output_reg_declared[kM12PaddedVertexOutputRegisters] = {};
     for (auto& out : pShaderInternal->output_signature) {
       if(out.isSystemValue()) continue;
+      if (out.reg() < kM12PaddedVertexOutputRegisters)
+        output_reg_declared[out.reg()] = true;
       func_signature.DefineOutput(air::OutputVertex{
         .user = out.consistentAttributeName(),
         .type = to_msl_type(out.componentType()),
       });
+    }
+    if (!rasterization_disabled) {
+      for (uint32_t reg = 0; reg < kM12PaddedVertexOutputRegisters; reg++) {
+        if (output_reg_declared[reg])
+          continue;
+        uint32_t assigned_index = func_signature.DefineOutput(air::OutputVertex{
+          .user = std::format("reg{}_0", reg),
+          .type = air::msl_float4,
+        });
+        epilogue >> [=](pvalue ret) -> IRValue {
+          return make_irvalue([=](struct context ctx) {
+            auto src_ptr = ctx.builder.CreateGEP(
+              ctx.resource.output.ptr_float4->getType()
+                ->getNonOpaquePointerElementType(),
+              ctx.resource.output.ptr_float4,
+              {ctx.builder.getInt32(0), ctx.builder.getInt32(reg)}
+            );
+            auto value = ctx.builder.CreateLoad(ctx.types._float4, src_ptr, true);
+            return ctx.builder.CreateInsertValue(ret, value, {assigned_index});
+          });
+        };
+      }
     }
   }
   if (vertex_so) {
@@ -805,9 +918,13 @@ llvm::Error convert_dxbc_vertex_shader(
     llvm::ArrayType::get(types._float4, max_input_register)->getPointerTo()
   );
   resource_map.input_element_count = max_input_register;
-  resource_map.output.ptr_int4 =
-    builder.CreateAlloca(llvm::ArrayType::get(types._int4, max_output_register)
-    );
+  auto output_reg_type = llvm::ArrayType::get(types._int4, max_output_register);
+  resource_map.output.ptr_int4 = builder.CreateAlloca(output_reg_type);
+  builder.CreateStore(
+    llvm::ConstantAggregateZero::get(output_reg_type),
+    resource_map.output.ptr_int4,
+    true
+  );
   resource_map.output.ptr_float4 = builder.CreateBitCast(
     resource_map.output.ptr_int4,
     llvm::ArrayType::get(types._float4, max_output_register)->getPointerTo()
@@ -1106,18 +1223,29 @@ AIRCONV_API int SM50Initialize(
 
   for (auto &[range_id, cbv] : shader_info->cbufferMap) {
     // TODO: abstract SM 5.0 binding
-    cbv.arg_index = binding_table_cbuffer.DefineBuffer(
-      "cb" + std::to_string(range_id), AddressSpace::constant,
-      MemoryAccess::read, msl_uint4,
-      GetArgumentIndex(SM50BindingType::ConstantBuffer, range_id)
-    );
+    bool inline_cbuffer = inline_d3d12_cbuffers();
+    cbv.arg_index =
+      inline_cbuffer
+        ? binding_table_cbuffer.DefineConstantArray(
+            "cb" + std::to_string(range_id), msl_uint4,
+            std::max<uint32_t>(cbv.size_in_vec4, 1),
+            GetArgumentIndex(SM50BindingType::ConstantBuffer, range_id))
+        : binding_table_cbuffer.DefineBuffer(
+            "cb" + std::to_string(range_id), AddressSpace::constant,
+            MemoryAccess::read, msl_uint4,
+            GetArgumentIndex(SM50BindingType::ConstantBuffer, range_id));
     sm50_shader->args_reflection_cbuffer.push_back({
       .Type = SM50BindingType::ConstantBuffer,
       .SM50BindingSlot = cbv.range.lower_bound,
       .SM50RegisterSpace = cbv.range.space,
       .Flags =
-        MTL_SM50_SHADER_ARGUMENT_BUFFER | MTL_SM50_SHADER_ARGUMENT_READ_ACCESS,
+        (MTL_SM50_SHADER_ARGUMENT_FLAG)(inline_cbuffer
+          ? (MTL_SM50_SHADER_ARGUMENT_INLINE_CBUFFER |
+             MTL_SM50_SHADER_ARGUMENT_READ_ACCESS)
+          : (MTL_SM50_SHADER_ARGUMENT_BUFFER |
+             MTL_SM50_SHADER_ARGUMENT_READ_ACCESS)),
       .StructurePtrOffset = cbv.arg_index,
+      .SizeInVec4 = std::max<uint32_t>(cbv.size_in_vec4, 1),
     });
     binding_cbuffer_mask |= (1 << range_id);
   }
@@ -1367,6 +1495,24 @@ AIRCONV_API int SM50Initialize(
   return 0;
 };
 
+AIRCONV_API int SM50InitializeWithOptions(
+  const void *pBytecode, size_t BytecodeSize, uint32_t Options,
+  sm50_shader_t *ppShader, struct MTL_SHADER_REFLECTION *pRefl,
+  sm50_error_t *ppError
+) {
+  uint32_t old_options = dxmt::dxbc::g_sm50_initialize_options;
+  dxmt::dxbc::g_sm50_initialize_options = Options;
+  if (Options) {
+    if (FILE *f = dxmt_airconv_open_trace_log("dxmt-inline-options.log")) {
+      std::fprintf(f, "SM50InitializeWithOptions options=0x%x\n", Options);
+      std::fclose(f);
+    }
+  }
+  int ret = SM50Initialize(pBytecode, BytecodeSize, ppShader, pRefl, ppError);
+  dxmt::dxbc::g_sm50_initialize_options = old_options;
+  return ret;
+}
+
 AIRCONV_API void SM50GetArgumentsInfo(
   sm50_shader_t pShader, struct MTL_SM50_SHADER_ARGUMENT *pConstantBuffers,
   struct MTL_SM50_SHADER_ARGUMENT *pArguments
@@ -1434,6 +1580,7 @@ AIRCONV_API int SM50Compile(
     linkSamplePos(*pModule);
 
   runOptimizationPasses(*pModule);
+  DumpSM50LLVMIRIfRequested(*pModule, FunctionName);
 
   // Serialize AIR
   auto compiled = new SM50CompiledBitcodeInternal();

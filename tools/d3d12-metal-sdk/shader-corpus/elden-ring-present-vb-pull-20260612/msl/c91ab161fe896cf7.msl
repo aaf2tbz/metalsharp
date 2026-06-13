@@ -1,0 +1,310 @@
+#include <metal_stdlib>
+using namespace metal;
+
+// metalsharp.binding_manifest.v1
+// direct_buffers=31 direct_textures=5 direct_samplers=4
+// range kind=srv space=0 lower=0 count=4
+// range kind=srv space=0 lower=3 count=2
+// range kind=srv space=0 lower=2 count=2
+
+struct input_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct output_v {
+  float4 position [[position]];
+  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];
+  float4 v2 [[user(locn2)]]; float4 v3 [[user(locn3)]];
+  float4 v4 [[user(locn4)]]; float4 v5 [[user(locn5)]];
+  float4 v6 [[user(locn6)]]; float4 v7 [[user(locn7)]];
+  float2 uv0 [[user(locn8)]]; float2 uv1 [[user(locn9)]];
+  float2 uv2 [[user(locn10)]]; float2 uv3 [[user(locn11)]];
+  float4 color0 [[user(locn12)]]; float4 color1 [[user(locn13)]];
+  float4 color2 [[user(locn14)]]; float4 color3 [[user(locn15)]];
+};
+
+struct vertex_input_v {
+};
+
+fragment float4 ps_main(
+  input_v in [[stage_in]],
+  device char* buf0 [[buffer(0)]],
+  device char* buf1 [[buffer(1)]],
+  device char* buf2 [[buffer(2)]],
+  device char* buf3 [[buffer(3)]],
+  device char* buf4 [[buffer(4)]],
+  device char* buf5 [[buffer(5)]],
+  device char* buf6 [[buffer(6)]],
+  device char* buf7 [[buffer(7)]],
+  device char* buf8 [[buffer(8)]],
+  device char* buf9 [[buffer(9)]],
+  device char* buf10 [[buffer(10)]],
+  device char* buf11 [[buffer(11)]],
+  device char* buf12 [[buffer(12)]],
+  device char* buf13 [[buffer(13)]],
+  device char* buf14 [[buffer(14)]],
+  device char* buf15 [[buffer(15)]],
+  device char* buf16 [[buffer(16)]],
+  device char* buf17 [[buffer(17)]],
+  device char* buf18 [[buffer(18)]],
+  device char* buf19 [[buffer(19)]],
+  device char* buf20 [[buffer(20)]],
+  device char* buf21 [[buffer(21)]],
+  device char* buf22 [[buffer(22)]],
+  device char* buf23 [[buffer(23)]],
+  device char* buf24 [[buffer(24)]],
+  device char* buf25 [[buffer(25)]],
+  device char* buf26 [[buffer(26)]],
+  device char* buf27 [[buffer(27)]],
+  device char* buf28 [[buffer(28)]],
+  device char* buf29 [[buffer(29)]],
+  device char* buf30 [[buffer(30)]],
+  texture2d<float, access::sample> tex0 [[texture(0)]],
+  texture2d<float, access::sample> tex1 [[texture(1)]],
+  texture2d<float, access::sample> tex2 [[texture(2)]],
+  texture2d<float, access::sample> tex3 [[texture(3)]],
+  texture2d<float, access::sample> tex4 [[texture(4)]],
+  sampler samp0 [[sampler(0)]],
+  sampler samp1 [[sampler(1)]],
+  sampler samp2 [[sampler(2)]],
+  sampler samp3 [[sampler(3)]]
+) {
+  float4 result = float4(0,0,0,1);
+  int v0 = 0; // unresolved value pre-decl
+  int v1 = 0; // unresolved value pre-decl
+  int v2 = 0; // unresolved value pre-decl
+  int v3 = 0; // unresolved value pre-decl
+  float v57 = in.v0.x;
+  float v58 = in.v0.y;
+  float v60 = (tex2.sample(samp2, float2(v57, v58))).x;
+  float4 v61 = float4((reinterpret_cast<device float4&>(buf2[((int)(5))*64])));
+  float v62 = (v61).y;
+  float v63 = -0.0f - v62;
+  float v64 = (v61).x;
+  float v65 = v64 - v60;
+  float v66 = v63 / v65;
+  float v67 = 1.0f / v66;
+  float4 v68 = float4((tex4.sample(samp3, float2(v57, v58))).x);
+  float v69 = (v68).x;
+  float v70 = (v68).y;
+  float v71 = (v68).z;
+  float v72 = (v68).w;
+  float v73 = v64 - v72;
+  float v74 = v63 / v73;
+  float v75 = v64 - v71;
+  float v76 = v63 / v75;
+  float v77 = v64 - v69;
+  float v78 = v63 / v77;
+  float v79 = v64 - v70;
+  float v80 = v63 / v79;
+  float v81 = v74 * v67;
+  float v82 = v81 + -1.0f;
+  float v83 = abs(static_cast<float>(v82));
+  float v84 = v83 + 0.00999999978f;
+  float v85 = 1.0f / v84;
+  float v86 = v76 * v67;
+  float v87 = v86 + -1.0f;
+  float v88 = abs(static_cast<float>(v87));
+  float v89 = v88 + 0.00999999978f;
+  float v90 = 1.0f / v89;
+  float v91 = v78 * v67;
+  float v92 = v91 + -1.0f;
+  float v93 = abs(static_cast<float>(v92));
+  float v94 = v93 + 0.00999999978f;
+  float v95 = 1.0f / v94;
+  float v96 = v80 * v67;
+  float v97 = v96 + -1.0f;
+  float v98 = abs(static_cast<float>(v97));
+  float v99 = v98 + 0.00999999978f;
+  float v100 = 1.0f / v99;
+  float4 v101 = float4((reinterpret_cast<device float4&>(buf2[((int)(0))*64])));
+  float v102 = (v101).x;
+  float v103 = (v101).y;
+  float v104 = v102 * 0.5f;
+  float v105 = v103 * 0.5f;
+  float v106 = v104 + v57;
+  float v107 = v105 + v58;
+  float4 v108 = float4((reinterpret_cast<device float4&>(buf4[((int)(0))*64])));
+  float v109 = (v108).x;
+  float v110 = (v108).y;
+  float v111 = (v108).z;
+  float v112 = (v108).w;
+  float v113 = v109 - v111;
+  float v114 = v110 - v112;
+  float v115 = min(static_cast<float>(v106), static_cast<float>(v113));
+  float v116 = min(static_cast<float>(v107), static_cast<float>(v114));
+  float4 v117 = float4((reinterpret_cast<device float4&>(buf2[((int)(1))*64])));
+  float v118 = (v117).x;
+  float v119 = (v117).y;
+  float v120 = v118 * 0.5f;
+  float v121 = v119 * 0.5f;
+  float v122 = v120 + v57;
+  float v123 = v121 + v58;
+  float v124 = min(static_cast<float>(v122), static_cast<float>(v113));
+  float v125 = min(static_cast<float>(v123), static_cast<float>(v114));
+  float4 v126 = float4((reinterpret_cast<device float4&>(buf2[((int)(2))*64])));
+  float v127 = (v126).x;
+  float v128 = (v126).y;
+  float v129 = v127 * 0.5f;
+  float v130 = v128 * 0.5f;
+  float v131 = v129 + v57;
+  float v132 = v130 + v58;
+  float v133 = min(static_cast<float>(v131), static_cast<float>(v113));
+  float v134 = min(static_cast<float>(v132), static_cast<float>(v114));
+  float4 v135 = float4((reinterpret_cast<device float4&>(buf2[((int)(3))*64])));
+  float v136 = (v135).x;
+  float v137 = (v135).y;
+  float v138 = v136 * 0.5f;
+  float v139 = v137 * 0.5f;
+  float v140 = v138 + v57;
+  float v141 = v139 + v58;
+  float v142 = min(static_cast<float>(v140), static_cast<float>(v113));
+  float v143 = min(static_cast<float>(v141), static_cast<float>(v114));
+  float v145 = (tex0.sample(samp2, float2(v115, v116))).x;
+  float v146 = (tex0.sample(samp2, float2(v115, v116))).y;
+  float v147 = (tex0.sample(samp2, float2(v115, v116))).z;
+  float v148 = (tex0.sample(samp2, float2(v115, v116))).w;
+  float v150 = (tex0.sample(samp2, float2(v124, v125))).x;
+  float v151 = (tex0.sample(samp2, float2(v124, v125))).y;
+  float v152 = (tex0.sample(samp2, float2(v124, v125))).z;
+  float v153 = (tex0.sample(samp2, float2(v124, v125))).w;
+  float v155 = (tex0.sample(samp2, float2(v133, v134))).x;
+  float v156 = (tex0.sample(samp2, float2(v133, v134))).y;
+  float v157 = (tex0.sample(samp2, float2(v133, v134))).z;
+  float v158 = (tex0.sample(samp2, float2(v133, v134))).w;
+  float v160 = (tex0.sample(samp2, float2(v142, v143))).x;
+  float v161 = (tex0.sample(samp2, float2(v142, v143))).y;
+  float v162 = (tex0.sample(samp2, float2(v142, v143))).z;
+  float v163 = (tex0.sample(samp2, float2(v142, v143))).w;
+  float v165 = (tex4.sample(samp2, float2(v115, v116))).x;
+  float v166 = (tex4.sample(samp2, float2(v115, v116))).y;
+  float v167 = (tex4.sample(samp2, float2(v115, v116))).z;
+  float v168 = (tex4.sample(samp2, float2(v115, v116))).w;
+  float v170 = (tex4.sample(samp2, float2(v124, v125))).x;
+  float v171 = (tex4.sample(samp2, float2(v124, v125))).y;
+  float v172 = (tex4.sample(samp2, float2(v124, v125))).z;
+  float v173 = (tex4.sample(samp2, float2(v124, v125))).w;
+  float v175 = (tex4.sample(samp2, float2(v133, v134))).x;
+  float v176 = (tex4.sample(samp2, float2(v133, v134))).y;
+  float v177 = (tex4.sample(samp2, float2(v133, v134))).z;
+  float v178 = (tex4.sample(samp2, float2(v133, v134))).w;
+  float v180 = (tex4.sample(samp2, float2(v142, v143))).x;
+  float v181 = (tex4.sample(samp2, float2(v142, v143))).y;
+  float v182 = (tex4.sample(samp2, float2(v142, v143))).z;
+  float v183 = (tex4.sample(samp2, float2(v142, v143))).w;
+  float4 v184 = float4((reinterpret_cast<device float4&>(buf2[((int)(4))*64])));
+  float v185 = (v184).x;
+  float v186 = (v184).y;
+  float v187 = v185 * v57;
+  float v188 = v186 * v58;
+  float v189 = v187 + 0.5f;
+  float v190 = v188 + 0.5f;
+  float v191 = fract(static_cast<float>(v189));
+  float v192 = fract(static_cast<float>(v190));
+  float v193 = 1.0f - v191;
+  float v194 = 1.0f - v192;
+  float v195 = v193 * v85;
+  float v196 = v195 * v194;
+  float v197 = v196 * v145;
+  float v198 = v196 * v146;
+  float v199 = v196 * v147;
+  float v200 = v196 * v148;
+  float v201 = v196 * v165;
+  float v202 = v196 * v166;
+  float v203 = v196 * v167;
+  float v204 = v196 * v168;
+  float v205 = v191 * v90;
+  float v206 = v205 * v194;
+  float v207 = v206 * v150;
+  float v208 = v206 * v151;
+  float v209 = v206 * v152;
+  float v210 = v206 * v153;
+  float v211 = v206 * v170;
+  float v212 = v206 * v171;
+  float v213 = v206 * v172;
+  float v214 = v206 * v173;
+  float v215 = v192 * v95;
+  float v216 = v215 * v193;
+  float v217 = v216 * v155;
+  float v218 = v216 * v156;
+  float v219 = v216 * v157;
+  float v220 = v216 * v158;
+  float v221 = v216 * v175;
+  float v222 = v216 * v176;
+  float v223 = v216 * v177;
+  float v224 = v216 * v178;
+  float v225 = v191 * v100;
+  float v226 = v225 * v192;
+  float v227 = v226 * v160;
+  float v228 = v226 * v161;
+  float v229 = v226 * v162;
+  float v230 = v226 * v163;
+  float v231 = v227 + v217;
+  float v232 = v231 + v207;
+  float v233 = v232 + v197;
+  float v234 = v228 + v218;
+  float v235 = v234 + v208;
+  float v236 = v235 + v198;
+  float v237 = v229 + v219;
+  float v238 = v237 + v209;
+  float v239 = v238 + v199;
+  float v240 = v230 + v220;
+  float v241 = v240 + v210;
+  float v242 = v241 + v200;
+  float v243 = v226 * v180;
+  float v244 = v226 * v181;
+  float v245 = v226 * v182;
+  float v246 = v226 * v183;
+  float v247 = v243 + v221;
+  float v248 = v247 + v211;
+  float v249 = v248 + v201;
+  float v250 = v244 + v222;
+  float v251 = v250 + v212;
+  float v252 = v251 + v202;
+  float v253 = v245 + v223;
+  float v254 = v253 + v213;
+  float v255 = v254 + v203;
+  float v256 = v246 + v224;
+  float v257 = v256 + v214;
+  float v258 = v257 + v204;
+  float v259 = v226 + v216;
+  float v260 = v259 + v206;
+  float v261 = v260 + v196;
+  float v262 = v233 / v261;
+  float v263 = v236 / v261;
+  float v264 = v239 / v261;
+  float v265 = v242 / v261;
+  float v266 = v249 / v261;
+  float v267 = v252 / v261;
+  float v268 = v255 / v261;
+  float v269 = v258 / v261;
+  bool v270 = (v148 == v153);
+  bool v271 = (v153 == v158);
+  bool v272 = (v270 & v271 != 0);
+  bool v273 = (v158 == v163);
+  bool v274 = (v272 & v273 != 0);
+  float v275 = (v274 ? v148 : v265);
+  bool v276 = (v168 == v173);
+  bool v277 = (v173 == v178);
+  bool v278 = (v276 & v277 != 0);
+  bool v279 = (v178 == v183);
+  bool v280 = (v278 & v279 != 0);
+  float v281 = (v280 ? v168 : v269);
+  result.x = v262;
+  result.y = v263;
+  result.z = v264;
+  result.w = v275;
+  result.x = v266;
+  result.y = v267;
+  result.z = v268;
+  result.w = v281;
+    return result;
+}

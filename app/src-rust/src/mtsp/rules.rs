@@ -491,12 +491,15 @@ mod tests {
             (1868140, PipelineId::M9),
             (1928870, PipelineId::M12),
             (2358720, PipelineId::M12),
+            (2379780, PipelineId::M11),
             (2456740, PipelineId::M12),
             (275850, PipelineId::WineBare),
+            (2784470, PipelineId::M12),
             (284160, PipelineId::M11),
             (1326470, PipelineId::M11),
             (1583230, PipelineId::M12),
             (3164500, PipelineId::M11),
+            (4000, PipelineId::M9),
             (3527290, PipelineId::M12),
         ] {
             assert_eq!(rules.get(&appid), Some(&pipeline), "appid {appid}");

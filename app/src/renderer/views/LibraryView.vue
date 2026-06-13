@@ -56,6 +56,8 @@ const gameGridRef = ref<HTMLElement | null>(null);
 const gameGridColumns = ref(1);
 let gameGridResizeObserver: ResizeObserver | null = null;
 let gameGridResizeListenerAttached = false;
+let artworkRetryTimer: number | null = null;
+const artworkRetryRequestedAppIds = new Set<number>();
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -124,6 +126,17 @@ function applyFilter() {
 
 function onCardExpanded(appid: number, open: boolean) {
   expandedAppId.value = open ? appid : null;
+}
+
+function requestArtworkRetry(appid: number) {
+  if (artworkRetryRequestedAppIds.has(appid)) return;
+  artworkRetryRequestedAppIds.add(appid);
+  if (artworkRetryTimer !== null) return;
+
+  artworkRetryTimer = window.setTimeout(async () => {
+    artworkRetryTimer = null;
+    await reloadLibrary();
+  }, 15_000);
 }
 
 function updateGameGridColumns() {
@@ -307,6 +320,10 @@ onUnmounted(() => {
   gameGridResizeObserver = null;
   window.removeEventListener("resize", updateGameGridColumns);
   gameGridResizeListenerAttached = false;
+  if (artworkRetryTimer !== null) {
+    window.clearTimeout(artworkRetryTimer);
+    artworkRetryTimer = null;
+  }
 });
 
 watch([library, search, filter], () => {
@@ -396,6 +413,7 @@ watch([library, search, filter], () => {
           @install="installGame(game)"
           @uninstall="uninstallGame(game)"
           @expanded="onCardExpanded"
+          @artwork-missing="requestArtworkRetry"
         />
       </div>
     </div>

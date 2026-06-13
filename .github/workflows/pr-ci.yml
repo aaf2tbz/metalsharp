@@ -41,6 +41,19 @@ jobs:
       - name: Metal tests
         run: ctest --test-dir build-metal --output-on-failure -R '^(metal_device|dxbc|format_translation|phase17)$'
 
+      - name: Build D3D12 Metal shader corpus
+        run: python3 tools/d3d12-metal-sdk/scripts/build-metal-shader-corpus.py --clean
+
+      - name: Verify staged D3D12 Metal shader corpus
+        run: python3 tools/d3d12-metal-sdk/scripts/verify-built-metal-shader-corpus.py dist/d3d12-metal-shaders
+
+      - name: Upload D3D12 Metal shader corpus
+        uses: actions/upload-artifact@v4
+        with:
+          name: d3d12-metal-shaders-pr-${{ github.event.pull_request.number }}
+          path: dist/d3d12-metal-shaders
+          if-no-files-found: error
+
   vue:
     name: Vue CI
     runs-on: macos-14
@@ -168,8 +181,12 @@ jobs:
             tar --use-compress-program=unzstd -xf app/bundles/metalsharp-graphics-dll.tar.zst -C "$tmp_dxmt"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows"
+            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix"
             cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-unix"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/"
             cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-windows"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/"
+            for unix_asset in winemetal.so libc++.1.dylib libc++abi.1.dylib libunwind.1.dylib; do
+              cp "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/$unix_asset" "$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix/$unix_asset"
+            done
           }
 
           python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
@@ -202,3 +219,26 @@ jobs:
           test -s app/native/host/HostRuntimeABI.h
           test -s app/native/host/manifest.json
           test -s app/native/host/libmetalsharp_host_runtime.dylib
+
+  m12-check:
+    name: M12 Check
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache M12 runtime inputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.metalsharp/toolchains
+            app/bundles
+          key: m12-check-${{ runner.os }}-llvm15-bundles-v1
+
+      - name: Install M12 build tools
+        run: brew install meson ninja mingw-w64 zstd
+
+      - name: Run M12 cube pipeline check
+        env:
+          M12_CHECK_SECONDS: "10"
+          M12_CHECK_RUN_LIVE: "0"
+        run: tools/ci/m12-check.sh

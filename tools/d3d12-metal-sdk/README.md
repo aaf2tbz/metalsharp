@@ -17,6 +17,50 @@ The SDK exists to make D3D12 changes evidence-driven before game-specific debugg
 - a baseline or generated result under `baselines/` or `results/`
 - a documented unsupported or risky-stub entry
 
+Start with the developer wrapper when resuming M12 work:
+
+```bash
+tools/d3d12-metal-sdk/scripts/m12-dev.sh help
+```
+
+The wrapper gives every common path a stable verb: `build-runtime`,
+`stage-runtime`, `mini`, `probes`, `shader-lab`, `full-offline`, `m12-check`,
+and `sdk-bundle`. See [docs/developer-assets.md](docs/developer-assets.md) for
+the asset map and exact commands.
+
+## Production M12 Shape
+
+The SDK exists to prove the same route that the app uses for M12 games:
+
+```text
+D3D12 game exe
+  -> Wine prefix `~/.metalsharp/prefix-steam`
+  -> game-local DXMT DLLs
+  -> WINEDLLPATH runtime routing
+  -> DXMT d3d12/dxgi/d3d11 fallback
+  -> winemetal.dll + DXMT_WINEMETAL_UNIXLIB=winemetal.so
+  -> winemetal.so
+  -> Metal
+```
+
+The app installs and migrates a prefix runtime surface before launch. That
+surface is staged from the installed runtime into
+`prefix-steam/drive_c/windows/system32/` and `prefix-steam/.metalsharp/unix/`,
+then validated byte-for-byte. Migration repair can fix a stale or broken prefix
+surface, but it does not reinstall Steam.
+
+M12 logs and caches are separate:
+
+```text
+~/.metalsharp/logs/m12/<appid>/m12.log
+~/.metalsharp/shader-cache/m12/<appid>/
+~/.metalsharp/pipeline-cache/m12/<appid>/
+```
+
+See [../../docs/architecture/m12-pipeline-map.md](../../docs/architecture/m12-pipeline-map.md)
+and [../../docs/architecture/m12-shader-engine.md](../../docs/architecture/m12-shader-engine.md)
+for the app-level architecture.
+
 ## Goals
 
 - Prove the intended DXMT D3D12 runtime is loaded.
@@ -67,6 +111,26 @@ touch paths.
 real mesh/object pipeline-state-stream probe. Keeping it as a runnable mini-app
 prevents future UE5/Nanite work from being described as supported without a
 repeatable proof.
+
+For the M12 render pipeline check used by PR CI, run:
+
+```bash
+tools/ci/m12-check.sh
+```
+
+This stages the released MetalSharp Wine runtime, rebuilds the PR DXMT D3D12
+artifacts with tests enabled, builds `m12_game.exe`, stages the rebuilt M12
+DLL/Unix bridge layout, and verifies the shared `winemetal.so` contract. PR CI
+exposes this as the `M12 Check` job so the core Wine/DXMT/WineMetal layout is
+proven independently of Steam or a title. For a local live render pass, opt in:
+
+```bash
+M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh
+```
+
+The executable is a 10-second RGB cube scene with dynamic vertices, indexed
+draws, a depth target, a lit ground plane, a projected shadow, and readback
+validation.
 
 For DXIL semantic coverage, run the reduced SM6 opcode-group probe:
 
@@ -127,6 +191,19 @@ The current honest shader feature posture is:
 `dxil_semantics_proven` is supporting evidence only. It must not substitute for
 `dxil_to_msl_proven`, and the contract comparator fails if shader compliance
 depends only on semantic coverage.
+
+The M12 shader engine is defined as its own contract because shader correctness
+spans DXIL parsing, MSL lowering, binding manifests, PSO creation, descriptor
+binding, shader cache behavior, offline corpus replay, and live render probes.
+Run the structural shader-engine gate before relying on game captures:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/validate-shader-engine.py \
+  --json tools/d3d12-metal-sdk/results/shader-engine-audit-metalsharp.json
+```
+
+The contract is `contracts/d3d12-shader-engine-contract.json`, with the
+reader-facing map in `docs/architecture/m12-shader-engine.md`.
 
 The default required probe groups prove:
 
@@ -441,6 +518,12 @@ x86_64-unix/
   winemetal.so
 ```
 
+For the MetalSharp profile, `runtime/wine/lib/wine/x86_64-unix/winemetal.so`
+must also match the rebuilt DXMT Unix bridge. Wine resolves
+`DXMT_WINEMETAL_UNIXLIB=winemetal.so` by name, so the shared Wine Unix location
+can be the file that actually loads even when the DXMT runtime directory is
+present.
+
 The runtime preflight intentionally treats Winemetal as two routes:
 
 - Steam/global Wine copies must preserve legacy wrapper exports such as
@@ -450,10 +533,11 @@ The runtime preflight intentionally treats Winemetal as two routes:
   event, counter sample, and bootstrap exports.
 
 Do not manually copy stale or ad hoc `winemetal.dll`/`winemetal.so` artifacts
-into `system32`, `syswow64`, or `runtime/wine/lib/wine`. Use
-`stage-dxmt-runtime.py`, which mirrors the verified rebuilt bridge into the
-runtime and prefix surfaces expected by the ABI checker. The preflight is
-designed to catch stale-copy regressions before Steam is launched.
+into `system32`, `syswow64`, or Wine runtime directories. Use
+`stage-dxmt-runtime.py`, which stages the rebuilt D3D12/DXGI/WineMetal PE DLLs,
+the DXMT Unix bridge, and the shared Wine Unix bridge location as one manifest.
+The preflight is designed to catch stale-copy regressions before Steam is
+launched.
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 

@@ -80,6 +80,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M10, PipelineId::M9],
                 shader_cache_subdir: None,
             },
+            // M12 is the DXMT D3D12 contract path. It deploys the D3D12/DXGI
+            // Windows DLLs, the WineMetal PE/unix bridge, DXMT's D3D11 fallback
+            // DLLs for mixed-engine games, and MetalSharp's app-local shims into
+            // the game directory before launch. The launcher then pins the
+            // cube-proven unix sidecar loading surface and a per-title log file.
             PipelineNode {
                 id: PipelineId::M12,
                 name: "M12",
@@ -89,9 +94,9 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d12,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
-                dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
@@ -150,7 +155,9 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("winemetal,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some(
+                    "winemetal,dxgi,dxgi_dxmt,d3d11,d3d10core,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
@@ -208,7 +215,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d10,d3d10_1,dxgi,dxgi_dxmt,d3d11,d3d10core,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec![
@@ -275,7 +282,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some("d3d9,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
                 winedllpath_dirs: vec![
                     "lib/wine/x86_64-windows",
@@ -286,11 +293,23 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "dxgi_dxmt.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/x86_64-windows",
+                        filename: "winemetal.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy {
                         source_subpath: "lib/dxmt/x86_64-windows",
                         filename: "nvapi64.dll",
                         dest_filename: None,
                     },
+                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll", dest_filename: None },
                     DllDeploy {
                         source_subpath: "lib/metalsharp/x86_64-windows",
                         filename: "metalsharp_ntdll_hook.dll",
@@ -593,9 +612,7 @@ mod tests {
     fn m12_is_stronger_than_other_dxmt_d3d_paths() {
         let m12 = get_pipeline(PipelineId::M12);
 
-        for required in ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"] {
-            assert!(m12.dyld_paths.contains(&required));
-        }
+        assert_eq!(m12.dyld_paths[..2], ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"]);
 
         let m12_dlls: std::collections::HashSet<_> = m12.deploy_dlls.iter().map(|dll| dll.filename).collect();
         for required in ["d3d12.dll", "d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"] {
@@ -619,7 +636,7 @@ mod tests {
 
         assert_eq!(
             m12.wine_overrides,
-            Some("winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("d3d12,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
@@ -644,13 +661,21 @@ mod tests {
         assert_eq!(m10.dyld_paths, m11.dyld_paths);
         assert_eq!(
             m10.wine_overrides,
-            Some("winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+            Some("winemetal,d3d10,d3d10_1,dxgi,dxgi_dxmt,d3d11,d3d10core,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
 
         let m10_dlls: std::collections::HashSet<_> = m10.deploy_dlls.iter().map(|dll| dll.filename).collect();
-        for required in
-            ["d3d10.dll", "d3d10_1.dll", "d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"]
-        {
+        for required in [
+            "d3d10.dll",
+            "d3d10_1.dll",
+            "d3d11.dll",
+            "dxgi.dll",
+            "dxgi_dxmt.dll",
+            "d3d10core.dll",
+            "winemetal.dll",
+            "nvapi64.dll",
+            "nvngx.dll",
+        ] {
             assert!(m10_dlls.contains(required), "M10 missing {}", required);
         }
         assert!(!m10_dlls.contains("d3d12.dll"));
@@ -674,13 +699,20 @@ mod tests {
         assert!(!m9.experimental);
         assert!(m9.launch_args.is_empty());
         assert_eq!(m9.shader_cache_subdir, Some("m9"));
-        assert_eq!(m9.wine_overrides, Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+        assert_eq!(
+            m9.wine_overrides,
+            Some("d3d9,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
 
         let m9_dlls: std::collections::HashSet<_> =
             m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
         assert!(m9_dlls.contains(&("lib/wine/x86_64-windows", "d3d9.dll")));
         assert!(m9_dlls.contains(&("lib/wine/i386-windows", "d3d9.dll")));
+        assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "dxgi.dll")));
+        assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "dxgi_dxmt.dll")));
+        assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "winemetal.dll")));
         assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "nvapi64.dll")));
+        assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "nvngx.dll")));
         assert!(m9.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxvk")));
         assert!(m9.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));
 
@@ -692,6 +724,22 @@ mod tests {
         assert!(m9.alternatives.contains(&PipelineId::M10));
         assert!(!m9.alternatives.contains(&PipelineId::M32));
         assert!(!m9.alternatives.contains(&PipelineId::WineBare));
+    }
+
+    #[test]
+    fn m11_uses_shared_dxgi_and_vendor_stub_surface() {
+        let m11 = get_pipeline(PipelineId::M11);
+        assert_eq!(
+            m11.wine_overrides,
+            Some("winemetal,dxgi,dxgi_dxmt,d3d11,d3d10core,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+
+        let m11_dlls: std::collections::HashSet<_> = m11.deploy_dlls.iter().map(|dll| dll.filename).collect();
+        for required in
+            ["d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"]
+        {
+            assert!(m11_dlls.contains(required), "M11 missing {}", required);
+        }
     }
 
     #[test]

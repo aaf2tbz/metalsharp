@@ -22,7 +22,7 @@ fn mac_cmd(name: &str) -> Command {
     Command::new(path)
 }
 
-pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-d3d12-sdk-phase17-pr129");
+pub const DXMT_BUNDLED_RUNTIME_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-m12-cube-runtime-v1");
 const DXMT_RUNTIME_MANIFEST: &str = "metalsharp-dxmt-runtime.json";
 const DXMT_RUNTIME_SCHEMA: &str = "metalsharp.dxmt-runtime.v1";
 const RUNTIME_BUNDLE: &str = "metalsharp-runtime";
@@ -42,13 +42,16 @@ const DXMT_REQUIRED_PE: &[&str] = &[
     "nvapi64.dll",
     "nvngx.dll",
 ];
+const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
 const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/wine/bin/metalsharp-wine",
     "runtime/metalsharp-backend",
     "runtime/host/manifest.json",
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
+    "runtime/wine/lib/wine/x86_64-unix/mscompatdb.so",
     "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
+    "runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS",
 ];
 const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-unix/winemetal.so",
@@ -200,6 +203,7 @@ fn run_install_all() {
         ("Support Assets", Box::new(install_split_assets_bundle)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+        ("Wine Init Runtime Surface", Box::new(install_wine_init_runtime_surface)),
         ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("Steam Bridge Shim", Box::new(install_steam_bridge)),
@@ -340,12 +344,7 @@ fn bundled_file_valid_exists(name: &str) -> bool {
 }
 
 fn install_rosetta() -> Result<bool, String> {
-    let plist = PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist");
-    if plist.exists() {
-        return Ok(false);
-    }
-    let running = mac_cmd("pgrep").args(["-q", "oahd"]).status().map(|s| s.success()).unwrap_or(false);
-    if running {
+    if crate::platform::rosetta_is_installed() {
         return Ok(false);
     }
 
@@ -354,7 +353,10 @@ fn install_rosetta() -> Result<bool, String> {
         .output()
         .map_err(|e| format!("failed to run softwareupdate: {}", e))?;
 
-    if output.status.success() || String::from_utf8_lossy(&output.stderr).contains("already installed") {
+    if output.status.success()
+        || String::from_utf8_lossy(&output.stderr).contains("already installed")
+        || crate::platform::rosetta_is_installed()
+    {
         Ok(true)
     } else {
         Err(format!("rosetta install failed: {}", String::from_utf8_lossy(&output.stderr)))
@@ -1040,6 +1042,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         }
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
+        sync_dxmt_winemetal_unixlib(&dxmt_dir)?;
         write_dxmt_runtime_manifest(&dxmt_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
         mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
@@ -1059,6 +1062,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
                 }
             }
             ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
+            sync_dxmt_winemetal_unixlib(&dxmt_dir)?;
             write_dxmt_runtime_manifest(&dxmt_dir, "fallback:~/metalsharp/runtime/dxmt")?;
         }
     }
@@ -1089,12 +1093,14 @@ pub fn dxmt_runtime_status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let dxmt_dir = dxmt_runtime_dir_for_home(&home);
     let installed_version = dxmt_runtime_installed_version(&dxmt_dir);
-    let files_ready = dxmt_runtime_ready(&dxmt_dir);
+    let missing_files = dxmt_runtime_missing_files(&dxmt_dir);
+    let files_ready = missing_files.is_empty();
     let current = files_ready && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
 
     json!({
         "current": current,
         "filesReady": files_ready,
+        "missingFiles": missing_files.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
         "installedVersion": installed_version,
         "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
         "manifestPath": dxmt_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
@@ -1125,8 +1131,9 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
         "source": source,
         "installedAtUnix": installed_at,
         "requiredFiles": {
-            "x86_64-unix": ["winemetal.so"],
+            "x86_64-unix": DXMT_REQUIRED_UNIX,
             "x86_64-windows": DXMT_REQUIRED_PE,
+            "wine/x86_64-unix": DXMT_REQUIRED_UNIX,
         },
     });
     fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), serde_json::to_string_pretty(&manifest).unwrap_or_default())
@@ -1147,10 +1154,57 @@ fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn sync_dxmt_winemetal_unixlib(dxmt_dir: &Path) -> Result<(), String> {
+    let dxmt_unix_dir = dxmt_dir.join("x86_64-unix");
+    let wine_unix_dir = dxmt_shared_wine_unix_dir(dxmt_dir);
+    fs::create_dir_all(&wine_unix_dir)
+        .map_err(|e| format!("create shared WineMetal unix dir {}: {}", wine_unix_dir.display(), e))?;
+    for file in DXMT_REQUIRED_UNIX {
+        let src = dxmt_unix_dir.join(file);
+        if !file_nonempty(&src) {
+            return Err(format!("missing DXMT Unix runtime file: {}", src.display()));
+        }
+        let dst = wine_unix_dir.join(file);
+        fs::copy(&src, &dst).map_err(|e| {
+            format!(
+                "copy DXMT Unix runtime file to shared Wine unix lib: {} -> {}: {}",
+                src.display(),
+                dst.display(),
+                e
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
+    dxmt_runtime_missing_files(dxmt_dir).is_empty()
+}
+
+fn dxmt_runtime_missing_files(dxmt_dir: &Path) -> Vec<PathBuf> {
     let pe_dir = dxmt_dir.join("x86_64-windows");
-    file_nonempty(&dxmt_dir.join("x86_64-unix").join("winemetal.so"))
-        && DXMT_REQUIRED_PE.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
+    let dxmt_unix_dir = dxmt_dir.join("x86_64-unix");
+    let wine_unix_dir = dxmt_shared_wine_unix_dir(dxmt_dir);
+    let mut missing = Vec::new();
+    for dll in DXMT_REQUIRED_PE {
+        let path = pe_dir.join(dll);
+        if !file_nonempty(&path) {
+            missing.push(path);
+        }
+    }
+    for file in DXMT_REQUIRED_UNIX {
+        for dir in [&dxmt_unix_dir, &wine_unix_dir] {
+            let path = dir.join(file);
+            if !file_nonempty(&path) {
+                missing.push(path);
+            }
+        }
+    }
+    missing
+}
+
+fn dxmt_shared_wine_unix_dir(dxmt_dir: &Path) -> PathBuf {
+    dxmt_dir.parent().unwrap_or_else(|| Path::new("")).join("wine").join("x86_64-unix")
 }
 
 fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
@@ -1471,6 +1525,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
         .join("Steam")
         .join("Steam.exe");
     if steam_exe.exists() {
+        validate_steam_prefix_runtime_surface(home)?;
         return Ok(false);
     }
 
@@ -1503,23 +1558,27 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
     let _ = fs::create_dir_all(&prefix);
 
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    stage_steam_prefix_runtime_surface(home)?;
     let mut wineboot_cmd = Command::new(&ms_wine);
     wineboot_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
+        .env("WINEDLLPATH", crate::prefix_runtime::prefix_runtime_winedllpath(&ms_root))
         .arg("wineboot")
         .arg("--init")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut wineboot_cmd, &ms_root);
     let _ = wineboot_cmd.status();
+    validate_steam_prefix_runtime_surface(home)?;
 
     let mut install_cmd = Command::new(&ms_wine);
     install_cmd
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
+        .env("WINEDLLPATH", crate::prefix_runtime::prefix_runtime_winedllpath(&ms_root))
         .arg(&installer)
         .args(["/S"])
         .stdout(std::process::Stdio::null())
@@ -1536,6 +1595,7 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
                 .join("Program Files (x86)")
                 .join("Steam");
             crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+            validate_steam_prefix_runtime_surface(home)?;
             return Ok(true);
         }
     }
@@ -1547,10 +1607,44 @@ fn install_windows_steam(home: &PathBuf) -> Result<bool, String> {
             .join("Program Files (x86)")
             .join("Steam");
         crate::steam::deploy_steamwebhelper_wrapper(&steam_dir);
+        validate_steam_prefix_runtime_surface(home)?;
         Ok(true)
     } else {
         Err("Steam.exe not found after installation — may need manual install".into())
     }
+}
+
+fn install_wine_init_runtime_surface(home: &PathBuf) -> Result<bool, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let runtime_wine = ms_home.join("runtime").join("wine");
+    let wine = metalsharp_wine_binary(home);
+    if !wine.exists() {
+        return Err(format!("MetalSharp Wine not found for prefix init: {}", wine.display()));
+    }
+
+    let prefix = ms_home.join("prefix-steam");
+    fs::create_dir_all(&prefix).map_err(|e| format!("create Steam prefix {}: {}", prefix.display(), e))?;
+
+    let staged_before = crate::prefix_runtime::stage_prefix_runtime_surface(&runtime_wine, &prefix)?;
+    crate::prefix_runtime::run_bounded_prefix_runtime_init(&wine, &runtime_wine, &prefix)?;
+    let staged_after = crate::prefix_runtime::stage_prefix_runtime_surface(&runtime_wine, &prefix)?;
+    crate::prefix_runtime::validate_install_wine_init_surface(&ms_home)?;
+
+    Ok(staged_before > 0 || staged_after > 0)
+}
+
+fn stage_steam_prefix_runtime_surface(home: &PathBuf) -> Result<usize, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let runtime_wine = ms_home.join("runtime").join("wine");
+    let prefix = ms_home.join("prefix-steam");
+    crate::prefix_runtime::stage_prefix_runtime_surface(&runtime_wine, &prefix)
+}
+
+fn validate_steam_prefix_runtime_surface(home: &PathBuf) -> Result<(), String> {
+    stage_steam_prefix_runtime_surface(home)?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    crate::prefix_runtime::validate_install_wine_init_surface(&ms_home)?;
+    Ok(())
 }
 
 fn check_command(cmd: &str) -> bool {
@@ -2111,6 +2205,16 @@ mod tests {
     }
 
     #[test]
+    fn runtime_archive_contract_requires_m12_shader_engine_material() {
+        assert!(
+            RUNTIME_REQUIRED_ARCHIVE_FILES
+                .iter()
+                .any(|path| path.contains("d3d12-metal-sdk/shader-corpus") && path.ends_with("SHA256SUMS")),
+            "runtime archive validation must require the M12 shader corpus proof material"
+        );
+    }
+
+    #[test]
     fn graphics_bundle_layout_matches_release_manifest() {
         let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
         let graphics_row = manifest
@@ -2174,6 +2278,9 @@ mod tests {
         fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
         fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
         fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
+        for dylib in DXMT_REQUIRED_UNIX.iter().copied().filter(|file| *file != "winemetal.so") {
+            fs::write(unix_dir.join(dylib), dylib.as_bytes()).expect("write DXMT Unix dylib");
+        }
         for dll in DXMT_REQUIRED_PE.iter().copied().filter(|dll| *dll != "dxgi_dxmt.dll") {
             fs::write(pe_dir.join(dll), dll.as_bytes()).expect("write DXMT DLL");
         }
@@ -2181,12 +2288,42 @@ mod tests {
         assert!(!dxmt_runtime_ready(&dxmt_dir));
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir).expect("normalize legacy DXMT bundle");
+        sync_dxmt_winemetal_unixlib(&dxmt_dir).expect("sync shared WineMetal unixlib");
 
         assert!(dxmt_runtime_ready(&dxmt_dir));
         assert_eq!(
             fs::read(pe_dir.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"),
             fs::read(pe_dir.join("dxgi.dll")).expect("read dxgi")
         );
+        assert_eq!(
+            fs::read(dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix").join("winemetal.so"))
+                .expect("read shared winemetal"),
+            fs::read(unix_dir.join("winemetal.so")).expect("read dxmt winemetal")
+        );
+        for dylib in DXMT_REQUIRED_UNIX.iter().copied().filter(|file| *file != "winemetal.so") {
+            assert_eq!(
+                fs::read(dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix").join(dylib))
+                    .expect("read shared Unix dylib"),
+                fs::read(unix_dir.join(dylib)).expect("read DXMT Unix dylib")
+            );
+        }
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_readiness_reports_missing_unix_loader_deps() {
+        let home = test_home("dxmt-missing-unix-loader-deps");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        write_dxmt_runtime_files(&dxmt_dir);
+
+        fs::remove_file(dxmt_dir.join("x86_64-unix").join("libc++abi.1.dylib")).expect("remove DXMT Unix dylib");
+        fs::remove_file(dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix").join("libunwind.1.dylib"))
+            .expect("remove shared Unix dylib");
+
+        let missing = dxmt_runtime_missing_files(&dxmt_dir);
+        assert!(missing.iter().any(|path| path.ends_with("x86_64-unix/libc++abi.1.dylib")));
+        assert!(missing.iter().any(|path| path.ends_with("x86_64-unix/libunwind.1.dylib")));
+        assert!(!dxmt_runtime_ready(&dxmt_dir));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -2241,6 +2378,59 @@ mod tests {
         let _ = fs::remove_dir_all(home);
     }
 
+    #[test]
+    fn existing_steam_install_refreshes_wine_init_runtime_surface() {
+        let home = test_home("existing-steam-runtime-refresh");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_prefix_init_runtime_files(&ms_dir);
+        write_m12_pipeline_material(&ms_dir);
+
+        let steam_exe =
+            ms_dir.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe");
+        fs::create_dir_all(steam_exe.parent().unwrap()).expect("create Steam dir");
+        fs::write(&steam_exe, b"steam").expect("write Steam.exe");
+
+        let stale_d3d12 =
+            ms_dir.join("prefix-steam").join("drive_c").join("windows").join("system32").join("d3d12.dll");
+        fs::create_dir_all(stale_d3d12.parent().unwrap()).expect("create system32");
+        fs::write(&stale_d3d12, b"stale").expect("write stale d3d12");
+
+        let installed = install_windows_steam(&home).expect("refresh existing Steam install");
+
+        assert!(!installed);
+        assert_eq!(
+            fs::read(&stale_d3d12).expect("read refreshed d3d12"),
+            fs::read(
+                ms_dir.join("runtime").join("wine").join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll")
+            )
+            .expect("read runtime d3d12")
+        );
+        assert!(ms_dir.join("prefix-steam").join(".metalsharp").join("unix").join("winemetal.so").is_file());
+        crate::prefix_runtime::validate_install_wine_init_surface(&ms_dir).expect("validate refreshed install surface");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn install_wine_init_runtime_surface_runs_bounded_probe_with_current_runtime() {
+        let home = test_home("install-wine-init-surface");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        write_prefix_init_runtime_files(&ms_dir);
+        write_m12_pipeline_material(&ms_dir);
+        write_fake_metalsharp_wine(&ms_dir);
+
+        let installed = install_wine_init_runtime_surface(&home).expect("install wine init runtime surface");
+
+        assert!(installed);
+        let prefix = ms_dir.join("prefix-steam");
+        let probe_args = fs::read_to_string(prefix.join("probe.args")).expect("read probe args");
+        assert_eq!(probe_args, "cmd\n/c\nexit\n");
+        assert!(!probe_args.contains("wineboot"));
+        crate::prefix_runtime::validate_install_wine_init_surface(&ms_dir).expect("validate install surface");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
     fn test_home(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "metalsharp-installer-{}-{}-{}",
@@ -2248,6 +2438,49 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
         ))
+    }
+
+    fn write_prefix_init_runtime_files(ms_dir: &Path) {
+        let runtime_wine = ms_dir.join("runtime").join("wine");
+        for (subdir, filename) in crate::prefix_runtime::prefix_runtime_dll_sources() {
+            let path = runtime_wine.join(subdir).join(filename);
+            fs::create_dir_all(path.parent().unwrap()).expect("create prefix init DLL parent");
+            fs::write(path, format!("runtime-{}", filename)).expect("write prefix init DLL");
+        }
+        for filename in crate::prefix_runtime::prefix_runtime_unix_sidecars() {
+            let path = runtime_wine.join("lib").join("wine").join("x86_64-unix").join(filename);
+            fs::create_dir_all(path.parent().unwrap()).expect("create prefix init Unix parent");
+            fs::write(path, format!("wine-{}", filename)).expect("write prefix init Unix sidecar");
+        }
+        let dxmt_winemetal = runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
+        fs::create_dir_all(dxmt_winemetal.parent().unwrap()).expect("create DXMT Unix parent");
+        fs::write(dxmt_winemetal, b"dxmt-winemetal").expect("write DXMT winemetal");
+    }
+
+    fn write_m12_pipeline_material(ms_dir: &Path) {
+        let material = ms_dir
+            .join("runtime")
+            .join("wine")
+            .join("share")
+            .join("d3d12-metal-sdk")
+            .join("shader-corpus")
+            .join("baseline")
+            .join("seed.metallib");
+        fs::create_dir_all(material.parent().unwrap()).expect("create M12 material parent");
+        fs::write(material, b"metallib").expect("write M12 material");
+    }
+
+    #[cfg(unix)]
+    fn write_fake_metalsharp_wine(ms_dir: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let wine = ms_dir.join("runtime").join("wine").join("bin").join("metalsharp-wine");
+        fs::create_dir_all(wine.parent().unwrap()).expect("create fake wine parent");
+        fs::write(&wine, b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$WINEPREFIX/probe.args\"\nexit 0\n")
+            .expect("write fake metalsharp-wine");
+        let mut permissions = fs::metadata(&wine).expect("fake wine metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&wine, permissions).expect("chmod fake wine");
     }
 
     #[test]
@@ -2299,10 +2532,15 @@ mod tests {
 
     fn write_dxmt_runtime_files(dxmt_dir: &Path) {
         let unix_dir = dxmt_dir.join("x86_64-unix");
+        let wine_unix_dir = dxmt_dir.parent().unwrap().join("wine").join("x86_64-unix");
         let pe_dir = dxmt_dir.join("x86_64-windows");
         fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
+        fs::create_dir_all(&wine_unix_dir).expect("create Wine unix dir");
         fs::create_dir_all(&pe_dir).expect("create DXMT PE dir");
-        fs::write(unix_dir.join("winemetal.so"), b"so").expect("write winemetal");
+        for file in DXMT_REQUIRED_UNIX {
+            fs::write(unix_dir.join(file), file.as_bytes()).expect("write DXMT Unix runtime file");
+            fs::write(wine_unix_dir.join(file), file.as_bytes()).expect("write shared Unix runtime file");
+        }
         for dll in DXMT_REQUIRED_PE {
             fs::write(pe_dir.join(dll), b"dll").expect("write DXMT DLL");
         }

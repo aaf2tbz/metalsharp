@@ -72,9 +72,9 @@ Converter::LoadOperand(const SrcOperandConstantBuffer &SrcOp, mask_t Mask) {
   auto Handle = V.get();
 
   if (auto Comp = ComponentFromScalarMask(Mask, SrcOp._.swizzle); Comp >= 0) {
-    auto TyInt = air.getIntTy();
-    auto Ptr = ir.CreateGEP(air.getIntTy(4), Handle, {LoadOperandIndex(SrcOp.regindex), ir.getInt32(Comp)});
-    auto ValueInt = ir.CreateLoad(TyInt, Ptr);
+    auto TyIntVec4 = air.getIntTy(4);
+    auto Ptr = ir.CreateGEP(TyIntVec4, Handle, {LoadOperandIndex(SrcOp.regindex)});
+    auto ValueInt = ir.CreateExtractElement(ir.CreateLoad(TyIntVec4, Ptr), Comp);
     return ApplySrcModifier(SrcOp._, ValueInt, Mask);
   }
 
@@ -90,9 +90,9 @@ Converter::LoadOperand(const SrcOperandImmediateConstantBuffer &SrcOp, mask_t Ma
   auto TyHandle = GetArrayType(Handle);
 
   if (auto Comp = ComponentFromScalarMask(Mask, SrcOp._.swizzle); Comp >= 0) {
-    auto TyInt = air.getIntTy();
-    auto Ptr = ir.CreateGEP(TyHandle, Handle, {ir.getInt32(0), LoadOperandIndex(SrcOp.regindex), ir.getInt32(Comp)});
-    auto ValueInt = ir.CreateLoad(TyInt, Ptr);
+    auto TyIntVec4 = air.getIntTy(4);
+    auto Ptr = ir.CreateGEP(TyHandle, Handle, {ir.getInt32(0), LoadOperandIndex(SrcOp.regindex)});
+    auto ValueInt = ir.CreateExtractElement(ir.CreateLoad(TyIntVec4, Ptr), Comp);
     return ApplySrcModifier(SrcOp._, ValueInt, Mask);
   }
 

@@ -331,6 +331,28 @@ def attach_inferred_stage_in_linked_function(pipeline: dict) -> dict:
     return copy
 
 
+def shader_payload_available(shader: object) -> bool:
+    if not isinstance(shader, dict):
+        return True
+    metallib = shader.get("metallib")
+    if not metallib:
+        return True
+    return Path(str(metallib)).exists()
+
+
+def pipeline_payloads_available(pipeline: dict) -> bool:
+    for key in ("shader", "vertex", "fragment"):
+        if not shader_payload_available(pipeline.get(key)):
+            return False
+    for key in ("vertex_linked_functions", "fragment_linked_functions"):
+        linked = pipeline.get(key)
+        if not isinstance(linked, list):
+            continue
+        if any(not shader_payload_available(shader) for shader in linked):
+            return False
+    return True
+
+
 def merged_pso_manifest(roots: list[Path], limit: int) -> dict | None:
     pipelines: list[dict] = []
     source_manifests: list[str] = []
@@ -342,6 +364,8 @@ def merged_pso_manifest(roots: list[Path], limit: int) -> dict | None:
         for pipeline in manifest["pipelines"]:
             if isinstance(pipeline, dict):
                 copy = attach_inferred_stage_in_linked_function(dict(pipeline))
+                if not pipeline_payloads_available(copy):
+                    continue
                 copy.setdefault("captured_manifest", str(manifest_path))
                 pipelines.append(copy)
                 if limit > 0 and len(pipelines) >= limit:
