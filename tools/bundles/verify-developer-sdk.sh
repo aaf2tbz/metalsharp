@@ -26,6 +26,7 @@ required=(
   "$ROOT/runtime/manifest.json"
   "$ROOT/runtime/wine/bin/wine"
   "$ROOT/runtime/dxmt/x86_64-windows/d3d12.dll"
+  "$ROOT/runtime/dxmt/x86_64-windows/d3d11.dll"
   "$ROOT/runtime/dxmt/x86_64-windows/dxgi.dll"
   "$ROOT/runtime/dxmt/x86_64-windows/dxgi_dxmt.dll"
   "$ROOT/runtime/dxmt/x86_64-windows/winemetal.dll"

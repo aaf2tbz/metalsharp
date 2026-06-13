@@ -28,6 +28,7 @@ GRAPHICS_ASSET = "metalsharp-graphics-dll.tar.zst"
 CRITICAL_FILES = [
     "runtime/wine/bin/wine",
     "runtime/dxmt/x86_64-windows/d3d12.dll",
+    "runtime/dxmt/x86_64-windows/d3d11.dll",
     "runtime/dxmt/x86_64-windows/dxgi.dll",
     "runtime/dxmt/x86_64-windows/dxgi_dxmt.dll",
     "runtime/dxmt/x86_64-windows/winemetal.dll",

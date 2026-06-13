@@ -141,6 +141,7 @@ SDK_CRITICAL_FILES = [
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/dxmt/x86_64-windows/d3d12.dll",
+    "runtime/dxmt/x86_64-windows/d3d11.dll",
     "runtime/dxmt/x86_64-windows/dxgi.dll",
     "runtime/dxmt/x86_64-windows/dxgi_dxmt.dll",
     "runtime/dxmt/x86_64-windows/winemetal.dll",
