@@ -116,6 +116,18 @@ probe, and require M12 shader corpus material. Migration repair is deliberately
 narrow: it repairs prefix layout and restages runtime files, but it does not
 reinstall Steam.
 
+The bounded probe is fail-closed. If it times out, the process is killed and
+install/migration reports failure. A timeout is not a successful prefix init.
+
+The required shader corpus proof is:
+
+```text
+runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS
+```
+
+The runtime must also include runtime-safe shader-engine material under the
+proven corpus source.
+
 The normal M12 game launch must carry:
 
 ```text
@@ -178,3 +190,22 @@ tools/bundles/verify-developer-sdk.sh \
 On `main` and version tags, CI uploads the refreshed SDK tarball and updated
 bundle manifest back to the `bundles` release with `--clobber`. The DMG build
 then downloads that refreshed SDK instead of repackaging a stale tarball.
+
+For manual repair of the runtime asset, start from the currently published
+`bundles` release archive:
+
+```bash
+gh release download bundles --repo aaf2tbz/metalsharp \
+  --pattern metalsharp-runtime.tar.zst --dir <work-dir>
+cargo build --release --manifest-path app/src-rust/Cargo.toml
+python3 tools/dmg/repair-runtime-bundle.py \
+  --archive <work-dir>/metalsharp-runtime.tar.zst \
+  --host-dir app/native/host \
+  --backend app/src-rust/target/release/metalsharp-backend
+tools/bundles/verify-bundles.sh --bundle-dir <verify-bundles-dir> --require mac
+gh release upload bundles <work-dir>/metalsharp-runtime.tar.zst \
+  --repo aaf2tbz/metalsharp --clobber
+```
+
+Always download the uploaded asset back and compare SHA-256 before treating the
+release bundle as current.

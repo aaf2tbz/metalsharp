@@ -120,9 +120,10 @@ tools/ci/m12-check.sh
 
 This stages the released MetalSharp Wine runtime, rebuilds the PR DXMT D3D12
 artifacts with tests enabled, builds `m12_game.exe`, stages the rebuilt M12
-DLL/Unix bridge layout, and verifies the shared `winemetal.so` contract. PR CI
-exposes this as the `M12 Check` job so the core Wine/DXMT/WineMetal layout is
-proven independently of Steam or a title. For a local live render pass, opt in:
+DLL/Unix bridge layout, validates the M12 shader-corpus proof surface, and
+verifies the shared `winemetal.so` contract. PR CI exposes this as the
+`M12 Check` job so the core Wine/DXMT/WineMetal layout is proven independently
+of Steam or a title. For a local live render pass, opt in:
 
 ```bash
 M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh
@@ -538,6 +539,16 @@ into `system32`, `syswow64`, or Wine runtime directories. Use
 the DXMT Unix bridge, and the shared Wine Unix bridge location as one manifest.
 The preflight is designed to catch stale-copy regressions before Steam is
 launched.
+
+For app installs and migrations, the M12 shader corpus is also part of the
+runtime contract. The installed runtime must include:
+
+```text
+runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS
+```
+
+The proof file is not copied into per-game shader caches, but its presence
+prevents a partial SDK/runtime archive from being accepted as M12-ready.
 
 Wine builtin DLLs commonly report as `C:\windows\system32\*.dll` from inside the probe even when they are backed by `WINEDLLPATH` or builtin replacement files. For D3D12, the loader probe therefore also checks ordinal `101` for `D3D12CreateDevice`, which is the important custom-runtime compatibility signal for games that import D3D12 by ordinal.
 

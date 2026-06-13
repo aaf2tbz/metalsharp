@@ -12,8 +12,10 @@ TOML, not Rust code.
 - [x] PE import parser with D3D API auto-detection
 - [x] TOML override rules (~70 appid mappings)
 - [x] Resolver: TOML → managed/FNA eligibility → PE analysis → directory heuristics → fallback
-- [x] Unified launcher with DLL deployment matrix
+- [x] Unified launcher with DLL deployment matrix, prefix-route staging, and
+      game-local M12 Unix sidecar staging
 - [x] API endpoints: GET /mtsp/pipelines, POST /mtsp/prepare
+- [x] `/mtsp/prepare` stages launch-critical M12 assets before returning `ok`
 - [x] Backward-compatible launch delegates
 - [x] GPTK dependency removed
 - [x] M9 D3D9 route under the DXMT launch/cache family
@@ -44,7 +46,7 @@ TOML, not Rust code.
 
 | ID | Name | Backend | Notes |
 |---|---|---|---|
-| M12 | D3D12 → Metal | dxmt | Public D3D12 route; deploys D3D12/DXGI/DXIL/Agility sidecars when selected |
+| M12 | D3D12 → Metal | dxmt | Public D3D12 route; deploys D3D12/DXGI/D3D11 fallback DLLs, Agility payloads, prefix-route DLLs, and game-local Unix sidecars |
 | M11 | D3D11 → Metal | dxmt | Public D3D11 route |
 | M10 | D3D10 → Metal | dxmt | Public D3D10 route |
 | M9 | D3D9 → Metal | dxmt | Public D3D9 route under the DXMT launch/cache family |

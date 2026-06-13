@@ -33,8 +33,8 @@ proof output into shader or pipeline caches.
   shader look broken.
 - **Installed corpus:** checked-in shader corpora under
   `tools/d3d12-metal-sdk/shader-corpus/` are packaged into the runtime and
-  scripts/tools bundles. Install and migration validate that at least one M12
-  shader-engine corpus source exists before M12 is considered ready.
+  scripts/tools bundles. Install and migration validate the expected corpus
+  proof file and runtime-safe material before M12 is considered ready.
 
 ## Runtime Material
 
@@ -45,6 +45,17 @@ M12 shader-engine material can be sourced from:
 ~/.metalsharp/runtime/d3d12-metal-sdk/shader-corpus/
 ~/.metalsharp/scripts/tools/d3d12-metal-sdk/shader-corpus/
 ```
+
+The install/migration readiness proof is the source-controlled corpus checksum
+file:
+
+```text
+elden-ring-present-vb-pull-20260612/proof/SHA256SUMS
+```
+
+That proof must exist under at least one installed corpus source, and the source
+must also contain runtime-safe shader-engine material. This prevents a partial
+archive with one stray `.metallib` from passing M12 readiness.
 
 When a game uses the M12 cache namespace, `shader_cache.rs` copies runtime-safe
 files into:
@@ -154,6 +165,13 @@ The full SDK render proof remains:
 
 ```bash
 tools/ci/m12-check.sh
+```
+
+For release-bundle proof, also run:
+
+```bash
+tools/bundles/verify-bundles.sh --bundle-dir app/bundles --require mac
+tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk.tar.zst
 ```
 
 ## Contract Authority

@@ -161,6 +161,12 @@ Windows files are staged to:
 ~/.metalsharp/prefix-steam/drive_c/windows/system32/
 ```
 
+32-bit PE files selected for the M9 route are staged to:
+
+```text
+~/.metalsharp/prefix-steam/drive_c/windows/syswow64/
+```
+
 Unix sidecars are staged to:
 
 ```text
@@ -190,10 +196,18 @@ Prefix init uses a bounded probe:
 metalsharp-wine cmd /c exit
 ```
 
+If that probe times out, MetalSharp kills the child and reports failure. A
+timeout is not accepted as proof that the prefix initialized correctly.
+
 Migration repairs reported prefix runtime failures without reinstalling Steam.
 The repair pass fixes prefix directories, backs up an invalid `dosdevices` path,
 recreates `c:`, clears only staged runtime files, restages the current runtime,
 reruns the bounded probe, and validates again.
+
+M12 launch sidecars are staged game-local, under `unix/`, and under
+`.metalsharp/unix/`. The `mscompatdb.so` sidecar is sourced from the validated
+Wine hook path, `runtime/wine/lib/wine/x86_64-unix/mscompatdb.so`; do not stage
+or validate an arbitrary DXMT-side `mscompatdb.so`.
 
 ## Important Environment
 

@@ -37,6 +37,13 @@ DXMT-family DLLs:
 | `nvapi64.dll`, `nvngx.dll` | M12, M11, M10, M9 |
 | `winemetal.so` | Unix Metal bridge |
 
+Prefix-route staging mirrors this family by architecture: x86_64 PE DLLs go to
+`prefix-steam/drive_c/windows/system32`, while i386 PE DLLs such as M9's
+32-bit `d3d9.dll` go to `prefix-steam/drive_c/windows/syswow64`. M12 also
+stages its Unix sidecars game-local, under `unix/`, and under
+`.metalsharp/unix/` so a normal game launch has the same bridge surface as the
+developer stress executables.
+
 Basic flow:
 
 ```text
@@ -82,6 +89,11 @@ M9 cache path:
 
 | Game | Best/current pipeline |
 |---|---|
+| 9 Kings | M12 |
+| Balatro | M11 |
+| BeamNG.drive | M11 |
+| Garry's Mod | M9 |
+| PEAK | M12 |
 | Schedule 1 | M12 recommended |
 | Subnautica | M11 |
 | Subnautica: Below Zero | M12 recommended, M11 optimized |

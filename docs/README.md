@@ -32,10 +32,12 @@ Use this page as the repo map before changing launch/runtime code.
 
 - [Launch Architecture](architecture/launch-architecture.md) - pipeline selection and launch ownership.
 - [D3D12 Pipeline Map](architecture/m12-pipeline-map.md) - current M12 D3D12/DXMT path.
+- [M12 Shader Engine](architecture/m12-shader-engine.md) - D3D12 shader-engine surfaces, runtime material, proof layers, and stress executables.
 - [D3D10 Pipeline Map](architecture/m10-pipeline-map.md) - current M10 D3D10/DXMT path.
 - [D3D9 Pipeline Map](architecture/m9-pipeline-map.md) - current M9 D3D9 route.
 - [DXMT and Vulkan Architecture](architecture/dxmt-vulkan-architecture.md) - DXMT/M9-M12 boundaries and Vulkan fallback boundaries.
 - [D3D12 Developer Runtime Package](../tools/d3d12-metal-sdk/docs/developer-runtime.md) - self-contained developer SDK tarball layout and publish flow.
+- [M12 Developer Assets](../tools/d3d12-metal-sdk/docs/developer-assets.md) - SDK scripts, probes, shader labs, cube/stress gates, and bundle rebuild workflow.
 
 ## Historical Roadmaps
 
@@ -66,4 +68,5 @@ These files are planning history and should not be treated as the current implem
 ```bash
 tools/bundles/verify-bundles.sh --release
 tools/bundles/verify-bundles.sh --require mac
+tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk.tar.zst
 ```

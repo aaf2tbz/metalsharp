@@ -28,6 +28,26 @@ tools/bundles/verify-bundles.sh --release
 tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk.tar.zst
 ```
 
+When repairing a published runtime bundle, start from the actual
+`metalsharp-runtime.tar.zst` asset on the `bundles` release, not from an
+unverified local archive. The repair flow is:
+
+```bash
+gh release download bundles --repo aaf2tbz/metalsharp \
+  --pattern metalsharp-runtime.tar.zst --dir <work-dir>
+cargo build --release --manifest-path app/src-rust/Cargo.toml
+python3 tools/dmg/repair-runtime-bundle.py \
+  --archive <work-dir>/metalsharp-runtime.tar.zst \
+  --host-dir app/native/host \
+  --backend app/src-rust/target/release/metalsharp-backend
+tools/bundles/verify-bundles.sh --bundle-dir <verify-bundles-dir> --require mac
+gh release upload bundles <work-dir>/metalsharp-runtime.tar.zst \
+  --repo aaf2tbz/metalsharp --clobber
+```
+
+After upload, download the asset back and compare its SHA-256 against the
+verified local archive. This closes the release-asset drift loop.
+
 ## Installer Acceptance Rules
 
 The installer consumes the split runtime tarballs by root name. `metalsharp-graphics-dll.tar.zst` is the only source for the active DXMT runtime payload used by M9-M12.
@@ -45,11 +65,13 @@ material. The runtime archive contract requires the checked-in D3D12 shader
 corpus proof material under:
 
 ```text
-runtime/wine/share/d3d12-metal-sdk/shader-corpus/
+runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS
 ```
 
 Install and migration validate that this corpus surface exists before the Wine
-init surface is accepted.
+init surface is accepted. Presence of one random `.metallib` is not enough:
+validation requires the proof file and at least one runtime-safe shader-engine
+material file under a proven corpus source.
 
 ## Wine Init Runtime Surface
 
@@ -98,11 +120,20 @@ The installer stages before the probe, runs the probe with `WINEDLLPATH` pointed
 at the current runtime, stages again after the probe, then validates the prefix
 surface and M12 shader material.
 
+The bounded probe is fail-closed. If it exceeds the timeout, MetalSharp kills
+the child process and reports an error. A killed or hung Wine init must never be
+treated as an installed or migrated runtime.
+
 Migration uses the same surface as an update operation. It preserves user and
 bottle settings, refreshes runtime files, restores settings, stages the prefix
 surface, and validates. It does not reinstall Steam when `Steam.exe` already
 exists. It also does not require `Steam.exe` to validate an update, because the
 goal is to prove the runtime surface Steam and games will load from.
+
+Migration may skip runtime work only when both the core runtime files and
+`validate_install_wine_init_surface()` pass. A core Wine/DXMT archive that
+exists on disk but has stale prefix DLLs or missing M12 corpus proof is not
+ready.
 
 If migration reports a Wine init/runtime failure, it performs one repair pass:
 
@@ -138,6 +169,12 @@ The game executable is still launched through the prepared MTSP M12 route with
 the DXMT DLLs, `WINEDLLPATH`, `DXMT_WINEMETAL_UNIXLIB=winemetal.so`, cache
 paths, and `~/.metalsharp/logs/m12/<appid>/m12.log` diagnostics. A Steam
 client-only handoff is diagnostic/bootstrap behavior, not the normal M12 route.
+
+`POST /mtsp/prepare` is a staging preflight, not a launch. It must still stage
+the same launch-critical M12 assets: Agility sidecars, prefix-route DLLs,
+game-local DXMT DLLs, M12 Unix sidecars, Steam identity files, and game-local
+path verification. If these cannot be staged, prepare should fail instead of
+returning `ok`.
 
 ## Steam Wrapper Rules
 

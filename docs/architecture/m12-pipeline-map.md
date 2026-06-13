@@ -87,7 +87,9 @@ prefix init and Steam/game launch:
 
 `prefix_runtime.rs` owns this file list. Install and migration call the same
 staging and validation functions so the two paths cannot drift. Validation is
-byte-for-byte against the installed runtime, not a name-only check.
+byte-for-byte against the installed runtime, not a name-only check. Wine init
+timeout is fail-closed: a bounded `cmd /c exit` probe that has to be killed is a
+runtime error, not a successful install.
 
 ## Install And Migration Contract
 
@@ -101,6 +103,14 @@ Install order:
 4. A bounded Wine probe runs `cmd /c exit` through `metalsharp-wine`.
 5. The prefix surface is staged again in case Wine rewrote `system32`.
 6. Prefix DLLs/sidecars and M12 shader-engine material are validated.
+
+The shader-engine material check requires the checked-in corpus proof file:
+
+```text
+runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS
+```
+
+A partial corpus with only a random shader sidecar is not sufficient.
 
 Migration order:
 
@@ -129,6 +139,10 @@ not require `Steam.exe` for prefix runtime validation. Steam installation is a
 separate user/install concern; updates only refresh the runtime surface Steam
 and games load from.
 
+Migration only skips runtime work when the core runtime and the prefix runtime
+surface both validate. A runtime archive that exists but has stale
+`prefix-steam` DLLs or missing M12 corpus proof still needs repair.
+
 ## Game Launch Flow
 
 1. The PE scanner and route rules select `PipelineId::M12`.
@@ -138,10 +152,21 @@ and games load from.
    injections, seeds Steam identity, and stages Agility SDK files when needed.
 4. `deploy_recipe_dlls` copies DXMT DLLs into the game directory and records
    `.metalsharp/injections.json`.
-5. M12 also supports a prefix route surface under
-   `prefix-steam/drive_c/windows/system32` for Steam-prefix launches.
-6. The launcher sets the Wine/DXMT environment and launches the game executable
+5. `deploy_prefix_route_dlls` stages the same route DLLs into
+   `prefix-steam/drive_c/windows/system32`; i386 PE DLLs such as M9's 32-bit
+   `d3d9.dll` go to `prefix-steam/drive_c/windows/syswow64`.
+6. `stage_m12_unix_sidecars` copies `winemetal.so`, Wine sidecars, loader
+   dylibs, and the validated Wine `mscompatdb.so` into the game directory,
+   `unix/`, and `.metalsharp/unix/`.
+7. `verify_m12_game_local_launch_path` checks that the cube-style game-local
+   sidecar layout exists before launch.
+8. The launcher sets the Wine/DXMT environment and launches the game executable
    directly while Wine Steam stays available for Steamworks state.
+
+`POST /mtsp/prepare` follows the same staging contract without spawning Wine or
+the game. It is a useful preflight only because it stages Agility, prefix-route
+DLLs, game-local sidecars, Steam identity, and M12 path verification before
+returning `ok`.
 
 Game-local M12 DLLs include:
 
@@ -212,6 +237,8 @@ Shader-engine corpus material is installed from:
 `shader_cache.rs` copies `.metallib`, `.air`, `.msl`, `.dxbc`, `.dxil`, `.cso`,
 `.json`, `.module.txt`, and `.dxil_report.txt` files into the selected M12
 cache. Proof/log folders are intentionally not copied as runtime cache inputs.
+The proof file still remains part of install/migration readiness because it
+proves the packaged corpus is the expected source-controlled fixture.
 
 ## Developer And CI Gates
 

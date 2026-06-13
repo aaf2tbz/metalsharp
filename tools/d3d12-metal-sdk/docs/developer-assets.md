@@ -36,6 +36,10 @@ The runtime layout has to match the application M12 contract:
   `app/src-rust/src/prefix_runtime.rs`.
 - M12 shader corpus material lives under
   `runtime/wine/share/d3d12-metal-sdk/shader-corpus/`.
+- The installed corpus must include
+  `elden-ring-present-vb-pull-20260612/proof/SHA256SUMS` plus runtime-safe
+  shader material. This is an install/migration readiness proof, not a cache
+  input.
 
 When adding new runtime files, update the source contract first, then the stage
 script, then the docs. Do not add one-off copies only to a game directory; that
@@ -138,3 +142,20 @@ tools/d3d12-metal-sdk/scripts/m12-dev.sh sdk-bundle
 
 This builds and verifies `metalsharp-d3d12-developer-sdk.tar.zst`, including
 scripts, contracts, probes, runtime manifest, and staged shader-corpus assets.
+
+For release parity, the SDK should be rebuilt from the same verified split
+bundles the app uses:
+
+```bash
+python3 tools/d3d12-metal-sdk/scripts/build-metal-shader-corpus.py --clean
+python3 tools/bundles/create-developer-sdk.py \
+  --bundle-dir app/bundles \
+  --out-dir dist/developer-sdk \
+  --manifest dist/bundles/metalsharp-bundle-manifest.tsv
+tools/bundles/verify-developer-sdk.sh \
+  dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst
+```
+
+When publishing a refreshed SDK to the `bundles` release, upload with
+`--clobber`, download it back, and compare the SHA-256 against the verified
+local archive.
