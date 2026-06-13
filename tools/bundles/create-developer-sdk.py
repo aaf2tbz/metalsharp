@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SDK_SOURCE = PROJECT_ROOT / "tools" / "d3d12-metal-sdk"
 DEFAULT_BUNDLE_DIR = PROJECT_ROOT / "app" / "bundles"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "dist" / "developer-sdk"
+DEFAULT_SHADER_BUILD_DIR = PROJECT_ROOT / "dist" / "d3d12-metal-shaders"
 SDK_ASSET = "metalsharp-d3d12-developer-sdk.tar.zst"
 SDK_ROOT = "developer-sdk/d3d12"
 
@@ -199,7 +200,7 @@ def rewrite_release_manifest(source: Path, dest: Path, sdk_archive: Path) -> Non
     dest.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
 
 
-def build_sdk(bundle_dir: Path, out_dir: Path, release_manifest: Path | None) -> Path:
+def build_sdk(bundle_dir: Path, out_dir: Path, release_manifest: Path | None, shader_build_dir: Path) -> Path:
     runtime_asset = bundle_dir / RUNTIME_ASSET
     graphics_asset = bundle_dir / GRAPHICS_ASSET
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -214,6 +215,8 @@ def build_sdk(bundle_dir: Path, out_dir: Path, release_manifest: Path | None) ->
         extract_zst(graphics_asset, graphics_src)
 
         copy_tree(SDK_SOURCE, sdk_root, ignore=sdk_ignore)
+        if shader_build_dir.is_dir():
+            copy_tree(shader_build_dir, sdk_root / "shader-corpus-build")
         copy_tree(runtime_src / "runtime" / "wine", sdk_root / "runtime" / "wine")
         copy_tree(runtime_src / "runtime" / "host", sdk_root / "runtime" / "host")
         copy_file(runtime_src / "runtime" / "metalsharp-backend", sdk_root / "runtime" / "metalsharp-backend")
@@ -235,9 +238,15 @@ def main() -> int:
         type=Path,
         help="Optional release manifest to copy and rewrite with the new SDK archive hash.",
     )
+    parser.add_argument(
+        "--shader-build-dir",
+        type=Path,
+        default=DEFAULT_SHADER_BUILD_DIR,
+        help="Optional staged AIR/metallib shader corpus build to include in the SDK.",
+    )
     args = parser.parse_args()
 
-    output = build_sdk(args.bundle_dir, args.out_dir, args.manifest)
+    output = build_sdk(args.bundle_dir, args.out_dir, args.manifest, args.shader_build_dir)
     print(f"{output}\t{sha256(output)}\t{output.stat().st_size}")
     manifest = args.out_dir / "metalsharp-bundle-manifest.tsv"
     if manifest.is_file():

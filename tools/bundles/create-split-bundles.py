@@ -154,6 +154,8 @@ SDK_CRITICAL_FILES = [
     "scripts/stage-dxmt-runtime.py",
 ]
 
+DEFAULT_SHADER_BUILD_DIR = PROJECT_ROOT / "dist" / "d3d12-metal-shaders"
+
 
 def sdk_file_record(root: Path, rel: str) -> dict:
     path = root / rel
@@ -277,6 +279,8 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         return is_dir and rel.parts[:1] in {("cache",), ("external",), ("out",)}
 
     copy_tree(PROJECT_ROOT / "tools" / "d3d12-metal-sdk", roots["sdk"], ignore=sdk_ignore)
+    if DEFAULT_SHADER_BUILD_DIR.is_dir():
+        copy_tree(DEFAULT_SHADER_BUILD_DIR, roots["sdk"] / "shader-corpus-build")
     copy_tree(roots["runtime"] / "wine", roots["sdk"] / "runtime" / "wine")
     copy_tree(roots["runtime"] / "host", roots["sdk"] / "runtime" / "host")
     copy_file(roots["runtime"] / "metalsharp-backend", roots["sdk"] / "runtime" / "metalsharp-backend")
