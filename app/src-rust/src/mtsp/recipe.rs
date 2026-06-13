@@ -241,11 +241,11 @@ fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&
 }
 
 pub(crate) fn requires_steam_secure_launch_args(appid: u32) -> bool {
-    matches!(appid, 440 | 252490 | 271590 | 284160 | 292030 | 1172380 | 1260320 | 3241660)
+    matches!(appid, 440 | 252490 | 271590 | 284160 | 292030 | 1172380 | 3241660)
 }
 
 pub(crate) fn requires_steam_launch_args(appid: u32) -> bool {
-    matches!(appid, 620 | 4000) || requires_steam_secure_launch_args(appid)
+    matches!(appid, 620 | 4000 | 1260320) || requires_steam_secure_launch_args(appid)
 }
 
 pub(crate) fn uses_steam_launch_model(appid: u32, pipeline: PipelineId) -> bool {
@@ -1102,7 +1102,7 @@ mod tests {
 
     #[test]
     fn source_style_titles_get_steam_secure_launch_args() {
-        for appid in [440, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
+        for appid in [440, 252490, 271590, 284160, 292030, 1172380, 3241660] {
             let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
 
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
@@ -1110,6 +1110,14 @@ mod tests {
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
         }
+    }
+
+    #[test]
+    fn party_animals_m11_uses_steam_without_secure() {
+        let args = effective_launch_args(1260320, super::super::engine::get_pipeline(PipelineId::M11));
+
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
     }
 
     #[test]
