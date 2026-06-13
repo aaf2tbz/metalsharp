@@ -7,7 +7,7 @@ pub fn deploy_preset_cache(home: &PathBuf, cache_subdir: &str, appid: u32) -> Op
 }
 
 pub fn deploy_preset_cache_to(home: &PathBuf, cache_subdir: &str, appid: u32, cache_base: &Path) -> Option<u64> {
-    let _ = std::fs::create_dir_all(&cache_base);
+    let _ = std::fs::create_dir_all(cache_base);
 
     let mut deployed = 0;
 
@@ -22,7 +22,7 @@ pub fn deploy_preset_cache_to(home: &PathBuf, cache_subdir: &str, appid: u32, ca
     }
 
     if cache_subdir == "m12" {
-        deployed += deploy_m12_shader_engine_cache(home, appid, &cache_base);
+        deployed += deploy_m12_shader_engine_cache(home, appid, cache_base);
     }
 
     (deployed > 0).then_some(deployed)
