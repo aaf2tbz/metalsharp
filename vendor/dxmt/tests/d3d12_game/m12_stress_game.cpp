@@ -1143,22 +1143,33 @@ static const char *kScenePs =
     "struct PS_IN { float4 pos : SV_Position; float3 normal : NORMAL; float2 uv : TEXCOORD0; float4 color : COLOR0; float3 world : TEXCOORD3; };\n"
     "float4 main(PS_IN i) : SV_Target {\n"
     "  float3 n = normalize(i.normal);\n"
-    "  float3 sunDir = normalize(float3(0.28, 0.62, -0.74));\n"
-    "  float3 fillDir = normalize(float3(-0.8, 0.3, 0.6));\n"
+    "  float3 sunDir = normalize(float3(0.42, 0.70, -0.58));\n"
+    "  float3 fillDir = normalize(float3(-0.9, 0.28, 0.5));\n"
     "  float longShadow = saturate(1.0 - smoothstep(-0.2, 1.9, i.world.y)) * smoothstep(-5.0, 9.0, i.world.z);\n"
-    "  float diffuse = saturate(dot(n, sunDir)) * 0.95 + saturate(dot(n, fillDir)) * 0.20;\n"
-    "  float2 uv0 = frac(i.uv + float2(time * 0.03, -time * 0.02));\n"
-    "  float2 uv1 = frac(i.world.xz * 0.08 + float2(time * 0.04, time * 0.025));\n"
+    "  float diffuse = saturate(dot(n, sunDir)) * 1.12 + saturate(dot(n, fillDir)) * 0.28;\n"
+    "  float2 uv0 = frac(i.uv + float2(time * 0.018, -time * 0.014));\n"
+    "  float2 uv1 = frac(i.world.xz * 0.075 + float2(time * 0.035, time * 0.022));\n"
     "  float3 tex0 = baseTex.Sample(samp0, uv0).rgb;\n"
     "  float3 tex1 = computeTex.Sample(samp0, uv1).rgb;\n"
     "  float water = step(0.42, i.color.b) * step(i.color.r, 0.30);\n"
-    "  float3 sunrise = float3(1.0, 0.52, 0.16) * saturate(1.0 - abs(i.world.x) * 0.018);\n"
-    "  float3 color = i.color.rgb * (0.18 + diffuse) + tex0 * 0.22 + tex1 * (0.28 + water * 0.38);\n"
-    "  color += sunrise * saturate(1.0 - length(i.world.xz - float2(0.0, 9.0)) * 0.055) * 0.65;\n"
-    "  color *= lerp(1.0 - longShadow * 0.38, 1.12, water);\n"
+    "  float sky = step(0.50, i.color.b) * step(0.72, i.color.r);\n"
+    "  float sun = step(0.72, i.color.r) * step(i.color.b, 0.22);\n"
+    "  float sand = step(0.55, i.color.r) * step(0.36, i.color.g) * step(i.color.b, 0.55) * (1.0 - sun);\n"
+    "  float3 waterTint = float3(0.00, 0.48, 0.82) + tex1.bgr * 0.28;\n"
+    "  float waveLine = smoothstep(0.72, 1.0, sin(i.world.x * 2.7 + time * 2.9) * 0.5 + 0.5) * smoothstep(0.20, 1.0, water);\n"
+    "  float foam = water * smoothstep(0.82, 1.0, sin(i.world.x * 5.3 + i.world.z * 2.4 - time * 4.1) * 0.5 + 0.5);\n"
+    "  float3 sunrise = float3(1.0, 0.56, 0.22) * saturate(1.0 - abs(i.world.x) * 0.020);\n"
+    "  float sunGlow = saturate(1.0 - length(i.world.xy - float2(0.0, 4.2)) * 0.13) * smoothstep(5.0, 10.5, i.world.z);\n"
+    "  float3 color = i.color.rgb * (0.26 + diffuse) + tex0 * 0.12 + tex1 * (0.15 + water * 0.34);\n"
+    "  color = lerp(color, waterTint * (0.78 + diffuse * 0.38) + foam * 0.32 + waveLine * float3(0.18, 0.72, 0.92), water * 0.72);\n"
+    "  color = lerp(color, float3(0.35, 0.62, 0.95) + sunrise * 0.55 + tex1.gbr * 0.045, sky * 0.82);\n"
+    "  color = lerp(color, float3(1.0, 0.52, 0.12) + tex1.rgb * 0.08, sun * 0.85);\n"
+    "  color = lerp(color, i.color.rgb * (0.85 + diffuse * 0.34) + tex0 * 0.08, sand * 0.48);\n"
+    "  color += sunrise * sunGlow * 0.95;\n"
+    "  color *= lerp(1.0 - longShadow * 0.26, 1.10, water);\n"
     "  [unroll] for (int k = 0; k < 8; ++k) {\n"
     "    float f = sin(dot(color, float3(3.1 + k, 2.2, 1.7)) + time * (0.2 + k * 0.03));\n"
-    "    color = saturate(color * (0.92 + 0.035 * f) + tex1.bgr * 0.018);\n"
+    "    color = saturate(color * (0.94 + 0.026 * f) + tex1.bgr * (0.011 + water * 0.010));\n"
     "  }\n"
     "  return float4(color, 1.0);\n"
     "}\n";
@@ -1186,8 +1197,9 @@ static const char *kPostPs =
     "  float2 wobble = uv + 0.006 * sin(float2(uv.y, uv.x) * 70.0 + time);\n"
     "  float3 a = computeTex.Sample(samp0, wobble).rgb;\n"
     "  float3 b = baseTex.Sample(samp0, frac(uv * 4.0 + time * 0.02)).rgb;\n"
-    "  float scan = 0.04 * sin(pos.y * 0.75 + time * 12.0);\n"
-    "  return float4(saturate(a * 0.18 + b * 0.10 + scan), 0.35);\n"
+    "  float scan = 0.018 * sin(pos.y * 0.75 + time * 12.0);\n"
+    "  float vignette = saturate(dot(uv - 0.5, uv - 0.5) * 1.6);\n"
+    "  return float4(saturate(a * 0.075 + b * 0.035 + scan + vignette * 0.018), 0.18);\n"
     "}\n";
 
 static const char *kBrightPostPs =
@@ -1202,17 +1214,21 @@ static const char *kSplashPs =
     "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
     "float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {\n"
     "  float2 centered = uv - 0.5;\n"
-    "  float2 roll = uv + float2(sin(time * 1.3 + uv.y * 18.0), cos(time * 0.9 + uv.x * 16.0)) * 0.012;\n"
-    "  float3 logo = baseTex.Sample(samp0, frac(roll * 1.2)).rgb;\n"
-    "  float3 noise = computeTex.Sample(samp0, frac(uv + time * float2(0.07, -0.04))).rgb;\n"
-    "  float bars = step(0.46, abs(centered.x)) + step(0.42, abs(centered.y));\n"
-    "  float scan = 0.08 * sin(pos.y * 1.6 + time * 24.0);\n"
-    "  float vignette = saturate(1.15 - dot(centered, centered) * 2.2);\n"
-    "  float pulse = 0.5 + 0.5 * sin(time * 5.0);\n"
-    "  float title = smoothstep(0.42, 0.95, max(max(logo.r, logo.g), logo.b));\n"
-    "  float3 color = saturate((logo * 0.78 + noise * 0.36 + scan) * vignette);\n"
-    "  color = lerp(color, float3(1.0, 0.92, 0.78), title);\n"
-    "  color = lerp(color, float3(0.95, 0.05, 0.11), saturate(bars * 0.18 * pulse));\n"
+    "  float3 logo = baseTex.Sample(samp0, uv).rgb;\n"
+    "  float3 noise = computeTex.Sample(samp0, frac(uv * 0.55 + time * float2(0.025, -0.018))).rgb;\n"
+    "  float vignette = saturate(1.20 - dot(centered, centered) * 1.85);\n"
+    "  float scan = 0.018 * sin(pos.y * 1.45 + time * 18.0);\n"
+    "  float title = smoothstep(0.86, 0.99, min(min(logo.r, logo.g), logo.b));\n"
+    "  float panel = smoothstep(0.18, 0.10, abs(centered.y)) * smoothstep(0.46, 0.39, abs(centered.x));\n"
+    "  float2 rayVec = float2(centered.x + 0.30, centered.y - 0.06);\n"
+    "  float ray = pow(saturate(dot(rayVec / max(length(rayVec), 0.001), normalize(float2(1.0, -0.16)))), 24.0);\n"
+    "  float border = step(0.47, abs(centered.x)) + step(0.43, abs(centered.y));\n"
+    "  float3 color = lerp(float3(0.015, 0.030, 0.060), float3(0.10, 0.28, 0.45), uv.y);\n"
+    "  color += noise * 0.060 + ray * float3(0.95, 0.43, 0.12) * 0.34 + scan;\n"
+    "  color = lerp(color, float3(0.02, 0.05, 0.08), panel * 0.72);\n"
+    "  color = lerp(color, float3(1.0, 0.92, 0.76), title);\n"
+    "  color = lerp(color, float3(0.95, 0.08, 0.10), saturate(border * 0.10));\n"
+    "  color *= vignette;\n"
     "  return float4(color, 1.0);\n"
     "}\n";
 
@@ -1412,6 +1428,51 @@ static void pushDisc(Vertex *verts, UINT &count, Vec3 center, float radius,
   }
 }
 
+static void pushBox(Vertex *verts, UINT &count, Vec3 minp, Vec3 maxp, float r,
+                    float g, float bl) {
+  Vec3 p000 = {minp.x, minp.y, minp.z};
+  Vec3 p001 = {minp.x, minp.y, maxp.z};
+  Vec3 p010 = {minp.x, maxp.y, minp.z};
+  Vec3 p011 = {minp.x, maxp.y, maxp.z};
+  Vec3 p100 = {maxp.x, minp.y, minp.z};
+  Vec3 p101 = {maxp.x, minp.y, maxp.z};
+  Vec3 p110 = {maxp.x, maxp.y, minp.z};
+  Vec3 p111 = {maxp.x, maxp.y, maxp.z};
+  pushQuad(verts, count, p000, p010, p110, p100, r, g, bl);
+  pushQuad(verts, count, p101, p111, p011, p001, r, g, bl);
+  pushQuad(verts, count, p001, p011, p010, p000, r * 0.86f, g * 0.86f, bl * 0.86f);
+  pushQuad(verts, count, p100, p110, p111, p101, r * 0.92f, g * 0.92f, bl * 0.92f);
+  pushQuad(verts, count, p010, p011, p111, p110, r * 1.08f, g * 1.08f, bl * 1.08f);
+  pushQuad(verts, count, p001, p000, p100, p101, r * 0.78f, g * 0.78f, bl * 0.78f);
+}
+
+static void pushSky(Vertex *verts, UINT &count) {
+  pushQuad(verts, count, {-28.0f, -1.5f, 12.5f}, {-28.0f, 9.5f, 12.5f},
+           {28.0f, 9.5f, 12.5f}, {28.0f, -1.5f, 12.5f}, 0.78f, 0.62f,
+           0.58f);
+  pushQuad(verts, count, {-28.0f, 2.2f, 12.35f}, {-28.0f, 9.8f, 12.35f},
+           {28.0f, 9.8f, 12.35f}, {28.0f, 2.2f, 12.35f}, 0.36f, 0.54f,
+           0.88f);
+}
+
+static void pushSunRays(Vertex *verts, UINT &count) {
+  Vec3 center = {0.0f, 4.2f, 8.72f};
+  for (int i = 0; i < 18; i++) {
+    float a = static_cast<float>(i) * 6.283185307f / 18.0f;
+    float a0 = a - 0.035f - 0.018f * static_cast<float>(i & 1);
+    float a1 = a + 0.035f + 0.011f * static_cast<float>((i + 1) & 1);
+    float inner = 1.65f;
+    float outer = 3.0f + 0.75f * std::sin(static_cast<float>(i) * 1.31f);
+    Vec3 p0 = {center.x + std::cos(a0) * inner, center.y + std::sin(a0) * inner,
+               center.z};
+    Vec3 p1 = {center.x + std::cos(a) * outer, center.y + std::sin(a) * outer,
+               center.z};
+    Vec3 p2 = {center.x + std::cos(a1) * inner, center.y + std::sin(a1) * inner,
+               center.z};
+    pushTri(verts, count, p0, p1, p2, 1.0f, 0.58f, 0.16f);
+  }
+}
+
 static void pushBeachWater(Vertex *verts, UINT &count) {
   const int cols = 64;
   const int rows = 32;
@@ -1429,10 +1490,24 @@ static void pushBeachWater(Vertex *verts, UINT &count) {
       Vec3 b = {x0 + (x1 - x0) * u0, -1.10f, z0 + (z1 - z0) * v1};
       Vec3 c = {x0 + (x1 - x0) * u1, -1.10f, z0 + (z1 - z0) * v1};
       Vec3 d = {x0 + (x1 - x0) * u1, -1.10f, z0 + (z1 - z0) * v0};
-      float stripe = 0.04f * static_cast<float>((x + y) & 1);
-      pushQuad(verts, count, a, b, c, d, 0.03f + stripe, 0.30f + stripe,
-               0.58f + stripe);
+      float stripe = 0.035f * static_cast<float>((x + y) & 1);
+      float depth = 0.10f * v0;
+      pushQuad(verts, count, a, b, c, d, 0.02f + stripe, 0.34f + depth + stripe,
+               0.64f + depth + stripe);
     }
+  }
+}
+
+static void pushFoam(Vertex *verts, UINT &count) {
+  for (int i = 0; i < 18; i++) {
+    float x = -20.5f + static_cast<float>(i) * 2.45f;
+    float z = 2.52f + 0.22f * std::sin(static_cast<float>(i) * 0.83f);
+    float w = 1.35f + 0.42f * std::sin(static_cast<float>(i) * 1.7f);
+    Vec3 a = {x, -0.985f, z};
+    Vec3 b = {x + 0.24f, -0.982f, z + 0.38f};
+    Vec3 c = {x + w, -0.984f, z + 0.30f};
+    Vec3 d = {x + w - 0.18f, -0.986f, z - 0.12f};
+    pushQuad(verts, count, a, b, c, d, 0.78f, 0.94f, 0.95f);
   }
 }
 
@@ -1460,9 +1535,9 @@ static void pushPalmTrunk(Vertex *verts, UINT &count) {
 
 static void pushPalmFronds(Vertex *verts, UINT &count) {
   Vec3 top = {-5.9f, 4.85f, 1.05f};
-  for (int i = 0; i < 14; i++) {
-    float a = static_cast<float>(i) * 6.283185307f / 14.0f;
-    float len = 2.2f + 0.55f * std::sin(static_cast<float>(i) * 1.7f);
+  for (int i = 0; i < 18; i++) {
+    float a = static_cast<float>(i) * 6.283185307f / 18.0f;
+    float len = 2.35f + 0.72f * std::sin(static_cast<float>(i) * 1.7f);
     Vec3 dir = {std::cos(a), 0.18f * std::sin(a * 2.0f), std::sin(a)};
     Vec3 side = normalize(cross(dir, {0.0f, 1.0f, 0.0f}));
     Vec3 tip = add(top, add(mul(dir, len), {0.0f, -0.35f, 0.0f}));
@@ -1473,30 +1548,66 @@ static void pushPalmFronds(Vertex *verts, UINT &count) {
     Vec3 b1 = sub(mid, mul(side, 0.36f));
     pushTri(verts, count, a0, b0, tip, 0.08f, 0.48f, 0.12f);
     pushTri(verts, count, a1, tip, b1, 0.05f, 0.36f, 0.08f);
+    Vec3 barb0 = add(mid, add(mul(dir, 0.25f), mul(side, 0.62f)));
+    Vec3 barb1 = add(mid, add(mul(dir, 0.45f), mul(side, -0.62f)));
+    pushTri(verts, count, mid, barb0, tip, 0.10f, 0.56f, 0.15f);
+    pushTri(verts, count, mid, tip, barb1, 0.04f, 0.30f, 0.06f);
   }
 }
 
 static void pushBoat(Vertex *verts, UINT &count) {
-  pushQuad(verts, count, {-1.8f, -0.72f, -2.8f}, {-1.25f, -0.20f, -2.95f},
-           {1.35f, -0.20f, -2.95f}, {2.0f, -0.72f, -2.8f}, 0.55f, 0.19f, 0.08f);
-  pushQuad(verts, count, {-1.45f, -0.35f, -2.62f}, {-1.0f, 0.05f, -2.72f},
-           {1.0f, 0.05f, -2.72f}, {1.45f, -0.35f, -2.62f}, 0.70f, 0.33f, 0.15f);
-  pushQuad(verts, count, {-0.05f, -0.15f, -2.75f}, {-0.05f, 1.75f, -2.75f},
-           {0.08f, 1.75f, -2.75f}, {0.08f, -0.15f, -2.75f}, 0.24f, 0.14f, 0.08f);
-  pushTri(verts, count, {0.12f, 1.65f, -2.78f}, {0.12f, 0.0f, -2.78f},
-          {1.25f, 0.28f, -2.78f}, 0.96f, 0.88f, 0.68f);
-  pushTri(verts, count, {-0.10f, 1.48f, -2.78f}, {-0.10f, 0.10f, -2.78f},
-          {-1.05f, 0.20f, -2.78f}, 0.88f, 0.80f, 0.62f);
+  pushQuad(verts, count, {-2.35f, -0.72f, -3.25f}, {-1.55f, -0.12f, -3.55f},
+           {1.55f, -0.12f, -3.55f}, {2.35f, -0.72f, -3.25f}, 0.58f, 0.18f, 0.07f);
+  pushQuad(verts, count, {-2.10f, -0.76f, -2.58f}, {-1.35f, -0.20f, -2.34f},
+           {1.35f, -0.20f, -2.34f}, {2.10f, -0.76f, -2.58f}, 0.42f, 0.12f, 0.05f);
+  pushQuad(verts, count, {-2.35f, -0.72f, -3.25f}, {-2.10f, -0.76f, -2.58f},
+           {-1.35f, -0.20f, -2.34f}, {-1.55f, -0.12f, -3.55f}, 0.74f, 0.30f, 0.12f);
+  pushQuad(verts, count, {1.55f, -0.12f, -3.55f}, {1.35f, -0.20f, -2.34f},
+           {2.10f, -0.76f, -2.58f}, {2.35f, -0.72f, -3.25f}, 0.36f, 0.10f, 0.04f);
+  pushBox(verts, count, {-0.75f, -0.16f, -3.08f}, {0.78f, 0.38f, -2.55f},
+          0.72f, 0.52f, 0.32f);
+  pushBox(verts, count, {-0.07f, -0.10f, -3.02f}, {0.08f, 2.22f, -2.82f},
+          0.20f, 0.12f, 0.07f);
+  pushTri(verts, count, {0.10f, 2.10f, -2.86f}, {0.10f, 0.10f, -2.86f},
+          {1.55f, 0.45f, -2.86f}, 1.0f, 0.90f, 0.66f);
+  pushTri(verts, count, {-0.12f, 1.92f, -2.90f}, {-0.12f, 0.10f, -2.90f},
+          {-1.38f, 0.34f, -2.90f}, 0.90f, 0.82f, 0.62f);
+  pushTri(verts, count, {-2.35f, -0.72f, -2.88f}, {-2.92f, -0.56f, -2.92f},
+          {-2.10f, -0.40f, -2.70f}, 0.64f, 0.20f, 0.08f);
+  pushTri(verts, count, {2.35f, -0.72f, -2.88f}, {2.92f, -0.56f, -2.92f},
+          {2.10f, -0.40f, -2.70f}, 0.36f, 0.10f, 0.04f);
+}
+
+static void pushJaggedRocks(Vertex *verts, UINT &count) {
+  for (int i = 0; i < 16; i++) {
+    float x = -12.0f + static_cast<float>(i) * 1.55f;
+    float z = 2.9f + 0.95f * std::sin(static_cast<float>(i) * 0.73f);
+    float h = 0.25f + 0.55f * static_cast<float>((i * 5) % 9) / 8.0f;
+    Vec3 base0 = {x - 0.42f, -0.98f, z - 0.25f};
+    Vec3 base1 = {x + 0.50f, -0.98f, z - 0.12f};
+    Vec3 base2 = {x + 0.22f, -0.98f, z + 0.46f};
+    Vec3 base3 = {x - 0.55f, -0.98f, z + 0.20f};
+    Vec3 tip = {x + 0.16f * std::sin(static_cast<float>(i)), -0.98f + h, z + 0.08f};
+    float shade = 0.45f + 0.20f * static_cast<float>(i & 1);
+    pushTri(verts, count, base0, base1, tip, shade, shade * 0.88f, shade * 0.72f);
+    pushTri(verts, count, base1, base2, tip, shade * 0.72f, shade * 0.70f, shade * 0.64f);
+    pushTri(verts, count, base2, base3, tip, shade * 0.52f, shade * 0.56f, shade * 0.55f);
+    pushTri(verts, count, base3, base0, tip, shade * 0.64f, shade * 0.60f, shade * 0.50f);
+  }
 }
 
 static UINT makeBeachScene(Vertex *verts) {
   UINT count = 0;
+  pushSky(verts, count);
+  pushSunRays(verts, count);
   pushBeachWater(verts, count);
+  pushFoam(verts, count);
   pushQuad(verts, count, {-22.0f, -1.02f, 3.0f}, {-22.0f, -1.02f, 16.0f},
            {22.0f, -1.02f, 16.0f}, {22.0f, -1.02f, 3.0f}, 0.82f, 0.68f, 0.38f);
   pushQuad(verts, count, {-22.0f, -1.03f, 2.4f}, {-22.0f, -1.02f, 4.2f},
            {22.0f, -1.02f, 4.2f}, {22.0f, -1.03f, 2.4f}, 0.93f, 0.82f, 0.52f);
-  pushDisc(verts, count, {0.0f, 4.2f, 8.6f}, 1.65f, 1.0f, 0.43f, 0.12f);
+  pushJaggedRocks(verts, count);
+  pushDisc(verts, count, {0.0f, 4.2f, 8.55f}, 1.65f, 1.0f, 0.43f, 0.12f);
   pushPalmTrunk(verts, count);
   pushPalmFronds(verts, count);
   pushBoat(verts, count);
@@ -1654,15 +1765,16 @@ static bool runStress(Harness &h, UINT seconds) {
   uint32_t texels[kTextureSize * kTextureSize] = {};
   for (UINT y = 0; y < kTextureSize; y++) {
     for (UINT x = 0; x < kTextureSize; x++) {
-      uint8_t r = static_cast<uint8_t>((x * 255) / (kTextureSize - 1));
-      uint8_t g = static_cast<uint8_t>((y * 255) / (kTextureSize - 1));
-      uint8_t b = static_cast<uint8_t>(((x ^ y) & 31) * 8);
+      uint8_t weave = static_cast<uint8_t>(((x * 13u + y * 7u + (x ^ y)) & 31u) * 2u);
+      uint8_t r = static_cast<uint8_t>(24u + (x * 72u) / (kTextureSize - 1) + weave);
+      uint8_t g = static_cast<uint8_t>(34u + (y * 84u) / (kTextureSize - 1) + weave);
+      uint8_t b = static_cast<uint8_t>(58u + (((x ^ y) & 63u) * 2u));
       texels[y * kTextureSize + x] =
           0xff000000u | (static_cast<uint32_t>(b) << 16) |
           (static_cast<uint32_t>(g) << 8) | r;
     }
   }
-  drawText(texels, 24, 190, 3, "STRESS TEST STARTING");
+  drawText(texels, 82, 232, 3, "STRESS TEST STARTING");
 
   ID3D12Resource *vertexBuffer =
       makeUploadBuffer(h, sceneVertices, sceneVertexCount * sizeof(Vertex),
