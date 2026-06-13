@@ -77,6 +77,32 @@ copy_llvm_dylib "libc++.1.dylib"
 copy_llvm_dylib "libc++abi.1.dylib"
 copy_llvm_dylib "libunwind.1.dylib"
 
+mirror_wine_unix_sidecar() {
+  local dep="$1"
+  local src="$run_root/unix/$dep"
+  local dxmt_dst="$wine_root/lib/dxmt/x86_64-unix/$dep"
+  local wine_dst="$wine_root/lib/wine/x86_64-unix/$dep"
+
+  if [[ ! -f "$src" ]]; then
+    echo "Missing staged Unix sidecar: $src" >&2
+    exit 1
+  fi
+
+  mkdir -p "$(dirname "$dxmt_dst")" "$(dirname "$wine_dst")"
+  cp "$src" "$dxmt_dst"
+  cp "$src" "$wine_dst"
+
+  if ! cmp -s "$src" "$dxmt_dst" || ! cmp -s "$src" "$wine_dst"; then
+    echo "Failed to mirror Unix sidecar into Wine search path: $dep" >&2
+    exit 1
+  fi
+}
+
+mirror_wine_unix_sidecar "winemetal.so"
+mirror_wine_unix_sidecar "libc++.1.dylib"
+mirror_wine_unix_sidecar "libc++abi.1.dylib"
+mirror_wine_unix_sidecar "libunwind.1.dylib"
+
 cd "$run_root"
 log_name="${exe_name%.exe}.log"
 rm -f "$log_name" /tmp/winemetal_debug.log /tmp/winemetal_pe_debug.log

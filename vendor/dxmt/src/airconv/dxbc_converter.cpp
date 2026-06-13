@@ -12,6 +12,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include <bit>
 #include <format>
@@ -19,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <cstdlib>
+#include <cstdio>
 
 #include "metallib_writer.hpp"
 #include "nt/air_builder.hpp"
@@ -37,6 +39,25 @@ class SM50ErrorInternal {
 public:
   llvm::SmallVector<char, 0> buf;
 };
+
+static void DumpSM50LLVMIRIfRequested(const llvm::Module &module,
+                                      const char *function_name) {
+  const char *dump_dir = std::getenv("DXMT_DUMP_SM50_LLVM");
+  if (!dump_dir || !dump_dir[0] || dump_dir[0] == '0')
+    return;
+  if (dump_dir[0] == '1' && dump_dir[1] == '\0')
+    dump_dir = "/tmp";
+
+  static unsigned dump_counter = 0;
+  char path[1024];
+  std::snprintf(path, sizeof(path), "%s/sm50_%s_%u.ll", dump_dir,
+                function_name ? function_name : "shader", dump_counter++);
+
+  std::error_code ec;
+  llvm::raw_fd_ostream out(path, ec, llvm::sys::fs::OF_Text);
+  if (!ec)
+    module.print(out, nullptr);
+}
 
 namespace dxmt::dxbc {
 
@@ -116,6 +137,32 @@ auto get_item_in_argbuf_binding_table(uint32_t argbuf_index, uint32_t index) {
   });
 };
 
+auto get_inline_cbuffer_in_argbuf_binding_table(uint32_t argbuf_index,
+                                                uint32_t index) {
+  return make_irvalue([=](context ctx) {
+    auto argbuf = ctx.function->getArg(argbuf_index);
+    auto argbuf_struct_type = llvm::cast<llvm::StructType>(
+      llvm::cast<llvm::PointerType>(argbuf->getType())
+        ->getNonOpaquePointerElementType()
+    );
+    auto field_ptr = ctx.builder.CreateStructGEP(
+      llvm::cast<llvm::PointerType>(argbuf->getType())
+        ->getNonOpaquePointerElementType(),
+      argbuf, index
+    );
+    auto field_type = argbuf_struct_type->getElementType(index);
+    return ctx.builder.CreateInBoundsGEP(
+      field_type, field_ptr, {ctx.builder.getInt32(0), ctx.builder.getInt32(0)}
+    );
+  });
+};
+
+static thread_local uint32_t g_sm50_initialize_options = 0;
+
+static bool inline_d3d12_cbuffers() {
+  return (g_sm50_initialize_options & SM50_INITIALIZE_INLINE_CBUFFERS) != 0;
+}
+
 void setup_binding_table(
   const ShaderInfo *shader_info, io_binding_map &resource_map,
   air::FunctionSignatureBuilder &func_signature, llvm::Module &module,
@@ -163,10 +210,17 @@ void setup_binding_table(
   for (auto &[range_id, cbv] : shader_info->cbufferMap) {
     // TODO: abstract SM 5.0 binding
     auto index = cbv.arg_index;
-    resource_map.cb_range_map[range_id] = [=](pvalue) {
-      // ignore index in SM 5.0
-      return get_item_in_argbuf_binding_table(cbuf_table_index, index);
-    };
+    if (inline_d3d12_cbuffers()) {
+      resource_map.cb_range_map[range_id] = [=](pvalue) {
+        return get_inline_cbuffer_in_argbuf_binding_table(cbuf_table_index,
+                                                          index);
+      };
+    } else {
+      resource_map.cb_range_map[range_id] = [=](pvalue) {
+        // ignore index in SM 5.0
+        return get_item_in_argbuf_binding_table(cbuf_table_index, index);
+      };
+    }
   }
   for (auto &[range_id, sampler] : shader_info->samplerMap) {
     // TODO: abstract SM 5.0 binding
@@ -1148,18 +1202,29 @@ AIRCONV_API int SM50Initialize(
 
   for (auto &[range_id, cbv] : shader_info->cbufferMap) {
     // TODO: abstract SM 5.0 binding
-    cbv.arg_index = binding_table_cbuffer.DefineBuffer(
-      "cb" + std::to_string(range_id), AddressSpace::constant,
-      MemoryAccess::read, msl_uint4,
-      GetArgumentIndex(SM50BindingType::ConstantBuffer, range_id)
-    );
+    bool inline_cbuffer = inline_d3d12_cbuffers();
+    cbv.arg_index =
+      inline_cbuffer
+        ? binding_table_cbuffer.DefineConstantArray(
+            "cb" + std::to_string(range_id), msl_uint4,
+            std::max<uint32_t>(cbv.size_in_vec4, 1),
+            GetArgumentIndex(SM50BindingType::ConstantBuffer, range_id))
+        : binding_table_cbuffer.DefineBuffer(
+            "cb" + std::to_string(range_id), AddressSpace::constant,
+            MemoryAccess::read, msl_uint4,
+            GetArgumentIndex(SM50BindingType::ConstantBuffer, range_id));
     sm50_shader->args_reflection_cbuffer.push_back({
       .Type = SM50BindingType::ConstantBuffer,
       .SM50BindingSlot = cbv.range.lower_bound,
       .SM50RegisterSpace = cbv.range.space,
       .Flags =
-        MTL_SM50_SHADER_ARGUMENT_BUFFER | MTL_SM50_SHADER_ARGUMENT_READ_ACCESS,
+        (MTL_SM50_SHADER_ARGUMENT_FLAG)(inline_cbuffer
+          ? (MTL_SM50_SHADER_ARGUMENT_INLINE_CBUFFER |
+             MTL_SM50_SHADER_ARGUMENT_READ_ACCESS)
+          : (MTL_SM50_SHADER_ARGUMENT_BUFFER |
+             MTL_SM50_SHADER_ARGUMENT_READ_ACCESS)),
       .StructurePtrOffset = cbv.arg_index,
+      .SizeInVec4 = std::max<uint32_t>(cbv.size_in_vec4, 1),
     });
     binding_cbuffer_mask |= (1 << range_id);
   }
@@ -1409,6 +1474,24 @@ AIRCONV_API int SM50Initialize(
   return 0;
 };
 
+AIRCONV_API int SM50InitializeWithOptions(
+  const void *pBytecode, size_t BytecodeSize, uint32_t Options,
+  sm50_shader_t *ppShader, struct MTL_SHADER_REFLECTION *pRefl,
+  sm50_error_t *ppError
+) {
+  uint32_t old_options = dxmt::dxbc::g_sm50_initialize_options;
+  dxmt::dxbc::g_sm50_initialize_options = Options;
+  if (Options) {
+    if (FILE *f = std::fopen("/tmp/dxmt_inline_options.log", "a")) {
+      std::fprintf(f, "SM50InitializeWithOptions options=0x%x\n", Options);
+      std::fclose(f);
+    }
+  }
+  int ret = SM50Initialize(pBytecode, BytecodeSize, ppShader, pRefl, ppError);
+  dxmt::dxbc::g_sm50_initialize_options = old_options;
+  return ret;
+}
+
 AIRCONV_API void SM50GetArgumentsInfo(
   sm50_shader_t pShader, struct MTL_SM50_SHADER_ARGUMENT *pConstantBuffers,
   struct MTL_SM50_SHADER_ARGUMENT *pArguments
@@ -1476,6 +1559,7 @@ AIRCONV_API int SM50Compile(
     linkSamplePos(*pModule);
 
   runOptimizationPasses(*pModule);
+  DumpSM50LLVMIRIfRequested(*pModule, FunctionName);
 
   // Serialize AIR
   auto compiled = new SM50CompiledBitcodeInternal();

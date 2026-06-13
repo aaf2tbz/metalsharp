@@ -313,6 +313,8 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
     auto header = reinterpret_cast<const DXRootSignatureHeader *>(data);
     if ((header->version != D3D_ROOT_SIGNATURE_VERSION_1_0 &&
          header->version != D3D_ROOT_SIGNATURE_VERSION_1_1) ||
+        (header->num_parameters > 0 &&
+         header->parameters_offset < sizeof(DXRootSignatureHeader)) ||
         !range_contains(size, header->parameters_offset,
                         header->num_parameters *
                             sizeof(DXRootParameterHeader)) ||
@@ -321,8 +323,9 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
       return false;
 
     if (header->num_static_samplers > 0 &&
-        !range_contains(size, header->static_sampler_offset,
-                        header->num_static_samplers * 52u))
+        (header->static_sampler_offset < sizeof(DXRootSignatureHeader) ||
+         !range_contains(size, header->static_sampler_offset,
+                         header->num_static_samplers * 52u)))
       return false;
 
     m_parameters.clear();

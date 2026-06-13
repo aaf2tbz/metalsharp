@@ -2313,7 +2313,8 @@ thunk_SM50Initialize(void *args) {
   struct sm50_initialize_params *params = args;
 
   params->ret =
-      SM50Initialize(params->bytecode, params->bytecode_size, params->shader, params->reflection, params->error);
+      SM50InitializeWithOptions(
+          params->bytecode, params->bytecode_size, params->options, params->shader, params->reflection, params->error);
 
   return STATUS_SUCCESS;
 }

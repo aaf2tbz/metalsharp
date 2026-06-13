@@ -133,6 +133,15 @@ static Mat4 mul(Mat4 a, Mat4 b) {
   return r;
 }
 
+static Mat4 transpose(Mat4 a) {
+  Mat4 r = {};
+  for (int row = 0; row < 4; row++) {
+    for (int col = 0; col < 4; col++)
+      r.m[row * 4 + col] = a.m[col * 4 + row];
+  }
+  return r;
+}
+
 static Mat4 perspective(float fovy, float aspect, float zn, float zf) {
   Mat4 r = {};
   float y = 1.0f / std::tan(fovy * 0.5f);
@@ -181,6 +190,19 @@ static bool compileShader(const char *label, const char *source, const char *ent
     return false;
   }
   releaseIf(errors);
+  if (envEnabled("M12_STRESS_DUMP_SHADER_DISASM")) {
+    ID3DBlob *disasm = nullptr;
+    if (SUCCEEDED(D3DDisassemble((*blob)->GetBufferPointer(),
+                                 (*blob)->GetBufferSize(), 0, nullptr,
+                                 &disasm)) &&
+        disasm) {
+      std::printf("=== disasm %s ===\n%.*s\n=== end disasm %s ===\n", label,
+                  static_cast<int>(disasm->GetBufferSize()),
+                  static_cast<const char *>(disasm->GetBufferPointer()),
+                  label);
+    }
+    releaseIf(disasm);
+  }
   std::printf("[PASS] %s compiled (%zu bytes)\n", label, (*blob)->GetBufferSize());
   return true;
 }
@@ -831,7 +853,7 @@ static bool createRootSignature(Harness &h, const D3D12_ROOT_SIGNATURE_DESC &des
 }
 
 static const char *kComputeShader =
-    "cbuffer Scene : register(b0) { float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
     "RWTexture2D<float4> outTex : register(u0);\n"
     "[numthreads(8,8,1)]\n"
     "void main(uint3 tid : SV_DispatchThreadID) {\n"
@@ -845,7 +867,7 @@ static const char *kComputeShader =
     "}\n";
 
 static const char *kSceneVs =
-    "cbuffer Scene : register(b0) { float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
     "struct VS_IN {\n"
     "  float3 pos : POSITION;\n"
     "  float3 normal : NORMAL;\n"
@@ -882,11 +904,242 @@ static const char *kSceneVs =
     "  return o;\n"
     "}\n";
 
+static const char *kSceneClipVs =
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float2 p[3] = { float2(-1.0,-1.0), float2(-1.0,3.0), float2(3.0,-1.0) };\n"
+    "  VS_OUT o;\n"
+    "  o.pos = float4(p[vid % 3], 0.0, 1.0);\n"
+    "  o.normal = float3(0.0, 0.0, -1.0);\n"
+    "  o.uv = p[vid % 3] * 0.5 + 0.5;\n"
+    "  o.color = float4(1.0, 0.16, 0.82, 1.0);\n"
+    "  o.world = float3(0.0, 0.0, 0.0);\n"
+    "  return o;\n"
+    "}\n";
+
+static const char *kSceneClipCbufferVs =
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float2 p[3] = { float2(-1.0,-1.0), float2(-1.0,3.0), float2(3.0,-1.0) };\n"
+    "  float cbufOk = (abs(viewProj[0][0]) > 0.001 && abs(width) > 1.0) ? 1.0 : 0.0;\n"
+    "  VS_OUT o;\n"
+    "  o.pos = float4(p[vid % 3], 0.0, 1.0);\n"
+    "  o.normal = float3(0.0, 0.0, -1.0);\n"
+    "  o.uv = p[vid % 3] * 0.5 + 0.5;\n"
+    "  o.color = lerp(float4(0.0, 1.0, 0.15, 1.0), float4(1.0, 0.16, 0.82, 1.0), cbufOk);\n"
+    "  o.world = float3(viewProj[0][0], width, height);\n"
+    "  return o;\n"
+    "}\n";
+
+static const char *kSceneCbufferGateVs =
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float2 p[3] = { float2(-1.0,-1.0), float2(-1.0,3.0), float2(3.0,-1.0) };\n"
+    "  float ok = (abs(viewProj[0][0] - 0.88294816) < 0.25 && abs(viewProj[1][1] - 1.42242265) < 0.35 && abs(viewProj[3][3] - 16.55294609) < 2.0 && abs(width - 1280.0) < 2.0) ? 1.0 : 0.0;\n"
+    "  VS_OUT o;\n"
+    "  o.pos = float4(p[vid % 3] + float2(4.0 * (1.0 - ok), 0.0), 0.0, 1.0);\n"
+    "  o.normal = float3(0.0, 0.0, -1.0);\n"
+    "  o.uv = p[vid % 3] * 0.5 + 0.5;\n"
+    "  o.color = float4(ok, 0.1, 1.0 - ok, 1.0);\n"
+    "  o.world = float3(viewProj[0][0], viewProj[1][1], viewProj[3][3]);\n"
+    "  return o;\n"
+    "}\n";
+
+static const char *kSceneWorldVs =
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float3 p = i.pos * i.inst0.w;\n"
+    "  float3 world = p + float3(i.inst0.x, i.inst0.y, i.inst0.z);\n"
+    "  VS_OUT o;\n"
+    "  o.pos = float4(world.x / 14.0, world.y / 8.0, 0.0, 1.0);\n"
+    "  o.normal = i.normal;\n"
+    "  o.uv = i.uv;\n"
+    "  o.color = float4(i.color.rgb * i.inst1.rgb, 1.0);\n"
+    "  o.world = world;\n"
+    "  return o;\n"
+    "}\n";
+
+static const char *kSceneManualMulVs =
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float phase = i.inst1.w + time * (0.7 + frac(iid * 0.017));\n"
+    "  float s = sin(phase);\n"
+    "  float c = cos(phase);\n"
+    "  float3 p = i.pos * i.inst0.w;\n"
+    "  float3 rotated = float3(p.x * c + p.z * s, p.y, -p.x * s + p.z * c);\n"
+    "  float wave = sin(time * 2.0 + iid * 0.41) * 0.18;\n"
+    "  float3 world = rotated + float3(i.inst0.x, i.inst0.y + wave, i.inst0.z);\n"
+    "  float3 n = normalize(float3(i.normal.x * c + i.normal.z * s, i.normal.y, -i.normal.x * s + i.normal.z * c));\n"
+    "  float4 w = float4(world, 1.0);\n"
+    "  VS_OUT o;\n"
+    "  o.pos = float4(dot(w, viewProj[0]), dot(w, viewProj[1]), dot(w, viewProj[2]), dot(w, viewProj[3]));\n"
+    "  o.normal = n;\n"
+    "  o.uv = i.uv * (2.0 + frac(iid * 0.13));\n"
+    "  o.color = float4(i.color.rgb * i.inst1.rgb, 1.0);\n"
+    "  o.world = world;\n"
+    "  return o;\n"
+    "}\n";
+
+static const char *kSceneScalarMulVs =
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float phase = i.inst1.w + time * (0.7 + frac(iid * 0.017));\n"
+    "  float s = sin(phase);\n"
+    "  float c = cos(phase);\n"
+    "  float3 p = i.pos * i.inst0.w;\n"
+    "  float3 rotated = float3(p.x * c + p.z * s, p.y, -p.x * s + p.z * c);\n"
+    "  float wave = sin(time * 2.0 + iid * 0.41) * 0.18;\n"
+    "  float3 world = rotated + float3(i.inst0.x, i.inst0.y + wave, i.inst0.z);\n"
+    "  float3 n = normalize(float3(i.normal.x * c + i.normal.z * s, i.normal.y, -i.normal.x * s + i.normal.z * c));\n"
+    "  float4 w = float4(world, 1.0);\n"
+    "  float4 clip;\n"
+    "  clip.x = w.x * viewProj[0][0] + w.y * viewProj[1][0] + w.z * viewProj[2][0] + w.w * viewProj[3][0];\n"
+    "  clip.y = w.x * viewProj[0][1] + w.y * viewProj[1][1] + w.z * viewProj[2][1] + w.w * viewProj[3][1];\n"
+    "  clip.z = w.x * viewProj[0][2] + w.y * viewProj[1][2] + w.z * viewProj[2][2] + w.w * viewProj[3][2];\n"
+    "  clip.w = w.x * viewProj[0][3] + w.y * viewProj[1][3] + w.z * viewProj[2][3] + w.w * viewProj[3][3];\n"
+    "  VS_OUT o;\n"
+    "  o.pos = clip;\n"
+    "  o.normal = n;\n"
+    "  o.uv = i.uv * (2.0 + frac(iid * 0.13));\n"
+    "  o.color = float4(i.color.rgb * i.inst1.rgb, 1.0);\n"
+    "  o.world = world;\n"
+    "  return o;\n"
+    "}\n";
+
+static const char *kSceneHardcodedMatrixVs =
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "struct VS_IN {\n"
+    "  float3 pos : POSITION;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float4 inst0 : TEXCOORD1;\n"
+    "  float4 inst1 : TEXCOORD2;\n"
+    "};\n"
+    "struct VS_OUT {\n"
+    "  float4 pos : SV_Position;\n"
+    "  float3 normal : NORMAL;\n"
+    "  float2 uv : TEXCOORD0;\n"
+    "  float4 color : COLOR0;\n"
+    "  float3 world : TEXCOORD3;\n"
+    "};\n"
+    "VS_OUT main(VS_IN i, uint vid : SV_VertexID, uint iid : SV_InstanceID) {\n"
+    "  float phase = i.inst1.w + time * (0.7 + frac(iid * 0.017));\n"
+    "  float s = sin(phase);\n"
+    "  float c = cos(phase);\n"
+    "  float3 p = i.pos * i.inst0.w;\n"
+    "  float3 rotated = float3(p.x * c + p.z * s, p.y, -p.x * s + p.z * c);\n"
+    "  float wave = sin(time * 2.0 + iid * 0.41) * 0.18;\n"
+    "  float3 world = rotated + float3(i.inst0.x, i.inst0.y + wave, i.inst0.z);\n"
+    "  float3 n = normalize(float3(i.normal.x * c + i.normal.z * s, i.normal.y, -i.normal.x * s + i.normal.z * c));\n"
+    "  float4 w = float4(world, 1.0);\n"
+    "  float4 clip;\n"
+    "  clip.x = w.x * 0.88294816 + w.y * 0.0 + w.z * 0.0 + w.w * 0.0;\n"
+    "  clip.y = w.x * 0.0 + w.y * 1.42242265 + w.z * 0.66379720 + w.w * 0.0;\n"
+    "  clip.z = w.x * 0.0 + w.y * -0.42341474 + w.z * 0.90731728 + w.w * 16.47353745;\n"
+    "  clip.w = w.x * 0.0 + w.y * -0.42288548 + w.z * 0.90618312 + w.w * 16.55294609;\n"
+    "  VS_OUT o;\n"
+    "  o.pos = clip;\n"
+    "  o.normal = n;\n"
+    "  o.uv = i.uv * (2.0 + frac(iid * 0.13));\n"
+    "  o.color = float4(i.color.rgb * i.inst1.rgb, 1.0);\n"
+    "  o.world = world;\n"
+    "  return o;\n"
+    "}\n";
+
 static const char *kScenePs =
     "Texture2D baseTex : register(t0);\n"
     "Texture2D computeTex : register(t1);\n"
     "SamplerState samp0 : register(s0);\n"
-    "cbuffer Scene : register(b0) { float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
     "struct PS_IN { float4 pos : SV_Position; float3 normal : NORMAL; float2 uv : TEXCOORD0; float4 color : COLOR0; float3 world : TEXCOORD3; };\n"
     "float4 main(PS_IN i) : SV_Target {\n"
     "  float3 n = normalize(i.normal);\n"
@@ -910,6 +1163,12 @@ static const char *kScenePs =
     "  return float4(color, 1.0);\n"
     "}\n";
 
+static const char *kSceneBrightPs =
+    "struct PS_IN { float4 pos : SV_Position; float3 normal : NORMAL; float2 uv : TEXCOORD0; float4 color : COLOR0; float3 world : TEXCOORD3; };\n"
+    "float4 main(PS_IN i) : SV_Target {\n"
+    "  return float4(saturate(i.color.rgb + float3(0.12, 0.05, 0.10)), 1.0);\n"
+    "}\n";
+
 static const char *kPostVs =
     "struct OUT { float4 pos : SV_Position; float2 uv : TEXCOORD0; };\n"
     "OUT main(uint vid : SV_VertexID) {\n"
@@ -922,7 +1181,7 @@ static const char *kPostPs =
     "Texture2D baseTex : register(t0);\n"
     "Texture2D computeTex : register(t1);\n"
     "SamplerState samp0 : register(s0);\n"
-    "cbuffer Scene : register(b0) { float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
     "float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {\n"
     "  float2 wobble = uv + 0.006 * sin(float2(uv.y, uv.x) * 70.0 + time);\n"
     "  float3 a = computeTex.Sample(samp0, wobble).rgb;\n"
@@ -931,11 +1190,16 @@ static const char *kPostPs =
     "  return float4(saturate(a * 0.18 + b * 0.10 + scan), 0.35);\n"
     "}\n";
 
+static const char *kBrightPostPs =
+    "float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {\n"
+    "  return float4(1.0, 0.18, 0.85, 1.0);\n"
+    "}\n";
+
 static const char *kSplashPs =
     "Texture2D baseTex : register(t0);\n"
     "Texture2D computeTex : register(t1);\n"
     "SamplerState samp0 : register(s0);\n"
-    "cbuffer Scene : register(b0) { float4x4 viewProj; float time; float frame; float width; float height; };\n"
+    "cbuffer Scene : register(b0) { row_major float4x4 viewProj; float time; float frame; float width; float height; };\n"
     "float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD0) : SV_Target {\n"
     "  float2 centered = uv - 0.5;\n"
     "  float2 roll = uv + float2(sin(time * 1.3 + uv.y * 18.0), cos(time * 0.9 + uv.x * 16.0)) * 0.012;\n"
@@ -991,11 +1255,13 @@ static bool createComputePipeline(Harness &h, ID3D12RootSignature **root,
 
 static bool createGraphicsPipeline(Harness &h, bool post, ID3D12RootSignature **root,
                                    ID3D12PipelineState **pso,
-                                   const char *overridePs = nullptr) {
+                                   const char *overridePs = nullptr,
+                                   const char *overrideVs = nullptr) {
   ID3DBlob *vs = nullptr;
   ID3DBlob *ps = nullptr;
   if (!compileShader(post ? "stress post VS" : "stress scene VS",
-                     post ? kPostVs : kSceneVs, "main", "vs_5_0", &vs) ||
+                     overrideVs ? overrideVs : (post ? kPostVs : kSceneVs),
+                     "main", "vs_5_0", &vs) ||
       !compileShader(post ? "stress post PS" : "stress scene PS",
                      overridePs ? overridePs : (post ? kPostPs : kScenePs),
                      "main", "ps_5_0", &ps)) {
@@ -1072,8 +1338,11 @@ static bool createGraphicsPipeline(Harness &h, bool post, ID3D12RootSignature **
   desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
   desc.SampleDesc.Count = 1;
   desc.SampleMask = UINT_MAX;
+  const bool sceneNoCull = !post && envEnabled("M12_STRESS_SCENE_NO_CULL");
+  const bool sceneNoDepth = !post && envEnabled("M12_STRESS_SCENE_NO_DEPTH");
   desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-  desc.RasterizerState.CullMode = post ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
+  desc.RasterizerState.CullMode =
+      (post || sceneNoCull) ? D3D12_CULL_MODE_NONE : D3D12_CULL_MODE_BACK;
   desc.RasterizerState.DepthClipEnable = TRUE;
   desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
   if (post) {
@@ -1085,12 +1354,12 @@ static bool createGraphicsPipeline(Harness &h, bool post, ID3D12RootSignature **
     desc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
     desc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
   }
-  desc.DepthStencilState.DepthEnable = post ? FALSE : TRUE;
+  desc.DepthStencilState.DepthEnable = (!post && !sceneNoDepth) ? TRUE : FALSE;
   desc.DepthStencilState.DepthWriteMask =
-      post ? D3D12_DEPTH_WRITE_MASK_ZERO : D3D12_DEPTH_WRITE_MASK_ALL;
+      (post || sceneNoDepth) ? D3D12_DEPTH_WRITE_MASK_ZERO : D3D12_DEPTH_WRITE_MASK_ALL;
   desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
   desc.DepthStencilState.StencilEnable = FALSE;
-  desc.DSVFormat = post ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_D32_FLOAT;
+  desc.DSVFormat = (post || sceneNoDepth) ? DXGI_FORMAT_UNKNOWN : DXGI_FORMAT_D32_FLOAT;
 
   HRESULT hr = h.device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(pso));
   releaseIf(vs);
@@ -1330,10 +1599,32 @@ static void barrier(ID3D12GraphicsCommandList *cmd, ID3D12Resource *resource,
 
 static bool runStress(Harness &h, UINT seconds) {
   float splashSeconds = envFloat("M12_STRESS_SPLASH_SECONDS", kSplashSeconds);
+  const bool sceneOnly = envEnabled("M12_STRESS_SCENE_ONLY");
+  const bool postOnly = envEnabled("M12_STRESS_POST_ONLY");
+  const bool skipPost = envEnabled("M12_STRESS_SKIP_POST");
+  const bool brightPost = envEnabled("M12_STRESS_BRIGHT_POST");
+  const bool sceneNoDepth = envEnabled("M12_STRESS_SCENE_NO_DEPTH");
+  const bool sceneBrightPs = envEnabled("M12_STRESS_SCENE_BRIGHT_PS");
+  const bool sceneClipVs = envEnabled("M12_STRESS_SCENE_CLIP_VS");
+  const bool sceneClipCbufferVs = envEnabled("M12_STRESS_SCENE_CLIP_CBUFFER_VS");
+  const bool sceneCbufferGateVs = envEnabled("M12_STRESS_SCENE_CBUFFER_GATE_VS");
+  const bool sceneWorldVs = envEnabled("M12_STRESS_SCENE_WORLD_VS");
+  const bool sceneManualMulVs = envEnabled("M12_STRESS_SCENE_MANUAL_MUL_VS");
+  const bool sceneScalarMulVs = envEnabled("M12_STRESS_SCENE_SCALAR_MUL_VS");
+  const bool sceneHardcodedMatrixVs = envEnabled("M12_STRESS_SCENE_HARDCODED_MATRIX_VS");
+  const bool skipReadback = envEnabled("M12_STRESS_SKIP_READBACK");
   if (envEnabled("M12_STRESS_SCENE_ONLY"))
     splashSeconds = 0.0f;
-  std::printf("[INFO] stress config splash_seconds=%.3f scene_only=%u\n",
-              splashSeconds, envEnabled("M12_STRESS_SCENE_ONLY") ? 1u : 0u);
+  std::printf("[INFO] stress config splash_seconds=%.3f scene_only=%u post_only=%u skip_post=%u bright_post=%u scene_no_depth=%u scene_bright_ps=%u scene_clip_vs=%u scene_clip_cbuffer_vs=%u scene_cbuffer_gate_vs=%u scene_world_vs=%u scene_manual_mul_vs=%u scene_scalar_mul_vs=%u scene_hardcoded_matrix_vs=%u skip_readback=%u\n",
+              splashSeconds, sceneOnly ? 1u : 0u, postOnly ? 1u : 0u,
+              skipPost ? 1u : 0u, brightPost ? 1u : 0u,
+              sceneNoDepth ? 1u : 0u, sceneBrightPs ? 1u : 0u,
+              sceneClipVs ? 1u : 0u, sceneClipCbufferVs ? 1u : 0u,
+              sceneCbufferGateVs ? 1u : 0u,
+              sceneWorldVs ? 1u : 0u, sceneManualMulVs ? 1u : 0u,
+              sceneScalarMulVs ? 1u : 0u,
+              sceneHardcodedMatrixVs ? 1u : 0u,
+              skipReadback ? 1u : 0u);
 
   Vertex sceneVertices[kMaxSceneVertices] = {};
   UINT sceneVertexCount = makeBeachScene(sceneVertices);
@@ -1441,8 +1732,23 @@ static bool runStress(Harness &h, UINT seconds) {
   ID3D12RootSignature *splashRoot = nullptr;
   ID3D12PipelineState *splashPso = nullptr;
   if (!createComputePipeline(h, &computeRoot, &computePso) ||
-      !createGraphicsPipeline(h, false, &sceneRoot, &scenePso) ||
-      !createGraphicsPipeline(h, true, &postRoot, &postPso) ||
+      !createGraphicsPipeline(h, false, &sceneRoot, &scenePso,
+                              sceneBrightPs ? kSceneBrightPs : nullptr,
+                             sceneHardcodedMatrixVs
+                                 ? kSceneHardcodedMatrixVs
+                                 : (sceneScalarMulVs
+                                        ? kSceneScalarMulVs
+                                        : (sceneManualMulVs
+                                               ? kSceneManualMulVs
+                                               : (sceneWorldVs
+                                                      ? kSceneWorldVs
+                                                      : (sceneClipCbufferVs
+                                                             ? kSceneClipCbufferVs
+                                                             : (sceneCbufferGateVs
+                                                                    ? kSceneCbufferGateVs
+                                                                    : (sceneClipVs ? kSceneClipVs : nullptr))))))) ||
+      !createGraphicsPipeline(h, true, &postRoot, &postPso,
+                              brightPost ? kBrightPostPs : nullptr) ||
       !createGraphicsPipeline(h, true, &splashRoot, &splashPso, kSplashPs))
     return false;
 
@@ -1511,6 +1817,8 @@ static bool runStress(Harness &h, UINT seconds) {
                   perspective(65.0f * 3.1415926535f / 180.0f,
                               static_cast<float>(kWidth) / static_cast<float>(kHeight),
                               0.1f, 80.0f));
+    if (envEnabled("M12_STRESS_TRANSPOSE_VIEWPROJ"))
+      vp = transpose(vp);
     cbMapped->viewProj = vp;
     cbMapped->time = elapsed;
     cbMapped->frame = static_cast<float>(frame);
@@ -1572,30 +1880,38 @@ static bool runStress(Harness &h, UINT seconds) {
         std::printf("[INFO] stress scene record frame=%u elapsed=%.3f expected_draws=10 vertices=%u instances=%u\n",
                     frame, elapsed, sceneVertexCount, kInstanceCount);
       }
-      h.cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
-      h.cmd->SetGraphicsRootSignature(sceneRoot);
-      h.cmd->SetPipelineState(scenePso);
-      h.cmd->SetGraphicsRootConstantBufferView(0, constantBuffer->GetGPUVirtualAddress());
-      h.cmd->SetGraphicsRootDescriptorTable(1, gpuSrv(h, 0));
-      h.cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-      h.cmd->IASetVertexBuffers(0, 2, vbvs);
-      h.cmd->DrawInstanced(sceneVertexCount, 1, 0, 0);
-      h.cmd->IASetVertexBuffers(0, 2, microVbvs);
-      for (UINT batch = 0; batch < 8; batch++)
-        h.cmd->DrawInstanced(3, kInstanceCount, 0, 0);
+      if (postOnly || sceneNoDepth) {
+        h.cmd->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+      } else {
+        h.cmd->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+      }
+      if (!postOnly) {
+        h.cmd->SetGraphicsRootSignature(sceneRoot);
+        h.cmd->SetPipelineState(scenePso);
+        h.cmd->SetGraphicsRootConstantBufferView(0, constantBuffer->GetGPUVirtualAddress());
+        h.cmd->SetGraphicsRootDescriptorTable(1, gpuSrv(h, 0));
+        h.cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        h.cmd->IASetVertexBuffers(0, 2, vbvs);
+        h.cmd->DrawInstanced(sceneVertexCount, 1, 0, 0);
+        h.cmd->IASetVertexBuffers(0, 2, microVbvs);
+        for (UINT batch = 0; batch < 8; batch++)
+          h.cmd->DrawInstanced(3, kInstanceCount, 0, 0);
+      }
 
-      h.cmd->SetGraphicsRootSignature(postRoot);
-      h.cmd->SetPipelineState(postPso);
-      h.cmd->SetGraphicsRootConstantBufferView(0, constantBuffer->GetGPUVirtualAddress());
-      h.cmd->SetGraphicsRootDescriptorTable(1, gpuSrv(h, 0));
-      h.cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-      h.cmd->DrawInstanced(4, 1, 0, 0);
+      if (!skipPost) {
+        h.cmd->SetGraphicsRootSignature(postRoot);
+        h.cmd->SetPipelineState(postPso);
+        h.cmd->SetGraphicsRootConstantBufferView(0, constantBuffer->GetGPUVirtualAddress());
+        h.cmd->SetGraphicsRootDescriptorTable(1, gpuSrv(h, 0));
+        h.cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        h.cmd->DrawInstanced(4, 1, 0, 0);
+      }
     }
 
     barrier(h.cmd, computeTexture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
-    if ((frame % 30) == 0) {
+    if (!skipReadback && (frame % 30) == 0) {
       barrier(h.cmd, h.backBuffers[backBufferIndex], D3D12_RESOURCE_STATE_RENDER_TARGET,
               D3D12_RESOURCE_STATE_COPY_SOURCE);
       D3D12_TEXTURE_COPY_LOCATION copyDst = {};
@@ -1623,7 +1939,7 @@ static bool runStress(Harness &h, UINT seconds) {
       break;
     ID3D12CommandList *lists[] = {h.cmd};
     h.queue->ExecuteCommandLists(1, lists);
-    if (envEnabled("M12_STRESS_READBACK_BEFORE_PRESENT") && (frame % 30) == 0) {
+    if (!skipReadback && envEnabled("M12_STRESS_READBACK_BEFORE_PRESENT") && (frame % 30) == 0) {
       ReadbackStats stats = analyzeReadback(readback, readbackPitch);
       std::printf("[INFO] stress pre-present frame=%u phase=%s bright=%u chroma=%u checksum=0x%016llx\n",
                   frame, inSplash ? "splash" : "scene", stats.brightPixels,
@@ -1635,7 +1951,7 @@ static bool runStress(Harness &h, UINT seconds) {
     if (!ok)
       break;
 
-    if ((frame % 30) == 0) {
+    if (!skipReadback && (frame % 30) == 0) {
       ReadbackStats stats = analyzeReadback(readback, readbackPitch);
       std::printf("[INFO] stress frame=%u phase=%s bright=%u chroma=%u checksum=0x%016llx\n",
                   frame, inSplash ? "splash" : "scene", stats.brightPixels, stats.chromaPixels,

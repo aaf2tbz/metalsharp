@@ -891,7 +891,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
     m_ia_slot_mask = ia_slot_mask;
   }
 
-  if (SM50Initialize(bytecode, size, &shader, &reflection, &sm50_err)) {
+  const uint32_t sm50_options = 0;
+  if (SM50InitializeWithOptions(bytecode, size, sm50_options,
+                                &shader, &reflection, &sm50_err)) {
     char err_buf[256] = {};
     SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
     SM50FreeError(sm50_err);
@@ -1900,47 +1902,46 @@ bool MTLD3D12PipelineState::Compile() {
         (uintptr_t)ps_func.handle);
   }
 
-  if (m_depth_stencil_desc.DepthEnable || m_depth_stencil_desc.StencilEnable) {
-    struct WMTDepthStencilInfo ds_info = {};
-    ds_info.depth_compare_function = WMTCompareFunctionAlways;
-    ds_info.depth_write_enabled = false;
-    ds_info.front_stencil.enabled = false;
-    ds_info.back_stencil.enabled = false;
-    if (m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
-        m_depth_stencil_desc.DepthFunc <= D3D12_COMPARISON_FUNC_ALWAYS) {
-      ds_info.depth_compare_function =
-          kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
-    }
-    ds_info.depth_write_enabled =
-        m_depth_stencil_desc.DepthEnable &&
-        m_depth_stencil_desc.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL;
-    if (m_depth_stencil_desc.StencilEnable) {
-      ds_info.front_stencil.enabled = true;
-      ds_info.front_stencil.depth_stencil_pass_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilPassOp];
-      ds_info.front_stencil.stencil_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilFailOp];
-      ds_info.front_stencil.depth_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilDepthFailOp];
-      ds_info.front_stencil.stencil_compare_function =
-          kCompareFunctionMap[m_depth_stencil_desc.FrontFace.StencilFunc];
-      ds_info.front_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
-      ds_info.front_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
-
-      ds_info.back_stencil.enabled = true;
-      ds_info.back_stencil.depth_stencil_pass_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilPassOp];
-      ds_info.back_stencil.stencil_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilFailOp];
-      ds_info.back_stencil.depth_fail_op =
-          kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilDepthFailOp];
-      ds_info.back_stencil.stencil_compare_function =
-          kCompareFunctionMap[m_depth_stencil_desc.BackFace.StencilFunc];
-      ds_info.back_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
-      ds_info.back_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
-    }
-    m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
+  struct WMTDepthStencilInfo ds_info = {};
+  ds_info.depth_compare_function = WMTCompareFunctionAlways;
+  ds_info.depth_write_enabled = false;
+  ds_info.front_stencil.enabled = false;
+  ds_info.back_stencil.enabled = false;
+  if (m_depth_stencil_desc.DepthEnable &&
+      m_depth_stencil_desc.DepthFunc >= D3D12_COMPARISON_FUNC_LESS &&
+      m_depth_stencil_desc.DepthFunc <= D3D12_COMPARISON_FUNC_ALWAYS) {
+    ds_info.depth_compare_function =
+        kCompareFunctionMap[m_depth_stencil_desc.DepthFunc];
   }
+  ds_info.depth_write_enabled =
+      m_depth_stencil_desc.DepthEnable &&
+      m_depth_stencil_desc.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL;
+  if (m_depth_stencil_desc.StencilEnable) {
+    ds_info.front_stencil.enabled = true;
+    ds_info.front_stencil.depth_stencil_pass_op =
+        kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilPassOp];
+    ds_info.front_stencil.stencil_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilFailOp];
+    ds_info.front_stencil.depth_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.FrontFace.StencilDepthFailOp];
+    ds_info.front_stencil.stencil_compare_function =
+        kCompareFunctionMap[m_depth_stencil_desc.FrontFace.StencilFunc];
+    ds_info.front_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
+    ds_info.front_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
+
+    ds_info.back_stencil.enabled = true;
+    ds_info.back_stencil.depth_stencil_pass_op =
+        kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilPassOp];
+    ds_info.back_stencil.stencil_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilFailOp];
+    ds_info.back_stencil.depth_fail_op =
+        kStencilOperationMap[m_depth_stencil_desc.BackFace.StencilDepthFailOp];
+    ds_info.back_stencil.stencil_compare_function =
+        kCompareFunctionMap[m_depth_stencil_desc.BackFace.StencilFunc];
+    ds_info.back_stencil.write_mask = m_depth_stencil_desc.StencilWriteMask;
+    ds_info.back_stencil.read_mask = m_depth_stencil_desc.StencilReadMask;
+  }
+  m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
 
   {
     PTRACE("VS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",

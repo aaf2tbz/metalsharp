@@ -111,6 +111,7 @@ public:
     return index < 8 ? m_rtv_formats[index] : DXGI_FORMAT_UNKNOWN;
   }
   UINT GetSampleCount() const { return m_sample_count; }
+  DXGI_FORMAT GetDSVFormat() const { return m_dsv_format; }
   WMT::Reference<WMT::ComputePipelineState> GetComputePSO() const {
     return m_compute_pso;
   }
