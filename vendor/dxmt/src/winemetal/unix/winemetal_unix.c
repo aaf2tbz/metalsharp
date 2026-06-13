@@ -152,6 +152,42 @@ winemetal_render_command_name(uint16_t type) {
   }
 }
 
+static const char *
+winemetal_compute_command_name(uint16_t type) {
+  switch ((enum WMTComputeCommandType)type) {
+  case WMTComputeCommandNop:
+    return "Nop";
+  case WMTComputeCommandDispatch:
+    return "Dispatch";
+  case WMTComputeCommandDispatchIndirect:
+    return "DispatchIndirect";
+  case WMTComputeCommandSetPSO:
+    return "SetPSO";
+  case WMTComputeCommandSetBuffer:
+    return "SetBuffer";
+  case WMTComputeCommandSetBufferOffset:
+    return "SetBufferOffset";
+  case WMTComputeCommandUseResource:
+    return "UseResource";
+  case WMTComputeCommandSetBytes:
+    return "SetBytes";
+  case WMTComputeCommandSetTexture:
+    return "SetTexture";
+  case WMTComputeCommandSetSamplerState:
+    return "SetSamplerState";
+  case WMTComputeCommandDispatchThreads:
+    return "DispatchThreads";
+  case WMTComputeCommandWaitForFence:
+    return "WaitForFence";
+  case WMTComputeCommandUpdateFence:
+    return "UpdateFence";
+  case WMTComputeCommandMemoryBarrier:
+    return "MemoryBarrier";
+  default:
+    return "Unknown";
+  }
+}
+
 static void
 winemetal_log_render_command(
     FILE *dl, size_t index, id<MTLRenderCommandEncoder> encoder, const struct wmtcmd_base *cmd
@@ -1172,86 +1208,113 @@ _MTLComputeCommandEncoder_encodeCommands(void *obj) {
   const struct wmtcmd_base *next = params->cmd_head.ptr;
   id<MTLComputeCommandEncoder> encoder = (id<MTLComputeCommandEncoder>)params->encoder;
   MTLSize threadgroup_size = {0, 0, 0};
+  size_t command_index = 0;
   while (next) {
-    switch ((enum WMTComputeCommandType)next->type) {
-    default:
-      assert(!next->type && "unhandled compute command type");
-      break;
-    case WMTComputeCommandDispatch: {
-      struct wmtcmd_compute_dispatch *body = (struct wmtcmd_compute_dispatch *)next;
-      [encoder dispatchThreadgroups:MTLSizeMake(body->size.width, body->size.height, body->size.depth)
-              threadsPerThreadgroup:threadgroup_size];
-      break;
-    }
-    case WMTComputeCommandDispatchThreads: {
-      struct wmtcmd_compute_dispatch *body = (struct wmtcmd_compute_dispatch *)next;
-      [encoder dispatchThreads:MTLSizeMake(body->size.width, body->size.height, body->size.depth)
-          threadsPerThreadgroup:threadgroup_size];
-      break;
-    }
-    case WMTComputeCommandDispatchIndirect: {
-      struct wmtcmd_compute_dispatch_indirect *body = (struct wmtcmd_compute_dispatch_indirect *)next;
-      [encoder dispatchThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
-                                 indirectBufferOffset:body->indirect_args_offset
-                                threadsPerThreadgroup:threadgroup_size];
-      break;
-    }
-    case WMTComputeCommandSetPSO: {
-      struct wmtcmd_compute_setpso *body = (struct wmtcmd_compute_setpso *)next;
-      [encoder setComputePipelineState:(id<MTLComputePipelineState>)body->pso];
-      threadgroup_size.width = body->threadgroup_size.width;
-      threadgroup_size.height = body->threadgroup_size.height;
-      threadgroup_size.depth = body->threadgroup_size.depth;
-      break;
-    }
-    case WMTComputeCommandSetBuffer: {
-      struct wmtcmd_compute_setbuffer *body = (struct wmtcmd_compute_setbuffer *)next;
-      [encoder setBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTComputeCommandSetBufferOffset: {
-      struct wmtcmd_compute_setbufferoffset *body = (struct wmtcmd_compute_setbufferoffset *)next;
-      [encoder setBufferOffset:body->offset atIndex:body->index];
-      break;
-    }
-    case WMTComputeCommandUseResource: {
-      struct wmtcmd_compute_useresource *body = (struct wmtcmd_compute_useresource *)next;
-      [encoder useResource:(id<MTLResource>)body->resource usage:(MTLResourceUsage)body->usage];
-      break;
-    }
-    case WMTComputeCommandSetBytes: {
-      struct wmtcmd_compute_setbytes *body = (struct wmtcmd_compute_setbytes *)next;
-      [encoder setBytes:body->bytes.ptr length:body->length atIndex:body->index];
-      break;
-    }
-    case WMTComputeCommandSetTexture: {
-      struct wmtcmd_compute_settexture *body = (struct wmtcmd_compute_settexture *)next;
-      [encoder setTexture:(id<MTLTexture>)body->texture atIndex:body->index];
-      break;
-    }
-    case WMTComputeCommandSetSamplerState: {
-      struct wmtcmd_compute_setsamplerstate *body = (struct wmtcmd_compute_setsamplerstate *)next;
-      [encoder setSamplerState:(id<MTLSamplerState>)body->sampler atIndex:body->index];
-      break;
-    }
-    case WMTComputeCommandUpdateFence: {
-      struct wmtcmd_compute_fence_op *body = (struct wmtcmd_compute_fence_op *)next;
-      [encoder updateFence:(id<MTLFence>)body->fence];
-      break;
-    }
-    case WMTComputeCommandWaitForFence: {
-      struct wmtcmd_compute_fence_op *body = (struct wmtcmd_compute_fence_op *)next;
-      [encoder waitForFence:(id<MTLFence>)body->fence];
-      break;
-    }
-    case WMTComputeCommandMemoryBarrier: {
-      struct wmtcmd_compute_memory_barrier *body = (struct wmtcmd_compute_memory_barrier *)next;
-      [encoder memoryBarrierWithScope:(MTLBarrierScope)body->scope];
-      break;
-    }
+    @try {
+      switch ((enum WMTComputeCommandType)next->type) {
+      default: {
+        FILE *el = winemetal_critical_log();
+        if (el) {
+          fprintf(el,
+                  "compute_cmd_unknown index=%zu encoder=%p cmd=%p type=%u next=%p\n",
+                  command_index, encoder, next, next->type, next->next.ptr);
+          fclose(el);
+        }
+        return STATUS_UNSUCCESSFUL;
+      }
+      case WMTComputeCommandNop:
+        break;
+      case WMTComputeCommandDispatch: {
+        struct wmtcmd_compute_dispatch *body = (struct wmtcmd_compute_dispatch *)next;
+        [encoder dispatchThreadgroups:MTLSizeMake(body->size.width, body->size.height, body->size.depth)
+                threadsPerThreadgroup:threadgroup_size];
+        break;
+      }
+      case WMTComputeCommandDispatchThreads: {
+        struct wmtcmd_compute_dispatch *body = (struct wmtcmd_compute_dispatch *)next;
+        [encoder dispatchThreads:MTLSizeMake(body->size.width, body->size.height, body->size.depth)
+            threadsPerThreadgroup:threadgroup_size];
+        break;
+      }
+      case WMTComputeCommandDispatchIndirect: {
+        struct wmtcmd_compute_dispatch_indirect *body = (struct wmtcmd_compute_dispatch_indirect *)next;
+        [encoder dispatchThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)body->indirect_args_buffer
+                                   indirectBufferOffset:body->indirect_args_offset
+                                  threadsPerThreadgroup:threadgroup_size];
+        break;
+      }
+      case WMTComputeCommandSetPSO: {
+        struct wmtcmd_compute_setpso *body = (struct wmtcmd_compute_setpso *)next;
+        [encoder setComputePipelineState:(id<MTLComputePipelineState>)body->pso];
+        threadgroup_size.width = body->threadgroup_size.width;
+        threadgroup_size.height = body->threadgroup_size.height;
+        threadgroup_size.depth = body->threadgroup_size.depth;
+        break;
+      }
+      case WMTComputeCommandSetBuffer: {
+        struct wmtcmd_compute_setbuffer *body = (struct wmtcmd_compute_setbuffer *)next;
+        [encoder setBuffer:(id<MTLBuffer>)body->buffer offset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTComputeCommandSetBufferOffset: {
+        struct wmtcmd_compute_setbufferoffset *body = (struct wmtcmd_compute_setbufferoffset *)next;
+        [encoder setBufferOffset:body->offset atIndex:body->index];
+        break;
+      }
+      case WMTComputeCommandUseResource: {
+        struct wmtcmd_compute_useresource *body = (struct wmtcmd_compute_useresource *)next;
+        [encoder useResource:(id<MTLResource>)body->resource usage:(MTLResourceUsage)body->usage];
+        break;
+      }
+      case WMTComputeCommandSetBytes: {
+        struct wmtcmd_compute_setbytes *body = (struct wmtcmd_compute_setbytes *)next;
+        [encoder setBytes:body->bytes.ptr length:body->length atIndex:body->index];
+        break;
+      }
+      case WMTComputeCommandSetTexture: {
+        struct wmtcmd_compute_settexture *body = (struct wmtcmd_compute_settexture *)next;
+        [encoder setTexture:(id<MTLTexture>)body->texture atIndex:body->index];
+        break;
+      }
+      case WMTComputeCommandSetSamplerState: {
+        struct wmtcmd_compute_setsamplerstate *body = (struct wmtcmd_compute_setsamplerstate *)next;
+        [encoder setSamplerState:(id<MTLSamplerState>)body->sampler atIndex:body->index];
+        break;
+      }
+      case WMTComputeCommandUpdateFence: {
+        struct wmtcmd_compute_fence_op *body = (struct wmtcmd_compute_fence_op *)next;
+        [encoder updateFence:(id<MTLFence>)body->fence];
+        break;
+      }
+      case WMTComputeCommandWaitForFence: {
+        struct wmtcmd_compute_fence_op *body = (struct wmtcmd_compute_fence_op *)next;
+        [encoder waitForFence:(id<MTLFence>)body->fence];
+        break;
+      }
+      case WMTComputeCommandMemoryBarrier: {
+        struct wmtcmd_compute_memory_barrier *body = (struct wmtcmd_compute_memory_barrier *)next;
+        [encoder memoryBarrierWithScope:(MTLBarrierScope)body->scope];
+        break;
+      }
+      }
+    } @catch(NSException * exception) {
+      FILE *el = winemetal_critical_log();
+      if (el) {
+        const char *name = [[exception name] UTF8String];
+        const char *reason = [[exception reason] UTF8String];
+        fprintf(el,
+                "compute_cmd_exception index=%zu encoder=%p cmd=%p type=%u name=%s exception=%s reason=%s next=%p\n",
+                command_index, encoder, next, next->type,
+                winemetal_compute_command_name(next->type),
+                name ? name : "(null)", reason ? reason : "(null)",
+                next->next.ptr);
+        fclose(el);
+      }
+      return STATUS_UNSUCCESSFUL;
     }
 
     next = next->next.ptr;
+    command_index++;
   }
   return STATUS_SUCCESS;
 }

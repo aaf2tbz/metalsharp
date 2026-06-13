@@ -4656,15 +4656,6 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     return;
   }
 
-  st.CloseRenderEncoder();
-  auto comp = cmdbuf.computeCommandEncoder(false);
-  ENC_CREATE("compute_dispatch", comp.handle);
-  ScopedMetalEncoderEnd comp_guard{comp, "compute_dispatch"};
-  if (!comp.handle) {
-    QTRACE("%s: FAILED to create compute encoder", trace_prefix);
-    return;
-  }
-
   uint8_t cmd_buf[8192];
   uint8_t *cmd_ptr = cmd_buf;
   wmtcmd_compute_nop *chain_head = nullptr;
@@ -5029,16 +5020,26 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
          st.pso->GetThreadgroupSize().height,
          st.pso->GetThreadgroupSize().depth);
 
+  QTRACE("%s: compute fallback begin bound_buffers=0x%llx bound_textures=0x%llx "
+         "bound_samplers=0x%llx",
+         trace_prefix, (unsigned long long)bound_compute_buffer_slots,
+         (unsigned long long)bound_compute_texture_slots,
+         (unsigned long long)bound_compute_sampler_slots);
   if (!st.null_vertex_arg_buf.handle) {
     uint64_t zero_data[4] = {};
+    QTRACE("%s: creating null compute buffer fallback", trace_prefix);
     st.null_vertex_arg_buf = st.MakeTransientBuffer(device, sizeof(zero_data));
     if (st.null_vertex_arg_buf.handle)
       st.null_vertex_arg_buf.updateContents(0, zero_data, sizeof(zero_data));
+    QTRACE("%s: null compute buffer fallback handle=%llu", trace_prefix,
+           (unsigned long long)st.null_vertex_arg_buf.handle);
   }
   if (st.null_vertex_arg_buf.handle) {
     uint64_t missing =
         D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
         ~bound_compute_buffer_slots;
+    QTRACE("%s: compute buffer fallback missing=0x%llx", trace_prefix,
+           (unsigned long long)missing);
     for (uint32_t slot = 0; slot < kD3D12M12DirectBufferSlots; slot++) {
       if (!(missing & (1ull << slot)))
         continue;
@@ -5052,6 +5053,9 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     uint64_t missing =
         D3D12DirectBindingMask(kD3D12M12DirectComputeTextureSlots) &
         ~bound_compute_texture_slots;
+    QTRACE("%s: compute texture fallback handle=%llu missing=0x%llx",
+           trace_prefix, (unsigned long long)st.null_direct_texture.handle,
+           (unsigned long long)missing);
     for (uint32_t slot = 0; slot < kD3D12M12DirectComputeTextureSlots; slot++) {
       if (!(missing & (1ull << slot)))
         continue;
@@ -5067,12 +5071,20 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     uint64_t missing =
         D3D12DirectBindingMask(kD3D12M12DirectComputeSamplerSlots) &
         ~bound_compute_sampler_slots;
+    QTRACE("%s: compute sampler fallback handle=%llu missing=0x%llx",
+           trace_prefix, (unsigned long long)st.null_direct_sampler.handle,
+           (unsigned long long)missing);
     for (uint32_t slot = 0; slot < kD3D12M12DirectComputeSamplerSlots; slot++) {
       if (!(missing & (1ull << slot)))
         continue;
       append_compute_setsampler(st.null_direct_sampler.handle, slot, true);
     }
   }
+  QTRACE("%s: compute fallback complete fallback_buffers=0x%llx "
+         "fallback_textures=0x%llx fallback_samplers=0x%llx",
+         trace_prefix, (unsigned long long)fallback_compute_buffer_slots,
+         (unsigned long long)fallback_compute_texture_slots,
+         (unsigned long long)fallback_compute_sampler_slots);
 
   if (TakeLogBudget(&g_compute_completeness_logs, 128)) {
     D3D12ShaderBindingCompletenessDesc desc = {};
@@ -5086,18 +5098,25 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     desc.fallback_textures = fallback_compute_texture_slots;
     desc.fallback_samplers = fallback_compute_sampler_slots;
     auto summary = D3D12EvaluateShaderBindingCompleteness(desc);
+    QTRACE("%s: compute completeness buffers=%u+%u/%u textures=%u+%u/%u "
+           "samplers=%u+%u/%u missing=0x%llx/0x%llx/0x%llx",
+           trace_prefix, summary.bound_buffer_count,
+           summary.fallback_buffer_count, summary.required_buffer_count,
+           summary.bound_texture_count, summary.fallback_texture_count,
+           summary.required_texture_count, summary.bound_sampler_count,
+           summary.fallback_sampler_count, summary.required_sampler_count,
+           (unsigned long long)summary.missing_buffers,
+           (unsigned long long)summary.missing_textures,
+           (unsigned long long)summary.missing_samplers);
     Logger::info(str::format(
         "M12 compute completeness label=", trace_prefix, " pso=", (void *)st.pso,
-        " dispatch=", x, "x", y, "x", z, " buffers ",
+        " dispatch=", x, "x", y, "x", z, " buffers=",
         summary.bound_buffer_count, "+", summary.fallback_buffer_count, "/",
-        summary.required_buffer_count, " missing=0x", std::hex,
-        summary.missing_buffers, " textures ", std::dec,
+        summary.required_buffer_count, " textures=",
         summary.bound_texture_count, "+", summary.fallback_texture_count, "/",
-        summary.required_texture_count, " missing=0x", std::hex,
-        summary.missing_textures, " samplers ", std::dec,
+        summary.required_texture_count, " samplers=",
         summary.bound_sampler_count, "+", summary.fallback_sampler_count, "/",
-        summary.required_sampler_count, " missing=0x", std::hex,
-        summary.missing_samplers, std::dec, " cs_args=",
+        summary.required_sampler_count, " cs_args=",
         st.pso->GetCSArguments().size(), " cs_cb=",
         st.pso->GetCSConstantBuffers().size(), " cs_qwords=",
         st.pso->GetCSReflection().ArgumentTableQwords));
@@ -5113,7 +5132,15 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         "M12 compute command chain overflow label=", trace_prefix, " pso=",
         (void *)st.pso, " used=", (uint64_t)(cmd_ptr - cmd_buf), " cap=",
         (uint64_t)sizeof(cmd_buf), " dispatch=", x, "x", y, "x", z));
-    EndMetalEncoder(comp, "compute_dispatch");
+    return;
+  }
+
+  st.CloseRenderEncoder();
+  auto comp = cmdbuf.computeCommandEncoder(false);
+  ENC_CREATE("compute_dispatch", comp.handle);
+  ScopedMetalEncoderEnd comp_guard{comp, "compute_dispatch"};
+  if (!comp.handle) {
+    QTRACE("%s: FAILED to create compute encoder", trace_prefix);
     return;
   }
 
