@@ -66,13 +66,30 @@ M32, Steam handoff, and plain Wine remain internal Wine-backed routes for diagno
 
 The backend copies graphics DLLs into the game directory before launch.
 
-M11/M10:
+M11:
 
 ```text
 d3d11.dll
 dxgi.dll
+dxgi_dxmt.dll
 d3d10core.dll
 winemetal.dll
+nvapi64.dll
+nvngx.dll
+```
+
+M10:
+
+```text
+d3d10.dll
+d3d10_1.dll
+d3d11.dll
+dxgi.dll
+dxgi_dxmt.dll
+d3d10core.dll
+winemetal.dll
+nvapi64.dll
+nvngx.dll
 ```
 
 M10 deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints for D3D10 imports, then uses DXMT's `d3d10core.dll` as the D3D10 handoff and shares the D3D11/DXGI/winemetal runtime with M11.
@@ -98,7 +115,16 @@ M9:
 
 ```text
 d3d9.dll
+dxgi.dll
+dxgi_dxmt.dll
+winemetal.dll
+nvapi64.dll
+nvngx.dll
 ```
+
+All public DXMT routes also require the `corefonts` and `gpu_vendor_stubs`
+bottle repair components so titles see the same font and vendor-API readiness
+surface before launch.
 
 ## Prefixes
 

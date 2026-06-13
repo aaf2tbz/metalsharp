@@ -514,6 +514,8 @@ pub fn prepare_steam_pipeline_env(
         }
     }
     deploy_recipe_dlls(&recipe)?;
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
 
     let env = steam_pipeline_env_pairs(&home, node, appid, recipe.exe_path.as_deref());
     Ok((env, recipe))
@@ -597,7 +599,7 @@ fn deploy_prefix_route_dlls(
     recipe: &super::recipe::LaunchRecipe,
     prefix: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if recipe.pipeline != PipelineId::M12 {
+    if !matches!(recipe.pipeline, PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
         return Ok(());
     }
 
@@ -609,33 +611,42 @@ fn deploy_prefix_route_dlls(
         }
         std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
     }
-    verify_m12_prefix_route_surface(recipe, &system32)?;
+    verify_dxmt_prefix_route_surface(recipe, &system32)?;
     Ok(())
 }
 
-fn verify_m12_prefix_route_surface(
+fn verify_dxmt_prefix_route_surface(
     recipe: &super::recipe::LaunchRecipe,
     system32: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let missing = required_m12_prefix_dlls(recipe)
+    let missing = required_dxmt_prefix_dlls(recipe)
         .into_iter()
         .filter(|filename| !system32.join(filename).is_file())
         .collect::<Vec<_>>();
     if missing.is_empty() {
         Ok(())
     } else {
-        Err(format!("M12 prefix route surface is incomplete: {}", missing.join(", ")).into())
+        Err(format!("{:?} prefix route surface is incomplete: {}", recipe.pipeline, missing.join(", ")).into())
     }
 }
 
-fn required_m12_prefix_dlls(recipe: &super::recipe::LaunchRecipe) -> Vec<String> {
+fn required_dxmt_prefix_dlls(recipe: &super::recipe::LaunchRecipe) -> Vec<String> {
     recipe
         .dlls
         .iter()
         .filter(|dll| {
             matches!(
                 dll.filename.as_str(),
-                "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll" | "winemetal.dll"
+                "d3d9.dll"
+                    | "d3d10.dll"
+                    | "d3d10_1.dll"
+                    | "d3d11.dll"
+                    | "d3d12.dll"
+                    | "dxgi.dll"
+                    | "dxgi_dxmt.dll"
+                    | "d3d10core.dll"
+                    | "winemetal.dll"
+                    | "metalsharp_ntdll_hook.dll"
             ) || dll.filename.starts_with("nvapi")
                 || dll.filename.starts_with("nvngx")
         })
@@ -4865,57 +4876,106 @@ mod tests {
     }
 
     #[test]
-    fn m12_prefix_route_deploys_full_dxmt_runtime_surface() {
-        let home = test_dir("m12-prefix-dlls");
-        let source_dir = home.join("runtime");
-        let game_dir = home.join("game");
-        let prefix = home.join("prefix");
-        std::fs::create_dir_all(&source_dir).expect("create source dir");
-        std::fs::create_dir_all(&game_dir).expect("create game dir");
+    fn dxmt_prefix_route_deploys_full_runtime_surface() {
+        for (pipeline, dll_names) in [
+            (
+                PipelineId::M9,
+                vec!["d3d9.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"],
+            ),
+            (
+                PipelineId::M10,
+                vec![
+                    "d3d10.dll",
+                    "d3d10_1.dll",
+                    "d3d11.dll",
+                    "dxgi.dll",
+                    "dxgi_dxmt.dll",
+                    "d3d10core.dll",
+                    "winemetal.dll",
+                    "nvapi64.dll",
+                    "nvngx.dll",
+                ],
+            ),
+            (
+                PipelineId::M11,
+                vec![
+                    "d3d11.dll",
+                    "dxgi.dll",
+                    "dxgi_dxmt.dll",
+                    "d3d10core.dll",
+                    "winemetal.dll",
+                    "nvapi64.dll",
+                    "nvngx.dll",
+                ],
+            ),
+            (
+                PipelineId::M12,
+                vec![
+                    "d3d12.dll",
+                    "d3d11.dll",
+                    "dxgi.dll",
+                    "dxgi_dxmt.dll",
+                    "d3d10core.dll",
+                    "winemetal.dll",
+                    "nvapi64.dll",
+                    "nvngx.dll",
+                ],
+            ),
+        ] {
+            let home = test_dir(&format!("prefix-dlls-{:?}", pipeline));
+            let source_dir = home.join("runtime");
+            let game_dir = home.join("game");
+            let prefix = home.join("prefix");
+            std::fs::create_dir_all(&source_dir).expect("create source dir");
+            std::fs::create_dir_all(&game_dir).expect("create game dir");
 
-        let dll_names = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll", "nvapi64.dll"];
-        let dlls = dll_names
-            .iter()
-            .map(|filename| {
-                let source_path = source_dir.join(filename);
-                std::fs::write(&source_path, filename.as_bytes()).expect("write source dll");
-                super::super::recipe::RecipeDll {
-                    source_subpath: filename.to_string(),
-                    filename: filename.to_string(),
-                    source_path,
-                    dest_path: game_dir.join(filename),
-                    source_present: true,
-                }
-            })
-            .collect();
+            let dlls = dll_names
+                .iter()
+                .map(|filename| {
+                    let source_path = source_dir.join(filename);
+                    std::fs::write(&source_path, filename.as_bytes()).expect("write source dll");
+                    super::super::recipe::RecipeDll {
+                        source_subpath: filename.to_string(),
+                        filename: filename.to_string(),
+                        source_path,
+                        dest_path: game_dir.join(filename),
+                        source_present: true,
+                    }
+                })
+                .collect();
 
-        let recipe = super::super::recipe::LaunchRecipe {
-            appid: 2050650,
-            pipeline: PipelineId::M12,
-            pipeline_name: "M12".into(),
-            backend: "dxmt".into(),
-            game_dir: Some(game_dir),
-            exe_path: None,
-            exe_name: None,
-            launch_args: vec![],
-            env: vec![],
-            dlls,
-            runtime_assets: vec![],
-            anti_cheat: vec![],
-            anti_cheat_status: vec![],
-            warnings: vec![],
-        };
+            let recipe = super::super::recipe::LaunchRecipe {
+                appid: 2050650,
+                pipeline,
+                pipeline_name: format!("{:?}", pipeline),
+                backend: "dxmt".into(),
+                game_dir: Some(game_dir),
+                exe_path: None,
+                exe_name: None,
+                launch_args: vec![],
+                env: vec![],
+                dlls,
+                runtime_assets: vec![],
+                anti_cheat: vec![],
+                anti_cheat_status: vec![],
+                warnings: vec![],
+            };
 
-        deploy_prefix_route_dlls(&recipe, &prefix).expect("deploy prefix route dlls");
+            deploy_prefix_route_dlls(&recipe, &prefix).expect("deploy prefix route dlls");
 
-        let system32 = prefix.join("drive_c").join("windows").join("system32");
-        assert_eq!(std::fs::read(system32.join("d3d12.dll")).expect("read d3d12"), b"d3d12.dll");
-        assert_eq!(std::fs::read(system32.join("dxgi.dll")).expect("read dxgi"), b"dxgi.dll");
-        assert_eq!(std::fs::read(system32.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"), b"dxgi_dxmt.dll");
-        assert_eq!(std::fs::read(system32.join("winemetal.dll")).expect("read winemetal"), b"winemetal.dll");
-        assert_eq!(std::fs::read(system32.join("nvapi64.dll")).expect("read nvapi64"), b"nvapi64.dll");
+            let system32 = prefix.join("drive_c").join("windows").join("system32");
+            for filename in dll_names {
+                assert_eq!(
+                    std::fs::read(system32.join(filename)).unwrap_or_else(|_| panic!("read {}", filename)),
+                    filename.as_bytes(),
+                    "{:?} staged {}",
+                    pipeline,
+                    filename
+                );
+            }
 
-        let _ = std::fs::remove_dir_all(home);
+            let _ = std::fs::remove_dir_all(home);
+        }
     }
 
     #[test]

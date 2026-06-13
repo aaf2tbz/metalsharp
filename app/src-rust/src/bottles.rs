@@ -2913,21 +2913,21 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D9 Metal",
             BottleArch::Wow64,
             true,
-            &["d3d9", "vcrun2019_x64", "vcrun2019_x86", "directx_jun2010"][..],
+            &["d3d9", "vcrun2019_x64", "vcrun2019_x86", "directx_jun2010", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M9,
         ),
         RuntimeProfile::M10 => (
             "D3D10 Metal",
             BottleArch::Wow64,
             true,
-            &["d3d10", "d3d10_1", "dxgi", "vcrun2019_x64", "vcrun2019_x86"][..],
+            &["d3d10", "d3d10_1", "dxgi", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M10,
         ),
         RuntimeProfile::M11 => (
             "D3D11 Metal",
             BottleArch::Win64,
             true,
-            &["d3d11", "dxgi", "vcrun2019_x64", "vcrun2019_x86"][..],
+            &["d3d11", "dxgi", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs", "corefonts"][..],
             crate::mtsp::engine::PipelineId::M11,
         ),
         RuntimeProfile::M12 => (
@@ -5899,6 +5899,16 @@ mod tests {
         assert!(ids.contains(&"d3d10"));
         assert!(ids.contains(&"d3d10_1"));
         assert!(ids.contains(&"dxgi"));
+    }
+
+    #[test]
+    fn dxmt_profiles_require_fonts_and_gpu_vendor_stubs() {
+        for profile in [RuntimeProfile::M9, RuntimeProfile::M10, RuntimeProfile::M11, RuntimeProfile::M12] {
+            let components = default_components_for(profile);
+            let ids = components.iter().map(|component| component.id.as_str()).collect::<Vec<_>>();
+            assert!(ids.contains(&"corefonts"), "{:?} missing corefonts", profile);
+            assert!(ids.contains(&"gpu_vendor_stubs"), "{:?} missing gpu vendor stubs", profile);
+        }
     }
 
     #[test]

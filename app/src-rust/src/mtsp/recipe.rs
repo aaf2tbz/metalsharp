@@ -368,7 +368,7 @@ pub fn selected_deploy_dlls_for_pipeline(
 
     node.deploy_dlls
         .iter()
-        .filter(|dll| node.id != PipelineId::M9 || dll.source_subpath == d3d9_subpath)
+        .filter(|dll| node.id != PipelineId::M9 || dll.filename != "d3d9.dll" || dll.source_subpath == d3d9_subpath)
         .flat_map(|dll| {
             let source_path = ms_root.join(dll.source_subpath).join(dll.filename);
             let dest_name = dll.dest_filename.unwrap_or(dll.filename);
@@ -1309,10 +1309,15 @@ mod tests {
             super::super::engine::get_pipeline(PipelineId::M9),
             &runtime,
         );
-        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+        let d3d9 = selected.iter().find(|dll| dll.filename == "d3d9.dll").expect("selected d3d9");
 
-        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
-        assert_eq!(selected.len(), 1);
+        assert_eq!(d3d9.source_subpath, "lib/wine/i386-windows");
+        assert!(selected
+            .iter()
+            .any(|dll| dll.filename == "dxgi.dll" && dll.source_subpath == "lib/dxmt/x86_64-windows"));
+        assert!(selected.iter().any(|dll| dll.filename == "dxgi_dxmt.dll"));
+        assert!(selected.iter().any(|dll| dll.filename == "nvapi64.dll"));
+        assert!(selected.iter().any(|dll| dll.filename == "nvngx.dll"));
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }
@@ -1331,10 +1336,15 @@ mod tests {
             super::super::engine::get_pipeline(PipelineId::M9),
             &runtime,
         );
-        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+        let d3d9 = selected.iter().find(|dll| dll.filename == "d3d9.dll").expect("selected d3d9");
 
-        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/x86_64-windows"]));
-        assert_eq!(selected.len(), 1);
+        assert_eq!(d3d9.source_subpath, "lib/wine/x86_64-windows");
+        assert!(selected
+            .iter()
+            .any(|dll| dll.filename == "dxgi.dll" && dll.source_subpath == "lib/dxmt/x86_64-windows"));
+        assert!(selected.iter().any(|dll| dll.filename == "dxgi_dxmt.dll"));
+        assert!(selected.iter().any(|dll| dll.filename == "nvapi64.dll"));
+        assert!(selected.iter().any(|dll| dll.filename == "nvngx.dll"));
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }
