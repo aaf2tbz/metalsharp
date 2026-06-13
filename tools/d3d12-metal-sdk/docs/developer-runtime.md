@@ -78,6 +78,58 @@ M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh
 The live executable is a 10-second RGB cube scene with depth, lighting, shadows,
 indexed draws, and readback validation.
 
+## MetalSharp M12 Runtime Contract
+
+The developer runtime mirrors the application M12 contract. A valid M12 runtime
+has three distinct surfaces:
+
+- **Installed runtime:** `runtime/wine/lib/dxmt/` and `runtime/wine/lib/wine/`
+  contain the current DXMT/Wine DLLs and Unix sidecars.
+- **Prefix runtime surface:** `prefix-steam/drive_c/windows/system32/` and
+  `prefix-steam/.metalsharp/unix/` contain byte-matching copies used by Wine
+  prefix init and Steam-prefix launches.
+- **Game-local launch surface:** the game directory receives the DXMT D3D12,
+  DXGI, D3D11 fallback, Winemetal, and vendor stub DLLs plus app-local Unix
+  sidecars for M12 game runs.
+
+The critical M12 DLL/sidecar set is:
+
+```text
+d3d12.dll
+dxgi.dll
+dxgi_dxmt.dll
+d3d11.dll
+d3d10core.dll
+winemetal.dll
+nvapi64.dll
+nvngx.dll
+winemetal.so
+libc++.1.dylib
+libc++abi.1.dylib
+libunwind.1.dylib
+```
+
+The application installer and migration wizard stage and validate the prefix
+surface through `app/src-rust/src/prefix_runtime.rs`. They compare file contents
+against the installed runtime, run a bounded `metalsharp-wine cmd /c exit`
+probe, and require M12 shader corpus material. Migration repair is deliberately
+narrow: it repairs prefix layout and restages runtime files, but it does not
+reinstall Steam.
+
+The normal M12 game launch must carry:
+
+```text
+WINEDLLPATH=<runtime>/lib/dxmt/x86_64-windows:...
+WINEDLLOVERRIDES=d3d12,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx,d3d11,d3d10core=n,b
+DXMT_WINEMETAL_UNIXLIB=winemetal.so
+DXMT_LOG_PATH=~/.metalsharp/logs/m12/<appid>/
+DXMT_LOG_FILE=m12.log
+```
+
+SDK probes and stress executables should be judged against this shape. A probe
+that loads a DLL by a different path or writes diagnostics into the shader cache
+is not proving the production M12 route.
+
 ## Offline Game Shader Validation
 
 Captured game shader caches can be staged into an offline Metal validation lab

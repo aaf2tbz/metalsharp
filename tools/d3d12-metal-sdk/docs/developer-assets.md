@@ -27,6 +27,20 @@ tools/d3d12-metal-sdk/scripts/m12-dev.sh stage-runtime
 copies the matching DLLs and Unix sidecars into the SDK runtime layout and
 writes a stage result JSON.
 
+The runtime layout has to match the application M12 contract:
+
+- Windows DLLs live under `runtime/wine/lib/dxmt/x86_64-windows/`.
+- Unix sidecars live under `runtime/wine/lib/dxmt/x86_64-unix/`.
+- Wine fallback DLLs and Unix modules live under `runtime/wine/lib/wine/`.
+- Prefix validation copies the same files into `prefix-steam` through
+  `app/src-rust/src/prefix_runtime.rs`.
+- M12 shader corpus material lives under
+  `runtime/wine/share/d3d12-metal-sdk/shader-corpus/`.
+
+When adding new runtime files, update the source contract first, then the stage
+script, then the docs. Do not add one-off copies only to a game directory; that
+is how launch drift reappears.
+
 ## Fast Local Proof
 
 ```bash
@@ -74,6 +88,19 @@ M12_CHECK_RUN_LIVE=1 tools/d3d12-metal-sdk/scripts/m12-dev.sh m12-check
 The non-live mode is the PR CI gate. The live mode runs the 10-second RGB cube
 scene and validates readback.
 
+This gate proves the cube-method launch surface:
+
+```text
+DXMT_WINEMETAL_UNIXLIB=winemetal.so
+WINEDLLPATH=<staged dxmt windows dll dir>:...
+DXMT_LOG_PATH=<m12 log dir>/
+DXMT_LOG_FILE=m12.log
+```
+
+The basename `winemetal.so` value is intentional. It keeps the PE
+`winemetal.dll` bridge aligned with the app-local Unix sidecar layout used by
+M12 game launches.
+
 ## M12 Stress Game
 
 ```bash
@@ -89,6 +116,19 @@ default. Override the duration with:
 ```bash
 M12_STRESS_SECONDS=6 tools/d3d12-metal-sdk/scripts/m12-dev.sh stress-game
 ```
+
+Use the stress game before returning to commercial game launches when changing
+any of these surfaces:
+
+- DXIL to MSL lowering
+- shader binding manifests
+- root signatures and descriptor tables
+- graphics or compute PSO creation
+- vertex/index binding
+- texture sampling
+- render target and present encoding
+- WineMetal sidecar loading
+- M12 log routing
 
 ## SDK Bundle
 

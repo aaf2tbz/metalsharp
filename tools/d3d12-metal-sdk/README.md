@@ -28,6 +28,39 @@ The wrapper gives every common path a stable verb: `build-runtime`,
 and `sdk-bundle`. See [docs/developer-assets.md](docs/developer-assets.md) for
 the asset map and exact commands.
 
+## Production M12 Shape
+
+The SDK exists to prove the same route that the app uses for M12 games:
+
+```text
+D3D12 game exe
+  -> Wine prefix `~/.metalsharp/prefix-steam`
+  -> game-local DXMT DLLs
+  -> WINEDLLPATH runtime routing
+  -> DXMT d3d12/dxgi/d3d11 fallback
+  -> winemetal.dll + DXMT_WINEMETAL_UNIXLIB=winemetal.so
+  -> winemetal.so
+  -> Metal
+```
+
+The app installs and migrates a prefix runtime surface before launch. That
+surface is staged from the installed runtime into
+`prefix-steam/drive_c/windows/system32/` and `prefix-steam/.metalsharp/unix/`,
+then validated byte-for-byte. Migration repair can fix a stale or broken prefix
+surface, but it does not reinstall Steam.
+
+M12 logs and caches are separate:
+
+```text
+~/.metalsharp/logs/m12/<appid>/m12.log
+~/.metalsharp/shader-cache/m12/<appid>/
+~/.metalsharp/pipeline-cache/m12/<appid>/
+```
+
+See [../../docs/architecture/m12-pipeline-map.md](../../docs/architecture/m12-pipeline-map.md)
+and [../../docs/architecture/m12-shader-engine.md](../../docs/architecture/m12-shader-engine.md)
+for the app-level architecture.
+
 ## Goals
 
 - Prove the intended DXMT D3D12 runtime is loaded.

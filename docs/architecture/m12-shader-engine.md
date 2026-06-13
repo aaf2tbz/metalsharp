@@ -5,6 +5,11 @@ function. The engine boundary starts when a D3D12 game supplies DXBC or DXIL
 bytecode and ends when a Metal render or compute pipeline is created, cached,
 bound, and used by a draw, dispatch, or present pass.
 
+The shader engine is also a deployment contract. Install and migration must put
+known-good shader-engine material on disk, launch must seed the selected M12
+cache from that material, and diagnostics must write to logs instead of mixing
+proof output into shader or pipeline caches.
+
 ## Engine Surfaces
 
 - **DXIL intake:** `dxil_container`, `llvm_bitcode`, and `dxil_ir` parse DXIL
@@ -26,6 +31,60 @@ bound, and used by a draw, dispatch, or present pass.
   root-signature reports, PSO manifests, and focused D3D12 trace output are part
   of the engine contract because stale or incomplete cache data can make a fixed
   shader look broken.
+- **Installed corpus:** checked-in shader corpora under
+  `tools/d3d12-metal-sdk/shader-corpus/` are packaged into the runtime and
+  scripts/tools bundles. Install and migration validate that at least one M12
+  shader-engine corpus source exists before M12 is considered ready.
+
+## Runtime Material
+
+M12 shader-engine material can be sourced from:
+
+```text
+~/.metalsharp/runtime/wine/share/d3d12-metal-sdk/shader-corpus/
+~/.metalsharp/runtime/d3d12-metal-sdk/shader-corpus/
+~/.metalsharp/scripts/tools/d3d12-metal-sdk/shader-corpus/
+```
+
+When a game uses the M12 cache namespace, `shader_cache.rs` copies runtime-safe
+files into:
+
+```text
+~/.metalsharp/shader-cache/m12/<appid>/
+```
+
+The copied file classes are:
+
+```text
+.metallib
+.air
+.msl
+.dxbc
+.dxil
+.cso
+.json
+.module.txt
+.dxil_report.txt
+```
+
+The cache seeding step intentionally skips proof, result, log, and direct Metal
+error directories. Runtime caches should contain shader-engine inputs and
+sidecars, not the entire developer proof tree.
+
+Logs are separate:
+
+```text
+~/.metalsharp/logs/m12/<appid>/m12.log
+```
+
+Pipeline caches are also separate:
+
+```text
+~/.metalsharp/pipeline-cache/m12/<appid>/
+```
+
+This split matters. A shader fix is not proven by a stale `.metallib`, and a
+runtime log is not a shader cache input.
 
 ## Invariants
 
@@ -42,6 +101,27 @@ bound, and used by a draw, dispatch, or present pass.
 - Shader cache invalidation is part of correctness. When lowering changes,
   stale `.msl`, `.metallib`, and pipeline-cache outputs must not be used as
   proof of current behavior.
+- A present or fullscreen fallback shader must preserve the draw shape it is
+  replacing. For example, the procedural fallback distinguishes a 4-vertex
+  triangle-strip fullscreen quad from a 3-vertex fullscreen triangle by reading
+  the bound draw args instead of clamping every draw to three vertices.
+- A binding-completeness failure is not only a shader failure. Root signature,
+  descriptor table, direct root buffer, vertex input, render-target, and PSO
+  metadata must be checked together before blaming lowering.
+
+## Proof Layers
+
+The engine has separate proof layers. They are cumulative, not interchangeable.
+
+| Layer | Artifact | Proves |
+| --- | --- | --- |
+| DXIL intake | `.dxbc`, `.dxil`, `.module.txt`, DXIL reports | The bytecode was found, parsed, and classified. |
+| Lowering | `.msl`, binding manifests | DXIL values, resources, semantics, and bindings lowered into MSL. |
+| Metal compile | `.air`, `.metallib`, compiler logs | Generated MSL compiles and links under Apple's Metal toolchain. |
+| Root signature | root-signature reports | Shader bindings can be matched to D3D12 root parameters and descriptor ranges. |
+| PSO manifests | `pso-render-*.json`, `pso-compute-*.json` | Render/compute pipeline descriptors have enough format, topology, shader, and binding metadata. |
+| Runtime binding | focused `m12.log` diagnostics | Command lists bind descriptors, buffers, draw args, render targets, and resources before encoding. |
+| Developer probes | `tools/d3d12-metal-sdk/results/*.json` | The pipeline behavior is reproducible without a commercial game launch. |
 
 ## Required Gates
 
@@ -83,3 +163,18 @@ The machine-readable source of truth is
 It names the source surfaces, required offline gates, runtime artifacts, and
 review evidence. `validate-contracts.py` includes this contract, while
 `validate-shader-engine.py` verifies the engine-specific source and gate shape.
+
+## Developer Stress Executables
+
+Two Windows executables exist so M12 development does not depend on repeated
+commercial game launches:
+
+- `m12_game.exe`: the PR/CI cube proof built by `tools/ci/m12-check.sh`.
+- `m12_stress_game.exe`: the higher-pressure title-like scene built by
+  `tools/d3d12-metal-sdk/scripts/m12-dev.sh stress-game`.
+
+`m12_stress_game.exe` is deliberately broader than a unit probe. It starts with
+a splash/movie-style pass, then renders a beach scene with water, sun, boat,
+tree geometry, text, textures, shadows, unusual vertices, and repeated presents.
+It should be used when changing the shader engine, PSO creation, vertex binding,
+texture sampling, or present path and a game run would be too unstable.
