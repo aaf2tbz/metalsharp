@@ -1692,19 +1692,29 @@ fn dxmt_winemetal_unixlib_path(ms_root: &Path) -> String {
     if env_flag_enabled("METALSHARP_M12_FORCE_DXMT_WINEMETAL_UNIXLIB") {
         return ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so").to_string_lossy().to_string();
     }
-    "winemetal.so".to_string()
+    M12_WINEMETAL_UNIXLIB.to_string()
 }
+
+const M12_LAUNCH_PATH_NAME: &str = "cube_method_game_local_dxmt_runtime";
+const M12_WINEMETAL_UNIXLIB: &str = "winemetal.so";
 
 fn m12_launch_path_name(node: &PipelineNode) -> Option<&'static str> {
     if node.id == PipelineId::M12 {
-        Some("game_local_dxmt_runtime")
+        Some(M12_LAUNCH_PATH_NAME)
     } else {
         None
     }
 }
 
-const M12_UNIX_SIDECARS: &[&str] =
-    &["winemetal.so", "winemac.so", "ntdll.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+const M12_UNIX_SIDECARS: &[&str] = &[
+    M12_WINEMETAL_UNIXLIB,
+    "winemac.so",
+    "ntdll.so",
+    "mscompatdb.so",
+    "libc++.1.dylib",
+    "libc++abi.1.dylib",
+    "libunwind.1.dylib",
+];
 
 fn stage_m12_unix_sidecars(
     node: &PipelineNode,
@@ -1802,7 +1812,7 @@ fn apply_m12_unix_sidecar_env(cmd: &mut Command, node: &PipelineNode, exe_dir: &
         return;
     }
 
-    cmd.env("DXMT_WINEMETAL_UNIXLIB", "winemetal.so");
+    cmd.env("DXMT_WINEMETAL_UNIXLIB", M12_WINEMETAL_UNIXLIB);
     for (key, value) in m12_game_local_env_pairs(exe_dir) {
         prepend_command_path_value_env(cmd, &key, &value);
     }
@@ -2020,7 +2030,7 @@ fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<
         crate::platform::metalsharp_home_dir_for(&home).join("pipeline-cache").join(subdir).join(appid.to_string());
     let _ = std::fs::create_dir_all(&shader_base);
     let _ = std::fs::create_dir_all(&pipeline_base);
-    super::shader_cache::deploy_preset_cache(home, subdir, appid);
+    super::shader_cache::deploy_preset_cache_to(home, subdir, appid, &shader_base);
     Some(CachePaths {
         shader: shader_base.to_string_lossy().to_string(),
         pipeline: pipeline_base.to_string_lossy().to_string(),
@@ -2084,7 +2094,7 @@ fn steam_pipeline_env_pairs(
     }
     if node.id == PipelineId::M12 {
         if let Some(exe_dir) = exe_path.and_then(Path::parent) {
-            env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), "winemetal.so".to_string()));
+            env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), M12_WINEMETAL_UNIXLIB.to_string()));
             env.extend(m12_game_local_env_pairs(exe_dir));
         }
     }
@@ -2163,6 +2173,7 @@ fn m12_app_compat_env_pairs(appid: u32, diagnostic_capture_requested: bool) -> V
             ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
             ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
+            ("DXMT_D3D12_UE_SM6_COMPAT".to_string(), "1".to_string()),
             ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
@@ -4381,6 +4392,7 @@ mod tests {
         assert_eq!(env_value(&env, "DXMT_D3D12_ENABLE_GEOMETRY_MESH"), Some("1"));
         assert_eq!(env_value(&env, "DXMT_D3D12_FORCE_SWAPCHAIN_BLIT"), Some("1"));
         assert_eq!(env_value(&env, "DXMT_D3D12_FORCE_COLOR_WRITE_STATE"), Some("1"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_UE_SM6_COMPAT"), Some("1"));
         assert_eq!(env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
         assert_eq!(env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
         assert_eq!(env_value(&env, "DXMT_D3D12_SWAPCHAIN_READBACK"), None);
@@ -4503,6 +4515,10 @@ mod tests {
         let staged = stage_m12_unix_sidecars(node, &ms_root, &exe_dir).expect("stage sidecars");
 
         assert!(wine_unix.join("mscompatdb.so").is_file(), "M12 must keep safe mscompatdb Unix hook available");
+        assert!(
+            M12_UNIX_SIDECARS.contains(&"mscompatdb.so"),
+            "M12 launch surface must stage the safe mscompatdb shim with the game-local Unix sidecars"
+        );
         assert_eq!(staged.len(), M12_UNIX_SIDECARS.len() * 3);
         for filename in M12_UNIX_SIDECARS {
             assert!(exe_dir.join(filename).is_file(), "missing root sidecar {}", filename);
@@ -4547,6 +4563,7 @@ mod tests {
         let env = steam_pipeline_env_pairs(&home, node, 1245620, Some(&exe));
 
         assert_eq!(last_env_value(&env, "DXMT_WINEMETAL_UNIXLIB"), Some("winemetal.so"));
+        assert_eq!(m12_launch_path_name(node), Some(M12_LAUNCH_PATH_NAME));
         assert_eq!(last_env_value(&env, "SteamAppId"), Some("1245620"));
         assert_eq!(last_env_value(&env, "SteamGameId"), Some("1245620"));
         assert_eq!(last_env_value(&env, "WINEMSYNC"), Some("1"));

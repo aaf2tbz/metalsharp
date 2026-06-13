@@ -1,19 +1,31 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn deploy_preset_cache(home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<u64> {
-    let preset_db = find_preset(home, cache_subdir, appid)?;
-
     let cache_base =
         crate::platform::metalsharp_home_dir_for(&home).join("shader-cache").join(cache_subdir).join(appid.to_string());
+    deploy_preset_cache_to(home, cache_subdir, appid, &cache_base)
+}
+
+pub fn deploy_preset_cache_to(home: &PathBuf, cache_subdir: &str, appid: u32, cache_base: &Path) -> Option<u64> {
     let _ = std::fs::create_dir_all(&cache_base);
 
-    let user_db = cache_base.join(preset_db.file_name()?.to_string_lossy().to_string());
+    let mut deployed = 0;
 
-    if user_db.exists() {
-        return merge_preset_into_user(&preset_db, &user_db);
+    if let Some(preset_db) = find_preset(home, cache_subdir, appid) {
+        let user_db = cache_base.join(preset_db.file_name()?.to_string_lossy().to_string());
+
+        if user_db.exists() {
+            deployed += merge_preset_into_user(&preset_db, &user_db).unwrap_or(0);
+        } else if std::fs::copy(&preset_db, &user_db).is_ok() {
+            deployed += 1;
+        }
     }
 
-    std::fs::copy(&preset_db, &user_db).ok()
+    if cache_subdir == "m12" {
+        deployed += deploy_m12_shader_engine_cache(home, appid, &cache_base);
+    }
+
+    (deployed > 0).then_some(deployed)
 }
 
 fn find_preset(home: &PathBuf, cache_subdir: &str, appid: u32) -> Option<PathBuf> {
@@ -95,6 +107,92 @@ fn check_preset_dir(preset_dir: &PathBuf, cache_subdir: &str, appid: u32) -> Opt
     None
 }
 
+fn deploy_m12_shader_engine_cache(home: &PathBuf, appid: u32, cache_base: &Path) -> u64 {
+    let mut copied = 0;
+    for source_dir in find_m12_shader_engine_sources(home, appid) {
+        copied += copy_shader_engine_files(&source_dir, cache_base);
+    }
+    copied
+}
+
+fn find_m12_shader_engine_sources(home: &PathBuf, appid: u32) -> Vec<PathBuf> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let mut roots = vec![
+        ms_home.join("runtime").join("wine").join("share").join("d3d12-metal-sdk").join("shader-corpus"),
+        ms_home.join("runtime").join("d3d12-metal-sdk").join("shader-corpus"),
+        ms_home.join("scripts").join("tools").join("d3d12-metal-sdk").join("shader-corpus"),
+        ms_home.join("runtime").join("wine").join("share").join("shader-presets").join("m12").join(appid.to_string()),
+        ms_home
+            .join("runtime")
+            .join("wine")
+            .join("share")
+            .join("shader-presets")
+            .join("dxmt-metal12")
+            .join(appid.to_string()),
+    ];
+
+    if let Ok(source) = std::env::var("METALSHARP_M12_SHADER_ENGINE_SOURCE") {
+        roots.push(PathBuf::from(source));
+    }
+
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        roots.push(resources.join("d3d12-metal-sdk").join("shader-corpus"));
+        roots.push(resources.join("tools").join("d3d12-metal-sdk").join("shader-corpus"));
+    }
+
+    roots.into_iter().filter(|path| path.is_dir()).collect()
+}
+
+fn copy_shader_engine_files(source_dir: &Path, cache_base: &Path) -> u64 {
+    let mut copied = 0;
+    let Ok(entries) = std::fs::read_dir(source_dir) else {
+        return 0;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            if matches!(name.as_str(), "proof" | "results" | "logs" | "direct-metal-errors") {
+                continue;
+            }
+            copied += copy_shader_engine_files(&path, cache_base);
+            continue;
+        }
+
+        if !is_m12_shader_engine_file(&path) {
+            continue;
+        }
+        let dest = cache_base.join(entry.file_name());
+        if dest.exists() && files_match(&path, &dest) {
+            continue;
+        }
+        if std::fs::copy(&path, &dest).is_ok() {
+            copied += 1;
+        }
+    }
+
+    copied
+}
+
+fn is_m12_shader_engine_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("metallib" | "air" | "msl" | "dxbc" | "dxil" | "cso" | "json")
+    ) || path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.ends_with(".module.txt") || name.ends_with(".dxil_report.txt"))
+        .unwrap_or(false)
+}
+
+fn files_match(a: &Path, b: &Path) -> bool {
+    match (std::fs::read(a), std::fs::read(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 fn merge_preset_into_user(preset_db: &PathBuf, user_db: &PathBuf) -> Option<u64> {
     let mut inserted: u64 = 0;
 
@@ -169,6 +267,12 @@ fn merge_preset_into_user(preset_db: &PathBuf, user_db: &PathBuf) -> Option<u64>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_dir(name: &str) -> PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
+        std::env::temp_dir().join(format!("metalsharp-shader-cache-{}-{}", name, nonce))
+    }
 
     #[test]
     fn m10_reuses_shared_dxmt_metal_preset_family() {
@@ -178,5 +282,45 @@ mod tests {
     #[test]
     fn m9_reuses_dxmt_preset_family() {
         assert_eq!(preset_lookup_subdirs("m9"), vec!["m9", "dxmt-metal"]);
+    }
+
+    #[test]
+    fn m12_deploys_file_shader_engine_corpus_to_selected_cache_path() {
+        let home = test_dir("m12-file-corpus");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let corpus = ms_home
+            .join("runtime")
+            .join("wine")
+            .join("share")
+            .join("d3d12-metal-sdk")
+            .join("shader-corpus")
+            .join("baseline");
+        let metallib = corpus.join("metallib");
+        let msl = corpus.join("msl");
+        let air = corpus.join("air");
+        let proof = corpus.join("proof");
+        std::fs::create_dir_all(&metallib).expect("create metallib corpus");
+        std::fs::create_dir_all(&msl).expect("create msl corpus");
+        std::fs::create_dir_all(&air).expect("create air corpus");
+        std::fs::create_dir_all(&proof).expect("create proof corpus");
+
+        std::fs::write(metallib.join("abc.metallib"), b"metallib").expect("write metallib");
+        std::fs::write(msl.join("abc.msl"), b"msl").expect("write msl");
+        std::fs::write(air.join("abc.air"), b"air").expect("write air");
+        std::fs::write(corpus.join("pso-render-abc.json"), b"{}").expect("write pso");
+        std::fs::write(proof.join("compile-summary.txt"), b"not runtime cache").expect("write proof");
+
+        let selected_cache =
+            home.join("Game").join(".metalsharp-cache").join("shader-cache").join("m12").join("1962700");
+        let deployed = deploy_preset_cache_to(&home, "m12", 1962700, &selected_cache).expect("deploy m12 corpus");
+
+        assert_eq!(deployed, 4);
+        assert!(selected_cache.join("abc.metallib").is_file());
+        assert!(selected_cache.join("abc.msl").is_file());
+        assert!(selected_cache.join("abc.air").is_file());
+        assert!(selected_cache.join("pso-render-abc.json").is_file());
+        assert!(!selected_cache.join("compile-summary.txt").exists());
+
+        let _ = std::fs::remove_dir_all(home);
     }
 }

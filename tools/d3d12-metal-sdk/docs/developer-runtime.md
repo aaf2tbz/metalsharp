@@ -47,6 +47,18 @@ scripts/preflight-runtime-layout.py --dxmt-runtime "$METALSHARP_DXMT_RUNTIME"
 scripts/run-probes.sh --wine "$WINE" --prefix "$WINEPREFIX" --dxmt-runtime "$METALSHARP_DXMT_RUNTIME" --mini-only
 ```
 
+For repository work, prefer the developer wrapper:
+
+```bash
+tools/d3d12-metal-sdk/scripts/m12-dev.sh mini
+tools/d3d12-metal-sdk/scripts/m12-dev.sh shader-lab -- --name latest-auto-discovery
+tools/d3d12-metal-sdk/scripts/m12-dev.sh full-offline
+```
+
+The wrapper is the stable front door for build, stage, run, offline shader-lab,
+and SDK packaging tasks. The lower-level scripts remain available for focused
+debugging.
+
 In a full MetalSharp repository checkout, use the M12 cube pipeline check before
 launching Steam or a game:
 
@@ -65,6 +77,30 @@ M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh
 
 The live executable is a 10-second RGB cube scene with depth, lighting, shadows,
 indexed draws, and readback validation.
+
+## Offline Game Shader Validation
+
+Captured game shader caches can be staged into an offline Metal validation lab
+without launching the game again. Keep these runs on external storage:
+
+```bash
+tools/d3d12-metal-sdk/scripts/stage-game-metal-validation.py \
+  --corpus "$HOME/.metalsharp/tmp/subnautica2_m12_offline/sm6-20260612-225622/shader-cache" \
+  --stage-root /Volumes/AverySSD/MetalSharp-M12-CorpusLab \
+  --name subnautica2-sm6
+```
+
+The tool regenerates MSL through DXMT's native DXIL converter when available,
+compiles the MSL into AIR and metallib with Apple's Metal toolchain, then builds
+and runs a tiny Objective-C++ Metal framework harness. The native harness loads
+each metallib, resolves exported functions, and creates compute pipeline states
+for kernel functions. Results are written to `manifest.json` and `summary.json`
+inside the staged run directory.
+
+This is a shader/library validation surface, not a full game replay. It gives a
+hard pass/fail matrix for DXIL lowering, Metal compilation, metallib linking,
+Metal framework library loading, and compute pipeline creation. Graphics PSO
+pairing from captured PSO JSON is the next layer above this gate.
 
 PowerShell users can initialize equivalent environment variables with:
 

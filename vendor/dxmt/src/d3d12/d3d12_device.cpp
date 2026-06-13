@@ -28,6 +28,15 @@
 #include <d3d12sdklayers.h>
 #include <windows.h>
 
+static bool dxmt_d3d12_env_enabled(const char *name) {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA(name, value, sizeof(value));
+  if (!len)
+    return false;
+  return value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+         value[0] == 't' || value[0] == 'T';
+}
+
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
   if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
       ep->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
@@ -2203,12 +2212,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *sm = (D3D12_FEATURE_DATA_SHADER_MODEL *)feature_data;
     if (feature_data_size < sizeof(*sm))
       return E_INVALIDARG;
-    constexpr D3D_SHADER_MODEL kMaxProvenShaderModel =
-        static_cast<D3D_SHADER_MODEL>(0x65); // D3D_SHADER_MODEL_6_5
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    const D3D_SHADER_MODEL max_shader_model =
+        ue_sm6_compat ? static_cast<D3D_SHADER_MODEL>(0x66)
+                      : static_cast<D3D_SHADER_MODEL>(0x65);
     if (sm->HighestShaderModel == 0 ||
-        sm->HighestShaderModel > kMaxProvenShaderModel)
-      sm->HighestShaderModel = kMaxProvenShaderModel;
-    TRACE("  SHADER_MODEL: HighestSM=%u", (unsigned)sm->HighestShaderModel);
+        sm->HighestShaderModel > max_shader_model)
+      sm->HighestShaderModel = max_shader_model;
+    TRACE("  SHADER_MODEL: HighestSM=%u ue_sm6_compat=%d",
+          (unsigned)sm->HighestShaderModel, ue_sm6_compat);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -2335,17 +2348,19 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS9 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
     o->MeshShaderPipelineStatsSupported = FALSE;
     o->MeshShaderSupportsFullRangeRenderTargetArrayIndex = FALSE;
-    o->AtomicInt64OnTypedResourceSupported = FALSE;
-    o->AtomicInt64OnGroupSharedSupported = FALSE;
+    o->AtomicInt64OnTypedResourceSupported = ue_sm6_compat ? TRUE : FALSE;
+    o->AtomicInt64OnGroupSharedSupported = ue_sm6_compat ? TRUE : FALSE;
     o->DerivativesInMeshAndAmplificationShadersSupported = FALSE;
     TRACE("  OPTIONS9: MeshStats=%d FullRTArray=%d Atomic64Typed=%d "
-          "Atomic64GroupShared=%d",
+          "Atomic64GroupShared=%d ue_sm6_compat=%d",
           o->MeshShaderPipelineStatsSupported,
           o->MeshShaderSupportsFullRangeRenderTargetArrayIndex,
           o->AtomicInt64OnTypedResourceSupported,
-          o->AtomicInt64OnGroupSharedSupported);
+          o->AtomicInt64OnGroupSharedSupported, ue_sm6_compat);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS10: {
@@ -2360,9 +2375,12 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS11 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->AtomicInt64OnDescriptorHeapResourceSupported = FALSE;
-    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d",
-          o->AtomicInt64OnDescriptorHeapResourceSupported);
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    o->AtomicInt64OnDescriptorHeapResourceSupported =
+        ue_sm6_compat ? TRUE : FALSE;
+    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d ue_sm6_compat=%d",
+          o->AtomicInt64OnDescriptorHeapResourceSupported, ue_sm6_compat);
     return S_OK;
   }
   case 41: { // D3D12_FEATURE_D3D12_OPTIONS12

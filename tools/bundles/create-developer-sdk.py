@@ -38,8 +38,10 @@ CRITICAL_FILES = [
     "runtime/dxmt/x86_64-unix/libc++abi.1.dylib",
     "runtime/dxmt/x86_64-unix/libunwind.1.dylib",
     "scripts/run-probes.sh",
+    "scripts/m12-dev.sh",
     "scripts/preflight-runtime-layout.py",
     "scripts/stage-dxmt-runtime.py",
+    "scripts/stage-game-metal-validation.py",
 ]
 
 

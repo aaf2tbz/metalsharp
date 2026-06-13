@@ -128,6 +128,11 @@
       "id": "m12-render-check",
       "command": "tools/ci/m12-check.sh",
       "proves": "A live DX12 render path can create PSOs, bind shaders, draw indexed geometry, present, and read back expected pixels."
+    },
+    {
+      "id": "m12-stress-game",
+      "command": "tools/d3d12-metal-sdk/scripts/m12-dev.sh stress-game",
+      "proves": "A title-shaped DX12-only stress executable runs a splash/movie phase, compute UAV writes, descriptor-table SRV sampling, dynamic CBV roots, depth/blend rendering, dense instanced and micro-triangle draws, fullscreen strip presentation, barriers, present, and readback diagnostics."
     }
   ],
   "runtime_artifacts": [

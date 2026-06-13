@@ -147,6 +147,7 @@ verify_runtime_core() {
     runtime/host/HostRuntimeABI.h \
     runtime/host/libmetalsharp_host_runtime.dylib \
     runtime/wine/lib/wine/x86_64-unix/mscompatdb.so \
+    runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS \
     runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll
 }
 

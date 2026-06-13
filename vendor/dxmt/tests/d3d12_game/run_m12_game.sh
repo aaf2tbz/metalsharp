@@ -13,8 +13,17 @@ run_root="${M12_GAME_RUN_ROOT:-$HOME/.metalsharp/tmp/m12_game_run}"
 prefix="${M12_GAME_WINEPREFIX:-$HOME/.metalsharp/tmp/m12_game_prefix}"
 loops="${M12_GAME_LOOPS:-1}"
 timeout_seconds="${M12_GAME_TIMEOUT:-45}"
+exe_name="${M12_GAME_EXE:-m12_game.exe}"
 toolchain_root="${METALSHARP_X86_LLVM_ROOT:-$HOME/.metalsharp/toolchains}"
 llvm_name="clang+llvm-15.0.7-x86_64-apple-darwin21.0"
+
+if [[ $# -gt 0 && "$1" == --exe ]]; then
+  exe_name="$2"
+  shift 2
+fi
+if [[ "$exe_name" != *.exe ]]; then
+  exe_name="$exe_name.exe"
+fi
 
 copy_llvm_dylib() {
   local dep="$1"
@@ -41,7 +50,7 @@ copy_llvm_dylib() {
 
 mkdir -p "$run_root" "$run_root/unix" "$(dirname "$prefix")"
 
-cp "$build_dir/tests/d3d12_game/m12_game.exe" "$run_root/"
+cp "$build_dir/tests/d3d12_game/$exe_name" "$run_root/"
 cp "$build_dir/src/d3d12/d3d12.dll" "$run_root/"
 cp "$build_dir/src/dxgi/dxgi.dll" "$run_root/"
 cp "$build_dir/src/dxgi/dxgi_dxmt.dll" "$run_root/"
@@ -69,7 +78,8 @@ copy_llvm_dylib "libc++abi.1.dylib"
 copy_llvm_dylib "libunwind.1.dylib"
 
 cd "$run_root"
-rm -f m12_game.log /tmp/winemetal_debug.log /tmp/winemetal_pe_debug.log
+log_name="${exe_name%.exe}.log"
+rm -f "$log_name" /tmp/winemetal_debug.log /tmp/winemetal_pe_debug.log
 
 export WINEPREFIX="$prefix"
 export WINEDEBUG="${WINEDEBUG:--all}"
@@ -82,4 +92,4 @@ export DXMT_SHADER_CACHE_PATH="${DXMT_SHADER_CACHE_PATH:-$run_root/shader-cache}
 export DYLD_LIBRARY_PATH="$toolchain_root/$llvm_name/lib:/Volumes/AverySSD/toolchains/$llvm_name/lib:$run_root/unix:$wine_root/lib/wine/x86_64-unix:${DYLD_LIBRARY_PATH:-}"
 
 /usr/bin/perl -e 'alarm shift; exec @ARGV' "$timeout_seconds" \
-  "$wine_bin" ./m12_game.exe --loops "$loops" "$@" > "$run_root/m12_game.log" 2>&1
+  "$wine_bin" "./$exe_name" --loops "$loops" "$@" > "$run_root/$log_name" 2>&1

@@ -17,6 +17,17 @@ The SDK exists to make D3D12 changes evidence-driven before game-specific debugg
 - a baseline or generated result under `baselines/` or `results/`
 - a documented unsupported or risky-stub entry
 
+Start with the developer wrapper when resuming M12 work:
+
+```bash
+tools/d3d12-metal-sdk/scripts/m12-dev.sh help
+```
+
+The wrapper gives every common path a stable verb: `build-runtime`,
+`stage-runtime`, `mini`, `probes`, `shader-lab`, `full-offline`, `m12-check`,
+and `sdk-bundle`. See [docs/developer-assets.md](docs/developer-assets.md) for
+the asset map and exact commands.
+
 ## Goals
 
 - Prove the intended DXMT D3D12 runtime is loaded.

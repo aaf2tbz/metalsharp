@@ -18,6 +18,49 @@ The harness currently covers:
 - dynamic 3D indexed cube rendering with depth, lighting, and shadows
 - copy/readback validation using colored-pixel counts and a checksum
 
+`m12_stress_game.exe` is the heavier title-shaped harness. It runs a 5-second
+fullscreen splash/movie-style phase before entering a dense 3D scene, then runs
+until 15 seconds by default. It deliberately stresses:
+
+- a startup texture containing `STRESS TEST STARTING`
+- game-style prerequisite checks for D3D12, DXGI, D3DCompiler, optional DXC,
+  optional DXIL, and D3D feature-level 12_0/12_1/12_2 negotiation
+- Unreal-style D3D12 capability checks, excluding project/executable-specific
+  Unreal checks: feature levels, root signature 1.1, UMA/architecture, GPU
+  virtual address size, render/depth/HDR format support, MSAA quality,
+  Resource Binding Tier, Resource Heap Tier, Typed UAV format support,
+  WaveOps, SM6/SM6.6, native 16-bit shader ops, render pass tier, ray tracing
+  tier, VRS tier, mesh shader tier, sampler feedback tier, int64 atomics,
+  enhanced barriers, relaxed format casting, vertex element alignment, and GPU
+  upload heap support
+- a high-density beach scene with animated water, a sunrise disc, sand, a palm
+  trunk, irregular palm fronds, a boat hull, sails, and long-shadow lighting
+- D3D12 feature queries for resource binding, typed UAV, WaveOps/SM6, and
+  mesh/sampler-feedback capability surfaces when exposed by the headers/runtime
+- compute PSO creation and `RWTexture2D` UAV writes
+- texture upload, SRV descriptor tables, static samplers, and sampling from two
+  textures
+- dynamic CBV root descriptors
+- depth, blend, render-target, UAV, copy-source, and present barriers
+- instanced cube draws with per-vertex and per-instance vertex-buffer slots
+- dense micro-triangle draw batches to mimic high-triangle/Nanite-style stress
+- procedural fullscreen triangle-strip draws using `SV_VertexID`
+- splash and scene readback diagnostics
+
+Current hard-failure checkpoint: the beach stress scene compiles and stages,
+creates the D3D12 device at feature level 12_0, creates compute/graphics PSOs,
+uploads the title texture, builds 13k+ scene vertices, and closes the first
+frame command list. The current backend then hits Metal's
+`Command encoder released without endEncoding` assertion before present. That
+is an intentional high-pressure local repro for encoder lifecycle debugging.
+
+The Unreal-style checks are based on public Epic guidance that UE5 rendering
+features such as Lumen, Nanite, Virtual Shadow Maps, and hardware ray tracing
+care about DirectX 12, Shader Model 6, SM6.6 atomics for Nanite/VSM-class
+paths, hardware ray tracing tiers, and current driver capability reporting.
+The corresponding D3D12 queries use Microsoft's documented
+`ID3D12Device::CheckFeatureSupport` surfaces.
+
 Build it from an enabled test build:
 
 ```sh
@@ -27,6 +70,7 @@ meson setup vendor/dxmt/build-metalsharp-x64-tests vendor/dxmt \
   -Dnative_llvm_path=/Volumes/AverySSD/toolchains/clang+llvm-15.0.7-x86_64-apple-darwin21.0 \
   -Dwine_install_path=$HOME/.metalsharp/runtime/wine
 meson compile -C vendor/dxmt/build-metalsharp-x64-tests m12_game
+meson compile -C vendor/dxmt/build-metalsharp-x64-tests m12_stress_game
 ```
 
 Run it through the local staging script:
@@ -43,6 +87,9 @@ vendor/dxmt/tests/d3d12_game/run_m12_game.sh
 
 # Full focused smoke suite before a shorter cube run.
 vendor/dxmt/tests/d3d12_game/run_m12_game.sh --quick-checks --seconds 1
+
+# 15-second title-shaped stress harness.
+vendor/dxmt/tests/d3d12_game/run_m12_game.sh --exe m12_stress_game
 ```
 
 The script stages the PR-built `m12_game.exe`, `d3d12.dll`, `dxgi.dll`,
