@@ -214,3 +214,55 @@ cargo test                        # 534 passed, 0 failed
 **Boundary check:** no shader lowering semantics changed. Cache inspection is
 strictly read-only (SQLite `SQLITE_OPEN_READ_ONLY`). M9/M10/M11 cache families
 remain shared as before; M12/M13 remain isolated.
+
+## Phase 5: Descriptor and Root-Signature Metal Binding Hardening ✅
+
+**Purpose:** move binding decisions toward a stable Metal ABI; make binding
+bugs contract failures, not game-only mysteries.
+
+**What landed:**
+- New `binding_contract.rs` module treating D3D12 root signatures and
+descriptor heaps as a formal ABI. Typed types mirror what the existing SDK
+  audits (`dxil-binding-manifest-audit.py`, `dxil-root-signature-audit.py`)
+  parse:
+  - `RootSignatureManifest` (version 1.0/1.1, parameters, static samplers,
+    null-descriptor policy)
+  - `RootParameter` (DescriptorTable / Constants / CBV / SRV / UAV, shader
+    visibility, register space/index, descriptor-table ranges)
+  - `DescriptorRange` (SRV/UAV/CBV/Sampler, base register, count, space,
+    table offset)
+  - `StaticSampler`, `NullDescriptorPolicy`, `ShaderVisibility`
+  - `ReflectionBinding` — the shader's declared bindings for the ABI check
+- `validate_root_signature` / `validate_root_signature_with` enforce Metal's
+  direct-binding limits (buffers≤31, textures≤8, samplers≤16 — matching the
+  Python audit defaults) plus D3D12 ABI rules:
+  - direct buffer/texture/sampler limit violations
+  - overlapping descriptor-table ranges within a space
+  - static-sampler register clashes with root parameters
+  - sparse (non-dense) root parameter indices
+  - `UINT_MAX` unbounded ranges rejected without proven probe support
+- **Reflection-ABI check**: proves every reflection binding is covered by a
+  root parameter range or static sampler (visibility-aware), turning a
+  shader-vs-root-signature mismatch into a contract failure.
+- New route: `POST /diagnostics/binding-contract/validate`
+  (accepts `{root_signature, reflection}` JSON, returns a structured report).
+
+**New tests (14):** clean manifest passes; buffer/texture/sampler limit
+violations flagged; overlapping ranges flagged; distinct spaces don't overlap;
+sparse indices flagged; static sampler clash flagged; unbounded range rejected;
+reflection covered by table passes; reflection not covered flagged; reflection
+sampler covered by static sampler; manifest JSON round-trip; Metal limits match
+Python audit defaults.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test binding_contract      # 14 passed
+cargo test                        # 548 passed, 0 failed
+```
+
+**Boundary check:** no runtime binding behavior changed — this is a typed
+contract + validator that mirrors existing SDK audits. M9/M10/M11 unaffected.
+The limits are the same the Python binding audit already enforces, so the two
+gates agree on what passes.
