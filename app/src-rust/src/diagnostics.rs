@@ -193,18 +193,26 @@ pub fn shader_cache_dirs(home: &Path, pipeline: crate::mtsp::engine::PipelineId,
 /// artifacts that are missing produce a structured failure (`ok: false`)
 /// rather than a silent fallback.
 pub fn build_launch_diagnostic(appid: u32, requested: Option<crate::mtsp::engine::PipelineId>) -> Value {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => {
-            return json!({
-                "ok": false,
-                "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
-                "error": "home directory could not be resolved",
-                "appid": appid,
-            });
-        },
-    };
-    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    match dirs::home_dir() {
+        Some(home) => build_launch_diagnostic_for(&home, appid, requested),
+        None => json!({
+            "ok": false,
+            "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
+            "error": "home directory could not be resolved",
+            "appid": appid,
+        }),
+    }
+}
+
+/// Same as [`build_launch_diagnostic`], but with an explicit home directory.
+/// This form is used by tests so they never mutate the process-global
+/// `METALSHARP_HOME` (which would race with other parallel tests).
+pub fn build_launch_diagnostic_for(
+    home: &Path,
+    appid: u32,
+    requested: Option<crate::mtsp::engine::PipelineId>,
+) -> Value {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
 
     let pipeline = crate::bottles::resolve_steam_pipeline_for_request(appid, requested);
     let node = crate::mtsp::engine::get_pipeline(pipeline);
@@ -258,7 +266,7 @@ pub fn build_launch_diagnostic(appid: u32, requested: Option<crate::mtsp::engine
     let staged_dll_hashes = staged_dll_hashes_for(dual.wine_dir.as_deref());
 
     // Cache directories for this pipeline+appid.
-    let cache_dirs: Vec<Value> = shader_cache_dirs(&home, pipeline, appid)
+    let cache_dirs: Vec<Value> = shader_cache_dirs(home, pipeline, appid)
         .into_iter()
         .map(|dir| {
             let exists = dir.exists();
@@ -477,7 +485,13 @@ mod tests {
         // state. The diagnostic must report the pipeline id, runtime profile,
         // prefix path, wine binary, and artifact_sources shape. Missing
         // artifacts on a clean test host are reported as a structured failure.
-        let report = build_launch_diagnostic(504230, None);
+        // We pass an explicit temp home so this never mutates METALSHARP_HOME.
+        let home = std::env::temp_dir().join("ms-diag-fields-home");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        let report = build_launch_diagnostic_for(&home, 504230, None);
+        let _ = fs::remove_dir_all(&home);
+
         assert_eq!(report.get("schema_version").and_then(|v| v.as_u64()), Some(DIAGNOSTIC_SCHEMA_VERSION as u64));
         assert_eq!(report.get("metalsharp_version").and_then(|v| v.as_str()), Some(env!("CARGO_PKG_VERSION")));
         assert_eq!(report.get("appid").and_then(|v| v.as_u64()), Some(504230));
@@ -492,22 +506,17 @@ mod tests {
 
     #[test]
     fn build_launch_diagnostic_reports_structured_failure_when_artifacts_missing() {
-        // Point METALSHARP_HOME at an empty dir so no runtime artifacts exist,
-        // then request M12 which requires d3d12.dll etc. The diagnostic must
-        // report ok=false with a missing_artifacts array, not a silent ok=true.
-        let tmp = std::env::temp_dir().join("ms-diag-empty-home");
-        let _ = fs::remove_dir_all(&tmp);
-        fs::create_dir_all(&tmp).unwrap();
-        let prev = std::env::var("METALSHARP_HOME").ok();
-        std::env::set_var("METALSHARP_HOME", &tmp);
+        // Use an explicit empty home so no runtime artifacts exist, then request
+        // M12 which requires d3d12.dll etc. The diagnostic must report ok=false
+        // with a missing_artifacts array, not a silent ok=true. No global env
+        // mutation, so this is safe under parallel test execution.
+        let home = std::env::temp_dir().join("ms-diag-empty-home");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
 
-        let report = build_launch_diagnostic(999999, Some(crate::mtsp::engine::PipelineId::M12));
+        let report = build_launch_diagnostic_for(&home, 999999, Some(crate::mtsp::engine::PipelineId::M12));
 
-        // Restore env ASAP even if assertions fail.
-        match prev {
-            Some(v) => std::env::set_var("METALSHARP_HOME", v),
-            None => std::env::remove_var("METALSHARP_HOME"),
-        }
+        let _ = fs::remove_dir_all(&home);
 
         // 999999 is not a known game, so it resolves through the fallback.
         // If it happens to resolve to M12, we get a structured failure. If it
@@ -524,7 +533,6 @@ mod tests {
                 report
             );
         }
-        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]
