@@ -67,14 +67,14 @@ export class UpdaterBridge {
     const devRoot = path.join(__dirname, "..", "..");
 
     const candidates = [
-      path.join(resourcesDir, "scripts", "tools", "updater", "update.py"),
       path.join(resourcesDir, "scripts", "tools", "updater", "update.sh"),
-      path.join(resourcesDir, "updater", "update.py"),
+      path.join(resourcesDir, "scripts", "tools", "updater", "update.py"),
       path.join(resourcesDir, "updater", "update.sh"),
-      path.join(resourcesDir, "app.asar.unpacked", "updater", "update.py"),
+      path.join(resourcesDir, "updater", "update.py"),
       path.join(resourcesDir, "app.asar.unpacked", "updater", "update.sh"),
-      path.join(devRoot, "updater", "update.py"),
+      path.join(resourcesDir, "app.asar.unpacked", "updater", "update.py"),
       path.join(devRoot, "updater", "update.sh"),
+      path.join(devRoot, "updater", "update.py"),
     ];
 
     for (const c of candidates) {
@@ -200,18 +200,18 @@ export class UpdaterBridge {
           stdio: "ignore",
         },
       );
+      if (fs.existsSync(shellScript) && fs.statSync(shellScript).size > 0) {
+        fs.chmodSync(shellScript, 0o755);
+        if (fs.existsSync(pythonScript)) fs.chmodSync(pythonScript, 0o755);
+        return shellScript;
+      }
       if (
         (result.status === 0 || fs.existsSync(pythonScript)) &&
         fs.existsSync(pythonScript) &&
         fs.statSync(pythonScript).size > 0
       ) {
         fs.chmodSync(pythonScript, 0o755);
-        if (fs.existsSync(shellScript)) fs.chmodSync(shellScript, 0o755);
         return pythonScript;
-      }
-      if (fs.existsSync(shellScript) && fs.statSync(shellScript).size > 0) {
-        fs.chmodSync(shellScript, 0o755);
-        return shellScript;
       }
     } catch (error) {
       console.error("Updater: failed to extract bundled updater", error);
