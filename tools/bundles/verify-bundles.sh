@@ -298,6 +298,7 @@ payload_at_least() {
 verify_scripts_tools_core() {
   verify_required_files "$1" "SCRIPTS TOOLS" \
     scripts/tools/configs/mtsp-rules.toml \
+    scripts/tools/updater/update.py \
     scripts/tools/updater/update.sh
 }
 
