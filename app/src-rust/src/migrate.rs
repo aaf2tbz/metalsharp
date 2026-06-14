@@ -2502,9 +2502,17 @@ mod tests {
 
         for path in [
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join(".keep"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemetal.so"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++.1.dylib"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++abi.1.dylib"),
+            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libunwind.1.dylib"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d12.dll"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("dxgi.dll"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("dxgi_dxmt.dll"),
+            runtime_wine.join("lib").join("wine").join("x86_64-windows").join("winemetal.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join(".keep"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d10core.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d11.dll"),
