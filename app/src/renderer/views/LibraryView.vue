@@ -56,6 +56,8 @@ const gameGridRef = ref<HTMLElement | null>(null);
 const gameGridColumns = ref(1);
 let gameGridResizeObserver: ResizeObserver | null = null;
 let gameGridResizeListenerAttached = false;
+let artworkRetryTimer: number | null = null;
+const artworkRetryRequestedAppIds = new Set<number>();
 
 const filteredGames = ref<SteamGame[]>([]);
 
@@ -126,6 +128,17 @@ function onCardExpanded(appid: number, open: boolean) {
   expandedAppId.value = open ? appid : null;
 }
 
+function requestArtworkRetry(appid: number) {
+  if (artworkRetryRequestedAppIds.has(appid)) return;
+  artworkRetryRequestedAppIds.add(appid);
+  if (artworkRetryTimer !== null) return;
+
+  artworkRetryTimer = window.setTimeout(async () => {
+    artworkRetryTimer = null;
+    await reloadLibrary();
+  }, 15_000);
+}
+
 function updateGameGridColumns() {
   const grid = gameGridRef.value;
   if (!grid) return;
@@ -180,10 +193,6 @@ async function toggleSteam() {
 
 async function toggleMacSteam() {
   if (!macSteamInstalled.value) {
-    const result = await api<{ ok: boolean; installed?: boolean; error?: string }>("POST", "/steam/mac-install");
-    if (result?.ok)
-      toast.show(result.installed ? "macOS Steam is already installed" : "Steam download page opened", "success");
-    else toast.show(result?.error ?? "Could not open macOS Steam installer", "error");
     return;
   }
   if (macSteamRunning.value) {
@@ -307,6 +316,10 @@ onUnmounted(() => {
   gameGridResizeObserver = null;
   window.removeEventListener("resize", updateGameGridColumns);
   gameGridResizeListenerAttached = false;
+  if (artworkRetryTimer !== null) {
+    window.clearTimeout(artworkRetryTimer);
+    artworkRetryTimer = null;
+  }
 });
 
 watch([library, search, filter], () => {
@@ -345,13 +358,14 @@ watch([library, search, filter], () => {
             <IconCrosshair class="control-icon" width="15" height="15" />
             <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
           </button>
-          <button class="btn btn-secondary library-control-button" title="MacOS Steam" @click="toggleMacSteam">
+          <button
+            v-if="macSteamInstalled"
+            class="btn btn-secondary library-control-button"
+            title="MacOS Steam"
+            @click="toggleMacSteam"
+          >
             <IconSmartphone class="control-icon" width="15" height="15" />
-            <span class="control-label">
-              {{
-                !macSteamInstalled ? "Install macOS Steam" : macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam"
-              }}
-            </span>
+            <span class="control-label">{{ macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam" }}</span>
           </button>
           <button
             class="btn btn-secondary library-control-button refresh-button"
@@ -396,6 +410,7 @@ watch([library, search, filter], () => {
           @install="installGame(game)"
           @uninstall="uninstallGame(game)"
           @expanded="onCardExpanded"
+          @artwork-missing="requestArtworkRetry"
         />
       </div>
     </div>

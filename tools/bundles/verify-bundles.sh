@@ -159,7 +159,19 @@ verify_graphics_core() {
     Graphics/dll/dxmt/x86_64-windows/dxgi_dxmt.dll \
     Graphics/dll/dxmt/x86_64-windows/nvapi64.dll \
     Graphics/dll/dxmt/x86_64-windows/nvngx.dll \
-    Graphics/dll/dxmt/x86_64-windows/winemetal.dll
+    Graphics/dll/dxmt/x86_64-windows/winemetal.dll \
+    Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so \
+    Graphics/dll/dxmt-m12/x86_64-unix/libc++.1.dylib \
+    Graphics/dll/dxmt-m12/x86_64-unix/libc++abi.1.dylib \
+    Graphics/dll/dxmt-m12/x86_64-unix/libunwind.1.dylib \
+    Graphics/dll/dxmt-m12/x86_64-windows/d3d10core.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/d3d11.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/d3d12.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/dxgi.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/dxgi_dxmt.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/nvapi64.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/nvngx.dll \
+    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll
 }
 
 verify_assets_core() {

@@ -485,7 +485,7 @@ mod tests {
             (774361, PipelineId::M9),
             (1169040, PipelineId::WineBare),
             (1237320, PipelineId::M11),
-            (1245620, PipelineId::M11),
+            (1245620, PipelineId::M12),
             (1562430, PipelineId::FnaArm64),
             (1623730, PipelineId::M12),
             (1868140, PipelineId::M9),
@@ -524,11 +524,11 @@ mod tests {
         assert!(!recipes.is_empty());
 
         let elden = recipes.get(&1245620).expect("elden ring recipe");
-        assert_eq!(elden.pipeline, PipelineId::M11);
+        assert_eq!(elden.pipeline, PipelineId::M12);
         assert_eq!(elden.name, "ELDEN RING");
         assert!(elden.components.contains(&"vcrun2019".to_string()));
         assert!(elden.components.contains(&"directx_jun2010".to_string()));
-        assert!(elden.check_dlls.contains(&"d3d11.dll".to_string()));
+        assert!(elden.check_dlls.contains(&"d3d12.dll".to_string()));
     }
 
     #[test]

@@ -107,7 +107,7 @@ pipeline = "m11"
 name = "Ghostrunner"
 
 [overrides.1245620]
-pipeline = "m11"
+pipeline = "m12"
 name = "ELDEN RING"
 offline_capable = true
 anticheat = "eac_eos"
@@ -116,7 +116,7 @@ anticheat = "eac_eos"
 components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
 
 [overrides.1245620.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll"]
+check_dlls = ["d3d12.dll", "dxgi.dll"]
 
 [overrides.814380]
 pipeline = "m11"

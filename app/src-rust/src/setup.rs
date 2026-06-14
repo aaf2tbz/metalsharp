@@ -147,20 +147,20 @@ pub fn dependencies() -> Value {
                 "installCmd": "/bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"",
             },
             {
-                "id": "rosetta",
-                "name": "Rosetta 2",
-                "desc": "x86_64 translation layer — needed for 32-bit Windows games and x86 mono",
-                "installed": rosetta,
-                "required": true,
-                "installCmd": "softwareupdate --install-rosetta --agree-to-license",
-            },
-            {
                 "id": "xcode_cli",
                 "name": "Xcode Command Line Tools",
                 "desc": "Provides clang for building native shims (CSteamworks, gdiplus stub)",
                 "installed": xcode_cli,
                 "required": true,
                 "installCmd": "xcode-select --install",
+            },
+            {
+                "id": "rosetta",
+                "name": "Rosetta 2",
+                "desc": "x86_64 translation layer — needed for 32-bit Windows games and x86 mono",
+                "installed": rosetta,
+                "required": true,
+                "installCmd": "softwareupdate --install-rosetta --agree-to-license",
             },
             {
                 "id": "metalsharp_wine",

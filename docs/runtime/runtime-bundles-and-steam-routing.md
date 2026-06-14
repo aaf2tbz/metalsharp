@@ -13,7 +13,7 @@ Current split bundle roots:
 | Asset | Why it is guarded |
 |---|---|
 | `metalsharp-electron.tar.zst` | Contains `electron/`, the built Electron application payload. |
-| `metalsharp-graphics-dll.tar.zst` | Contains `Graphics/dll/`, the DXMT D3D10/D3D11/D3D12 DLLs and winemetal bridge. |
+| `metalsharp-graphics-dll.tar.zst` | Contains `Graphics/dll/`, the legacy DXMT D3D9/D3D10/D3D11 surface and the isolated M12 D3D12 surface. |
 | `metalsharp-runtime.tar.zst` | Contains `runtime/`, the Wine runtime, host ABI, and backend executable. |
 | `metalsharp-assets.tar.zst` | Contains `assets/`, Mono, GPTK, DXVK, Goldberg, EAC toggle, shims, and runtime support assets. |
 | `metalsharp-scripts-tools.tar.zst` | Contains `scripts/tools/`, updater scripts, configs, native tools, and CEF helpers. |
@@ -30,7 +30,21 @@ tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk
 
 ## Installer Acceptance Rules
 
-The installer consumes the split runtime tarballs by root name. `metalsharp-graphics-dll.tar.zst` is the only source for the active DXMT runtime payload used by M9-M12.
+The installer consumes the split runtime tarballs by root name. `metalsharp-graphics-dll.tar.zst` is the only source for the active DXMT runtime payloads used by M9-M12.
+
+The graphics bundle has two runtime surfaces:
+
+```text
+Graphics/dll/dxmt/      -> legacy DXMT payload for M9, M10, and M11
+Graphics/dll/dxmt-m12/  -> updated D3D12/DXGI/winemetal payload for M12 only
+```
+
+After install those surfaces live under:
+
+```text
+~/.metalsharp/runtime/wine/lib/dxmt/
+~/.metalsharp/runtime/wine/lib/dxmt-m12/
+```
 
 Installed DXMT runtime state is recorded in:
 
@@ -38,7 +52,7 @@ Installed DXMT runtime state is recorded in:
 ~/.metalsharp/runtime/wine/lib/dxmt/metalsharp-dxmt-runtime.json
 ```
 
-Do not trust a runtime by version string alone. Check the manifest, required DLLs, and source archive hash when diagnosing deployment drift.
+Do not trust a runtime by version string alone. Check the manifest, required DLLs, the `dxmt-m12` sidecars, and source archive hash when diagnosing deployment drift.
 
 ## Steam Launch Route
 
@@ -55,6 +69,19 @@ Renderer Play -> POST /steam/launch-game {"launchMethod":"m12"} -> prepare_steam
 ```
 
 Wine Steam must be launched by the backend so it gets the managed Wine prefix, runtime library env, DLL overrides, and wrapper deployment. Launching `Steam.exe` directly from a shell is not equivalent to pressing the app button.
+
+Steam-model titles use the real Steam DLLs instead of Goldberg. For those titles the launcher stages the real Steam API DLLs and the Steam client/overlay components next to the selected executable when they are available:
+
+```text
+steam_api64.dll
+steam_api.dll
+steamclient64.dll
+steamclient.dll
+GameOverlayRenderer64.dll
+GameOverlayRenderer.dll
+```
+
+This applies to Steam launch-model titles such as Party Animals and Source games without forcing `-secure` onto titles that only need `-steam`.
 
 ## Steam Wrapper Rules
 

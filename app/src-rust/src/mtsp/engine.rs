@@ -91,33 +91,49 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 wine_overrides: Some(
                     "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
-                dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
+                dyld_paths: vec!["lib/dxmt-m12/x86_64-unix", "lib/wine/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxmt-m12/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
                     DllDeploy {
-                        source_subpath: "lib/dxmt/x86_64-windows",
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
+                        filename: "d3d12.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
+                        filename: "d3d11.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
+                        filename: "dxgi.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
                         filename: "dxgi_dxmt.dll",
                         dest_filename: None,
                     },
                     DllDeploy {
-                        source_subpath: "lib/dxmt/x86_64-windows",
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
                         filename: "d3d10core.dll",
                         dest_filename: None,
                     },
                     DllDeploy {
-                        source_subpath: "lib/dxmt/x86_64-windows",
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
                         filename: "winemetal.dll",
                         dest_filename: None,
                     },
                     DllDeploy {
-                        source_subpath: "lib/dxmt/x86_64-windows",
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
                         filename: "nvapi64.dll",
                         dest_filename: None,
                     },
-                    DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "nvngx.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt-m12/x86_64-windows",
+                        filename: "nvngx.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy {
                         source_subpath: "lib/metalsharp/x86_64-windows",
                         filename: "metalsharp_ntdll_hook.dll",
@@ -593,14 +609,23 @@ mod tests {
     fn m12_is_stronger_than_other_dxmt_d3d_paths() {
         let m12 = get_pipeline(PipelineId::M12);
 
-        for required in ["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"] {
+        for required in ["lib/wine/x86_64-unix", "lib/dxmt-m12/x86_64-unix"] {
             assert!(m12.dyld_paths.contains(&required));
         }
+        assert!(!m12.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));
+        assert!(m12.winedllpath_dirs.contains(&"lib/dxmt-m12/x86_64-windows"));
+        assert!(!m12.winedllpath_dirs.contains(&"lib/dxmt/x86_64-windows"));
 
-        let m12_dlls: std::collections::HashSet<_> = m12.deploy_dlls.iter().map(|dll| dll.filename).collect();
+        let m12_dlls: std::collections::HashSet<_> =
+            m12.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
         for required in ["d3d12.dll", "d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"] {
-            assert!(m12_dlls.contains(required), "M12 missing shared DXMT DLL {}", required);
+            assert!(
+                m12_dlls.contains(&("lib/dxmt-m12/x86_64-windows", required)),
+                "M12 missing isolated DXMT DLL {}",
+                required
+            );
         }
+        assert!(!m12.deploy_dlls.iter().any(|dll| dll.source_subpath == "lib/dxmt/x86_64-windows"));
 
         let m12_env: std::collections::HashSet<_> = m12.env_vars.iter().map(|env| env.key).collect();
         assert!(m12_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
@@ -622,6 +647,42 @@ mod tests {
             Some("winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
         );
         assert!(m12.alternatives.contains(&PipelineId::M11));
+    }
+
+    #[test]
+    fn m11_m10_m9_stay_on_legacy_dxmt_surface() {
+        let m11 = get_pipeline(PipelineId::M11);
+        assert_eq!(
+            m11.wine_overrides,
+            Some("winemetal,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+
+        let m10 = get_pipeline(PipelineId::M10);
+        assert_eq!(
+            m10.wine_overrides,
+            Some("winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+
+        let m9 = get_pipeline(PipelineId::M9);
+        assert_eq!(m9.wine_overrides, Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+
+        for pipeline in [m11, m10, m9] {
+            assert!(
+                pipeline.dyld_paths.iter().all(|path| !path.contains("dxmt-m12")),
+                "{} should not load the isolated M12 Unix surface",
+                pipeline.name
+            );
+            assert!(
+                pipeline.winedllpath_dirs.iter().all(|path| !path.contains("dxmt-m12")),
+                "{} should not route PE DLLs through the isolated M12 surface",
+                pipeline.name
+            );
+            assert!(
+                pipeline.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxmt-m12")),
+                "{} should not deploy isolated M12 DLLs",
+                pipeline.name
+            );
+        }
     }
 
     #[test]
