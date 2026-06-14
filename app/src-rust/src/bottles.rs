@@ -825,6 +825,66 @@ fn write_bottle_manifest_atomic(manifest_path: &Path, data: &[u8]) -> Result<(),
     Ok(())
 }
 
+/// Phase 2: declarative Steam route contract for a pipeline.
+///
+/// This codifies what every first-class Steam game route promises so that a
+/// passive refresh, a compatdata write, or a bottle metadata change cannot
+/// silently downgrade or erase a saved route. The contract is derived from
+/// the same primitives the runtime uses (`steam_pipeline_defaults_offline`,
+/// `runtime_profile_for_pipeline`, `pipeline_preference_id`, and the pipeline
+/// node's `requires_wine` flag) so it can never drift from launch behavior.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct SteamRouteContract {
+    pub pipeline: &'static str,
+    pub runtime_profile: RuntimeProfile,
+    pub steam_identity_mode: &'static str,
+    pub launch_route: &'static str,
+    pub requires_wine: bool,
+    pub binds_to_shared_steam_prefix: bool,
+    pub waits_for_prefix_idle: bool,
+    pub compat_tool_name: &'static str,
+    pub bottle_id_template: &'static str,
+}
+
+/// The route contract for a single pipeline.
+pub fn steam_route_contract_for(pipeline: crate::mtsp::engine::PipelineId) -> SteamRouteContract {
+    let offline = steam_pipeline_defaults_offline(pipeline);
+    let requires_wine = crate::mtsp::engine::get_pipeline(pipeline).requires_wine;
+    SteamRouteContract {
+        pipeline: pipeline_preference_id(pipeline),
+        runtime_profile: runtime_profile_for_pipeline(pipeline),
+        steam_identity_mode: if offline { "offline_steam_emulation" } else { "wine_steam_background" },
+        launch_route: if offline { "/steam/launch-offline" } else { "/steam/launch-game" },
+        // Steam game bottles bind to the shared Steam launch prefix and never
+        // block the launcher on prefix idle completion (only installer bottles
+        // do). This is the contract that `should_wait_for_prefix_idle`
+        // enforces for steam game bottles.
+        requires_wine,
+        binds_to_shared_steam_prefix: requires_wine,
+        waits_for_prefix_idle: false,
+        compat_tool_name: "MetalSharp",
+        bottle_id_template: "steam_{appid}",
+    }
+}
+
+/// The full route-contract table covering every protected and first-class
+/// Steam game lane. M9/M10/M11 are protected compatibility lanes; M12/M13,
+/// FnaArm64, WineBare, and D3DMetal cover the remaining route families the
+/// contract must exercise.
+pub fn steam_route_contracts() -> Vec<SteamRouteContract> {
+    use crate::mtsp::engine::PipelineId::*;
+    vec![
+        steam_route_contract_for(M9),
+        steam_route_contract_for(M10),
+        steam_route_contract_for(M11),
+        steam_route_contract_for(M12),
+        steam_route_contract_for(M13),
+        steam_route_contract_for(FnaArm64),
+        steam_route_contract_for(WineBare),
+        steam_route_contract_for(D3DMetal),
+    ]
+}
+
 pub fn list_bottles() -> Result<Vec<BottleManifest>, Box<dyn std::error::Error>> {
     let root = bottles_root();
     if !root.exists() {
@@ -5594,6 +5654,178 @@ mod tests {
             effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, false),
             crate::mtsp::engine::PipelineId::M11
         );
+    }
+
+    #[test]
+    fn passive_steam_refresh_preserves_saved_m11_pipeline() {
+        // A saved M11 route must survive a passive refresh that would otherwise
+        // resolve to M12. This is the M11 counterpart to the M9 preservation
+        // rule and protects the protected D3D11 compatibility lane.
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(17300),
+            name: "M11 Title".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(17300),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            preferred_pipeline: Some("m11".into()),
+            installed_components: default_components_for(RuntimeProfile::M11),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M12, true),
+            crate::mtsp::engine::PipelineId::M11,
+            "passive refresh must not downgrade a saved M11 route to M12"
+        );
+        // An active (explicit) request still wins.
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M12, false),
+            crate::mtsp::engine::PipelineId::M12
+        );
+    }
+
+    #[test]
+    fn passive_steam_refresh_preserves_saved_m12_pipeline() {
+        // A saved M12 route must survive a passive refresh that would otherwise
+        // fall back to M11 or M9. The isolated M12 lane cannot be silently
+        // erased by a background library refresh.
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(2379780),
+            name: "M12 Title".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(2379780),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Win64,
+            runtime_profile: RuntimeProfile::M12,
+            preferred_pipeline: Some("m12".into()),
+            installed_components: default_components_for(RuntimeProfile::M12),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, true),
+            crate::mtsp::engine::PipelineId::M12,
+            "passive refresh must not downgrade a saved M12 route to M11"
+        );
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M9, true),
+            crate::mtsp::engine::PipelineId::M12,
+            "passive refresh must not downgrade a saved M12 route to M9"
+        );
+    }
+
+    #[test]
+    fn steam_route_contract_table_matches_compatdata_records() {
+        // The declarative route contract must match the actual compatdata
+        // record produced for each first-class Steam game lane. If this test
+        // fails, a pipeline's identity mode, launch route, or bottle scoping
+        // has drifted from the codified contract.
+        for contract in steam_route_contracts() {
+            let pipeline = crate::mtsp::engine::PipelineId::from_str_flexible(contract.pipeline)
+                .expect("contract pipeline id must parse");
+            let appid = 620u32;
+            let manifest = BottleManifest {
+                id: steam_game_bottle_id(appid),
+                name: format!("{} contract probe", contract.pipeline),
+                custom_name: None,
+                bottle_type: BottleType::Steam,
+                steam_app_id: Some(appid),
+                prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+                arch: BottleArch::Win64,
+                runtime_profile: contract.runtime_profile,
+                preferred_pipeline: Some(contract.pipeline.to_string()),
+                installed_components: default_components_for(contract.runtime_profile),
+                source_installer_path: None,
+                installer_kind: None,
+                game_install_path: Some("/games/probe".into()),
+                runtime_assets: Vec::new(),
+                installed_app_detections: Vec::new(),
+                health: BottleHealth::Ready,
+                last_launch_log: None,
+                last_launch_pid: None,
+                last_launch_status: None,
+                last_launch_finished_at: None,
+                created_at: timestamp_secs(),
+                updated_at: timestamp_secs(),
+            };
+
+            let record = steam_compatdata_record(&manifest, pipeline);
+
+            assert_eq!(record.appid, appid, "appid scoping for {}", contract.pipeline);
+            assert_eq!(record.bottle_id, steam_game_bottle_id(appid), "bottle id template for {}", contract.pipeline);
+            assert_eq!(record.launch_pipeline, contract.pipeline, "launch_pipeline for {}", contract.pipeline);
+            assert_eq!(
+                record.steam_identity_mode, contract.steam_identity_mode,
+                "steam_identity_mode for {}",
+                contract.pipeline
+            );
+            assert_eq!(
+                record.compat_tool_name, contract.compat_tool_name,
+                "compat_tool_name for {}",
+                contract.pipeline
+            );
+            assert!(
+                record.launch_command_template.contains(contract.launch_route),
+                "launch route for {}: {}",
+                contract.pipeline,
+                record.launch_command_template
+            );
+        }
+    }
+
+    #[test]
+    fn steam_route_contract_table_covers_all_required_lanes() {
+        // The contract table is the protected-lane gate. These ids must all be
+        // present so a future refactor cannot silently drop a lane.
+        let ids: Vec<&'static str> = steam_route_contracts().iter().map(|c| c.pipeline).collect();
+        for required in ["m9", "m10", "m11", "m12", "fna_arm64", "wine_bare", "d3dmetal"] {
+            assert!(ids.contains(&required), "route contract table must cover {} (got {:?})", required, ids);
+        }
+    }
+
+    #[test]
+    fn m12_route_contract_uses_isolated_shader_lane_and_wine_background_identity() {
+        // M12 is an isolated lane: it must NOT advertise offline emulation,
+        // must require wine, and must bind to the shared Steam launch prefix.
+        let m12 = steam_route_contract_for(crate::mtsp::engine::PipelineId::M12);
+        assert_eq!(m12.steam_identity_mode, "wine_steam_background");
+        assert_eq!(m12.launch_route, "/steam/launch-game");
+        assert!(m12.requires_wine);
+        assert!(m12.binds_to_shared_steam_prefix);
+        assert!(!m12.waits_for_prefix_idle);
+    }
+
+    #[test]
+    fn d3dmetal_route_contract_advertises_offline_emulation_lane() {
+        let d3dmetal = steam_route_contract_for(crate::mtsp::engine::PipelineId::D3DMetal);
+        assert_eq!(d3dmetal.steam_identity_mode, "offline_steam_emulation");
+        assert_eq!(d3dmetal.launch_route, "/steam/launch-offline");
     }
 
     #[test]

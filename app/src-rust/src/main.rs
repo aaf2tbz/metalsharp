@@ -211,6 +211,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
         (Method::Get, "/update/migrate/progress") => resp(200, migrate::read_migrate_progress()),
+        // Phase 2: report what the last migration preserved, skipped, and why.
+        (Method::Get, "/update/migrate/report") => resp(200, migrate::latest_migration_report()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
@@ -938,6 +940,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
+        // Phase 2: declarative Steam route contract table (protected + first-class lanes).
+        (Method::Get, "/bottles/route-contracts") => {
+            resp(200, json!({ "ok": true, "contracts": bottles::steam_route_contracts() }))
+        },
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
         (Method::Post, "/bottles/record-compatibility") => {

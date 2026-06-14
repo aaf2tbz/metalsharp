@@ -57,6 +57,109 @@ const MIGRATION_TOTAL_STEPS: usize = 8;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
+/// Phase 2: an observational record of what a migration preserved, what it
+/// skipped, and why. This does not change what is preserved or restored — it
+/// only makes the existing preserve/restore behavior inspectable so a future
+/// migration cannot silently drop a category.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MigrationReportEntry {
+    pub phase: &'static str,
+    pub outcome: &'static str,
+    pub category: &'static str,
+    pub path: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MigrationReport {
+    pub schema_version: u64,
+    pub version: &'static str,
+    pub generated_at_unix: u64,
+    pub entries: Vec<MigrationReportEntry>,
+}
+
+impl MigrationReport {
+    pub fn new() -> Self {
+        MigrationReport {
+            schema_version: 1,
+            version: MIGRATE_VERSION,
+            generated_at_unix: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn record(
+        &mut self,
+        phase: &'static str,
+        outcome: &'static str,
+        category: &'static str,
+        path: Option<String>,
+        reason: impl Into<String>,
+    ) {
+        self.entries.push(MigrationReportEntry { phase, outcome, category, path, reason: reason.into() });
+    }
+}
+
+impl Default for MigrationReport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn migration_report_path() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("logs").join("migration-report-latest.json")
+}
+
+fn migration_report_path_for(ms_home: &Path) -> PathBuf {
+    ms_home.join("logs").join("migration-report-latest.json")
+}
+
+fn write_migration_report(report: &MigrationReport) {
+    write_migration_report_in(&crate::platform::metalsharp_home_dir(), report);
+}
+
+fn write_migration_report_in(ms_home: &Path, report: &MigrationReport) {
+    let final_path = migration_report_path_for(ms_home);
+    let Some(parent) = final_path.parent().map(|p| p.to_path_buf()) else {
+        return;
+    };
+    if fs::create_dir_all(&parent).is_err() {
+        return;
+    }
+    let tmp_path = final_path.with_extension("json.tmp");
+    if let Ok(payload) = serde_json::to_string_pretty(report) {
+        if fs::write(&tmp_path, payload).is_ok() {
+            let _ = fs::rename(&tmp_path, &final_path);
+        }
+    }
+}
+
+/// Read the most recently persisted migration report, or an idle placeholder.
+pub fn latest_migration_report() -> serde_json::Value {
+    latest_migration_report_in(&crate::platform::metalsharp_home_dir())
+}
+
+pub fn latest_migration_report_in(ms_home: &Path) -> serde_json::Value {
+    let path = migration_report_path_for(ms_home);
+    if path.exists() {
+        if let Ok(contents) = fs::read_to_string(&path) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&contents) {
+                return v;
+            }
+        }
+    }
+    json!({
+        "schema_version": 1,
+        "status": "idle",
+        "version": MIGRATE_VERSION,
+        "entries": [],
+        "summary": "No migration has run yet."
+    })
+}
+
 #[derive(Clone, Debug, Default)]
 struct PostUpdateMigrationMarker {
     needed: bool,
@@ -82,7 +185,6 @@ fn write_migrate_progress(status: &str, step: usize, total: usize, message: &str
 pub fn is_migrating() -> bool {
     MIGRATING.load(Ordering::SeqCst)
 }
-
 pub fn read_migrate_progress() -> serde_json::Value {
     let path = migrate_progress_path();
     if path.exists() {
@@ -386,7 +488,7 @@ fn run_migration() {
         "Preserving user preferences, Steam API key, and bottle settings...",
         None,
     );
-    let preserved = preserve_user_data(&ms_dir);
+    let (preserved, mut report) = preserve_user_data(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Cleaning stale runtime state...", None);
@@ -427,7 +529,8 @@ fn run_migration() {
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Restoring preserved user data...", None);
-    restore_user_data(&ms_dir, &preserved);
+    restore_user_data(&ms_dir, &preserved, &mut report);
+    write_migration_report(&report);
 
     if !install_ok {
         write_migrate_progress(
@@ -657,7 +760,8 @@ struct PreservedData {
     prefix_gptk_dosdevice_links: Vec<(String, PathBuf)>,
 }
 
-fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
+fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
+    let mut report = MigrationReport::new();
     let tmp = std::env::temp_dir().join(format!(
         "metalsharp-migration-preserve-{}-{}-{:x}",
         std::process::id(),
@@ -667,9 +771,34 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     let _ = fs::remove_dir_all(&tmp);
     let _ = fs::create_dir_all(&tmp);
 
-    let setup_json = ms_dir.join("setup.json").exists().then(|| fs::read(ms_dir.join("setup.json")).ok()).flatten();
+    let setup_json_path = ms_dir.join("setup.json");
+    let setup_json = if setup_json_path.exists() {
+        let loaded = fs::read(&setup_json_path).ok();
+        report.record(
+            "preserve",
+            if loaded.is_some() { "preserved" } else { "skipped" },
+            "setup.json",
+            Some(setup_json_path.to_string_lossy().to_string()),
+            if loaded.is_some() { "setup.json present" } else { "setup.json present but unreadable" },
+        );
+        loaded
+    } else {
+        report.record("preserve", "skipped", "setup.json", None, "setup.json absent");
+        None
+    };
 
     let steam_config_json = read_preserved_steam_config(ms_dir);
+    report.record(
+        "preserve",
+        if steam_config_json.is_some() { "preserved" } else { "skipped" },
+        "steam_config",
+        None,
+        if steam_config_json.is_some() {
+            "steam config with API key present"
+        } else {
+            "no steam config with API key found"
+        },
+    );
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user data (cache metadata)...", None);
     let cache_tmp = tmp.join("cache");
@@ -677,6 +806,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if cache.exists() {
         let _ = fs::create_dir_all(&cache_tmp);
         preserve_selective(&cache, &cache_tmp, &["downloads", "updates", "updater-tools", "tmp"]);
+        report.record(
+            "preserve",
+            "preserved",
+            "cache",
+            Some(cache.to_string_lossy().to_string()),
+            "cache metadata preserved (downloads/updates/tmp payloads excluded)",
+        );
+    } else {
+        report.record("preserve", "skipped", "cache", None, "cache directory absent");
     }
 
     write_migrate_progress(
@@ -691,6 +829,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if prefix_steam.exists() {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
         preserve_settings_only(&prefix_steam, &prefix_steam_tmp);
+        report.record(
+            "preserve",
+            "preserved",
+            "prefix-steam",
+            Some(prefix_steam.to_string_lossy().to_string()),
+            "Steam prefix settings files preserved (payloads excluded)",
+        );
+    } else {
+        report.record("preserve", "skipped", "prefix-steam", None, "prefix-steam directory absent");
     }
 
     let prefix_gptk_tmp = tmp.join("prefix-gptk");
@@ -698,6 +845,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if prefix_gptk.exists() {
         let _ = fs::create_dir_all(&prefix_gptk_tmp);
         preserve_settings_only(&prefix_gptk, &prefix_gptk_tmp);
+        report.record(
+            "preserve",
+            "preserved",
+            "prefix-gptk",
+            Some(prefix_gptk.to_string_lossy().to_string()),
+            "GPTK prefix settings files preserved",
+        );
+    } else {
+        report.record("preserve", "skipped", "prefix-gptk", None, "prefix-gptk directory absent");
     }
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (game metadata)...", None);
@@ -706,6 +862,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if games.exists() {
         let _ = fs::create_dir_all(&games_tmp);
         preserve_settings_only(&games, &games_tmp);
+        report.record(
+            "preserve",
+            "preserved",
+            "games",
+            Some(games.to_string_lossy().to_string()),
+            "per-game local metadata preserved",
+        );
+    } else {
+        report.record("preserve", "skipped", "games", None, "games directory absent");
     }
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (library metadata)...", None);
@@ -714,6 +879,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if sharp_library.exists() {
         let _ = fs::create_dir_all(&sharp_library_tmp);
         preserve_settings_only(&sharp_library, &sharp_library_tmp);
+        report.record(
+            "preserve",
+            "preserved",
+            "sharp-library",
+            Some(sharp_library.to_string_lossy().to_string()),
+            "Sharp Library metadata preserved",
+        );
+    } else {
+        report.record("preserve", "skipped", "sharp-library", None, "sharp-library directory absent");
     }
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (bottle metadata)...", None);
@@ -722,6 +896,15 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if bottles.exists() {
         let _ = fs::create_dir_all(&bottles_tmp);
         preserve_settings_only(&bottles, &bottles_tmp);
+        report.record(
+            "preserve",
+            "preserved",
+            "bottles",
+            Some(bottles.to_string_lossy().to_string()),
+            "bottle manifests preserved (appids and routes)",
+        );
+    } else {
+        report.record("preserve", "skipped", "bottles", None, "bottles directory absent");
     }
 
     write_migrate_progress(
@@ -736,28 +919,47 @@ fn preserve_user_data(ms_dir: &PathBuf) -> PreservedData {
     if compatdata.exists() {
         let _ = fs::create_dir_all(&compatdata_tmp);
         preserve_settings_only(&compatdata, &compatdata_tmp);
+        report.record(
+            "preserve",
+            "preserved",
+            "compatdata",
+            Some(compatdata.to_string_lossy().to_string()),
+            "compatdata manifests preserved (appid-scoped routes)",
+        );
+    } else {
+        report.record("preserve", "skipped", "compatdata", None, "compatdata directory absent");
     }
 
     let prefix_steam_dosdevice_links = collect_prefix_dosdevice_links(&ms_dir.join("prefix-steam"));
+    report.record(
+        "preserve",
+        if prefix_steam_dosdevice_links.is_empty() { "skipped" } else { "preserved" },
+        "dosdevices",
+        None,
+        format!("{} prefix-steam dosdevice links snapshotted", prefix_steam_dosdevice_links.len()),
+    );
     let prefix_gptk_dosdevice_links = if ms_dir.join("prefix-gptk").exists() {
         collect_prefix_dosdevice_links(&ms_dir.join("prefix-gptk"))
     } else {
         Vec::new()
     };
 
-    PreservedData {
-        setup_json,
-        steam_config_json,
-        prefix_steam_tmp,
-        prefix_gptk_tmp,
-        cache_tmp,
-        games_tmp,
-        sharp_library_tmp,
-        bottles_tmp,
-        compatdata_tmp,
-        prefix_steam_dosdevice_links,
-        prefix_gptk_dosdevice_links,
-    }
+    (
+        PreservedData {
+            setup_json,
+            steam_config_json,
+            prefix_steam_tmp,
+            prefix_gptk_tmp,
+            cache_tmp,
+            games_tmp,
+            sharp_library_tmp,
+            bottles_tmp,
+            compatdata_tmp,
+            prefix_steam_dosdevice_links,
+            prefix_gptk_dosdevice_links,
+        },
+        report,
+    )
 }
 
 fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, String> {
@@ -1675,7 +1877,7 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
     let _ = fs::create_dir_all(ms_dir.join("shader-cache"));
 }
 
-fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
+fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut MigrationReport) {
     let steam_config_json = preserved.steam_config_json.as_ref().map(|data| normalize_steam_config_json(data));
     let steam_api_key_restored = steam_config_json.as_deref().is_some_and(steam_config_has_api_key);
 
@@ -1696,6 +1898,15 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = std::os::unix::fs::symlink("../drive_c", &c_link);
         }
         remove_root_dosdevice_mapping(&dst);
+        report.record(
+            "restore",
+            "restored",
+            "prefix-steam",
+            Some(dst.to_string_lossy().to_string()),
+            "Steam prefix settings restored",
+        );
+    } else {
+        report.record("restore", "skipped", "prefix-steam", None, "no preserved prefix-steam payload");
     }
 
     restore_prefix_dosdevice_links(&ms_dir.join("prefix-steam"), &preserved.prefix_steam_dosdevice_links);
@@ -1711,6 +1922,15 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
         if !dosdevices.exists() {
             let _ = fs::create_dir_all(&dosdevices);
         }
+        report.record(
+            "restore",
+            "restored",
+            "prefix-gptk",
+            Some(dst.to_string_lossy().to_string()),
+            "GPTK prefix settings restored",
+        );
+    } else {
+        report.record("restore", "skipped", "prefix-gptk", None, "no preserved prefix-gptk payload");
     }
     restore_prefix_dosdevice_links(&ms_dir.join("prefix-gptk"), &preserved.prefix_gptk_dosdevice_links);
 
@@ -1720,6 +1940,15 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         preserve_settings_only(&preserved.games_tmp, &dst);
+        report.record(
+            "restore",
+            "restored",
+            "games",
+            Some(dst.to_string_lossy().to_string()),
+            "per-game metadata restored",
+        );
+    } else {
+        report.record("restore", "skipped", "games", None, "no preserved games payload");
     }
 
     if preserved.sharp_library_tmp.exists() {
@@ -1728,6 +1957,15 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         preserve_settings_only(&preserved.sharp_library_tmp, &dst);
+        report.record(
+            "restore",
+            "restored",
+            "sharp-library",
+            Some(dst.to_string_lossy().to_string()),
+            "Sharp Library metadata restored",
+        );
+    } else {
+        report.record("restore", "skipped", "sharp-library", None, "no preserved sharp-library payload");
     }
 
     if preserved.bottles_tmp.exists() {
@@ -1736,6 +1974,15 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         preserve_settings_only(&preserved.bottles_tmp, &dst);
+        report.record(
+            "restore",
+            "restored",
+            "bottles",
+            Some(dst.to_string_lossy().to_string()),
+            "bottle manifests restored (appids and routes)",
+        );
+    } else {
+        report.record("restore", "skipped", "bottles", None, "no preserved bottles payload");
     }
 
     if preserved.compatdata_tmp.exists() {
@@ -1744,14 +1991,29 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData) {
             let _ = fs::create_dir_all(&dst);
         }
         preserve_settings_only(&preserved.compatdata_tmp, &dst);
+        report.record(
+            "restore",
+            "restored",
+            "compatdata",
+            Some(dst.to_string_lossy().to_string()),
+            "compatdata manifests restored (appid-scoped routes)",
+        );
+    } else {
+        report.record("restore", "skipped", "compatdata", None, "no preserved compatdata payload");
     }
 
     if let Some(ref data) = preserved.setup_json {
         restore_setup_json(ms_dir, data, steam_api_key_restored);
+        report.record("restore", "restored", "setup.json", None, "setup.json restored");
+    } else {
+        report.record("restore", "skipped", "setup.json", None, "no preserved setup.json");
     }
 
     if let Some(ref data) = steam_config_json {
         restore_steam_config(ms_dir, data);
+        report.record("restore", "restored", "steam_config", None, "steam config restored");
+    } else {
+        report.record("restore", "skipped", "steam_config", None, "no preserved steam config");
     }
 }
 
@@ -1904,6 +2166,75 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migration_report_records_preserved_and_skipped_categories() {
+        // Phase 2: migration must report what it preserved and what it skipped
+        // (and why), without changing what is preserved. We set up a home with
+        // bottles + compatdata present but no prefix-steam / games, then verify
+        // the report carries preserved entries for the present categories and
+        // skipped entries (with reasons) for the absent ones.
+        let home = test_dir("migration-report");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("bottles").join("steam_620")).expect("create bottles");
+        fs::write(ms_dir.join("bottles").join("steam_620").join("bottle.json"), br#"{"id":"steam_620"}"#)
+            .expect("write bottle manifest");
+        fs::create_dir_all(ms_dir.join("compatdata").join("620")).expect("create compatdata");
+        fs::write(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json"), br#"{"appid":620}"#)
+            .expect("write compatdata manifest");
+        // prefix-steam, games, sharp-library, prefix-gptk, cache are absent on purpose.
+
+        let (preserved, report) = preserve_user_data(&ms_dir);
+
+        let preserved_categories: Vec<&str> = report
+            .entries
+            .iter()
+            .filter(|e| e.phase == "preserve" && e.outcome == "preserved")
+            .map(|e| e.category)
+            .collect();
+        let skipped_categories: Vec<&str> = report
+            .entries
+            .iter()
+            .filter(|e| e.phase == "preserve" && e.outcome == "skipped")
+            .map(|e| e.category)
+            .collect();
+
+        assert!(preserved_categories.contains(&"bottles"), "bottles must be reported preserved: {:?}", report.entries);
+        assert!(preserved_categories.contains(&"compatdata"), "compatdata must be reported preserved");
+        assert!(
+            skipped_categories.contains(&"prefix-steam"),
+            "absent prefix-steam must be reported skipped with a reason"
+        );
+        assert!(skipped_categories.contains(&"games"), "absent games must be reported skipped");
+        // Every skipped entry must carry a non-empty reason.
+        for entry in report.entries.iter().filter(|e| e.outcome == "skipped") {
+            assert!(!entry.reason.is_empty(), "skipped entry must explain why: {:?}", entry);
+        }
+
+        // Restore must record restored entries for the preserved categories.
+        let mut restore_report = MigrationReport::new();
+        // Remove live bottles to prove restore actually restores them.
+        let _ = fs::remove_dir_all(ms_dir.join("bottles"));
+        restore_user_data(&ms_dir, &preserved, &mut restore_report);
+        let restored_categories: Vec<&str> = restore_report
+            .entries
+            .iter()
+            .filter(|e| e.phase == "restore" && e.outcome == "restored")
+            .map(|e| e.category)
+            .collect();
+        assert!(restored_categories.contains(&"bottles"), "bottles must be reported restored");
+
+        // The persisted report must round-trip through latest_migration_report_in()
+        // without mutating the process-global METALSHARP_HOME (which would race
+        // with other parallel tests).
+        write_migration_report_in(&ms_dir, &report);
+        let read_back = latest_migration_report_in(&ms_dir);
+        assert_eq!(read_back.get("schema_version").and_then(|v| v.as_u64()), Some(1));
+        let entries = read_back.get("entries").and_then(|v| v.as_array()).expect("entries array");
+        assert!(!entries.is_empty(), "persisted report must contain entries");
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn completed_setups_repair_missing_runtime_without_steam_prefix() {
         let home = test_dir("missing-runtime");
         fs::create_dir_all(crate::platform::metalsharp_home_dir_for(&home)).expect("create ms dir");
@@ -2028,10 +2359,10 @@ mod tests {
         fs::create_dir_all(bottle_manifest.parent().unwrap()).expect("create bottle dir");
         fs::write(&bottle_manifest, br#"{"id":"steam_620"}"#).expect("write bottle manifest");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert_eq!(
             fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
@@ -2048,10 +2379,10 @@ mod tests {
         fs::create_dir_all(compat_manifest.parent().unwrap()).expect("create compatdata dir");
         fs::write(&compat_manifest, br#"{"appid":620}"#).expect("write compatdata manifest");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         fs::remove_dir_all(ms_dir.join("compatdata")).expect("remove live compatdata");
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert_eq!(
             fs::read_to_string(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json")).unwrap(),
@@ -2073,7 +2404,7 @@ mod tests {
         fs::write(steamapps.join("appmanifest_620.acf"), b"manifest").expect("write app manifest");
         fs::write(ms_dir.join("prefix-steam").join("user.reg"), b"settings").expect("write prefix settings");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         assert!(preserved.prefix_steam_tmp.join("user.reg").exists());
         assert!(!preserved.prefix_steam_tmp.join("drive_c").exists());
         assert!(!find_descendant_named(&preserved.prefix_steam_tmp, "steamapps"));
@@ -2087,7 +2418,7 @@ mod tests {
 
         fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove live prefix");
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
         assert!(!ms_dir.join("prefix-steam").join("drive_c").exists());
@@ -2107,9 +2438,9 @@ mod tests {
 
         assert_eq!(count_settings_files(&prefix), 1);
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
         assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("z:").exists());
@@ -2202,7 +2533,7 @@ mod tests {
         )
         .expect("write bottle game payload");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         assert!(preserved.bottles_tmp.join("steam_620").join("bottle.json").exists());
         assert!(!preserved.bottles_tmp.join("steam_620").join("prefix").exists());
         assert!(!find_descendant_named(&preserved.bottles_tmp, "portal2.exe"));
@@ -2222,7 +2553,7 @@ mod tests {
 
         fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert_eq!(
             fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
@@ -2244,9 +2575,9 @@ mod tests {
         fs::write(ms_dir.join("cache").join("covers").join("620.png"), b"cover").expect("write cover");
         fs::write(ms_dir.join("cache").join("updates").join("MetalSharp.dmg"), b"dmg").expect("write cached dmg");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert_eq!(
             fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).unwrap(),
@@ -2270,10 +2601,10 @@ mod tests {
         )
         .expect("write Steam API key");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         remove_old_runtime(&ms_dir);
         let _ = fs::remove_file(ms_dir.join("setup.json"));
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
         let setup_json: serde_json::Value = serde_json::from_str(&setup).expect("parse restored setup");
@@ -2300,9 +2631,9 @@ mod tests {
         )
         .expect("write legacy Steam API key");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         let setup = fs::read_to_string(ms_dir.join("setup.json")).expect("read restored setup");
         let setup_json: serde_json::Value = serde_json::from_str(&setup).expect("parse restored setup");
@@ -2328,9 +2659,9 @@ mod tests {
         )
         .expect("write durable Steam config backup");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         let steam_config =
             fs::read_to_string(ms_dir.join("cache").join("steam_config.json")).expect("read restored Steam config");
@@ -2584,7 +2915,7 @@ mod tests {
         std::os::unix::fs::symlink(&home, gptk_dosdevices.join("l:")).expect("create gptk l drive");
         fs::write(gptk_prefix.join("user.reg"), b"gptk-settings").expect("write gptk settings");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
 
         assert_eq!(preserved.prefix_steam_dosdevice_links, vec![(String::from("s:"), external_steam.clone())]);
         assert_eq!(preserved.prefix_gptk_dosdevice_links, vec![(String::from("l:"), home.clone())]);
@@ -2592,7 +2923,7 @@ mod tests {
         fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove prefix-steam");
         fs::remove_dir_all(ms_dir.join("prefix-gptk")).expect("remove prefix-gptk");
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
         assert_eq!(
@@ -2629,14 +2960,14 @@ mod tests {
             .expect("create dmg mount 2");
         fs::write(prefix.join("user.reg"), b"settings").expect("write settings");
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
 
         assert_eq!(preserved.prefix_steam_dosdevice_links.len(), 1);
         assert_eq!(preserved.prefix_steam_dosdevice_links[0], (String::from("d:"), external_steam.clone()));
 
         fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove prefix");
         remove_old_runtime(&ms_dir);
-        restore_user_data(&ms_dir, &preserved);
+        restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert_eq!(
             fs::read_link(ms_dir.join("prefix-steam").join("dosdevices").join("d:")).expect("read d drive"),
@@ -2661,7 +2992,7 @@ mod tests {
 
         assert!(!ms_dir.join("prefix-gptk").exists());
 
-        let preserved = preserve_user_data(&ms_dir);
+        let (preserved, _report) = preserve_user_data(&ms_dir);
 
         assert!(preserved.prefix_steam_dosdevice_links.is_empty());
         assert!(preserved.prefix_gptk_dosdevice_links.is_empty());

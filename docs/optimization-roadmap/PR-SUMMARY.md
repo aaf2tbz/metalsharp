@@ -62,3 +62,59 @@ cargo test                        # 513 passed, 0 failed
 **Boundary check:** no M9/M10/M11 artifact path or launch behavior changed.
 The only additions are diagnostic outputs, timing instrumentation, and
 content hashes in the existing injection manifest.
+
+## Phase 2: Runtime and Bottle Contract Hardening ✅
+
+**Purpose:** make saved bottle and Steam route state hard to regress.
+
+**What landed:**
+- Declarative Steam route contract (`bottles::SteamRouteContract`) codifying,
+  per pipeline: pipeline id, runtime profile, steam identity mode
+  (`wine_steam_background` vs `offline_steam_emulation`), launch route
+  (`/steam/launch-game` vs `/steam/launch-offline`), `requires_wine`, shared
+  Steam prefix binding, prefix-idle wait policy, compat tool name, and the
+  appid-scoped bottle id template. The contract is derived from the same
+  primitives the runtime uses (`steam_pipeline_defaults_offline`,
+  `runtime_profile_for_pipeline`, `pipeline_preference_id`, pipeline node's
+  `requires_wine`) so it cannot drift from launch behavior.
+- `steam_route_contract_for(pipeline)` and `steam_route_contracts()` table
+  covering M9, M10, M11, M12, M13, FnaArm64, WineBare, D3DMetal.
+- Passive-refresh preservation tests for M11 and M12 (the M9 case already
+  existed): a saved M11 route survives a passive refresh that would resolve
+  to M12, and a saved M12 route survives passive fallback to M11/M9.
+- A data-driven route-contract test that builds a bottle per contract lane
+  and asserts `steam_compatdata_record` matches the contract (appid scoping,
+  bottle id, launch pipeline, identity mode, compat tool, launch route).
+- `deploy_steam_appid` staging test proving `steam_appid.txt` lands in every
+  standard binary subdir and that an active Goldberg `force_steam_appid.txt`
+  is kept in sync.
+- Migration preserve/skip report: `migrate::MigrationReport` records every
+  preserved and skipped category with a reason during `preserve_user_data`
+  and `restore_user_data`, persisted atomically to
+  `~/.metalsharp/logs/migration-report-latest.json`. This does not change
+  what is preserved — it only makes the behavior inspectable.
+- New HTTP routes:
+  - `GET /bottles/route-contracts` — the declarative contract table
+  - `GET /update/migrate/report` — the latest migration preserve/skip report
+- No test mutates the process-global `METALSHARP_HOME`; all new diagnostics
+  and migration tests use explicit-home (`_for`) variants so they are safe
+  under parallel test execution.
+
+**New tests (8):** M11 passive preservation, M12 passive preservation,
+route-contract table vs compatdata records, route-contract lane coverage,
+M12 isolated-lane contract, D3DMetal offline contract, `deploy_steam_appid`
+staging, migration preserve/skip report round-trip.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test bottles::tests         # 67 passed
+cargo test mtsp                   # 111 passed
+cargo test                        # 521 passed, 0 failed (3 consecutive runs)
+```
+
+**Boundary check:** M9/M10/M11 launch behavior and artifact paths unchanged.
+The route contract is derived from existing primitives, not a new source of
+truth. Migration preserve/restore logic is unchanged; only an observational
+report was added.

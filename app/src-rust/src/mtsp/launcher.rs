@@ -4026,6 +4026,38 @@ mod tests {
     use crate::mtsp::recipe;
 
     #[test]
+    fn deploy_steam_appid_writes_visible_appid_file_for_each_known_subdir() {
+        // Phase 2: routes that depend on Steam-visible identity must stage
+        // steam_appid.txt into every standard binary subdir the game may
+        // launch from, plus update an active Goldberg force_steam_appid.txt.
+        let game_dir = test_dir("deploy-steam-appid");
+        let sub_win64 = game_dir.join("Binaries").join("Win64");
+        let sub_bin = game_dir.join("bin");
+        std::fs::create_dir_all(&sub_win64).unwrap();
+        std::fs::create_dir_all(&sub_bin).unwrap();
+        // "Game" subdir absent on purpose: it must be skipped, not panic.
+
+        deploy_steam_appid(&game_dir, 504230);
+
+        assert_eq!(std::fs::read_to_string(sub_win64.join("steam_appid.txt")).unwrap(), "504230");
+        assert_eq!(std::fs::read_to_string(sub_bin.join("steam_appid.txt")).unwrap(), "504230");
+        assert_eq!(std::fs::read_to_string(game_dir.join("steam_appid.txt")).unwrap(), "504230");
+        assert!(!game_dir.join("Game").join("steam_appid.txt").exists(), "absent subdirs must be skipped");
+
+        // An active Goldberg emulator setting must be kept in sync.
+        let goldberg_dir = game_dir.join("steam_settings");
+        std::fs::create_dir_all(&goldberg_dir).unwrap();
+        std::fs::write(goldberg_dir.join("force_steam_appid.txt"), "0").unwrap();
+        deploy_steam_appid(&game_dir, 504230);
+        assert_eq!(
+            std::fs::read_to_string(goldberg_dir.join("force_steam_appid.txt")).unwrap(),
+            "504230",
+            "goldberg force_steam_appid.txt must track the real appid"
+        );
+        let _ = std::fs::remove_dir_all(&game_dir);
+    }
+
+    #[test]
     fn m9_cache_env_uses_dxmt_family_not_dxvk() {
         let node = get_pipeline(PipelineId::M9);
         let cache = CachePaths { shader: "/tmp/m9-shaders".into(), pipeline: "/tmp/m9-pipelines".into() };
