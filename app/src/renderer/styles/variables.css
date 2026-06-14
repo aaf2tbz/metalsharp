@@ -32,7 +32,7 @@
   --sidebar-hover: rgba(29, 37, 46, 0.6);
   --sidebar-active: rgba(95, 183, 232, 0.15);
   --sidebar-text: #ffffff;
-  --sidebar-text-active: #5fb7e8;
+  --sidebar-text-active: var(--sidebar-text);
   --sidebar-text-hover: #ffffff;
   --sidebar-logo-color: #ffffff;
   --sidebar-logo-accent: #5fb7e8;
@@ -82,7 +82,7 @@
   --sidebar-hover: rgba(240, 243, 247, 0.4);
   --sidebar-active: rgba(52, 127, 186, 0.1);
   --sidebar-text: #1e2732;
-  --sidebar-text-active: #246fa8;
+  --sidebar-text-active: var(--sidebar-text);
   --sidebar-text-hover: #0e1a26;
   --sidebar-logo-color: #1e2732;
   --sidebar-logo-accent: #8faab8;
