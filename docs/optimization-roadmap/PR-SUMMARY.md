@@ -266,3 +266,58 @@ cargo test                        # 548 passed, 0 failed
 contract + validator that mirrors existing SDK audits. M9/M10/M11 unaffected.
 The limits are the same the Python binding audit already enforces, so the two
 gates agree on what passes.
+
+## Phase 6: Command Replay, Barriers, and Resource Visibility ✅
+
+**Purpose:** optimize the hot path after artifacts and bindings are
+observable; make command replay and visibility failures reproduce in probes
+before they are chased in games.
+
+**Scope note:** same as Phases 4/5 — `vendor/dxmt` is reference source not
+compiled here. Phase 6 lands the Rust-side *contract model* (typed rules the
+existing SDK probes validate) so encoder lifetime is observable and a missing
+transition is a contract failure.
+
+**What landed:**
+- New `command_contract.rs` module with:
+  - `ResourceState` (D3D12 resource-state subset, with `is_write`/`is_read`)
+  - `ResourceBarrier` (incl. split barriers via `split_begin`)
+  - `RenderPassBoundary` (render targets + depth + sample count)
+  - `CommandOp` — tagged enum covering Reset, ResourceBarrier,
+    BeginRenderPass/EndRenderPass, ClearRenderTargetView, Draw/DrawIndexed,
+    Dispatch, CopyResource/Region, ResolveSubresource, Present, Close, Execute
+- `validate_command_trace(ops)` enforces:
+  - **Visibility**: a resource's last recorded state must permit the use
+    (copy dst/src, UAV, render target, depth write/read)
+  - **Present gate**: back buffer must be in `Present` state (a never-
+    transitioned resource defaults to `Common`, which is flagged at Present)
+  - **Render-pass boundaries**: BeginRenderPass while one is open is flagged;
+    a render-target set change without an explicit boundary is flagged
+    (Metal would need an encoder split)
+  - **Reset/reuse**: resetting a list inside an open render pass is flagged
+  - **Split barriers**: a `BEGIN_ONLY` barrier never ended is flagged at
+    trace end and at any write while pending
+  - `COMMON`/`GENERIC_READ` permit implicit read access (D3D12 decay rules)
+- Visibility summary counters: total transitions, write→read / read→write,
+  split barriers, unfinished split barriers, render passes.
+- New route: `POST /diagnostics/command-replay/validate`.
+
+**New tests (12):** clean present cycle passes; present without transition
+flagged; copy with wrong states flagged; render pass not closed flagged;
+unfinished split barrier flagged; completed split barrier clean; render-target
+change without boundary flagged; reset inside render pass flagged; COMMON
+permits implicit access; depth-write allows draw; trace JSON round-trip;
+resource-state write/read classification.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test command_contract      # 12 passed
+cargo test                        # 560 passed, 0 failed
+```
+
+**Boundary check:** no runtime command-list/barrier behavior changed — this
+is a typed contract + validator that mirrors the existing SDK probes. The
+mini-suite (`rtv_clear`, `texture_sample`, `swapchain_present`) all map to
+trace patterns the validator accepts in clean form.

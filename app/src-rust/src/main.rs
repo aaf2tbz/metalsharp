@@ -20,6 +20,7 @@
 mod anticheat;
 mod binding_contract;
 mod bottles;
+mod command_contract;
 mod d3d12_runtime_doctor;
 mod diagnostics;
 mod installer;
@@ -1139,6 +1140,20 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     resp(200, serde_json::to_value(report).unwrap_or(json!({"ok": false, "error": "serialize failed"})))
                 },
                 Err(e) => resp(400, json!({ "ok": false, "error": format!("invalid root signature manifest: {}", e) })),
+            }
+        },
+        // Phase 6: command replay / barriers / resource visibility validator.
+        // Accepts a recorded command-list trace JSON and returns a structured
+        // pass/fail against encoder-lifetime, render-pass, and transition rules.
+        (Method::Post, "/diagnostics/command-replay/validate") => {
+            let body = read_body(req);
+            let trace_json = body.get("trace").cloned().unwrap_or(json!([]));
+            match serde_json::from_value::<Vec<command_contract::CommandOp>>(trace_json) {
+                Ok(ops) => {
+                    let report = command_contract::validate_command_trace(&ops);
+                    resp(200, serde_json::to_value(report).unwrap_or(json!({"ok": false, "error": "serialize failed"})))
+                },
+                Err(e) => resp(400, json!({ "ok": false, "error": format!("invalid command trace: {}", e) })),
             }
         },
         (Method::Post, "/steam/compatdata") => {
