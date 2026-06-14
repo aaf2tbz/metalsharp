@@ -91,6 +91,7 @@ verify_app_bundle() {
             return 1
         fi
     done
+    codesign --verify --deep --strict --verbose=2 "$app_path" >/dev/null 2>&1 || return 1
     return 0
 }
 

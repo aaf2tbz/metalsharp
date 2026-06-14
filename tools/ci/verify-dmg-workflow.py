@@ -72,6 +72,7 @@ def check_dmg_verifier(assets: list[str]) -> None:
         "runtime/metalsharp-backend",
         "runtime/host",
         "scripts/tools/updater/update.sh",
+        "codesign --verify --deep --strict",
         "tools/bundles/verify-bundles.sh",
     ]:
         if needle not in verifier:
