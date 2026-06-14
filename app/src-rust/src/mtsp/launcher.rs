@@ -848,7 +848,7 @@ pub fn launch_custom_with_options(
 
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let wine = runtime_wine_binary_for_launch(&ms_root, node);
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
         return Err("MetalSharp Wine not found — run setup first".into());
     }
@@ -876,7 +876,6 @@ pub fn launch_custom_with_options(
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", wine_debug_value())
         .env("WINEDEBUGGER", "none");
-    apply_direct_wine_runtime_env(&mut cmd, &home, &ms_root, node);
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
 
     if node.uses_winedllpath_routing() {
@@ -1124,7 +1123,7 @@ fn launch_dxmt_metal_with_context(
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let wine = runtime_wine_binary_for_launch(&ms_root, node);
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
     let default_log_path;
     let log_path = match log_path {
         Some(path) => Some(path),
@@ -1154,6 +1153,9 @@ fn launch_dxmt_metal_with_context(
         validate_recipe_runtime(&recipe)?;
         cleanup_legacy_injections(game_dir)?;
     }
+    if node.id == PipelineId::M12 {
+        cleanup_m12_legacy_hook_artifacts(game_dir, &prefix);
+    }
     deploy_recipe_dlls(&recipe)?;
     deploy_prefix_route_dlls(&recipe, &prefix)?;
 
@@ -1178,7 +1180,6 @@ fn launch_dxmt_metal_with_context(
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", wine_debug_value())
         .env("WINEDEBUGGER", "none");
-    apply_direct_wine_runtime_env(&mut cmd, &home, &ms_root, node);
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
 
     if node.uses_winedllpath_routing() {
@@ -1739,45 +1740,6 @@ fn dxmt_winemetal_unixlib_path(_ms_root: &Path) -> String {
     "winemetal.so".to_string()
 }
 
-fn runtime_wine_binary_for_launch(ms_root: &Path, node: &PipelineNode) -> PathBuf {
-    if node.id == PipelineId::M12 {
-        let direct = ms_root.join("bin").join("wine");
-        if direct.exists() {
-            return direct;
-        }
-    }
-
-    crate::platform::runtime_wine_binary(ms_root)
-}
-
-fn apply_direct_wine_runtime_env(cmd: &mut Command, home: &Path, ms_root: &Path, node: &PipelineNode) {
-    for (key, value) in direct_wine_runtime_env_pairs(home, ms_root, node) {
-        cmd.env(key, value);
-    }
-    if node.id == PipelineId::M12 {
-        cmd.env_remove("MS_ROOT");
-    }
-}
-
-fn direct_wine_runtime_env_pairs(home: &Path, ms_root: &Path, node: &PipelineNode) -> Vec<(String, String)> {
-    if node.id != PipelineId::M12 {
-        return Vec::new();
-    }
-
-    let metalsharp_home = crate::platform::metalsharp_home_dir_for(home);
-    vec![
-        ("CX_ROOT".to_string(), ms_root.to_string_lossy().to_string()),
-        ("WINESERVER".to_string(), ms_root.join("bin").join("wineserver").to_string_lossy().to_string()),
-        ("WINELOADER".to_string(), ms_root.join("bin").join("wine").to_string_lossy().to_string()),
-        ("WINEDATADIR".to_string(), ms_root.join("share").to_string_lossy().to_string()),
-        ("MS_FWD_COMPAT_GL_CTX".to_string(), "1".to_string()),
-        ("VK_ICD_FILENAMES".to_string(), "/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json".to_string()),
-        ("MVK_PRESENT_MODE".to_string(), "1".to_string()),
-        ("DXVK_STATE_CACHE_PATH".to_string(), metalsharp_home.join("dxvk-cache").to_string_lossy().to_string()),
-        ("DXVK_LOG_PATH".to_string(), metalsharp_home.join("dxvk-logs").to_string_lossy().to_string()),
-    ]
-}
-
 fn route_library_env_pairs(ms_root: &PathBuf, paths: &[&str]) -> Vec<(String, String)> {
     if paths.is_empty() {
         return Vec::new();
@@ -1822,6 +1784,14 @@ fn cleanup_metalsharp_dlls_from_game_dir(game_dir: &Path) -> Result<(), Box<dyn 
         }
     }
     Ok(())
+}
+
+fn cleanup_m12_legacy_hook_artifacts(game_dir: &Path, prefix: &Path) {
+    let _ = std::fs::remove_file(game_dir.join("metalsharp_ntdll_hook.dll"));
+    let windows = prefix.join("drive_c").join("windows");
+    for system_dir in ["system32", "syswow64"] {
+        let _ = std::fs::remove_file(windows.join(system_dir).join("metalsharp_ntdll_hook.dll"));
+    }
 }
 
 fn build_winedllpath(ms_root: &PathBuf, dirs: &[&str]) -> String {
@@ -1956,7 +1926,6 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
         env.push(("SteamUserSteamID".to_string(), steam_id));
     }
 
-    env.extend(direct_wine_runtime_env_pairs(home, &ms_root, node));
     env.extend(route_library_env_pairs(&ms_root, &node.dyld_paths));
     if let Some(overrides) = node.wine_overrides {
         env.push(("WINEDLLOVERRIDES".to_string(), overrides.to_string()));
@@ -4508,30 +4477,36 @@ mod tests {
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
-        assert!(overrides.contains("mscompatdb,gameoverlayrenderer,gameoverlayrenderer64=d"));
-        assert!(keys.contains("CX_ROOT"));
-        assert!(keys.contains("WINESERVER"));
-        assert!(keys.contains("WINELOADER"));
-        assert!(keys.contains("WINEDATADIR"));
+        assert!(overrides.contains("gameoverlayrenderer,gameoverlayrenderer64=d"));
+        assert!(!overrides.contains("mscompatdb"));
+        assert!(!keys.contains("CX_ROOT"));
+        assert!(!keys.contains("WINESERVER"));
+        assert!(!keys.contains("WINELOADER"));
+        assert!(!keys.contains("WINEDATADIR"));
         assert!(!keys.contains("MS_ROOT"));
-        assert!(env_value(&env, "WINELOADER").unwrap_or_default().ends_with("/runtime/wine/bin/wine"));
-        assert!(env_value(&env, "WINEDLLPATH").unwrap_or_default().contains("dxmt-m12/x86_64-windows"));
+        let winedllpath = env_value(&env, "WINEDLLPATH").unwrap_or_default();
+        assert!(winedllpath.contains("dxmt-m12/x86_64-windows"));
+        assert!(!winedllpath.contains("lib/metalsharp"));
         assert!(env_value(&env, "DYLD_LIBRARY_PATH").unwrap_or_default().contains("dxmt-m12/x86_64-unix"));
         assert!(env_value(&env, "DYLD_FALLBACK_LIBRARY_PATH").unwrap_or_default().contains("dxmt-m12/x86_64-unix"));
         let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
-    fn m12_launch_uses_direct_wine_binary_to_bypass_wrapper_ms_root() {
-        let home = test_dir("m12-direct-wine");
+    fn m12_launch_uses_normal_metalsharp_wine_binary() {
+        let home = test_dir("m12-normal-wine");
         let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
         let bin = ms_root.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("metalsharp-wine"), b"#!/bin/sh\n").unwrap();
         std::fs::write(bin.join("wine"), b"#!/bin/sh\n").unwrap();
 
-        assert_eq!(runtime_wine_binary_for_launch(&ms_root, get_pipeline(PipelineId::M12)), bin.join("wine"));
-        assert_eq!(runtime_wine_binary_for_launch(&ms_root, get_pipeline(PipelineId::M9)), bin.join("metalsharp-wine"));
+        let m12 = get_pipeline(PipelineId::M12);
+        let m11 = get_pipeline(PipelineId::M11);
+        assert_eq!(crate::platform::runtime_wine_binary(&ms_root), bin.join("metalsharp-wine"));
+        assert_eq!(m12.requires_wine, m11.requires_wine);
+        assert_eq!(m12.backend, m11.backend);
+        assert!(m12.winedllpath_dirs.iter().any(|path| path.contains("dxmt-m12")));
         let _ = std::fs::remove_dir_all(home);
     }
 
