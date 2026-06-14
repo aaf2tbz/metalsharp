@@ -3010,7 +3010,10 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
     }
 }
 
-fn runtime_profile_for_app_pipeline(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
+pub(crate) fn runtime_profile_for_app_pipeline(
+    appid: u32,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> RuntimeProfile {
     if pipeline == crate::mtsp::engine::PipelineId::FnaArm64 {
         return match crate::mtsp::launcher::find_fna_profile(appid).mono_arch {
             crate::mtsp::launcher::MonoArch::X86 => RuntimeProfile::FnaX86,

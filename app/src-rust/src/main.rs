@@ -20,6 +20,7 @@
 mod anticheat;
 mod bottles;
 mod d3d12_runtime_doctor;
+mod diagnostics;
 mod installer;
 mod kernel_translation;
 mod launch;
@@ -307,16 +308,29 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/scan") => {
+            let mut timing = diagnostics::LaunchTiming::start();
             app_log("Scanning for installed games...");
-            match scan::scan_all() {
+            timing.mark("scan_start");
+            let result = scan::scan_all();
+            timing.mark("scan_all_done");
+            if let Some(home) = dirs::home_dir() {
+                diagnostics::record_scan_timing(&home, "scan_all", &timing);
+            }
+            match result {
                 Ok(result) => resp(200, result),
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
         (Method::Get, "/steam/status") => resp(200, steam::status()),
         (Method::Get, "/steam/library") => {
+            let mut timing = diagnostics::LaunchTiming::start();
             app_log("Loading Steam library...");
+            timing.mark("library_load_start");
             let result = steam::library();
+            timing.mark("library_load_done");
+            if let Some(home) = dirs::home_dir() {
+                diagnostics::record_scan_timing(&home, "steam_library", &timing);
+            }
             app_log(&format!("Loaded {} games", result.get("total").and_then(|t| t.as_u64()).unwrap_or(0)));
             resp(200, result)
         },
@@ -990,6 +1004,45 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/d3d12-runtime-doctor") => {
             let body = read_body(req);
             resp(200, d3d12_runtime_doctor::handle_steam_d3d12_runtime_doctor(&body))
+        },
+        // Phase 1: baseline launch observability. Stable JSON diagnostic that
+        // reports the resolved pipeline, runtime profile, wine path, prefix,
+        // artifact sources (with content hashes), staged DLL hashes, and cache
+        // directories for an appid. No launch behavior changes.
+        (Method::Get, "/diagnostics/launch") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let requested_pipeline = url_str
+                .split("pipeline=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+            resp(200, diagnostics::build_launch_diagnostic(appid, requested_pipeline))
+        },
+        (Method::Get, "/diagnostics/launch/timing") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let home = dirs::home_dir().unwrap_or_default();
+            let bottle_id = format!("steam_{}", appid);
+            match diagnostics::latest_launch_timing(&home, &bottle_id) {
+                Some(timing) => {
+                    resp(200, json!({ "ok": true, "appid": appid, "bottle_id": bottle_id, "timing": timing }))
+                },
+                None => resp(
+                    200,
+                    json!({ "ok": false, "appid": appid, "bottle_id": bottle_id, "error": "no launch timing recorded for this bottle yet" }),
+                ),
+            }
         },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);

@@ -444,22 +444,41 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 }
 
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut timing = crate::diagnostics::LaunchTiming::start();
+    timing.mark("pipeline_resolution_start");
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
+    timing.mark("pipeline_resolution_done");
     prepare_start_protected_game_for_pipeline(appid, pipeline_id);
+    timing.mark("start_protected_game_prepare_done");
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    timing.mark("recipe_build_done");
     let deployed_sources: Vec<String> = {
         validate_recipe_runtime(&recipe)?;
+        timing.mark("recipe_runtime_validate_done");
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_legacy_injections(game_dir)?;
+            timing.mark("legacy_injection_cleanup_done");
         }
         let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
         deploy_recipe_dlls(&recipe)?;
+        timing.mark("dll_staging_done");
         let home = dirs::home_dir().ok_or("no home dir")?;
         let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
         deploy_prefix_route_dlls(&recipe, &prefix)?;
+        timing.mark("prefix_route_dll_deploy_done");
         sources
     };
+    timing.mark("prepare_complete");
+
+    // Persist launch timing so performance deltas can be compared between PRs
+    // via GET /diagnostics/launch/timing?appid=...
+    let home_for_timing = dirs::home_dir();
+    if let Some(home) = home_for_timing {
+        timing.record_for_bottle(&home, &format!("steam_{}", appid));
+    }
+
+    let timing_json = timing.to_json();
 
     Ok(serde_json::json!({
         "ok": true,
@@ -469,6 +488,7 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "recipe": recipe,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
+        "timing": timing_json,
     }))
 }
 
@@ -562,11 +582,17 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
         }
 
         std::fs::copy(&deploy.source_path, &deploy.dest_path)?;
+        let staged_sha256 = crate::diagnostics::file_sha256(&deploy.dest_path);
+        let source_sha256 =
+            if staged_sha256.is_some() { crate::diagnostics::file_sha256(&deploy.source_path) } else { None };
         manifest_dlls.push(serde_json::json!({
             "filename": deploy.filename,
             "source_path": deploy.source_path,
             "dest_path": deploy.dest_path,
             "backup_path": if backup_path.exists() { Some(backup_path) } else { None },
+            "sha256": staged_sha256,
+            "source_sha256": source_sha256,
+            "matches_source": matches!((&staged_sha256, &source_sha256), (Some(a), Some(b)) if a == b),
         }));
     }
 
