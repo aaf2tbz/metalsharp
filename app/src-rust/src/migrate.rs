@@ -5,19 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-fn mac_cmd(name: &str) -> Command {
-    let path = match name {
-        "pkill" => "/usr/bin/pkill",
-        _ => name,
-    };
-    Command::new(path)
-}
-
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 3;
-const MIGRATION_EXACT_KILL_PATTERNS: &[&str] =
-    &["wineloader", "steam.exe", "steamwebhelper.exe", "steamwebhelper", "wineserver", "wine64", "wine"];
-const MIGRATION_COMMAND_KILL_PATTERNS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "wineserver", "wineloader"];
 const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "steamapps",
     "common",
@@ -593,13 +582,10 @@ fn run_migration() {
     let _ = fs::remove_file(&marker);
     let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
 
-    kill_steam_wine();
-    log_to_file("Migration: killed Wine/Steam processes after prefix update to dismiss wineboot window");
-
-    // wineboot -u can fork Steam.exe twice for self-update. The second Wine
-    // window is crash-prone during migration, so dismiss it and let the app's
-    // normal Steam launch path start Steam after migration completes.
-    dismiss_steam_update_windows_after_migration(&ms_dir, 90);
+    // wineboot -u can fork Steam.exe twice for self-update. Let those updater
+    // windows finish naturally so the next app launch is not left with a
+    // half-completed Steam update.
+    wait_for_steam_update_windows_after_migration(&ms_dir, 90);
 
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
@@ -672,18 +658,7 @@ fn wait_for_install_complete() -> Result<(), String> {
     Err("runtime install timed out".into())
 }
 
-fn kill_steam_wine() {
-    for pat in MIGRATION_EXACT_KILL_PATTERNS {
-        run_pkill(&["-x", pat]);
-    }
-
-    for pat in MIGRATION_COMMAND_KILL_PATTERNS {
-        run_pkill(&["-f", pat]);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(750));
-}
-
-fn dismiss_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u64) {
+fn wait_for_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u64) {
     let prefix = ms_dir.join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
     let start = std::time::Instant::now();
@@ -702,10 +677,11 @@ fn dismiss_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u64
             SteamUpdateWaitAction::LogFirstClose => {
                 log_to_file("Migration: initial Wine/Steam update window closed, waiting for Steam updater window...");
             },
-            SteamUpdateWaitAction::KillAfterSecondOpen => {
-                log_to_file("Migration: second Wine/Steam updater window detected; force-killing it after wineboot");
-                force_kill_steam_update_processes_for_prefix(&prefix_str);
-                log_to_file("Migration: dismissed post-wineboot Steam updater window; Steam can be started normally from the app");
+            SteamUpdateWaitAction::LogSecondOpen => {
+                log_to_file("Migration: second Wine/Steam updater window detected, waiting for it to close...");
+            },
+            SteamUpdateWaitAction::Complete => {
+                log_to_file("Migration: Wine/Steam updater windows closed after wineboot");
                 return;
             },
             SteamUpdateWaitAction::None => {},
@@ -729,20 +705,12 @@ fn steam_update_process_alive(prefix_str: &str, process_output: &str) -> bool {
     })
 }
 
-fn force_kill_steam_update_processes_for_prefix(prefix_str: &str) {
-    if prefix_str.trim().is_empty() {
-        return;
-    }
-
-    run_pkill(&["-TERM", "-f", prefix_str]);
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    run_pkill(&["-KILL", "-f", prefix_str]);
-}
-
 #[derive(Default)]
 struct SteamUpdateWindowWait {
     first_open_seen: bool,
     first_close_seen: bool,
+    second_open_seen: bool,
+    second_close_seen: bool,
 }
 
 impl SteamUpdateWindowWait {
@@ -757,8 +725,14 @@ impl SteamUpdateWindowWait {
             return SteamUpdateWaitAction::LogFirstClose;
         }
 
-        if steam_alive && self.first_close_seen {
-            return SteamUpdateWaitAction::KillAfterSecondOpen;
+        if steam_alive && self.first_close_seen && !self.second_open_seen {
+            self.second_open_seen = true;
+            return SteamUpdateWaitAction::LogSecondOpen;
+        }
+
+        if !steam_alive && self.second_open_seen && !self.second_close_seen {
+            self.second_close_seen = true;
+            return SteamUpdateWaitAction::Complete;
         }
 
         SteamUpdateWaitAction::None
@@ -774,23 +748,8 @@ enum SteamUpdateWaitAction {
     None,
     LogFirstOpen,
     LogFirstClose,
-    KillAfterSecondOpen,
-}
-
-fn run_pkill(args: &[&str]) {
-    let Ok(mut child) = mac_cmd("pkill").args(args).spawn() else {
-        return;
-    };
-
-    for _ in 0..20 {
-        if child.try_wait().ok().flatten().is_some() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(25));
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
+    LogSecondOpen,
+    Complete,
 }
 
 struct PreservedData {
@@ -2718,14 +2677,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_kill_patterns_avoid_broad_command_matches() {
-        assert!(MIGRATION_EXACT_KILL_PATTERNS.contains(&"wineloader"));
-        assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"steam"));
-        assert!(!MIGRATION_COMMAND_KILL_PATTERNS.contains(&"wine"));
-    }
-
-    #[test]
-    fn migration_kills_second_steam_update_window() {
+    fn migration_waits_for_second_steam_update_window_to_close() {
         let mut wait = SteamUpdateWindowWait::default();
 
         assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
@@ -2733,7 +2685,10 @@ mod tests {
         assert_eq!(wait.observe(true), SteamUpdateWaitAction::None);
         assert_eq!(wait.observe(false), SteamUpdateWaitAction::LogFirstClose);
         assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
-        assert_eq!(wait.observe(true), SteamUpdateWaitAction::KillAfterSecondOpen);
+        assert_eq!(wait.observe(true), SteamUpdateWaitAction::LogSecondOpen);
+        assert_eq!(wait.observe(true), SteamUpdateWaitAction::None);
+        assert_eq!(wait.observe(false), SteamUpdateWaitAction::Complete);
+        assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
     }
 
     #[test]
