@@ -141,49 +141,28 @@ fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
 }
 
 pub fn vcpp_ensure_and_install_x64(prefix: &Path) -> Result<(), String> {
-    if vcpp_prefix_has_x64(prefix) {
-        eprintln!("vcredist: VC++ x64 already present, skipping");
-        return Ok(());
-    }
     let (x64, _x86) = vcpp_ensure_downloaded()?;
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let wine = crate::platform::runtime_wine_binary(&ms_root);
-    if !wine.exists() {
-        return Err("MetalSharp Wine not found".into());
-    }
-    let prefix_str = prefix.to_string_lossy().to_string();
-    eprintln!("vcredist: installing VC++ 2015-2022 x64 into {} ...", prefix.display());
-    let status = Command::new(&wine)
-        .arg(&x64)
-        .arg("/install")
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "/usr/bin/true")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("wine x64 failed: {}", e))?;
-    if !status.success() {
-        return Err("VC++ x64 installer exited with error".into());
-    }
-    let _ = Command::new(ms_root.join("bin").join("wineserver")).env("WINEPREFIX", &prefix_str).arg("-w").status();
+    run_interactive_vcpp_installer(prefix, &x64, "x64")?;
     if vcpp_prefix_has_x64(prefix) {
         eprintln!("vcredist: VC++ x64 verified in {}", prefix.display());
         Ok(())
     } else {
-        // DLLs may not appear immediately — trust the installer
-        eprintln!("vcredist: VC++ x64 installer completed but DLLs not yet visible (install may need prefix refresh)");
-        Ok(())
+        Err("VC++ x64 installer completed, but runtime DLLs were not found in system32".into())
     }
 }
 
 pub fn vcpp_ensure_and_install_x86(prefix: &Path) -> Result<(), String> {
-    if vcpp_prefix_has_x86(prefix) {
-        eprintln!("vcredist: VC++ x86 already present, skipping");
-        return Ok(());
-    }
     let (_x64, x86) = vcpp_ensure_downloaded()?;
+    run_interactive_vcpp_installer(prefix, &x86, "x86")?;
+    if vcpp_prefix_has_x86(prefix) {
+        eprintln!("vcredist: VC++ x86 verified in {}", prefix.display());
+        Ok(())
+    } else {
+        Err("VC++ x86 installer completed, but runtime DLLs were not found in syswow64".into())
+    }
+}
+
+fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -191,28 +170,37 @@ pub fn vcpp_ensure_and_install_x86(prefix: &Path) -> Result<(), String> {
         return Err("MetalSharp Wine not found".into());
     }
     let prefix_str = prefix.to_string_lossy().to_string();
-    eprintln!("vcredist: installing VC++ 2015-2022 x86 into {} ...", prefix.display());
-    let status = Command::new(&wine)
-        .arg(&x86)
-        .arg("/install")
+    eprintln!("vcredist: launching interactive VC++ 2015-2022 {} installer into {} ...", arch, prefix.display());
+    let mut cmd = Command::new(&wine);
+    cmd.arg("start")
+        .arg("/wait")
+        .arg("/unix")
+        .arg(installer)
+        .args(vcpp_setup_install_args())
         .env("WINEPREFIX", &prefix_str)
+        .env("WINEARCH", "win64")
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "/usr/bin/true")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("wine x86 failed: {}", e))?;
-    if !status.success() {
-        return Err("VC++ x86 installer exited with error".into());
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Some(parent) = installer.parent() {
+        cmd.current_dir(parent);
     }
-    let _ = Command::new(ms_root.join("bin").join("wineserver")).env("WINEPREFIX", &prefix_str).arg("-w").status();
-    if vcpp_prefix_has_x86(prefix) {
-        eprintln!("vcredist: VC++ x86 verified in {}", prefix.display());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let status = cmd.status().map_err(|e| format!("wine {} failed: {}", arch, e))?;
+    if vcpp_installer_status_ok(status.code()) {
         Ok(())
     } else {
-        eprintln!("vcredist: VC++ x86 installer completed but DLLs not yet visible (install may need prefix refresh)");
-        Ok(())
+        Err(format!("VC++ {} installer exited with status {:?}", arch, status.code()))
     }
+}
+
+fn vcpp_setup_install_args() -> [&'static str; 1] {
+    ["/install"]
+}
+
+fn vcpp_installer_status_ok(code: Option<i32>) -> bool {
+    matches!(code, Some(0) | Some(194))
 }
 
 fn vcpp_prefix_has_x64(prefix: &Path) -> bool {
@@ -823,6 +811,66 @@ fn write_bottle_manifest_atomic(manifest_path: &Path, data: &[u8]) -> Result<(),
     fs::write(&tmp_path, data)?;
     fs::rename(tmp_path, manifest_path)?;
     Ok(())
+}
+
+/// Phase 2: declarative Steam route contract for a pipeline.
+///
+/// This codifies what every first-class Steam game route promises so that a
+/// passive refresh, a compatdata write, or a bottle metadata change cannot
+/// silently downgrade or erase a saved route. The contract is derived from
+/// the same primitives the runtime uses (`steam_pipeline_defaults_offline`,
+/// `runtime_profile_for_pipeline`, `pipeline_preference_id`, and the pipeline
+/// node's `requires_wine` flag) so it can never drift from launch behavior.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct SteamRouteContract {
+    pub pipeline: &'static str,
+    pub runtime_profile: RuntimeProfile,
+    pub steam_identity_mode: &'static str,
+    pub launch_route: &'static str,
+    pub requires_wine: bool,
+    pub binds_to_shared_steam_prefix: bool,
+    pub waits_for_prefix_idle: bool,
+    pub compat_tool_name: &'static str,
+    pub bottle_id_template: &'static str,
+}
+
+/// The route contract for a single pipeline.
+pub fn steam_route_contract_for(pipeline: crate::mtsp::engine::PipelineId) -> SteamRouteContract {
+    let offline = steam_pipeline_defaults_offline(pipeline);
+    let requires_wine = crate::mtsp::engine::get_pipeline(pipeline).requires_wine;
+    SteamRouteContract {
+        pipeline: pipeline_preference_id(pipeline),
+        runtime_profile: runtime_profile_for_pipeline(pipeline),
+        steam_identity_mode: if offline { "offline_steam_emulation" } else { "wine_steam_background" },
+        launch_route: if offline { "/steam/launch-offline" } else { "/steam/launch-game" },
+        // Steam game bottles bind to the shared Steam launch prefix and never
+        // block the launcher on prefix idle completion (only installer bottles
+        // do). This is the contract that `should_wait_for_prefix_idle`
+        // enforces for steam game bottles.
+        requires_wine,
+        binds_to_shared_steam_prefix: requires_wine,
+        waits_for_prefix_idle: false,
+        compat_tool_name: "MetalSharp",
+        bottle_id_template: "steam_{appid}",
+    }
+}
+
+/// The full route-contract table covering every protected and first-class
+/// Steam game lane. M9/M10/M11 are protected compatibility lanes; M12/M13,
+/// FnaArm64, WineBare, and D3DMetal cover the remaining route families the
+/// contract must exercise.
+pub fn steam_route_contracts() -> Vec<SteamRouteContract> {
+    use crate::mtsp::engine::PipelineId::*;
+    vec![
+        steam_route_contract_for(M9),
+        steam_route_contract_for(M10),
+        steam_route_contract_for(M11),
+        steam_route_contract_for(M12),
+        steam_route_contract_for(M13),
+        steam_route_contract_for(FnaArm64),
+        steam_route_contract_for(WineBare),
+        steam_route_contract_for(D3DMetal),
+    ]
 }
 
 pub fn list_bottles() -> Result<Vec<BottleManifest>, Box<dyn std::error::Error>> {
@@ -1547,6 +1595,78 @@ fn is_wine_prefix_busy(prefix: &Path) -> bool {
         },
         Err(_) => false,
     }
+}
+
+/// Phase 7: explicit wineboot state machine. Separates "prefix is updating"
+/// (Wine itself is busy: wineboot/wineserver active) from "MetalSharp is
+/// verifying update" (MetalSharp is running a readiness check), so the UI
+/// does not double-poll or misrepresent a Steam update window inside the
+/// prefix. This is observational — it does not change readiness behavior.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WinebootState {
+    /// The prefix exists and no Wine process is busy inside it.
+    Idle,
+    /// A Wine process (wineboot/wineserver) is active inside the prefix —
+    /// e.g. Steam is applying an update. This is the prefix's own state,
+    /// NOT MetalSharp verifying anything.
+    PrefixUpdating,
+    /// MetalSharp is running a readiness/verification check against the
+    /// prefix (runtime-doctor, preflight). Distinct from PrefixUpdating so a
+    /// UI can show "verifying" rather than "updating".
+    Verifying,
+    /// The prefix does not exist yet (first launch, fresh bottle).
+    PrefixMissing,
+}
+
+impl WinebootState {
+    /// Resolve the wineboot state for a prefix path. `verifying` is true when
+    /// MetalSharp itself is the actor performing a readiness check (the UI
+    /// should report "verifying", not "prefix updating").
+    pub fn for_prefix(prefix: &Path, verifying: bool) -> WinebootState {
+        if verifying {
+            return WinebootState::Verifying;
+        }
+        if !prefix.exists() {
+            return WinebootState::PrefixMissing;
+        }
+        if is_wine_prefix_busy(prefix) {
+            WinebootState::PrefixUpdating
+        } else {
+            WinebootState::Idle
+        }
+    }
+}
+
+/// Phase 7: report the wineboot state for a Steam game's prefix as the
+/// runtime doctor sees it, WITHOUT conflating MetalSharp's verification with
+/// a prefix update. Used so the UI can distinguish the two.
+pub fn steam_prefix_wineboot_state(appid: u32, verifying: bool) -> Value {
+    let prefix = steam_launch_prefix();
+    let state = WinebootState::for_prefix(&prefix, verifying);
+    json!({
+        "ok": true,
+        "appid": appid,
+        "prefix_path": prefix.to_string_lossy(),
+        "wineboot_state": state,
+        "is_prefix_updating": state == WinebootState::PrefixUpdating,
+        "is_verifying": state == WinebootState::Verifying,
+    })
+}
+
+/// Explicit-home variant used by tests so they never mutate the process-global
+/// METALSHARP_HOME.
+pub fn steam_prefix_wineboot_state_for(home: &Path, appid: u32, verifying: bool) -> Value {
+    let prefix = crate::platform::metalsharp_home_dir_for(home).join("prefix-steam");
+    let state = WinebootState::for_prefix(&prefix, verifying);
+    json!({
+        "ok": true,
+        "appid": appid,
+        "prefix_path": prefix.to_string_lossy(),
+        "wineboot_state": state,
+        "is_prefix_updating": state == WinebootState::PrefixUpdating,
+        "is_verifying": state == WinebootState::Verifying,
+    })
 }
 
 fn process_descendants(pid: u32) -> Vec<u32> {
@@ -3010,7 +3130,10 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
     }
 }
 
-fn runtime_profile_for_app_pipeline(appid: u32, pipeline: crate::mtsp::engine::PipelineId) -> RuntimeProfile {
+pub(crate) fn runtime_profile_for_app_pipeline(
+    appid: u32,
+    pipeline: crate::mtsp::engine::PipelineId,
+) -> RuntimeProfile {
     if pipeline == crate::mtsp::engine::PipelineId::FnaArm64 {
         return match crate::mtsp::launcher::find_fna_profile(appid).mono_arch {
             crate::mtsp::launcher::MonoArch::X86 => RuntimeProfile::FnaX86,
@@ -5504,6 +5627,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wineboot_state_prefix_missing_when_prefix_absent() {
+        // Phase 7: a non-existent prefix must report PrefixMissing, not Idle,
+        // so the UI does not double-poll for an update that cannot exist.
+        let missing = std::env::temp_dir().join("ms-wineboot-missing-nope");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert_eq!(WinebootState::for_prefix(&missing, false), WinebootState::PrefixMissing);
+    }
+
+    #[test]
+    fn wineboot_state_verifying_takes_precedence() {
+        // When MetalSharp is verifying, the state is Verifying regardless of
+        // prefix busyness. This separates "MetalSharp is verifying" from
+        // "prefix is updating".
+        let missing = std::env::temp_dir().join("ms-wineboot-verify-nope");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert_eq!(WinebootState::for_prefix(&missing, true), WinebootState::Verifying);
+    }
+
+    #[test]
+    fn wineboot_state_report_distinguishes_updating_from_verifying() {
+        // The JSON report exposes both the enum and derived booleans so a UI
+        // can render "verifying" vs "updating" without re-deriving it. Uses
+        // the explicit-home variant so no global env is mutated.
+        let home = std::env::temp_dir().join("ms-wineboot-report");
+        let _ = std::fs::remove_dir_all(&home);
+        let report = steam_prefix_wineboot_state_for(&home, 620, true);
+        assert_eq!(report.get("wineboot_state").and_then(|v| v.as_str()), Some("verifying"));
+        assert_eq!(report.get("is_verifying").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(report.get("is_prefix_updating").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
     fn installer_bottle_ids_are_stable_for_source_path() {
         let path = Path::new("/tmp/MinecraftInstaller.exe");
         assert_eq!(installer_bottle_id(path), installer_bottle_id(path));
@@ -5591,6 +5746,178 @@ mod tests {
             effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, false),
             crate::mtsp::engine::PipelineId::M11
         );
+    }
+
+    #[test]
+    fn passive_steam_refresh_preserves_saved_m11_pipeline() {
+        // A saved M11 route must survive a passive refresh that would otherwise
+        // resolve to M12. This is the M11 counterpart to the M9 preservation
+        // rule and protects the protected D3D11 compatibility lane.
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(17300),
+            name: "M11 Title".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(17300),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            preferred_pipeline: Some("m11".into()),
+            installed_components: default_components_for(RuntimeProfile::M11),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M12, true),
+            crate::mtsp::engine::PipelineId::M11,
+            "passive refresh must not downgrade a saved M11 route to M12"
+        );
+        // An active (explicit) request still wins.
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M12, false),
+            crate::mtsp::engine::PipelineId::M12
+        );
+    }
+
+    #[test]
+    fn passive_steam_refresh_preserves_saved_m12_pipeline() {
+        // A saved M12 route must survive a passive refresh that would otherwise
+        // fall back to M11 or M9. The isolated M12 lane cannot be silently
+        // erased by a background library refresh.
+        let manifest = BottleManifest {
+            id: steam_game_bottle_id(2379780),
+            name: "M12 Title".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(2379780),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Win64,
+            runtime_profile: RuntimeProfile::M12,
+            preferred_pipeline: Some("m12".into()),
+            installed_components: default_components_for(RuntimeProfile::M12),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M11, true),
+            crate::mtsp::engine::PipelineId::M12,
+            "passive refresh must not downgrade a saved M12 route to M11"
+        );
+        assert_eq!(
+            effective_pipeline_for_bottle_refresh(Some(&manifest), crate::mtsp::engine::PipelineId::M9, true),
+            crate::mtsp::engine::PipelineId::M12,
+            "passive refresh must not downgrade a saved M12 route to M9"
+        );
+    }
+
+    #[test]
+    fn steam_route_contract_table_matches_compatdata_records() {
+        // The declarative route contract must match the actual compatdata
+        // record produced for each first-class Steam game lane. If this test
+        // fails, a pipeline's identity mode, launch route, or bottle scoping
+        // has drifted from the codified contract.
+        for contract in steam_route_contracts() {
+            let pipeline = crate::mtsp::engine::PipelineId::from_str_flexible(contract.pipeline)
+                .expect("contract pipeline id must parse");
+            let appid = 620u32;
+            let manifest = BottleManifest {
+                id: steam_game_bottle_id(appid),
+                name: format!("{} contract probe", contract.pipeline),
+                custom_name: None,
+                bottle_type: BottleType::Steam,
+                steam_app_id: Some(appid),
+                prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+                arch: BottleArch::Win64,
+                runtime_profile: contract.runtime_profile,
+                preferred_pipeline: Some(contract.pipeline.to_string()),
+                installed_components: default_components_for(contract.runtime_profile),
+                source_installer_path: None,
+                installer_kind: None,
+                game_install_path: Some("/games/probe".into()),
+                runtime_assets: Vec::new(),
+                installed_app_detections: Vec::new(),
+                health: BottleHealth::Ready,
+                last_launch_log: None,
+                last_launch_pid: None,
+                last_launch_status: None,
+                last_launch_finished_at: None,
+                created_at: timestamp_secs(),
+                updated_at: timestamp_secs(),
+            };
+
+            let record = steam_compatdata_record(&manifest, pipeline);
+
+            assert_eq!(record.appid, appid, "appid scoping for {}", contract.pipeline);
+            assert_eq!(record.bottle_id, steam_game_bottle_id(appid), "bottle id template for {}", contract.pipeline);
+            assert_eq!(record.launch_pipeline, contract.pipeline, "launch_pipeline for {}", contract.pipeline);
+            assert_eq!(
+                record.steam_identity_mode, contract.steam_identity_mode,
+                "steam_identity_mode for {}",
+                contract.pipeline
+            );
+            assert_eq!(
+                record.compat_tool_name, contract.compat_tool_name,
+                "compat_tool_name for {}",
+                contract.pipeline
+            );
+            assert!(
+                record.launch_command_template.contains(contract.launch_route),
+                "launch route for {}: {}",
+                contract.pipeline,
+                record.launch_command_template
+            );
+        }
+    }
+
+    #[test]
+    fn steam_route_contract_table_covers_all_required_lanes() {
+        // The contract table is the protected-lane gate. These ids must all be
+        // present so a future refactor cannot silently drop a lane.
+        let ids: Vec<&'static str> = steam_route_contracts().iter().map(|c| c.pipeline).collect();
+        for required in ["m9", "m10", "m11", "m12", "fna_arm64", "wine_bare", "d3dmetal"] {
+            assert!(ids.contains(&required), "route contract table must cover {} (got {:?})", required, ids);
+        }
+    }
+
+    #[test]
+    fn m12_route_contract_uses_isolated_shader_lane_and_wine_background_identity() {
+        // M12 is an isolated lane: it must NOT advertise offline emulation,
+        // must require wine, and must bind to the shared Steam launch prefix.
+        let m12 = steam_route_contract_for(crate::mtsp::engine::PipelineId::M12);
+        assert_eq!(m12.steam_identity_mode, "wine_steam_background");
+        assert_eq!(m12.launch_route, "/steam/launch-game");
+        assert!(m12.requires_wine);
+        assert!(m12.binds_to_shared_steam_prefix);
+        assert!(!m12.waits_for_prefix_idle);
+    }
+
+    #[test]
+    fn d3dmetal_route_contract_advertises_offline_emulation_lane() {
+        let d3dmetal = steam_route_contract_for(crate::mtsp::engine::PipelineId::D3DMetal);
+        assert_eq!(d3dmetal.steam_identity_mode, "offline_steam_emulation");
+        assert_eq!(d3dmetal.launch_route, "/steam/launch-offline");
     }
 
     #[test]
@@ -6598,6 +6925,19 @@ mod tests {
         fs::write(syswow64.join("msvcp140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019_x86", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setup_vcpp_install_args_are_interactive() {
+        assert_eq!(vcpp_setup_install_args(), ["/install"]);
+    }
+
+    #[test]
+    fn setup_vcpp_accepts_reboot_required_status() {
+        assert!(vcpp_installer_status_ok(Some(0)));
+        assert!(vcpp_installer_status_ok(Some(194)));
+        assert!(!vcpp_installer_status_ok(Some(1)));
+        assert!(!vcpp_installer_status_ok(None));
     }
 
     #[test]

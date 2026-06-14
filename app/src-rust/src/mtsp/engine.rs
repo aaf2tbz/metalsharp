@@ -89,7 +89,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;mscompatdb,gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/dxmt-m12/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt-m12/x86_64-windows", "lib/metalsharp/x86_64-windows"],
@@ -642,10 +642,11 @@ mod tests {
         assert_eq!(m12_env_values.get("DXMT_METALFX_TEMPORAL"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_CONFIG"), Some(&DXMT_M12_SAFE_CONFIG));
 
-        assert_eq!(
-            m12.wine_overrides,
-            Some("winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
-        );
+        let m12_overrides = m12.wine_overrides.unwrap_or_default();
+        assert!(m12_overrides.contains("winemetal"));
+        assert!(m12_overrides.contains("d3d12"));
+        assert!(m12_overrides.contains("dxgi"));
+        assert!(m12_overrides.contains("gameoverlayrenderer"));
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 

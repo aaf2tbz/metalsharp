@@ -18,8 +18,12 @@
 )]
 
 mod anticheat;
+mod binding_contract;
 mod bottles;
+mod command_contract;
 mod d3d12_runtime_doctor;
+mod diagnostics;
+mod fna_profile;
 mod installer;
 mod kernel_translation;
 mod launch;
@@ -210,6 +214,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
         },
         (Method::Get, "/update/migrate/progress") => resp(200, migrate::read_migrate_progress()),
+        // Phase 2: report what the last migration preserved, skipped, and why.
+        (Method::Get, "/update/migrate/report") => resp(200, migrate::latest_migration_report()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
@@ -307,16 +313,29 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             }
         },
         (Method::Get, "/scan") => {
+            let mut timing = diagnostics::LaunchTiming::start();
             app_log("Scanning for installed games...");
-            match scan::scan_all() {
+            timing.mark("scan_start");
+            let result = scan::scan_all();
+            timing.mark("scan_all_done");
+            if let Some(home) = dirs::home_dir() {
+                diagnostics::record_scan_timing(&home, "scan_all", &timing);
+            }
+            match result {
                 Ok(result) => resp(200, result),
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
         (Method::Get, "/steam/status") => resp(200, steam::status()),
         (Method::Get, "/steam/library") => {
+            let mut timing = diagnostics::LaunchTiming::start();
             app_log("Loading Steam library...");
+            timing.mark("library_load_start");
             let result = steam::library();
+            timing.mark("library_load_done");
+            if let Some(home) = dirs::home_dir() {
+                diagnostics::record_scan_timing(&home, "steam_library", &timing);
+            }
             app_log(&format!("Loaded {} games", result.get("total").and_then(|t| t.as_u64()).unwrap_or(0)));
             resp(200, result)
         },
@@ -924,6 +943,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
+        // Phase 2: declarative Steam route contract table (protected + first-class lanes).
+        (Method::Get, "/bottles/route-contracts") => {
+            resp(200, json!({ "ok": true, "contracts": bottles::steam_route_contracts() }))
+        },
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
         (Method::Post, "/bottles/record-compatibility") => {
@@ -990,6 +1013,216 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/d3d12-runtime-doctor") => {
             let body = read_body(req);
             resp(200, d3d12_runtime_doctor::handle_steam_d3d12_runtime_doctor(&body))
+        },
+        // Phase 1: baseline launch observability. Stable JSON diagnostic that
+        // reports the resolved pipeline, runtime profile, wine path, prefix,
+        // artifact sources (with content hashes), staged DLL hashes, and cache
+        // directories for an appid. No launch behavior changes.
+        (Method::Get, "/diagnostics/launch") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let requested_pipeline = url_str
+                .split("pipeline=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+            resp(200, diagnostics::build_launch_diagnostic(appid, requested_pipeline))
+        },
+        (Method::Get, "/diagnostics/launch/timing") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let home = dirs::home_dir().unwrap_or_default();
+            let bottle_id = format!("steam_{}", appid);
+            match diagnostics::latest_launch_timing(&home, &bottle_id) {
+                Some(timing) => {
+                    resp(200, json!({ "ok": true, "appid": appid, "bottle_id": bottle_id, "timing": timing }))
+                },
+                None => resp(
+                    200,
+                    json!({ "ok": false, "appid": appid, "bottle_id": bottle_id, "error": "no launch timing recorded for this bottle yet" }),
+                ),
+            }
+        },
+        // Phase 3: M12 artifact + launch verification (dry-run). Reports the
+        // exact env pairs and artifact hashes M12 would load, without
+        // launching Steam or the game. Uses the same env builder as launch.
+        (Method::Get, "/diagnostics/m12/dry-run") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            resp(200, mtsp::launcher::m12_verify_dry_run(appid))
+        },
+        (Method::Get, "/diagnostics/pipeline/dry-run") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let requested_pipeline = url_str
+                .split("pipeline=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(200, mtsp::launcher::pipeline_dry_run_for(&home, appid, requested_pipeline))
+        },
+        // Phase 4: shader/PSO/cache diagnostics.
+        (Method::Get, "/diagnostics/cache-doctor") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            resp(200, mtsp::shader_cache::cache_doctor(appid))
+        },
+        (Method::Get, "/diagnostics/pso-manifests") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let limit = url_str
+                .split("limit=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(20)
+                .min(200);
+            let requested_pipeline = url_str
+                .split("pipeline=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+            let pipeline = bottles::resolve_steam_pipeline_for_request(appid, requested_pipeline);
+            let home = dirs::home_dir().unwrap_or_default();
+            let manifests = mtsp::shader_cache::recent_pso_manifests(&home, pipeline, appid, limit);
+            resp(
+                200,
+                json!({ "ok": true, "appid": appid, "pipeline": pipeline, "count": manifests.len(), "manifests": manifests }),
+            )
+        },
+        // Phase 5: descriptor / root-signature binding contract validator.
+        // Accepts a root signature manifest JSON and (optionally) reflection
+        // bindings, returns a structured pass/fail against Metal's direct-
+        // binding limits and D3D12 ABI rules.
+        (Method::Post, "/diagnostics/binding-contract/validate") => {
+            let body = read_body(req);
+            let manifest_json = body.get("root_signature").cloned().unwrap_or(json!(null));
+            let reflection_json = body.get("reflection").cloned().unwrap_or(json!([]));
+            match serde_json::from_value::<binding_contract::RootSignatureManifest>(manifest_json) {
+                Ok(manifest) => {
+                    let reflection: Vec<binding_contract::ReflectionBinding> =
+                        serde_json::from_value(reflection_json).unwrap_or_default();
+                    let report = binding_contract::validate_root_signature_with(
+                        &manifest,
+                        &binding_contract::ReflectionBindingSet::from_bindings(reflection),
+                        binding_contract::BindingLimits::default(),
+                    );
+                    resp(200, serde_json::to_value(report).unwrap_or(json!({"ok": false, "error": "serialize failed"})))
+                },
+                Err(e) => resp(400, json!({ "ok": false, "error": format!("invalid root signature manifest: {}", e) })),
+            }
+        },
+        // Phase 6: command replay / barriers / resource visibility validator.
+        // Accepts a recorded command-list trace JSON and returns a structured
+        // pass/fail against encoder-lifetime, render-pass, and transition rules.
+        (Method::Post, "/diagnostics/command-replay/validate") => {
+            let body = read_body(req);
+            let trace_json = body.get("trace").cloned().unwrap_or(json!([]));
+            match serde_json::from_value::<Vec<command_contract::CommandOp>>(trace_json) {
+                Ok(ops) => {
+                    let report = command_contract::validate_command_trace(&ops);
+                    resp(200, serde_json::to_value(report).unwrap_or(json!({"ok": false, "error": "serialize failed"})))
+                },
+                Err(e) => resp(400, json!({ "ok": false, "error": format!("invalid command trace: {}", e) })),
+            }
+        },
+        // Phase 7: runtime artifact verification (presence + sha256 per file),
+        // wineboot state, and stop-Wine-Steam target report.
+        (Method::Get, "/diagnostics/runtime-artifacts") => resp(200, installer::runtime_artifact_report()),
+        (Method::Get, "/diagnostics/wineboot-state") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let verifying = url_str.contains("verifying=true");
+            resp(200, bottles::steam_prefix_wineboot_state(appid, verifying))
+        },
+        (Method::Get, "/steam/stop-targets") => resp(200, steam::stop_wine_steam_targets()),
+        // Phase 8: Mono/FNA/XNA flavor detection, profile explanation, and
+        // conservative unproven-game classification. These explain the lane
+        // selection without changing pinned known-good behavior.
+        (Method::Get, "/diagnostics/fna/signals") => {
+            let url_str = req.url().to_string();
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| url_decode(s))
+                .unwrap_or_default();
+            let path = std::path::PathBuf::from(&game_dir);
+            if path.is_dir() {
+                resp(200, serde_json::to_value(fna_profile::detect_fna_signals(&path)).unwrap())
+            } else {
+                resp(400, json!({ "ok": false, "error": "gameDir is not a directory", "gameDir": game_dir }))
+            }
+        },
+        (Method::Get, "/diagnostics/fna/explain") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| url_decode(s))
+                .unwrap_or_default();
+            let path = std::path::PathBuf::from(&game_dir);
+            resp(200, serde_json::to_value(fna_profile::explain_profile(appid, &path)).unwrap())
+        },
+        (Method::Get, "/diagnostics/fna/classify") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| url_decode(s))
+                .unwrap_or_default();
+            let path = std::path::PathBuf::from(&game_dir);
+            resp(200, serde_json::to_value(fna_profile::classify_unproven_fna_game(appid, &path)).unwrap())
         },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
@@ -1875,6 +2108,38 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
 
 fn resp(code: u16, body: serde_json::Value) -> RouteResponse {
     RouteResponse::Json(code, body.to_string().into_bytes())
+}
+
+/// Minimal percent-decoding for URL query values (e.g. gameDir paths with
+/// spaces). Handles %20 and the common %2F. Good enough for diagnostic
+/// query params without pulling in a URL crate.
+fn url_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_val(bytes[i + 1]);
+            let lo = hex_val(bytes[i + 2]);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn resp_raw(code: u16, data: Vec<u8>, mime: &str) -> RouteResponse {

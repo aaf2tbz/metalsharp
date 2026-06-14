@@ -527,6 +527,50 @@ pub fn stop_wine_steam() -> Result<Value, Box<dyn std::error::Error>> {
     Ok(json!({"ok": true, "running": is_wine_steam_running()}))
 }
 
+/// Phase 7: report what `stop_wine_steam` would target WITHOUT actually
+/// killing anything. Makes the cleanup filter observable so "stop Wine Steam"
+/// is provably scoped to real Wine Steam helper processes (steamwebhelper,
+/// winedevice, wineserver, headless conhost, the detached Wine desktop), not
+/// a broad destructive process kill. Also lists the processes that are
+/// explicitly EXCLUDED (the macOS Steam client, and our own ripgrep/ps).
+pub fn stop_wine_steam_targets() -> Value {
+    let pids = wine_steam_cleanup_pids();
+    let this_pid = std::process::id();
+    let lines = process_lines();
+    let mut targeted = Vec::new();
+    let mut excluded = Vec::new();
+    for line in &lines {
+        let Some((pid, command)) = parse_process_line(line) else {
+            continue;
+        };
+        if pid == this_pid {
+            continue;
+        }
+        if is_wine_steam_cleanup_command(command) {
+            targeted.push(json!({"pid": pid, "command": command}));
+        } else if command.contains("Steam.app/Contents/MacOS")
+            || command.contains("steam_osx")
+            || command.contains(" rg ")
+            || command.contains("rg -i")
+            || command.contains("ps axo")
+        {
+            // These are explicitly excluded so a reviewer can prove the stop
+            // filter never touches the macOS Steam client or our own tools.
+            excluded.push(json!({"pid": pid, "command": command}));
+        }
+    }
+    json!({
+        "ok": true,
+        "targeted_pid_count": pids.len(),
+        "targeted": targeted,
+        "excluded": excluded,
+        "summary": format!(
+            "stop_wine_steam targets {} Wine Steam helper process(es); the macOS Steam client and MetalSharp's own rg/ps invocations are excluded",
+            pids.len()
+        ),
+    })
+}
+
 pub fn install_game_via_steam(appid: u32) -> Result<Value, Box<dyn std::error::Error>> {
     if !is_wine_steam_running() {
         launch_wine_steam()?;
@@ -1554,6 +1598,20 @@ pub fn watch_steamapps() -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_wine_steam_targets_report_has_required_shape() {
+        // Phase 7: the stop-targets report must expose the targeted and
+        // explicitly-excluded process lists so a reviewer can prove the stop
+        // filter never touches the macOS Steam client or our own rg/ps.
+        let report = stop_wine_steam_targets();
+        assert_eq!(report.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert!(report.get("targeted_pid_count").and_then(|v| v.as_u64()).is_some());
+        assert!(report.get("targeted").unwrap().is_array());
+        assert!(report.get("excluded").unwrap().is_array());
+        let summary = report.get("summary").and_then(|v| v.as_str()).unwrap();
+        assert!(summary.contains("Wine Steam helper"), "summary must name the target scope: {}", summary);
+    }
 
     #[test]
     fn parses_acf_quoted_fields() {

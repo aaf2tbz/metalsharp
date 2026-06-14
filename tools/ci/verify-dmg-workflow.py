@@ -61,6 +61,8 @@ def check_package_resources(assets: list[str]) -> None:
     if missing:
         fail(f"app/package.json missing extraResources entries: {missing}")
 
+    if build.get("afterPack") != "build/adhoc-deep-sign.cjs":
+        fail("app/package.json must keep afterPack=build/adhoc-deep-sign.cjs")
     if build.get("afterSign") != "build/notarize.cjs":
         fail("app/package.json must keep afterSign=build/notarize.cjs")
 
@@ -147,6 +149,16 @@ def check_workflows() -> None:
             fail(f"release workflow missing signing fallback contract: {required}")
     if "CSC_IDENTITY_AUTO_DISCOVERY=false" not in read("tools/dmg/check-apple-signing-readiness.sh"):
         fail("unsigned DMG fallback must disable Electron Builder certificate discovery")
+    adhoc_sign = read("app/build/adhoc-deep-sign.cjs")
+    for required in [
+        "METALSHARP_UNSIGNED_DMG",
+        "codesign",
+        "--deep",
+        "--timestamp=none",
+        "--verify",
+    ]:
+        if required not in adhoc_sign:
+            fail(f"ad-hoc deep-sign hook missing hardening contract: {required}")
     notarization = read("tools/dmg/verify-notarization.sh")
     for required in [
         "Authority=Developer ID Application",

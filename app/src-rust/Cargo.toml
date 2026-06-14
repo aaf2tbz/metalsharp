@@ -1,6 +1,6 @@
 [package]
 name = "metalsharp-backend"
-version = "0.46.7"
+version = "0.46.9"
 edition = "2021"
 
 [dependencies]
@@ -16,3 +16,4 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 ctrlc = "3"
 libc = "0.2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
+sha2 = "0.10"

@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.46.7",
+  "version": "0.46.9",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -44,6 +44,7 @@
     "appId": "com.metalsharp.app",
     "productName": "MetalSharp",
     "copyright": "Copyright © 2026 MetalSharp",
+    "afterPack": "build/adhoc-deep-sign.cjs",
     "afterSign": "build/notarize.cjs",
     "mac": {
       "category": "public.app-category.games",

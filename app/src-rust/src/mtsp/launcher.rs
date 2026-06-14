@@ -444,22 +444,41 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 }
 
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let mut timing = crate::diagnostics::LaunchTiming::start();
+    timing.mark("pipeline_resolution_start");
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
+    timing.mark("pipeline_resolution_done");
     prepare_start_protected_game_for_pipeline(appid, pipeline_id);
+    timing.mark("start_protected_game_prepare_done");
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    timing.mark("recipe_build_done");
     let deployed_sources: Vec<String> = {
         validate_recipe_runtime(&recipe)?;
+        timing.mark("recipe_runtime_validate_done");
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_legacy_injections(game_dir)?;
+            timing.mark("legacy_injection_cleanup_done");
         }
         let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
         deploy_recipe_dlls(&recipe)?;
+        timing.mark("dll_staging_done");
         let home = dirs::home_dir().ok_or("no home dir")?;
         let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
         deploy_prefix_route_dlls(&recipe, &prefix)?;
+        timing.mark("prefix_route_dll_deploy_done");
         sources
     };
+    timing.mark("prepare_complete");
+
+    // Persist launch timing so performance deltas can be compared between PRs
+    // via GET /diagnostics/launch/timing?appid=...
+    let home_for_timing = dirs::home_dir();
+    if let Some(home) = home_for_timing {
+        timing.record_for_bottle(&home, &format!("steam_{}", appid));
+    }
+
+    let timing_json = timing.to_json();
 
     Ok(serde_json::json!({
         "ok": true,
@@ -469,6 +488,7 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         "recipe": recipe,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
+        "timing": timing_json,
     }))
 }
 
@@ -524,6 +544,129 @@ pub fn prepare_steam_pipeline_env(
     Ok((env, recipe))
 }
 
+/// Phase 3: M12 artifact and launch verification (dry-run).
+///
+/// Proves the M12 route would load the intended DXMT/winemetal artifacts
+/// WITHOUT launching Steam or the game. This runs through the same
+/// environment builder (`steam_pipeline_env_pairs`) as `launch_dxmt_metal`,
+/// so the env pairs and artifact sources reported here are exactly what a
+/// real M12 launch would use. Nothing is deployed or spawned.
+pub fn m12_verify_dry_run(appid: u32) -> serde_json::Value {
+    match dirs::home_dir() {
+        Some(home) => pipeline_dry_run_for(&home, appid, Some(PipelineId::M12)),
+        None => serde_json::json!({"ok": false, "appid": appid, "error": "home directory could not be resolved"}),
+    }
+}
+
+/// Read-only pipeline dry-run with an explicit home (used by tests so they
+/// never mutate the process-global METALSHARP_HOME).
+///
+/// Artifact sources are derived from the pipeline node's `deploy_dlls`
+/// (resolved against the runtime wine root) so verification reflects the
+/// RUNTIME readiness, independent of whether a specific game is installed.
+/// The env pairs come from the same `steam_pipeline_env_pairs` builder the
+/// launch path uses.
+pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineId>) -> serde_json::Value {
+    let home = home.to_path_buf();
+    let pipeline = super::rules::resolve_requested_pipeline(appid, requested);
+    let node = get_pipeline(pipeline);
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+
+    // Build the SAME env pairs the launch path uses (read-only).
+    let env = steam_pipeline_env_pairs(&home, node, appid);
+    let env_keys: std::collections::HashSet<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
+    let env_pairs_json: Vec<serde_json::Value> =
+        env.iter().map(|(k, v)| serde_json::json!({ "key": k, "value": v })).collect();
+
+    // Artifact sources derived from the pipeline node's deploy list, resolved
+    // against the runtime wine root. Optional stubs (nvapi/nvngx/atidxx) are
+    // tolerated as missing.
+    let mut deploy_dlls: Vec<serde_json::Value> = Vec::new();
+    let mut missing: Vec<serde_json::Value> = Vec::new();
+    let mut windows_dll_dir: Option<PathBuf> = None;
+    for deploy in &node.deploy_dlls {
+        let source_path = ms_root.join(deploy.source_subpath).join(deploy.filename);
+        if windows_dll_dir.is_none() {
+            windows_dll_dir = source_path.parent().map(|p| p.to_path_buf());
+        }
+        let present = source_path.exists();
+        let optional_stub = deploy.filename.starts_with("nvapi")
+            || deploy.filename.starts_with("nvngx")
+            || deploy.filename.starts_with("atidxx");
+        let sha = if present { crate::diagnostics::file_sha256(&source_path) } else { None };
+        let size = if present { std::fs::metadata(&source_path).ok().map(|m| m.len()) } else { None };
+        deploy_dlls.push(serde_json::json!({
+            "filename": deploy.filename,
+            "source_subpath": deploy.source_subpath,
+            "source_path": source_path.to_string_lossy(),
+            "present": present,
+            "optional": optional_stub,
+            "sha256": sha,
+            "size_bytes": size,
+        }));
+        if !present && !optional_stub {
+            missing.push(serde_json::json!({
+                "filename": deploy.filename,
+                "source_subpath": deploy.source_subpath,
+                "source_path": source_path.to_string_lossy(),
+            }));
+        }
+    }
+
+    // For the isolated M12/M13 lane, also verify the x86_64-unix sidecars that
+    // winemetal requires at runtime.
+    let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
+    let unix_lib_dir = if matches!(pipeline, PipelineId::M12 | PipelineId::M13) {
+        let dir = ms_root.join("lib").join("dxmt-m12").join("x86_64-unix");
+        for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+            let path = dir.join(sidecar);
+            let present = path.exists();
+            let sha = if present { crate::diagnostics::file_sha256(&path) } else { None };
+            unix_sidecars.push(serde_json::json!({
+                "filename": sidecar,
+                "path": path.to_string_lossy(),
+                "present": present,
+                "sha256": sha,
+            }));
+            if !present {
+                missing.push(serde_json::json!({
+                    "filename": sidecar,
+                    "source_path": path.to_string_lossy(),
+                    "category": "unix_sidecar",
+                }));
+            }
+        }
+        Some(dir)
+    } else {
+        None
+    };
+
+    serde_json::json!({
+        "ok": missing.is_empty(),
+        "schema_version": 1,
+        "dry_run": true,
+        "appid": appid,
+        "pipeline": pipeline,
+        "pipeline_name": node.name,
+        "runtime_root": ms_root.to_string_lossy(),
+        "windows_dll_dir": windows_dll_dir.as_ref().map(|d| d.to_string_lossy()).unwrap_or_default(),
+        "windows_dll_dir_exists": windows_dll_dir.as_ref().map(|d| d.exists()).unwrap_or(false),
+        "unix_lib_dir": unix_lib_dir.as_ref().map(|d| d.to_string_lossy()),
+        "unix_lib_dir_exists": unix_lib_dir.as_ref().map(|d| d.exists()),
+        "deploy_dlls": deploy_dlls,
+        "unix_sidecars": unix_sidecars,
+        "env_pairs": env_pairs_json,
+        "env_keys_present": {
+            "WINEDLLOVERRIDES": env_keys.contains("WINEDLLOVERRIDES"),
+            "DXMT_SHADER_CACHE_PATH": env_keys.contains("DXMT_SHADER_CACHE_PATH"),
+            "DYLD_FALLBACK_LIBRARY_PATH": env_keys.contains("DYLD_FALLBACK_LIBRARY_PATH") || env_keys.contains("LD_LIBRARY_PATH"),
+            "SteamAppId": env_keys.contains("SteamAppId"),
+            "DXMT_WINEMETAL_UNIXLIB": env_keys.contains("DXMT_WINEMETAL_UNIXLIB"),
+        },
+        "missing": missing,
+    })
+}
+
 pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
     validate_recipe_runtime(recipe)?;
 
@@ -562,11 +705,17 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
         }
 
         std::fs::copy(&deploy.source_path, &deploy.dest_path)?;
+        let staged_sha256 = crate::diagnostics::file_sha256(&deploy.dest_path);
+        let source_sha256 =
+            if staged_sha256.is_some() { crate::diagnostics::file_sha256(&deploy.source_path) } else { None };
         manifest_dlls.push(serde_json::json!({
             "filename": deploy.filename,
             "source_path": deploy.source_path,
             "dest_path": deploy.dest_path,
             "backup_path": if backup_path.exists() { Some(backup_path) } else { None },
+            "sha256": staged_sha256,
+            "source_sha256": source_sha256,
+            "matches_source": matches!((&staged_sha256, &source_sha256), (Some(a), Some(b)) if a == b),
         }));
     }
 
@@ -3998,6 +4147,187 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
 mod tests {
     use super::*;
     use crate::mtsp::recipe;
+
+    #[test]
+    fn deploy_steam_appid_writes_visible_appid_file_for_each_known_subdir() {
+        // Phase 2: routes that depend on Steam-visible identity must stage
+        // steam_appid.txt into every standard binary subdir the game may
+        // launch from, plus update an active Goldberg force_steam_appid.txt.
+        let game_dir = test_dir("deploy-steam-appid");
+        let sub_win64 = game_dir.join("Binaries").join("Win64");
+        let sub_bin = game_dir.join("bin");
+        std::fs::create_dir_all(&sub_win64).unwrap();
+        std::fs::create_dir_all(&sub_bin).unwrap();
+        // "Game" subdir absent on purpose: it must be skipped, not panic.
+
+        deploy_steam_appid(&game_dir, 504230);
+
+        assert_eq!(std::fs::read_to_string(sub_win64.join("steam_appid.txt")).unwrap(), "504230");
+        assert_eq!(std::fs::read_to_string(sub_bin.join("steam_appid.txt")).unwrap(), "504230");
+        assert_eq!(std::fs::read_to_string(game_dir.join("steam_appid.txt")).unwrap(), "504230");
+        assert!(!game_dir.join("Game").join("steam_appid.txt").exists(), "absent subdirs must be skipped");
+
+        // An active Goldberg emulator setting must be kept in sync.
+        let goldberg_dir = game_dir.join("steam_settings");
+        std::fs::create_dir_all(&goldberg_dir).unwrap();
+        std::fs::write(goldberg_dir.join("force_steam_appid.txt"), "0").unwrap();
+        deploy_steam_appid(&game_dir, 504230);
+        assert_eq!(
+            std::fs::read_to_string(goldberg_dir.join("force_steam_appid.txt")).unwrap(),
+            "504230",
+            "goldberg force_steam_appid.txt must track the real appid"
+        );
+        let _ = std::fs::remove_dir_all(&game_dir);
+    }
+
+    #[test]
+    fn m12_pipeline_deploy_list_includes_d3d12_and_uses_isolated_dxmt_m12_surface() {
+        // Phase 3 contract: M12 must deploy d3d12.dll (plus dxgi/d3d11/
+        // d3d10core/winemetal) from the isolated lib/dxmt-m12 surface.
+        let node = get_pipeline(PipelineId::M12);
+        let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
+        for required in ["d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll"] {
+            assert!(filenames.contains(&required), "M12 deploy list must include {} (got {:?})", required, filenames);
+        }
+        for deploy in &node.deploy_dlls {
+            if matches!(
+                deploy.filename,
+                "d3d12.dll" | "d3d11.dll" | "dxgi.dll" | "d3d10core.dll" | "winemetal.dll" | "dxgi_dxmt.dll"
+            ) {
+                assert!(
+                    deploy.source_subpath.starts_with("lib/dxmt-m12/"),
+                    "M12 DLL {} must come from lib/dxmt-m12, got {}",
+                    deploy.filename,
+                    deploy.source_subpath
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn m11_pipeline_deploy_list_does_not_include_d3d12_and_uses_legacy_dxmt_surface() {
+        // Phase 3 contract: M11 must NOT deploy d3d12.dll and must point at the
+        // legacy lib/dxmt surface, never lib/dxmt-m12.
+        let node = get_pipeline(PipelineId::M11);
+        let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
+        assert!(!filenames.contains(&"d3d12.dll"), "M11 deploy list must NOT include d3d12.dll (got {:?})", filenames);
+        for deploy in &node.deploy_dlls {
+            assert!(
+                !deploy.source_subpath.starts_with("lib/dxmt-m12/"),
+                "M11 DLL {} must not come from lib/dxmt-m12 (got {})",
+                deploy.filename,
+                deploy.source_subpath
+            );
+        }
+    }
+
+    #[test]
+    fn m12_dry_run_includes_d3d12_dll_and_m11_dry_run_does_not() {
+        // Phase 3 contract: the dry-run verifier's deploy list must reflect
+        // the pipeline node. M12 dry-run includes d3d12.dll; M11 does not.
+        // Uses an explicit temp home so no global env is mutated.
+        let home = std::env::temp_dir().join("ms-m12-dryrun-contract");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+
+        let m12 = pipeline_dry_run_for(&home, 2379780, Some(PipelineId::M12));
+        let m11 = pipeline_dry_run_for(&home, 17300, Some(PipelineId::M11));
+
+        let m12_filenames: Vec<String> = m12
+            .get("deploy_dlls")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .map(|d| d.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        let m11_filenames: Vec<String> = m11
+            .get("deploy_dlls")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .map(|d| d.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+
+        assert!(
+            m12_filenames.contains(&"d3d12.dll".to_string()),
+            "M12 dry-run must include d3d12.dll: {:?}",
+            m12_filenames
+        );
+        assert!(
+            !m11_filenames.contains(&"d3d12.dll".to_string()),
+            "M11 dry-run must NOT include d3d12.dll: {:?}",
+            m11_filenames
+        );
+
+        // Both dry-runs must report the env keys the launch path sets.
+        let m12_env = m12.get("env_keys_present").unwrap();
+        assert_eq!(m12_env.get("WINEDLLOVERRIDES").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(m12_env.get("SteamAppId").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(m12.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn m12_dry_run_verifies_unix_sidecars_and_marks_missing_artifacts() {
+        // Phase 3: the M12 dry-run must enumerate the x86_64-unix sidecars and
+        // report missing required artifacts as a structured failure (not a
+        // silent ok=true). With an empty temp home, all artifacts are absent.
+        let home = std::env::temp_dir().join("ms-m12-dryrun-empty");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+
+        let dry = pipeline_dry_run_for(&home, 2379780, Some(PipelineId::M12));
+
+        // Unix sidecars must be enumerated for the M12 lane.
+        let sidecar_names: Vec<String> = dry
+            .get("unix_sidecars")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .map(|s| s.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        for required in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+            assert!(
+                sidecar_names.contains(&required.to_string()),
+                "M12 dry-run must verify {}: {:?}",
+                required,
+                sidecar_names
+            );
+        }
+
+        // d3d12.dll is a required (non-optional) M12 artifact, so it must be
+        // listed as missing when absent.
+        let missing_filenames: Vec<String> = dry
+            .get("missing")
+            .and_then(|v| v.as_array())
+            .unwrap()
+            .iter()
+            .map(|m| m.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            missing_filenames.contains(&"d3d12.dll".to_string()),
+            "M12 dry-run must flag missing d3d12.dll: {:?}",
+            missing_filenames
+        );
+        assert_eq!(dry.get("ok").and_then(|v| v.as_bool()), Some(false), "empty home must yield ok=false");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn m12_pipeline_env_vars_set_winemetal_overrides_and_shader_cache() {
+        // Phase 3 contract: the M12 env builder must set the winemetal
+        // WINEDLLOVERRIDES, route the wine DLL path to dxmt-m12, and point the
+        // shader cache at the isolated m12 lane.
+        let node = get_pipeline(PipelineId::M12);
+        assert!(node.wine_overrides.unwrap_or("").contains("winemetal"));
+        assert!(
+            node.winedllpath_dirs.iter().any(|d| d.starts_with("lib/dxmt-m12")),
+            "M12 winedllpath must route to dxmt-m12"
+        );
+        assert_eq!(node.shader_cache_subdir, Some("m12"), "M12 shader cache must be isolated under m12");
+    }
 
     #[test]
     fn m9_cache_env_uses_dxmt_family_not_dxvk() {
