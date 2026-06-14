@@ -4,7 +4,6 @@ import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
 import IconCrosshair from "~icons/lucide/crosshair";
-import IconSmartphone from "~icons/lucide/smartphone";
 import IconRefreshCcw from "~icons/lucide/refresh-ccw";
 import IconBattery from "~icons/lucide/battery";
 
@@ -142,11 +141,12 @@ function requestArtworkRetry(appid: number) {
 function updateGameGridColumns() {
   const grid = gameGridRef.value;
   if (!grid) return;
-  const minColumnWidth = 300;
+  const minColumnWidth = 340;
   const gap = 18;
   const width = grid.clientWidth;
   const availableColumns = Math.max(1, Math.floor((width + gap) / (minColumnWidth + gap)));
-  const visibleColumns = Math.max(1, filteredGames.value.length);
+  const minimumVisibleColumns = filteredGames.value.length === 1 && availableColumns >= 2 ? 2 : 1;
+  const visibleColumns = Math.max(minimumVisibleColumns, filteredGames.value.length);
   gameGridColumns.value = Math.min(availableColumns, visibleColumns);
 }
 
@@ -345,8 +345,6 @@ watch([library, search, filter], () => {
         <div class="library-status-strip">
           <span v-if="wineSteamRunning" class="badge badge-ok">Steam Running</span>
           <span v-else-if="wineSteamInstalled" class="badge badge-warn">Steam Offline</span>
-          <span v-if="macSteamRunning" class="badge badge-ok">Mac Steam Running</span>
-          <span v-else-if="macSteamInstalled" class="badge badge-warn">Mac Steam Offline</span>
           <span class="badge" :class="backendConnected ? 'badge-ok' : 'badge-error'">
             {{ backendConnected ? `Backend${backendVersion ? " v" + backendVersion : ""}` : "Backend Offline" }}
           </span>
@@ -357,15 +355,6 @@ watch([library, search, filter], () => {
           <button class="btn btn-secondary library-control-button" title="Wine Steam" @click="toggleSteam">
             <IconCrosshair class="control-icon" width="15" height="15" />
             <span class="control-label">{{ wineSteamRunning ? "Stop Wine Steam" : "Start Wine Steam" }}</span>
-          </button>
-          <button
-            v-if="macSteamInstalled"
-            class="btn btn-secondary library-control-button"
-            title="MacOS Steam"
-            @click="toggleMacSteam"
-          >
-            <IconSmartphone class="control-icon" width="15" height="15" />
-            <span class="control-label">{{ macSteamRunning ? "Stop MacOS Steam" : "Start MacOS Steam" }}</span>
           </button>
           <button
             class="btn btn-secondary library-control-button refresh-button"
@@ -421,18 +410,35 @@ watch([library, search, filter], () => {
 .library-view {
   padding: 0 28px 32px;
   height: 100%;
+  width: 100%;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--bg-deep);
+}
+:global(:root[data-theme="developer"]) .library-view {
+  background:
+    radial-gradient(circle at 18% 4%, rgba(255, 46, 247, 0.15), transparent 30%),
+    radial-gradient(circle at 90% 16%, rgba(0, 245, 255, 0.13), transparent 32%),
+    linear-gradient(180deg, rgba(185, 255, 77, 0.04), transparent 240px),
+    var(--bg-deep);
 }
 
 .library-header {
   margin: 0 -28px 20px;
   padding: 44px 28px 14px;
+  min-width: 0;
   background: var(--page-header-bg);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
   position: relative;
   overflow: hidden;
+}
+:global(:root[data-theme="developer"]) .library-header {
+  border-bottom-color: rgba(185, 255, 77, 0.28);
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 245, 255, 0.22),
+    0 20px 56px rgba(0, 0, 0, 0.22);
 }
 .library-header::after {
   content: "";
@@ -442,17 +448,32 @@ watch([library, search, filter], () => {
               radial-gradient(ellipse 40% 60% at 80% 50%, rgba(95, 183, 232, 0.05) 0%, transparent 60%);
   pointer-events: none;
 }
+:global(:root[data-theme="developer"]) .library-header::after {
+  background:
+    repeating-linear-gradient(90deg, rgba(185, 255, 77, 0.08) 0 1px, transparent 1px 24px),
+    linear-gradient(90deg, rgba(255, 46, 247, 0.10), transparent 34%, rgba(0, 245, 255, 0.09) 78%, transparent);
+}
 .library-title-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   margin-bottom: 18px;
+  min-width: 0;
+}
+.library-title-row > div:first-child {
+  min-width: 0;
 }
 .library-header h1 {
   font-size: 24px;
   font-weight: 750;
   line-height: 1.1;
+}
+:global(:root[data-theme="developer"]) .library-header h1 {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-weight: 800;
 }
 .library-counts {
   margin-top: 6px;
@@ -465,15 +486,25 @@ watch([library, search, filter], () => {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-  min-width: 220px;
+  justify-self: end;
+  min-width: 0;
+  max-width: 100%;
+}
+.library-status-strip .badge {
+  min-width: 0;
+  max-width: min(260px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .library-controls {
   display: grid;
-  grid-template-columns: auto minmax(280px, 1fr);
+  grid-template-columns: minmax(0, max-content) minmax(240px, 1fr);
   align-items: center;
   gap: 12px;
   min-width: 0;
+  width: 100%;
   -webkit-app-region: no-drag;
 }
 .library-launch-actions {
@@ -485,7 +516,7 @@ watch([library, search, filter], () => {
 }
 .library-controls-center {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 148px;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 148px);
   gap: 10px;
   min-width: 0;
 }
@@ -498,30 +529,33 @@ watch([library, search, filter], () => {
 .library-control-button {
   flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 .control-icon {
   flex: 0 0 15px;
 }
 .control-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 @media (max-width: 1040px) {
+  .library-title-row {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .library-status-strip {
+    justify-self: start;
+    justify-content: flex-start;
+  }
   .library-controls {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 880px) {
-  .library-title-row {
-    flex-direction: column;
-    gap: 10px;
-  }
-  .library-status-strip {
-    justify-content: flex-start;
-    min-width: 0;
-  }
   .library-controls {
     gap: 6px;
   }
@@ -530,7 +564,7 @@ watch([library, search, filter], () => {
   }
   .library-launch-actions {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
   .library-controls-center {
     grid-template-columns: 1fr;
@@ -553,11 +587,26 @@ watch([library, search, filter], () => {
   }
 }
 
+@media (max-width: 720px) {
+  .library-header {
+    padding-top: 36px;
+  }
+  .library-controls-center {
+    grid-template-columns: 1fr;
+  }
+  .library-status-strip .badge {
+    max-width: calc(100vw - var(--sidebar-width-collapsed) - 48px);
+  }
+}
+
 .game-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
   gap: 18px;
   align-items: start;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
 }
 
 .game-grid-column {

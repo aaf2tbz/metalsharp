@@ -100,6 +100,10 @@ function stopPolling() {
 }
 
 async function restartApp() {
+  message.value = "Stopping Wine Steam...";
+  try {
+    await window.metalsharp.request("POST", "/steam/stop", undefined, 10000);
+  } catch {}
   await window.metalsharp.restartAfterMigration();
 }
 

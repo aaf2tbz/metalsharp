@@ -1,36 +1,56 @@
 #!/usr/bin/env python3
-"""MetalSharp Updater — handles app update installation after download.
+"""MetalSharp update handoff helper.
 
-Spawned by the Electron app with detached=true so it survives the app quitting.
-Performs: kill processes → mount DMG → install → relaunch → verify.
+This helper is intentionally detached from Electron. The app starts it after a
+DMG is downloaded, then this process owns the handoff:
 
-Communication: writes JSON status to ~/.metalsharp/update_install_status.json
-The new MetalSharp instance reads this file on launch to show success/failure.
+1. show "Closing MetalSharp..." through the status file
+2. wait for the Electron app to exit, forcing it only if needed
+3. stop the backend after the app is gone
+4. mount the update DMG
+5. open MetalSharp.app directly from the mounted DMG
 
-Usage:
-    python3 update.py --dmg <path> --backend-pid <pid> --target-version <ver> \
-                      [--status-file <path>] [--python <path>]
+The launched app/backend version owns migration detection. A post-update marker
+is still written as a fallback so the migration wizard opens even if the backend
+is slow to answer during startup.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
 import os
+import plistlib
 import signal
 import subprocess
 import sys
 import time
-import urllib.request
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 try:
     os.setsid()
 except OSError:
     pass
 
-APP_PATH = "/Applications/MetalSharp.app"
-BACKEND_PORT = 9274
+APP_BUNDLE_ID = "com.metalsharp.app"
+BACKEND_PROCESS = "metalsharp-backend"
+APP_PROCESS_NAMES = [
+    "MetalSharp",
+    "MetalSharp Helper",
+    "MetalSharp Helper (GPU)",
+    "MetalSharp Helper (Renderer)",
+]
 
 
-def write_status(status_file, phase, percent, message, error=None, new_version=None):
+def write_status(
+    status_file: Path,
+    phase: str,
+    percent: int,
+    message: str,
+    error: Optional[str] = None,
+    new_version: Optional[str] = None,
+) -> None:
     data = {
         "phase": phase,
         "percent": percent,
@@ -40,393 +60,364 @@ def write_status(status_file, phase, percent, message, error=None, new_version=N
         "timestamp": time.time(),
     }
     try:
-        with open(status_file, "w") as f:
-            json.dump(data, f)
+        status_file.parent.mkdir(parents=True, exist_ok=True)
+        status_file.write_text(json.dumps(data), encoding="utf-8")
     except Exception:
         pass
 
 
-def read_status(status_file):
-    try:
-        with open(status_file, "r") as f:
-            return json.load(f)
-    except Exception:
-        return None
+def run(cmd: List[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def run(cmd, **kwargs):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=30, **kwargs)
-
-
-def is_pid_alive(pid):
+def is_pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
     try:
         os.kill(pid, 0)
         return True
-    except (ProcessLookupError, PermissionError, OSError):
+    except (ProcessLookupError, OSError):
         return False
-
-
-def kill_pid(pid, timeout=10):
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except (ProcessLookupError, PermissionError, OSError):
+    except PermissionError:
         return True
+
+
+def wait_for_pid_exit(pid: int, timeout: float) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         if not is_pid_alive(pid):
             return True
-        time.sleep(0.3)
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-    time.sleep(0.5)
+        time.sleep(0.25)
     return not is_pid_alive(pid)
 
 
-def kill_by_patterns(patterns):
-    for pat in patterns:
-        try:
-            subprocess.run(["pkill", "-x", pat], capture_output=True, timeout=5)
-        except Exception:
-            pass
-    for pat in patterns:
-        try:
-            subprocess.run(["pkill", "-f", pat], capture_output=True, timeout=5)
-        except Exception:
-            pass
-    time.sleep(1)
-
-
-def verify_all_dead(patterns, timeout=15):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        all_dead = True
-        for pat in patterns:
-            r = subprocess.run(["pgrep", "-x", pat], capture_output=True, text=True)
-            if r.returncode == 0 and r.stdout.strip():
-                all_dead = False
-                for pid_str in r.stdout.strip().split("\n"):
-                    try:
-                        os.kill(int(pid_str.strip()), signal.SIGKILL)
-                    except Exception:
-                        pass
-        if all_dead:
-            return True
-        time.sleep(0.5)
-    return False
-
-
-def mount_dmg(dmg_path):
-    r = run(["hdiutil", "attach", "-nobrowse", "-quiet", dmg_path])
-    if r.returncode == 0:
-        return _parse_mount(r.stdout)
-
-    apple = (
-        'do shell script "hdiutil attach -nobrowse -quiet '
-        '\\"' + dmg_path + '\\""'
-        " with administrator privileges"
-    )
-    r = run(["osascript", "-e", apple])
-    if r.returncode == 0:
-        time.sleep(2)
-        info = run(["hdiutil", "info"])
-        return _parse_mount_info(info.stdout, dmg_path)
-
-    return None
-
-
-def _parse_mount(output):
-    for line in output.strip().split("\n"):
-        parts = line.split()
-        if parts and parts[-1].startswith("/Volumes/"):
-            return parts[-1]
-    return None
-
-
-def _parse_mount_info(output, dmg_path):
-    lines = output.split("\n")
-    found = False
-    for line in lines:
-        if dmg_path in line:
-            found = True
-        if found and "/Volumes/" in line:
-            idx = line.index("/Volumes/")
-            rest = line[idx:].strip()
-            return rest
-    return None
-
-
-def find_app_in_mount(mount_point):
+def signal_pid(pid: int, sig: signal.Signals) -> None:
+    if pid <= 0:
+        return
     try:
-        for entry in os.listdir(mount_point):
-            if entry.endswith(".app") and "metalsharp" in entry.lower():
-                return os.path.join(mount_point, entry)
+        os.kill(pid, sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def pgrep_exact(name: str) -> List[int]:
+    try:
+        result = run(["pgrep", "-x", name], timeout=5)
+    except Exception:
+        return []
+    if result.returncode != 0:
+        return []
+    pids: List[int] = []
+    for raw in result.stdout.splitlines():
+        try:
+            pids.append(int(raw.strip()))
+        except ValueError:
+            pass
+    return pids
+
+
+def pkill_exact(name: str, sig: str = "TERM") -> None:
+    try:
+        run(["pkill", f"-{sig}", "-x", name], timeout=5)
     except Exception:
         pass
+
+
+def wait_for_names_gone(names: List[str], timeout: float) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not any(pgrep_exact(name) for name in names):
+            return True
+        time.sleep(0.3)
+    return not any(pgrep_exact(name) for name in names)
+
+
+def quit_app(app_pid: int, status_file: Path, target_version: str) -> None:
+    write_status(status_file, "closing_app", 25, "Closing MetalSharp...", new_version=target_version)
+
+    # Give the renderer poller a chance to display the closing message before
+    # the external helper tells Electron to exit.
+    time.sleep(2)
+
+    try:
+        run(["osascript", "-e", f'tell application id "{APP_BUNDLE_ID}" to quit'], timeout=8)
+    except Exception:
+        pass
+
+    if app_pid > 0 and not wait_for_pid_exit(app_pid, 15):
+        signal_pid(app_pid, signal.SIGTERM)
+        wait_for_pid_exit(app_pid, 8)
+    if app_pid > 0 and is_pid_alive(app_pid):
+        signal_pid(app_pid, signal.SIGKILL)
+        wait_for_pid_exit(app_pid, 3)
+
+    for name in APP_PROCESS_NAMES:
+        pkill_exact(name, "TERM")
+    if not wait_for_names_gone(APP_PROCESS_NAMES, 8):
+        for name in APP_PROCESS_NAMES:
+            pkill_exact(name, "KILL")
+        wait_for_names_gone(APP_PROCESS_NAMES, 3)
+
+
+def stop_backend(backend_pid: int, status_file: Path, target_version: str) -> None:
+    write_status(status_file, "killing_backend", 35, "Stopping backend...", new_version=target_version)
+    if backend_pid > 0:
+        signal_pid(backend_pid, signal.SIGTERM)
+        wait_for_pid_exit(backend_pid, 8)
+        if is_pid_alive(backend_pid):
+            signal_pid(backend_pid, signal.SIGKILL)
+            wait_for_pid_exit(backend_pid, 3)
+
+    pkill_exact(BACKEND_PROCESS, "TERM")
+    if not wait_for_names_gone([BACKEND_PROCESS], 8):
+        pkill_exact(BACKEND_PROCESS, "KILL")
+        wait_for_names_gone([BACKEND_PROCESS], 3)
+
+
+def verify_dmg(dmg_path: Path) -> bool:
+    if not dmg_path.is_file():
+        return False
+    try:
+        result = run(["hdiutil", "verify", str(dmg_path)], timeout=120)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def mount_dmg(dmg_path: Path) -> Optional[str]:
+    try:
+        result = run(["hdiutil", "attach", "-plist", "-nobrowse", str(dmg_path)], timeout=120)
+    except Exception:
+        result = subprocess.CompletedProcess([], 1, "", "")
+
+    if result.returncode == 0:
+        mount_point = parse_attach_plist(result.stdout.encode("utf-8"))
+        if mount_point:
+            return mount_point
+
+    # Rarely, attaching a downloaded image may require a system prompt.
+    escaped = str(dmg_path).replace('"', '\\"')
+    script = f'do shell script "hdiutil attach -nobrowse \\"{escaped}\\"" with administrator privileges'
+    try:
+        result = run(["osascript", "-e", script], timeout=180)
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    time.sleep(2)
+    return find_mount_for_dmg(dmg_path)
+
+
+def parse_attach_plist(raw: bytes) -> Optional[str]:
+    try:
+        data = plistlib.loads(raw)
+    except Exception:
+        return None
+    for entity in data.get("system-entities", []):
+        mount_point = entity.get("mount-point")
+        if isinstance(mount_point, str) and mount_point.startswith("/Volumes/"):
+            return mount_point
     return None
 
 
-def admin_rm_rf(path):
-    r = run(["rm", "-rf", path])
-    if r.returncode == 0:
-        return True
-    apple = 'do shell script "rm -rf \\"' + path + '\\"" with administrator privileges'
-    r = run(["osascript", "-e", apple])
-    return r.returncode == 0
+def find_mount_for_dmg(dmg_path: Path) -> Optional[str]:
+    try:
+        result = run(["hdiutil", "info", "-plist"], timeout=30)
+        data = plistlib.loads(result.stdout.encode("utf-8"))
+    except Exception:
+        return None
+    for image in data.get("images", []):
+        image_path = image.get("image-path")
+        if image_path and Path(image_path) != dmg_path:
+            continue
+        for entity in image.get("system-entities", []):
+            mount_point = entity.get("mount-point")
+            if isinstance(mount_point, str) and mount_point.startswith("/Volumes/"):
+                return mount_point
+    return None
 
 
-def admin_cp_r(src, dst):
-    r = run(["cp", "-R", src, dst])
-    if r.returncode == 0:
-        return True
-    apple = (
-        'do shell script "cp -R \\"'
-        + src
-        + '\\" \\"'
-        + dst
-        + '\\"" with administrator privileges'
-    )
-    r = run(["osascript", "-e", apple])
-    return r.returncode == 0
+def detach_mount(mount_point: Optional[str]) -> None:
+    if not mount_point:
+        return
+    try:
+        run(["hdiutil", "detach", mount_point, "-quiet"], timeout=30)
+    except Exception:
+        pass
 
 
-def wait_for_backend(timeout=45):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            req = urllib.request.Request(
-                "http://127.0.0.1:" + str(BACKEND_PORT) + "/status"
-            )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read())
-                return data.get("version"), data.get("pid")
-        except Exception:
-            pass
-        time.sleep(1)
-    return None, None
+def find_app_in_mount(mount_point: str) -> Optional[Path]:
+    root = Path(mount_point)
+    try:
+        for entry in root.iterdir():
+            if entry.suffix == ".app" and "metalsharp" in entry.name.lower():
+                return entry
+    except Exception:
+        return None
+    return None
 
 
-def main():
-    parser = argparse.ArgumentParser(description="MetalSharp Updater")
+def read_app_version(app_path: Path) -> str:
+    plist_path = app_path / "Contents" / "Info.plist"
+    try:
+        with plist_path.open("rb") as handle:
+            value = plistlib.load(handle).get("CFBundleShortVersionString", "")
+            return str(value)
+    except Exception:
+        return ""
+
+
+def clean_version(value: str) -> str:
+    raw = value.strip().lstrip("v").split("-", 1)[0].split("+", 1)[0]
+    parts = []
+    for part in raw.split("."):
+        digits = ""
+        for char in part:
+            if not char.isdigit():
+                break
+            digits += char
+        if digits:
+            parts.append(digits)
+    return ".".join(parts)
+
+
+def verify_app_bundle(app_path: Path, target_version: str) -> Tuple[bool, str]:
+    required = [
+        app_path / "Contents" / "Info.plist",
+        app_path / "Contents" / "MacOS" / "MetalSharp",
+        app_path / "Contents" / "Resources" / "runtime" / "metalsharp-backend",
+    ]
+    for path in required:
+        if not path.is_file() or path.stat().st_size <= 0:
+            return False, f"Update app is missing {path}"
+
+    updater_dir = app_path / "Contents" / "Resources" / "scripts" / "tools" / "updater"
+    if not (updater_dir / "update.py").is_file() and not (updater_dir / "update.sh").is_file():
+        return False, "Update app is missing updater handoff tools"
+
+    actual = clean_version(read_app_version(app_path))
+    expected = clean_version(target_version)
+    if not actual:
+        return False, "Update app version could not be read"
+    if actual != expected:
+        return False, f"Update app version {actual} does not match target {expected}"
+    return True, ""
+
+
+def write_migration_marker(metalsharp_home: Path, target_version: str) -> None:
+    try:
+        metalsharp_home.mkdir(parents=True, exist_ok=True)
+        marker = metalsharp_home / ".post-update-migration"
+        marker.write_text(
+            json.dumps({"needed": True, "target_version": target_version, "timestamp": time.time()}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def open_dmg_app(app_path: Path) -> bool:
+    try:
+        result = run(["open", "-n", str(app_path)], timeout=30)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="MetalSharp update handoff helper")
     parser.add_argument("--dmg", required=True)
     parser.add_argument("--backend-pid", required=True, type=int)
     parser.add_argument("--target-version", required=True)
-    parser.add_argument(
-        "--status-file",
-        default=os.path.expanduser("~/.metalsharp/update_install_status.json"),
-    )
-    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--status-file", default=os.path.expanduser("~/.metalsharp/update_install_status.json"))
+    parser.add_argument("--metalsharp-home", default=os.path.expanduser("~/.metalsharp"))
+    parser.add_argument("--app-pid", default=0, type=int)
     args = parser.parse_args()
 
-    sf = args.status_file
-    tv = args.target_version
-    dmg = args.dmg
-    bpid = args.backend_pid
+    status_file = Path(args.status_file)
+    metalsharp_home = Path(args.metalsharp_home)
+    target_version = args.target_version
+    dmg_path = Path(args.dmg).expanduser().resolve()
+    mount_point: Optional[str] = None
 
-    write_status(sf, "starting", 0, "Starting update...", new_version=tv)
+    write_status(status_file, "starting", 0, "Starting update handoff...", new_version=target_version)
 
-    # ── 1. Kill backend ──────────────────────────────────────────────
-    write_status(
-        sf,
-        "killing_backend",
-        5,
-        "Stopping backend (PID {})...".format(bpid),
-        new_version=tv,
-    )
-    if not kill_pid(bpid, timeout=10):
+    quit_app(args.app_pid, status_file, target_version)
+    write_status(status_file, "app_closed", 30, "MetalSharp closed.", new_version=target_version)
+
+    stop_backend(args.backend_pid, status_file, target_version)
+    write_status(status_file, "backend_stopped", 42, "Backend stopped.", new_version=target_version)
+
+    write_status(status_file, "verifying_dmg", 50, "Verifying update disk image...", new_version=target_version)
+    if not verify_dmg(dmg_path):
         write_status(
-            sf,
-            "error",
-            5,
-            "Failed to stop backend",
-            error="backend_kill_failed",
-            new_version=tv,
-        )
-        sys.exit(1)
-    run(["pkill", "-x", "metalsharp-backend"])
-    time.sleep(0.5)
-    write_status(sf, "killed_backend", 10, "Backend stopped.", new_version=tv)
-
-    # ── 2. Kill steam/wine/webhelper ─────────────────────────────────
-    write_status(
-        sf, "killing_steam", 15, "Stopping Steam and Wine processes...", new_version=tv
-    )
-    wine_patterns = [
-        "steam",
-        "steam.exe",
-        "steamwebhelper",
-        "steamwebhelper.exe",
-        "wine",
-        "wine64",
-        "wineserver",
-    ]
-    kill_by_patterns(wine_patterns)
-    verify_all_dead(wine_patterns, timeout=15)
-    write_status(
-        sf, "killed_steam", 20, "Steam/Wine processes stopped.", new_version=tv
-    )
-
-    # ── 3. Verify DMG exists ─────────────────────────────────────────
-    if not os.path.exists(dmg):
-        write_status(
-            sf,
-            "error",
-            20,
-            "DMG not found: {}".format(dmg),
-            error="dmg_not_found",
-            new_version=tv,
-        )
-        sys.exit(1)
-
-    # ── 4. Kill MetalSharp app ───────────────────────────────────────
-    write_status(sf, "closing_app", 25, "Closing MetalSharp...", new_version=tv)
-    for pat in [
-        "MetalSharp",
-        "MetalSharp Helper",
-        "MetalSharp Helper (GPU)",
-        "MetalSharp Helper (Renderer)",
-    ]:
-        try:
-            subprocess.run(["pkill", "-x", pat], capture_output=True, timeout=5)
-        except Exception:
-            pass
-
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        r = subprocess.run(
-            ["pgrep", "-x", "MetalSharp"], capture_output=True, text=True
-        )
-        if r.returncode != 0:
-            break
-        time.sleep(0.5)
-
-    # Force kill anything remaining
-    try:
-        subprocess.run(["killall", "-9", "MetalSharp"], capture_output=True, timeout=5)
-    except Exception:
-        pass
-    time.sleep(2)
-    write_status(sf, "app_closed", 30, "MetalSharp closed.", new_version=tv)
-
-    # ── 5. Mount DMG (may prompt for password via osascript) ─────────
-    write_status(sf, "mounting", 35, "Mounting update disk image...", new_version=tv)
-    mount_point = mount_dmg(dmg)
-    if not mount_point:
-        write_status(
-            sf,
-            "error",
-            35,
-            "Failed to mount DMG.",
-            error="mount_failed",
-            new_version=tv,
-        )
-        sys.exit(1)
-    write_status(sf, "mounted", 45, "Mounted at {}".format(mount_point), new_version=tv)
-
-    # ── 6. Install ───────────────────────────────────────────────────
-    write_status(sf, "installing", 50, "Installing new version...", new_version=tv)
-
-    app_source = find_app_in_mount(mount_point)
-    if not app_source:
-        run(["hdiutil", "detach", mount_point, "-quiet"])
-        write_status(
-            sf,
+            status_file,
             "error",
             50,
-            "MetalSharp.app not found in update.",
-            error="app_not_found",
-            new_version=tv,
+            f"DMG failed verification: {dmg_path}",
+            "dmg_verify_failed",
+            target_version,
         )
-        sys.exit(1)
+        return 1
 
-    if os.path.exists(APP_PATH):
-        if not admin_rm_rf(APP_PATH):
-            run(["hdiutil", "detach", mount_point, "-quiet"])
-            write_status(
-                sf,
-                "error",
-                55,
-                "Failed to remove old app.",
-                error="remove_failed",
-                new_version=tv,
-            )
-            sys.exit(1)
+    write_status(status_file, "mounting", 62, "Mounting update disk image...", new_version=target_version)
+    mount_point = mount_dmg(dmg_path)
+    if not mount_point:
+        write_status(status_file, "error", 62, "Failed to mount update DMG.", "mount_failed", target_version)
+        return 1
+
+    write_status(status_file, "mounted", 75, f"Mounted update at {mount_point}", new_version=target_version)
+    app_source = find_app_in_mount(mount_point)
+    if not app_source:
+        detach_mount(mount_point)
+        write_status(
+            status_file,
+            "error",
+            75,
+            "MetalSharp.app not found in update DMG.",
+            "app_not_found",
+            target_version,
+        )
+        return 1
+
+    ok, error = verify_app_bundle(app_source, target_version)
+    if not ok:
+        detach_mount(mount_point)
+        write_status(status_file, "error", 78, error, "app_bundle_invalid", target_version)
+        return 1
+
+    write_migration_marker(metalsharp_home, target_version)
 
     write_status(
-        sf, "installing", 60, "Copying new version to Applications...", new_version=tv
+        status_file,
+        "launching_dmg_app",
+        88,
+        f"Opening MetalSharp v{clean_version(target_version)} from update DMG...",
+        new_version=target_version,
     )
-    if not admin_cp_r(app_source, APP_PATH):
-        run(["hdiutil", "detach", mount_point, "-quiet"])
+    if not open_dmg_app(app_source):
+        detach_mount(mount_point)
         write_status(
-            sf,
+            status_file,
             "error",
-            65,
-            "Failed to copy new version.",
-            error="copy_failed",
-            new_version=tv,
+            88,
+            "Failed to open MetalSharp from update DMG.",
+            "open_failed",
+            target_version,
         )
-        sys.exit(1)
+        return 1
 
-    write_status(sf, "installed", 80, "New version installed.", new_version=tv)
-
-    ms_dir = os.path.expanduser("~/.metalsharp")
-    os.makedirs(ms_dir, exist_ok=True)
-    migration_marker = os.path.join(ms_dir, ".post-update-migration")
-    try:
-        with open(migration_marker, "w") as f:
-            json.dump({"needed": True, "target_version": tv, "timestamp": time.time()}, f)
-    except Exception:
-        pass
-
-    # ── 7. Unmount ───────────────────────────────────────────────────
-    write_status(sf, "unmounting", 82, "Unmounting update disk...", new_version=tv)
-    run(["hdiutil", "detach", mount_point, "-quiet"])
-
-    # ── 8. Relaunch ──────────────────────────────────────────────────
-    write_status(sf, "relaunching", 85, "Launching MetalSharp...", new_version=tv)
-    time.sleep(1)
-    run(["open", APP_PATH])
-
-    # ── 9. Verify version ────────────────────────────────────────────
-    write_status(sf, "verifying", 90, "Verifying installation...", new_version=tv)
-    version, new_pid = wait_for_backend(timeout=45)
-
-    if version and version != tv:
-        write_status(
-            sf,
-            "deploying_backend",
-            92,
-            "Backend version mismatch, redeploying...",
-            new_version=tv,
-        )
-        if new_pid:
-            kill_pid(new_pid, timeout=10)
-        time.sleep(1)
-        run(["pkill", "-x", "metalsharp-backend"])
-        time.sleep(1)
-        run(["open", "-a", "MetalSharp"])
-        time.sleep(3)
-        version, new_pid = wait_for_backend(timeout=30)
-
-    # ── 10. Report result ────────────────────────────────────────────
-    if version == tv:
-        write_status(
-            sf,
-            "complete",
-            100,
-            "Update installed. Opening migration wizard...",
-            new_version=tv,
-        )
-    else:
-        write_status(
-            sf,
-            "complete",
-            100,
-            "Update installed. Backend: v{} (expected v{})".format(version or "?", tv),
-            new_version=tv,
-        )
+    # Do not detach the DMG on success. The new app is running from this volume
+    # and can eject it after migration/restart if appropriate.
+    write_status(
+        status_file,
+        "complete",
+        100,
+        "Update handoff complete. Opening migration wizard...",
+        new_version=target_version,
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

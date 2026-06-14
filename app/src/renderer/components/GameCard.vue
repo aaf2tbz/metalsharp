@@ -724,17 +724,38 @@ function formatBytes(bytes: number): string {
     0 0 24px color-mix(in srgb, var(--accent) 16%, transparent),
     0 16px 36px color-mix(in srgb, var(--bg-deep) 34%, transparent);
 }
+:global(:root[data-theme="developer"]) .game-card {
+  border-color: rgba(0, 245, 255, 0.22);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(185, 255, 77, 0.14),
+    0 0 34px rgba(255, 46, 247, 0.14),
+    0 22px 56px rgba(0, 0, 0, 0.36);
+}
 .game-card.installed {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--card-installed-glow-color) 35%, transparent),
     0 0 40px color-mix(in srgb, var(--card-installed-glow-color) 48%, transparent),
     0 18px 40px color-mix(in srgb, var(--bg-deep) 36%, transparent);
 }
+:global(:root[data-theme="developer"]) .game-card.installed {
+  border-color: rgba(185, 255, 77, 0.34);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(185, 255, 77, 0.24),
+    0 0 42px rgba(185, 255, 77, 0.20),
+    0 24px 58px rgba(0, 0, 0, 0.38);
+}
 .game-card.uninstalled {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
     0 0 24px color-mix(in srgb, var(--accent) 14%, transparent),
     0 14px 34px color-mix(in srgb, var(--bg-deep) 30%, transparent);
+}
+:global(:root[data-theme="developer"]) .game-card.uninstalled {
+  opacity: 0.92;
+  filter: saturate(0.9);
 }
 .game-card:hover {
   border-color: var(--border-strong);
@@ -744,12 +765,29 @@ function formatBytes(bytes: number): string {
     0 22px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
   transform: translateY(-1px);
 }
+:global(:root[data-theme="developer"]) .game-card:hover {
+  border-color: rgba(185, 255, 77, 0.58);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 245, 255, 0.14),
+    0 0 0 1px rgba(185, 255, 77, 0.28),
+    0 0 46px rgba(0, 245, 255, 0.20),
+    0 26px 64px rgba(0, 0, 0, 0.44);
+  transform: translateY(-3px);
+}
 .game-card.running {
   border-color: var(--success);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--success) 48%, transparent),
     0 0 38px color-mix(in srgb, var(--success) 30%, transparent),
     0 22px 48px color-mix(in srgb, var(--bg-deep) 42%, transparent);
+}
+:global(:root[data-theme="developer"]) .game-card.running {
+  border-color: var(--success);
+  box-shadow:
+    0 0 0 1px rgba(112, 255, 140, 0.38),
+    0 0 46px rgba(112, 255, 140, 0.24),
+    0 0 80px rgba(0, 245, 255, 0.10),
+    0 26px 64px rgba(0, 0, 0, 0.42);
 }
 
 .game-card-banner {
@@ -763,6 +801,15 @@ function formatBytes(bytes: number): string {
   justify-content: center;
   overflow: hidden;
   position: relative;
+}
+:global(:root[data-theme="developer"]) .game-card-banner {
+  border-radius: calc(var(--radius-lg) - 4px);
+  margin: 10px 10px 0;
+  width: calc(100% - 20px);
+  background:
+    linear-gradient(135deg, rgba(185, 255, 77, 0.15), rgba(255, 46, 247, 0.13)),
+    var(--bg-surface);
+  box-shadow: inset 0 0 0 1px rgba(0, 245, 255, 0.18);
 }
 .game-card-cover {
   width: 100%;
@@ -778,6 +825,15 @@ function formatBytes(bytes: number): string {
   background:
     radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 48%),
     var(--bg-surface);
+}
+:global(:root[data-theme="developer"]) .game-card-cover {
+  filter: saturate(1.18) contrast(1.03);
+}
+:global(:root[data-theme="developer"]) .game-card-cover.fallback {
+  background:
+    radial-gradient(circle at 26% 32%, rgba(255, 46, 247, 0.24), transparent 36%),
+    radial-gradient(circle at 76% 64%, rgba(0, 245, 255, 0.20), transparent 40%),
+    linear-gradient(135deg, rgba(185, 255, 77, 0.13), rgba(9, 7, 15, 0.92));
 }
 .game-card:hover .game-card-cover {
   transform: scale(1.015);
@@ -811,6 +867,9 @@ function formatBytes(bytes: number): string {
   color: var(--game-card-text, var(--text-primary));
   padding: 14px;
 }
+:global(:root[data-theme="developer"]) .game-card-body {
+  padding: 16px 18px 18px;
+}
 .game-card-heading {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -825,6 +884,10 @@ function formatBytes(bytes: number): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+:global(:root[data-theme="developer"]) .game-card-title {
+  color: #f8ffe7;
+  font-family: var(--font-mono);
 }
 .game-card-meta {
   display: flex;
@@ -848,6 +911,13 @@ function formatBytes(bytes: number): string {
   color: var(--success);
   font-size: 11px;
   font-weight: 700;
+}
+:global(:root[data-theme="developer"]) .route-chip,
+:global(:root[data-theme="developer"]) .tool-chip,
+:global(:root[data-theme="developer"]) .launch-mode-select,
+:global(:root[data-theme="developer"]) .icon-button,
+:global(:root[data-theme="developer"]) .danger-link {
+  border-radius: 999px;
 }
 .bottle-chip {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -986,6 +1056,21 @@ function formatBytes(bytes: number): string {
   gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+@media (max-width: 760px) {
+  :global(:root[data-theme="developer"]) .game-card-banner {
+    min-height: 102px;
+    margin: 8px 8px 0;
+    width: calc(100% - 16px);
+  }
+  :global(:root[data-theme="developer"]) .game-card-body {
+    padding: 14px;
+  }
+  .primary-action-row,
+  .secondary-action-grid {
+    gap: 8px;
+  }
 }
 
 .doctor-panel {

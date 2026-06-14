@@ -582,10 +582,11 @@ fn run_migration() {
     let _ = fs::remove_file(&marker);
     let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
 
-    // wineboot -u can fork Steam.exe twice for self-update. Let those updater
-    // windows finish naturally so the next app launch is not left with a
-    // half-completed Steam update.
-    wait_for_steam_update_windows_after_migration(&ms_dir, 90);
+    // wineboot -u can fork Steam.exe for self-update, but most migrations do
+    // not show that window. Keep this as a short, non-fatal grace period so the
+    // wizard does not sit on "Verifying MetalSharp update..." for a full minute.
+    write_migrate_progress("running", step, total_steps, "Finishing update handoff...", None);
+    wait_for_steam_update_windows_after_migration(&ms_dir, 12);
 
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
@@ -662,6 +663,9 @@ fn wait_for_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u6
     let prefix = ms_dir.join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
     let start = std::time::Instant::now();
+    let initial_grace = std::time::Duration::from_secs(timeout_secs.min(4));
+    let second_window_grace = std::time::Duration::from_secs(4);
+    let mut first_close_at: Option<std::time::Instant> = None;
     let mut state = SteamUpdateWindowWait::default();
 
     while start.elapsed().as_secs() < timeout_secs {
@@ -670,15 +674,29 @@ fn wait_for_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u6
             _ => break,
         };
 
-        match state.observe(steam_update_process_alive(&prefix_str, &output)) {
+        let steam_alive = steam_update_process_alive(&prefix_str, &output);
+        if !state.saw_first_window() && !steam_alive && start.elapsed() >= initial_grace {
+            log_to_file("Migration: no Steam updater window appeared during grace period (non-fatal)");
+            return;
+        }
+        if let Some(closed_at) = first_close_at {
+            if !steam_alive && closed_at.elapsed() >= second_window_grace {
+                log_to_file("Migration: no second Steam updater window appeared during grace period (non-fatal)");
+                return;
+            }
+        }
+
+        match state.observe(steam_alive) {
             SteamUpdateWaitAction::LogFirstOpen => {
                 log_to_file("Migration: initial Wine/Steam update window detected, waiting for it to close...");
             },
             SteamUpdateWaitAction::LogFirstClose => {
                 log_to_file("Migration: initial Wine/Steam update window closed, waiting for Steam updater window...");
+                first_close_at = Some(std::time::Instant::now());
             },
             SteamUpdateWaitAction::LogSecondOpen => {
                 log_to_file("Migration: second Wine/Steam updater window detected, waiting for it to close...");
+                first_close_at = None;
             },
             SteamUpdateWaitAction::Complete => {
                 log_to_file("Migration: Wine/Steam updater windows closed after wineboot");

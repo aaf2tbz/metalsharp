@@ -73,6 +73,7 @@ def check_dmg_verifier(assets: list[str]) -> None:
         "Contents/Resources",
         "runtime/metalsharp-backend",
         "runtime/host",
+        "scripts/tools/updater/update.py",
         "scripts/tools/updater/update.sh",
         "tools/bundles/verify-bundles.sh",
     ]:

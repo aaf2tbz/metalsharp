@@ -7,10 +7,12 @@ import IconFileText from "~icons/lucide/file-text";
 import IconMoon from "~icons/lucide/moon";
 import IconSun from "~icons/lucide/sun";
 import IconSettings from "~icons/lucide/settings";
+import IconTerminal from "~icons/lucide/terminal";
+import type { ThemeName } from "../composables/useTheme";
 
 defineProps<{
   currentView: string;
-  theme: "dark" | "light";
+  theme: ThemeName;
 }>();
 
 const emit = defineEmits<{
@@ -63,11 +65,14 @@ const navItems: NavItem[] = [
       <button
         class="sidebar-nav-item sidebar-theme-toggle"
         @click="emit('toggleTheme')"
-        :title="collapsed ? (theme === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined"
+        :title="collapsed ? (theme === 'dark' ? 'Light Mode' : theme === 'light' ? 'Developer Mode' : 'Dark Mode') : undefined"
       >
-        <IconMoon v-if="theme === 'dark'" class="sidebar-nav-icon" width="18" height="18" />
-        <IconSun v-else class="sidebar-nav-icon" width="18" height="18" />
-        <span v-if="!collapsed" class="sidebar-nav-label">{{ theme === "dark" ? "Light Mode" : "Dark Mode" }}</span>
+        <IconSun v-if="theme === 'dark'" class="sidebar-nav-icon" width="18" height="18" />
+        <IconTerminal v-else-if="theme === 'light'" class="sidebar-nav-icon" width="18" height="18" />
+        <IconMoon v-else class="sidebar-nav-icon" width="18" height="18" />
+        <span v-if="!collapsed" class="sidebar-nav-label">{{
+          theme === "dark" ? "Light Mode" : theme === "light" ? "Dev Mode" : "Dark Mode"
+        }}</span>
       </button>
       <button
         class="sidebar-nav-item"
@@ -85,6 +90,8 @@ const navItems: NavItem[] = [
 <style scoped>
 .sidebar {
   width: var(--sidebar-width-expanded);
+  height: 100vh;
+  min-height: 0;
   background: var(--sidebar-bg);
   backdrop-filter: blur(28px) saturate(200%);
   -webkit-backdrop-filter: blur(28px) saturate(200%);
@@ -120,6 +127,7 @@ const navItems: NavItem[] = [
   min-height: 108px;
   padding: 38px 12px 12px;
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
 
 .sidebar-hamburger {
@@ -147,6 +155,7 @@ const navItems: NavItem[] = [
   align-items: center;
   gap: 8px;
   overflow: hidden;
+  min-width: 0;
 }
 .sidebar-logo-icon {
   width: 26px;
@@ -163,6 +172,8 @@ const navItems: NavItem[] = [
   background-clip: text;
   line-height: 1.4;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   animation: logo-shift 6s linear infinite;
 }
 @keyframes logo-shift {
@@ -172,6 +183,7 @@ const navItems: NavItem[] = [
 
 .sidebar-nav {
   flex: 1;
+  min-height: 0;
   padding: 10px 8px;
   display: flex;
   flex-direction: column;
@@ -271,24 +283,53 @@ const navItems: NavItem[] = [
   }
 }
 
-:global(body.light) .sidebar-nav-item.active {
+:global(:root[data-theme="light"]) .sidebar-nav-item.active {
   border-color: rgba(52, 127, 186, 0.26);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.42),
     inset 0 0 18px rgba(52, 127, 186, 0.06),
     0 0 0 1px rgba(52, 127, 186, 0.03);
 }
-:global(body.light) .sidebar-nav-item.active::before {
+:global(:root[data-theme="light"]) .sidebar-nav-item.active::before {
   background:
     linear-gradient(90deg, transparent 0%, rgba(52, 127, 186, 0.20) 48%, transparent 100%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 64%);
   opacity: 0.22;
 }
-:global(body.light) .sidebar-nav-item.active::after {
+:global(:root[data-theme="light"]) .sidebar-nav-item.active::after {
   border-color: rgba(52, 127, 186, 0.16);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.22),
     inset 0 0 14px rgba(52, 127, 186, 0.05);
+}
+
+:global(:root[data-theme="developer"]) .sidebar::before {
+  background:
+    linear-gradient(180deg, rgba(255, 46, 247, 0.15) 0%, transparent 38%),
+    repeating-linear-gradient(180deg, rgba(185, 255, 77, 0.06) 0 1px, transparent 1px 18px);
+}
+
+:global(:root[data-theme="developer"]) .sidebar-nav-item.active {
+  border-color: rgba(185, 255, 77, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 22px rgba(255, 46, 247, 0.12),
+    0 0 0 1px rgba(0, 245, 255, 0.16),
+    0 0 24px rgba(185, 255, 77, 0.12);
+}
+
+:global(:root[data-theme="developer"]) .sidebar-nav-item.active::before {
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(185, 255, 77, 0.45) 45%, rgba(0, 245, 255, 0.28) 52%, transparent 100%),
+    linear-gradient(180deg, rgba(255, 46, 247, 0.16), transparent 64%);
+  opacity: 0.34;
+}
+
+:global(:root[data-theme="developer"]) .sidebar-nav-item.active::after {
+  border-color: rgba(0, 245, 255, 0.32);
+  box-shadow:
+    inset 0 0 0 1px rgba(185, 255, 77, 0.14),
+    inset 0 0 18px rgba(255, 46, 247, 0.10);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -309,6 +350,7 @@ const navItems: NavItem[] = [
   display: flex;
   flex-direction: column;
   gap: 2px;
+  flex: 0 0 auto;
 }
 
 .sidebar.collapsed .sidebar-top {
