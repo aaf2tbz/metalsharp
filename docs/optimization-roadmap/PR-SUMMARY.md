@@ -164,3 +164,53 @@ python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --help  # invo
 
 **Boundary check:** M9/M10/M11 deploy lists and artifact paths unchanged.
 The verifier is purely read-only — it never deploys, spawns, or launches.
+
+## Phase 4: Shader, PSO, and Cache Diagnostics ✅
+
+**Purpose:** turn opaque M12 graphics failures into actionable shader/PSO/cache
+evidence.
+
+**Scope note:** `vendor/dxmt` is vendored **reference source** — it is NOT
+compiled by this repo's `CMakeLists.txt` (the shipped DXMT runtime is prebuilt
+under `lib/`). Editing DXMT C++ lowering would have no effect on the shipped
+runtime and could not be verified here. Phase 4 therefore lands the Rust-side
+observability layer (cache doctor + PSO manifest schema) that parses the
+runtime's on-disk products, without touching shader lowering semantics.
+
+**What landed:**
+- `shader_cache::cache_doctor(appid)` / `cache_doctor_for(home, pipeline, appid)`
+  — reads the DXMT SQLite shader and pipeline caches **read-only** and reports:
+  - cache root, per-DB size/mtime, total `cache_*` entry count
+  - newest/oldest entry mtime
+  - the staged runtime DLL sha256 (from `injections.json`) used to detect
+    caches built against an older runtime build
+  - a `stale_warning` when entries exist but no runtime hash is recorded
+- `shader_cache_family` / `primary_cache_subdir` codify the cache isolation
+  contract: M9/M10/M11 share the `dxmt-metal` family, M12/M13 use the isolated
+  `dxmt-metal12` family.
+- `PsoDiagnosticManifest` — the stable JSON schema for DXMT PSO trace
+  sidecars (DXIL input hash, MSL output hash, root signature hash, vertex
+  input layout hash, render target/depth formats, sample count,
+  `uses_stage_in`, async compile status, compile status, Metal error, ObjC
+  exception). `parse_pso_manifest` + `recent_pso_manifests` parse the trace
+  JSON DXMT emits under `DXMT_LOG_PATH` when its trace flags are set.
+- New routes: `GET /diagnostics/cache-doctor?appid=`,
+  `GET /diagnostics/pso-manifests?appid=&pipeline=&limit=`.
+
+**New tests (8):** shader cache family isolation, primary cache subdir mapping,
+cache doctor counts entries + reports isolated M12 lane, cache doctor empty
+state, cache doctor stale warning without runtime hash, graphics PSO manifest
+failure parse, compute PSO manifest success parse, recent PSO manifests
+newest-first ordering.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test mtsp::shader_cache     # 10 passed
+cargo test                        # 534 passed, 0 failed
+```
+
+**Boundary check:** no shader lowering semantics changed. Cache inspection is
+strictly read-only (SQLite `SQLITE_OPEN_READ_ONLY`). M9/M10/M11 cache families
+remain shared as before; M12/M13 remain isolated.
