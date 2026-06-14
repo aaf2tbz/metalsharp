@@ -146,7 +146,8 @@ function updateGameGridColumns() {
   const gap = 18;
   const width = grid.clientWidth;
   const availableColumns = Math.max(1, Math.floor((width + gap) / (minColumnWidth + gap)));
-  const visibleColumns = Math.max(1, filteredGames.value.length);
+  const minimumVisibleColumns = filteredGames.value.length === 1 && availableColumns >= 2 ? 2 : 1;
+  const visibleColumns = Math.max(minimumVisibleColumns, filteredGames.value.length);
   gameGridColumns.value = Math.min(availableColumns, visibleColumns);
 }
 
