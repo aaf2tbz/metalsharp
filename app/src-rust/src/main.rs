@@ -1079,6 +1079,45 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let home = dirs::home_dir().unwrap_or_default();
             resp(200, mtsp::launcher::pipeline_dry_run_for(&home, appid, requested_pipeline))
         },
+        // Phase 4: shader/PSO/cache diagnostics.
+        (Method::Get, "/diagnostics/cache-doctor") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            resp(200, mtsp::shader_cache::cache_doctor(appid))
+        },
+        (Method::Get, "/diagnostics/pso-manifests") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let limit = url_str
+                .split("limit=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(20)
+                .min(200);
+            let requested_pipeline = url_str
+                .split("pipeline=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+            let pipeline = bottles::resolve_steam_pipeline_for_request(appid, requested_pipeline);
+            let home = dirs::home_dir().unwrap_or_default();
+            let manifests = mtsp::shader_cache::recent_pso_manifests(&home, pipeline, appid, limit);
+            resp(
+                200,
+                json!({ "ok": true, "appid": appid, "pipeline": pipeline, "count": manifests.len(), "manifests": manifests }),
+            )
+        },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))
