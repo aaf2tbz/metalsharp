@@ -44,6 +44,7 @@
     "appId": "com.metalsharp.app",
     "productName": "MetalSharp",
     "copyright": "Copyright © 2026 MetalSharp",
+    "afterPack": "build/adhoc-deep-sign.cjs",
     "afterSign": "build/notarize.cjs",
     "mac": {
       "category": "public.app-category.games",
