@@ -141,49 +141,28 @@ fn vcpp_install_into_prefix(prefix: &Path) -> Result<(), String> {
 }
 
 pub fn vcpp_ensure_and_install_x64(prefix: &Path) -> Result<(), String> {
-    if vcpp_prefix_has_x64(prefix) {
-        eprintln!("vcredist: VC++ x64 already present, skipping");
-        return Ok(());
-    }
     let (x64, _x86) = vcpp_ensure_downloaded()?;
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let wine = crate::platform::runtime_wine_binary(&ms_root);
-    if !wine.exists() {
-        return Err("MetalSharp Wine not found".into());
-    }
-    let prefix_str = prefix.to_string_lossy().to_string();
-    eprintln!("vcredist: installing VC++ 2015-2022 x64 into {} ...", prefix.display());
-    let status = Command::new(&wine)
-        .arg(&x64)
-        .arg("/install")
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "/usr/bin/true")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("wine x64 failed: {}", e))?;
-    if !status.success() {
-        return Err("VC++ x64 installer exited with error".into());
-    }
-    let _ = Command::new(ms_root.join("bin").join("wineserver")).env("WINEPREFIX", &prefix_str).arg("-w").status();
+    run_interactive_vcpp_installer(prefix, &x64, "x64")?;
     if vcpp_prefix_has_x64(prefix) {
         eprintln!("vcredist: VC++ x64 verified in {}", prefix.display());
         Ok(())
     } else {
-        // DLLs may not appear immediately — trust the installer
-        eprintln!("vcredist: VC++ x64 installer completed but DLLs not yet visible (install may need prefix refresh)");
-        Ok(())
+        Err("VC++ x64 installer completed, but runtime DLLs were not found in system32".into())
     }
 }
 
 pub fn vcpp_ensure_and_install_x86(prefix: &Path) -> Result<(), String> {
-    if vcpp_prefix_has_x86(prefix) {
-        eprintln!("vcredist: VC++ x86 already present, skipping");
-        return Ok(());
-    }
     let (_x64, x86) = vcpp_ensure_downloaded()?;
+    run_interactive_vcpp_installer(prefix, &x86, "x86")?;
+    if vcpp_prefix_has_x86(prefix) {
+        eprintln!("vcredist: VC++ x86 verified in {}", prefix.display());
+        Ok(())
+    } else {
+        Err("VC++ x86 installer completed, but runtime DLLs were not found in syswow64".into())
+    }
+}
+
+fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -191,28 +170,37 @@ pub fn vcpp_ensure_and_install_x86(prefix: &Path) -> Result<(), String> {
         return Err("MetalSharp Wine not found".into());
     }
     let prefix_str = prefix.to_string_lossy().to_string();
-    eprintln!("vcredist: installing VC++ 2015-2022 x86 into {} ...", prefix.display());
-    let status = Command::new(&wine)
-        .arg(&x86)
-        .arg("/install")
+    eprintln!("vcredist: launching interactive VC++ 2015-2022 {} installer into {} ...", arch, prefix.display());
+    let mut cmd = Command::new(&wine);
+    cmd.arg("start")
+        .arg("/wait")
+        .arg("/unix")
+        .arg(installer)
+        .args(vcpp_setup_install_args())
         .env("WINEPREFIX", &prefix_str)
+        .env("WINEARCH", "win64")
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "/usr/bin/true")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map_err(|e| format!("wine x86 failed: {}", e))?;
-    if !status.success() {
-        return Err("VC++ x86 installer exited with error".into());
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Some(parent) = installer.parent() {
+        cmd.current_dir(parent);
     }
-    let _ = Command::new(ms_root.join("bin").join("wineserver")).env("WINEPREFIX", &prefix_str).arg("-w").status();
-    if vcpp_prefix_has_x86(prefix) {
-        eprintln!("vcredist: VC++ x86 verified in {}", prefix.display());
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    let status = cmd.status().map_err(|e| format!("wine {} failed: {}", arch, e))?;
+    if vcpp_installer_status_ok(status.code()) {
         Ok(())
     } else {
-        eprintln!("vcredist: VC++ x86 installer completed but DLLs not yet visible (install may need prefix refresh)");
-        Ok(())
+        Err(format!("VC++ {} installer exited with status {:?}", arch, status.code()))
     }
+}
+
+fn vcpp_setup_install_args() -> [&'static str; 1] {
+    ["/install"]
+}
+
+fn vcpp_installer_status_ok(code: Option<i32>) -> bool {
+    matches!(code, Some(0) | Some(194))
 }
 
 fn vcpp_prefix_has_x64(prefix: &Path) -> bool {
@@ -6937,6 +6925,19 @@ mod tests {
         fs::write(syswow64.join("msvcp140.dll"), &dll_payload).expect("write dll");
         assert_eq!(inspect_component_state(&dir, "vcrun2019_x86", ComponentState::Unknown), ComponentState::Installed);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn setup_vcpp_install_args_are_interactive() {
+        assert_eq!(vcpp_setup_install_args(), ["/install"]);
+    }
+
+    #[test]
+    fn setup_vcpp_accepts_reboot_required_status() {
+        assert!(vcpp_installer_status_ok(Some(0)));
+        assert!(vcpp_installer_status_ok(Some(194)));
+        assert!(!vcpp_installer_status_ok(Some(1)));
+        assert!(!vcpp_installer_status_ok(None));
     }
 
     #[test]
