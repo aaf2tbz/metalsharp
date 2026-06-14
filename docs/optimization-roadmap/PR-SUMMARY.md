@@ -414,3 +414,67 @@ cargo test                        # 579 passed, 0 failed (2 consecutive runs)
 Celeste (504230), Stardew Valley (413150) is unchanged. This module explains
 and receipts the lane selection; it does not override `find_fna_profile` or
 `deploy_fna_assemblies`. No game file is overwritten without a receipt.
+
+## Phase 9: Release Gates and Maintenance Cleanup ✅
+
+**Purpose:** make the PR train durable after the first optimization passes
+land.
+
+**What landed:**
+- `docs/optimization-roadmap/local-gates.md` — the canonical local gate set:
+  Rust (fmt/clippy/test/build), TypeScript (build/biome/test), C++ (cmake/
+  ctest), and the D3D12 Metal SDK probes CI cannot run, plus a table of every
+  Phase 1–8 backend diagnostic route.
+- `docs/optimization-roadmap/release-checklist.md` — pre-release verification:
+  version sync across the 5 files, runtime artifact presence + hashes, M12
+  sidecar presence, legacy DXMT surface presence, local graphics gates, route
+  gates, and the strict SDK doc gate (no "D3D12 works" claim without naming
+  the exact route/probes/feature level/gaps).
+- `docs/optimization-roadmap/ci-gating-notes.md` — explicit statement of what
+  CI proves vs what must run locally (the graphics gates), with pointers to
+  the Phase 4–6 Rust validators that ARE unit-tested in CI and the live
+  introspection routes.
+- `docs/optimization-roadmap/README.md` — index of the roadmap docs with the
+  per-phase commit map and baseline/final proof.
+- `AGENTS.md` now points to `local-gates.md` from the suggested-tests section.
+- Verified `validate-contracts.py` → `[PASS]` (8 contracts) and
+  `validate-probe-matrix.py` → `[PASS]` (18 probe groups).
+
+**Proof:**
+```
+python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py   # [PASS] 8 contracts
+python3 tools/d3d12-metal-sdk/scripts/validate-probe-matrix.py # [PASS] 18 probe groups
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo build --release             # ok
+cargo test                        # 579 passed, 0 failed (2 consecutive runs)
+```
+
+**Boundary check:** docs-only + one AGENTS.md pointer. No code behavior
+changed in Phase 9.
+
+---
+
+## Completion summary
+
+All 9 phases landed as separate commits on
+`codex/phased-optimization-roadmap`, each with its own proof gate green and
+M9/M10/M11 launch behavior / artifact paths untouched.
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Rust tests | 502 passed | 579 passed (+77) |
+| clippy / fmt | clean | clean |
+| New Rust modules | — | `diagnostics`, `binding_contract`, `command_contract`, `fna_profile` |
+| New diagnostic routes | — | 14 read-only routes |
+| SDK validation | n/a | 8 contracts + 18 probe groups `[PASS]` |
+
+The final state is a cleaner MetalSharp, not a risky graphics branch:
+- launch routes are explainable (`/diagnostics/launch`, route contracts);
+- bottles preserve intent (passive-refresh preservation tested for M9/M11/M12);
+- M12 artifact use is provable (`/diagnostics/m12/dry-run`);
+- DXMT/winemetal failures are diagnosable (cache doctor, PSO manifests);
+- binding and command-replay bugs are contract failures, not game mysteries;
+- migration preserves/skips are reported;
+- Mono/FNA/XNA games get a cautious, explainable setup path with receipts;
+- a future graphics or launcher PR has an obvious local gate.

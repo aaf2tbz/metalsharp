@@ -206,6 +206,10 @@ The updater module (`updater.rs`) checks for new releases by hitting `https://ap
 
 ## Suggested Tests Before Committing
 
+> **Canonical gates:** see [`docs/optimization-roadmap/local-gates.md`](docs/optimization-roadmap/local-gates.md)
+> for the full local gate set, including the D3D12 Metal SDK probes CI cannot
+> run and the Phase 1–8 backend diagnostic routes.
+
 ### Rust changes
 ```bash
 cd app/src-rust
