@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, type Component } from "vue";
+import { computed, ref, type Component } from "vue";
 import IconMenu from "~icons/lucide/menu";
 import IconServer from "~icons/lucide/server";
 import IconLayers from "~icons/lucide/layers";
@@ -10,7 +10,7 @@ import IconSettings from "~icons/lucide/settings";
 import IconTerminal from "~icons/lucide/terminal";
 import type { ThemeName } from "../composables/useTheme";
 
-defineProps<{
+const props = defineProps<{
   currentView: string;
   theme: ThemeName;
 }>();
@@ -21,6 +21,11 @@ const emit = defineEmits<{
 }>();
 
 const collapsed = ref(false);
+
+const themeToggleLabel = computed(() => {
+  if (props.theme === "developer") return "Dev Mode";
+  return props.theme === "light" ? "Light Mode" : "Dark Mode";
+});
 
 interface NavItem {
   view: string;
@@ -65,14 +70,12 @@ const navItems: NavItem[] = [
       <button
         class="sidebar-nav-item sidebar-theme-toggle"
         @click="emit('toggleTheme')"
-        :title="collapsed ? (theme === 'dark' ? 'Light Mode' : theme === 'light' ? 'Developer Mode' : 'Dark Mode') : undefined"
+        :title="collapsed ? themeToggleLabel : undefined"
       >
-        <IconSun v-if="theme === 'dark'" class="sidebar-nav-icon" width="18" height="18" />
-        <IconTerminal v-else-if="theme === 'light'" class="sidebar-nav-icon" width="18" height="18" />
+        <IconTerminal v-if="theme === 'developer'" class="sidebar-nav-icon" width="18" height="18" />
+        <IconSun v-else-if="theme === 'light'" class="sidebar-nav-icon" width="18" height="18" />
         <IconMoon v-else class="sidebar-nav-icon" width="18" height="18" />
-        <span v-if="!collapsed" class="sidebar-nav-label">{{
-          theme === "dark" ? "Light Mode" : theme === "light" ? "Dev Mode" : "Dark Mode"
-        }}</span>
+        <span v-if="!collapsed" class="sidebar-nav-label">{{ themeToggleLabel }}</span>
       </button>
       <button
         class="sidebar-nav-item"
