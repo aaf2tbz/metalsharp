@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 3;
+const STEAM_UPDATE_PROCESS_MARKERS: &[&str] =
+    &["steam.exe", "steamupdate.exe", "steamwebhelper.exe", "steamwebhelper", "steamerrorreporter.exe"];
 const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "steamapps",
     "common",
@@ -606,7 +608,7 @@ fn steam_update_process_alive(prefix_str: &str, process_output: &str) -> bool {
     let prefix = prefix_str.to_ascii_lowercase();
     process_output.lines().any(|line| {
         let lower = line.to_ascii_lowercase();
-        lower.contains(&prefix) && (lower.contains("steam.exe") || lower.contains("steamupdate.exe"))
+        lower.contains(&prefix) && STEAM_UPDATE_PROCESS_MARKERS.iter().any(|marker| lower.contains(marker))
     })
 }
 
@@ -2359,6 +2361,17 @@ mod tests {
 
         assert!(steam_update_process_alive(prefix, ps));
         assert!(!steam_update_process_alive("/tmp/missing-prefix", ps));
+    }
+
+    #[test]
+    fn migration_steam_update_detection_tracks_helper_processes() {
+        let prefix = "/Users/alex/.metalsharp/prefix-steam";
+        let ps = "\
+201 /Users/alex/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamwebhelper
+202 /Users/alex/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamerrorreporter.exe
+";
+
+        assert!(steam_update_process_alive(prefix, ps));
     }
 
     #[test]
