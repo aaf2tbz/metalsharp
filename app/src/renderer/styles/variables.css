@@ -88,3 +88,51 @@
   --sidebar-logo-accent: #8faab8;
   --page-header-bg: linear-gradient(90deg, #f0f4f8 0%, #d0e2f2 30%, #b8d4ec 50%, #cce0f0 75%, #f0f4f8 100%);
 }
+
+:root[data-theme="developer"] {
+  --bg-deep: #09070f;
+  --bg-surface: #131022;
+  --bg-card: #171221;
+  --bg-card-hover: #21182f;
+  --game-card-bg: linear-gradient(145deg, rgba(20, 13, 31, 0.98), rgba(12, 23, 34, 0.96));
+  --game-card-body-bg: linear-gradient(180deg, rgba(23, 18, 33, 0.98), rgba(11, 10, 20, 0.98));
+  --game-card-text: #f8ffe7;
+  --game-card-dim: #98f2ff;
+  --bg-input: #0d0b17;
+  --accent: #b9ff4d;
+  --accent-hover: #00f5ff;
+  --accent-dim: #ff2ef7;
+  --accent-glow: rgba(185, 255, 77, 0.22);
+  --card-glow: rgba(255, 46, 247, 0.18);
+  --card-installed-glow-color: #b9ff4d;
+  --success: #70ff8c;
+  --success-bg: rgba(112, 255, 140, 0.12);
+  --play-color: #b9ff4d;
+  --play-color-hover: #d7ff84;
+  --error: #ff4f77;
+  --error-bg: rgba(255, 79, 119, 0.13);
+  --warn: #ffd84d;
+  --warn-bg: rgba(255, 216, 77, 0.14);
+  --text-primary: #f8ffe7;
+  --text-secondary: #98f2ff;
+  --text-dim: #b39bd0;
+  --text-bright: #ffffff;
+  --border: rgba(0, 245, 255, 0.18);
+  --border-strong: rgba(185, 255, 77, 0.32);
+  --sidebar-bg: rgba(9, 7, 15, 0.88);
+  --sidebar-hover: rgba(255, 46, 247, 0.12);
+  --sidebar-active: linear-gradient(90deg, rgba(185, 255, 77, 0.12), rgba(0, 245, 255, 0.08), rgba(255, 46, 247, 0.10));
+  --sidebar-text: #f8ffe7;
+  --sidebar-text-active: var(--sidebar-text);
+  --sidebar-text-hover: #b9ff4d;
+  --sidebar-logo-color: #b9ff4d;
+  --sidebar-logo-accent: #ff2ef7;
+  --page-header-bg:
+    radial-gradient(circle at 12% 12%, rgba(255, 46, 247, 0.20), transparent 32%),
+    radial-gradient(circle at 88% 18%, rgba(0, 245, 255, 0.18), transparent 30%),
+    linear-gradient(100deg, #0a0611 0%, #191026 34%, #05232c 68%, #22082d 100%);
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --transition: 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}

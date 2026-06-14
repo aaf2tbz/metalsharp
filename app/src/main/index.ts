@@ -36,11 +36,113 @@ function isDevRuntime(): boolean {
   return process.env.METALSHARP_DEV === "1" || !app.isPackaged;
 }
 
+function isUiOnlyRuntime(): boolean {
+  return process.env.METALSHARP_UI_ONLY === "1";
+}
+
 function getMetalsharpDir(): string {
   if (process.env.METALSHARP_HOME?.trim()) {
     return path.resolve(process.env.METALSHARP_HOME);
   }
   return path.join(os.homedir(), isDevRuntime() ? ".metalsharp-dev" : ".metalsharp");
+}
+
+function uiOnlyBackendResponse(method: string, url: string): unknown {
+  if (url === "/status") {
+    return { ok: true, data: { ok: true, version: "0.46.9-ui" } };
+  }
+  if (url === "/setup/state") {
+    return {
+      ok: true,
+      completed: true,
+      step: 4,
+      deviceName: "UI Preview Rig",
+      steamApiKeySet: true,
+      runtimeMigrationRequired: false,
+    };
+  }
+  if (url === "/steam/api-key") {
+    return { ok: true, key: "ui-only" };
+  }
+  if (url === "/steam/status") {
+    return {
+      ok: true,
+      installed: true,
+      running: false,
+      mac_installed: true,
+      mac_running: false,
+      metalsharp_wine_available: true,
+    };
+  }
+  if (url === "/steam/library") {
+    const games = [
+      {
+        appid: 1583230,
+        name: "High Fidelity Render Probe",
+        installed: true,
+        state: "installed",
+        cover_url: "",
+        header_url: "",
+        size_bytes: 48791234560,
+        launch_method: "m12",
+        launch_method_name: "M12",
+        preferred_pipeline: "m12",
+      },
+      {
+        appid: 3527290,
+        name: "PEAK",
+        installed: true,
+        state: "installed",
+        cover_url: "",
+        header_url: "",
+        size_bytes: 6281222144,
+        launch_method: "m11",
+        launch_method_name: "M11",
+        preferred_pipeline: "m11",
+      },
+      {
+        appid: 105600,
+        name: "Terraria",
+        installed: false,
+        state: "not_installed",
+        cover_url: "",
+        header_url: "",
+        size_bytes: 629145600,
+        launch_method: "auto",
+        launch_method_name: "Auto",
+        preferred_pipeline: null,
+      },
+      {
+        appid: 1962700,
+        name: "Shader Cache Lab",
+        installed: true,
+        state: "downloading",
+        cover_url: "",
+        header_url: "",
+        size_bytes: 15032385536,
+        launch_method: "m12",
+        launch_method_name: "M12",
+        preferred_pipeline: "m12",
+      },
+    ];
+    return { ok: true, total: games.length, installed_count: 3, games };
+  }
+  if (url === "/scan") {
+    return { ok: true, steam: { installed: true, running: false } };
+  }
+  if (url === "/update/check") {
+    return { ok: true, available: false, current_version: "0.46.9-ui", latest_version: "0.46.9-ui" };
+  }
+  if (url === "/steam/watch-steamapps") {
+    return { ok: true, new_appids: [] };
+  }
+  if (url.startsWith("/mtsp/pipelines")) {
+    return { ok: true, id: "m12", name: "M12", preferred: "m12", pipelines: [] };
+  }
+  if (method === "POST") {
+    return { ok: true };
+  }
+  return { ok: true };
 }
 
 function isFirstLaunch(): boolean {
@@ -134,6 +236,7 @@ async function checkNeedsMigration(): Promise<boolean> {
 }
 
 async function createWindow(migrating = false) {
+  const uiOnly = isUiOnlyRuntime();
   mainWindow = new BrowserWindow({
     width: migrating ? 640 : 1200,
     height: migrating ? 420 : 800,
@@ -141,12 +244,13 @@ async function createWindow(migrating = false) {
     minHeight: migrating ? 420 : 600,
     resizable: !migrating,
     title: migrating ? "MetalSharp Migration" : "MetalSharp",
-    backgroundColor: migrating ? "#1b2838" : undefined,
+    backgroundColor: migrating ? "#1b2838" : uiOnly ? "#09070f" : undefined,
+    frame: !uiOnly,
     transparent: false,
-    vibrancy: migrating ? undefined : "sidebar",
-    backgroundMaterial: migrating ? undefined : "acrylic",
+    vibrancy: migrating || uiOnly ? undefined : "sidebar",
+    backgroundMaterial: migrating || uiOnly ? undefined : "acrylic",
     icon: path.join(__dirname, "..", "..", "build", "icon.png"),
-    titleBarStyle: "hiddenInset",
+    titleBarStyle: uiOnly ? undefined : "hiddenInset",
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -155,7 +259,9 @@ async function createWindow(migrating = false) {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+  mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"), {
+    query: isUiOnlyRuntime() ? { theme: "developer" } : {},
+  });
 }
 
 function startSteamappsWatcher() {
@@ -200,6 +306,17 @@ async function cleanup() {
 let migrationMode = false;
 
 app.whenReady().then(async () => {
+  if (isUiOnlyRuntime()) {
+    process.env.METALSHARP_DEV = "1";
+    migrationMode = false;
+    registerIpc();
+    await createWindow(false);
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
+    });
+    return;
+  }
+
   process.env.METALSHARP_HOME = getMetalsharpDir();
   if (isDevRuntime()) process.env.METALSHARP_DEV = "1";
   ensureMetalsharpDirs();
@@ -255,6 +372,10 @@ async function requestBackend(
   body?: Record<string, unknown>,
   timeoutMs?: number,
 ): Promise<unknown> {
+  if (isUiOnlyRuntime()) {
+    return uiOnlyBackendResponse(method, url);
+  }
+
   const ready = await bridge.ensureRunning();
   if (!ready.ok) {
     return { ok: false, error: ready.error ?? "Backend is not available" };
@@ -293,6 +414,7 @@ function registerIpc() {
   );
 
   ipcMain.handle("app:is-first-launch", () => {
+    if (isUiOnlyRuntime()) return false;
     return isFirstLaunch();
   });
 
@@ -471,6 +593,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:open-logs-folder", async () => {
+    if (isUiOnlyRuntime()) return { ok: true, path: "ui-only://logs" };
     const logsPath = path.join(getMetalsharpDir(), "logs");
     fs.mkdirSync(logsPath, { recursive: true });
     await shell.openPath(logsPath);
@@ -478,6 +601,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:open-metalsharp-folder", async () => {
+    if (isUiOnlyRuntime()) return { ok: true, path: "ui-only://metalsharp" };
     const metalsharpPath = getMetalsharpDir();
     fs.mkdirSync(metalsharpPath, { recursive: true });
     await shell.openPath(metalsharpPath);
@@ -485,6 +609,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:repair-data-access", async () => {
+    if (isUiOnlyRuntime()) return { ok: true, path: "ui-only://metalsharp", checks: [] };
     return verifyMetalsharpDataAccess();
   });
 
@@ -494,42 +619,52 @@ function registerIpc() {
   });
 
   ipcMain.handle("backend:restart", async () => {
+    if (isUiOnlyRuntime()) return { ok: true };
     return bridge.restart();
   });
 
   ipcMain.handle("backend:is-alive", async () => {
+    if (isUiOnlyRuntime()) return true;
     return bridge.isAlive();
   });
 
   ipcMain.handle("updater:ensure-ready", async () => {
+    if (isUiOnlyRuntime()) return { ok: false, error: "Updater is disabled in UI-only preview mode." };
     return updaterBridge.ensureReady();
   });
 
   ipcMain.handle("updater:spawn-install", async (_e, dmgPath: string, backendPid: number, targetVersion: string) => {
+    if (isUiOnlyRuntime()) return { ok: false, error: "Updater is disabled in UI-only preview mode." };
     return updaterBridge.spawnInstallUpdater(dmgPath, backendPid, targetVersion);
   });
 
   ipcMain.handle("updater:install-status", async () => {
+    if (isUiOnlyRuntime()) return null;
     return updaterBridge.readInstallStatus();
   });
 
   ipcMain.handle("updater:clear-status", async () => {
+    if (isUiOnlyRuntime()) return;
     updaterBridge.clearInstallStatus();
   });
 
   ipcMain.handle("backend:get-pid", async () => {
+    if (isUiOnlyRuntime()) return null;
     return bridge.getBackendPid();
   });
 
   ipcMain.handle("migrate:check", async () => {
+    if (isUiOnlyRuntime()) return { ok: true, needed: false };
     return requestMigrationBackend("GET", "/update/migrate/check");
   });
 
   ipcMain.handle("migrate:start", async () => {
+    if (isUiOnlyRuntime()) return { ok: true };
     return requestMigrationBackend("POST", "/update/migrate/start", undefined, 10000);
   });
 
   ipcMain.handle("migrate:progress", async () => {
+    if (isUiOnlyRuntime()) return { ok: true, phase: "complete", percent: 100 };
     return requestMigrationBackend("GET", "/update/migrate/progress");
   });
 

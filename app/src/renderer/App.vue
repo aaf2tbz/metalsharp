@@ -522,11 +522,40 @@ async function initApp() {
 }
 .content {
   flex: 1;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 0;
   min-width: 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-deep);
+}
+:root[data-theme="developer"] .content {
+  background:
+    linear-gradient(90deg, rgba(185, 255, 77, 0.05) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(0, 245, 255, 0.04) 1px, transparent 1px),
+    radial-gradient(circle at 24% 16%, rgba(255, 46, 247, 0.14), transparent 34%),
+    radial-gradient(circle at 84% 10%, rgba(0, 245, 255, 0.11), transparent 30%),
+    var(--bg-deep);
+  background-size:
+    34px 34px,
+    34px 34px,
+    auto,
+    auto,
+    auto;
+}
+:root[data-theme="developer"] .update-banner {
+  background:
+    linear-gradient(90deg, rgba(185, 255, 77, 0.16), rgba(0, 245, 255, 0.10), rgba(255, 46, 247, 0.14)),
+    rgba(9, 7, 15, 0.84);
+  border-bottom-color: rgba(185, 255, 77, 0.28);
+  color: var(--text-primary);
+}
+:root[data-theme="developer"] .update-banner-btn {
+  border-radius: 999px;
+  border-color: rgba(185, 255, 77, 0.42);
+  background: rgba(9, 7, 15, 0.62);
+  color: var(--accent);
 }
 </style>
