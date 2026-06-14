@@ -15,8 +15,12 @@ download_asset() {
   local asset="$1"
   local dest="$2"
   if [ -s "$dest" ]; then
-    echo "SKIP bundle: $asset"
-    return 0
+    if "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$BUNDLE_DIR" "$asset" >/dev/null 2>&1; then
+      echo "SKIP bundle: $asset"
+      return 0
+    fi
+    echo "Refreshing stale bundle: $asset"
+    rm -f "$dest"
   fi
   echo "Downloading bundle: $asset"
   curl -fL --retry 3 -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$asset"

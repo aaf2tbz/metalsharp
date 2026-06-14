@@ -88,6 +88,8 @@ def check_bundle_scripts() -> None:
         "tools/dmg/repair-runtime-bundle.py",
         "repair_assets_fnalibs_bundle",
         "tools/bundles/verify-bundles.sh",
+        "--bundle-dir \"$BUNDLE_DIR\" \"$asset\"",
+        "Refreshing stale bundle",
         "metalsharp-bundle-manifest.tsv",
     ]:
         if needle not in create_bundles:
