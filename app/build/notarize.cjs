@@ -1,5 +1,4 @@
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { notarize } = require("@electron/notarize");
 
 function hasPasswordCredentials() {
@@ -10,25 +9,11 @@ function hasApiKeyCredentials() {
   return Boolean(process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER);
 }
 
-function adhocSignApp(appPath) {
-  const entitlements = path.join(__dirname, "entitlements.mac.plist");
-  const args = ["--force", "--deep", "--sign", "-", "--options", "runtime"];
-  if (entitlements) {
-    args.push("--entitlements", entitlements);
-  }
-  args.push(appPath);
-
-  execFileSync("/usr/bin/codesign", args, { stdio: "inherit" });
-  execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=4", appPath], { stdio: "inherit" });
-}
-
 exports.default = async function notarizeMetalSharp(context) {
   if (context.electronPlatformName !== "darwin") {
     return;
   }
 
-  const appName = context.packager.appInfo.productFilename;
-  const appPath = path.join(context.appOutDir, `${appName}.app`);
   const requireNotarization = process.env.METALSHARP_REQUIRE_NOTARIZATION === "1";
   if (!hasPasswordCredentials() && !hasApiKeyCredentials()) {
     const message =
@@ -37,11 +22,11 @@ exports.default = async function notarizeMetalSharp(context) {
       throw new Error(message);
     }
     console.log(message);
-    console.log("Apple Developer ID unavailable; applying ad-hoc app bundle signature for local Gatekeeper integrity.");
-    adhocSignApp(appPath);
     return;
   }
 
+  const appName = context.packager.appInfo.productFilename;
+  const appPath = path.join(context.appOutDir, `${appName}.app`);
   const baseOptions = {
     appBundleId: context.packager.appInfo.appId,
     appPath,
