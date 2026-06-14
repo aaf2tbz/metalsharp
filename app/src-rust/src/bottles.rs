@@ -1609,6 +1609,78 @@ fn is_wine_prefix_busy(prefix: &Path) -> bool {
     }
 }
 
+/// Phase 7: explicit wineboot state machine. Separates "prefix is updating"
+/// (Wine itself is busy: wineboot/wineserver active) from "MetalSharp is
+/// verifying update" (MetalSharp is running a readiness check), so the UI
+/// does not double-poll or misrepresent a Steam update window inside the
+/// prefix. This is observational — it does not change readiness behavior.
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WinebootState {
+    /// The prefix exists and no Wine process is busy inside it.
+    Idle,
+    /// A Wine process (wineboot/wineserver) is active inside the prefix —
+    /// e.g. Steam is applying an update. This is the prefix's own state,
+    /// NOT MetalSharp verifying anything.
+    PrefixUpdating,
+    /// MetalSharp is running a readiness/verification check against the
+    /// prefix (runtime-doctor, preflight). Distinct from PrefixUpdating so a
+    /// UI can show "verifying" rather than "updating".
+    Verifying,
+    /// The prefix does not exist yet (first launch, fresh bottle).
+    PrefixMissing,
+}
+
+impl WinebootState {
+    /// Resolve the wineboot state for a prefix path. `verifying` is true when
+    /// MetalSharp itself is the actor performing a readiness check (the UI
+    /// should report "verifying", not "prefix updating").
+    pub fn for_prefix(prefix: &Path, verifying: bool) -> WinebootState {
+        if verifying {
+            return WinebootState::Verifying;
+        }
+        if !prefix.exists() {
+            return WinebootState::PrefixMissing;
+        }
+        if is_wine_prefix_busy(prefix) {
+            WinebootState::PrefixUpdating
+        } else {
+            WinebootState::Idle
+        }
+    }
+}
+
+/// Phase 7: report the wineboot state for a Steam game's prefix as the
+/// runtime doctor sees it, WITHOUT conflating MetalSharp's verification with
+/// a prefix update. Used so the UI can distinguish the two.
+pub fn steam_prefix_wineboot_state(appid: u32, verifying: bool) -> Value {
+    let prefix = steam_launch_prefix();
+    let state = WinebootState::for_prefix(&prefix, verifying);
+    json!({
+        "ok": true,
+        "appid": appid,
+        "prefix_path": prefix.to_string_lossy(),
+        "wineboot_state": state,
+        "is_prefix_updating": state == WinebootState::PrefixUpdating,
+        "is_verifying": state == WinebootState::Verifying,
+    })
+}
+
+/// Explicit-home variant used by tests so they never mutate the process-global
+/// METALSHARP_HOME.
+pub fn steam_prefix_wineboot_state_for(home: &Path, appid: u32, verifying: bool) -> Value {
+    let prefix = crate::platform::metalsharp_home_dir_for(home).join("prefix-steam");
+    let state = WinebootState::for_prefix(&prefix, verifying);
+    json!({
+        "ok": true,
+        "appid": appid,
+        "prefix_path": prefix.to_string_lossy(),
+        "wineboot_state": state,
+        "is_prefix_updating": state == WinebootState::PrefixUpdating,
+        "is_verifying": state == WinebootState::Verifying,
+    })
+}
+
 fn process_descendants(pid: u32) -> Vec<u32> {
     let mut descendants = Vec::new();
     let mut stack = vec![pid];
@@ -5565,6 +5637,38 @@ fn timestamp_secs() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wineboot_state_prefix_missing_when_prefix_absent() {
+        // Phase 7: a non-existent prefix must report PrefixMissing, not Idle,
+        // so the UI does not double-poll for an update that cannot exist.
+        let missing = std::env::temp_dir().join("ms-wineboot-missing-nope");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert_eq!(WinebootState::for_prefix(&missing, false), WinebootState::PrefixMissing);
+    }
+
+    #[test]
+    fn wineboot_state_verifying_takes_precedence() {
+        // When MetalSharp is verifying, the state is Verifying regardless of
+        // prefix busyness. This separates "MetalSharp is verifying" from
+        // "prefix is updating".
+        let missing = std::env::temp_dir().join("ms-wineboot-verify-nope");
+        let _ = std::fs::remove_dir_all(&missing);
+        assert_eq!(WinebootState::for_prefix(&missing, true), WinebootState::Verifying);
+    }
+
+    #[test]
+    fn wineboot_state_report_distinguishes_updating_from_verifying() {
+        // The JSON report exposes both the enum and derived booleans so a UI
+        // can render "verifying" vs "updating" without re-deriving it. Uses
+        // the explicit-home variant so no global env is mutated.
+        let home = std::env::temp_dir().join("ms-wineboot-report");
+        let _ = std::fs::remove_dir_all(&home);
+        let report = steam_prefix_wineboot_state_for(&home, 620, true);
+        assert_eq!(report.get("wineboot_state").and_then(|v| v.as_str()), Some("verifying"));
+        assert_eq!(report.get("is_verifying").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(report.get("is_prefix_updating").and_then(|v| v.as_bool()), Some(false));
+    }
 
     #[test]
     fn installer_bottle_ids_are_stable_for_source_path() {

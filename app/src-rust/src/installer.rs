@@ -1232,6 +1232,107 @@ fn dxmt_runtime_ready(dxmt_dir: &Path) -> bool {
         && DXMT_REQUIRED_PE.iter().all(|dll| file_nonempty(&pe_dir.join(dll)))
 }
 
+/// Phase 7: per-artifact verification report. Goes beyond the existing
+/// `file_nonempty` presence checks by also recording sha256 and size, and by
+/// reporting EACH required file individually (so a missing M12 sidecar is
+/// visible by name, not a single boolean). Used by the runtime-verification
+/// gate so a missing DLL/dylib/so sidecar is caught before gameplay.
+pub fn runtime_artifact_report() -> Value {
+    match dirs::home_dir() {
+        Some(home) => runtime_artifact_report_for(&home),
+        None => json!({"ok": false, "error": "home directory could not be resolved"}),
+    }
+}
+
+/// Explicit-home variant used by tests so they never mutate the process-global
+/// METALSHARP_HOME (which would race with other parallel tests).
+pub fn runtime_artifact_report_for(home: &Path) -> Value {
+    let dxmt_dir = dxmt_runtime_dir_for_home(home);
+    let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    let m11 = verify_required_files("dxmt", &dxmt_dir, DXMT_REQUIRED_UNIX, DXMT_REQUIRED_PE);
+    let m12 = verify_required_files_with_unix("dxmt-m12", &dxmt_m12_dir, DXMT_M12_REQUIRED_UNIX, DXMT_REQUIRED_PE);
+    let ok = m11.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false)
+        && m12.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false);
+    json!({
+        "ok": ok,
+        "schema_version": 1,
+        "dxmt": m11,
+        "dxmt_m12": m12,
+    })
+}
+
+fn verify_required_files(label: &str, runtime_dir: &Path, unix_required: &[&str], pe_required: &[&str]) -> Value {
+    let mut entries = Vec::new();
+    let mut all_present = true;
+    for name in unix_required {
+        let path = runtime_dir.join("x86_64-unix").join(name);
+        let present = file_nonempty(&path);
+        all_present &= present;
+        entries.push(artifact_entry(label, "x86_64-unix", name, &path, present));
+    }
+    for dll in pe_required {
+        let path = runtime_dir.join("x86_64-windows").join(dll);
+        let present = file_nonempty(&path);
+        all_present &= present;
+        entries.push(artifact_entry(label, "x86_64-windows", dll, &path, present));
+    }
+    json!({
+        "all_present": all_present,
+        "entries": entries,
+    })
+}
+
+fn verify_required_files_with_unix(
+    label: &str,
+    runtime_dir: &Path,
+    unix_required: &[&str],
+    pe_required: &[&str],
+) -> Value {
+    // M12 lane has its OWN required unix set (winemetal.so + libc++ dylibs +
+    // libunwind). This is the same shape as verify_required_files but takes the
+    // M12 unix list explicitly so the report names each sidecar.
+    verify_required_files(label, runtime_dir, unix_required, pe_required)
+}
+
+fn artifact_entry(label: &str, subdir: &str, name: &str, path: &Path, present: bool) -> Value {
+    let sha = if present { crate::diagnostics::file_sha256(path) } else { None };
+    let size = if present { fs::metadata(path).ok().map(|m| m.len()) } else { None };
+    json!({
+        "label": label,
+        "subdir": subdir,
+        "filename": name,
+        "path": path.to_string_lossy(),
+        "present": present,
+        "sha256": sha,
+        "size_bytes": size,
+    })
+}
+
+/// Phase 7: explicitly named missing M12 sidecars, for the regression test
+/// ("runtime verification catches missing M12 sidecars before gameplay").
+pub fn missing_m12_sidecars() -> Vec<String> {
+    dirs::home_dir().map(|home| missing_m12_sidecars_for(&home)).unwrap_or_default()
+}
+
+/// Explicit-home variant used by tests.
+pub fn missing_m12_sidecars_for(home: &Path) -> Vec<String> {
+    let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    let pe_dir = dxmt_m12_dir.join("x86_64-windows");
+    let unix_dir = dxmt_m12_dir.join("x86_64-unix");
+    let mut missing = Vec::new();
+    for name in DXMT_M12_REQUIRED_UNIX {
+        if !file_nonempty(&unix_dir.join(name)) {
+            missing.push(format!("dxmt-m12/x86_64-unix/{}", name));
+        }
+    }
+    for dll in DXMT_REQUIRED_PE {
+        if !file_nonempty(&pe_dir.join(dll)) {
+            missing.push(format!("dxmt-m12/x86_64-windows/{}", dll));
+        }
+    }
+    missing
+}
+
 fn dxmt_m12_runtime_ready(dxmt_m12_dir: &Path) -> bool {
     let pe_dir = dxmt_m12_dir.join("x86_64-windows");
     DXMT_M12_REQUIRED_UNIX.iter().all(|name| file_nonempty(&dxmt_m12_dir.join("x86_64-unix").join(name)))
@@ -2144,6 +2245,54 @@ fn extract_zst(archive: &PathBuf, dest: &PathBuf, name: &str) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_m12_sidecars_lists_each_absent_file_by_name() {
+        // Phase 7: runtime verification must catch missing M12 sidecars
+        // (DLL/dylib/so) by name before gameplay. With an empty home, every
+        // required M12 file is missing and must be named explicitly. Uses the
+        // explicit-home variant so no global env is mutated.
+        let home = test_home("missing-m12-sidecars");
+
+        let missing = missing_m12_sidecars_for(&home);
+        // Every required unix sidecar and PE DLL must be named.
+        for name in DXMT_M12_REQUIRED_UNIX {
+            assert!(
+                missing.iter().any(|m| m.ends_with(&format!("/x86_64-unix/{}", name))),
+                "missing M12 unix sidecar {} must be reported: {:?}",
+                name,
+                missing
+            );
+        }
+        for dll in DXMT_REQUIRED_PE {
+            assert!(
+                missing.iter().any(|m| m.ends_with(&format!("/x86_64-windows/{}", dll))),
+                "missing M12 PE DLL {} must be reported: {:?}",
+                dll,
+                missing
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_artifact_report_names_each_file_with_presence_and_hash() {
+        // Phase 7: the artifact report must name each file with presence +
+        // sha256 so a stale/missing artifact is observable by name. Explicit
+        // home so no global env mutation.
+        let home = test_home("artifact-report-empty");
+
+        let report = runtime_artifact_report_for(&home);
+        assert_eq!(report.get("schema_version").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(report.get("ok").and_then(|v| v.as_bool()), Some(false), "empty home must report ok=false");
+        let m12 = report.get("dxmt_m12").unwrap();
+        let entries = m12.get("entries").and_then(|v| v.as_array()).unwrap();
+        // Every entry must carry filename, present=false, sha256=null.
+        for entry in entries {
+            assert!(entry.get("filename").and_then(|v| v.as_str()).is_some());
+            assert_eq!(entry.get("present").and_then(|v| v.as_bool()), Some(false));
+            assert_eq!(entry.get("sha256").and_then(|v| v.as_str()), None);
+        }
+    }
 
     #[test]
     fn metalsharp_wine_binary_accepts_renamed_runtime_binary() {
