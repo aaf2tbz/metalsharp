@@ -23,6 +23,7 @@ mod bottles;
 mod command_contract;
 mod d3d12_runtime_doctor;
 mod diagnostics;
+mod fna_profile;
 mod installer;
 mod kernel_translation;
 mod launch;
@@ -1171,6 +1172,58 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             resp(200, bottles::steam_prefix_wineboot_state(appid, verifying))
         },
         (Method::Get, "/steam/stop-targets") => resp(200, steam::stop_wine_steam_targets()),
+        // Phase 8: Mono/FNA/XNA flavor detection, profile explanation, and
+        // conservative unproven-game classification. These explain the lane
+        // selection without changing pinned known-good behavior.
+        (Method::Get, "/diagnostics/fna/signals") => {
+            let url_str = req.url().to_string();
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| url_decode(s))
+                .unwrap_or_default();
+            let path = std::path::PathBuf::from(&game_dir);
+            if path.is_dir() {
+                resp(200, serde_json::to_value(fna_profile::detect_fna_signals(&path)).unwrap())
+            } else {
+                resp(400, json!({ "ok": false, "error": "gameDir is not a directory", "gameDir": game_dir }))
+            }
+        },
+        (Method::Get, "/diagnostics/fna/explain") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| url_decode(s))
+                .unwrap_or_default();
+            let path = std::path::PathBuf::from(&game_dir);
+            resp(200, serde_json::to_value(fna_profile::explain_profile(appid, &path)).unwrap())
+        },
+        (Method::Get, "/diagnostics/fna/classify") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| url_decode(s))
+                .unwrap_or_default();
+            let path = std::path::PathBuf::from(&game_dir);
+            resp(200, serde_json::to_value(fna_profile::classify_unproven_fna_game(appid, &path)).unwrap())
+        },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))
@@ -2055,6 +2108,38 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
 
 fn resp(code: u16, body: serde_json::Value) -> RouteResponse {
     RouteResponse::Json(code, body.to_string().into_bytes())
+}
+
+/// Minimal percent-decoding for URL query values (e.g. gameDir paths with
+/// spaces). Handles %20 and the common %2F. Good enough for diagnostic
+/// query params without pulling in a URL crate.
+fn url_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_val(bytes[i + 1]);
+            let lo = hex_val(bytes[i + 2]);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn resp_raw(code: u16, data: Vec<u8>, mime: &str) -> RouteResponse {
