@@ -1050,6 +1050,35 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 ),
             }
         },
+        // Phase 3: M12 artifact + launch verification (dry-run). Reports the
+        // exact env pairs and artifact hashes M12 would load, without
+        // launching Steam or the game. Uses the same env builder as launch.
+        (Method::Get, "/diagnostics/m12/dry-run") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            resp(200, mtsp::launcher::m12_verify_dry_run(appid))
+        },
+        (Method::Get, "/diagnostics/pipeline/dry-run") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let requested_pipeline = url_str
+                .split("pipeline=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(200, mtsp::launcher::pipeline_dry_run_for(&home, appid, requested_pipeline))
+        },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))

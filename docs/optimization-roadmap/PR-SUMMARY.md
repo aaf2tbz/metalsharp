@@ -118,3 +118,49 @@ cargo test                        # 521 passed, 0 failed (3 consecutive runs)
 The route contract is derived from existing primitives, not a new source of
 truth. Migration preserve/restore logic is unchanged; only an observational
 report was added.
+
+## Phase 3: M12 Artifact and Launch Verification ✅
+
+**Purpose:** prove M12 is using the intended updated DXMT/winemetal artifacts
+before debugging games.
+
+**What landed:**
+- `m12_verify_dry_run(appid)` and `pipeline_dry_run_for(home, appid, requested)`
+  — a read-only verifier that runs through the **same environment builder**
+  (`steam_pipeline_env_pairs`) as `launch_dxmt_metal`. It reports, without
+  launching Steam or the game:
+  - the resolved `lib/dxmt-m12/x86_64-windows` dir + each deploy DLL
+    (`d3d12.dll`, `dxgi.dll`, `d3d11.dll`, `d3d10core.dll`, `winemetal.dll`,
+    …) with presence, sha256, and size
+  - the `lib/dxmt-m12/x86_64-unix` sidecars (`winemetal.so`, `libc++.1.dylib`,
+    `libc++abi.1.dylib`, `libunwind.1.dylib`) for the M12/M13 lane
+  - the exact env pairs the launch path sets, with an `env_keys_present` map
+    for `WINEDLLOVERRIDES`, `DXMT_SHADER_CACHE_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`,
+    `SteamAppId`, `DXMT_WINEMETAL_UNIXLIB`
+  - missing required artifacts as a structured `ok: false` + `missing[]` array
+    (optional stubs nvapi/nvngx/atidxx tolerated)
+- New routes: `GET /diagnostics/m12/dry-run?appid=`,
+  `GET /diagnostics/pipeline/dry-run?appid=&pipeline=`.
+- `docs/architecture/m12-pipeline-map.md` now documents the verifier and marks
+  stability gap #1 ("first-class M12 runtime verification") as addressed.
+- Verified the existing SDK proof scripts are invocable with the roadmap's
+  flags: `preflight-runtime-layout.py --profile metalsharp`,
+  `run-probes.sh --profile metalsharp --mini-only`, `validate-contracts.py`.
+
+**New tests (5):** M12 deploy list includes d3d12 and uses isolated
+`lib/dxmt-m12` surface; M11 deploy list excludes d3d12 and never touches
+`lib/dxmt-m12`; M12 dry-run includes d3d12 / M11 does not + env keys;
+M12 dry-run verifies unix sidecars and flags missing artifacts;
+M12 env vars set winemetal overrides + isolated `m12` shader cache.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test mtsp                   # 116 passed
+cargo test                        # 526 passed, 0 failed
+python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --help  # invocable
+```
+
+**Boundary check:** M9/M10/M11 deploy lists and artifact paths unchanged.
+The verifier is purely read-only — it never deploys, spawns, or launches.

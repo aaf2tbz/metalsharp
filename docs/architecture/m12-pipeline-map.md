@@ -91,7 +91,12 @@ The current release-hosted graphics bundle contains two DXMT surfaces:
 
 1. Add a first-class M12 runtime verification command in this repo that launches
    a small D3D12 probe through the same `launch_dxmt_metal` environment used by
-   games.
+   games. — **Addressed (Phase 3):** `GET /diagnostics/m12/dry-run?appid=...`
+   and `GET /diagnostics/pipeline/dry-run?appid=...&pipeline=m12` report the
+   exact env pairs, artifact hashes, and unix sidecars M12 would load, using
+   the same `steam_pipeline_env_pairs` builder as `launch_dxmt_metal`, without
+   launching Steam or the game. The existing `POST /steam/d3d12-runtime-doctor`
+   runs the SDK mini-probe suite through that same environment.
 2. Add a native Cocoa viewer test target if the goal is to exercise the in-tree
    `metalsharp_d3d12` implementation through CAMetalLayer rather than through
    Wine/winemetal.
@@ -104,3 +109,31 @@ The current MetalSharp project treats M12 as the D3D12 DXMT route while keeping
 older DXMT routes isolated. D3D12 PE import detection selects M12, the backend
 handoff deploys the `dxmt-m12` runtime, and M9/M10/M11 continue to use the
 legacy `dxmt` surface that is known to work for current Steam/Wine titles.
+
+## M12 Artifact and Launch Verification (Phase 3)
+
+A reviewer can prove M12 loaded the intended artifacts without launching a full
+game using the read-only dry-run verifier. It runs through the same environment
+builder (`steam_pipeline_env_pairs`) as `launch_dxmt_metal`, so the reported env
+pairs and artifact sources are exactly what a real M12 launch would use.
+
+- `GET /diagnostics/m12/dry-run?appid=<appid>` — M12-specific dry-run including
+  the `lib/dxmt-m12/x86_64-unix` sidecars (`winemetal.so`, `libc++.1.dylib`,
+  `libc++abi.1.dylib`, `libunwind.1.dylib`).
+- `GET /diagnostics/pipeline/dry-run?appid=<appid>&pipeline=m12|m11|...` —
+  generic pipeline dry-run for comparing lanes.
+
+The dry-run reports, per artifact: resolved source path, presence, sha256, and
+size; required artifacts that are missing produce a structured `ok: false` with
+a `missing[]` array rather than a silent fallback. Env keys verified present:
+`WINEDLLOVERRIDES` (winemetal overrides), `DXMT_SHADER_CACHE_PATH` (isolated
+`m12` lane), `DYLD_FALLBACK_LIBRARY_PATH`/`LD_LIBRARY_PATH`, `SteamAppId`, and
+`DXMT_WINEMETAL_UNIXLIB`.
+
+Contract guarantees covered by tests:
+
+- M12 deploys `d3d12.dll`, `dxgi.dll`, `d3d11.dll`, `d3d10core.dll`,
+  `winemetal.dll` from `lib/dxmt-m12/x86_64-windows`.
+- M11 does **not** deploy `d3d12.dll` and points only at `lib/dxmt`, never
+  `lib/dxmt-m12`.
+- M12 dry-run includes `d3d12.dll`; M11 dry-run does not.
