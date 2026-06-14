@@ -27,6 +27,11 @@ if [ -z "$APP_DIR" ]; then
   exit 1
 fi
 
+if ! codesign --verify --deep --strict --verbose=4 "$APP_DIR"; then
+  echo "DMG app bundle has an invalid code signature: ${APP_DIR#$MOUNT_DIR/}" >&2
+  exit 1
+fi
+
 RESOURCES="$APP_DIR/Contents/Resources"
 BACKEND="$RESOURCES/runtime/metalsharp-backend"
 HOST="$RESOURCES/runtime/host"
