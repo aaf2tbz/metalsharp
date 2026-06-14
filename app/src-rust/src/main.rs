@@ -18,6 +18,7 @@
 )]
 
 mod anticheat;
+mod binding_contract;
 mod bottles;
 mod d3d12_runtime_doctor;
 mod diagnostics;
@@ -1117,6 +1118,28 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 200,
                 json!({ "ok": true, "appid": appid, "pipeline": pipeline, "count": manifests.len(), "manifests": manifests }),
             )
+        },
+        // Phase 5: descriptor / root-signature binding contract validator.
+        // Accepts a root signature manifest JSON and (optionally) reflection
+        // bindings, returns a structured pass/fail against Metal's direct-
+        // binding limits and D3D12 ABI rules.
+        (Method::Post, "/diagnostics/binding-contract/validate") => {
+            let body = read_body(req);
+            let manifest_json = body.get("root_signature").cloned().unwrap_or(json!(null));
+            let reflection_json = body.get("reflection").cloned().unwrap_or(json!([]));
+            match serde_json::from_value::<binding_contract::RootSignatureManifest>(manifest_json) {
+                Ok(manifest) => {
+                    let reflection: Vec<binding_contract::ReflectionBinding> =
+                        serde_json::from_value(reflection_json).unwrap_or_default();
+                    let report = binding_contract::validate_root_signature_with(
+                        &manifest,
+                        &binding_contract::ReflectionBindingSet::from_bindings(reflection),
+                        binding_contract::BindingLimits::default(),
+                    );
+                    resp(200, serde_json::to_value(report).unwrap_or(json!({"ok": false, "error": "serialize failed"})))
+                },
+                Err(e) => resp(400, json!({ "ok": false, "error": format!("invalid root signature manifest: {}", e) })),
+            }
         },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
