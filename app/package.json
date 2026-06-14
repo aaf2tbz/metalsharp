@@ -30,7 +30,7 @@
     "@biomejs/biome": "^2.4.15",
     "@electron/notarize": "^2.5.0",
     "@iconify-json/lucide": "^1.2.111",
-    "@types/node": "^22.0.0",
+    "@types/node": "^25.9.3",
     "@vitejs/plugin-vue": "^6.0.7",
     "electron": "^42.3.3",
     "electron-builder": "^26.0.0",
