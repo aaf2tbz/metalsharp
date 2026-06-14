@@ -150,6 +150,8 @@ fn is_wine_steam_cleanup_command(command: &str) -> bool {
         || lower.contains("c:\\program files (x86)\\steam")
         || lower.contains("steamwebhelper.exe")
         || lower.contains("steamwebhelper_real.exe")
+        || lower.contains("c:\\windows\\system32\\explorer.exe /desktop")
+        || (lower.contains("c:\\windows\\system32\\conhost.exe") && lower.contains("--headless"))
         || lower.contains("winedevice.exe")
         || lower.contains("wineserver")
         || lower.contains("wineloader")
@@ -1588,6 +1590,15 @@ mod tests {
         ));
         assert!(!is_macos_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"Steam.app|steam_osx|ipcserver\"",
+        ));
+    }
+
+    #[test]
+    fn wine_steam_cleanup_includes_detached_tray_helpers() {
+        assert!(is_wine_steam_cleanup_command("1234 C:\\windows\\system32\\explorer.exe /desktop "));
+        assert!(is_wine_steam_cleanup_command("1235 C:\\windows\\system32\\conhost.exe --server 0x3c --headless "));
+        assert!(!is_wine_steam_cleanup_command(
+            "/bin/zsh -lc ps axo pid=,command= | rg -i \"explorer.exe|conhost.exe\"",
         ));
     }
 

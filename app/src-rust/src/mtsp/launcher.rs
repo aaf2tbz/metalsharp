@@ -5,6 +5,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use walkdir::WalkDir;
 
 const DEFAULT_BRIDGE_PORT: u16 = 18733;
 const FNA_CARBON_SHIM: &str = "libCarbon.dylib";
@@ -445,6 +446,7 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let pipeline_id = super::rules::resolve_pipeline(appid);
     let node = get_pipeline(pipeline_id);
+    prepare_start_protected_game_for_pipeline(appid, pipeline_id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let deployed_sources: Vec<String> = {
         validate_recipe_runtime(&recipe)?;
@@ -453,6 +455,9 @@ pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::er
         }
         let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
         deploy_recipe_dlls(&recipe)?;
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+        deploy_prefix_route_dlls(&recipe, &prefix)?;
         sources
     };
 
@@ -494,6 +499,7 @@ pub fn prepare_steam_pipeline_env(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    prepare_start_protected_game_for_pipeline(appid, pipeline_id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     validate_recipe_runtime(&recipe)?;
     if node.backend == "dxmt" {
@@ -511,6 +517,8 @@ pub fn prepare_steam_pipeline_env(
         }
     }
     deploy_recipe_dlls(&recipe)?;
+    let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+    deploy_prefix_route_dlls(&recipe, &prefix)?;
 
     let env = steam_pipeline_env_pairs(&home, node, appid);
     Ok((env, recipe))
@@ -980,6 +988,7 @@ fn launch_dxmt_metal_with_context(
     }
     repair_metalsharp_wine_wrapper_env_order()?;
 
+    prepare_start_protected_game_for_pipeline(appid, node.id);
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
@@ -3003,12 +3012,7 @@ fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
     if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
         ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
     } else {
-        ensure_real_steam_dlls(
-            &home,
-            &game_dir,
-            appid,
-            super::recipe::uses_steam_secure_launch_model(appid, pipeline_id),
-        );
+        ensure_real_steam_dlls(&home, &game_dir, appid, super::recipe::uses_steam_launch_model(appid, pipeline_id));
     }
 }
 
@@ -3389,7 +3393,7 @@ pub fn ensure_steam_emu_if_active(home: &Path, game_dir: &Path, appid: u32) {
 /// For non-Goldberg launches: ensure the game directory has real Steam DLLs,
 /// not leftover Goldberg emulator files. Restores .orig backups if they exist,
 /// or deploys from the user's Wine Steam installation.
-fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32, deploy_secure_components: bool) {
+fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32, deploy_steam_model_components: bool) {
     let targets = goldberg_deploy_targets(game_dir);
     let mut restored_any = false;
 
@@ -3486,15 +3490,18 @@ fn ensure_real_steam_dlls(home: &Path, game_dir: &Path, appid: u32, deploy_secur
         }
     }
 
-    if deploy_secure_components {
-        for filename in ["steamclient64.dll", "steamclient.dll", "GameOverlayRenderer64.dll", "GameOverlayRenderer.dll"]
-        {
+    if deploy_steam_model_components {
+        for filename in real_steam_model_component_names() {
             deploy_real_steam_component(&wine_steam_dir, &targets, filename);
         }
     }
 
     // Always ensure steam_appid.txt is correct for the real Steam runtime.
     deploy_steam_appid(game_dir, appid);
+}
+
+fn real_steam_model_component_names() -> &'static [&'static str] {
+    &["steamclient64.dll", "steamclient.dll", "GameOverlayRenderer64.dll", "GameOverlayRenderer.dll"]
 }
 
 fn deploy_real_steam_component(wine_steam_dir: &Path, targets: &[PathBuf], filename: &str) {
@@ -3515,20 +3522,25 @@ fn deploy_real_steam_component(wine_steam_dir: &Path, targets: &[PathBuf], filen
     }
 }
 
-fn start_protected_game_real_exe(appid: u32) -> Option<&'static str> {
+fn start_protected_game_real_exe_names(appid: u32) -> &'static [&'static str] {
     match appid {
-        1245620 => Some("eldenring.exe"),
-        1888160 => Some("armoredcore6.exe"),
-        _ => None,
+        1245620 => &["eldenring.exe"],
+        1888160 => &["armoredcore6.exe"],
+        _ => &[],
     }
 }
 
-fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
-    let real_exe_name = match start_protected_game_real_exe(appid) {
-        Some(name) => name,
-        None => return,
+fn prepare_start_protected_game_for_pipeline(appid: u32, pipeline_id: PipelineId) {
+    if !matches!(pipeline_id, PipelineId::Dxmt | PipelineId::M12) {
+        return;
+    }
+    let Some(game_dir) = crate::setup::resolve_windows_game_dir(appid) else {
+        return;
     };
+    apply_start_protected_game_bypass(appid, &game_dir);
+}
 
+fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
     let spg = match super::recipe::find_case_insensitive(game_dir, "start_protected_game.exe") {
         Some(path) => path,
         None => return,
@@ -3542,14 +3554,65 @@ fn apply_start_protected_game_bypass(appid: u32, game_dir: &Path) {
         return;
     }
 
-    let real_exe = match super::recipe::find_case_insensitive(game_dir, real_exe_name) {
+    let real_exe = match find_start_protected_real_exe(appid, game_dir, spg_dir) {
         Some(path) => path,
         None => return,
     };
 
     let old = spg_dir.join("start_protected_game.old");
-    let _ = std::fs::rename(&spg, &old);
-    let _ = std::fs::copy(&real_exe, &spg);
+    if let Err(err) = std::fs::rename(&spg, &old) {
+        eprintln!("start_protected_game: failed to rename {} to {}: {}", spg.display(), old.display(), err);
+        return;
+    }
+    if let Err(err) = std::fs::copy(&real_exe, &spg) {
+        eprintln!("start_protected_game: failed to copy {} to {}: {}", real_exe.display(), spg.display(), err);
+        let _ = std::fs::rename(&old, &spg);
+    }
+}
+
+fn find_start_protected_real_exe(appid: u32, game_dir: &Path, spg_dir: &Path) -> Option<PathBuf> {
+    for real_exe_name in start_protected_game_real_exe_names(appid) {
+        if let Some(path) = super::recipe::find_case_insensitive(game_dir, real_exe_name) {
+            return Some(path);
+        }
+    }
+
+    let candidates = WalkDir::new(spg_dir)
+        .max_depth(1)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_file() {
+                return None;
+            }
+            let name = path.file_name()?.to_string_lossy().to_string();
+            if is_start_protected_real_exe_candidate(&name) {
+                Some(path.to_path_buf())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if candidates.len() == 1 {
+        candidates.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn is_start_protected_real_exe_candidate(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".exe")
+        && lower != "start_protected_game.exe"
+        && !lower.contains("easyanticheat")
+        && !lower.contains("setup")
+        && !lower.contains("redist")
+        && !lower.contains("installer")
+        && !lower.contains("uninstall")
+        && !lower.contains("crash")
+        && !lower.contains("launcher")
 }
 
 fn generate_steam_interfaces(game_dir: &Path) {
@@ -3934,6 +3997,7 @@ fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mtsp::recipe;
 
     #[test]
     fn m9_cache_env_uses_dxmt_family_not_dxvk() {
@@ -4045,6 +4109,9 @@ mod tests {
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
+        assert!(env_value(&env, "WINEDLLPATH").unwrap_or_default().contains("dxmt-m12/x86_64-windows"));
+        assert!(env_value(&env, "DYLD_LIBRARY_PATH").unwrap_or_default().contains("dxmt-m12/x86_64-unix"));
+        assert!(env_value(&env, "DYLD_FALLBACK_LIBRARY_PATH").unwrap_or_default().contains("dxmt-m12/x86_64-unix"));
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -4267,6 +4334,11 @@ mod tests {
             let path = winedllpath.unwrap().1.as_str();
             assert!(!path.is_empty(), "{:?} WINEDLLPATH is empty", pipeline_id);
             assert!(path.contains("x86_64-windows"), "{:?} WINEDLLPATH missing windows dir: {}", pipeline_id, path);
+            if pipeline_id == PipelineId::M12 {
+                assert!(path.contains("dxmt-m12"), "M12 should use isolated M12 DLL path: {}", path);
+            } else {
+                assert!(!path.contains("dxmt-m12"), "{:?} should not use isolated M12 DLL path: {}", pipeline_id, path);
+            }
             let _ = std::fs::remove_dir_all(&home);
         }
     }
@@ -4278,6 +4350,67 @@ mod tests {
         let env = steam_pipeline_env_pairs(&home, node, 1);
         assert!(!env.iter().any(|(key, _)| key == "WINEDLLPATH"));
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn m12_prefix_route_dlls_stage_into_system32() {
+        let root = test_dir("m12-prefix-route");
+        let source_dir = root.join("runtime").join("wine").join("lib").join("dxmt-m12").join("x86_64-windows");
+        let prefix = root.join("prefix-steam");
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+
+        let dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll"];
+        let recipe_dlls: Vec<recipe::RecipeDll> = dlls
+            .iter()
+            .map(|dll| {
+                let source_path = source_dir.join(dll);
+                std::fs::write(&source_path, format!("m12-{dll}")).expect("write route dll");
+                recipe::RecipeDll {
+                    source_subpath: "lib/dxmt-m12/x86_64-windows".to_string(),
+                    filename: (*dll).to_string(),
+                    source_path,
+                    dest_path: root.join("game").join(dll),
+                    source_present: true,
+                }
+            })
+            .collect();
+
+        let mut recipe = empty_test_recipe(PipelineId::M12);
+        recipe.dlls = recipe_dlls;
+
+        deploy_prefix_route_dlls(&recipe, &prefix).expect("stage M12 route DLLs");
+
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        for dll in dlls {
+            assert_eq!(std::fs::read_to_string(system32.join(dll)).unwrap(), format!("m12-{dll}"));
+        }
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn non_m12_prefix_route_dlls_do_not_stage_into_system32() {
+        let root = test_dir("m11-prefix-route");
+        let source_dir = root.join("runtime").join("wine").join("lib").join("dxmt").join("x86_64-windows");
+        let prefix = root.join("prefix-steam");
+        std::fs::create_dir_all(&source_dir).expect("create source dir");
+        let source_path = source_dir.join("d3d12.dll");
+        std::fs::write(&source_path, "legacy-dxmt-d3d12").expect("write route dll");
+
+        let mut recipe = empty_test_recipe(PipelineId::M11);
+        recipe.dlls.push(recipe::RecipeDll {
+            source_subpath: "lib/dxmt/x86_64-windows".to_string(),
+            filename: "d3d12.dll".to_string(),
+            source_path,
+            dest_path: root.join("game").join("d3d12.dll"),
+            source_present: true,
+        });
+
+        deploy_prefix_route_dlls(&recipe, &prefix).expect("non-M12 route is no-op");
+
+        assert!(!prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll").exists());
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -4402,7 +4535,7 @@ mod tests {
     }
 
     #[test]
-    fn secure_steam_launch_deploys_real_steam_client_components() {
+    fn steam_model_launch_deploys_real_steam_client_components() {
         let home = test_dir("secure-real-steam");
         let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
             .join("prefix-steam")
@@ -4414,14 +4547,10 @@ mod tests {
         std::fs::create_dir_all(&steam_dir).expect("create steam dir");
         std::fs::create_dir_all(&bin_dir).expect("create game bin");
 
-        for filename in [
-            "steam_api64.dll",
-            "steam_api.dll",
-            "steamclient64.dll",
-            "steamclient.dll",
-            "GameOverlayRenderer64.dll",
-            "GameOverlayRenderer.dll",
-        ] {
+        for filename in ["steam_api64.dll", "steam_api.dll"] {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+        for filename in real_steam_model_component_names() {
             std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
         }
 
@@ -4445,6 +4574,40 @@ mod tests {
             );
             assert_eq!(std::fs::read_to_string(target.join("steam_appid.txt")).expect("read appid"), "440");
         }
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn steam_only_launches_deploy_real_steam_client_components() {
+        let home = test_dir("steam-only-real-steam");
+        let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam");
+        let game_dir = home.join("SteamLibrary").join("steamapps").join("common").join("Party Animals");
+        std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+
+        for filename in ["steam_api64.dll", "steam_api.dll"] {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+        for filename in real_steam_model_component_names() {
+            std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+        }
+
+        ensure_real_steam_dlls(&home, &game_dir, 1260320, true);
+
+        assert_eq!(std::fs::read(game_dir.join("steam_api64.dll")).expect("read api64"), b"steam_api64.dll");
+        assert_eq!(std::fs::read(game_dir.join("steam_api.dll")).expect("read api"), b"steam_api.dll");
+        for filename in real_steam_model_component_names() {
+            assert_eq!(
+                std::fs::read(game_dir.join(filename)).expect("read steam model component"),
+                filename.as_bytes()
+            );
+        }
+        assert_eq!(std::fs::read_to_string(game_dir.join("steam_appid.txt")).expect("read appid"), "1260320");
 
         let _ = std::fs::remove_dir_all(home);
     }
@@ -4571,11 +4734,62 @@ mod tests {
     }
 
     #[test]
+    fn start_protected_game_bypass_handles_armored_core_vi() {
+        let home = test_dir("spg-ac6");
+        let game_dir = home.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("armoredcore6.exe"), b"AC6_REAL_GAME").expect("write real exe");
+
+        apply_start_protected_game_bypass(1888160, &home);
+
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"AC6_REAL_GAME");
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn start_protected_game_bypass_can_infer_single_sibling_real_exe() {
+        let home = test_dir("spg-generic");
+        let game_dir = home.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("realgame.exe"), b"REAL_GAME").expect("write real exe");
+
+        apply_start_protected_game_bypass(99999, &home);
+
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME");
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn start_protected_game_bypass_skips_ambiguous_generic_siblings() {
+        let home = test_dir("spg-ambiguous");
+        let game_dir = home.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("first.exe"), b"FIRST").expect("write first exe");
+        std::fs::write(game_dir.join("second.exe"), b"SECOND").expect("write second exe");
+
+        apply_start_protected_game_bypass(99999, &home);
+
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"EAC_STUB");
+        assert!(!game_dir.join("start_protected_game.old").exists());
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn start_protected_game_bypass_skips_unknown_appid() {
         let home = test_dir("spg-skip");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
         std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("first.exe"), b"FIRST").expect("write first exe");
+        std::fs::write(game_dir.join("second.exe"), b"SECOND").expect("write second exe");
 
         apply_start_protected_game_bypass(99999, &home);
 
@@ -4589,6 +4803,25 @@ mod tests {
         let mut dir = std::env::temp_dir();
         dir.push(format!("metalsharp-launcher-{}-{}-{}", name, std::process::id(), unique_suffix()));
         dir
+    }
+
+    fn empty_test_recipe(pipeline: PipelineId) -> recipe::LaunchRecipe {
+        recipe::LaunchRecipe {
+            appid: 1,
+            pipeline,
+            pipeline_name: format!("{pipeline:?}"),
+            backend: "dxmt".to_string(),
+            game_dir: None,
+            exe_path: None,
+            exe_name: None,
+            launch_args: Vec::new(),
+            env: Vec::new(),
+            dlls: Vec::new(),
+            runtime_assets: Vec::new(),
+            anti_cheat: Vec::new(),
+            anti_cheat_status: Vec::new(),
+            warnings: Vec::new(),
+        }
     }
 
     fn env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {

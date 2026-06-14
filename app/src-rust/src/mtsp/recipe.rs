@@ -112,7 +112,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::FnaArm64
         | PipelineId::WineBare => {
             let dir = game_dir.as_ref().ok_or_else(|| format!("game directory not found for appid {}", appid))?;
-            Some(resolve_game_exe(appid, dir)?)
+            Some(resolve_game_exe_for_pipeline(appid, dir, Some(node.id))?)
         },
         _ => None,
     };
@@ -197,8 +197,10 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
 
     append_database_default_launch_args(appid, pipeline, launch_args);
 
-    if uses_steam_secure_launch_model(appid, pipeline) {
+    if uses_steam_launch_model(appid, pipeline) {
         append_unique_launch_arg(launch_args, "-steam");
+    }
+    if uses_steam_secure_launch_model(appid, pipeline) {
         append_unique_launch_arg(launch_args, "-secure");
     }
 
@@ -226,7 +228,7 @@ fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&
         379720 | 275850 | 892970 | 252490 | 570 | 548430 | 526870 | 1272080 => &["-vulkan"],
         949230 => &["-force-vulkan"],
         1174180 => &["-api", "Vulkan"],
-        400 | 620 if pipeline == PipelineId::M9 => &["-dxlevel", "90", "-novid"],
+        400 | 620 | 4000 if pipeline == PipelineId::M9 => &["-dxlevel", "90", "-novid"],
         240 | 500 | 550 if pipeline == PipelineId::M9 => &["-dxlevel", "90"],
         7670 if pipeline == PipelineId::M9 => &["-dx9"],
         12210 if pipeline == PipelineId::M10 => &["-d3d10"],
@@ -236,7 +238,15 @@ fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&
 }
 
 pub(crate) fn requires_steam_secure_launch_args(appid: u32) -> bool {
-    matches!(appid, 440 | 620 | 4000 | 252490 | 271590 | 284160 | 292030 | 1172380 | 1260320 | 3241660)
+    matches!(appid, 440 | 730 | 252490 | 271590 | 284160 | 292030 | 1172380 | 3241660)
+}
+
+pub(crate) fn requires_steam_launch_args(appid: u32) -> bool {
+    matches!(appid, 620 | 4000 | 1260320) || requires_steam_secure_launch_args(appid)
+}
+
+pub(crate) fn uses_steam_launch_model(appid: u32, pipeline: PipelineId) -> bool {
+    requires_steam_launch_args(appid) && !matches!(pipeline, PipelineId::M13 | PipelineId::D3DMetal)
 }
 
 pub(crate) fn uses_steam_secure_launch_model(appid: u32, pipeline: PipelineId) -> bool {
@@ -267,7 +277,7 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
-            None => resolve_game_exe(appid, game_dir)?,
+            None => resolve_game_exe_for_pipeline(appid, game_dir, Some(node.id))?,
         }),
         _ => None,
     };
@@ -313,6 +323,20 @@ pub fn build_custom_launch_recipe(
 }
 
 pub fn resolve_game_exe(appid: u32, game_dir: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    resolve_game_exe_for_pipeline(appid, game_dir, None)
+}
+
+fn resolve_game_exe_for_pipeline(
+    appid: u32,
+    game_dir: &Path,
+    pipeline: Option<PipelineId>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    if matches!(pipeline, Some(PipelineId::Dxmt | PipelineId::M12)) {
+        if let Some(path) = prepared_start_protected_game_exe(game_dir) {
+            return Ok(path);
+        }
+    }
+
     for preferred in preferred_exe_names(appid) {
         let path = find_case_insensitive(game_dir, preferred);
         if let Some(path) = path {
@@ -342,6 +366,16 @@ pub fn resolve_game_exe(appid: u32, game_dir: &Path) -> Result<PathBuf, Box<dyn 
         .next()
         .map(|c| c.path)
         .ok_or_else(|| format!("no launchable .exe found in {}", game_dir.display()).into())
+}
+
+fn prepared_start_protected_game_exe(game_dir: &Path) -> Option<PathBuf> {
+    let spg = find_case_insensitive(game_dir, "start_protected_game.exe")?;
+    let spg_dir = spg.parent()?;
+    if spg_dir.join("start_protected_game.old").is_file() {
+        Some(spg)
+    } else {
+        None
+    }
 }
 
 pub fn selected_deploy_dlls_for_pipeline(
@@ -718,6 +752,7 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
         305620 => &["tld.exe"],
         1245620 => &["start_protected_game.exe", "eldenring.exe"],
+        1888160 => &["start_protected_game.exe", "armoredcore6.exe"],
         1962700 => &["Subnautica2.exe"],
         220 => &["hl2.exe"],
         440 => &["tf/win32/tf.exe", "tf.exe"],
@@ -1018,6 +1053,38 @@ mod tests {
     }
 
     #[test]
+    fn m12_selects_prepared_start_protected_game_exe() {
+        let dir = test_dir("spg-prepared");
+        let game_dir = dir.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.old"), b"EAC_STUB").expect("write old");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"REAL_GAME_COPY").expect("write protected copy");
+        std::fs::write(game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write real exe");
+
+        let selected =
+            resolve_game_exe_for_pipeline(1245620, &dir, Some(PipelineId::M12)).expect("select prepared protected exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("start_protected_game.exe"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn armored_core_vi_prefers_start_protected_game_exe() {
+        let dir = test_dir("ac6-preferred");
+        let game_dir = dir.join("Game");
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write protected exe");
+        std::fs::write(game_dir.join("armoredcore6.exe"), b"REAL_GAME").expect("write real exe");
+
+        let selected = resolve_game_exe(1888160, &dir).expect("select AC6 protected exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("start_protected_game.exe"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn preferred_exes_skip_crash_reporters_for_known_half_working_titles() {
         let village_dir = test_dir("preferred-village-exe");
         std::fs::create_dir_all(&village_dir).expect("create village dir");
@@ -1082,7 +1149,7 @@ mod tests {
 
     #[test]
     fn source_style_titles_get_steam_secure_launch_args() {
-        for appid in [440, 620, 4000, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
+        for appid in [440, 730, 252490, 271590, 284160, 292030, 1172380, 3241660] {
             let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
 
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
@@ -1090,6 +1157,36 @@ mod tests {
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
             assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
         }
+    }
+
+    #[test]
+    fn party_animals_m11_uses_steam_without_secure() {
+        let args = effective_launch_args(1260320, super::super::engine::get_pipeline(PipelineId::M11));
+
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
+    }
+
+    #[test]
+    fn portal_2_m9_uses_source_defaults_without_secure() {
+        let args = effective_launch_args(620, super::super::engine::get_pipeline(PipelineId::M9));
+
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")));
+        assert!(args.iter().any(|arg| arg == "90"));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
+    }
+
+    #[test]
+    fn garrys_mod_m9_uses_source_defaults_without_secure() {
+        let args = effective_launch_args(4000, super::super::engine::get_pipeline(PipelineId::M9));
+
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")));
+        assert!(args.iter().any(|arg| arg == "90"));
+        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")));
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
     }
 
     #[test]
