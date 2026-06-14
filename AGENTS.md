@@ -69,7 +69,7 @@ Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get 
 | `M9` | D3D9 / 32-bit capable DXMT-family route | Nidhogg 2, Undertale, Blasphemous, Dave the Diver |
 | `M10` | D3D10 to Metal | D3D10 apps/games |
 | `M11` | D3D11 to Metal | Rain World, Schedule I, Subnautica BZ |
-| `M12` | D3D12 to Metal | Peak, Silksong, D3D12 investigation titles |
+| `M12` | D3D12 to Metal through the isolated `dxmt-m12` runtime surface | Peak, Silksong, Elden Ring, D3D12 investigation titles |
 | `Mono/FNA` | Windows XNA/FNA through native Mono, staged FNA/XNA assemblies, and host shims | Celeste, Terraria |
 
 Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, and `m13` stay backend-parseable for legacy records, diagnostics, and fallback behavior, but they are not normal bottle route buttons.
@@ -78,7 +78,9 @@ Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, a
 
 - Wine runtime: `~/.metalsharp/runtime/wine/`
 - Wine prefix: `~/.metalsharp/prefix-steam/`
-- DXMT PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`
+- DXMT PE DLLs for M9/M10/M11: `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`
+- DXMT M12 PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt-m12/x86_64-windows/`
+- DXMT M12 Unix bridge and sidecars: `~/.metalsharp/runtime/wine/lib/dxmt-m12/x86_64-unix/`
 - DXVK i386 DLLs: `~/.metalsharp/runtime/wine/lib/dxvk/i386-windows/`
 - MoltenVK ICD: `~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json`
 - DXMT config: `~/.metalsharp/runtime/wine/etc/dxmt.conf`
@@ -99,7 +101,7 @@ Backend listens on `127.0.0.1:9274` (override with `METALSHARP_PORT`). Key endpo
 - `POST /game/prepare` — prepare game runtime (shims, DLLs, config)
 - `GET /steam/library` — full game library (owned + installed)
 - `POST /steam/launch` — start Wine Steam
-- `POST /steam/stop` — kill Wine Steam + wineserver
+- `POST /steam/stop` — kill Wine Steam, wineserver, Wine Steam service helpers, detached Wine desktop/tray helpers, and headless Wine console hosts
 - `POST /steam/launch-game` — Steam game launch with bottle preflight; env-dependent routes keep Wine Steam alive and spawn the game through the selected MTSP pipeline
 - `POST /steam/runtime-doctor` — inspect a Steam game's bottle/runtime readiness
 - `GET /sharp-library` — Sharp Library apps and imported Windows programs
@@ -164,12 +166,13 @@ tools/linux/publish-oci-packages.sh
 
 ## CI Workflows
 
-Current CI is split between PR smoke coverage and tag/main release packaging:
+Current CI is split between PR smoke coverage, lightweight main-push workflow validation, and tag-driven release packaging:
 
 | Workflow | Triggers | What it does |
 |----------|----------|-------------|
-| `pr-ci.yml` | PRs to `main` | Metal CI, Vue CI, Rust CI, Electron CI, C/C++/Obj-C CI, Docker Package Smoke |
-| `ci.yml` | pushes to `main`, tags `v*` | Full DMG build, Linux DEB build, Linux runtime tarballs, GHCR package publish, release artifact upload on tags |
+| `pr-ci.yml` | PRs to `main` | Shell CI, Metal CI, Vue CI, Rust CI, Electron CI, C/C++/Obj-C CI, and lightweight `DMG Workflow CI` contract validation |
+| `ci.yml` | pushes to `main` | Main-branch smoke coverage plus `DMG Workflow CI` contract validation; it does not publish release artifacts |
+| `release.yml` | tags `v*` | Developer SDK publish, full arm64 DMG build, DMG runtime-asset verification, release artifact upload, and package publication |
 | `publish-linux-packages.yml` | manual | Re-publish Linux DEB/runtime release assets to GHCR with ORAS |
 
 ## Version Bumping
