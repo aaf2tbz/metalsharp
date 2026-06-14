@@ -2193,6 +2193,10 @@ fn logs_dir() -> std::path::PathBuf {
     crate::platform::metalsharp_home_dir().join("logs")
 }
 
+fn crash_reports_log_dir() -> std::path::PathBuf {
+    logs_dir().join("crash-reports")
+}
+
 fn chrono_now() -> String {
     local_date(&["+%Y-%m-%d %H:%M:%S %Z"]).unwrap_or_else(|| {
         let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -2489,7 +2493,7 @@ fn scan_crash_files(
 }
 
 fn persist_crash_log(source: &str, path: &std::path::Path, timestamp: &str, size: u64) {
-    let log_dir = logs_dir();
+    let log_dir = crash_reports_log_dir();
     let _ = std::fs::create_dir_all(&log_dir);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let file_name = format!("crash-{}-{}-{}.log", slugify(source), slugify(&name), slugify(timestamp));

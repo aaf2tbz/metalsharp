@@ -278,6 +278,7 @@ fn parse_bridge_port(value: Option<&str>) -> Option<u16> {
 struct CachePaths {
     shader: String,
     pipeline: String,
+    log: String,
 }
 
 struct LaunchLogContext<'a> {
@@ -1897,15 +1898,22 @@ fn cleanup_legacy_injections(game_dir: &Path) -> Result<(), Box<dyn std::error::
 
 fn build_cache_paths(home: &PathBuf, node: &PipelineNode, appid: u32) -> Option<CachePaths> {
     let subdir = node.shader_cache_subdir?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
     let shader_base = preferred_shader_cache_base(home, subdir, appid);
-    let pipeline_base =
-        crate::platform::metalsharp_home_dir_for(&home).join("pipeline-cache").join(subdir).join(appid.to_string());
+    let pipeline_base = ms_home.join("pipeline-cache").join(subdir).join(appid.to_string());
+    let log_base = if subdir == "m12" {
+        ms_home.join("logs").join("m12-pipeline").join(appid.to_string())
+    } else {
+        pipeline_base.clone()
+    };
     let _ = std::fs::create_dir_all(&shader_base);
     let _ = std::fs::create_dir_all(&pipeline_base);
+    let _ = std::fs::create_dir_all(&log_base);
     super::shader_cache::deploy_preset_cache(home, subdir, appid);
     Some(CachePaths {
         shader: shader_base.to_string_lossy().to_string(),
         pipeline: pipeline_base.to_string_lossy().to_string(),
+        log: log_base.to_string_lossy().to_string(),
     })
 }
 
@@ -2073,6 +2081,7 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
 
     let shader_dir = format!("{}/", cache.shader);
     let pipeline_dir = format!("{}/", cache.pipeline);
+    let log_dir = format!("{}/", cache.log);
     let mut env = vec![
         ("METALSHARP_SHADER_CACHE_PATH".to_string(), shader_dir.clone()),
         ("METALSHARP_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()),
@@ -2084,7 +2093,7 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
         "dxmt" => {
             env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir));
             env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
-            env.push(("DXMT_LOG_PATH".to_string(), pipeline_dir));
+            env.push(("DXMT_LOG_PATH".to_string(), log_dir));
         },
         "dxvk" => {
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
@@ -2098,7 +2107,7 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
             env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir.clone()));
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
             env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
-            env.push(("DXMT_LOG_PATH".to_string(), pipeline_dir));
+            env.push(("DXMT_LOG_PATH".to_string(), log_dir));
         },
         "mono" | "macos-steam" => {
             env.push(("FNA3D_SHADER_CACHE_PATH".to_string(), shader_dir));
@@ -4374,7 +4383,11 @@ mod tests {
     #[test]
     fn m9_cache_env_uses_dxmt_family_not_dxvk() {
         let node = get_pipeline(PipelineId::M9);
-        let cache = CachePaths { shader: "/tmp/m9-shaders".into(), pipeline: "/tmp/m9-pipelines".into() };
+        let cache = CachePaths {
+            shader: "/tmp/m9-shaders".into(),
+            pipeline: "/tmp/m9-pipelines".into(),
+            log: "/tmp/m9-logs".into(),
+        };
 
         let env = cache_env_pairs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"));
         let keys: std::collections::HashSet<_> = env.iter().map(|(key, _)| key.as_str()).collect();
@@ -4386,6 +4399,20 @@ mod tests {
         assert!(!keys.contains("DXVK_STATE_CACHE_PATH"));
         assert!(!keys.contains("DXVK_LOG_PATH"));
         assert!(!keys.contains("VK_ICD_FILENAMES"));
+    }
+
+    #[test]
+    fn m12_dxmt_log_path_uses_shared_logs_folder() {
+        let home = test_dir("m12-log-path");
+        let node = get_pipeline(PipelineId::M12);
+
+        let env = steam_pipeline_env_pairs(&home, node, 1583230);
+        let dxmt_log_path =
+            env.iter().find(|(key, _)| key == "DXMT_LOG_PATH").map(|(_, value)| value.as_str()).unwrap_or_default();
+
+        assert!(dxmt_log_path.contains("/logs/m12-pipeline/1583230/"));
+        assert!(!dxmt_log_path.contains("/pipeline-cache/"));
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
