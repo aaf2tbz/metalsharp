@@ -366,3 +366,51 @@ cargo test                        # 566 passed, 0 failed (2 consecutive runs)
 `should_wait_for_prefix_idle`, and `dxmt_runtime_ready` are untouched. Phase 7
 only adds observational reports and an explicit state enum. No automatic
 restart behavior is introduced.
+
+## Phase 8: Mono/FNA/XNA Pipeline Reliability and Asset Coverage ✅
+
+**Purpose:** make the non-Wine-native and Mono-based compatibility lanes
+stronger for known games and safer for untested games.
+
+**What landed:**
+- New `fna_profile.rs` module treating Mono/FNA/XNA as a first-class
+  compatibility family:
+  - `detect_fna_signals` — richer flavor detection layered on top of the
+    existing `detect_fna_flavor`: FNA / MonoGame / XNA + Steamworks.NET,
+    CSteamworks, FAudio, FMOD, OpenAL, XInput, x86-vs-native Mono signal,
+    and the evidence files that drove each signal.
+  - `AssetReceipt` + `AssetStagingReport` — receipt-driven asset staging:
+    records filename, source path + sha256, dest path + sha256, required vs
+    optional, whether a game file was overwritten, and a reason. Persists
+    atomically to `<game_dir>/.metalsharp/fna-staging.json` so a future run
+    can skip re-copying when source and staged hashes match.
+  - `explain_profile` — "profile explain" diagnostic that reports WHY a game
+    selected FNA ARM64, FNA x86, XNA/MonoGame x86, or a fallback, with the
+    signals that confirm it.
+  - `classify_unproven_fna_game` — conservative unproven-game classifier
+    that does NOT claim compatibility, stages only reversible shims, and
+    offers Wine fallback. Pinned known-good app ids (Terraria/Celeste/Stardew)
+    are never reclassified.
+  - `PINNED_FNA_APPIDS` const codifies the protected known-good set.
+- New routes: `GET /diagnostics/fna/signals`, `GET /diagnostics/fna/explain`,
+  `GET /diagnostics/fna/classify`, plus a `url_decode` helper for query params.
+
+**New tests (15):** FNA + audio/Steamworks signals; MonoGame + XNA signals;
+unknown-flavor handling; unproven game conservative for unknown;
+conservative-setup recommendation for FNA signal; pinned titles never
+overridden; pinned appid set covers Terraria/Celeste/Stardew; receipt hash
+capture; staging report round-trip; explain-profile for Celeste (x86),
+Stardew (native), Terraria (x86); unproven explanation is conservative.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test fna_profile            # 15 passed
+cargo test                        # 579 passed, 0 failed (2 consecutive runs)
+```
+
+**Boundary check:** pinned known-good behavior for Terraria (105600),
+Celeste (504230), Stardew Valley (413150) is unchanged. This module explains
+and receipts the lane selection; it does not override `find_fna_profile` or
+`deploy_fna_assemblies`. No game file is overwritten without a receipt.
