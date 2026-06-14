@@ -44,6 +44,7 @@ const DXMT_REQUIRED_PE: &[&str] = &[
 ];
 const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so"];
 const DXMT_M12_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+const DXMT_M12_WINE_BUILTIN_PE_OVERLAY: &[&str] = &["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"];
 const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/wine/bin/metalsharp-wine",
     "runtime/metalsharp-backend",
@@ -1050,6 +1051,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
         ensure_dxmt_runtime_compat_files(&dxmt_m12_dir)?;
+        overlay_m12_dxmt_into_wine_builtin_dirs(&dxmt_m12_dir)?;
         write_dxmt_runtime_manifest(&dxmt_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
         mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
@@ -1085,6 +1087,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
             }
             ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
             ensure_dxmt_runtime_compat_files(&dxmt_m12_dir)?;
+            overlay_m12_dxmt_into_wine_builtin_dirs(&dxmt_m12_dir)?;
             write_dxmt_runtime_manifest(&dxmt_dir, "fallback:~/metalsharp/runtime/dxmt")?;
         }
     }
@@ -1111,6 +1114,10 @@ fn dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir: &Path) -> PathBuf {
     dxmt_dir.parent().unwrap_or(dxmt_dir).join("dxmt-m12")
 }
 
+fn wine_builtin_dir_from_dxmt_dir(dxmt_dir: &Path) -> PathBuf {
+    dxmt_dir.parent().unwrap_or(dxmt_dir).join("wine")
+}
+
 pub fn dxmt_runtime_current_for_home(home: &Path) -> bool {
     dxmt_runtime_current_for_dir(&dxmt_runtime_dir_for_home(home))
 }
@@ -1126,22 +1133,29 @@ pub fn dxmt_runtime_status() -> Value {
     let installed_version = dxmt_runtime_installed_version(&dxmt_dir);
     let files_ready = dxmt_runtime_ready(&dxmt_dir);
     let m12_files_ready = dxmt_m12_runtime_ready(&dxmt_m12_dir);
-    let current = files_ready && m12_files_ready && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
+    let m12_builtin_overlay_ready = m12_dxmt_wine_builtin_overlay_current(&dxmt_m12_dir);
+    let current = files_ready
+        && m12_files_ready
+        && m12_builtin_overlay_ready
+        && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
 
     json!({
         "current": current,
         "filesReady": files_ready,
         "m12FilesReady": m12_files_ready,
+        "m12BuiltinOverlayReady": m12_builtin_overlay_ready,
         "installedVersion": installed_version,
         "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
         "manifestPath": dxmt_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
         "m12Path": dxmt_m12_dir.to_string_lossy(),
+        "m12BuiltinPath": wine_builtin_dir_from_dxmt_dir(&dxmt_m12_dir).to_string_lossy(),
     })
 }
 
 fn dxmt_runtime_current_for_dir(dxmt_dir: &Path) -> bool {
     dxmt_runtime_ready(dxmt_dir)
         && dxmt_m12_runtime_ready(&dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir))
+        && m12_dxmt_wine_builtin_overlay_current(&dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir))
         && dxmt_runtime_installed_version(dxmt_dir).as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION)
 }
 
@@ -1186,6 +1200,60 @@ fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn overlay_m12_dxmt_into_wine_builtin_dirs(dxmt_m12_dir: &Path) -> Result<(), String> {
+    let wine_dir = wine_builtin_dir_from_dxmt_dir(dxmt_m12_dir);
+    let m12_pe_dir = dxmt_m12_dir.join("x86_64-windows");
+    let m12_unix_dir = dxmt_m12_dir.join("x86_64-unix");
+    let wine_pe_dir = wine_dir.join("x86_64-windows");
+    let wine_unix_dir = wine_dir.join("x86_64-unix");
+
+    fs::create_dir_all(&wine_pe_dir)
+        .map_err(|e| format!("create M12 Wine builtin PE overlay dir {}: {}", wine_pe_dir.display(), e))?;
+    fs::create_dir_all(&wine_unix_dir)
+        .map_err(|e| format!("create M12 Wine builtin Unix overlay dir {}: {}", wine_unix_dir.display(), e))?;
+
+    for dll in DXMT_M12_WINE_BUILTIN_PE_OVERLAY {
+        copy_required_runtime_file(&m12_pe_dir.join(dll), &wine_pe_dir.join(dll), "M12 Wine builtin PE overlay")?;
+    }
+    for lib in DXMT_M12_REQUIRED_UNIX {
+        copy_required_runtime_file(&m12_unix_dir.join(lib), &wine_unix_dir.join(lib), "M12 Wine builtin Unix overlay")?;
+    }
+
+    Ok(())
+}
+
+fn copy_required_runtime_file(src: &Path, dst: &Path, label: &str) -> Result<(), String> {
+    if !file_nonempty(src) {
+        return Err(format!("{} source missing or empty: {}", label, src.display()));
+    }
+    fs::copy(src, dst).map(|_| ()).map_err(|e| format!("copy {} {} -> {}: {}", label, src.display(), dst.display(), e))
+}
+
+fn m12_dxmt_wine_builtin_overlay_current(dxmt_m12_dir: &Path) -> bool {
+    let wine_dir = wine_builtin_dir_from_dxmt_dir(dxmt_m12_dir);
+    let m12_pe_dir = dxmt_m12_dir.join("x86_64-windows");
+    let m12_unix_dir = dxmt_m12_dir.join("x86_64-unix");
+    let wine_pe_dir = wine_dir.join("x86_64-windows");
+    let wine_unix_dir = wine_dir.join("x86_64-unix");
+
+    DXMT_M12_WINE_BUILTIN_PE_OVERLAY
+        .iter()
+        .all(|dll| runtime_files_match(&m12_pe_dir.join(dll), &wine_pe_dir.join(dll)))
+        && DXMT_M12_REQUIRED_UNIX
+            .iter()
+            .all(|lib| runtime_files_match(&m12_unix_dir.join(lib), &wine_unix_dir.join(lib)))
+}
+
+fn runtime_files_match(src: &Path, dst: &Path) -> bool {
+    let Ok(src_meta) = src.metadata() else { return false };
+    let Ok(dst_meta) = dst.metadata() else { return false };
+    src_meta.is_file()
+        && dst_meta.is_file()
+        && src_meta.len() > 0
+        && src_meta.len() == dst_meta.len()
+        && fs::read(src).ok() == fs::read(dst).ok()
 }
 
 fn copy_graphics_runtime_surface(src_root: &Path, dst_root: &Path) -> Result<(), String> {
@@ -2251,6 +2319,10 @@ mod tests {
         assert!(!dxmt_runtime_current_for_dir(&dxmt_dir));
 
         write_dxmt_runtime_manifest(&dxmt_dir, "test").expect("write current DXMT manifest");
+        assert!(!dxmt_runtime_current_for_dir(&dxmt_dir));
+
+        let dxmt_m12_dir = dxmt_m12_runtime_dir_from_dxmt_dir(&dxmt_dir);
+        overlay_m12_dxmt_into_wine_builtin_dirs(&dxmt_m12_dir).expect("overlay M12 Wine builtin files");
         assert!(dxmt_runtime_current_for_dir(&dxmt_dir));
 
         fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), br#"{"schema":"metalsharp.dxmt-runtime.v1","version":"old"}"#)
@@ -2282,6 +2354,39 @@ mod tests {
             fs::read(pe_dir.join("dxgi_dxmt.dll")).expect("read dxgi_dxmt"),
             fs::read(pe_dir.join("dxgi.dll")).expect("read dxgi")
         );
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn m12_wine_builtin_overlay_copies_only_bridge_surface() {
+        let home = test_home("m12-wine-builtin-overlay");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        write_dxmt_runtime_files(&dxmt_dir);
+        let dxmt_m12_dir = dxmt_m12_runtime_dir_from_dxmt_dir(&dxmt_dir);
+        let wine_dir = wine_builtin_dir_from_dxmt_dir(&dxmt_m12_dir);
+
+        assert!(!m12_dxmt_wine_builtin_overlay_current(&dxmt_m12_dir));
+
+        overlay_m12_dxmt_into_wine_builtin_dirs(&dxmt_m12_dir).expect("overlay M12 builtin files");
+
+        assert!(m12_dxmt_wine_builtin_overlay_current(&dxmt_m12_dir));
+        for dll in DXMT_M12_WINE_BUILTIN_PE_OVERLAY {
+            assert_eq!(
+                fs::read(dxmt_m12_dir.join("x86_64-windows").join(dll)).expect("read M12 DLL"),
+                fs::read(wine_dir.join("x86_64-windows").join(dll)).expect("read overlaid Wine DLL"),
+                "{dll} overlay should match M12 source"
+            );
+        }
+        for lib in DXMT_M12_REQUIRED_UNIX {
+            assert_eq!(
+                fs::read(dxmt_m12_dir.join("x86_64-unix").join(lib)).expect("read M12 Unix lib"),
+                fs::read(wine_dir.join("x86_64-unix").join(lib)).expect("read overlaid Wine Unix lib"),
+                "{lib} overlay should match M12 source"
+            );
+        }
+        assert!(!wine_dir.join("x86_64-windows").join("d3d11.dll").exists());
+        assert!(!wine_dir.join("x86_64-windows").join("d3d10core.dll").exists());
+
         let _ = fs::remove_dir_all(home);
     }
 
