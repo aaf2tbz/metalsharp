@@ -162,8 +162,7 @@ textarea {
 :root[data-theme="developer"] body {
   background:
     radial-gradient(circle at 18% 12%, rgba(255, 46, 247, 0.12), transparent 32%),
-    radial-gradient(circle at 86% 20%, rgba(0, 245, 255, 0.10), transparent 30%),
-    var(--bg-deep);
+    radial-gradient(circle at 86% 20%, rgba(0, 245, 255, 0.1), transparent 30%), var(--bg-deep);
 }
 
 :root[data-theme="developer"] .btn {
@@ -180,7 +179,7 @@ textarea {
 :root[data-theme="developer"] .btn:hover {
   border-color: var(--accent);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.10), transparent 54%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 54%),
     linear-gradient(90deg, rgba(185, 255, 77, 0.18), rgba(0, 245, 255, 0.13), rgba(255, 46, 247, 0.13));
   box-shadow:
     inset 0 0 0 1px rgba(185, 255, 77, 0.16),
@@ -192,12 +191,11 @@ textarea {
 :root[data-theme="developer"] .btn-install {
   border-color: rgba(185, 255, 77, 0.72);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 52%),
-    linear-gradient(90deg, #b9ff4d, #00f5ff);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.22), transparent 52%), linear-gradient(90deg, #b9ff4d, #00f5ff);
   color: #09070f;
   text-shadow: none;
   box-shadow:
-    0 0 0 1px rgba(185, 255, 77, 0.20),
+    0 0 0 1px rgba(185, 255, 77, 0.2),
     0 0 28px rgba(0, 245, 255, 0.18);
 }
 :root[data-theme="developer"] .btn-primary:hover,
@@ -208,10 +206,8 @@ textarea {
     linear-gradient(90deg, #d7ff84, #00f5ff, #ff2ef7);
 }
 :root[data-theme="developer"] .btn-secondary {
-  border-color: rgba(0, 245, 255, 0.30);
-  background:
-    linear-gradient(180deg, rgba(0, 245, 255, 0.12), transparent 60%),
-    rgba(13, 11, 23, 0.82);
+  border-color: rgba(0, 245, 255, 0.3);
+  background: linear-gradient(180deg, rgba(0, 245, 255, 0.12), transparent 60%), rgba(13, 11, 23, 0.82);
   color: var(--text-secondary);
 }
 :root[data-theme="developer"] .btn-danger,
@@ -225,9 +221,7 @@ textarea {
 :root[data-theme="developer"] textarea {
   border-color: rgba(0, 245, 255, 0.24);
   border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 50%),
-    var(--bg-input);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 50%), var(--bg-input);
   color: var(--text-primary);
   outline: none;
 }
@@ -237,12 +231,6 @@ textarea {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(185, 255, 77, 0.12);
 }
-:root[data-theme="developer"] .badge {
-  border-radius: 999px;
-  border: 1px solid currentColor;
-  background: rgba(9, 7, 15, 0.68);
-}
-
 .btn-sm {
   padding: 4px 10px;
   font-size: 12px;
@@ -275,6 +263,11 @@ textarea {
 .badge-error {
   background: var(--error-bg);
   color: var(--error);
+}
+:root[data-theme="developer"] .badge {
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  background: rgba(9, 7, 15, 0.68);
 }
 
 .spinner {

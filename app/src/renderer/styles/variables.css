@@ -121,14 +121,14 @@
   --border-strong: rgba(185, 255, 77, 0.32);
   --sidebar-bg: rgba(9, 7, 15, 0.88);
   --sidebar-hover: rgba(255, 46, 247, 0.12);
-  --sidebar-active: linear-gradient(90deg, rgba(185, 255, 77, 0.12), rgba(0, 245, 255, 0.08), rgba(255, 46, 247, 0.10));
+  --sidebar-active: linear-gradient(90deg, rgba(185, 255, 77, 0.12), rgba(0, 245, 255, 0.08), rgba(255, 46, 247, 0.1));
   --sidebar-text: #f8ffe7;
   --sidebar-text-active: var(--sidebar-text);
   --sidebar-text-hover: #b9ff4d;
   --sidebar-logo-color: #b9ff4d;
   --sidebar-logo-accent: #ff2ef7;
   --page-header-bg:
-    radial-gradient(circle at 12% 12%, rgba(255, 46, 247, 0.20), transparent 32%),
+    radial-gradient(circle at 12% 12%, rgba(255, 46, 247, 0.2), transparent 32%),
     radial-gradient(circle at 88% 18%, rgba(0, 245, 255, 0.18), transparent 30%),
     linear-gradient(100deg, #0a0611 0%, #191026 34%, #05232c 68%, #22082d 100%);
   --radius-sm: 12px;
