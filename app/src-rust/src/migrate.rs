@@ -7,8 +7,20 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 3;
-const STEAM_UPDATE_PROCESS_MARKERS: &[&str] =
-    &["steam.exe", "steamupdate.exe", "steamwebhelper.exe", "steamwebhelper", "steamerrorreporter.exe"];
+const POST_WINEBOOT_WINE_ACTIVITY_MARKERS: &[&str] = &[
+    "steam.exe",
+    "steamupdate.exe",
+    "steamwebhelper.exe",
+    "steamwebhelper",
+    "steamerrorreporter.exe",
+    "explorer.exe",
+    "services.exe",
+    "rpcss.exe",
+    "plugplay.exe",
+    "wineloader",
+    "wine64-preloader",
+    "wine-preloader",
+];
 const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "steamapps",
     "common",
@@ -552,24 +564,29 @@ fn wait_for_install_complete() -> Result<(), String> {
     Err("runtime install timed out".into())
 }
 
-fn wait_for_post_wineboot_steam_update(prefix: &Path, step: usize, appear_timeout_secs: u64, close_timeout_secs: u64) {
+fn wait_for_post_wineboot_wine_activity(
+    prefix: &Path,
+    step: usize,
+    appear_timeout_secs: u64,
+    close_timeout_secs: u64,
+) -> bool {
     if !prefix.file_name().and_then(|name| name.to_str()).map(|name| name == "prefix-steam").unwrap_or(false) {
-        return;
+        return false;
     }
 
     let prefix_str = prefix.to_string_lossy().to_string();
     let start = std::time::Instant::now();
-    let mut state = SteamUpdateWindowWait::default();
+    let mut state = PostWinebootWineActivityWait::default();
 
     loop {
         let elapsed = start.elapsed().as_secs();
-        if !state.saw_update_window() && elapsed >= appear_timeout_secs {
-            log_to_file("Migration: no post-wineboot Steam updater window appeared before timeout (non-fatal)");
-            return;
+        if !state.saw_activity() && elapsed >= appear_timeout_secs {
+            log_to_file("Migration: no post-wineboot Wine activity appeared before timeout (non-fatal)");
+            return false;
         }
-        if state.saw_update_window() && elapsed >= appear_timeout_secs.saturating_add(close_timeout_secs) {
-            log_to_file("Migration: timed out waiting for Steam updater to close after wineboot (non-fatal)");
-            return;
+        if state.saw_activity() && elapsed >= appear_timeout_secs.saturating_add(close_timeout_secs) {
+            log_to_file("Migration: timed out waiting for post-wineboot Wine activity to close (non-fatal)");
+            return false;
         }
 
         let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
@@ -577,8 +594,8 @@ fn wait_for_post_wineboot_steam_update(prefix: &Path, step: usize, appear_timeou
             _ => break,
         };
 
-        match state.observe(steam_update_process_alive(&prefix_str, &output)) {
-            SteamUpdateWaitAction::LogOpen => {
+        match state.observe(post_wineboot_wine_activity_alive(&prefix_str, &output)) {
+            PostWinebootActivityAction::LogOpen => {
                 write_migrate_progress(
                     "running",
                     step,
@@ -586,58 +603,59 @@ fn wait_for_post_wineboot_steam_update(prefix: &Path, step: usize, appear_timeou
                     "Updating Steam prefix; Steam is updating automatically...",
                     None,
                 );
-                log_to_file(
-                    "Migration: post-wineboot Steam updater window detected; waiting for Steam update to finish...",
-                );
+                log_to_file("Migration: post-wineboot Wine activity detected; waiting for Steam update to finish...");
             },
-            SteamUpdateWaitAction::Complete => {
+            PostWinebootActivityAction::Complete => {
                 write_migrate_progress("running", step, MIGRATION_TOTAL_STEPS, "Steam prefix update finished.", None);
-                log_to_file("Migration: post-wineboot Steam updater closed; Steam prefix update finished");
-                return;
+                log_to_file("Migration: post-wineboot Wine activity closed; Steam prefix update finished");
+                return true;
             },
-            SteamUpdateWaitAction::None => {},
+            PostWinebootActivityAction::None => {},
         }
 
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
 
-    log_to_file("Migration: could not inspect Steam updater process state after wineboot (non-fatal)");
+    log_to_file("Migration: could not inspect post-wineboot Wine process state (non-fatal)");
+    false
 }
 
-fn steam_update_process_alive(prefix_str: &str, process_output: &str) -> bool {
+fn post_wineboot_wine_activity_alive(prefix_str: &str, process_output: &str) -> bool {
     let prefix = prefix_str.to_ascii_lowercase();
     process_output.lines().any(|line| {
         let lower = line.to_ascii_lowercase();
-        lower.contains(&prefix) && STEAM_UPDATE_PROCESS_MARKERS.iter().any(|marker| lower.contains(marker))
+        lower.contains(&prefix)
+            && !lower.contains("wineboot")
+            && POST_WINEBOOT_WINE_ACTIVITY_MARKERS.iter().any(|marker| lower.contains(marker))
     })
 }
 
 #[derive(Default)]
-struct SteamUpdateWindowWait {
-    update_open_seen: bool,
+struct PostWinebootWineActivityWait {
+    activity_seen: bool,
 }
 
-impl SteamUpdateWindowWait {
-    fn observe(&mut self, steam_alive: bool) -> SteamUpdateWaitAction {
-        if steam_alive && !self.update_open_seen {
-            self.update_open_seen = true;
-            return SteamUpdateWaitAction::LogOpen;
+impl PostWinebootWineActivityWait {
+    fn observe(&mut self, activity_alive: bool) -> PostWinebootActivityAction {
+        if activity_alive && !self.activity_seen {
+            self.activity_seen = true;
+            return PostWinebootActivityAction::LogOpen;
         }
 
-        if !steam_alive && self.update_open_seen {
-            return SteamUpdateWaitAction::Complete;
+        if !activity_alive && self.activity_seen {
+            return PostWinebootActivityAction::Complete;
         }
 
-        SteamUpdateWaitAction::None
+        PostWinebootActivityAction::None
     }
 
-    fn saw_update_window(&self) -> bool {
-        self.update_open_seen
+    fn saw_activity(&self) -> bool {
+        self.activity_seen
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum SteamUpdateWaitAction {
+enum PostWinebootActivityAction {
     None,
     LogOpen,
     Complete,
@@ -841,6 +859,10 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path, step: us
         log_to_file(&format!("Failed to spawn wineboot for {}: {}", prefix.display(), e));
         format!("spawn wineboot for {}: {}", prefix.display(), e)
     })?;
+    let steam_prefix =
+        prefix.file_name().and_then(|name| name.to_str()).map(|name| name == "prefix-steam").unwrap_or(false);
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let mut post_wineboot_state = PostWinebootWineActivityWait::default();
 
     for attempt in 0..240 {
         if let Some(status) = child.try_wait().map_err(|e| {
@@ -849,7 +871,7 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path, step: us
         })? {
             if status.success() {
                 log_to_file(&format!("wineboot -u completed successfully for prefix: {}", prefix.display()));
-                wait_for_post_wineboot_steam_update(prefix, step, 45, 300);
+                wait_for_post_wineboot_wine_activity(prefix, step, 45, 300);
                 return Ok(());
             }
             let error_msg = format!("wineboot -u failed for {} with exit code: {:?}", prefix.display(), status.code());
@@ -860,6 +882,41 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path, step: us
 
         if attempt == 120 {
             log_to_file(&format!("wineboot -u still running after 60 seconds for prefix: {}", prefix.display()));
+        }
+
+        if steam_prefix {
+            let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+                _ => String::new(),
+            };
+            match post_wineboot_state.observe(post_wineboot_wine_activity_alive(&prefix_str, &output)) {
+                PostWinebootActivityAction::LogOpen => {
+                    write_migrate_progress(
+                        "running",
+                        step,
+                        MIGRATION_TOTAL_STEPS,
+                        "Updating Steam prefix; Steam is updating automatically...",
+                        None,
+                    );
+                    log_to_file("Migration: post-wineboot Wine activity detected while wineboot is still running");
+                },
+                PostWinebootActivityAction::Complete => {
+                    write_migrate_progress(
+                        "running",
+                        step,
+                        MIGRATION_TOTAL_STEPS,
+                        "Steam prefix update finished.",
+                        None,
+                    );
+                    log_to_file(
+                        "Migration: post-wineboot Wine activity closed while wineboot was still running; ending wineboot wait",
+                    );
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(());
+                },
+                PostWinebootActivityAction::None => {},
+            }
         }
     }
 
@@ -2341,17 +2398,17 @@ mod tests {
     }
 
     #[test]
-    fn migration_waits_for_post_wineboot_steam_update_to_finish() {
-        let mut wait = SteamUpdateWindowWait::default();
+    fn migration_waits_for_post_wineboot_wine_activity_to_finish() {
+        let mut wait = PostWinebootWineActivityWait::default();
 
-        assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
-        assert_eq!(wait.observe(true), SteamUpdateWaitAction::LogOpen);
-        assert_eq!(wait.observe(true), SteamUpdateWaitAction::None);
-        assert_eq!(wait.observe(false), SteamUpdateWaitAction::Complete);
+        assert_eq!(wait.observe(false), PostWinebootActivityAction::None);
+        assert_eq!(wait.observe(true), PostWinebootActivityAction::LogOpen);
+        assert_eq!(wait.observe(true), PostWinebootActivityAction::None);
+        assert_eq!(wait.observe(false), PostWinebootActivityAction::Complete);
     }
 
     #[test]
-    fn migration_steam_update_process_detection_is_prefix_scoped() {
+    fn migration_post_wineboot_activity_detection_is_prefix_scoped() {
         let prefix = "/Users/alex/.metalsharp/prefix-steam";
         let ps = "\
 101 /Users/alex/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steam.exe
@@ -2359,19 +2416,31 @@ mod tests {
 103 /Users/alex/.metalsharp/prefix-steam/drive_c/Steam/steamwebhelper.exe
 ";
 
-        assert!(steam_update_process_alive(prefix, ps));
-        assert!(!steam_update_process_alive("/tmp/missing-prefix", ps));
+        assert!(post_wineboot_wine_activity_alive(prefix, ps));
+        assert!(!post_wineboot_wine_activity_alive("/tmp/missing-prefix", ps));
     }
 
     #[test]
-    fn migration_steam_update_detection_tracks_helper_processes() {
+    fn migration_post_wineboot_activity_detection_tracks_wine_processes() {
         let prefix = "/Users/alex/.metalsharp/prefix-steam";
         let ps = "\
-201 /Users/alex/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamwebhelper
-202 /Users/alex/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamerrorreporter.exe
+201 /Users/alex/.metalsharp/prefix-steam/drive_c/windows/explorer.exe
+202 /Users/alex/.metalsharp/prefix-steam/drive_c/windows/system32/services.exe
+203 /Users/alex/.metalsharp/prefix-steam/drive_c/Program Files (x86)/Steam/steamwebhelper
 ";
 
-        assert!(steam_update_process_alive(prefix, ps));
+        assert!(post_wineboot_wine_activity_alive(prefix, ps));
+    }
+
+    #[test]
+    fn migration_post_wineboot_activity_ignores_wineboot_itself() {
+        let prefix = "/Users/alex/.metalsharp/prefix-steam";
+        let ps = "\
+301 /Users/alex/.metalsharp/prefix-steam/drive_c/windows/system32/wineboot.exe
+302 /Users/alex/.metalsharp/prefix-steam/drive_c/windows/system32/wineboot
+";
+
+        assert!(!post_wineboot_wine_activity_alive(prefix, ps));
     }
 
     #[test]
