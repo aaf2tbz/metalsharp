@@ -708,6 +708,8 @@ function formatBytes(bytes: number): string {
 <style scoped>
 .game-card {
   align-self: start;
+  min-width: 0;
+  width: 100%;
   height: fit-content;
   display: flex;
   flex-direction: column;
@@ -872,7 +874,7 @@ function formatBytes(bytes: number): string {
 }
 .game-card-heading {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
   gap: 10px;
   align-items: start;
   margin-bottom: 8px;
@@ -896,14 +898,17 @@ function formatBytes(bytes: number): string {
   min-height: 24px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 .game-card-size {
+  min-width: 0;
   font-size: 11px;
   color: var(--game-card-dim, var(--text-dim));
 }
 .route-chip {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
   min-height: 22px;
   padding: 2px 8px;
   border-radius: var(--radius-sm);
@@ -940,9 +945,11 @@ function formatBytes(bytes: number): string {
   min-width: 0;
 }
 .primary-action-row .btn-play {
+  min-width: 0;
   flex: 1 1 auto;
 }
 .wide-action {
+  min-width: 0;
   width: 100%;
 }
 .secondary-action-grid {
@@ -1003,6 +1010,7 @@ function formatBytes(bytes: number): string {
   cursor: pointer;
   transition: all var(--transition);
   flex: 0 0 34px;
+  min-width: 34px;
 }
 .icon-button:hover {
   color: var(--accent);
@@ -1070,6 +1078,18 @@ function formatBytes(bytes: number): string {
   .primary-action-row,
   .secondary-action-grid {
     gap: 8px;
+  }
+  .game-card-body {
+    padding: 12px;
+  }
+  .game-card-title {
+    font-size: 13px;
+  }
+  .route-chip,
+  .bottle-chip,
+  .steam-emu-toggle,
+  .game-card-size {
+    font-size: 10px;
   }
 }
 
