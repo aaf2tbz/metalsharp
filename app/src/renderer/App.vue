@@ -356,7 +356,9 @@ async function initApp() {
       <section class="update-changelog-modal" @click.stop>
         <header class="update-changelog-modal-header">
           <h2>MetalSharp v{{ updateStatus?.latest_version }}</h2>
-          <button class="modal-close-btn" type="button" @click="showUpdateChangelog = false">Close</button>
+          <button class="modal-close-btn" type="button" aria-label="Close" title="Close" @click="showUpdateChangelog = false">
+            x
+          </button>
         </header>
         <pre class="update-changelog-body">{{ fullUpdateChangelog }}</pre>
       </section>
@@ -495,19 +497,16 @@ async function initApp() {
   background: var(--bg-surface);
   color: var(--text-primary);
   border-radius: 4px;
-  min-width: 72px;
-  min-height: 32px;
-  padding: 8px 16px;
-  font-size: 13px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
   font-weight: 700;
   cursor: pointer;
-  position: relative;
-  z-index: 1;
-}
-.modal-close-btn::after {
-  content: "";
-  position: absolute;
-  inset: -6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .update-changelog-modal pre,
 .update-changelog-body {
