@@ -1156,6 +1156,21 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 Err(e) => resp(400, json!({ "ok": false, "error": format!("invalid command trace: {}", e) })),
             }
         },
+        // Phase 7: runtime artifact verification (presence + sha256 per file),
+        // wineboot state, and stop-Wine-Steam target report.
+        (Method::Get, "/diagnostics/runtime-artifacts") => resp(200, installer::runtime_artifact_report()),
+        (Method::Get, "/diagnostics/wineboot-state") => {
+            let url_str = req.url().to_string();
+            let appid: u32 = url_str
+                .split("appid=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let verifying = url_str.contains("verifying=true");
+            resp(200, bottles::steam_prefix_wineboot_state(appid, verifying))
+        },
+        (Method::Get, "/steam/stop-targets") => resp(200, steam::stop_wine_steam_targets()),
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))

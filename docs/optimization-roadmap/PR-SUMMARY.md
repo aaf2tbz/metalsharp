@@ -321,3 +321,48 @@ cargo test                        # 560 passed, 0 failed
 is a typed contract + validator that mirrors the existing SDK probes. The
 mini-suite (`rtv_clear`, `texture_sample`, `swapchain_present`) all map to
 trace patterns the validator accepts in clean form.
+
+## Phase 7: Bottle, Migration, and Runtime Performance Cleanup ✅
+
+**Purpose:** reduce app-level friction without changing graphics semantics.
+
+**What landed:**
+- `installer::runtime_artifact_report[_for]` — per-artifact verification that
+  goes beyond the existing `file_nonempty` presence checks by recording sha256
+  + size for EACH required file (M11 `lib/dxmt` and M12 `lib/dxmt-m12`, both
+  PE and unix sidecars). A missing M12 sidecar is now reported by name.
+- `installer::missing_m12_sidecars[_for]` — explicitly named missing M12
+  DLLs/dylibs/so, for the regression gate.
+- `bottles::WinebootState` — explicit state machine (`Idle` /
+  `PrefixUpdating` / `Verifying` / `PrefixMissing`) separating "prefix is
+  updating" (Wine busy: wineboot/wineserver) from "MetalSharp is verifying"
+  (runtime-doctor/preflight), so the UI does not double-poll or misrepresent
+  a Steam update window. `steam_prefix_wineboot_state[_for]` exposes the enum
+  + derived booleans.
+- `steam::stop_wine_steam_targets` — makes the existing stop filter
+  **observable**: lists what `stop_wine_steam` would target AND the processes
+  explicitly excluded (macOS Steam client, MetalSharp's own rg/ps), proving
+  the stop is scoped to real Wine Steam helper processes, not a broad kill.
+  No behavior change to `stop_wine_steam` itself.
+- New routes: `GET /diagnostics/runtime-artifacts`,
+  `GET /diagnostics/wineboot-state?appid=&verifying=true`,
+  `GET /steam/stop-targets`.
+- All new functions have explicit-home `_for` variants; no new test mutates
+  the process-global `METALSHARP_HOME` (parallel-safe).
+
+**New tests (6):** wineboot PrefixMissing when absent; Verifying takes
+precedence; wineboot report distinguishes updating vs verifying; missing M12
+sidecars listed by name; runtime artifact report names each file with presence
++ hash; stop-targets report shape.
+
+**Proof:**
+```
+cargo fmt --all -- --check        # clean
+cargo clippy --all-targets -- -D warnings   # clean
+cargo test                        # 566 passed, 0 failed (2 consecutive runs)
+```
+
+**Boundary check:** no readiness logic changed — `stop_wine_steam`,
+`should_wait_for_prefix_idle`, and `dxmt_runtime_ready` are untouched. Phase 7
+only adds observational reports and an explicit state enum. No automatic
+restart behavior is introduced.
