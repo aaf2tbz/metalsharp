@@ -17,21 +17,20 @@ app/
 │       ├── launch.rs            Engine detection + game launch — the core routing logic
 │       ├── steam.rs             Steam process management, library, install/uninstall, CEF wrapper
 │       ├── setup.rs             Per-game preparation (shim builds, DLL staging, FNA runtime)
-│       ├── installer.rs         Dependency installer (split bundles, Rosetta, Xcode CLI, GPTK, Mono)
-│       ├── migrate.rs           Runtime migration + settings-only preservation and prefix runtime repair
-│       ├── prefix_runtime.rs    Shared Wine prefix runtime surface for install/migration validation
+│       ├── installer.rs         Dependency installer (Wine bundle, Rosetta, Xcode CLI, GPTK, Mono)
+│       ├── migrate.rs           Runtime migration + preservation of Steam/prefix/game/bottle state
 │       ├── scan.rs              Game library scanner (Steam appmanifest parsing, wine path resolution)
 │       ├── sharp_library.rs     Sharp Library imports, installer launch, bottle app imports
 │       └── updater.rs           Self-update via GitHub releases DMG download
 ├── src/
 │   ├── main/                    Electron main process
 │   └── renderer/                Electron renderer (UI, library, setup wizard)
-├── bundles/                     Split release bundles downloaded from the `bundles` GitHub release
+├── bundles/                     Pre-packaged deps (metalsharp_bundle.tar.zst, SteamSetup.exe, etc.)
 ├── updater/                     Python update runtime script
 ├── package.json                 Electron app manifest
 └── src-rust/Cargo.toml          Rust backend manifest
 
-src/                             Native host shims and legacy MetalSharp graphics/runtime components
+src/                             C++ native D3D11/D3D12/DXGI/XAudio2/XInput → Metal implementations
 ├── d3d/d3d11/                   D3D11 device, context, shaders, resources
 ├── d3d/d3d12/                   D3D12 device, command queue, command list, resources
 ├── dxgi/                        DXGI factory, adapter, swap chain
@@ -46,15 +45,6 @@ src/                             Native host shims and legacy MetalSharp graphic
 ├── win32/                       Win32 API shims (kernel32, user32, registry, etc.)
 └── fna/                         FNA/XNA game support (Terraria, Celeste shims)
 
-vendor/dxmt/                     Active DXMT Metal runtime used by M9/M10/M11/M12
-├── src/d3d12/                   M12 D3D12 implementation, DXIL/MSL lowering, PSO/binding code
-├── src/d3d11/                   M11 D3D11 implementation
-├── src/d3d10/                   M10 D3D10 handoff
-├── src/dxgi/                    Shared DXGI bridge and dxgi_dxmt sidecar
-├── src/winemetal/               PE winemetal.dll and Unix winemetal.so bridge
-└── tests/d3d12_game/            M12 cube/stress executables and launch harnesses
-
-tools/d3d12-metal-sdk/           M12 contracts, probes, shader corpora, offline gates, SDK package source
 include/                         C++ public headers
 tests/                           C++ test suite (20+ tests: D3D11, D3D12, DXBC, Metal, audio, input)
 tools/
@@ -84,28 +74,11 @@ Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get 
 
 Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, and `m13` stay backend-parseable for legacy records, diagnostics, and fallback behavior, but they are not normal bottle route buttons.
 
-### M12 Runtime Contract
-
-M12 is a DXMT/WineMetal route, not GPTK/D3DMetal. A merge-ready M12 change must keep these surfaces aligned:
-
-- Release bundles: `metalsharp-runtime.tar.zst`, `metalsharp-graphics-dll.tar.zst`, and `metalsharp-d3d12-developer-sdk.tar.zst`.
-- Installed runtime: `~/.metalsharp/runtime/wine/lib/dxmt/`, `lib/wine/`, `lib/metalsharp/`, and `share/d3d12-metal-sdk/shader-corpus/`.
-- Prefix runtime surface: `~/.metalsharp/prefix-steam/drive_c/windows/system32/`, `syswow64/` for i386 PE DLLs, and `~/.metalsharp/prefix-steam/.metalsharp/unix/`.
-- Game-local launch surface: DXMT DLLs next to the selected executable plus M12 Unix sidecars staged game-local, under `unix/`, and under `.metalsharp/unix/`.
-- Logs and caches: `~/.metalsharp/logs/m12/<appid>/m12.log`, `shader-cache/m12/<appid>/`, and `pipeline-cache/m12/<appid>/`.
-
-`POST /mtsp/prepare` is a preflight/staging endpoint for this contract. For M12 it must stage Agility, prefix-route DLLs, game-local sidecars, Steam identity, and the same launch-critical assets that the real launch path needs. It should never report `ok` for a route that would fail immediately because sidecars or prefix DLLs are missing.
-
-Prefix init uses `metalsharp-wine cmd /c exit`, not `wineboot`. A timeout is a failure, not success. Install and migration must validate the prefix runtime surface and M12 shader corpus proof before marking setup complete.
-
 ### Key Paths at Runtime
 
 - Wine runtime: `~/.metalsharp/runtime/wine/`
 - Wine prefix: `~/.metalsharp/prefix-steam/`
 - DXMT PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`
-- DXMT Unix sidecars: `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/`
-- MetalSharp hook DLLs: `~/.metalsharp/runtime/wine/lib/metalsharp/x86_64-windows/`
-- M12 shader corpus: `~/.metalsharp/runtime/wine/share/d3d12-metal-sdk/shader-corpus/`
 - DXVK i386 DLLs: `~/.metalsharp/runtime/wine/lib/dxvk/i386-windows/`
 - MoltenVK ICD: `~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json`
 - DXMT config: `~/.metalsharp/runtime/wine/etc/dxmt.conf`
@@ -178,8 +151,6 @@ ctest --output-on-failure
 ### DMG packaging
 ```bash
 ./tools/dmg/create-bundles.sh
-./tools/bundles/verify-bundles.sh --bundle-dir app/bundles --require mac
-./tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk.tar.zst
 cd app && npx electron-builder --mac dmg --arm64
 ```
 
@@ -200,8 +171,6 @@ Current CI is split between PR smoke coverage and tag/main release packaging:
 | `pr-ci.yml` | PRs to `main` | Metal CI, Vue CI, Rust CI, Electron CI, C/C++/Obj-C CI, Docker Package Smoke |
 | `ci.yml` | pushes to `main`, tags `v*` | Full DMG build, Linux DEB build, Linux runtime tarballs, GHCR package publish, release artifact upload on tags |
 | `publish-linux-packages.yml` | manual | Re-publish Linux DEB/runtime release assets to GHCR with ORAS |
-
-`M12 Check` is the PR gate for the D3D12 DXMT route. Non-live mode rebuilds and stages the M12 runtime and `m12_game.exe`; local live mode is available with `M12_CHECK_RUN_LIVE=1 tools/ci/m12-check.sh`.
 
 ## Version Bumping
 
@@ -259,21 +228,6 @@ npx biome check src/           # lint (CI enforces)
 ```
 
 ### Integration sanity
-- M12 contract gates:
-  ```bash
-  python3 tools/d3d12-metal-sdk/scripts/validate-m12-pipeline-contract.py
-  python3 tools/d3d12-metal-sdk/scripts/validate-shader-engine.py \
-    --json tools/d3d12-metal-sdk/results/shader-engine-audit-metalsharp.json
-  python3 tools/d3d12-metal-sdk/scripts/build-metal-shader-corpus.py --clean
-  python3 tools/d3d12-metal-sdk/scripts/verify-built-metal-shader-corpus.py dist/d3d12-metal-shaders
-  tools/ci/m12-check.sh
-  tools/d3d12-metal-sdk/scripts/m12-dev.sh stress-game
-  ```
-- Bundle contract gates:
-  ```bash
-  tools/bundles/verify-bundles.sh --bundle-dir app/bundles --require mac
-  tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk.tar.zst
-  ```
 - `POST /setup/install-all` → verify progress endpoint shows completion
 - `GET /steam/status` → verify returns valid JSON
 - `POST /game/launch-auto` with a known appid → verify correct engine selected (check logs)
@@ -295,8 +249,3 @@ npx biome check src/           # lint (CI enforces)
 - **Linux Docker DEB builds can leave `dist/` root-owned** — `tools/linux/create-release-tarballs.sh` repairs ownership before writing `dist/packages`
 - **`winemetal.so` has no i386-unix version** — it uses WoW64 thunks for 32-bit PE clients, always lives in x86_64-unix/
 - **Steam auto-updates overwrite the steamwebhelper wrapper** — `deploy_steamwebhelper_wrapper()` handles this but it's a known pain point
-- **Do not treat a Wine init timeout as success** — install/migration must fail and report the prefix runtime issue after killing the probe.
-- **M12 shader corpus proof is required** — `runtime/wine/share/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/proof/SHA256SUMS` is part of the runtime bundle contract.
-- **Repair release bundles from the real `bundles` release asset** — patch `metalsharp-runtime.tar.zst` with current backend/host/mscompatdb/corpus, verify, then `gh release upload bundles ... --clobber`.
-- **M9 i386 PE DLLs go to `syswow64` in prefix route staging** — do not copy `lib/wine/i386-windows/d3d9.dll` into `system32`.
-- **`mscompatdb.so` for M12 comes from `lib/wine/x86_64-unix`** — the launch sidecar resolver validates and stages the Wine hook copy, not an arbitrary DXMT-side copy.

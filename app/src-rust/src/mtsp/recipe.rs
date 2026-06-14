@@ -166,9 +166,6 @@ pub fn effective_launch_args(appid: u32, node: &PipelineNode) -> Vec<String> {
     if appid == 1962700 && node.id == PipelineId::M12 {
         launch_args.retain(|arg| !arg.eq_ignore_ascii_case("-NOSPLASH"));
     }
-    if appid == 2050650 && node.id == PipelineId::M12 {
-        launch_args.clear();
-    }
     append_app_launch_args(appid, node.id, &mut launch_args);
     launch_args
 }
@@ -200,10 +197,8 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
 
     append_database_default_launch_args(appid, pipeline, launch_args);
 
-    if uses_steam_launch_model(appid, pipeline) {
-        append_unique_launch_arg(launch_args, "-steam");
-    }
     if uses_steam_secure_launch_model(appid, pipeline) {
+        append_unique_launch_arg(launch_args, "-steam");
         append_unique_launch_arg(launch_args, "-secure");
     }
 
@@ -231,7 +226,7 @@ fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&
         379720 | 275850 | 892970 | 252490 | 570 | 548430 | 526870 | 1272080 => &["-vulkan"],
         949230 => &["-force-vulkan"],
         1174180 => &["-api", "Vulkan"],
-        400 | 620 | 4000 if pipeline == PipelineId::M9 => &["-dxlevel", "90", "-novid"],
+        400 | 620 if pipeline == PipelineId::M9 => &["-dxlevel", "90", "-novid"],
         240 | 500 | 550 if pipeline == PipelineId::M9 => &["-dxlevel", "90"],
         7670 if pipeline == PipelineId::M9 => &["-dx9"],
         12210 if pipeline == PipelineId::M10 => &["-d3d10"],
@@ -241,15 +236,7 @@ fn database_default_launch_args(appid: u32, pipeline: PipelineId) -> &'static [&
 }
 
 pub(crate) fn requires_steam_secure_launch_args(appid: u32) -> bool {
-    matches!(appid, 440 | 252490 | 271590 | 284160 | 292030 | 1172380 | 3241660)
-}
-
-pub(crate) fn requires_steam_launch_args(appid: u32) -> bool {
-    matches!(appid, 620 | 4000 | 1260320) || requires_steam_secure_launch_args(appid)
-}
-
-pub(crate) fn uses_steam_launch_model(appid: u32, pipeline: PipelineId) -> bool {
-    requires_steam_launch_args(appid) && !matches!(pipeline, PipelineId::M13 | PipelineId::D3DMetal)
+    matches!(appid, 440 | 620 | 4000 | 252490 | 271590 | 284160 | 292030 | 1172380 | 1260320 | 3241660)
 }
 
 pub(crate) fn uses_steam_secure_launch_model(appid: u32, pipeline: PipelineId) -> bool {
@@ -368,7 +355,7 @@ pub fn selected_deploy_dlls_for_pipeline(
 
     node.deploy_dlls
         .iter()
-        .filter(|dll| node.id != PipelineId::M9 || dll.filename != "d3d9.dll" || dll.source_subpath == d3d9_subpath)
+        .filter(|dll| node.id != PipelineId::M9 || dll.source_subpath == d3d9_subpath)
         .flat_map(|dll| {
             let source_path = ms_root.join(dll.source_subpath).join(dll.filename);
             let dest_name = dll.dest_filename.unwrap_or(dll.filename);
@@ -1074,13 +1061,6 @@ mod tests {
     }
 
     #[test]
-    fn re4_m12_uses_native_launch_args() {
-        let args = effective_launch_args(2050650, super::super::engine::get_pipeline(PipelineId::M12));
-
-        assert!(args.is_empty());
-    }
-
-    #[test]
     fn dual_renderer_half_working_titles_get_dx11_args_on_m11() {
         for appid in [1623730, 2358720] {
             let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
@@ -1102,7 +1082,7 @@ mod tests {
 
     #[test]
     fn source_style_titles_get_steam_secure_launch_args() {
-        for appid in [440, 252490, 271590, 284160, 292030, 1172380, 3241660] {
+        for appid in [440, 620, 4000, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
             let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
 
             assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
@@ -1113,42 +1093,11 @@ mod tests {
     }
 
     #[test]
-    fn party_animals_m11_uses_steam_without_secure() {
-        let args = effective_launch_args(1260320, super::super::engine::get_pipeline(PipelineId::M11));
-
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
-        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
-    }
-
-    #[test]
-    fn portal_2_m9_uses_source_defaults_without_secure() {
-        let args = effective_launch_args(620, super::super::engine::get_pipeline(PipelineId::M9));
-
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")));
-        assert!(args.iter().any(|arg| arg == "90"));
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")));
-        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
-    }
-
-    #[test]
-    fn garrys_mod_m9_uses_source_defaults_without_secure() {
-        let args = effective_launch_args(4000, super::super::engine::get_pipeline(PipelineId::M9));
-
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-dxlevel")));
-        assert!(args.iter().any(|arg| arg == "90"));
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-novid")));
-        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
-    }
-
-    #[test]
     fn d3dmetal_launches_skip_steam_secure_args() {
         for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
             for appid in [440, 620, 4000, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
                 let args = effective_launch_args(appid, super::super::engine::get_pipeline(pipeline));
 
-                assert!(!uses_steam_launch_model(appid, pipeline), "appid {appid} pipeline {pipeline:?}");
                 assert!(!uses_steam_secure_launch_model(appid, pipeline), "appid {appid} pipeline {pipeline:?}");
                 assert!(
                     !args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")),
@@ -1288,9 +1237,6 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(dxgi_targets.contains(&Some(exe_dir)));
         assert!(dxgi_targets.contains(&Some(engine_dir)));
-        assert!(dlls.iter().any(|dll| {
-            dll.filename == "d3d11.dll" && dll.source_path.ends_with("lib/dxmt/x86_64-windows/d3d11.dll")
-        }));
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }
@@ -1309,15 +1255,10 @@ mod tests {
             super::super::engine::get_pipeline(PipelineId::M9),
             &runtime,
         );
-        let d3d9 = selected.iter().find(|dll| dll.filename == "d3d9.dll").expect("selected d3d9");
+        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
 
-        assert_eq!(d3d9.source_subpath, "lib/wine/i386-windows");
-        assert!(selected
-            .iter()
-            .any(|dll| dll.filename == "dxgi.dll" && dll.source_subpath == "lib/dxmt/x86_64-windows"));
-        assert!(selected.iter().any(|dll| dll.filename == "dxgi_dxmt.dll"));
-        assert!(selected.iter().any(|dll| dll.filename == "nvapi64.dll"));
-        assert!(selected.iter().any(|dll| dll.filename == "nvngx.dll"));
+        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
+        assert_eq!(selected.len(), 1);
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }
@@ -1336,15 +1277,10 @@ mod tests {
             super::super::engine::get_pipeline(PipelineId::M9),
             &runtime,
         );
-        let d3d9 = selected.iter().find(|dll| dll.filename == "d3d9.dll").expect("selected d3d9");
+        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
 
-        assert_eq!(d3d9.source_subpath, "lib/wine/x86_64-windows");
-        assert!(selected
-            .iter()
-            .any(|dll| dll.filename == "dxgi.dll" && dll.source_subpath == "lib/dxmt/x86_64-windows"));
-        assert!(selected.iter().any(|dll| dll.filename == "dxgi_dxmt.dll"));
-        assert!(selected.iter().any(|dll| dll.filename == "nvapi64.dll"));
-        assert!(selected.iter().any(|dll| dll.filename == "nvngx.dll"));
+        assert_eq!(sources, std::collections::HashSet::from(["lib/wine/x86_64-windows"]));
+        assert_eq!(selected.len(), 1);
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }

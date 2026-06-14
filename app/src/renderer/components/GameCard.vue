@@ -2,7 +2,6 @@
 import { computed, ref, onMounted, watch } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
-import sharpLogoUrl from "../icon.png";
 import IconX from "~icons/lucide/x";
 import IconFlaskConical from "~icons/lucide/flask-conical";
 import IconShieldPlus from "~icons/lucide/shield-plus";
@@ -107,7 +106,6 @@ const emit = defineEmits<{
   install: [];
   uninstall: [];
   expanded: [appid: number, open: boolean];
-  artworkMissing: [appid: number];
 }>();
 
 const toast = useToast();
@@ -126,7 +124,6 @@ const runtimeReport = ref<SteamRuntimeReport | null>(null);
 const bottleName = ref("");
 const bottlePreferredMode = ref("auto");
 const bottleSaving = ref(false);
-const artworkLoadFailed = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
 const userSelectablePipelineOrder = ["d3dmetal", "m12", "m11", "m10", "m9", "fna_arm64"];
 const userSelectablePipelineNames: Record<string, string> = {
@@ -223,12 +220,6 @@ const launchModeOptions = computed(() => {
   return [...byId.values()];
 });
 
-const primaryArtworkUrl = computed(() => props.game.header_url || props.game.cover_url || "");
-const displayedArtworkUrl = computed(() =>
-  primaryArtworkUrl.value && !artworkLoadFailed.value ? primaryArtworkUrl.value : sharpLogoUrl,
-);
-const usingFallbackArtwork = computed(() => !primaryArtworkUrl.value || artworkLoadFailed.value);
-
 const bottlePipelineOptions = computed(() =>
   userSelectablePipelineOrder.map((id) => ({ id, name: userSelectablePipelineNames[id] })),
 );
@@ -243,8 +234,6 @@ function runtimeDoctorPipelineRequest() {
 }
 
 onMounted(async () => {
-  if (!primaryArtworkUrl.value) emit("artworkMissing", props.game.appid);
-
   const savedLaunchMode = localStorage.getItem(launchModeStorageKey.value);
   if (savedLaunchMode) selectedLaunchMode.value = savedLaunchMode;
 
@@ -267,17 +256,6 @@ onMounted(async () => {
     if (es?.ok) eacActive.value = es.eac_toggle_active;
   }
 });
-
-watch(primaryArtworkUrl, (url) => {
-  artworkLoadFailed.value = false;
-  if (!url) emit("artworkMissing", props.game.appid);
-});
-
-function onArtworkError() {
-  if (!primaryArtworkUrl.value || artworkLoadFailed.value) return;
-  artworkLoadFailed.value = true;
-  emit("artworkMissing", props.game.appid);
-}
 
 watch(doctorOpen, (open) => {
   if (!open) emit('expanded', props.game.appid, false);
@@ -511,13 +489,14 @@ function formatBytes(bytes: number): string {
   <div class="game-card" :class="{ running, installed: game.installed, uninstalled: !game.installed }">
     <div class="game-card-banner">
       <img
-        :src="displayedArtworkUrl"
+        v-if="game.header_url || game.cover_url"
+        :src="game.header_url || game.cover_url"
         :alt="game.name"
         class="game-card-cover"
-        :class="{ fallback: usingFallbackArtwork }"
         loading="lazy"
-        @error="onArtworkError"
+        @error="($event.target as HTMLImageElement).style.display = 'none'"
       />
+      <span v-else class="game-icon-placeholder">{{ game.name.charAt(0).toUpperCase() }}</span>
       <button v-if="running" class="running-close-button" title="Close game" @click="emit('stop')">
         <IconX width="14" height="14" />
       </button>
@@ -755,7 +734,6 @@ function formatBytes(bytes: number): string {
 .game-card-banner {
   width: 100%;
   aspect-ratio: 16 / 6.25;
-  min-height: 116px;
   height: auto;
   background: var(--bg-surface);
   display: flex;
@@ -771,13 +749,6 @@ function formatBytes(bytes: number): string {
   transition:
     transform 0.3s ease,
     filter var(--transition);
-}
-.game-card-cover.fallback {
-  object-fit: contain;
-  padding: 26px;
-  background:
-    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 48%),
-    var(--bg-surface);
 }
 .game-card:hover .game-card-cover {
   transform: scale(1.015);
@@ -803,6 +774,13 @@ function formatBytes(bytes: number): string {
   border-color: var(--error);
   background: var(--error-bg);
 }
+.game-icon-placeholder {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--text-dim);
+  opacity: 0.4;
+}
+
 .game-card-body {
   display: flex;
   flex-direction: column;

@@ -9,16 +9,6 @@ TOOLCHAIN_ROOT="${METALSHARP_X86_LLVM_ROOT:-/Volumes/AverySSD/toolchains}"
 LLVM_NAME="clang+llvm-15.0.7-x86_64-apple-darwin21.0"
 LLVM_DIR="${TOOLCHAIN_ROOT}/${LLVM_NAME}"
 LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-15.0.7/${LLVM_NAME}.tar.xz"
-DXMT_ENABLE_TESTS="${DXMT_ENABLE_TESTS:-0}"
-
-MESON_ARGS=(
-  --cross-file "${DXMT_DIR}/build-win64.txt"
-  -Dnative_llvm_path="${LLVM_DIR}"
-  -Dwine_install_path="${WINE_ROOT}"
-)
-if [[ "${DXMT_ENABLE_TESTS}" == "1" ]]; then
-  MESON_ARGS+=(-Denable_tests=true)
-fi
 
 mkdir -p "${TOOLCHAIN_ROOT}"
 
@@ -56,24 +46,22 @@ fi
 
 if [[ -f "${BUILD_DIR}/build.ninja" ]]; then
   meson setup "${BUILD_DIR}" "${DXMT_DIR}" --reconfigure \
-    "${MESON_ARGS[@]}"
+    --cross-file "${DXMT_DIR}/build-win64.txt" \
+    -Dnative_llvm_path="${LLVM_DIR}" \
+    -Dwine_install_path="${WINE_ROOT}"
 else
   meson setup "${BUILD_DIR}" "${DXMT_DIR}" \
-    "${MESON_ARGS[@]}"
+    --cross-file "${DXMT_DIR}/build-win64.txt" \
+    -Dnative_llvm_path="${LLVM_DIR}" \
+    -Dwine_install_path="${WINE_ROOT}"
 fi
 
-NINJA_TARGETS=(
-  src/dxgi/dxgi.dll
-  src/dxgi/dxgi_dxmt.dll
-  src/winemetal/unix/winemetal.so
-  src/winemetal/winemetal.dll
+ninja -C "${BUILD_DIR}" \
+  src/dxgi/dxgi.dll \
+  src/dxgi/dxgi_dxmt.dll \
+  src/winemetal/unix/winemetal.so \
+  src/winemetal/winemetal.dll \
   src/d3d12/d3d12.dll
-)
-if [[ "${DXMT_ENABLE_TESTS}" == "1" ]]; then
-  NINJA_TARGETS+=(tests/d3d12_game/m12_game.exe)
-fi
-
-ninja -C "${BUILD_DIR}" "${NINJA_TARGETS[@]}"
 
 echo "x86_64 LLVM ready: ${LLVM_DIR}"
 echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi.dll"
@@ -81,6 +69,3 @@ echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi_dxmt.dll"
 echo "rebuilt: ${BUILD_DIR}/src/d3d12/d3d12.dll"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/winemetal.dll"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/unix/winemetal.so"
-if [[ "${DXMT_ENABLE_TESTS}" == "1" ]]; then
-  echo "rebuilt: ${BUILD_DIR}/tests/d3d12_game/m12_game.exe"
-fi

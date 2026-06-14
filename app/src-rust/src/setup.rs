@@ -120,7 +120,7 @@ pub fn dependencies() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
 
     let mono = check_command("mono") || check_path(&PathBuf::from("/opt/homebrew/bin/mono"));
-    let rosetta = crate::platform::rosetta_is_installed();
+    let rosetta = check_rosetta();
     let xcode_cli = check_command("clang") || check_command("xcodebuild");
     let steam = check_path(&home.join("Library/Application Support/Steam/Steam.app/Contents/MacOS/steam_osx"))
         || check_path(&PathBuf::from("/Applications/Steam.app/Contents/MacOS/steam_osx"));
@@ -149,7 +149,7 @@ pub fn dependencies() -> Value {
             {
                 "id": "rosetta",
                 "name": "Rosetta 2",
-                "desc": "x86_64 translation layer required for MetalSharp Wine/DXMT routes, including M12",
+                "desc": "x86_64 translation layer — needed for 32-bit Windows games and x86 mono",
                 "installed": rosetta,
                 "required": true,
                 "installCmd": "softwareupdate --install-rosetta --agree-to-license",
@@ -1960,6 +1960,11 @@ fn check_brew(formula: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+fn check_rosetta() -> bool {
+    PathBuf::from("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
+        || mac_cmd("pgrep").arg("-q").arg("oahd").status().map(|s| s.success()).unwrap_or(false)
 }
 
 #[cfg(test)]

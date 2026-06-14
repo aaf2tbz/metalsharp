@@ -14,11 +14,9 @@ DEFAULT_CONTRACT_ROOT = ROOT_DIR / "tools" / "d3d12-metal-sdk" / "contracts"
 
 REQUIRED_CONTRACTS = [
     "d3d12-metal-contract.json",
-    "d3d12-shader-engine-contract.json",
     "agility-1.619.3-contract.json",
     "feature-support-contract.json",
     "dxgi-contract.json",
-    "m12-pipeline-contract.json",
     "unsupported-api-ledger.json",
     "risky-stub-ledger.json",
     "contract-waivers.json",
@@ -188,55 +186,6 @@ def validate_winemetal_bridge(path: Path, data: dict[str, Any], errors: list[str
                 require(bool(entry.get("reason")), f"{path}: deferred_until_claimed[{i}] missing reason", errors)
 
 
-def validate_shader_engine(path: Path, data: dict[str, Any], errors: list[str]) -> None:
-    validate_evidence(path, data, errors)
-    surfaces = data.get("source_surfaces")
-    require(isinstance(surfaces, list) and len(surfaces) > 0, f"{path}: source_surfaces must be non-empty list", errors)
-    if isinstance(surfaces, list):
-        seen_ids: set[str] = set()
-        for i, surface in enumerate(surfaces):
-            require(isinstance(surface, dict), f"{path}: source_surfaces[{i}] must be object", errors)
-            if not isinstance(surface, dict):
-                continue
-            sid = surface.get("id")
-            require(isinstance(sid, str) and bool(sid), f"{path}: source_surfaces[{i}] missing id", errors)
-            require(sid not in seen_ids, f"{path}: duplicate source surface id `{sid}`", errors)
-            if isinstance(sid, str):
-                seen_ids.add(sid)
-            source_paths = surface.get("paths")
-            require(isinstance(source_paths, list) and len(source_paths) > 0, f"{path}: source_surfaces[{i}] paths must be non-empty", errors)
-            if isinstance(source_paths, list):
-                for rel in source_paths:
-                    require(isinstance(rel, str) and bool(rel), f"{path}: source_surfaces[{i}] has invalid path", errors)
-                    if isinstance(rel, str) and rel:
-                        require((ROOT_DIR / rel).exists(), f"{path}: source surface path does not exist: {rel}", errors)
-            patterns = surface.get("must_contain")
-            require(isinstance(patterns, list) and len(patterns) > 0, f"{path}: source_surfaces[{i}] must_contain must be non-empty", errors)
-
-    gates = data.get("offline_gates")
-    require(isinstance(gates, list) and len(gates) > 0, f"{path}: offline_gates must be non-empty list", errors)
-    if isinstance(gates, list):
-        seen_ids: set[str] = set()
-        for i, gate in enumerate(gates):
-            require(isinstance(gate, dict), f"{path}: offline_gates[{i}] must be object", errors)
-            if not isinstance(gate, dict):
-                continue
-            gid = gate.get("id")
-            require(isinstance(gid, str) and bool(gid), f"{path}: offline_gates[{i}] missing id", errors)
-            require(gid not in seen_ids, f"{path}: duplicate offline gate id `{gid}`", errors)
-            if isinstance(gid, str):
-                seen_ids.add(gid)
-            require(bool(gate.get("command")), f"{path}: offline_gates[{i}] missing command", errors)
-            require(bool(gate.get("proves")), f"{path}: offline_gates[{i}] missing proves", errors)
-
-    artifacts = data.get("runtime_artifacts")
-    require(isinstance(artifacts, list) and len(artifacts) > 0, f"{path}: runtime_artifacts must be non-empty list", errors)
-    if isinstance(artifacts, list):
-        required = {"d3d12.dll", "dxgi.dll", "winemetal.dll", "winemetal.so"}
-        missing = sorted(required - {str(item) for item in artifacts})
-        require(not missing, f"{path}: runtime_artifacts missing required entries: {', '.join(missing)}", errors)
-
-
 def validate_contracts(root: Path) -> list[str]:
     errors: list[str] = []
     waiver_ids = active_waiver_ids(root, errors)
@@ -256,8 +205,6 @@ def validate_contracts(root: Path) -> list[str]:
         require(bool(data.get("schema")), f"{path}: missing schema", errors)
         if name in {"d3d12-metal-contract.json", "agility-1.619.3-contract.json"}:
             validate_reference_contract(path, data, errors)
-        elif name == "d3d12-shader-engine-contract.json":
-            validate_shader_engine(path, data, errors)
         elif name in {"unsupported-api-ledger.json", "risky-stub-ledger.json"}:
             validate_ledgers(path, data, errors)
             if name == "unsupported-api-ledger.json":

@@ -443,10 +443,6 @@ public:
   DefineSampler(std::string name, uint32_t location_index = UINT32_MAX);
   uint32_t
   DefineInteger64(std::string name, uint32_t location_index = UINT32_MAX);
-  uint32_t DefineConstantArray(
-    std::string name, MSLRepresentableType element_type, uint32_t array_size,
-    uint32_t location_index = UINT32_MAX
-  );
 
   auto Build(llvm::LLVMContext &context, const llvm::DataLayout &layout) const
     -> std::tuple<llvm::StructType *, llvm::MDNode *>;

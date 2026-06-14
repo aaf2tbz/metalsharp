@@ -141,20 +141,14 @@ SDK_CRITICAL_FILES = [
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/dxmt/x86_64-windows/d3d12.dll",
-    "runtime/dxmt/x86_64-windows/d3d11.dll",
     "runtime/dxmt/x86_64-windows/dxgi.dll",
     "runtime/dxmt/x86_64-windows/dxgi_dxmt.dll",
     "runtime/dxmt/x86_64-windows/winemetal.dll",
     "runtime/dxmt/x86_64-unix/winemetal.so",
-    "runtime/dxmt/x86_64-unix/libc++.1.dylib",
-    "runtime/dxmt/x86_64-unix/libc++abi.1.dylib",
-    "runtime/dxmt/x86_64-unix/libunwind.1.dylib",
     "scripts/run-probes.sh",
     "scripts/preflight-runtime-layout.py",
     "scripts/stage-dxmt-runtime.py",
 ]
-
-DEFAULT_SHADER_BUILD_DIR = PROJECT_ROOT / "dist" / "d3d12-metal-shaders"
 
 
 def sdk_file_record(root: Path, rel: str) -> dict:
@@ -223,10 +217,6 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     wine_src = source1 / "wine-11.5"
     copy_tree(wine_src, roots["runtime"] / "wine")
     copy_tree(source2 / "wine" / "etc", roots["runtime"] / "wine" / "etc")
-    copy_tree(
-        PROJECT_ROOT / "tools" / "d3d12-metal-sdk" / "shader-corpus",
-        roots["runtime"] / "wine" / "share" / "d3d12-metal-sdk" / "shader-corpus",
-    )
     backend = APP_DIR / "src-rust" / "target" / "release" / "metalsharp-backend"
     require_file(backend, "runtime backend")
     copy_file(backend, roots["runtime"] / "metalsharp-backend")
@@ -283,8 +273,6 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         return is_dir and rel.parts[:1] in {("cache",), ("external",), ("out",)}
 
     copy_tree(PROJECT_ROOT / "tools" / "d3d12-metal-sdk", roots["sdk"], ignore=sdk_ignore)
-    if DEFAULT_SHADER_BUILD_DIR.is_dir():
-        copy_tree(DEFAULT_SHADER_BUILD_DIR, roots["sdk"] / "shader-corpus-build")
     copy_tree(roots["runtime"] / "wine", roots["sdk"] / "runtime" / "wine")
     copy_tree(roots["runtime"] / "host", roots["sdk"] / "runtime" / "host")
     copy_file(roots["runtime"] / "metalsharp-backend", roots["sdk"] / "runtime" / "metalsharp-backend")

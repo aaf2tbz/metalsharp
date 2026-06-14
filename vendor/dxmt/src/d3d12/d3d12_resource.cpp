@@ -11,32 +11,6 @@ namespace dxmt {
 
 static std::atomic<uint64_t> g_next_texture_virtual_address{0x200000000000ull};
 
-static WMTTextureType
-TextureTypeForResourceDesc(const D3D12_RESOURCE_DESC &desc) {
-  UINT sample_count = desc.SampleDesc.Count ? desc.SampleDesc.Count : 1;
-  switch (desc.Dimension) {
-  case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
-    return (desc.DepthOrArraySize > 1) ? WMTTextureType1DArray : WMTTextureType1D;
-  case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
-    return WMTTextureType3D;
-  default:
-    if (sample_count > 1)
-      return (desc.DepthOrArraySize > 1) ? WMTTextureType2DMultisampleArray
-                                         : WMTTextureType2DMultisample;
-    return (desc.DepthOrArraySize > 1) ? WMTTextureType2DArray : WMTTextureType2D;
-  }
-}
-
-static uint32_t
-SampleCountForResourceDesc(const D3D12_RESOURCE_DESC &desc,
-                           WMTTextureType texture_type) {
-  UINT sample_count = desc.SampleDesc.Count ? desc.SampleDesc.Count : 1;
-  if (texture_type == WMTTextureType2DMultisample ||
-      texture_type == WMTTextureType2DMultisampleArray)
-    return sample_count;
-  return 1;
-}
-
 MTLD3D12Resource::MTLD3D12Resource(
     MTLD3D12Device *device, const D3D12_RESOURCE_DESC &desc,
     D3D12_RESOURCE_STATES initial_state,
@@ -130,10 +104,18 @@ void MTLD3D12Resource::InitializeResource(
             ? m_desc.DepthOrArraySize
             : 1;
     tex_info.mipmap_level_count = m_desc.MipLevels ? m_desc.MipLevels : 1;
-    tex_info.type = TextureTypeForResourceDesc(m_desc);
-    tex_info.sample_count = SampleCountForResourceDesc(m_desc, tex_info.type);
-    if (tex_info.sample_count > 1)
-      tex_info.mipmap_level_count = 1;
+    tex_info.sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
+    switch (m_desc.Dimension) {
+    case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
+      tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType1DArray : WMTTextureType1D;
+      break;
+    case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
+      tex_info.type = WMTTextureType3D;
+      break;
+    default:
+      tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType2DArray : WMTTextureType2D;
+      break;
+    }
     tex_info.usage = (WMTTextureUsage)(WMTTextureUsageRenderTarget |
                                       WMTTextureUsageShaderRead |
                                       WMTTextureUsageShaderWrite |
@@ -183,10 +165,18 @@ WMT::Reference<WMT::Texture> MTLD3D12Resource::GetMTLTexture() {
     tex_info.array_length = (m_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D)
                                   ? m_desc.DepthOrArraySize : 1;
     tex_info.mipmap_level_count = m_desc.MipLevels ? m_desc.MipLevels : 1;
-    tex_info.type = TextureTypeForResourceDesc(m_desc);
-    tex_info.sample_count = SampleCountForResourceDesc(m_desc, tex_info.type);
-    if (tex_info.sample_count > 1)
-      tex_info.mipmap_level_count = 1;
+    tex_info.sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
+    switch (m_desc.Dimension) {
+    case D3D12_RESOURCE_DIMENSION_TEXTURE1D:
+      tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType1DArray : WMTTextureType1D;
+      break;
+    case D3D12_RESOURCE_DIMENSION_TEXTURE3D:
+      tex_info.type = WMTTextureType3D;
+      break;
+    default:
+      tex_info.type = (m_desc.DepthOrArraySize > 1) ? WMTTextureType2DArray : WMTTextureType2D;
+      break;
+    }
     tex_info.usage = (WMTTextureUsage)(WMTTextureUsageRenderTarget | WMTTextureUsageShaderRead | WMTTextureUsageShaderWrite | WMTTextureUsagePixelFormatView);
     tex_info.options = cpu_accessible ? WMTResourceStorageModeShared : WMTResourceStorageModePrivate;
     tex_info.pixel_format = MTLD3D12PipelineState::DXGIToMTLPixelFormat(static_cast<DXGI_FORMAT>(m_desc.Format));

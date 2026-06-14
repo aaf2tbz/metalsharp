@@ -1,8 +1,0 @@
-run=/Users/alexmondello/.metalsharp/tmp/elden_m12_offline/live-60s-present-vb-pull-20260612-165919
-source_cache=/Users/alexmondello/.metalsharp/tmp/elden_m12_offline/live-60s-present-vb-pull-20260612-165919/shader-cache
-offline_metallib_dir=/Users/alexmondello/.metalsharp/tmp/elden_m12_offline/live-60s-present-vb-pull-20260612-165919/metallib-offline-compile
-ok=217
-fail=0
-captured_msl=217
-compiled_metallib=217
-compile_stderr=216

@@ -324,7 +324,7 @@ def main() -> int:
         inspect(
             wine_runtime / "lib" / "wine" / "x86_64-windows" / "winemetal.dll",
             "wine_builtin_windows",
-            required_steam_exports,
+            required_dxmt_exports,
             "pe",
         ),
         inspect(
@@ -336,7 +336,7 @@ def main() -> int:
         inspect(
             prefix / "drive_c" / "windows" / "system32" / "winemetal.dll",
             "prefix_system32",
-            required_steam_exports,
+            required_dxmt_exports,
             "pe",
         ),
         inspect(
@@ -356,7 +356,7 @@ def main() -> int:
     if args.game_dir:
         entries.append(inspect(Path(args.game_dir) / "winemetal.dll", "game_local_winemetal", required_dxmt_exports, "pe"))
 
-    active_windows_roles = {"dxmt_windows", "game_local_winemetal"}
+    active_windows_roles = {"dxmt_windows", "prefix_system32", "game_local_winemetal"}
     active_windows_ok = any(entry["role"] in active_windows_roles and entry["ok"] for entry in entries)
     if active_windows_ok:
         for entry in entries:
@@ -383,7 +383,8 @@ def main() -> int:
         "source_audit": source_audit,
         "entries": entries,
         "notes": [
-            "Steam/global Wine and prefix Winemetal copies must preserve legacy Steam wrapper exports only.",
+            "Steam/global Wine x86_64 copies must preserve Steam wrapper exports plus D3D12 shader/PSO bridge exports.",
+            "The 32-bit syswow64 copy is still checked for legacy wrapper exports only.",
             "DXMT/game-local copies must preserve Steam wrapper exports plus D3D12 shader/PSO bridge exports.",
             "A red result here means do not launch Steam or a game; repair DLL staging first.",
         ],

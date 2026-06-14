@@ -1190,13 +1190,7 @@ pub fn gptk_is_installed() -> bool {
 }
 
 pub fn rosetta_is_installed() -> bool {
-    if current() != HostPlatform::Macos {
-        return false;
-    }
-
-    Path::new("/Library/Apple/usr/lib/libRosettaAOT.dylib").exists()
-        || Path::new("/Library/Apple/System/Library/LaunchDaemons/com.apple.oahd.plist").exists()
-        || Command::new("/usr/bin/pgrep").args(["-q", "oahd"]).status().map(|status| status.success()).unwrap_or(false)
+    std::path::Path::new("/Library/Apple/usr/lib/libRosettaAOT.dylib").exists()
 }
 
 #[cfg(test)]

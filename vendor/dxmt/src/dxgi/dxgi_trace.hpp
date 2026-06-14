@@ -1,6 +1,5 @@
 #pragma once
 
-#include "log/log.hpp"
 #include "util_env.hpp"
 #include <cstdarg>
 #include <cstdio>
@@ -20,7 +19,7 @@ static inline void DXMTDXGITrace(const char *component, const char *fmt, ...) {
   if (!DXMTDXGITraceEnabled())
     return;
 
-  FILE *f = dxmt::openDiagnosticLog("dxmt-dxgi-trace.log");
+  FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
   if (!f)
     return;
 

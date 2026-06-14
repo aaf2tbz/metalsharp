@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -25,16 +24,6 @@ ARTIFACTS = [
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
     ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
-]
-
-SHARED_WINEMETAL_ARTIFACTS = [
-    ("src/winemetal/unix/winemetal.so", "wine/x86_64-unix/winemetal.so"),
-]
-
-UNIX_DYLIB_DEPS = [
-    "libc++.1.dylib",
-    "libc++abi.1.dylib",
-    "libunwind.1.dylib",
 ]
 
 
@@ -65,16 +54,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--profile", default="metalsharp")
     parser.add_argument("--dry-run", action="store_true", help="Write the manifest without copying files.")
-    parser.add_argument(
-        "--include-winemetal",
-        action="store_true",
-        help="Compatibility no-op: WineMetal is staged by default for M12.",
-    )
-    parser.add_argument(
-        "--no-shared-winemetal",
-        action="store_true",
-        help="Do not mirror DXMT winemetal.so into lib/wine/x86_64-unix.",
-    )
     return parser.parse_args()
 
 
@@ -83,23 +62,26 @@ def main() -> int:
     build_dir = args.build_dir
     runtime_dir = args.runtime_dir
     wine_lib_dir = runtime_dir.parent / "wine"
+    prefix = args.prefix
     args.results_dir.mkdir(parents=True, exist_ok=True)
 
     records: list[dict] = []
     failures: list[str] = []
 
     artifacts = list(ARTIFACTS)
-    if not args.no_shared_winemetal:
-        artifacts.extend(SHARED_WINEMETAL_ARTIFACTS)
+    artifacts.extend(
+        [
+            ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
+            ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
+            ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
+        ]
+    )
 
     for src_rel, dst_rel in artifacts:
         src = build_dir / src_rel
         dst = Path(dst_rel)
         if not dst.is_absolute():
-            if dst.parts and dst.parts[0] == "wine":
-                dst = runtime_dir.parent / dst
-            else:
-                dst = runtime_dir / dst
+            dst = runtime_dir / dst
         before = file_record(dst)
         source = file_record(src)
 
@@ -122,51 +104,6 @@ def main() -> int:
             }
         )
 
-    unix_src = build_dir / "src/winemetal/unix/winemetal.so"
-    try:
-        linked = subprocess.check_output(["otool", "-L", str(unix_src)], text=True, stderr=subprocess.DEVNULL)
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        linked = ""
-    linked_deps = [dep for dep in UNIX_DYLIB_DEPS if dep in linked]
-    deps_to_stage = UNIX_DYLIB_DEPS if linked_deps else []
-    for dep in deps_to_stage:
-        dep_candidates = [
-            build_dir / "src/winemetal/unix" / dep,
-            build_dir / "src/winemetal" / dep,
-            build_dir / dep,
-        ]
-        if os.environ.get("DYLD_LIBRARY_PATH"):
-            dep_candidates.extend(Path(part) / dep for part in os.environ["DYLD_LIBRARY_PATH"].split(os.pathsep) if part)
-        for root_var in ("METALSHARP_X86_LLVM_ROOT",):
-            root = os.environ.get(root_var)
-            if root:
-                dep_candidates.extend(Path(root).glob(f"*/lib/{dep}"))
-        dep_candidates.extend(Path(os.path.expanduser("~/.metalsharp/toolchains")).glob(f"*/lib/{dep}"))
-        dep_candidates.extend(Path("/Volumes/AverySSD/toolchains").glob(f"*/lib/{dep}"))
-        dep_src = next((candidate for candidate in dep_candidates if candidate.exists()), None)
-        if dep_src is None:
-            failures.append(f"missing Unix dependency for winemetal.so: {dep}")
-            continue
-        for dst_dir in [runtime_dir / "x86_64-unix", wine_lib_dir / "x86_64-unix"]:
-            dst = dst_dir / dep
-            before = file_record(dst)
-            copied = False
-            if not args.dry_run:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(dep_src, dst)
-                copied = True
-            after = file_record(dst)
-            source = file_record(dep_src)
-            records.append(
-                {
-                    "source": source,
-                    "destination_before": before,
-                    "destination_after": after,
-                    "copied": copied,
-                    "match": source["sha256"] is not None and source["sha256"] == after["sha256"],
-                }
-            )
-
     mismatches = [
         record
         for record in records
@@ -178,8 +115,6 @@ def main() -> int:
         "build_dir": str(build_dir),
         "runtime_dir": str(runtime_dir),
         "dry_run": args.dry_run,
-        "include_winemetal": args.include_winemetal,
-        "shared_winemetal": not args.no_shared_winemetal,
         "ok": not failures and not mismatches,
         "failure_count": len(failures) + len(mismatches),
         "failures": failures,

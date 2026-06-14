@@ -32,12 +32,6 @@ For env-dependent Steam routes, MetalSharp keeps Wine Steam running as the backg
 executable directly through the selected MTSP pipeline with the bottle prefix, route env, cache paths, and
 `SteamAppId`/`SteamGameId`. Internal client-only Steam handoff still exists for diagnostics and bootstrap cases, but it is not exposed as a normal bottle option.
 
-`POST /mtsp/prepare` is the route preflight/staging entrypoint. It must stage
-the same launch-critical assets the real route needs before returning `ok`.
-For M12 this includes Agility payloads, prefix-route DLLs, game-local DXMT DLLs,
-Unix sidecars, Steam identity files, shader-cache material, and launch-path
-verification.
-
 ## Current Pipelines
 
 | Public route | Backend | Launch path |
@@ -89,20 +83,9 @@ M11/M10 copy:
 
 M10 is selected by 64-bit `d3d10.dll`, `d3d10_1.dll`, or `d3d10core.dll` imports. It deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints plus DXMT's `d3d10core.dll`, so public D3D10 imports and the DXMT core handoff are both owned by the x86_64 M10 runtime contract.
 
-M12 copies the full D3D12/DXGI fallback surface:
+M12 also copies:
 
 - `d3d12.dll`
-- `dxgi.dll`
-- `dxgi_dxmt.dll`
-- `d3d11.dll`
-- `d3d10core.dll`
-- `winemetal.dll`
-- vendor GPU stubs such as `nvapi64.dll` and `nvngx.dll` when selected
-
-M12 also stages `winemetal.so`, loader sidecars, and the validated
-`mscompatdb.so` game-local, under `unix/`, and under `.metalsharp/unix/`. The
-same route DLLs are staged into `prefix-steam/drive_c/windows/system32` for the
-shared Steam prefix; i386 DLLs for routes such as M9 go to `syswow64` instead.
 
 M9 copies:
 
@@ -133,7 +116,6 @@ Steam identity env; client-only Steam handoff remains internal for diagnostics/b
 - Wine Steam readiness checks fail clearly if Steam never becomes detectable, keeping launch requests below the renderer
   backend timeout instead of silently proceeding without a Steam client.
 - Shader cache paths are per appid under `~/.metalsharp/shader-cache/`.
-- M12 logs are consolidated under `~/.metalsharp/logs/m12/<appid>/m12.log`.
 - Wine-backed launch logs include the host ABI version, host runtime path, Wine runtime path, Steam bridge port, and
   compatdata manifest path when the launch is tied to a Steam appid.
 - Launch recipes classify detected anti-cheat markers into statuses such as `blocked_pending_vendor_support`,

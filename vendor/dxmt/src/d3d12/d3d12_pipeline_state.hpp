@@ -2,7 +2,6 @@
 
 #include "com/com_pointer.hpp"
 #include "d3d12.h"
-#include "d3d12_vertex_input.hpp"
 #include "Metal.hpp"
 #include "airconv_public.h"
 #include <atomic>
@@ -21,24 +20,6 @@ struct StageInVertexAttributeInfo {
   uint32_t attribute_index = 0;
   WMTAttributeFormat format = WMTAttributeFormatInvalid;
   std::string semantic_name;
-};
-
-struct D3D12IAInputElementInfo {
-  std::string semantic_name;
-  uint32_t semantic_index = 0;
-  uint32_t shader_register = 0;
-  uint32_t input_slot = 0;
-  uint32_t table_index = 0;
-  D3D12VertexTableIndexingMode table_indexing_mode =
-      D3D12VertexTableIndexingMode::CompactBySlotMask;
-  uint32_t aligned_byte_offset = 0;
-  DXGI_FORMAT dxgi_format = DXGI_FORMAT_UNKNOWN;
-  WMTAttributeFormat metal_format = WMTAttributeFormatInvalid;
-  D3D12_INPUT_CLASSIFICATION input_slot_class =
-      D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
-  bool per_instance = false;
-  uint32_t instance_step_rate = 1;
-  bool system_value = false;
 };
 
 struct CompiledShader {
@@ -111,7 +92,6 @@ public:
     return index < 8 ? m_rtv_formats[index] : DXGI_FORMAT_UNKNOWN;
   }
   UINT GetSampleCount() const { return m_sample_count; }
-  DXGI_FORMAT GetDSVFormat() const { return m_dsv_format; }
   WMT::Reference<WMT::ComputePipelineState> GetComputePSO() const {
     return m_compute_pso;
   }
@@ -137,14 +117,10 @@ public:
   std::string GetGSCacheHash() const;
   uint32_t GetPSArgumentBufferSize() const { return m_ps_reflection.ArgumentTableQwords * 8; }
   uint32_t GetIAInputSlotMask() const { return m_ia_slot_mask; }
-  const std::vector<D3D12IAInputElementInfo> &GetIAInputElements() const {
-    return m_ia_input_elements;
-  }
   const D3D12_INPUT_LAYOUT_DESC &GetInputLayout() const { return m_input_layout; }
   bool UsesStageInVertexDescriptor() const { return m_vs_uses_stage_in; }
   bool RequiresMSCStageInFunction() const { return m_vs_requires_msc_stage_in; }
   bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }
-  bool UsesTessellationFallback() const { return m_uses_tessellation_fallback; }
 
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
 
@@ -166,7 +142,7 @@ private:
   bool RecordCompileFailure(const char *stage, const std::string &detail);
   void BuildIAInputLayout(const void *bytecode, SIZE_T size,
                           std::vector<SM50_IA_INPUT_ELEMENT> &elements,
-                          uint32_t &slot_mask);
+                          uint32_t &slot_mask) const;
 
   static std::mutex s_shader_mutex;
   static std::unordered_map<size_t, WMT::Reference<WMT::Function>> s_shader_cache;
@@ -190,7 +166,6 @@ private:
   bool m_vs_uses_stage_in = false;
   bool m_vs_requires_msc_stage_in = false;
   bool m_uses_geometry_mesh_pipeline = false;
-  bool m_uses_tessellation_fallback = false;
   uint32_t m_gs_passthrough = ~0u;
   D3D12_INDEX_BUFFER_STRIP_CUT_VALUE m_strip_cut_value = {};
   D3D12_PRIMITIVE_TOPOLOGY_TYPE m_topology = {};
@@ -223,7 +198,6 @@ private:
   std::vector<MTL_SM50_SHADER_ARGUMENT> m_gs_cb_args;
   sm50_shader_t m_gs_shader = nullptr;
   uint32_t m_ia_slot_mask = 0;
-  std::vector<D3D12IAInputElementInfo> m_ia_input_elements;
   std::unordered_map<uint32_t, StageInVertexAttributeInfo> m_vs_stage_in_register_map;
   std::vector<StageInVertexAttributeInfo> m_vs_stage_in_attribute_order;
 

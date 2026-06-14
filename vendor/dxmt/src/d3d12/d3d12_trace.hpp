@@ -1,6 +1,5 @@
 #pragma once
 
-#include "log/log.hpp"
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
@@ -24,14 +23,6 @@ static inline bool DXMTD3D12TraceComponentEnabled(const char *component) {
   if (!component || !component[0])
     return false;
   return std::strstr(filter, component) != nullptr;
-}
-
-static inline bool DXMTD3D12TraceStderrEnabled() {
-  static int enabled = []() {
-    const char *value = std::getenv("DXMT_D3D12_TRACE_STDERR");
-    return value && value[0] && std::strcmp(value, "0") != 0;
-  }();
-  return enabled != 0;
 }
 
 static inline long DXMTD3D12TraceMaxBytes() {
@@ -62,36 +53,21 @@ static inline void DXMTD3D12Trace(const char *component, const char *fmt, ...) {
   if (!DXMTD3D12TraceComponentEnabled(component))
     return;
 
-  va_list args;
-  va_start(args, fmt);
-
-  if (DXMTD3D12TraceStderrEnabled()) {
-    fprintf(stderr, "[pid=%lu tid=%lu] %s: ", GetCurrentProcessId(),
-            GetCurrentThreadId(), component ? component : "d3d12");
-    va_list stderr_args;
-    va_copy(stderr_args, args);
-    vfprintf(stderr, fmt, stderr_args);
-    va_end(stderr_args);
-    fputc('\n', stderr);
-    fflush(stderr);
-  }
-
-  FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
-  if (!f) {
-    va_end(args);
+  FILE *f = fopen("Z:\\tmp\\dxmt_d3d12_trace.log", "a+");
+  if (!f)
     return;
-  }
 
   fseek(f, 0, SEEK_END);
   if (ftell(f) >= DXMTD3D12TraceMaxBytes()) {
     fclose(f);
-    va_end(args);
     return;
   }
 
   fprintf(f, "[pid=%lu tid=%lu] %s: ", GetCurrentProcessId(),
           GetCurrentThreadId(), component ? component : "d3d12");
 
+  va_list args;
+  va_start(args, fmt);
   vfprintf(f, fmt, args);
   va_end(args);
 

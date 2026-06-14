@@ -27,7 +27,6 @@ mod launcher_evidence;
 mod migrate;
 mod mtsp;
 mod platform;
-mod prefix_runtime;
 mod scan;
 mod setup;
 mod sharp_library;

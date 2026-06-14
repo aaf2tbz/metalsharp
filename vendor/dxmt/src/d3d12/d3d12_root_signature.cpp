@@ -137,7 +137,7 @@ struct DXStaticSampler {
 };
 #pragma pack(pop)
 
-#define RSTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define RSTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
 static bool range_contains(size_t size, uint32_t offset, size_t bytes) {
   return offset <= size && bytes <= size - offset;
@@ -313,8 +313,6 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
     auto header = reinterpret_cast<const DXRootSignatureHeader *>(data);
     if ((header->version != D3D_ROOT_SIGNATURE_VERSION_1_0 &&
          header->version != D3D_ROOT_SIGNATURE_VERSION_1_1) ||
-        (header->num_parameters > 0 &&
-         header->parameters_offset < sizeof(DXRootSignatureHeader)) ||
         !range_contains(size, header->parameters_offset,
                         header->num_parameters *
                             sizeof(DXRootParameterHeader)) ||
@@ -323,9 +321,8 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
       return false;
 
     if (header->num_static_samplers > 0 &&
-        (header->static_sampler_offset < sizeof(DXRootSignatureHeader) ||
-         !range_contains(size, header->static_sampler_offset,
-                         header->num_static_samplers * 52u)))
+        !range_contains(size, header->static_sampler_offset,
+                        header->num_static_samplers * 52u))
       return false;
 
     m_parameters.clear();

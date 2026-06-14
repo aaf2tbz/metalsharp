@@ -742,20 +742,6 @@ if [[ ! -f "$UNIX_DIR/winemetal.so" ]]; then
   exit 2
 fi
 
-for unix_dep in winemetal.so libc++.1.dylib libc++abi.1.dylib libunwind.1.dylib; do
-  if [[ ! -f "$WINE_UNIX_DIR/$unix_dep" ]]; then
-    echo "Missing shared Wine Unix dependency for M12: $WINE_UNIX_DIR/$unix_dep" >&2
-    exit 2
-  fi
-done
-
-for unix_dep in libc++.1.dylib libc++abi.1.dylib libunwind.1.dylib; do
-  if [[ ! -f "$UNIX_DIR/$unix_dep" ]]; then
-    echo "Missing DXMT Unix dependency for M12: $UNIX_DIR/$unix_dep" >&2
-    exit 2
-  fi
-done
-
 for unix_dep in winemac.so ntdll.so; do
   if [[ ! -f "$WINE_UNIX_DIR/$unix_dep" ]]; then
     echo "Missing Wine Unix dependency for winemetal.so: $WINE_UNIX_DIR/$unix_dep" >&2

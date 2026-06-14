@@ -109,7 +109,6 @@ interface SetupState {
   dxmtRuntime?: {
     current: boolean;
     filesReady: boolean;
-    missingFiles?: string[];
     installedVersion?: string | null;
     requiredVersion: string;
     manifestPath: string;

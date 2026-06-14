@@ -11,24 +11,6 @@ namespace dxmt {
 class MTLD3D12Device;
 class MTLD3D12SwapChain;
 
-struct D3D12SwapchainBackbufferWork {
-  uint64_t serial = 0;
-  uint32_t command_count = 0;
-  uint32_t draw_count = 0;
-  uint32_t indexed_draw_count = 0;
-  uint32_t indirect_count = 0;
-  uint32_t dispatch_count = 0;
-  uint32_t clear_rtv_count = 0;
-  uint32_t clear_dsv_count = 0;
-  uint32_t clear_uav_count = 0;
-  uint32_t graphics_setup = 0;
-  uint32_t swapchain_work = 0;
-  uint32_t has_swapchain_rt = 0;
-  int32_t command_buffer_status = 0;
-  int64_t replay_ms = 0;
-  int64_t wait_ms = 0;
-};
-
 class MTLD3D12Resource : public ID3D12Resource {
 public:
   MTLD3D12Resource(MTLD3D12Device *device, const D3D12_RESOURCE_DESC &desc,
@@ -96,12 +78,6 @@ public:
   bool IsSwapchainBackBuffer() const { return m_is_swapchain_backbuffer; }
   uint32_t SwapchainBackBufferIndex() const { return m_swapchain_buffer_index; }
   MTLD3D12SwapChain *OwningSwapchain() const { return m_swapchain; }
-  void RecordSwapchainQueueWork(const D3D12SwapchainBackbufferWork &work) {
-    m_swapchain_work = work;
-  }
-  D3D12SwapchainBackbufferWork GetSwapchainQueueWork() const {
-    return m_swapchain_work;
-  }
 
 private:
   void InitializeResource(WMT::Reference<WMT::Buffer> backing_buffer,
@@ -122,7 +98,6 @@ private:
   bool m_is_swapchain_backbuffer = false;
   uint32_t m_swapchain_buffer_index = 0;
   MTLD3D12SwapChain *m_swapchain = nullptr;
-  D3D12SwapchainBackbufferWork m_swapchain_work = {};
 
   void *m_cpu_addr = nullptr;
   uint64_t m_gpu_addr = 0;

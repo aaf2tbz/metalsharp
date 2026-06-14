@@ -1,7 +1,0 @@
-source=tools/d3d12-metal-sdk/shader-corpus/elden-ring-present-vb-pull-20260612/msl
-compiler=xcrun metal -x metal -c
-ok=217
-fail=0
-captured_msl=217
-compiled_air=217
-warnings=5791

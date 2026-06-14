@@ -63,8 +63,6 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
 const MIGRATION_TOTAL_STEPS: usize = 8;
-const MIGRATION_PREFIX_INIT_TIMEOUT_SECS: u64 = 10;
-const MIGRATION_PREFIX_INIT_ARGS: &[&str] = &["cmd", "/c", "exit"];
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
 
@@ -180,7 +178,7 @@ pub fn needs_migration() -> serde_json::Value {
 
 fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-    if runtime_ready_for_migration_skip(&ms_dir) {
+    if runtime_core_ready(&ms_dir) {
         return false;
     }
 
@@ -267,7 +265,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
 
     [
         runtime_wine.join("lib").join("wine").join("x86_64-unix"),
-        runtime_wine.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
@@ -300,10 +297,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
     .iter()
     .all(|path| path.exists())
         && framework_has_resource_dylib(&runtime_wine.join("lib").join("external").join("D3DMetal.framework"))
-}
-
-fn runtime_ready_for_migration_skip(ms_dir: &Path) -> bool {
-    runtime_core_ready(ms_dir) && crate::prefix_runtime::validate_install_wine_init_surface(ms_dir).is_ok()
 }
 
 fn framework_has_resource_dylib(framework: &Path) -> bool {
@@ -374,7 +367,7 @@ fn run_migration() {
     }
 
     let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
-    if runtime_ready_for_migration_skip(&ms_dir) && !marker_requested {
+    if runtime_core_ready(&ms_dir) && !marker_requested {
         update_migration_metadata(&ms_dir);
         let marker = post_update_marker_path(&ms_dir);
         let _ = fs::remove_file(&marker);
@@ -462,29 +455,19 @@ fn run_migration() {
         "running",
         step,
         total_steps,
-        "Initializing Wine prefixes with refreshed runtime DLLs...",
+        "Updating Wine prefixes and registering external Steam libraries...",
         None,
     );
     match update_existing_wine_prefixes(&ms_dir, step) {
-        Ok(updated) => log_to_file(&format!("Migration: prefix runtime init completed for {} prefix(es)", updated)),
-        Err(e) => {
-            write_migrate_progress(
-                "error",
-                step,
-                total_steps,
-                &format!("Wine prefix runtime validation failed: {}", e),
-                Some(&e),
-            );
-            log_to_file(&format!("Migration: prefix runtime init failed: {}", e));
-            return;
-        },
+        Ok(updated) => log_to_file(&format!("Migration: wineboot -u completed for {} prefix(es)", updated)),
+        Err(e) => log_to_file(&format!("Migration: wineboot -u failed (non-fatal): {}", e)),
     }
     register_external_steam_libraries(&ms_dir);
     clear_steam_crash_marker(&ms_dir);
 
     step += 1;
     write_migrate_progress("running", step, total_steps, "Verifying MetalSharp update...", None);
-    if let Err(e) = verify_migration_ready_with_repair(&ms_dir, post_update_marker.as_ref(), step, total_steps) {
+    if let Err(e) = verify_migration_ready(&ms_dir, post_update_marker.as_ref()) {
         write_migrate_progress("error", step, total_steps, &format!("Update verification failed: {}", e), Some(&e));
         log_to_file(&format!("Migration to v{} failed verification: {}", MIGRATE_VERSION, e));
         return;
@@ -508,7 +491,12 @@ fn run_migration() {
     let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
 
     kill_steam_wine();
-    log_to_file("Migration: killed Wine/Steam processes after prefix init guard");
+    log_to_file("Migration: killed Wine/Steam processes after prefix update to dismiss wineboot window");
+
+    // wineboot -u can fork Steam.exe twice for self-update. The second Wine
+    // window is crash-prone during migration, so dismiss it and let the app's
+    // normal Steam launch path start Steam after migration completes.
+    dismiss_steam_update_windows_after_migration(&ms_dir, 90);
 
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
@@ -543,62 +531,7 @@ fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMark
         return Err("runtime bundle is still incomplete after install".into());
     }
 
-    validate_migration_wine_init_surface(ms_dir)?;
-
     Ok(())
-}
-
-fn verify_migration_ready_with_repair(
-    ms_dir: &Path,
-    marker: Option<&PostUpdateMigrationMarker>,
-    step: usize,
-    total_steps: usize,
-) -> Result<(), String> {
-    match verify_migration_ready(ms_dir, marker) {
-        Ok(()) => Ok(()),
-        Err(first_error) => {
-            log_to_file(&format!(
-                "Migration: verification reported Wine init/runtime failure; attempting repair: {}",
-                first_error
-            ));
-            write_migrate_progress(
-                "running",
-                step,
-                total_steps,
-                "Repairing Wine prefix runtime surface...",
-                Some(&first_error),
-            );
-            repair_migration_wine_init_surface(ms_dir, &first_error)
-                .map_err(|repair_error| format!("{}; repair failed: {}", first_error, repair_error))?;
-            verify_migration_ready(ms_dir, marker).map_err(|second_error| {
-                format!("{}; repair attempted but verification still failed: {}", first_error, second_error)
-            })
-        },
-    }
-}
-
-fn validate_migration_wine_init_surface(ms_dir: &Path) -> Result<(), String> {
-    let prefix = ms_dir.join("prefix-steam");
-    if !prefix.exists() {
-        return Err(format!("Steam prefix missing after migration install: {}", prefix.display()));
-    }
-
-    let (runtime, pipeline) = crate::prefix_runtime::validate_install_wine_init_surface(ms_dir)?;
-    log_to_file(&format!(
-        "Migration: verified Wine init runtime surface ({} Windows files, {} Unix files, {} M12 pipeline material files)",
-        runtime.windows_files, runtime.unix_files, pipeline.material_files
-    ));
-    Ok(())
-}
-
-fn repair_migration_wine_init_surface(ms_dir: &Path, reason: &str) -> Result<(), String> {
-    let runtime_wine = ms_dir.join("runtime").join("wine");
-    let wine = crate::platform::runtime_wine_binary(&runtime_wine);
-    if !wine.exists() {
-        return Err(format!("MetalSharp Wine not found at {}", wine.display()));
-    }
-    let prefix = ms_dir.join("prefix-steam");
-    repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, reason)
 }
 
 fn migration_metadata_current(ms_dir: &Path) -> bool {
@@ -647,14 +580,49 @@ fn kill_steam_wine() {
     std::thread::sleep(std::time::Duration::from_millis(750));
 }
 
+fn dismiss_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u64) {
+    let prefix = ms_dir.join("prefix-steam");
+    let prefix_str = prefix.to_string_lossy().to_string();
+    let start = std::time::Instant::now();
+    let mut state = SteamUpdateWindowWait::default();
+
+    while start.elapsed().as_secs() < timeout_secs {
+        let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => break,
+        };
+
+        match state.observe(steam_update_process_alive(&prefix_str, &output)) {
+            SteamUpdateWaitAction::LogFirstOpen => {
+                log_to_file("Migration: initial Wine/Steam update window detected, waiting for it to close...");
+            },
+            SteamUpdateWaitAction::LogFirstClose => {
+                log_to_file("Migration: initial Wine/Steam update window closed, waiting for Steam updater window...");
+            },
+            SteamUpdateWaitAction::KillAfterSecondOpen => {
+                log_to_file("Migration: second Wine/Steam updater window detected; force-killing it after wineboot");
+                force_kill_steam_update_processes_for_prefix(&prefix_str);
+                log_to_file("Migration: dismissed post-wineboot Steam updater window; Steam can be started normally from the app");
+                return;
+            },
+            SteamUpdateWaitAction::None => {},
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+
+    if state.saw_first_window() {
+        log_to_file("Migration: timed out waiting for Steam updater window lifecycle (non-fatal)");
+    } else {
+        log_to_file("Migration: no Steam updater window appeared before timeout (non-fatal)");
+    }
+}
+
 fn steam_update_process_alive(prefix_str: &str, process_output: &str) -> bool {
     let prefix = prefix_str.to_ascii_lowercase();
     process_output.lines().any(|line| {
         let lower = line.to_ascii_lowercase();
-        lower.contains(&prefix)
-            && (lower.contains("steam.exe")
-                || lower.contains("steamupdate.exe")
-                || lower.contains("steamwebhelper.exe"))
+        lower.contains(&prefix) && (lower.contains("steam.exe") || lower.contains("steamupdate.exe"))
     })
 }
 
@@ -663,35 +631,47 @@ fn force_kill_steam_update_processes_for_prefix(prefix_str: &str) {
         return;
     }
 
-    for signal in ["-TERM", "-KILL"] {
-        let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-            _ => return,
-        };
-        for pid in steam_process_pids_for_prefix(prefix_str, &output) {
-            let _ = Command::new("kill").args([signal, &pid.to_string()]).status();
+    run_pkill(&["-TERM", "-f", prefix_str]);
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    run_pkill(&["-KILL", "-f", prefix_str]);
+}
+
+#[derive(Default)]
+struct SteamUpdateWindowWait {
+    first_open_seen: bool,
+    first_close_seen: bool,
+}
+
+impl SteamUpdateWindowWait {
+    fn observe(&mut self, steam_alive: bool) -> SteamUpdateWaitAction {
+        if steam_alive && !self.first_open_seen {
+            self.first_open_seen = true;
+            return SteamUpdateWaitAction::LogFirstOpen;
         }
-        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        if !steam_alive && self.first_open_seen && !self.first_close_seen {
+            self.first_close_seen = true;
+            return SteamUpdateWaitAction::LogFirstClose;
+        }
+
+        if steam_alive && self.first_close_seen {
+            return SteamUpdateWaitAction::KillAfterSecondOpen;
+        }
+
+        SteamUpdateWaitAction::None
+    }
+
+    fn saw_first_window(&self) -> bool {
+        self.first_open_seen
     }
 }
 
-fn steam_process_pids_for_prefix(prefix_str: &str, process_output: &str) -> Vec<u32> {
-    let prefix = prefix_str.to_ascii_lowercase();
-    process_output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim_start();
-            let mut parts = trimmed.splitn(2, char::is_whitespace);
-            let pid_text = parts.next()?;
-            let command = parts.next().unwrap_or("");
-            let pid = pid_text.parse::<u32>().ok()?;
-            let lower = command.to_ascii_lowercase();
-            let is_steam = lower.contains("steam.exe")
-                || lower.contains("steamupdate.exe")
-                || lower.contains("steamwebhelper.exe");
-            (lower.contains(&prefix) && is_steam).then_some(pid)
-        })
-        .collect()
+#[derive(Debug, PartialEq, Eq)]
+enum SteamUpdateWaitAction {
+    None,
+    LogFirstOpen,
+    LogFirstClose,
+    KillAfterSecondOpen,
 }
 
 fn run_pkill(args: &[&str]) {
@@ -837,139 +817,41 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
     let mut updated = 0usize;
     for prefix in collect_existing_wine_prefixes(ms_dir) {
         let steam_library_drive_links = collect_steam_library_drive_links(&prefix);
-        // Snapshot all dosdevice symlinks before the bounded prefix init can
-        // rewrite them.
+        // Snapshot all dosdevice symlinks before wineboot rewrites them.
         // This covers custom drive mappings (external drives, Z:, etc.) that
-        // Wine initialization may destroy.
+        // wineboot -u may destroy.
         let all_dosdevice_links = collect_prefix_dosdevice_links(&prefix);
 
         write_migrate_progress(
             "running",
             step,
             MIGRATION_TOTAL_STEPS,
-            &format!("Initializing Wine prefix {}...", prefix.display()),
+            &format!("Updating Wine prefix {}...", prefix.display()),
             None,
         );
 
         // Pre-check: dosdevices must exist and be a directory.
         let dosdevices = prefix.join("dosdevices");
-        let refresh_result = if dosdevices.exists() && !dosdevices.is_dir() {
-            Err(format!("dosdevices exists but is not a directory for {}", prefix.display()))
-        } else {
-            refresh_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix)
-        };
-        if let Err(first_error) = refresh_result {
+        if dosdevices.exists() && !dosdevices.is_dir() {
             log_to_file(&format!(
-                "Migration: prefix runtime init reported failure for {}; attempting repair: {}",
-                prefix.display(),
-                first_error
+                "Migration: dosdevices exists but is not a directory for {} — skipping wineboot",
+                prefix.display()
             ));
-            repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, &first_error)?;
+            continue;
         }
-        guard_against_steam_opening_during_prefix_init(&prefix);
+
+        run_wineboot_update(&wine, &runtime_wine, &prefix)?;
 
         restore_steam_library_drive_links(&prefix, &steam_library_drive_links);
         restore_prefix_dosdevice_links(&prefix, &all_dosdevice_links);
 
-        // Post-check: verify critical dosdevice links survived prefix init.
+        // Post-check: verify critical dosdevice links survived wineboot.
         verify_prefix_dosdevices_integrity(&prefix);
 
         updated += 1;
     }
 
     Ok(updated)
-}
-
-fn refresh_migration_wine_prefix_runtime_surface(
-    wine: &Path,
-    runtime_wine: &Path,
-    prefix: &Path,
-) -> Result<(), String> {
-    let staged = stage_updated_prefix_runtime_surface(runtime_wine, prefix)?;
-    log_to_file(&format!("Migration: staged {} refreshed runtime file(s) into {}", staged, prefix.display()));
-    run_prefix_runtime_init(wine, runtime_wine, prefix)?;
-    let staged_after_init = stage_updated_prefix_runtime_surface(runtime_wine, prefix)?;
-    log_to_file(&format!(
-        "Migration: re-staged {} refreshed runtime file(s) into {} after prefix init",
-        staged_after_init,
-        prefix.display()
-    ));
-    let report = crate::prefix_runtime::validate_prefix_runtime_surface(runtime_wine, prefix)?;
-    log_to_file(&format!(
-        "Migration: validated refreshed prefix runtime surface for {} ({} Windows files, {} Unix files)",
-        prefix.display(),
-        report.windows_files,
-        report.unix_files
-    ));
-    Ok(())
-}
-
-fn repair_migration_wine_prefix_runtime_surface(
-    wine: &Path,
-    runtime_wine: &Path,
-    prefix: &Path,
-    reason: &str,
-) -> Result<(), String> {
-    log_to_file(&format!(
-        "Migration: repairing Wine prefix runtime surface for {} after reported failure: {}",
-        prefix.display(),
-        reason
-    ));
-    let prefix_str = prefix.to_string_lossy().to_string();
-    force_kill_steam_update_processes_for_prefix(&prefix_str);
-    repair_prefix_runtime_layout(prefix)?;
-    clear_staged_prefix_runtime_surface(prefix);
-    refresh_migration_wine_prefix_runtime_surface(wine, runtime_wine, prefix)?;
-    log_to_file(&format!("Migration: Wine prefix runtime repair succeeded for {}", prefix.display()));
-    Ok(())
-}
-
-fn repair_prefix_runtime_layout(prefix: &Path) -> Result<(), String> {
-    fs::create_dir_all(prefix.join("drive_c").join("windows").join("system32"))
-        .map_err(|e| format!("repair prefix system32 for {}: {}", prefix.display(), e))?;
-    fs::create_dir_all(prefix.join(".metalsharp").join("unix"))
-        .map_err(|e| format!("repair prefix Unix surface for {}: {}", prefix.display(), e))?;
-    repair_prefix_dosdevices_dir(prefix)
-}
-
-fn repair_prefix_dosdevices_dir(prefix: &Path) -> Result<(), String> {
-    let drive_c = prefix.join("drive_c");
-    fs::create_dir_all(&drive_c).map_err(|e| format!("repair prefix drive_c for {}: {}", prefix.display(), e))?;
-
-    let dosdevices = prefix.join("dosdevices");
-    if dosdevices.exists() && !dosdevices.is_dir() {
-        let backup = prefix.join(format!("dosdevices.migration-repair-{}", temp_suffix()));
-        fs::rename(&dosdevices, &backup).map_err(|e| {
-            format!(
-                "backup invalid dosdevices path for {}: {} -> {}: {}",
-                prefix.display(),
-                dosdevices.display(),
-                backup.display(),
-                e
-            )
-        })?;
-        log_to_file(&format!("Migration: backed up invalid dosdevices path to {}", backup.display()));
-    }
-    fs::create_dir_all(&dosdevices).map_err(|e| format!("repair prefix dosdevices for {}: {}", prefix.display(), e))?;
-
-    let c_drive = dosdevices.join("c:");
-    if !c_drive.exists() {
-        std::os::unix::fs::symlink("../drive_c", &c_drive)
-            .map_err(|e| format!("repair prefix c: drive link for {}: {}", prefix.display(), e))?;
-    }
-    remove_root_dosdevice_mapping(prefix);
-    Ok(())
-}
-
-fn clear_staged_prefix_runtime_surface(prefix: &Path) {
-    let system32 = prefix.join("drive_c").join("windows").join("system32");
-    for (_, filename) in prefix_runtime_dll_sources() {
-        let _ = fs::remove_file(system32.join(filename));
-    }
-    let unix_surface = prefix.join(".metalsharp").join("unix");
-    for filename in prefix_runtime_unix_sidecars() {
-        let _ = fs::remove_file(unix_surface.join(filename));
-    }
 }
 
 fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
@@ -988,87 +870,50 @@ fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
     prefixes.push(prefix);
 }
 
-fn stage_updated_prefix_runtime_surface(runtime_wine: &Path, prefix: &Path) -> Result<usize, String> {
-    crate::prefix_runtime::stage_prefix_runtime_surface(runtime_wine, prefix)
-}
-
-fn prefix_runtime_dll_sources() -> &'static [(&'static str, &'static str)] {
-    crate::prefix_runtime::prefix_runtime_dll_sources()
-}
-
-fn prefix_runtime_unix_sidecars() -> &'static [&'static str] {
-    crate::prefix_runtime::prefix_runtime_unix_sidecars()
-}
-
-fn prefix_runtime_unix_source(runtime_wine: &Path, filename: &str) -> Option<PathBuf> {
-    crate::prefix_runtime::prefix_runtime_unix_source(runtime_wine, filename)
-}
-
-fn run_prefix_runtime_init(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Result<(), String> {
+fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Result<(), String> {
     let mut cmd = Command::new(wine);
     cmd.env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "/usr/bin/true")
-        .env("WINEDLLOVERRIDES", "winedbg=d;steam,steamwebhelper,steamservice=d")
-        .env("WINEDLLPATH", prefix_runtime_winedllpath(runtime_wine))
-        .args(MIGRATION_PREFIX_INIT_ARGS)
+        .env("WINEDLLOVERRIDES", "winedbg=d")
+        .arg("wineboot")
+        .arg("-u")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     crate::platform::set_runtime_library_env(&mut cmd, runtime_wine);
 
-    log_to_file(&format!("Starting bounded prefix runtime init for prefix: {}", prefix.display()));
+    log_to_file(&format!("Starting wineboot -u for prefix: {}", prefix.display()));
 
     let mut child = cmd.spawn().map_err(|e| {
-        log_to_file(&format!("Failed to spawn prefix runtime init for {}: {}", prefix.display(), e));
-        format!("spawn prefix runtime init for {}: {}", prefix.display(), e)
+        log_to_file(&format!("Failed to spawn wineboot for {}: {}", prefix.display(), e));
+        format!("spawn wineboot for {}: {}", prefix.display(), e)
     })?;
 
-    for _ in 0..(MIGRATION_PREFIX_INIT_TIMEOUT_SECS * 2) {
+    for attempt in 0..240 {
         if let Some(status) = child.try_wait().map_err(|e| {
-            log_to_file(&format!("Failed to wait for prefix runtime init for {}: {}", prefix.display(), e));
-            format!("wait prefix runtime init for {}: {}", prefix.display(), e)
+            log_to_file(&format!("Failed to wait for wineboot for {}: {}", prefix.display(), e));
+            format!("wait wineboot for {}: {}", prefix.display(), e)
         })? {
             if status.success() {
-                log_to_file(&format!("Prefix runtime init completed successfully for prefix: {}", prefix.display()));
+                log_to_file(&format!("wineboot -u completed successfully for prefix: {}", prefix.display()));
                 return Ok(());
             }
-            let error_msg =
-                format!("prefix runtime init failed for {} with exit code: {:?}", prefix.display(), status.code());
+            let error_msg = format!("wineboot -u failed for {} with exit code: {:?}", prefix.display(), status.code());
             log_to_file(&error_msg);
             return Err(error_msg);
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
+
+        if attempt == 120 {
+            log_to_file(&format!("wineboot -u still running after 60 seconds for prefix: {}", prefix.display()));
+        }
     }
 
-    let error_msg = format!(
-        "prefix runtime init exceeded {} seconds for {}; killed init process",
-        MIGRATION_PREFIX_INIT_TIMEOUT_SECS,
-        prefix.display()
-    );
+    let error_msg = format!("wineboot -u timed out (120 seconds) for {}", prefix.display());
     log_to_file(&error_msg);
     let _ = child.kill();
     let _ = child.wait();
     Err(error_msg)
-}
-
-fn prefix_runtime_winedllpath(runtime_wine: &Path) -> String {
-    crate::prefix_runtime::prefix_runtime_winedllpath(runtime_wine)
-}
-
-fn guard_against_steam_opening_during_prefix_init(prefix: &Path) {
-    let prefix_str = prefix.to_string_lossy().to_string();
-    for _ in 0..(MIGRATION_PREFIX_INIT_TIMEOUT_SECS * 2) {
-        let output = match Command::new("ps").args(["axo", "pid=,command="]).output() {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-            _ => return,
-        };
-        if steam_update_process_alive(&prefix_str, &output) {
-            log_to_file("Migration: Steam attempted to open during prefix init; killing prefix-scoped Steam processes");
-            force_kill_steam_update_processes_for_prefix(&prefix_str);
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1266,7 +1111,7 @@ fn restore_steam_library_drive_links(prefix: &Path, links: &[SteamLibraryDriveLi
 fn verify_prefix_dosdevices_integrity(prefix: &Path) {
     let dosdevices = prefix.join("dosdevices");
     if !dosdevices.is_dir() {
-        log_to_file(&format!("Migration: dosdevices directory missing after prefix init for {}", prefix.display()));
+        log_to_file(&format!("Migration: dosdevices directory missing after wineboot for {}", prefix.display()));
         let _ = fs::create_dir_all(&dosdevices);
     }
 
@@ -2127,8 +1972,6 @@ mod tests {
         let home = test_dir("complete-runtime");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
-            .expect("stage prefix runtime");
 
         assert!(runtime_core_ready(&ms_dir));
         assert!(!runtime_needs_repair(&home, true));
@@ -2190,22 +2033,6 @@ mod tests {
                 .join("metalsharp_ntdll_hook.dll"),
         )
         .expect("remove MetalSharp ntdll hook");
-
-        assert!(!runtime_core_ready(&ms_dir));
-        assert!(runtime_needs_repair(&home, true));
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn missing_mscompatdb_shim_requests_runtime_repair() {
-        let home = test_dir("missing-mscompatdb-shim");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-
-        fs::remove_file(
-            ms_dir.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
-        )
-        .expect("remove safe mscompatdb shim");
 
         assert!(!runtime_core_ready(&ms_dir));
         assert!(runtime_needs_repair(&home, true));
@@ -2383,7 +2210,7 @@ mod tests {
         );
 
         fs::remove_file(dosdevices.join("y:")).expect("remove y drive symlink");
-        std::os::unix::fs::symlink(&home, dosdevices.join("y:")).expect("simulate prefix init y rewrite");
+        std::os::unix::fs::symlink(&home, dosdevices.join("y:")).expect("simulate wineboot y rewrite");
         restore_steam_library_drive_links(&prefix, &links);
 
         assert_eq!(fs::read_link(dosdevices.join("y:")).expect("read restored y drive"), external);
@@ -2407,7 +2234,6 @@ mod tests {
         )
         .expect("create bottle prefix payload");
         fs::write(bottle.join("bottle.json"), br#"{"id":"steam_620","profile":"m9"}"#).expect("write bottle settings");
-        fs::write(bottle.join("settings.toml"), b"pipeline = \"m12\"\n").expect("write bottle config");
         fs::write(
             bottle
                 .join("prefix")
@@ -2443,17 +2269,10 @@ mod tests {
         fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
         remove_old_runtime(&ms_dir);
         restore_user_data(&ms_dir, &preserved);
-        write_runtime_core(&ms_dir);
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
-            .expect("stage refreshed runtime after restore");
 
         assert_eq!(
             fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
             r#"{"id":"steam_620","profile":"m9"}"#
-        );
-        assert_eq!(
-            fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("settings.toml")).unwrap(),
-            "pipeline = \"m12\"\n"
         );
         assert!(!ms_dir.join("bottles").join("steam_620").join("prefix").exists());
         assert!(!find_descendant_named(&ms_dir.join("bottles"), "portal2.exe"));
@@ -2575,6 +2394,18 @@ mod tests {
     }
 
     #[test]
+    fn migration_kills_second_steam_update_window() {
+        let mut wait = SteamUpdateWindowWait::default();
+
+        assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
+        assert_eq!(wait.observe(true), SteamUpdateWaitAction::LogFirstOpen);
+        assert_eq!(wait.observe(true), SteamUpdateWaitAction::None);
+        assert_eq!(wait.observe(false), SteamUpdateWaitAction::LogFirstClose);
+        assert_eq!(wait.observe(false), SteamUpdateWaitAction::None);
+        assert_eq!(wait.observe(true), SteamUpdateWaitAction::KillAfterSecondOpen);
+    }
+
+    #[test]
     fn migration_steam_update_process_detection_is_prefix_scoped() {
         let prefix = "/Users/alex/.metalsharp/prefix-steam";
         let ps = "\
@@ -2585,113 +2416,6 @@ mod tests {
 
         assert!(steam_update_process_alive(prefix, ps));
         assert!(!steam_update_process_alive("/tmp/missing-prefix", ps));
-        assert_eq!(steam_process_pids_for_prefix(prefix, ps), vec![101, 103]);
-    }
-
-    #[test]
-    fn migration_prefix_init_uses_cmd_probe_not_wineboot() {
-        assert_eq!(MIGRATION_PREFIX_INIT_ARGS, &["cmd", "/c", "exit"]);
-        assert!(!MIGRATION_PREFIX_INIT_ARGS.contains(&"wineboot"));
-        assert_eq!(MIGRATION_PREFIX_INIT_TIMEOUT_SECS, 10);
-    }
-
-    #[test]
-    fn migration_prefix_runtime_surface_stages_updated_dlls_and_sidecars() {
-        let home = test_dir("prefix-runtime-surface");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-        let runtime_wine = ms_dir.join("runtime").join("wine");
-        let prefix = ms_dir.join("prefix-steam");
-        let old_wine_winemetal = runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemetal.so");
-        let new_dxmt_winemetal = runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
-        fs::write(&old_wine_winemetal, b"old-wine-winemetal").expect("write old Wine winemetal");
-        fs::write(&new_dxmt_winemetal, b"new-dxmt-winemetal").expect("write new DXMT winemetal");
-
-        let copied = stage_updated_prefix_runtime_surface(&runtime_wine, &prefix).expect("stage runtime surface");
-
-        assert_eq!(copied, prefix_runtime_dll_sources().len() + prefix_runtime_unix_sidecars().len());
-        for (_, filename) in prefix_runtime_dll_sources() {
-            assert!(
-                prefix.join("drive_c").join("windows").join("system32").join(filename).is_file(),
-                "missing staged DLL {}",
-                filename
-            );
-        }
-        for filename in prefix_runtime_unix_sidecars() {
-            assert!(
-                prefix.join(".metalsharp").join("unix").join(filename).is_file(),
-                "missing staged Unix sidecar {}",
-                filename
-            );
-        }
-        assert_eq!(
-            fs::read(prefix.join(".metalsharp").join("unix").join("winemetal.so")).expect("read staged winemetal"),
-            b"new-dxmt-winemetal"
-        );
-        assert_eq!(prefix_runtime_unix_source(&runtime_wine, "winemetal.so"), Some(new_dxmt_winemetal));
-
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_prefix_runtime_repair_refreshes_stale_surface_after_reported_failure() {
-        let home = test_dir("prefix-runtime-repair-stale");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-        write_fake_migration_wine(&ms_dir);
-        let runtime_wine = ms_dir.join("runtime").join("wine");
-        let wine = crate::platform::runtime_wine_binary(&runtime_wine);
-        let prefix = ms_dir.join("prefix-steam");
-        stage_updated_prefix_runtime_surface(&runtime_wine, &prefix).expect("stage runtime surface");
-        fs::write(prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll"), b"stale")
-            .expect("write stale d3d12");
-
-        repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, "reported stale d3d12")
-            .expect("repair prefix runtime surface");
-
-        assert_eq!(
-            fs::read(prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll"))
-                .expect("read repaired d3d12"),
-            fs::read(runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("d3d12.dll"))
-                .expect("read runtime d3d12")
-        );
-        assert_eq!(
-            fs::read_to_string(prefix.join("migration-probe.args")).expect("read probe args"),
-            "cmd\n/c\nexit\n"
-        );
-        assert!(!prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe").exists());
-        crate::prefix_runtime::validate_prefix_runtime_surface(&runtime_wine, &prefix)
-            .expect("validate repaired prefix runtime");
-
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_prefix_runtime_repair_recovers_invalid_dosdevices_without_steam_reinstall() {
-        let home = test_dir("prefix-runtime-repair-dosdevices");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-        write_fake_migration_wine(&ms_dir);
-        let runtime_wine = ms_dir.join("runtime").join("wine");
-        let wine = crate::platform::runtime_wine_binary(&runtime_wine);
-        let prefix = ms_dir.join("prefix-steam");
-        fs::create_dir_all(&prefix).expect("create prefix");
-        fs::write(prefix.join("dosdevices"), b"not-a-directory").expect("write invalid dosdevices");
-
-        repair_migration_wine_prefix_runtime_surface(&wine, &runtime_wine, &prefix, "reported invalid dosdevices")
-            .expect("repair invalid dosdevices");
-
-        assert!(prefix.join("dosdevices").is_dir());
-        assert!(prefix.join("dosdevices").join("c:").exists());
-        assert!(fs::read_dir(&prefix)
-            .expect("read prefix")
-            .flatten()
-            .any(|entry| entry.file_name().to_string_lossy().starts_with("dosdevices.migration-repair-")));
-        assert!(!prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe").exists());
-        crate::prefix_runtime::validate_prefix_runtime_surface(&runtime_wine, &prefix)
-            .expect("validate repaired prefix runtime");
-
-        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
@@ -2699,8 +2423,6 @@ mod tests {
         let home = test_dir("marker-override");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
-            .expect("stage prefix runtime");
         fs::write(
             ms_dir.join("setup.json"),
             serde_json::to_vec(&json!({"completed": true, "runtime_migration_schema": 3})).unwrap(),
@@ -2757,62 +2479,7 @@ mod tests {
         );
 
         write_runtime_core(&ms_dir);
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
-            .expect("stage prefix runtime");
         assert!(verify_migration_ready(&ms_dir, None).is_ok());
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_ready_validates_prefix_runtime_without_requiring_steam_reinstall() {
-        let home = test_dir("verify-prefix-runtime-no-steam-reinstall");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-
-        let prefix = ms_dir.join("prefix-steam");
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &prefix)
-            .expect("stage prefix runtime");
-
-        assert!(!prefix.join("drive_c").join("Program Files (x86)").join("Steam").join("Steam.exe").exists());
-        assert!(verify_migration_ready(&ms_dir, None).is_ok());
-
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_ready_rejects_stale_prefix_runtime_surface() {
-        let home = test_dir("verify-stale-prefix-runtime");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-
-        let prefix = ms_dir.join("prefix-steam");
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &prefix)
-            .expect("stage prefix runtime");
-        fs::write(prefix.join("drive_c").join("windows").join("system32").join("d3d12.dll"), b"stale")
-            .expect("write stale d3d12");
-
-        let error = verify_migration_ready(&ms_dir, None).expect_err("stale prefix runtime should fail verification");
-
-        assert!(error.contains("d3d12.dll"));
-        assert!(error.contains("stale"));
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn migration_ready_requires_m12_pipeline_material() {
-        let home = test_dir("verify-m12-pipeline-material");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        write_runtime_core(&ms_dir);
-        fs::remove_dir_all(
-            ms_dir.join("runtime").join("wine").join("share").join("d3d12-metal-sdk").join("shader-corpus"),
-        )
-        .expect("remove shader corpus");
-        stage_updated_prefix_runtime_surface(&ms_dir.join("runtime").join("wine"), &ms_dir.join("prefix-steam"))
-            .expect("stage prefix runtime");
-
-        let error = verify_migration_ready(&ms_dir, None).expect_err("missing M12 pipeline material should fail");
-
-        assert!(error.contains("M12 pipeline material missing"));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -2835,13 +2502,6 @@ mod tests {
 
         for path in [
             runtime_wine.join("lib").join("wine").join("x86_64-unix").join(".keep"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemetal.so"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("winemac.so"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("ntdll.so"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("mscompatdb.so"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++.1.dylib"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libc++abi.1.dylib"),
-            runtime_wine.join("lib").join("wine").join("x86_64-unix").join("libunwind.1.dylib"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
             runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
@@ -2856,9 +2516,6 @@ mod tests {
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
             runtime_wine.join("lib").join("metalsharp").join("x86_64-windows").join("metalsharp_ntdll_hook.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
-            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("libc++.1.dylib"),
-            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("libc++abi.1.dylib"),
-            runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("libunwind.1.dylib"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
             runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d12.dll"),
@@ -2885,20 +2542,6 @@ mod tests {
             ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
             ms_dir.join("configs").join("mtsp-rules.toml"),
             runtime_wine.join("etc").join("dxmt.conf"),
-            runtime_wine
-                .join("share")
-                .join("d3d12-metal-sdk")
-                .join("shader-corpus")
-                .join("elden-ring-present-vb-pull-20260612")
-                .join("metallib")
-                .join("seed.metallib"),
-            runtime_wine
-                .join("share")
-                .join("d3d12-metal-sdk")
-                .join("shader-corpus")
-                .join("elden-ring-present-vb-pull-20260612")
-                .join("proof")
-                .join("SHA256SUMS"),
         ] {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
             fs::write(path, b"test").expect("write runtime file");
@@ -2921,19 +2564,6 @@ mod tests {
         fs::write(host.join("manifest.json"), br#"{"abi":"metalsharp-host-runtime"}"#).expect("write manifest");
         fs::write(host.join("HostRuntimeABI.h"), b"header").expect("write header");
         fs::write(host.join("libmetalsharp_host_runtime.dylib"), b"dylib").expect("write dylib");
-    }
-
-    #[cfg(unix)]
-    fn write_fake_migration_wine(ms_dir: &Path) {
-        use std::os::unix::fs::PermissionsExt;
-
-        let wine = ms_dir.join("runtime").join("wine").join("bin").join("metalsharp-wine");
-        fs::create_dir_all(wine.parent().unwrap()).expect("create fake Wine parent");
-        fs::write(&wine, b"#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$WINEPREFIX/migration-probe.args\"\nexit 0\n")
-            .expect("write fake Wine");
-        let mut permissions = fs::metadata(&wine).expect("fake Wine metadata").permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&wine, permissions).expect("chmod fake Wine");
     }
 
     fn write_steam_libraryfolders(prefix: &Path, path_line: &str) {

@@ -14,9 +14,6 @@ D3D9 game
 ```
 
 The current DXMT source tree provides D3D10, D3D11, D3D12, DXGI, and winemetal targets. It does not ship a separate DXMT `d3d9.dll`, so M9 keeps the D3D9 DLL boundary at the bundled Wine/MetalSharp D3D9 handoff while removing DXVK/MoltenVK selection from MTSP.
-M9 still deploys the shared DXGI/WineMetal/vendor-stub surface because D3D9-era
-games and launchers can query DXGI adapters, NVIDIA APIs, or WineMetal bridge
-state before the first D3D9 draw.
 
 ## Engine Contract
 
@@ -25,18 +22,13 @@ state before the first D3D9 draw.
 | Pipeline | `M9` |
 | Backend | `dxmt` |
 | Launch args | none by default; `dx9`/`d3d9` select M9 as route aliases |
-| Wine overrides | `d3d9,dxgi,dxgi_dxmt,winemetal,nvapi64,nvngx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
+| Wine overrides | `d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d` |
 | Shader cache subdir | `m9` |
 | Preset fallback family | `m9`, then `dxmt-metal` |
 
 M9 deploys:
 
 - `d3d9.dll`
-- `dxgi.dll`
-- `dxgi_dxmt.dll`
-- `winemetal.dll`
-- `nvapi64.dll`
-- `nvngx.dll`
 
 M9 does not deploy from `lib/dxvk`, does not set DXVK cache variables, and does not require a MoltenVK ICD in the MTSP launch path.
 

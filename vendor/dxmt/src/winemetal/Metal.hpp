@@ -482,7 +482,7 @@ public:
   bool
   setViewport(WMTViewport viewport) {
     struct wmtcmd_render_setviewport cmd;
-    cmd.type = WMTRenderCommandSetViewport;
+    cmd.type = WMTRenderCommandSetViewports;
     cmd.reserved[0] = cmd.reserved[1] = cmd.reserved[2] = 0;
     cmd.next.set(nullptr);
     cmd.viewport = viewport;

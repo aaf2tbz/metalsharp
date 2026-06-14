@@ -54,28 +54,6 @@ std::string sanitizeLogLine(const std::string &line) {
   return sanitized;
 }
 
-bool useSharedLogFile() {
-  return !env::getEnvVar("DXMT_LOG_FILE").empty();
-}
-
-std::string buildLogFileName(const std::string &base) {
-  std::string path = env::getEnvVar("DXMT_LOG_PATH");
-
-  if (path == "none")
-    return std::string();
-
-  const std::string sharedFile = env::getEnvVar("DXMT_LOG_FILE");
-  const std::string fileName = sharedFile.empty()
-                                   ? env::getExeBaseName() + "_" + base
-                                   : sharedFile;
-
-  if (!path.empty() && *path.rbegin() != '/' && *path.rbegin() != '\\')
-    path += '/';
-
-  path += fileName;
-  return path;
-}
-
 } // namespace
 
 Logger::Logger(const std::string &fileName)
@@ -127,12 +105,8 @@ void Logger::emitMsg(LogLevel level, const std::string &message) {
 #endif
       auto path = getFileName(m_fileName);
 
-      if (!path.empty()) {
-        auto mode = std::ios_base::out;
-        if (useSharedLogFile())
-          mode |= std::ios_base::app;
-        m_fileStream = std::ofstream(str::topath(path.c_str()).c_str(), mode);
-      }
+      if (!path.empty())
+        m_fileStream = std::ofstream(str::topath(path.c_str()).c_str());
     }
 
     std::stringstream stream(message);
@@ -158,7 +132,7 @@ void Logger::emitMsg(LogLevel level, const std::string &message) {
 }
 
 std::string Logger::getFileName(const std::string &base) {
-  std::string path = buildLogFileName(base);
+  std::string path = env::getEnvVar("DXMT_LOG_PATH");
 
   if (path == "none")
     return std::string();
@@ -167,6 +141,11 @@ std::string Logger::getFileName(const std::string &base) {
   if (path.empty() && m_wineLogOutput)
     return std::string();
 
+  if (!path.empty() && *path.rbegin() != '/')
+    path += '/';
+
+  std::string exeName = env::getExeBaseName();
+  path += exeName + "_" + base;
   return path;
 }
 
@@ -188,27 +167,6 @@ LogLevel Logger::getMinLogLevel() {
   }
 
   return LogLevel::Info;
-}
-
-FILE *openDiagnosticLog(const char *base) {
-  // MetalSharp's M12 launcher sets DXMT_LOG_PATH plus DXMT_LOG_FILE=m12.log.
-  // That makes focused DXGI/D3D12/DXIL probes append into the same per-title
-  // file as the component loggers. When DXMT is used outside MetalSharp, the
-  // normal DXMT filename behavior still applies instead of a hard-coded temp
-  // path that would be invisible to the launcher.
-  std::string path = buildLogFileName(base && base[0] ? base : "dxmt-diagnostic.log");
-
-  if (path == "none")
-    return nullptr;
-
-  if (path.empty())
-    return nullptr;
-
-#ifdef _WIN32
-  return _wfopen(str::topath(path.c_str()).c_str(), L"a");
-#else
-  return std::fopen(str::topath(path.c_str()).c_str(), "a");
-#endif
 }
 
 } // namespace dxmt

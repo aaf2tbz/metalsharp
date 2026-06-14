@@ -40,15 +40,10 @@ cd app && npm install && npm run build && cd ..
 
 ## Fetch Runtime Bundles
 
-Downloads Wine, DXMT, GPTK DLLs, Steam setup files, the D3D12 developer SDK,
-and other runtime assets from the `bundles` GitHub release. The script also
-repairs the runtime bundle with the current backend, host ABI, safe
-`mscompatdb.so`, MetalSharp hook DLL, and M12 shader corpus before verification:
+Downloads Wine, DXMT, GPTK DLLs, Steam setup files, and other runtime assets from the GitHub release:
 
 ```bash
 ./tools/dmg/create-bundles.sh
-./tools/bundles/verify-bundles.sh --bundle-dir app/bundles --require mac
-./tools/bundles/verify-developer-sdk.sh app/bundles/metalsharp-d3d12-developer-sdk.tar.zst
 ```
 
 ## Run
@@ -77,7 +72,5 @@ cd app && npm run dmg
 
 - **`cmake` fails**: Ensure Xcode CLI tools are installed (`xcode-select -p` should return a path)
 - **`npm install` fails**: Make sure Node 18+ is installed (`brew install node`)
-- **Missing or stale bundles**: Run `./tools/dmg/create-bundles.sh`, then the
-  bundle verifiers above. M12 requires the shader corpus proof inside the
-  runtime archive.
+- **Missing bundles**: Run `./tools/dmg/create-bundles.sh` — this downloads all runtime assets from GitHub
 - **App won't open**: If you see a Gatekeeper warning, run `xattr -cr /path/to/MetalSharp.app`

@@ -61,10 +61,6 @@ pipeline = "m12"
 name = "Subnautica 2"
 offline_capable = true
 
-[overrides.2784470]
-pipeline = "m12"
-name = "9 Kings"
-
 [overrides.3164500]
 pipeline = "m11"
 name = "Schedule I"
@@ -101,10 +97,6 @@ check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll",
 [overrides.391540]
 pipeline = "m9"
 name = "Undertale"
-
-[overrides.2379780]
-pipeline = "m11"
-name = "Balatro"
 
 [overrides.945360]
 pipeline = "m11"
@@ -470,10 +462,6 @@ name = "BeamNG.drive"
 [overrides.220]
 pipeline = "m9"
 name = "Half-Life 2"
-
-[overrides.4000]
-pipeline = "m9"
-name = "Garry's Mod"
 
 [overrides.440]
 pipeline = "m9"

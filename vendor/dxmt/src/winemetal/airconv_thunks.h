@@ -26,7 +26,6 @@ struct sm50_initialize_params {
   sm50_shader_t *shader;
   void *reflection;
   sm50_error_t *error;
-  uint32_t options;
   int ret;
 };
 
@@ -131,11 +130,10 @@ struct sm50_initialize_params32 {
   uint32_t shader;
   uint32_t reflection;
   uint32_t error;
-  uint32_t options;
   int ret;
 };
 
-COMPATIBLE_STRUCT32(sm50_initialize_params, 28)
+COMPATIBLE_STRUCT32(sm50_initialize_params, 24)
 
 struct sm50_compile_params32 {
   sm50_shader_t shader;
