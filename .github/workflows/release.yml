@@ -48,6 +48,13 @@ jobs:
           tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C dist/release-runtime
           test -x dist/release-runtime/runtime/wine/bin/winebuild
 
+      - name: Install DXMT build tools
+        run: |
+          brew list meson >/dev/null 2>&1 || brew install meson
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          meson --version
+          ninja --version
+
       - name: Build staged M12 DXMT runtime
         run: |
           tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
@@ -160,6 +167,13 @@ jobs:
           mkdir -p dist/release-runtime
           tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C dist/release-runtime
           test -x dist/release-runtime/runtime/wine/bin/winebuild
+
+      - name: Install DXMT build tools
+        run: |
+          brew list meson >/dev/null 2>&1 || brew install meson
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          meson --version
+          ninja --version
 
       - name: Build staged M12 DXMT runtime
         run: |
