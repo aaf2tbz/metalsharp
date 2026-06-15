@@ -17,6 +17,7 @@ DEFAULT_BUILD_DIR = ROOT_DIR / "vendor" / "dxmt" / "build-metalsharp-x64"
 DEFAULT_RUNTIME_DIR = Path(os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt"))
 DEFAULT_PREFIX_DIR = Path(os.path.expanduser("~/.metalsharp/prefix-steam"))
 DEFAULT_RESULTS_DIR = ROOT_DIR / "tools" / "d3d12-metal-sdk" / "results"
+LLVM_TOOLCHAIN_NAME = "clang+llvm-15.0.7-x86_64-apple-darwin21.0"
 
 ARTIFACTS = [
     ("src/d3d12/d3d12.dll", "x86_64-windows/d3d12.dll"),
@@ -24,6 +25,12 @@ ARTIFACTS = [
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
     ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
+]
+
+UNIX_SIDECARS = [
+    "libc++.1.dylib",
+    "libc++abi.1.dylib",
+    "libunwind.1.dylib",
 ]
 
 
@@ -57,6 +64,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def sidecar_source(name: str) -> Path | None:
+    roots = [
+        Path(os.environ["METALSHARP_X86_LLVM_ROOT"]) if os.environ.get("METALSHARP_X86_LLVM_ROOT") else None,
+        Path(os.path.expanduser("~/.metalsharp/toolchains")),
+        Path("/Volumes/AverySSD/toolchains"),
+    ]
+    for root in roots:
+        if root is None:
+            continue
+        candidate = root / LLVM_TOOLCHAIN_NAME / "lib" / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def main() -> int:
     args = parse_args()
     build_dir = args.build_dir
@@ -76,9 +98,17 @@ def main() -> int:
             ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
         ]
     )
+    for sidecar in UNIX_SIDECARS:
+        source = sidecar_source(sidecar)
+        if source is None:
+            failures.append(f"missing LLVM sidecar: {sidecar}")
+            continue
+        artifacts.append((str(source), f"x86_64-unix/{sidecar}"))
+        artifacts.append((str(source), str(wine_lib_dir / "x86_64-unix" / sidecar)))
 
     for src_rel, dst_rel in artifacts:
-        src = build_dir / src_rel
+        src_path = Path(src_rel)
+        src = src_path if src_path.is_absolute() else build_dir / src_path
         dst = Path(dst_rel)
         if not dst.is_absolute():
             dst = runtime_dir / dst

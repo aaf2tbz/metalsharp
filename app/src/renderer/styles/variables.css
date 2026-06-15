@@ -78,9 +78,9 @@
   --text-bright: #0e1a26;
   --border: rgba(30, 39, 50, 0.1);
   --border-strong: rgba(30, 39, 50, 0.18);
-  --sidebar-bg: rgba(255, 255, 255, 0.35);
-  --sidebar-hover: rgba(240, 243, 247, 0.4);
-  --sidebar-active: rgba(52, 127, 186, 0.1);
+  --sidebar-bg: #ffffff;
+  --sidebar-hover: #eef3f7;
+  --sidebar-active: rgba(52, 127, 186, 0.08);
   --sidebar-text: #1e2732;
   --sidebar-text-active: var(--sidebar-text);
   --sidebar-text-hover: #0e1a26;

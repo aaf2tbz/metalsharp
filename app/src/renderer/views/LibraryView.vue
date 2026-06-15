@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, onUnmounted, watch, computed, type Ref } from "vue";
+import { ref, inject, onUnmounted, watch, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
@@ -51,10 +51,6 @@ const runningAppId = ref<number | null>(null);
 const runningPid = ref<number | null>(null);
 const launchingAppId = ref<number | null>(null);
 const expandedAppId = ref<number | null>(null);
-const gameGridRef = ref<HTMLElement | null>(null);
-const gameGridColumns = ref(1);
-let gameGridResizeObserver: ResizeObserver | null = null;
-let gameGridResizeListenerAttached = false;
 let artworkRetryTimer: number | null = null;
 const artworkRetryRequestedAppIds = new Set<number>();
 
@@ -137,38 +133,6 @@ function requestArtworkRetry(appid: number) {
     await reloadLibrary();
   }, 15_000);
 }
-
-function updateGameGridColumns() {
-  const grid = gameGridRef.value;
-  if (!grid) return;
-  const minColumnWidth = 340;
-  const gap = 18;
-  const width = grid.clientWidth;
-  const availableColumns = Math.max(1, Math.floor((width + gap) / (minColumnWidth + gap)));
-  const minimumVisibleColumns = filteredGames.value.length === 1 && availableColumns >= 2 ? 2 : 1;
-  const visibleColumns = Math.max(minimumVisibleColumns, filteredGames.value.length);
-  gameGridColumns.value = Math.min(availableColumns, visibleColumns);
-}
-
-function observeGameGrid() {
-  const grid = gameGridRef.value;
-  if (!grid || gameGridResizeObserver) return;
-  if (typeof ResizeObserver !== "undefined") {
-    gameGridResizeObserver = new ResizeObserver(updateGameGridColumns);
-    gameGridResizeObserver.observe(grid);
-  } else if (!gameGridResizeListenerAttached) {
-    window.addEventListener("resize", updateGameGridColumns);
-    gameGridResizeListenerAttached = true;
-  }
-}
-
-const gameColumns = computed(() => {
-  const columns = Array.from({ length: gameGridColumns.value }, () => [] as SteamGame[]);
-  filteredGames.value.forEach((game, index) => {
-    columns[index % gameGridColumns.value].push(game);
-  });
-  return columns;
-});
 
 async function toggleSteam() {
   if (wineSteamRunning.value) {
@@ -305,17 +269,9 @@ async function uninstallGame(game: SteamGame) {
 
 onMounted(() => {
   applyFilter();
-  requestAnimationFrame(() => {
-    observeGameGrid();
-    updateGameGridColumns();
-  });
 });
 
 onUnmounted(() => {
-  gameGridResizeObserver?.disconnect();
-  gameGridResizeObserver = null;
-  window.removeEventListener("resize", updateGameGridColumns);
-  gameGridResizeListenerAttached = false;
   if (artworkRetryTimer !== null) {
     window.clearTimeout(artworkRetryTimer);
     artworkRetryTimer = null;
@@ -324,10 +280,6 @@ onUnmounted(() => {
 
 watch([library, search, filter], () => {
   applyFilter();
-  requestAnimationFrame(() => {
-    observeGameGrid();
-    updateGameGridColumns();
-  });
 });
 </script>
 
@@ -384,24 +336,22 @@ watch([library, search, filter], () => {
       <p>Add your Steam API key in Settings to load your library, or download a game manually.</p>
     </div>
 
-    <div v-else ref="gameGridRef" class="game-grid">
-      <div v-for="(column, index) in gameColumns" :key="index" class="game-grid-column">
-        <GameCard
-          v-for="game in column"
-          :key="game.appid"
-          :game="game"
-          :running="runningAppId === game.appid"
-          :launching="launchingAppId === game.appid"
-          :steam-installed="wineSteamInstalled"
-          :developer-mode="developerMode"
-          @play="launchGame(game, $event)"
-          @stop="stopGame(game)"
-          @install="installGame(game)"
-          @uninstall="uninstallGame(game)"
-          @expanded="onCardExpanded"
-          @artwork-missing="requestArtworkRetry"
-        />
-      </div>
+    <div v-else class="game-grid">
+      <GameCard
+        v-for="game in filteredGames"
+        :key="game.appid"
+        :game="game"
+        :running="runningAppId === game.appid"
+        :launching="launchingAppId === game.appid"
+        :steam-installed="wineSteamInstalled"
+        :developer-mode="developerMode"
+        @play="launchGame(game, $event)"
+        @stop="stopGame(game)"
+        @install="installGame(game)"
+        @uninstall="uninstallGame(game)"
+        @expanded="onCardExpanded"
+        @artwork-missing="requestArtworkRetry"
+      />
     </div>
   </div>
 </template>
@@ -601,19 +551,12 @@ watch([library, search, filter], () => {
 
 .game-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   align-items: start;
   min-width: 0;
   width: 100%;
   max-width: 100%;
-}
-
-.game-grid-column {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 18px;
 }
 
 .empty-state {

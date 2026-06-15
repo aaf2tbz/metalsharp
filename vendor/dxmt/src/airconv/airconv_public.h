@@ -43,6 +43,7 @@ enum MTL_SM50_SHADER_ARGUMENT_FLAG : uint32_t {
   MTL_SM50_SHADER_ARGUMENT_TEXTURE_MINLOD_CLAMP = 1 << 4,
   MTL_SM50_SHADER_ARGUMENT_TBUFFER_OFFSET = 1 << 5,
   MTL_SM50_SHADER_ARGUMENT_TEXTURE_ARRAY = 1 << 6,
+  MTL_SM50_SHADER_ARGUMENT_INLINE_CBUFFER = 1 << 7,
   MTL_SM50_SHADER_ARGUMENT_READ_ACCESS = 1 << 10,
   MTL_SM50_SHADER_ARGUMENT_WRITE_ACCESS = 1 << 11,
 };
@@ -60,6 +61,7 @@ struct MTL_SM50_SHADER_ARGUMENT {
   uint32_t SM50RegisterSpace;
   enum MTL_SM50_SHADER_ARGUMENT_FLAG Flags;
   uint32_t StructurePtrOffset;
+  uint32_t SizeInVec4;
 };
 
 enum MTL_TESSELLATOR_OUTPUT_PRIMITIVE {
@@ -196,6 +198,10 @@ enum SM50_SHADER_COMPILATION_ARGUMENT_TYPE {
   SM50_SHADER_ARGUMENT_TYPE_MAX = 0xffffffff,
 };
 
+enum SM50_INITIALIZE_OPTION : uint32_t {
+  SM50_INITIALIZE_INLINE_CBUFFERS = 1 << 0,
+};
+
 struct SM50_SHADER_COMPILATION_ARGUMENT_DATA {
   void *next;
   enum SM50_SHADER_COMPILATION_ARGUMENT_TYPE type;
@@ -294,6 +300,12 @@ struct SM50_SHADER_PSO_TESSELLATOR_DATA {
 AIRCONV_API int SM50Initialize(
   const void *pBytecode, size_t BytecodeSize, sm50_shader_t *ppShader,
   struct MTL_SHADER_REFLECTION *pRefl, sm50_error_t *ppError
+);
+
+AIRCONV_API int SM50InitializeWithOptions(
+  const void *pBytecode, size_t BytecodeSize, uint32_t Options,
+  sm50_shader_t *ppShader, struct MTL_SHADER_REFLECTION *pRefl,
+  sm50_error_t *ppError
 );
 AIRCONV_API void SM50Destroy(sm50_shader_t pShader);
 AIRCONV_API int SM50Compile(

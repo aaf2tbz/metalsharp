@@ -42,6 +42,19 @@ winemetal_debug_enabled(void) {
   return value && value[0] && strcmp(value, "0") != 0;
 }
 
+static FILE *
+winemetal_open_pe_log(void) {
+  const char *root = getenv("DXMT_LOG_PATH");
+  char path[4096];
+
+  if (!root || !root[0])
+    return fopen("winemetal-pe-debug.log", "a");
+
+  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", "winemetal-pe-debug.log");
+  path[sizeof(path) - 1] = '\0';
+  return fopen(path, "a");
+}
+
 BOOL WINAPI
 DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
   NTSTATUS status;
@@ -54,12 +67,8 @@ DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
   status = load_unixlib_from_env();
   if ((DWORD)status == STATUS_DLL_NOT_FOUND)
     status = __wine_init_unix_call();
-  {
-    HMODULE hook = LoadLibraryA("metalsharp_ntdll_hook.dll");
-    (void)hook;
-  }
   if (winemetal_debug_enabled()) {
-    log = fopen("Z:\\tmp\\winemetal_pe_debug.log", "a");
+    log = winemetal_open_pe_log();
     if (log) {
       fprintf(
           log,

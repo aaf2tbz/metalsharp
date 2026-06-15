@@ -1,5 +1,6 @@
 #include "d3d12_command_list.hpp"
 #include "d3d12_command_allocator.hpp"
+#include "d3d12_command_stats.hpp"
 #include "d3d12_device.hpp"
 #include "d3d12_pipeline_state.hpp"
 #include "d3d12_resource.hpp"
@@ -8,17 +9,71 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 
-#define CLTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a"); if (_tf) { fprintf(_tf, "CmdList::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define CLTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, "CmdList::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
 namespace dxmt {
+
+static uint64_t g_command_list_debug_id = 0;
+static uint32_t g_command_list_lifecycle_logs = 0;
+
+static bool TakeCommandListLifecycleLogBudget(uint32_t limit) {
+  return __atomic_add_fetch(&g_command_list_lifecycle_logs, 1,
+                            __ATOMIC_RELAXED) <= limit;
+}
+
+static void LogCommandListLifecycle(const char *label, uint64_t id,
+                                    D3D12_COMMAND_LIST_TYPE type,
+                                    const std::vector<uint8_t> &commands,
+                                    bool closed) {
+  auto stats = D3D12CollectCommandStreamStats(commands.data(), commands.size());
+  if (!stats.IsFrameProgressCandidate() && !stats.corrupt)
+    return;
+  if (!TakeCommandListLifecycleLogBudget(256))
+    return;
+
+  Logger::info(str::format(
+      "M12 command list ", label, " id=", (unsigned long long)id,
+      " type=", (unsigned)type, " closed=", closed,
+      " cmds=", stats.command_count, " draws=", stats.draw_count,
+      " indexed=", stats.indexed_draw_count,
+      " indirect=", stats.indirect_count, " dispatch=", stats.dispatch_count,
+      " clear_rtv=", stats.clear_rtv_count,
+      " clear_dsv=", stats.clear_dsv_count,
+      " clear_uav=", stats.clear_uav_count,
+      " graphics_setup=", stats.HasGraphicsSetup(),
+      " gfx_roots=", stats.set_graphics_root_sig_count,
+      " gfx_tables=", stats.set_graphics_root_table_count,
+      " gfx_cbv=", stats.set_graphics_root_cbv_count,
+      " gfx_srv=", stats.set_graphics_root_srv_count,
+      " gfx_uav=", stats.set_graphics_root_uav_count,
+      " gfx_consts=", stats.set_graphics_root_constants_count,
+      " comp_roots=", stats.set_compute_root_sig_count,
+      " comp_tables=", stats.set_compute_root_table_count,
+      " comp_cbv=", stats.set_compute_root_cbv_count,
+      " comp_srv=", stats.set_compute_root_srv_count,
+      " comp_uav=", stats.set_compute_root_uav_count,
+      " comp_consts=", stats.set_compute_root_constants_count,
+      " zero_draw=", stats.IsZeroDrawGraphicsList(),
+      " draw_bearing=", stats.IsDrawBearing(),
+      " corrupt=", stats.corrupt));
+}
 
 MTLD3D12GraphicsCommandList::MTLD3D12GraphicsCommandList(
     MTLD3D12Device *device, MTLD3D12CommandAllocator *allocator,
     D3D12_COMMAND_LIST_TYPE type, ID3D12PipelineState *initial_state)
     : m_device(device), m_allocator(allocator), m_type(type) {
+  m_debug_id =
+      __atomic_add_fetch(&g_command_list_debug_id, 1, __ATOMIC_RELAXED);
   m_device->AddRef();
   if (m_allocator)
     m_allocator->AddRef();
+  if (initial_state) {
+    CmdSetPipelineState cmd = {};
+    cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
+    cmd.pso = initial_state;
+    Emit(cmd);
+  }
+  LogCommandListLifecycle("create", m_debug_id, m_type, m_cmds, m_closed);
 }
 
 MTLD3D12GraphicsCommandList::~MTLD3D12GraphicsCommandList() {
@@ -100,6 +155,7 @@ MTLD3D12GraphicsCommandList::GetType() {
 HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Close() {
   CLTRACE("Close");
   m_closed = true;
+  LogCommandListLifecycle("close", m_debug_id, m_type, m_cmds, m_closed);
   return S_OK;
 }
 
@@ -114,6 +170,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Reset(
     cmd.pso = initial_state;
     Emit(cmd);
   }
+  LogCommandListLifecycle("reset", m_debug_id, m_type, m_cmds, m_closed);
   return S_OK;
 }
 

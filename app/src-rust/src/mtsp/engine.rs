@@ -89,10 +89,10 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;mscompatdb,gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/dxmt-m12/x86_64-unix", "lib/wine/x86_64-unix"],
-                winedllpath_dirs: vec!["lib/dxmt-m12/x86_64-windows", "lib/metalsharp/x86_64-windows"],
+                winedllpath_dirs: vec!["lib/dxmt-m12/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy {
                         source_subpath: "lib/dxmt-m12/x86_64-windows",
@@ -132,11 +132,6 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     DllDeploy {
                         source_subpath: "lib/dxmt-m12/x86_64-windows",
                         filename: "nvngx.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/metalsharp/x86_64-windows",
-                        filename: "metalsharp_ntdll_hook.dll",
                         dest_filename: None,
                     },
                 ],
@@ -615,6 +610,7 @@ mod tests {
         assert!(!m12.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));
         assert!(m12.winedllpath_dirs.contains(&"lib/dxmt-m12/x86_64-windows"));
         assert!(!m12.winedllpath_dirs.contains(&"lib/dxmt/x86_64-windows"));
+        assert!(!m12.winedllpath_dirs.contains(&"lib/metalsharp/x86_64-windows"));
 
         let m12_dlls: std::collections::HashSet<_> =
             m12.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
@@ -626,6 +622,7 @@ mod tests {
             );
         }
         assert!(!m12.deploy_dlls.iter().any(|dll| dll.source_subpath == "lib/dxmt/x86_64-windows"));
+        assert!(!m12.deploy_dlls.iter().any(|dll| dll.filename == "metalsharp_ntdll_hook.dll"));
 
         let m12_env: std::collections::HashSet<_> = m12.env_vars.iter().map(|env| env.key).collect();
         assert!(m12_env.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
@@ -647,6 +644,7 @@ mod tests {
         assert!(m12_overrides.contains("d3d12"));
         assert!(m12_overrides.contains("dxgi"));
         assert!(m12_overrides.contains("gameoverlayrenderer"));
+        assert!(!m12_overrides.contains("mscompatdb"));
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 

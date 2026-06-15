@@ -1149,22 +1149,40 @@ mod tests {
 
     #[test]
     fn source_style_titles_get_steam_secure_launch_args() {
-        for appid in [440, 730, 252490, 271590, 284160, 292030, 1172380, 3241660] {
-            let args = effective_launch_args(appid, super::super::engine::get_pipeline(PipelineId::M11));
+        for pipeline in [PipelineId::M11, PipelineId::M12] {
+            for appid in [440, 730, 252490, 271590, 284160, 292030, 1172380, 3241660] {
+                let args = effective_launch_args(appid, super::super::engine::get_pipeline(pipeline));
 
-            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
-            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "appid {appid}");
-            assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(), 1, "appid {appid}");
-            assert_eq!(args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(), 1, "appid {appid}");
+                assert!(
+                    args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")),
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+                assert!(
+                    args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")),
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+                assert_eq!(
+                    args.iter().filter(|arg| arg.eq_ignore_ascii_case("-steam")).count(),
+                    1,
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+                assert_eq!(
+                    args.iter().filter(|arg| arg.eq_ignore_ascii_case("-secure")).count(),
+                    1,
+                    "appid {appid} pipeline {pipeline:?}"
+                );
+            }
         }
     }
 
     #[test]
-    fn party_animals_m11_uses_steam_without_secure() {
-        let args = effective_launch_args(1260320, super::super::engine::get_pipeline(PipelineId::M11));
+    fn party_animals_m11_and_m12_use_steam_without_secure() {
+        for pipeline in [PipelineId::M11, PipelineId::M12] {
+            let args = effective_launch_args(1260320, super::super::engine::get_pipeline(pipeline));
 
-        assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
-        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")));
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+            assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
+        }
     }
 
     #[test]

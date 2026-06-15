@@ -2,10 +2,25 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <cstdint>
 #include <bitset>
 
-#define DXTRACE(fmt, ...) do { FILE *_tf = fopen("Z:\\tmp\\dxmt_dxil_trace.log", "a"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+static FILE *
+dxmt_dxil_open_trace_log(const char *fallback_name) {
+  const char *root = std::getenv("DXMT_LOG_PATH");
+  const char *file = fallback_name && fallback_name[0] ? fallback_name : "dxmt-dxil-trace.log";
+  char path[4096];
+
+  if (!root || !root[0])
+    return std::fopen(file, "a");
+
+  std::snprintf(path, sizeof(path), "%s%s%s", root, (root[std::strlen(root) - 1] == '/' || root[std::strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return std::fopen(path, "a");
+}
+
+#define DXTRACE(fmt, ...) do { FILE *_tf = dxmt_dxil_open_trace_log("dxmt-dxil-trace.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
 namespace dxmt::dxil {
 
@@ -212,6 +227,36 @@ static LLVMInstruction::Opcode decodeBinop(uint32_t opcode) {
   case 11: return LLVMInstruction::Or;
   case 12: return LLVMInstruction::Xor;
   default: return LLVMInstruction::Add;
+  }
+}
+
+static bool isFloatingBinopType(const LLVMModule &module, uint32_t type_id) {
+  if (type_id >= module.types.size())
+    return false;
+  const auto &type = module.types[type_id];
+  if (type.kind == LLVMType::Float || type.kind == LLVMType::Double)
+    return true;
+  if (type.kind == LLVMType::Vector && !type.subtypes.empty())
+    return type.subtypes[0].kind == LLVMType::Float ||
+           type.subtypes[0].kind == LLVMType::Double;
+  return false;
+}
+
+static LLVMInstruction::Opcode decodeBinopForType(const LLVMModule &module,
+                                                  uint32_t opcode,
+                                                  uint32_t type_id) {
+  if (!isFloatingBinopType(module, type_id))
+    return decodeBinop(opcode);
+
+  switch (opcode) {
+  case 0: return LLVMInstruction::FAdd;
+  case 1: return LLVMInstruction::FSub;
+  case 2: return LLVMInstruction::FMul;
+  case 3:
+  case 4: return LLVMInstruction::FDiv;
+  case 5:
+  case 6: return LLVMInstruction::FRem;
+  default: return decodeBinop(opcode);
   }
 }
 
@@ -1097,8 +1142,9 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         uint32_t type_id = 0;
         uint32_t lhs = valueTypePair(ops, slot, type_id);
         uint32_t rhs = popValue(ops, slot);
-        inst.opcode = slot < ops.size() ? decodeBinop((uint32_t)ops[slot])
-                                     : LLVMInstruction::Add;
+        inst.opcode = slot < ops.size()
+                          ? decodeBinopForType(ctx.module, (uint32_t)ops[slot], type_id)
+                          : LLVMInstruction::Add;
         inst.type_id = type_id;
         inst.operands.push_back(lhs);
         inst.operands.push_back(rhs);
