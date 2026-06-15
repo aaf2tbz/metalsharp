@@ -37,6 +37,15 @@ except OSError:
 
 APP_BUNDLE_ID = "com.metalsharp.app"
 APPLICATIONS_APP = Path("/Applications/MetalSharp.app")
+ALLOW_INSTALLED_APP_SCRIPT = r'''
+set -e
+app="$1"
+/usr/bin/xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
+/usr/sbin/spctl --add --label MetalSharp "$app" 2>/dev/null || true
+if /usr/bin/xattr -p com.apple.quarantine "$app" >/dev/null 2>&1; then
+    exit 1
+fi
+'''
 BACKEND_PROCESS = "metalsharp-backend"
 APP_PROCESS_NAMES = [
     "MetalSharp",
@@ -361,6 +370,31 @@ def copy_app_bundle(source: Path, destination: Path) -> Tuple[bool, str]:
     return True, ""
 
 
+def allow_installed_app(app_path: Path) -> Tuple[bool, str]:
+    try:
+        result = run(["/bin/sh", "-c", ALLOW_INSTALLED_APP_SCRIPT, "allow-metalsharp", str(app_path)], timeout=60)
+    except Exception as exc:
+        result = subprocess.CompletedProcess([], 1, "", str(exc))
+    if result.returncode == 0:
+        return True, ""
+
+    shell_cmd = " && ".join(
+        [
+            f"/usr/bin/xattr -dr com.apple.quarantine {shlex.quote(str(app_path))} 2>/dev/null || true",
+            f"(/usr/sbin/spctl --add --label MetalSharp {shlex.quote(str(app_path))} 2>/dev/null || true)",
+            f"! /usr/bin/xattr -p com.apple.quarantine {shlex.quote(str(app_path))} >/dev/null 2>&1",
+        ]
+    )
+    script = f'do shell script "{escape_applescript(shell_cmd)}" with administrator privileges'
+    try:
+        admin_result = run(["osascript", "-e", script], timeout=180)
+    except Exception as exc:
+        return False, str(exc)
+    if admin_result.returncode != 0:
+        return False, admin_result.stderr.strip() or admin_result.stdout.strip() or result.stderr.strip() or "allow failed"
+    return True, ""
+
+
 def open_installed_app(app_path: Path) -> bool:
     try:
         result = run(["open", "-n", str(app_path)], timeout=30)
@@ -460,6 +494,25 @@ def main() -> int:
         return 1
 
     detach_mount(mount_point)
+
+    write_status(
+        status_file,
+        "allowing_installed_app",
+        92,
+        "Allowing installed MetalSharp app before first launch...",
+        new_version=target_version,
+    )
+    allowed, allow_error = allow_installed_app(APPLICATIONS_APP)
+    if not allowed:
+        write_status(
+            status_file,
+            "error",
+            92,
+            f"Failed to allow MetalSharp before opening: {allow_error}",
+            "app_allow_failed",
+            target_version,
+        )
+        return 1
 
     write_status(
         status_file,

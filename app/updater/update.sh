@@ -208,6 +208,18 @@ copy_app_bundle() {
     [ -n "$source_version" ] && verify_app_bundle "$destination" "$source_version"
 }
 
+allow_installed_app() {
+    local app_path="$1"
+    if /bin/sh -c '/usr/bin/xattr -dr com.apple.quarantine "$1" 2>/dev/null || true; /usr/sbin/spctl --add --label MetalSharp "$1" 2>/dev/null || true; ! /usr/bin/xattr -p com.apple.quarantine "$1" >/dev/null 2>&1' allow-metalsharp "$app_path"; then
+        return 0
+    fi
+
+    local cmd escaped
+    cmd="/usr/bin/xattr -dr com.apple.quarantine $(printf '%q' "$app_path") 2>/dev/null || true; /usr/sbin/spctl --add --label MetalSharp $(printf '%q' "$app_path") 2>/dev/null || true; ! /usr/bin/xattr -p com.apple.quarantine $(printf '%q' "$app_path") >/dev/null 2>&1"
+    escaped="$(applescript_escape "$cmd")"
+    osascript -e "do shell script \"$escaped\" with administrator privileges" >/dev/null 2>&1
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help)
@@ -298,6 +310,12 @@ if ! verify_app_bundle "$APPLICATIONS_APP" "$TARGET_VERSION_CLEAN"; then
 fi
 
 detach_mount
+
+write_status "allowing_installed_app" 92 "Allowing installed MetalSharp app before first launch..."
+if ! allow_installed_app "$APPLICATIONS_APP"; then
+    write_status "error" 92 "Failed to allow MetalSharp before opening." "app_allow_failed"
+    exit 1
+fi
 
 write_status "launching_installed_app" 94 "Opening MetalSharp v$TARGET_VERSION_CLEAN from /Applications..."
 if ! open -n "$APPLICATIONS_APP"; then
