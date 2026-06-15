@@ -564,6 +564,7 @@ fn run_migration() {
         log_to_file(&format!("Migration to v{} failed verification: {}", MIGRATE_VERSION, e));
         return;
     }
+    std::thread::sleep(std::time::Duration::from_secs(5));
 
     update_migration_metadata(&ms_dir);
     if !migration_metadata_current(&ms_dir) {
@@ -620,6 +621,8 @@ fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMark
     if !runtime_core_ready(ms_dir) {
         return Err("runtime bundle is still incomplete after install".into());
     }
+
+    verify_steam_prefix_external_drive_links(ms_dir)?;
 
     Ok(())
 }
@@ -1569,6 +1572,127 @@ fn clear_steam_crash_marker(ms_dir: &Path) {
             Err(e) => log_to_file(&format!("Migration: failed to clear Steam .crash marker: {}", e)),
         }
     }
+}
+
+fn verify_steam_prefix_external_drive_links(ms_dir: &Path) -> Result<(), String> {
+    let prefix = ms_dir.join("prefix-steam");
+    if !prefix.exists() {
+        log_to_file("Migration: Steam prefix missing during external drive verification; skipping drive links");
+        return Ok(());
+    }
+
+    let dosdevices = prefix.join("dosdevices");
+    fs::create_dir_all(&dosdevices).map_err(|e| format!("create Steam dosdevices: {}", e))?;
+    ensure_c_drive(&dosdevices)?;
+
+    let external_drives = discover_external_drive_mounts();
+    if external_drives.is_empty() {
+        log_to_file("Migration: no mounted external drives found to verify in Steam prefix");
+        return Ok(());
+    }
+
+    let mut mapped = 0usize;
+    for drive_path in external_drives {
+        match ensure_dosdevice_link_for_target(&dosdevices, &drive_path) {
+            Ok(Some(letter)) => {
+                mapped += 1;
+                log_to_file(&format!("Migration: verified Steam prefix drive {}: -> {}", letter, drive_path.display()));
+            },
+            Ok(None) => log_to_file(&format!(
+                "Migration: external drive {} is already linked in Steam prefix",
+                drive_path.display()
+            )),
+            Err(e) => log_to_file(&format!(
+                "Migration: failed to link external drive {} in Steam prefix: {}",
+                drive_path.display(),
+                e
+            )),
+        }
+    }
+
+    log_to_file(&format!("Migration: Steam prefix external drive verification complete ({} new link(s))", mapped));
+    Ok(())
+}
+
+fn ensure_c_drive(dosdevices: &Path) -> Result<(), String> {
+    let c_drive = dosdevices.join("c:");
+    match fs::read_link(&c_drive) {
+        Ok(target) if target == Path::new("../drive_c") => Ok(()),
+        Ok(_) => {
+            fs::remove_file(&c_drive).map_err(|e| format!("replace c: drive mapping: {}", e))?;
+            std::os::unix::fs::symlink("../drive_c", &c_drive).map_err(|e| format!("create c: drive mapping: {}", e))
+        },
+        Err(_) => {
+            std::os::unix::fs::symlink("../drive_c", &c_drive).map_err(|e| format!("create c: drive mapping: {}", e))
+        },
+    }
+}
+
+fn discover_external_drive_mounts() -> Vec<PathBuf> {
+    discover_external_drive_mounts_from(Path::new("/Volumes"))
+}
+
+fn discover_external_drive_mounts_from(volumes_dir: &Path) -> Vec<PathBuf> {
+    let mut drives = Vec::new();
+    let Ok(entries) = fs::read_dir(volumes_dir) else {
+        return drives;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let lower = name.to_ascii_lowercase();
+        if lower.starts_with("macintosh")
+            || lower.starts_with('.')
+            || lower.contains("metalsharp")
+            || lower.starts_with("game porting toolkit")
+            || lower.contains("evaluation environment")
+        {
+            continue;
+        }
+        drives.push(path);
+    }
+
+    drives.sort();
+    drives.dedup();
+    drives
+}
+
+fn ensure_dosdevice_link_for_target(dosdevices: &Path, target: &Path) -> Result<Option<char>, String> {
+    if let Some(existing) = find_drive_letter_for_target(dosdevices, target) {
+        if fs::read_link(dosdevices.join(format!("{}:", existing))).ok().as_deref() == Some(target) {
+            return Ok(None);
+        }
+    }
+
+    let drive = find_next_available_drive_letter(dosdevices).ok_or_else(|| "no available drive letters".to_string())?;
+    let link = dosdevices.join(format!("{}:", drive));
+    std::os::unix::fs::symlink(target, &link)
+        .map_err(|e| format!("create {}: -> {}: {}", drive, target.display(), e))?;
+    let verified = fs::read_link(&link).map_err(|e| format!("verify {}: link: {}", drive, e))?;
+    if verified != target {
+        return Err(format!("{}: points to {}, expected {}", drive, verified.display(), target.display()));
+    }
+    Ok(Some(drive))
+}
+
+fn find_drive_letter_for_target(dosdevices: &Path, target: &Path) -> Option<char> {
+    let entries = fs::read_dir(dosdevices).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.len() != 2 || !name.ends_with(':') {
+            continue;
+        }
+        if fs::read_link(entry.path()).ok().as_deref() == Some(target) {
+            return name.as_bytes().first().map(|b| *b as char);
+        }
+    }
+    None
 }
 
 fn register_external_steam_libraries(ms_dir: &Path) {
@@ -3045,6 +3169,53 @@ mod tests {
         clear_steam_crash_marker(&ms_dir);
         assert!(!steam_dir.join(".crash").exists());
 
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn verifier_links_external_drives_to_steam_prefix() {
+        let home = test_dir("verify-external-drives");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let dosdevices = prefix.join("dosdevices");
+        let external = home.join("ExternalSSD");
+
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        fs::create_dir_all(&external).expect("create external drive");
+        std::os::unix::fs::symlink("../drive_c", dosdevices.join("c:")).expect("create c drive");
+
+        ensure_dosdevice_link_for_target(&dosdevices, &external).expect("link external drive");
+
+        assert_eq!(fs::read_link(dosdevices.join("d:")).expect("read d drive"), external);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn verifier_reuses_existing_external_drive_link() {
+        let home = test_dir("verify-existing-external-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let dosdevices = ms_dir.join("prefix-steam").join("dosdevices");
+        let external = home.join("ExternalSSD");
+
+        fs::create_dir_all(&dosdevices).expect("create dosdevices");
+        fs::create_dir_all(&external).expect("create external drive");
+        std::os::unix::fs::symlink(&external, dosdevices.join("s:")).expect("create existing drive link");
+
+        assert_eq!(ensure_dosdevice_link_for_target(&dosdevices, &external).unwrap(), None);
+        assert!(!dosdevices.join("d:").exists());
+        assert_eq!(fs::read_link(dosdevices.join("s:")).expect("read s drive"), external);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn discover_external_drive_mounts_skips_system_and_dmg_volumes() {
+        let home = test_dir("discover-external-drives");
+        let volumes = home.join("Volumes");
+        for name in ["Macintosh HD", "MetalSharp 0.47.9-arm64", ".hidden", "ExternalSSD"] {
+            fs::create_dir_all(volumes.join(name)).expect("create fake volume");
+        }
+
+        assert_eq!(discover_external_drive_mounts_from(&volumes), vec![volumes.join("ExternalSSD")]);
         let _ = fs::remove_dir_all(home);
     }
 
