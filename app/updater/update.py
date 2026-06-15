@@ -118,6 +118,56 @@ def verify_all_dead(patterns, timeout=15):
     return False
 
 
+def force_kill_process_names(patterns, grace=2):
+    for pat in patterns:
+        try:
+            subprocess.run(["pkill", "-x", pat], capture_output=True, timeout=5)
+        except Exception:
+            pass
+    time.sleep(grace)
+    for pat in patterns:
+        try:
+            subprocess.run(["pkill", "-9", "-x", pat], capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+
+def unmount_stale_metalsharp_images(current_mount=None):
+    try:
+        result = subprocess.run(["mount"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return
+    for line in result.stdout.splitlines():
+        if "MetalSharp" not in line and "metalsharp" not in line:
+            continue
+        try:
+            mount_point = line.split(" on ", 1)[1].split(" (", 1)[0]
+        except Exception:
+            continue
+        if current_mount and mount_point == current_mount:
+            continue
+        subprocess.run(["hdiutil", "detach", mount_point, "-quiet"], capture_output=True, timeout=30)
+        subprocess.run(["diskutil", "unmount", "force", mount_point], capture_output=True, timeout=30)
+
+
+def force_stop_old_runtime(status_file, backend_pid, app_pid, target_version):
+    write_status(status_file, "stopping_old_runtime", 5, "Force-stopping the old MetalSharp app and backend...", new_version=target_version)
+    kill_pid(backend_pid, timeout=5)
+    force_kill_process_names(["metalsharp-backend"], grace=1)
+    subprocess.run(["osascript", "-e", 'tell application id "com.metalsharp.app" to quit'], capture_output=True, timeout=10)
+    if app_pid:
+        kill_pid(app_pid, timeout=5)
+    force_kill_process_names([
+        "MetalSharp",
+        "MetalSharp Helper",
+        "MetalSharp Helper (GPU)",
+        "MetalSharp Helper (Renderer)",
+        "MetalSharp Helper (Plugin)",
+    ])
+    write_status(status_file, "unmounting_old_runtime", 28, "Unmounting stale MetalSharp disk images...", new_version=target_version)
+    unmount_stale_metalsharp_images()
+
+
 def mount_dmg(dmg_path):
     mount_dir = tempfile.mkdtemp(prefix="metalsharp-update-mount-")
     r = run(["hdiutil", "attach", "-nobrowse", "-quiet", "-mountpoint", mount_dir, dmg_path])
@@ -234,36 +284,19 @@ def main():
         default=os.path.expanduser("~/.metalsharp/update_install_status.json"),
     )
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--app-pid", default=0, type=int)
     args = parser.parse_args()
 
     sf = args.status_file
     tv = args.target_version
     dmg = args.dmg
     bpid = args.backend_pid
+    app_pid = args.app_pid
 
     write_status(sf, "starting", 0, "Starting update...", new_version=tv)
 
-    # ── 1. Kill backend ──────────────────────────────────────────────
-    write_status(
-        sf,
-        "killing_backend",
-        5,
-        "Stopping backend (PID {})...".format(bpid),
-        new_version=tv,
-    )
-    if not kill_pid(bpid, timeout=10):
-        write_status(
-            sf,
-            "error",
-            5,
-            "Failed to stop backend",
-            error="backend_kill_failed",
-            new_version=tv,
-        )
-        sys.exit(1)
-    run(["pkill", "-x", "metalsharp-backend"])
-    time.sleep(0.5)
-    write_status(sf, "killed_backend", 10, "Backend stopped.", new_version=tv)
+    # ── 1. Force-stop old app/backend before touching the update image ───────
+    force_stop_old_runtime(sf, bpid, app_pid, tv)
 
     # ── 2. Kill steam/wine/webhelper ─────────────────────────────────
     write_status(
@@ -296,35 +329,8 @@ def main():
         )
         sys.exit(1)
 
-    # ── 4. Kill MetalSharp app ───────────────────────────────────────
-    write_status(sf, "closing_app", 25, "Closing MetalSharp...", new_version=tv)
-    for pat in [
-        "MetalSharp",
-        "MetalSharp Helper",
-        "MetalSharp Helper (GPU)",
-        "MetalSharp Helper (Renderer)",
-    ]:
-        try:
-            subprocess.run(["pkill", "-x", pat], capture_output=True, timeout=5)
-        except Exception:
-            pass
-
-    deadline = time.time() + 15
-    while time.time() < deadline:
-        r = subprocess.run(
-            ["pgrep", "-x", "MetalSharp"], capture_output=True, text=True
-        )
-        if r.returncode != 0:
-            break
-        time.sleep(0.5)
-
-    # Force kill anything remaining
-    try:
-        subprocess.run(["killall", "-9", "MetalSharp"], capture_output=True, timeout=5)
-    except Exception:
-        pass
-    time.sleep(2)
-    write_status(sf, "app_closed", 30, "MetalSharp closed.", new_version=tv)
+    # ── 4. Force-stop again immediately before mounting in case the app respawned ──
+    force_stop_old_runtime(sf, bpid, app_pid, tv)
 
     # ── 5. Mount DMG (may prompt for password via osascript) ─────────
     write_status(sf, "mounting", 35, "Mounting update disk image...", new_version=tv)

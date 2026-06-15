@@ -6,6 +6,7 @@ BACKEND_PID=""
 TARGET_VERSION=""
 STATUS_FILE=""
 METALSHARP_HOME_ARG=""
+APP_PID="0"
 
 write_status() {
     local phase="$1" percent="$2" message="$3" error="${4:-}"
@@ -28,17 +29,65 @@ write_status() {
         "$safe_ver" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
 }
 
+pid_alive() {
+    local pid="$1"
+    [ -n "$pid" ] && [ "$pid" -gt 0 ] 2>/dev/null && kill -0 "$pid" 2>/dev/null
+}
+
 kill_pid() {
     local pid="$1" timeout="${2:-10}"
+    pid_alive "$pid" || return 0
     kill "$pid" 2>/dev/null || true
     local deadline=$((SECONDS + timeout))
     while [ $SECONDS -lt $deadline ]; do
-        kill -0 "$pid" 2>/dev/null || return 0
+        pid_alive "$pid" || return 0
         sleep 0.3
     done
     kill -9 "$pid" 2>/dev/null || true
     sleep 0.5
-    kill -0 "$pid" 2>/dev/null && return 1 || return 0
+    pid_alive "$pid" && return 1 || return 0
+}
+
+force_kill_process_names() {
+    local grace="${1:-3}"
+    shift || true
+    for pat in "$@"; do
+        pkill -x "$pat" 2>/dev/null || true
+    done
+    sleep "$grace"
+    for pat in "$@"; do
+        pkill -9 -x "$pat" 2>/dev/null || true
+    done
+}
+
+unmount_stale_metalsharp_images() {
+    local mounted_paths
+    mounted_paths="$(mount | awk '/MetalSharp|metalsharp/ { sub(/^.* on /, ""); sub(/ \([^)]*\).*$/, ""); print }')"
+    [ -n "$mounted_paths" ] || return 0
+    while IFS= read -r mp; do
+        [ -n "$mp" ] || continue
+        [ "$mp" = "$MOUNT_POINT" ] && continue
+        case "$mp" in
+            *MetalSharp*|*metalsharp*)
+                hdiutil detach "$mp" -quiet 2>/dev/null || diskutil unmount force "$mp" >/dev/null 2>&1 || true
+                ;;
+        esac
+    done <<< "$mounted_paths"
+}
+
+force_stop_old_runtime() {
+    write_status "stopping_old_runtime" 5 "Force-stopping the old MetalSharp app and backend..."
+    kill_pid "$BACKEND_PID" 5 || true
+    pkill -x metalsharp-backend 2>/dev/null || true
+    sleep 1
+    pkill -9 -x metalsharp-backend 2>/dev/null || true
+
+    osascript -e 'tell application id "com.metalsharp.app" to quit' >/dev/null 2>&1 || true
+    kill_pid "$APP_PID" 5 || true
+    force_kill_process_names 2 "MetalSharp" "MetalSharp Helper" "MetalSharp Helper (GPU)" "MetalSharp Helper (Renderer)" "MetalSharp Helper (Plugin)"
+
+    write_status "unmounting_old_runtime" 28 "Unmounting stale MetalSharp disk images..."
+    unmount_stale_metalsharp_images
 }
 
 while [ "$#" -gt 0 ]; do
@@ -48,6 +97,7 @@ while [ "$#" -gt 0 ]; do
         --target-version) shift; TARGET_VERSION="${1:-}"; shift ;;
         --status-file) shift; STATUS_FILE="${1:-}"; shift ;;
         --metalsharp-home) shift; METALSHARP_HOME_ARG="${1:-}"; shift ;;
+        --app-pid) shift; APP_PID="${1:-0}"; shift ;;
         --) shift; break ;;
         *) shift ;;
     esac
@@ -163,10 +213,7 @@ fi
 
 write_status "starting" 0 "Starting update..."
 
-write_status "killing_backend" 5 "Stopping backend (PID $BACKEND_PID)..."
-kill_pid "$BACKEND_PID" 10
-pkill -x metalsharp-backend 2>/dev/null || true
-sleep 0.5
+force_stop_old_runtime
 
 write_status "killing_steam" 15 "Stopping Steam and Wine processes..."
 for pat in steam steam.exe steamwebhelper steamwebhelper.exe wine wine64 wineserver wineloader; do
@@ -177,17 +224,7 @@ for pat in Steam.exe steamwebhelper.exe wineserver wineloader; do
 done
 sleep 1
 
-write_status "closing_app" 25 "Closing MetalSharp..."
-for pat in "MetalSharp" "MetalSharp Helper" "MetalSharp Helper (GPU)" "MetalSharp Helper (Renderer)"; do
-    pkill -x "$pat" 2>/dev/null || true
-done
-deadline=$((SECONDS + 15))
-while [ $SECONDS -lt $deadline ]; do
-    pgrep -x "MetalSharp" >/dev/null 2>&1 || break
-    sleep 0.5
-done
-killall -9 "MetalSharp" 2>/dev/null || true
-sleep 2
+force_stop_old_runtime
 
 write_status "verifying_dmg" 30 "Verifying DMG..."
 if [ ! -f "$DMG_PATH" ]; then
@@ -198,6 +235,8 @@ if ! hdiutil verify "$DMG_PATH" >/dev/null 2>&1; then
     write_status "error" 30 "DMG failed verification: $DMG_PATH" "dmg_verify_failed"
     exit 1
 fi
+
+force_stop_old_runtime
 
 write_status "mounting" 35 "Mounting update disk image..."
 MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-update-mount.XXXXXX")" || {
