@@ -85,6 +85,15 @@ def check_dmg_verifier(assets: list[str]) -> None:
             fail(f"DMG verifier no longer checks bundle asset {asset}")
 
 
+def check_updater_handoff() -> None:
+    python_updater = read("app/updater/update.py")
+    shell_updater = read("app/updater/update.sh")
+    for path, updater in [("app/updater/update.py", python_updater), ("app/updater/update.sh", shell_updater)]:
+        for needle in ["hdiutil", "attach", "-mountpoint", "metalsharp-update-mount", "detach_mount(mount_point" if path.endswith(".py") else "detach_mount"]:
+            if needle not in updater:
+                fail(f"{path} no longer mounts the downloaded DMG on a private update mount point before install")
+
+
 def check_bundle_scripts() -> None:
     create_bundles = read("tools/dmg/create-bundles.sh")
     for needle in [
@@ -175,6 +184,7 @@ def main() -> int:
     assets = manifest_assets()
     check_package_resources(assets)
     check_dmg_verifier(assets)
+    check_updater_handoff()
     check_bundle_scripts()
     check_workflows()
     print(f"DMG workflow contract verified ({len(assets)} mac bundle assets).")

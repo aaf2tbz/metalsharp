@@ -131,7 +131,7 @@ verify_app_bundle() {
         "$app_path/Contents/Resources/runtime/metalsharp-backend"
     do
         if [ ! -s "$required" ]; then
-            write_status "error" 78 "Update app is missing ${required#$app_path/}" "app_bundle_invalid"
+            write_status "error" 78 "Update app is missing ${required#"$app_path"/}" "app_bundle_invalid"
             return 1
         fi
     done
@@ -166,21 +166,33 @@ find_mount_for_dmg() {
 }
 
 mount_dmg() {
-    local output
-    output="$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1)" || true
-    MOUNT_POINT="$(echo "$output" | awk '/\/Volumes\// { idx = index($0, "/Volumes/"); print substr($0, idx); exit }')"
-    if [ -z "$MOUNT_POINT" ]; then
-        local escaped="${DMG_PATH//\"/\\\"}"
-        osascript -e "do shell script \"hdiutil attach -nobrowse \\\"$escaped\\\"\" with administrator privileges" >/dev/null 2>&1 || true
-        sleep 2
-        MOUNT_POINT="$(find_mount_for_dmg "$DMG_PATH")"
+    local mount_dir escaped_dmg escaped_mount
+    mount_dir="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-update-mount.XXXXXX")" || return 1
+    hdiutil attach -nobrowse -mountpoint "$mount_dir" "$DMG_PATH" >/dev/null 2>&1 || true
+    if [ -d "$mount_dir" ] && [ -n "$(find "$mount_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+        MOUNT_POINT="$mount_dir"
+        return 0
     fi
-    [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]
+
+    # Keep the update image on a private mount point so install source discovery
+    # cannot accidentally reuse an older /Volumes/MetalSharp mount from a prior
+    # update attempt.
+    escaped_dmg="${DMG_PATH//\"/\\\"}"
+    escaped_mount="${mount_dir//\"/\\\"}"
+    osascript -e "do shell script \"hdiutil attach -nobrowse -mountpoint \\\"$escaped_mount\\\" \\\"$escaped_dmg\\\"\" with administrator privileges" >/dev/null 2>&1 || true
+    sleep 2
+    if [ -d "$mount_dir" ] && [ -n "$(find "$mount_dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+        MOUNT_POINT="$mount_dir"
+        return 0
+    fi
+    rmdir "$mount_dir" 2>/dev/null || true
+    return 1
 }
 
 detach_mount() {
     if [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]; then
         hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+        rmdir "$MOUNT_POINT" 2>/dev/null || true
     fi
 }
 
