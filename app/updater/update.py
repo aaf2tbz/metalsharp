@@ -26,6 +26,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -197,27 +198,44 @@ def verify_dmg(dmg_path: Path) -> bool:
 
 
 def mount_dmg(dmg_path: Path) -> Optional[str]:
+    mount_dir = Path(tempfile.mkdtemp(prefix="metalsharp-update-mount-"))
     try:
-        result = run(["hdiutil", "attach", "-plist", "-nobrowse", str(dmg_path)], timeout=120)
+        result = run(
+            ["hdiutil", "attach", "-plist", "-nobrowse", "-mountpoint", str(mount_dir), str(dmg_path)],
+            timeout=120,
+        )
     except Exception:
         result = subprocess.CompletedProcess([], 1, "", "")
 
     if result.returncode == 0:
         mount_point = parse_attach_plist(result.stdout.encode("utf-8"))
-        if mount_point:
+        if mount_point and Path(mount_point).resolve() == mount_dir.resolve():
             return mount_point
+        if mount_dir.is_dir() and any(mount_dir.iterdir()):
+            return str(mount_dir)
 
-    # Rarely, attaching a downloaded image may require a system prompt.
-    escaped = str(dmg_path).replace('"', '\\"')
-    script = f'do shell script "hdiutil attach -nobrowse \\"{escaped}\\"" with administrator privileges'
+    # Rarely, attaching a downloaded image may require a system prompt. Keep the
+    # mount point private so install source discovery cannot accidentally reuse
+    # an older /Volumes/MetalSharp mount from a previous update attempt.
+    escaped_dmg = str(dmg_path).replace('"', '\\"')
+    escaped_mount = str(mount_dir).replace('"', '\\"')
+    script = (
+        'do shell script "hdiutil attach -nobrowse -mountpoint '
+        f'\\"{escaped_mount}\\" \\"{escaped_dmg}\\"" with administrator privileges'
+    )
     try:
         result = run(["osascript", "-e", script], timeout=180)
     except Exception:
+        cleanup_mount_dir(mount_dir)
         return None
     if result.returncode != 0:
+        cleanup_mount_dir(mount_dir)
         return None
     time.sleep(2)
-    return find_mount_for_dmg(dmg_path)
+    if mount_dir.is_dir() and any(mount_dir.iterdir()):
+        return str(mount_dir)
+    cleanup_mount_dir(mount_dir)
+    return None
 
 
 def parse_attach_plist(raw: bytes) -> Optional[str]:
@@ -249,6 +267,13 @@ def find_mount_for_dmg(dmg_path: Path) -> Optional[str]:
     return None
 
 
+def cleanup_mount_dir(mount_point: Path) -> None:
+    try:
+        mount_point.rmdir()
+    except Exception:
+        pass
+
+
 def detach_mount(mount_point: Optional[str]) -> None:
     if not mount_point:
         return
@@ -256,6 +281,7 @@ def detach_mount(mount_point: Optional[str]) -> None:
         run(["hdiutil", "detach", mount_point, "-quiet"], timeout=30)
     except Exception:
         pass
+    cleanup_mount_dir(Path(mount_point))
 
 
 def find_app_in_mount(mount_point: str) -> Optional[Path]:
