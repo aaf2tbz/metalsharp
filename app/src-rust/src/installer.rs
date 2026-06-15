@@ -62,18 +62,18 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-windows/nvapi64.dll",
     "Graphics/dll/dxmt/x86_64-windows/nvngx.dll",
     "Graphics/dll/dxmt/x86_64-windows/winemetal.dll",
-    "Graphics/dll/dxmt_m12/x86_64-unix/winemetal.so",
-    "Graphics/dll/dxmt_m12/x86_64-unix/libc++.1.dylib",
-    "Graphics/dll/dxmt_m12/x86_64-unix/libc++abi.1.dylib",
-    "Graphics/dll/dxmt_m12/x86_64-unix/libunwind.1.dylib",
-    "Graphics/dll/dxmt_m12/x86_64-windows/d3d10core.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/d3d11.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/d3d12.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/dxgi.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/nvapi64.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/nvngx.dll",
-    "Graphics/dll/dxmt_m12/x86_64-windows/winemetal.dll",
+    "Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so",
+    "Graphics/dll/dxmt-m12/x86_64-unix/libc++.1.dylib",
+    "Graphics/dll/dxmt-m12/x86_64-unix/libc++abi.1.dylib",
+    "Graphics/dll/dxmt-m12/x86_64-unix/libunwind.1.dylib",
+    "Graphics/dll/dxmt-m12/x86_64-windows/d3d10core.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/d3d11.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/d3d12.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/dxgi.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/dxgi_dxmt.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/nvapi64.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/nvngx.dll",
+    "Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll",
 ];
 const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/eac-toggle/x86_64-windows/_winhttp.dll",
@@ -1046,7 +1046,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
 
         let src_root = tmp.join("Graphics").join("dll");
         copy_graphics_runtime_surface(&src_root.join("dxmt"), &dxmt_dir)?;
-        copy_graphics_runtime_surface(&src_root.join("dxmt_m12"), &dxmt_m12_dir)?;
+        copy_graphics_runtime_surface(&src_root.join("dxmt-m12"), &dxmt_m12_dir)?;
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
         ensure_dxmt_runtime_compat_files(&dxmt_m12_dir)?;
@@ -1055,7 +1055,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         let _ = fs::remove_dir_all(&tmp);
     } else {
         let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
-        let dxmt_m12_src = home.join("metalsharp").join("runtime").join("dxmt_m12");
+        let dxmt_m12_src = home.join("metalsharp").join("runtime").join("dxmt-m12");
         if dxmt_src.join("x86_64-windows").join("d3d11.dll").exists() {
             for subdir in &["x86_64-unix", "x86_64-windows"] {
                 let src = dxmt_src.join(subdir);
