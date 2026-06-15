@@ -658,6 +658,11 @@ function registerIpc() {
     return requestMigrationBackend("GET", "/update/migrate/check");
   });
 
+  ipcMain.handle("migrate:prepare-external-drives", async () => {
+    if (isUiOnlyRuntime()) return { ok: true, drives: [], prefixes: [], mapped: 0 };
+    return requestMigrationBackend("POST", "/update/migrate/external-drives/prepare", undefined, 10000);
+  });
+
   ipcMain.handle("migrate:start", async () => {
     if (isUiOnlyRuntime()) return { ok: true };
     return requestMigrationBackend("POST", "/update/migrate/start", undefined, 10000);

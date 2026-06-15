@@ -209,6 +209,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Post, "/update/cleanup") => resp(200, updater::cleanup_downloaded_dmgs()),
         (Method::Get, "/update/migrate/check") => resp(200, migrate::needs_migration()),
+        (Method::Post, "/update/migrate/external-drives/prepare") => {
+            resp(200, migrate::prepare_external_drives_for_migration())
+        },
         (Method::Post, "/update/migrate/start") => match migrate::start_migration() {
             Ok(v) => resp(200, v),
             Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),

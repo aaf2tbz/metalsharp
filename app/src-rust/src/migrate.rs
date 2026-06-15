@@ -415,6 +415,55 @@ fn file_nonempty(path: &Path) -> bool {
     path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
 }
 
+pub fn prepare_external_drives_for_migration() -> serde_json::Value {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return json!({"ok": false, "error": "no home directory"}),
+    };
+    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    if !ms_dir.exists() {
+        return json!({"ok": false, "error": "~/.metalsharp not found"});
+    }
+
+    let drives = discover_external_drive_mounts();
+    if drives.is_empty() {
+        log_to_file("Migration preflight: no mounted external drives found to connect");
+        return json!({"ok": true, "drives": [], "prefixes": [], "mapped": 0});
+    }
+
+    let prefixes = collect_external_drive_mapping_prefixes(&ms_dir);
+    if prefixes.is_empty() {
+        return json!({
+            "ok": false,
+            "error": "No MetalSharp Wine prefixes found to connect external drives",
+            "drives": drives.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
+        });
+    }
+
+    let mut mapped = 0usize;
+    let mut errors = Vec::new();
+    for prefix in &prefixes {
+        match connect_external_drives_to_prefix(prefix, &drives) {
+            Ok(count) => mapped += count,
+            Err(e) => errors.push(format!("{}: {}", prefix.display(), e)),
+        }
+    }
+
+    let drive_values = drives.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>();
+    let prefix_values = prefixes.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>();
+    if !errors.is_empty() {
+        return json!({"ok": false, "error": errors.join("; "), "drives": drive_values, "prefixes": prefix_values, "mapped": mapped});
+    }
+
+    log_to_file(&format!(
+        "Migration preflight: connected {} mounted external drive(s) across {} Wine prefix(es) ({} new link(s))",
+        drives.len(),
+        prefixes.len(),
+        mapped
+    ));
+    json!({"ok": true, "drives": drive_values, "prefixes": prefix_values, "mapped": mapped})
+}
+
 pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     if MIGRATING.load(Ordering::SeqCst) {
         return Ok(json!({"ok": false, "error": "migration already in progress"}));
@@ -1042,6 +1091,28 @@ fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
     prefixes
 }
 
+fn collect_external_drive_mapping_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
+    let mut prefixes = Vec::new();
+    push_existing_or_target_prefix(&mut prefixes, ms_dir.join("prefix-steam"));
+    push_existing_prefix(&mut prefixes, ms_dir.join("prefix-gptk"));
+
+    let bottles = ms_dir.join("bottles");
+    if let Ok(entries) = fs::read_dir(&bottles) {
+        for entry in entries.flatten() {
+            push_existing_prefix(&mut prefixes, entry.path().join("prefix"));
+        }
+    }
+
+    prefixes
+}
+
+fn push_existing_or_target_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
+    if prefixes.iter().any(|existing| existing == &prefix) {
+        return;
+    }
+    prefixes.push(prefix);
+}
+
 fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
     if !prefix.exists() {
         return;
@@ -1581,37 +1652,49 @@ fn verify_steam_prefix_external_drive_links(ms_dir: &Path) -> Result<(), String>
         return Ok(());
     }
 
-    let dosdevices = prefix.join("dosdevices");
-    fs::create_dir_all(&dosdevices).map_err(|e| format!("create Steam dosdevices: {}", e))?;
-    ensure_c_drive(&dosdevices)?;
-
     let external_drives = discover_external_drive_mounts();
     if external_drives.is_empty() {
         log_to_file("Migration: no mounted external drives found to verify in Steam prefix");
         return Ok(());
     }
 
+    let mapped = connect_external_drives_to_prefix(&prefix, &external_drives)?;
+    log_to_file(&format!("Migration: Steam prefix external drive verification complete ({} new link(s))", mapped));
+    Ok(())
+}
+
+fn connect_external_drives_to_prefix(prefix: &Path, external_drives: &[PathBuf]) -> Result<usize, String> {
+    let dosdevices = prefix.join("dosdevices");
+    fs::create_dir_all(&dosdevices).map_err(|e| format!("create dosdevices: {}", e))?;
+    ensure_c_drive(&dosdevices)?;
+
     let mut mapped = 0usize;
     for drive_path in external_drives {
-        match ensure_dosdevice_link_for_target(&dosdevices, &drive_path) {
+        match ensure_dosdevice_link_for_target(&dosdevices, drive_path) {
             Ok(Some(letter)) => {
                 mapped += 1;
-                log_to_file(&format!("Migration: verified Steam prefix drive {}: -> {}", letter, drive_path.display()));
+                log_to_file(&format!(
+                    "Migration: connected external drive {}: -> {} for {}",
+                    letter,
+                    drive_path.display(),
+                    prefix.display()
+                ));
             },
             Ok(None) => log_to_file(&format!(
-                "Migration: external drive {} is already linked in Steam prefix",
-                drive_path.display()
+                "Migration: external drive {} is already linked for {}",
+                drive_path.display(),
+                prefix.display()
             )),
             Err(e) => log_to_file(&format!(
-                "Migration: failed to link external drive {} in Steam prefix: {}",
+                "Migration: failed to link external drive {} for {}: {}",
                 drive_path.display(),
+                prefix.display(),
                 e
             )),
         }
     }
 
-    log_to_file(&format!("Migration: Steam prefix external drive verification complete ({} new link(s))", mapped));
-    Ok(())
+    Ok(mapped)
 }
 
 fn ensure_c_drive(dosdevices: &Path) -> Result<(), String> {
@@ -3024,6 +3107,27 @@ mod tests {
             ),
         )
         .expect("write libraryfolders.vdf");
+    }
+
+    #[test]
+    fn migration_preflight_maps_entire_external_drive_mounts() {
+        let home = test_dir("preflight-entire-external-drive");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let prefix = ms_dir.join("prefix-steam");
+        let drive_c = prefix.join("drive_c");
+        fs::create_dir_all(&drive_c).expect("create steam prefix drive_c");
+        let averyssd = home.join("Volumes").join("AverySSD");
+        let gamedrive = home.join("Volumes").join("GameDrive");
+        fs::create_dir_all(averyssd.join("SteamLibrary").join("steamapps")).expect("create AverySSD steamapps");
+        fs::create_dir_all(gamedrive.join("OtherFolder")).expect("create second drive");
+
+        let mapped = connect_external_drives_to_prefix(&prefix, &[averyssd.clone(), gamedrive.clone()])
+            .expect("connect external drives");
+
+        assert_eq!(mapped, 2);
+        let dosdevices = prefix.join("dosdevices");
+        assert_eq!(fs::read_link(dosdevices.join("d:")).expect("d drive link"), averyssd);
+        assert_eq!(fs::read_link(dosdevices.join("e:")).expect("e drive link"), gamedrive);
     }
 
     #[test]
