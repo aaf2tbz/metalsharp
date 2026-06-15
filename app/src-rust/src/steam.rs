@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 static STEAM_INSTALLING: AtomicBool = AtomicBool::new(false);
 const STEAMWEBHELPER_WRAPPER_MAX_BYTES: u64 = 100_000;
 const STEAMWEBHELPER_WRAPPER_SHA256: &str = "f46a1e8c39c850ba22861f63559f13b4f68557acf04a92e6d1b899769b2ea1f9";
+const STEAM_D3D12_GUARD_APPS: &[&str] = &["Steam.exe", "steamwebhelper.exe", "steamwebhelper_real.exe"];
+const STEAM_D3D12_GUARD_DLLS: &[&str] = &["d3d12", "d3d12core", "d3d12SDKLayers", "dxcore"];
 
 fn ms_wine() -> PathBuf {
     let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
@@ -266,6 +268,46 @@ fn ensure_steam_launch_ready(steam_dir: &PathBuf) {
     }
 }
 
+fn build_steam_d3d12_guard_reg() -> String {
+    let mut reg = String::from("Windows Registry Editor Version 5.00\r\n");
+    for app in STEAM_D3D12_GUARD_APPS {
+        reg.push_str(&format!("\r\n[HKEY_CURRENT_USER\\Software\\Wine\\AppDefaults\\{}\\DllOverrides]\r\n", app));
+        for dll in STEAM_D3D12_GUARD_DLLS {
+            reg.push_str(&format!("\"{}\"=\"builtin\"\r\n", dll));
+        }
+    }
+    reg
+}
+
+fn seed_steam_d3d12_guard(prefix: &Path, ms_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let wine = crate::platform::runtime_wine_binary(ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found".into());
+    }
+
+    let reg_file = prefix.join("drive_c").join("metalsharp-steam-d3d12-guard.reg");
+    std::fs::write(&reg_file, build_steam_d3d12_guard_reg())?;
+    let reg_file_win = wine_z_drive_path(&reg_file);
+    let status = Command::new(&wine)
+        .arg("regedit")
+        .arg(&reg_file_win)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("regedit exited with {}", status).into())
+    }
+}
+
+fn wine_z_drive_path(path: &Path) -> String {
+    format!("Z:{}", path.to_string_lossy().replace('/', "\\"))
+}
+
 fn resolve_steam_prefix() -> PathBuf {
     let steam_dir = resolve_steam_dir();
     if steam_dir.starts_with(steam_prefix()) {
@@ -304,6 +346,9 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     ensure_steam_launch_ready(&steam_dir);
 
     let ms_root = crate::platform::metalsharp_home_dir().join("runtime").join("wine");
+    if let Err(err) = seed_steam_d3d12_guard(&prefix, &ms_root) {
+        eprintln!("steam: WARNING — failed to seed Steam D3D12 guard AppDefaults: {}", err);
+    }
     if !crate::installer::moltenvk_ready(&ms_root) {
         eprintln!("steam: WARNING — MoltenVK not found in Wine runtime, Steam webhelper UI may fail to render");
     }
@@ -1658,6 +1703,25 @@ mod tests {
         assert!(!is_wine_steam_cleanup_command(
             "/bin/zsh -lc ps axo pid=,command= | rg -i \"explorer.exe|conhost.exe\"",
         ));
+    }
+
+    #[test]
+    fn steam_d3d12_guard_uses_appdefaults_not_global_overrides() {
+        let reg = build_steam_d3d12_guard_reg();
+
+        for app in STEAM_D3D12_GUARD_APPS {
+            assert!(
+                reg.contains(&format!("Software\\Wine\\AppDefaults\\{}\\DllOverrides", app)),
+                "missing AppDefaults guard for {app}: {reg}"
+            );
+        }
+        for dll in STEAM_D3D12_GUARD_DLLS {
+            assert!(reg.contains(&format!("\"{}\"=\"builtin\"", dll)), "missing builtin guard for {dll}: {reg}");
+        }
+        assert!(
+            !reg.contains("[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]"),
+            "Steam D3D12 guard must not globally disable M12 game routing"
+        );
     }
 
     #[test]
