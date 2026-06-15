@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, type Ref } from "vue";
+import { computed, inject, onBeforeUnmount, ref, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import IconZap from "~icons/lucide/zap";
@@ -21,6 +21,11 @@ const installLogs = ref<{ text: string; cls: string }[]>([]);
 const steamInstalled = ref(false);
 const steamInstalling = ref(false);
 const installingSteam = ref(false);
+const steamUpdateWaitActive = ref(false);
+const steamUpdateWaitComplete = ref(false);
+const steamUpdateWaitRemaining = ref(25);
+let steamUpdateWaitTimer: ReturnType<typeof setInterval> | null = null;
+let steamUpdateWaitCompletionTimer: ReturnType<typeof setTimeout> | null = null;
 const brewChecking = ref(true);
 const brewInstalled = ref(false);
 const brewInstalling = ref(false);
@@ -31,6 +36,43 @@ const vcppX64Done = ref(false);
 const vcppX86Done = ref(false);
 const vcppX64Installing = ref(false);
 const vcppX86Installing = ref(false);
+const canContinueToVcpp = computed(() => installStatus.value === "complete" && steamInstalled.value && steamUpdateWaitComplete.value);
+
+function clearSteamUpdateWait() {
+  if (steamUpdateWaitTimer) {
+    clearInterval(steamUpdateWaitTimer);
+    steamUpdateWaitTimer = null;
+  }
+  if (steamUpdateWaitCompletionTimer) {
+    clearTimeout(steamUpdateWaitCompletionTimer);
+    steamUpdateWaitCompletionTimer = null;
+  }
+}
+
+function startSteamUpdateWait() {
+  if (steamUpdateWaitActive.value || steamUpdateWaitComplete.value) return;
+  steamUpdateWaitActive.value = true;
+  steamUpdateWaitRemaining.value = 25;
+  const waitUntil = Date.now() + 25_000;
+
+  clearSteamUpdateWait();
+  steamUpdateWaitTimer = setInterval(() => {
+    const remainingMs = Math.max(0, waitUntil - Date.now());
+    steamUpdateWaitRemaining.value = Math.ceil(remainingMs / 1000);
+  }, 250);
+
+  steamUpdateWaitCompletionTimer = setTimeout(() => {
+    clearSteamUpdateWait();
+    steamUpdateWaitRemaining.value = 0;
+    steamUpdateWaitActive.value = false;
+    steamUpdateWaitComplete.value = true;
+  }, 25_000);
+}
+
+function markSteamInstalled() {
+  steamInstalled.value = true;
+  startSteamUpdateWait();
+}
 
 async function checkBrew() {
   brewChecking.value = true;
@@ -120,7 +162,7 @@ async function startInstall() {
 async function checkSteam() {
   const s = await api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
   if (s?.installed || s?.running) {
-    steamInstalled.value = true;
+    markSteamInstalled();
   }
   installingSteam.value = true;
 }
@@ -137,7 +179,7 @@ async function installSteam() {
     const s = await api<{ installed: boolean; running: boolean }>("GET", "/steam/status");
     if (s?.installed || s?.running) {
       clearInterval(poll);
-      steamInstalled.value = true;
+      markSteamInstalled();
       steamInstalling.value = false;
     }
   }, 3000);
@@ -184,6 +226,7 @@ async function goToDoneStep() {
 }
 
 async function installVcppX64() {
+  if (!canContinueToVcpp.value) return;
   vcppX64Installing.value = true;
   try {
     const result = await api<{ ok: boolean; error?: string }>("POST", "/setup/install-vcpp-x64");
@@ -200,6 +243,7 @@ async function installVcppX64() {
 }
 
 async function installVcppX86() {
+  if (!canContinueToVcpp.value) return;
   vcppX86Installing.value = true;
   try {
     const result = await api<{ ok: boolean; error?: string }>("POST", "/setup/install-vcpp-x86");
@@ -214,6 +258,15 @@ async function installVcppX86() {
   }
   vcppX86Installing.value = false;
 }
+
+function goToVcppStep() {
+  if (!canContinueToVcpp.value) return;
+  step.value = 3;
+}
+
+onBeforeUnmount(() => {
+  clearSteamUpdateWait();
+});
 </script>
 
 <template>
@@ -325,11 +378,15 @@ async function installVcppX86() {
           <button v-else class="btn btn-primary" :disabled="steamInstalling" @click="installSteam">
             {{ steamInstalling ? "Installing Steam..." : "Install Steam" }}
           </button>
+          <div v-if="steamUpdateWaitActive" class="steam-update-wait">
+            <span class="steam-update-spinner" aria-hidden="true"></span>
+            <span>letting steam updates install</span>
+          </div>
         </div>
 
         <div class="setup-actions">
           <button class="btn btn-secondary" @click="step = 1">Back</button>
-          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Next: VC++ Runtimes</button>
+          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" :disabled="!canContinueToVcpp" @click="goToVcppStep">Next: VC++ Runtimes</button>
         </div>
       </div>
 
@@ -346,7 +403,7 @@ async function installVcppX86() {
               <div class="setup-vcpp-desc">Required for 64-bit games (Portal 2, Elden Ring, most modern titles)</div>
             </div>
             <span v-if="vcppX64Done" class="badge badge-ok" style="font-size:12px;padding:6px 14px;">Done</span>
-            <button v-else class="btn btn-primary" :disabled="vcppX64Installing" @click="installVcppX64">
+            <button v-else class="btn btn-primary" :disabled="!canContinueToVcpp || vcppX64Installing" @click="installVcppX64">
               {{ vcppX64Installing ? "Installing..." : "Install x64" }}
             </button>
           </div>
@@ -357,7 +414,7 @@ async function installVcppX86() {
               <div class="setup-vcpp-desc">Required for 32-bit games and WoW64 compatibility (older titles, 32-bit components)</div>
             </div>
             <span v-if="vcppX86Done" class="badge badge-ok" style="font-size:12px;padding:6px 14px;">Done</span>
-            <button v-else class="btn btn-primary" :disabled="vcppX86Installing" @click="installVcppX86">
+            <button v-else class="btn btn-primary" :disabled="!canContinueToVcpp || vcppX86Installing" @click="installVcppX86">
               {{ vcppX86Installing ? "Installing..." : "Install x86" }}
             </button>
           </div>
@@ -632,6 +689,24 @@ async function installVcppX86() {
   font-size: 13px;
   color: var(--text-dim);
   margin-bottom: 12px;
+}
+.steam-update-wait {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+.steam-update-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 
 .setup-vcpp-section {
