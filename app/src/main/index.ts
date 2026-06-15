@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
@@ -210,6 +211,87 @@ function clearPostUpdateMigrationMarker() {
   } catch {}
 }
 
+type ProcessRow = { pid: number; comm: string; command: string };
+
+function parseProcessRows(output: string): ProcessRow[] {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d+)\s+(\S+)\s+(.*)$/);
+      if (!match) return null;
+      return { pid: Number(match[1]), comm: match[2], command: match[3] };
+    })
+    .filter((row): row is ProcessRow => !!row && Number.isFinite(row.pid));
+}
+
+function isMetalSharpMainProcess(row: ProcessRow): boolean {
+  const command = row.command.toLowerCase();
+  const comm = path.basename(row.comm).toLowerCase();
+  return (
+    comm === "metalsharp" ||
+    command.includes("/metalsharp.app/contents/macos/metalsharp") ||
+    command.includes("/metalsharp.app/contents/macos/metalsharp ")
+  );
+}
+
+function forceKillDuplicateMetalSharpApps(): { killed: number[]; errors: string[] } {
+  const killed: number[] = [];
+  const errors: string[] = [];
+  let rows: ProcessRow[] = [];
+  try {
+    rows = parseProcessRows(execFileSync("/bin/ps", ["-axo", "pid=,comm=,command="], { encoding: "utf8" }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { killed, errors: [message] };
+  }
+
+  const duplicatePids = rows
+    .filter(isMetalSharpMainProcess)
+    .map((row) => row.pid)
+    .filter((pid) => pid > 0 && pid !== process.pid);
+
+  for (const pid of duplicatePids) {
+    try {
+      process.kill(pid, "SIGTERM");
+      killed.push(pid);
+    } catch (error) {
+      const code =
+        typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+      if (code !== "ESRCH") errors.push(`SIGTERM ${pid}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (duplicatePids.length > 0) {
+    for (let i = 0; i < 10; i++) {
+      const stillAlive = duplicatePids.some((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (!stillAlive) break;
+      try {
+        execFileSync("/bin/sleep", ["0.25"]);
+      } catch {}
+    }
+    for (const pid of duplicatePids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (error) {
+        const code =
+          typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+        if (code !== "ESRCH") errors.push(`SIGKILL ${pid}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
+  return { killed: [...new Set(killed)], errors };
+}
+
 async function checkNeedsMigration(): Promise<boolean> {
   const marker = hasPostUpdateMigrationMarker();
   return new Promise((resolve) => {
@@ -336,6 +418,14 @@ app.whenReady().then(async () => {
   }
 
   const needsMigration = await checkNeedsMigration();
+  if (needsMigration) {
+    const duplicateKill = forceKillDuplicateMetalSharpApps();
+    if (duplicateKill.killed.length > 0 || duplicateKill.errors.length > 0) {
+      console.warn(
+        `Migration guard handled duplicate MetalSharp apps: killed=${duplicateKill.killed.join(",") || "none"} errors=${duplicateKill.errors.join(" | ") || "none"}`,
+      );
+    }
+  }
   migrationMode = needsMigration;
 
   registerIpc();

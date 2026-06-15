@@ -616,6 +616,7 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     validate_bottle_id(&manifest.id)?;
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
+    refresh_m12_runtime_before_save(&mut persisted);
     let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
@@ -626,6 +627,39 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     let manifest_path = bottle_manifest_path(&manifest.id);
     write_bottle_manifest_atomic(&manifest_path, data.as_bytes())?;
     Ok(())
+}
+
+fn refresh_m12_runtime_before_save(manifest: &mut BottleManifest) {
+    if !matches!(manifest.runtime_profile, RuntimeProfile::M12) {
+        return;
+    }
+
+    manifest.installed_components =
+        merge_components(manifest.installed_components.clone(), default_components_for(manifest.runtime_profile));
+
+    #[cfg(not(test))]
+    {
+        match dirs::home_dir().ok_or_else(|| "home directory could not be resolved".to_string()).and_then(|home| {
+            crate::installer::ensure_m12_runtime_ready(&home)
+                .map(|changed| if changed { "installed" } else { "current" }.to_string())
+        }) {
+            Ok(state) => {
+                eprintln!("bottle: M12 shared runtime is {} before save", state);
+                for id in ["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"] {
+                    mark_component_state(manifest, id, ComponentState::Installed);
+                }
+            },
+            Err(e) => {
+                eprintln!("bottle: M12 shared runtime setup failed before save: {}", e);
+                for id in ["d3d12", "d3d12_agility", "d3d11", "dxgi", "gpu_vendor_stubs"] {
+                    mark_component_state(manifest, id, ComponentState::NeedsRepair);
+                }
+            },
+        }
+    }
+
+    manifest.health =
+        if components_ready(&manifest.installed_components) { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
 }
 
 fn refresh_mono_fna_components_before_save(manifest: &mut BottleManifest) {
@@ -753,6 +787,7 @@ pub fn save_steam_compatdata(
 ) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
+    refresh_m12_runtime_before_save(&mut persisted);
     let appid = persisted.steam_app_id.ok_or("steam compatdata requires steam appid")?;
     let record = steam_compatdata_record(&persisted, pipeline);
     let dir = steam_compatdata_dir(appid);
@@ -1029,6 +1064,7 @@ fn ensure_steam_game_bottle_inner(
     manifest.steam_app_id = Some(appid);
     manifest.prefix_path = steam_launch_prefix().to_string_lossy().to_string();
     manifest.runtime_profile = runtime_profile;
+    manifest.preferred_pipeline = Some(pipeline_preference_id(effective_pipeline).to_string());
     manifest.installed_components =
         merge_components(manifest.installed_components, default_components_for(runtime_profile));
     manifest.game_install_path = game_dir.map(normalized_existing_path_string);
@@ -1049,6 +1085,11 @@ pub fn prepare_steam_game_launch(
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     if matches!(pipeline, crate::mtsp::engine::PipelineId::M12) {
+        #[cfg(not(test))]
+        if let Some(home) = dirs::home_dir() {
+            crate::installer::ensure_m12_runtime_ready(&home)
+                .map_err(|e| format!("M12 runtime setup failed before Steam launch: {}", e))?;
+        }
         let _ = crate::setup::prepare_game(appid)?;
     }
     let dual = crate::scan::resolve_dual_game_dir(appid);
@@ -1120,9 +1161,8 @@ pub fn prepare_steam_game_launch(
             }
         }
     }
-    if let Some(appid) = manifest.steam_app_id {
-        let pipeline =
-            manifest_preferred_pipeline(&manifest).unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
+    if manifest.steam_app_id.is_some() {
+        let pipeline = manifest_preferred_pipeline(&manifest).unwrap_or(pipeline);
         let _ = save_steam_compatdata(&manifest, pipeline);
     }
     Ok(manifest)

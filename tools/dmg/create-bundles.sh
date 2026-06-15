@@ -26,6 +26,33 @@ download_asset() {
   curl -fL --retry 3 -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$asset"
 }
 
+repair_graphics_m12_bundle() {
+  local archive="$BUNDLE_DIR/metalsharp-graphics-dll.tar.zst"
+  local m12_root="${METALSHARP_DXMT_M12_ROOT:-$HOME/.metalsharp/runtime/wine/lib/dxmt_m12}"
+  if [ ! -s "$archive" ] || [ ! -d "$m12_root/x86_64-windows" ] || [ ! -d "$m12_root/x86_64-unix" ]; then
+    return 0
+  fi
+
+  local tmp root
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-graphics-m12.XXXXXX")"
+  root="$tmp/root"
+  mkdir -p "$root"
+  tar --use-compress-program=unzstd -xf "$archive" -C "$root"
+  mkdir -p "$root/Graphics/dll"
+  rm -rf "$root/Graphics/dll/dxmt-m12"
+  mkdir -p "$root/Graphics/dll/dxmt-m12"
+  cp -R -p "$m12_root/x86_64-unix" "$root/Graphics/dll/dxmt-m12/x86_64-unix"
+  cp -R -p "$m12_root/x86_64-windows" "$root/Graphics/dll/dxmt-m12/x86_64-windows"
+  (
+    cd "$root"
+    tar -cf "$tmp/metalsharp-graphics-dll.tar" Graphics
+  )
+  zstd -q -19 -T0 -f "$tmp/metalsharp-graphics-dll.tar" -o "$archive"
+  chmod 0644 "$archive"
+  rm -rf "$tmp"
+  echo "repaired graphics M12 payload: $archive from $m12_root"
+}
+
 repair_assets_fnalibs_bundle() {
   local assets_archive="$BUNDLE_DIR/metalsharp-assets.tar.zst"
   local fnalibs_archive="$BUNDLE_DIR/fnalibs.tar.zst"
@@ -73,6 +100,7 @@ while IFS=$'\t' read -r asset _root _platforms _notes; do
   download_asset "$asset" "$BUNDLE_DIR/$asset"
 done < "$MANIFEST"
 
+repair_graphics_m12_bundle
 repair_assets_fnalibs_bundle
 
 "$PROJECT_ROOT/tools/dmg/repair-runtime-bundle.py" \

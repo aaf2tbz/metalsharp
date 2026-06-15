@@ -37,10 +37,19 @@ jobs:
           cd ..
           METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
 
+      - name: Build staged M12 DXMT runtime
+        run: |
+          tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+          python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py \
+            --build-dir vendor/dxmt/build-metalsharp-x64 \
+            --runtime-dir dist/dxmt_m12 \
+            --profile release-ci-m12
+
       - name: Download current split bundles
         run: tools/dmg/create-bundles.sh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METALSHARP_DXMT_M12_ROOT: ${{ github.workspace }}/dist/dxmt_m12
 
       - name: Build self-contained developer SDK
         run: |
@@ -127,9 +136,17 @@ jobs:
       - name: Build TypeScript
         run: cd app && npm run build
 
+      - name: Build staged M12 DXMT runtime
+        run: |
+          tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+          python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py \
+            --build-dir vendor/dxmt/build-metalsharp-x64 \
+            --runtime-dir dist/dxmt_m12 \
+            --profile release-ci-m12
+
       - name: Download bundles for DMG
         run: |
-          tools/dmg/create-bundles.sh
+          METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12" tools/dmg/create-bundles.sh
           tools/dmg/stage-release-bundles.sh app/bundles dist/staged-bundles
           for required in \
             metalsharp-electron.tar.zst \

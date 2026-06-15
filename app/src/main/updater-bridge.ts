@@ -124,6 +124,8 @@ export class UpdaterBridge {
         getStatusFile(),
         "--metalsharp-home",
         getMetalsharpDir(),
+        "--app-pid",
+        String(process.pid),
       ],
       {
         detached: true,
