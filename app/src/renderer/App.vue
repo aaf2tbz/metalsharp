@@ -522,11 +522,9 @@ async function initApp() {
 }
 .content {
   flex: 1;
-  overflow-x: hidden;
   overflow-y: auto;
   padding: 0;
   min-width: 0;
-  width: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-deep);
