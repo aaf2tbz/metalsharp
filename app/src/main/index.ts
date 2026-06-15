@@ -1,9 +1,9 @@
+import { execFileSync } from "child_process";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
 import * as path from "path";
-import { execFileSync } from "child_process";
 import { RustBridge } from "./rust-bridge";
 import { UpdaterBridge } from "./updater-bridge";
 
@@ -257,7 +257,8 @@ function forceKillDuplicateMetalSharpApps(): { killed: number[]; errors: string[
       process.kill(pid, "SIGTERM");
       killed.push(pid);
     } catch (error) {
-      const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+      const code =
+        typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
       if (code !== "ESRCH") errors.push(`SIGTERM ${pid}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
@@ -281,7 +282,8 @@ function forceKillDuplicateMetalSharpApps(): { killed: number[]; errors: string[
       try {
         process.kill(pid, "SIGKILL");
       } catch (error) {
-        const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+        const code =
+          typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
         if (code !== "ESRCH") errors.push(`SIGKILL ${pid}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
