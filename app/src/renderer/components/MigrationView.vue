@@ -8,9 +8,6 @@ const total = ref(0);
 const message = ref("Checking migration status...");
 const error = ref<string | null>(null);
 const complete = ref(false);
-const externalDriveReady = ref(false);
-const preparingDrives = ref(false);
-const connectedDrives = ref<string[]>([]);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -19,41 +16,17 @@ const percent = computed(() => {
   return Math.round((step.value / total.value) * 100);
 });
 
-const stages = [{ name: "[D3D]" }, { name: "[DXMT]" }, { name: "[x86_64]" }, { name: "[Metal]" }];
+const stages = [
+  { name: "[D3D]" },
+  { name: "[DXMT]" },
+  { name: "[x86_64]" },
+  { name: "[Metal]" },
+];
 
 const MAX_START_RETRIES = 20;
 const START_RETRY_DELAY_MS = 500;
 
-async function prepareExternalDrives() {
-  preparingDrives.value = true;
-  error.value = null;
-  message.value = "Connecting mounted external drives to MetalSharp...";
-  try {
-    const res = await window.metalsharp.migratePrepareExternalDrives();
-    if (!res?.ok) {
-      error.value = res?.error ?? "Failed to connect external drives";
-      message.value = `Error: ${error.value}`;
-      return;
-    }
-    const drives = Array.isArray(res.drives) ? res.drives.filter((d): d is string => typeof d === "string") : [];
-    connectedDrives.value = drives;
-    externalDriveReady.value = true;
-    message.value =
-      drives.length > 0
-        ? `Connected ${drives.length} external drive${drives.length === 1 ? "" : "s"}. Starting migration...`
-        : "No mounted external drives found. Starting migration...";
-    await startMigration();
-  } catch (e: unknown) {
-    const errorText = e instanceof Error ? e.message : "Network error";
-    error.value = errorText;
-    message.value = `Error: ${error.value}`;
-  } finally {
-    preparingDrives.value = false;
-  }
-}
-
 async function startMigration(retriesLeft = MAX_START_RETRIES) {
-  if (!externalDriveReady.value) return;
   try {
     const res = await window.metalsharp.migrateStart();
     if (res?.ok) {
@@ -127,15 +100,11 @@ function stopPolling() {
 }
 
 async function restartApp() {
-  message.value = "Stopping Wine Steam...";
-  try {
-    await window.metalsharp.request("POST", "/steam/stop", undefined, 10000);
-  } catch {}
   await window.metalsharp.restartAfterMigration();
 }
 
 onMounted(async () => {
-  message.value = "Connect any external drives you use for Steam libraries, then continue.";
+  await startMigration();
 });
 
 onUnmounted(() => {
@@ -153,12 +122,7 @@ onUnmounted(() => {
       </div>
 
       <div class="pipeline-vis">
-        <div
-          v-for="(stage, i) in stages"
-          :key="stage.name"
-          class="pipeline-stage"
-          :class="{ active: !complete && !error }"
-        >
+        <div v-for="(stage, i) in stages" :key="stage.name" class="pipeline-stage" :class="{ active: !complete && !error }">
           <span class="stage-label">{{ stage.name }}</span>
           <div v-if="i < stages.length - 1" class="pipeline-arrow">
             <IconArrowRight width="16" height="12" />
@@ -176,24 +140,10 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-if="!externalDriveReady && !complete" class="external-drive-preflight">
-        <p class="preflight-title">External drive check required</p>
-        <p class="preflight-copy">
-          Before migration starts, plug in and unlock every external drive Steam uses, including AverySSD. MetalSharp
-          will map each mounted external drive as a full Wine drive so Steam can see the entire disk.
-        </p>
-        <button class="restart-btn" :disabled="preparingDrives" @click="prepareExternalDrives()">
-          {{ preparingDrives ? "Connecting drives..." : "Connect external drives and start migration" }}
-        </button>
-      </div>
-
       <p class="status-message" :class="{ error: !!error, complete }">{{ message }}</p>
-      <p v-if="connectedDrives.length" class="drive-list">Connected: {{ connectedDrives.join(", ") }}</p>
 
       <button v-if="complete" class="restart-btn" @click="restartApp()">Restart MetalSharp</button>
-      <p v-if="error" class="error-hint">
-        Connect the drive in Finder, then try again. If the issue persists, check the logs.
-      </p>
+      <p v-if="error" class="error-hint">Try restarting the app. If the issue persists, check the logs.</p>
     </div>
   </div>
 </template>
@@ -288,19 +238,12 @@ onUnmounted(() => {
 }
 
 @keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 .pipeline-arrow {
@@ -358,33 +301,6 @@ onUnmounted(() => {
   color: #ef5350;
 }
 
-.external-drive-preflight {
-  background: rgba(102, 192, 244, 0.08);
-  border: 1px solid rgba(102, 192, 244, 0.22);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 18px;
-}
-
-.preflight-title {
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  margin: 0 0 8px 0;
-}
-
-.preflight-copy,
-.drive-list {
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 12px;
-  line-height: 1.5;
-  margin: 0 0 14px 0;
-}
-
-.drive-list {
-  margin-top: -14px;
-}
-
 .restart-btn {
   background: #66c0f4;
   color: #1b2838;
@@ -397,13 +313,8 @@ onUnmounted(() => {
   transition: background 0.2s;
 }
 
-.restart-btn:hover:not(:disabled) {
+.restart-btn:hover {
   background: #4db8e8;
-}
-
-.restart-btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
 }
 
 .error-hint {

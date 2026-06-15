@@ -415,55 +415,6 @@ fn file_nonempty(path: &Path) -> bool {
     path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
 }
 
-pub fn prepare_external_drives_for_migration() -> serde_json::Value {
-    let home = match dirs::home_dir() {
-        Some(h) => h,
-        None => return json!({"ok": false, "error": "no home directory"}),
-    };
-    let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-    if !ms_dir.exists() {
-        return json!({"ok": false, "error": "~/.metalsharp not found"});
-    }
-
-    let drives = discover_external_drive_mounts();
-    if drives.is_empty() {
-        log_to_file("Migration preflight: no mounted external drives found to connect");
-        return json!({"ok": true, "drives": [], "prefixes": [], "mapped": 0});
-    }
-
-    let prefixes = collect_external_drive_mapping_prefixes(&ms_dir);
-    if prefixes.is_empty() {
-        return json!({
-            "ok": false,
-            "error": "No MetalSharp Wine prefixes found to connect external drives",
-            "drives": drives.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>()
-        });
-    }
-
-    let mut mapped = 0usize;
-    let mut errors = Vec::new();
-    for prefix in &prefixes {
-        match connect_external_drives_to_prefix(prefix, &drives) {
-            Ok(count) => mapped += count,
-            Err(e) => errors.push(format!("{}: {}", prefix.display(), e)),
-        }
-    }
-
-    let drive_values = drives.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>();
-    let prefix_values = prefixes.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>();
-    if !errors.is_empty() {
-        return json!({"ok": false, "error": errors.join("; "), "drives": drive_values, "prefixes": prefix_values, "mapped": mapped});
-    }
-
-    log_to_file(&format!(
-        "Migration preflight: connected {} mounted external drive(s) across {} Wine prefix(es) ({} new link(s))",
-        drives.len(),
-        prefixes.len(),
-        mapped
-    ));
-    json!({"ok": true, "drives": drive_values, "prefixes": prefix_values, "mapped": mapped})
-}
-
 pub fn start_migration() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     if MIGRATING.load(Ordering::SeqCst) {
         return Ok(json!({"ok": false, "error": "migration already in progress"}));
@@ -613,7 +564,6 @@ fn run_migration() {
         log_to_file(&format!("Migration to v{} failed verification: {}", MIGRATE_VERSION, e));
         return;
     }
-    std::thread::sleep(std::time::Duration::from_secs(5));
 
     update_migration_metadata(&ms_dir);
     if !migration_metadata_current(&ms_dir) {
@@ -632,11 +582,10 @@ fn run_migration() {
     let _ = fs::remove_file(&marker);
     let _ = fs::remove_file(migration_steam_config_backup_path(&ms_dir));
 
-    // wineboot -u can fork Steam.exe for self-update, but most migrations do
-    // not show that window. Keep this as a short, non-fatal grace period so the
-    // wizard does not sit on "Verifying MetalSharp update..." for a full minute.
-    write_migrate_progress("running", step, total_steps, "Finishing update handoff...", None);
-    wait_for_steam_update_windows_after_migration(&ms_dir, 12);
+    // wineboot -u can fork Steam.exe twice for self-update. Let those updater
+    // windows finish naturally so the next app launch is not left with a
+    // half-completed Steam update.
+    wait_for_steam_update_windows_after_migration(&ms_dir, 90);
 
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
@@ -670,8 +619,6 @@ fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMark
     if !runtime_core_ready(ms_dir) {
         return Err("runtime bundle is still incomplete after install".into());
     }
-
-    verify_steam_prefix_external_drive_links(ms_dir)?;
 
     Ok(())
 }
@@ -715,9 +662,6 @@ fn wait_for_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u6
     let prefix = ms_dir.join("prefix-steam");
     let prefix_str = prefix.to_string_lossy().to_string();
     let start = std::time::Instant::now();
-    let initial_grace = std::time::Duration::from_secs(timeout_secs.min(4));
-    let second_window_grace = std::time::Duration::from_secs(4);
-    let mut first_close_at: Option<std::time::Instant> = None;
     let mut state = SteamUpdateWindowWait::default();
 
     while start.elapsed().as_secs() < timeout_secs {
@@ -726,29 +670,15 @@ fn wait_for_steam_update_windows_after_migration(ms_dir: &Path, timeout_secs: u6
             _ => break,
         };
 
-        let steam_alive = steam_update_process_alive(&prefix_str, &output);
-        if !state.saw_first_window() && !steam_alive && start.elapsed() >= initial_grace {
-            log_to_file("Migration: no Steam updater window appeared during grace period (non-fatal)");
-            return;
-        }
-        if let Some(closed_at) = first_close_at {
-            if !steam_alive && closed_at.elapsed() >= second_window_grace {
-                log_to_file("Migration: no second Steam updater window appeared during grace period (non-fatal)");
-                return;
-            }
-        }
-
-        match state.observe(steam_alive) {
+        match state.observe(steam_update_process_alive(&prefix_str, &output)) {
             SteamUpdateWaitAction::LogFirstOpen => {
                 log_to_file("Migration: initial Wine/Steam update window detected, waiting for it to close...");
             },
             SteamUpdateWaitAction::LogFirstClose => {
                 log_to_file("Migration: initial Wine/Steam update window closed, waiting for Steam updater window...");
-                first_close_at = Some(std::time::Instant::now());
             },
             SteamUpdateWaitAction::LogSecondOpen => {
                 log_to_file("Migration: second Wine/Steam updater window detected, waiting for it to close...");
-                first_close_at = None;
             },
             SteamUpdateWaitAction::Complete => {
                 log_to_file("Migration: Wine/Steam updater windows closed after wineboot");
@@ -1089,28 +1019,6 @@ fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
     let mut prefixes = Vec::new();
     push_existing_prefix(&mut prefixes, ms_dir.join("prefix-steam"));
     prefixes
-}
-
-fn collect_external_drive_mapping_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
-    let mut prefixes = Vec::new();
-    push_existing_or_target_prefix(&mut prefixes, ms_dir.join("prefix-steam"));
-    push_existing_prefix(&mut prefixes, ms_dir.join("prefix-gptk"));
-
-    let bottles = ms_dir.join("bottles");
-    if let Ok(entries) = fs::read_dir(&bottles) {
-        for entry in entries.flatten() {
-            push_existing_prefix(&mut prefixes, entry.path().join("prefix"));
-        }
-    }
-
-    prefixes
-}
-
-fn push_existing_or_target_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
-    if prefixes.iter().any(|existing| existing == &prefix) {
-        return;
-    }
-    prefixes.push(prefix);
 }
 
 fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
@@ -1643,139 +1551,6 @@ fn clear_steam_crash_marker(ms_dir: &Path) {
             Err(e) => log_to_file(&format!("Migration: failed to clear Steam .crash marker: {}", e)),
         }
     }
-}
-
-fn verify_steam_prefix_external_drive_links(ms_dir: &Path) -> Result<(), String> {
-    let prefix = ms_dir.join("prefix-steam");
-    if !prefix.exists() {
-        log_to_file("Migration: Steam prefix missing during external drive verification; skipping drive links");
-        return Ok(());
-    }
-
-    let external_drives = discover_external_drive_mounts();
-    if external_drives.is_empty() {
-        log_to_file("Migration: no mounted external drives found to verify in Steam prefix");
-        return Ok(());
-    }
-
-    let mapped = connect_external_drives_to_prefix(&prefix, &external_drives)?;
-    log_to_file(&format!("Migration: Steam prefix external drive verification complete ({} new link(s))", mapped));
-    Ok(())
-}
-
-fn connect_external_drives_to_prefix(prefix: &Path, external_drives: &[PathBuf]) -> Result<usize, String> {
-    let dosdevices = prefix.join("dosdevices");
-    fs::create_dir_all(&dosdevices).map_err(|e| format!("create dosdevices: {}", e))?;
-    ensure_c_drive(&dosdevices)?;
-
-    let mut mapped = 0usize;
-    for drive_path in external_drives {
-        match ensure_dosdevice_link_for_target(&dosdevices, drive_path) {
-            Ok(Some(letter)) => {
-                mapped += 1;
-                log_to_file(&format!(
-                    "Migration: connected external drive {}: -> {} for {}",
-                    letter,
-                    drive_path.display(),
-                    prefix.display()
-                ));
-            },
-            Ok(None) => log_to_file(&format!(
-                "Migration: external drive {} is already linked for {}",
-                drive_path.display(),
-                prefix.display()
-            )),
-            Err(e) => log_to_file(&format!(
-                "Migration: failed to link external drive {} for {}: {}",
-                drive_path.display(),
-                prefix.display(),
-                e
-            )),
-        }
-    }
-
-    Ok(mapped)
-}
-
-fn ensure_c_drive(dosdevices: &Path) -> Result<(), String> {
-    let c_drive = dosdevices.join("c:");
-    match fs::read_link(&c_drive) {
-        Ok(target) if target == Path::new("../drive_c") => Ok(()),
-        Ok(_) => {
-            fs::remove_file(&c_drive).map_err(|e| format!("replace c: drive mapping: {}", e))?;
-            std::os::unix::fs::symlink("../drive_c", &c_drive).map_err(|e| format!("create c: drive mapping: {}", e))
-        },
-        Err(_) => {
-            std::os::unix::fs::symlink("../drive_c", &c_drive).map_err(|e| format!("create c: drive mapping: {}", e))
-        },
-    }
-}
-
-fn discover_external_drive_mounts() -> Vec<PathBuf> {
-    discover_external_drive_mounts_from(Path::new("/Volumes"))
-}
-
-fn discover_external_drive_mounts_from(volumes_dir: &Path) -> Vec<PathBuf> {
-    let mut drives = Vec::new();
-    let Ok(entries) = fs::read_dir(volumes_dir) else {
-        return drives;
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
-            continue;
-        };
-        let lower = name.to_ascii_lowercase();
-        if lower.starts_with("macintosh")
-            || lower.starts_with('.')
-            || lower.contains("metalsharp")
-            || lower.starts_with("game porting toolkit")
-            || lower.contains("evaluation environment")
-        {
-            continue;
-        }
-        drives.push(path);
-    }
-
-    drives.sort();
-    drives.dedup();
-    drives
-}
-
-fn ensure_dosdevice_link_for_target(dosdevices: &Path, target: &Path) -> Result<Option<char>, String> {
-    if let Some(existing) = find_drive_letter_for_target(dosdevices, target) {
-        if fs::read_link(dosdevices.join(format!("{}:", existing))).ok().as_deref() == Some(target) {
-            return Ok(None);
-        }
-    }
-
-    let drive = find_next_available_drive_letter(dosdevices).ok_or_else(|| "no available drive letters".to_string())?;
-    let link = dosdevices.join(format!("{}:", drive));
-    std::os::unix::fs::symlink(target, &link)
-        .map_err(|e| format!("create {}: -> {}: {}", drive, target.display(), e))?;
-    let verified = fs::read_link(&link).map_err(|e| format!("verify {}: link: {}", drive, e))?;
-    if verified != target {
-        return Err(format!("{}: points to {}, expected {}", drive, verified.display(), target.display()));
-    }
-    Ok(Some(drive))
-}
-
-fn find_drive_letter_for_target(dosdevices: &Path, target: &Path) -> Option<char> {
-    let entries = fs::read_dir(dosdevices).ok()?;
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.len() != 2 || !name.ends_with(':') {
-            continue;
-        }
-        if fs::read_link(entry.path()).ok().as_deref() == Some(target) {
-            return name.as_bytes().first().map(|b| *b as char);
-        }
-    }
-    None
 }
 
 fn register_external_steam_libraries(ms_dir: &Path) {
@@ -3110,27 +2885,6 @@ mod tests {
     }
 
     #[test]
-    fn migration_preflight_maps_entire_external_drive_mounts() {
-        let home = test_dir("preflight-entire-external-drive");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        let prefix = ms_dir.join("prefix-steam");
-        let drive_c = prefix.join("drive_c");
-        fs::create_dir_all(&drive_c).expect("create steam prefix drive_c");
-        let averyssd = home.join("Volumes").join("AverySSD");
-        let gamedrive = home.join("Volumes").join("GameDrive");
-        fs::create_dir_all(averyssd.join("SteamLibrary").join("steamapps")).expect("create AverySSD steamapps");
-        fs::create_dir_all(gamedrive.join("OtherFolder")).expect("create second drive");
-
-        let mapped = connect_external_drives_to_prefix(&prefix, &[averyssd.clone(), gamedrive.clone()])
-            .expect("connect external drives");
-
-        assert_eq!(mapped, 2);
-        let dosdevices = prefix.join("dosdevices");
-        assert_eq!(fs::read_link(dosdevices.join("d:")).expect("d drive link"), averyssd);
-        assert_eq!(fs::read_link(dosdevices.join("e:")).expect("e drive link"), gamedrive);
-    }
-
-    #[test]
     fn migration_preserves_and_restores_external_drive_dosdevice_links() {
         let home = test_dir("preserve-dosdevice-links");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -3273,53 +3027,6 @@ mod tests {
         clear_steam_crash_marker(&ms_dir);
         assert!(!steam_dir.join(".crash").exists());
 
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn verifier_links_external_drives_to_steam_prefix() {
-        let home = test_dir("verify-external-drives");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        let prefix = ms_dir.join("prefix-steam");
-        let dosdevices = prefix.join("dosdevices");
-        let external = home.join("ExternalSSD");
-
-        fs::create_dir_all(&dosdevices).expect("create dosdevices");
-        fs::create_dir_all(&external).expect("create external drive");
-        std::os::unix::fs::symlink("../drive_c", dosdevices.join("c:")).expect("create c drive");
-
-        ensure_dosdevice_link_for_target(&dosdevices, &external).expect("link external drive");
-
-        assert_eq!(fs::read_link(dosdevices.join("d:")).expect("read d drive"), external);
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn verifier_reuses_existing_external_drive_link() {
-        let home = test_dir("verify-existing-external-drive");
-        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
-        let dosdevices = ms_dir.join("prefix-steam").join("dosdevices");
-        let external = home.join("ExternalSSD");
-
-        fs::create_dir_all(&dosdevices).expect("create dosdevices");
-        fs::create_dir_all(&external).expect("create external drive");
-        std::os::unix::fs::symlink(&external, dosdevices.join("s:")).expect("create existing drive link");
-
-        assert_eq!(ensure_dosdevice_link_for_target(&dosdevices, &external).unwrap(), None);
-        assert!(!dosdevices.join("d:").exists());
-        assert_eq!(fs::read_link(dosdevices.join("s:")).expect("read s drive"), external);
-        let _ = fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn discover_external_drive_mounts_skips_system_and_dmg_volumes() {
-        let home = test_dir("discover-external-drives");
-        let volumes = home.join("Volumes");
-        for name in ["Macintosh HD", "MetalSharp 0.47.9-arm64", ".hidden", "ExternalSSD"] {
-            fs::create_dir_all(volumes.join(name)).expect("create fake volume");
-        }
-
-        assert_eq!(discover_external_drive_mounts_from(&volumes), vec![volumes.join("ExternalSSD")]);
         let _ = fs::remove_dir_all(home);
     }
 

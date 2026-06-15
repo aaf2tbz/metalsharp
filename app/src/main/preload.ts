@@ -24,7 +24,6 @@ contextBridge.exposeInMainWorld("metalsharp", {
   updaterClearStatus: () => ipcRenderer.invoke("updater:clear-status"),
   backendGetPid: () => ipcRenderer.invoke("backend:get-pid"),
   migrateCheck: () => ipcRenderer.invoke("migrate:check"),
-  migratePrepareExternalDrives: () => ipcRenderer.invoke("migrate:prepare-external-drives"),
   migrateStart: () => ipcRenderer.invoke("migrate:start"),
   migrateProgress: () => ipcRenderer.invoke("migrate:progress"),
   quitApp: () => ipcRenderer.send("app:quit"),
