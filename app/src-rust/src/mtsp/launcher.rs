@@ -527,6 +527,7 @@ pub fn prepare_steam_pipeline_env(
         repair_metalsharp_wine_wrapper_env_order()?;
     }
     if let Some(game_dir) = recipe.game_dir.as_ref() {
+        prepare_steam_api_for_game_dir(&home, game_dir, appid, pipeline_id);
         cleanup_legacy_injections(game_dir)?;
         if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
             crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
@@ -3178,6 +3179,10 @@ fn prepare_steam_api_for_pipeline(appid: u32, pipeline_id: PipelineId) {
         return;
     };
 
+    prepare_steam_api_for_game_dir(&home, &game_dir, appid, pipeline_id);
+}
+
+fn prepare_steam_api_for_game_dir(home: &Path, game_dir: &Path, appid: u32, pipeline_id: PipelineId) {
     if goldberg_status_for_pipeline(&home, &game_dir, pipeline_id) {
         ensure_steam_emu_for_pipeline_if_active(&home, &game_dir, appid, pipeline_id);
     } else {
@@ -4971,6 +4976,53 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn m12_steam_launch_models_deploy_same_real_steam_components_as_m11() {
+        for (appid, expects_secure) in [(1260320, false), (440, true)] {
+            let home = test_dir(&format!("m12-real-steam-{appid}"));
+            let steam_dir = crate::platform::metalsharp_home_dir_for(&home)
+                .join("prefix-steam")
+                .join("drive_c")
+                .join("Program Files (x86)")
+                .join("Steam");
+            let game_dir = home.join("SteamLibrary").join("steamapps").join("common").join(format!("Game {appid}"));
+            let bin_dir = game_dir.join("bin");
+            std::fs::create_dir_all(&steam_dir).expect("create steam dir");
+            std::fs::create_dir_all(&bin_dir).expect("create game bin");
+
+            for filename in ["steam_api64.dll", "steam_api.dll"] {
+                std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+            }
+            for filename in real_steam_model_component_names() {
+                std::fs::write(steam_dir.join(filename), filename.as_bytes()).expect("write steam component");
+            }
+
+            let args = recipe::effective_launch_args(appid, get_pipeline(PipelineId::M12));
+            assert!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "appid {appid}");
+            assert_eq!(args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), expects_secure, "appid {appid}");
+
+            prepare_steam_api_for_game_dir(&home, &game_dir, appid, PipelineId::M12);
+
+            for target in [&game_dir, &bin_dir] {
+                assert_eq!(std::fs::read(target.join("steam_api64.dll")).expect("read api64"), b"steam_api64.dll");
+                assert_eq!(std::fs::read(target.join("steam_api.dll")).expect("read api"), b"steam_api.dll");
+                for filename in real_steam_model_component_names() {
+                    assert_eq!(
+                        std::fs::read(target.join(filename)).expect("read steam model component"),
+                        filename.as_bytes(),
+                        "appid {appid} filename {filename}"
+                    );
+                }
+                assert_eq!(
+                    std::fs::read_to_string(target.join("steam_appid.txt")).expect("read appid"),
+                    appid.to_string()
+                );
+            }
+
+            let _ = std::fs::remove_dir_all(home);
+        }
     }
 
     #[test]
