@@ -1022,6 +1022,32 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
     Err("MetalSharp Wine not found — no bundled wine.tar.zst available".into())
 }
 
+pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
+    let dxmt_dir = dxmt_runtime_dir_for_home(home);
+    let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_ready(&dxmt_m12_dir) {
+        return Ok(false);
+    }
+
+    let home_buf = home.to_path_buf();
+    let mut changed = false;
+    changed |= ensure_runtime_bundle_assets(&home_buf)?;
+    changed |= install_metalsharp_bundle(&home_buf)?;
+    changed |= install_host_runtime(&home_buf)?;
+    changed |= install_scripts_tools_bundle(&home_buf)?;
+    changed |= install_dxmt_runtime(&home_buf)?;
+
+    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_ready(&dxmt_m12_dir) {
+        Ok(changed)
+    } else {
+        Err(format!(
+            "M12 DXMT runtime {} is not ready after setup; missing files under {}",
+            DXMT_BUNDLED_RUNTIME_VERSION,
+            dxmt_m12_dir.display()
+        ))
+    }
+}
+
 fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);

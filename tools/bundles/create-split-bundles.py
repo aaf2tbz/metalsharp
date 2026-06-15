@@ -145,6 +145,14 @@ SDK_CRITICAL_FILES = [
     "runtime/dxmt/x86_64-windows/dxgi_dxmt.dll",
     "runtime/dxmt/x86_64-windows/winemetal.dll",
     "runtime/dxmt/x86_64-unix/winemetal.so",
+    "runtime/dxmt_m12/x86_64-windows/d3d12.dll",
+    "runtime/dxmt_m12/x86_64-windows/dxgi.dll",
+    "runtime/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
+    "runtime/dxmt_m12/x86_64-windows/winemetal.dll",
+    "runtime/dxmt_m12/x86_64-unix/winemetal.so",
+    "runtime/dxmt_m12/x86_64-unix/libc++.1.dylib",
+    "runtime/dxmt_m12/x86_64-unix/libc++abi.1.dylib",
+    "runtime/dxmt_m12/x86_64-unix/libunwind.1.dylib",
     "scripts/run-probes.sh",
     "scripts/preflight-runtime-layout.py",
     "scripts/stage-dxmt-runtime.py",
@@ -231,6 +239,11 @@ def build_staging(tmp: Path) -> dict[str, Path]:
 
     copy_tree(source_dxmt / "x86_64-unix", roots["graphics"] / "dxmt" / "x86_64-unix")
     copy_tree(source_dxmt / "x86_64-windows", roots["graphics"] / "dxmt" / "x86_64-windows")
+    m12_root_env = os.environ.get("METALSHARP_DXMT_M12_ROOT")
+    m12_root = Path(m12_root_env).expanduser() if m12_root_env else Path.home() / ".metalsharp" / "runtime" / "wine" / "lib" / "dxmt_m12"
+    if m12_root.exists():
+        copy_tree(m12_root / "x86_64-unix", roots["graphics"] / "dxmt-m12" / "x86_64-unix")
+        copy_tree(m12_root / "x86_64-windows", roots["graphics"] / "dxmt-m12" / "x86_64-windows")
 
     for name in ["mono-arm64", "goldberg", "eac-toggle", "shims", "shader-cache"]:
         copy_tree(source2 / name, roots["assets"] / name)
@@ -277,6 +290,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     copy_tree(roots["runtime"] / "host", roots["sdk"] / "runtime" / "host")
     copy_file(roots["runtime"] / "metalsharp-backend", roots["sdk"] / "runtime" / "metalsharp-backend")
     copy_tree(roots["graphics"] / "dxmt", roots["sdk"] / "runtime" / "dxmt")
+    copy_tree(roots["graphics"] / "dxmt-m12", roots["sdk"] / "runtime" / "dxmt_m12")
     write_sdk_runtime_manifest(
         roots["sdk"],
         SOURCE_BUNDLES / "metalsharp_bundle.tar.zst",

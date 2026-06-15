@@ -56,12 +56,16 @@ prepare_runtime() {
   fi
 
   tar --use-compress-program=unzstd -xf "$BUNDLE_DIR/metalsharp-graphics-dll.tar.zst" -C "$TMP_DXMT"
+  local bundle_dxmt_root="$TMP_DXMT/Graphics/dll/dxmt-m12"
+  if [[ ! -d "$bundle_dxmt_root" ]]; then
+    bundle_dxmt_root="$TMP_DXMT/Graphics/dll/dxmt"
+  fi
   if command -v ditto >/dev/null 2>&1; then
-    ditto --noextattr --noqtn "$TMP_DXMT/Graphics/dll/dxmt/x86_64-unix" "$M12_DXMT_ROOT/x86_64-unix"
-    ditto --noextattr --noqtn "$TMP_DXMT/Graphics/dll/dxmt/x86_64-windows" "$M12_DXMT_ROOT/x86_64-windows"
+    ditto --noextattr --noqtn "$bundle_dxmt_root/x86_64-unix" "$M12_DXMT_ROOT/x86_64-unix"
+    ditto --noextattr --noqtn "$bundle_dxmt_root/x86_64-windows" "$M12_DXMT_ROOT/x86_64-windows"
   else
-    cp -R "$TMP_DXMT/Graphics/dll/dxmt/x86_64-unix/." "$M12_DXMT_ROOT/x86_64-unix/"
-    cp -R "$TMP_DXMT/Graphics/dll/dxmt/x86_64-windows/." "$M12_DXMT_ROOT/x86_64-windows/"
+    cp -R "$bundle_dxmt_root/x86_64-unix/." "$M12_DXMT_ROOT/x86_64-unix/"
+    cp -R "$bundle_dxmt_root/x86_64-windows/." "$M12_DXMT_ROOT/x86_64-windows/"
   fi
   cp "$M12_DXMT_ROOT/x86_64-unix/winemetal.so" "$WINE_ROOT/lib/wine/x86_64-unix/winemetal.so"
 

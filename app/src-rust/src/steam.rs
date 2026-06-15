@@ -285,27 +285,26 @@ fn seed_steam_d3d12_guard(prefix: &Path, ms_root: &Path) -> Result<(), Box<dyn s
         return Err("MetalSharp Wine not found".into());
     }
 
-    let reg_file = prefix.join("drive_c").join("metalsharp-steam-d3d12-guard.reg");
+    let reg_file_name = "metalsharp-steam-d3d12-guard.reg";
+    let reg_file = prefix.join("drive_c").join(reg_file_name);
     std::fs::write(&reg_file, build_steam_d3d12_guard_reg())?;
-    let reg_file_win = wine_z_drive_path(&reg_file);
-    let status = Command::new(&wine)
-        .arg("regedit")
+    let reg_file_win = format!("C:\\{}", reg_file_name);
+    let mut cmd = Command::new(&wine);
+    cmd.arg("reg")
+        .arg("import")
         .arg(&reg_file_win)
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
+        .stderr(std::process::Stdio::null());
+    crate::platform::set_runtime_library_env(&mut cmd, ms_root);
+    let status = cmd.status()?;
     if status.success() {
         Ok(())
     } else {
         Err(format!("regedit exited with {}", status).into())
     }
-}
-
-fn wine_z_drive_path(path: &Path) -> String {
-    format!("Z:{}", path.to_string_lossy().replace('/', "\\"))
 }
 
 fn resolve_steam_prefix() -> PathBuf {

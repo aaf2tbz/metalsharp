@@ -1921,7 +1921,11 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let cache_paths = build_cache_paths(home, node, appid);
     let appid_string = appid.to_string();
-    let mut env = vec![("SteamAppId".to_string(), appid_string.clone()), ("SteamGameId".to_string(), appid_string)];
+    let mut env = vec![
+        ("SteamAppId".to_string(), appid_string.clone()),
+        ("SteamGameId".to_string(), appid_string.clone()),
+        ("SteamOverlayGameId".to_string(), appid_string),
+    ];
 
     if let Some(steam_id) = crate::steam::get_steam_id() {
         env.push(("SteamUserSteamID".to_string(), steam_id));
@@ -2028,6 +2032,11 @@ fn is_m9_stuck_loading_title(appid: u32) -> bool {
 }
 
 fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) {
+    let appid_string = appid.to_string();
+    cmd.env("SteamAppId", &appid_string);
+    cmd.env("SteamGameId", &appid_string);
+    cmd.env("SteamOverlayGameId", &appid_string);
+
     for (key, value) in app_compat_env_pairs(appid, pipeline_id) {
         cmd.env(key, value);
     }
@@ -4469,17 +4478,23 @@ mod tests {
         assert!(keys.contains("DXMT_CONFIG_FILE"));
         assert!(keys.contains("SteamAppId"));
         assert!(keys.contains("SteamGameId"));
+        assert!(keys.contains("SteamOverlayGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
         assert!(keys.contains("DXMT_LOG_PATH"));
         assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
         assert!(keys.contains("DXMT_CONFIG"));
+        assert_eq!(env_value(&env, "DXMT_D3D12_UE_SM6_COMPAT"), Some("1"));
         let unixlib =
             env.iter().find(|(key, _)| key == "DXMT_WINEMETAL_UNIXLIB").map(|(_, value)| value.as_str()).unwrap();
         assert_eq!(unixlib, "winemetal.so");
         assert!(keys.contains("DXMT_ASYNC_PIPELINE_COMPILE"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamAppId").map(|(_, value)| value.as_str()), Some("1583230"));
         assert_eq!(env.iter().find(|(key, _)| key == "SteamGameId").map(|(_, value)| value.as_str()), Some("1583230"));
+        assert_eq!(
+            env.iter().find(|(key, _)| key == "SteamOverlayGameId").map(|(_, value)| value.as_str()),
+            Some("1583230")
+        );
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
         assert!(overrides.contains("gameoverlayrenderer,gameoverlayrenderer64=d"));
