@@ -13,6 +13,26 @@ SM50Initialize(
   params.shader = ppShader;
   params.reflection = pRefl;
   params.error = ppError;
+  params.options = 0;
+  NTSTATUS status;
+  status = UNIX_CALL(sm50_initialize, &params);
+  if (status)
+    return -1;
+  return params.ret;
+}
+
+AIRCONV_API int
+SM50InitializeWithOptions(
+    const void *pBytecode, size_t BytecodeSize, uint32_t Options, sm50_shader_t *ppShader,
+    struct MTL_SHADER_REFLECTION *pRefl, sm50_error_t *ppError
+) {
+  struct sm50_initialize_params params;
+  params.bytecode = pBytecode;
+  params.bytecode_size = BytecodeSize;
+  params.shader = ppShader;
+  params.reflection = pRefl;
+  params.error = ppError;
+  params.options = Options;
   NTSTATUS status;
   status = UNIX_CALL(sm50_initialize, &params);
   if (status)

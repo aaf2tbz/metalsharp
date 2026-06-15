@@ -241,7 +241,7 @@ struct ID3D12StateObjectDatabaseFactoryCompat : public IUnknown {
 };
 
 static void TraceAgility(const char *fmt, ...) {
-  FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+  FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
   if (!f)
     return;
 
@@ -1832,7 +1832,7 @@ D3D12SerializeRootSignature(const D3D12_ROOT_SIGNATURE_DESC *pRootSignature,
                             D3D_ROOT_SIGNATURE_VERSION Version,
                             ID3DBlob **ppBlob, ID3DBlob **ppErrorBlob) {
   {
-    FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       fprintf(f, "D3D12SerializeRootSignature version=%u params=%u\n", Version,
               pRootSignature ? pRootSignature->NumParameters : 0);
@@ -1846,7 +1846,7 @@ extern "C" HRESULT WINAPI D3D12SerializeVersionedRootSignature(
     const D3D12_VERSIONED_ROOT_SIGNATURE_DESC *pRootSignature,
     ID3DBlob **ppBlob, ID3DBlob **ppErrorBlob) {
   {
-    FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       fprintf(f, "D3D12SerializeVersionedRootSignature version=%u\n",
               pRootSignature ? pRootSignature->Version : 0);
@@ -2032,7 +2032,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
   if (reason == DLL_PROCESS_ATTACH) {
     DisableThreadLibraryCalls(instance);
     install_crash_handler();
-    FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       char exe[MAX_PATH];
       GetModuleFileNameA(NULL, exe, MAX_PATH);
@@ -2053,7 +2053,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
       fclose(f);
     }
   } else if (reason == DLL_PROCESS_DETACH) {
-    FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       char exe[MAX_PATH];
       GetModuleFileNameA(NULL, exe, MAX_PATH);

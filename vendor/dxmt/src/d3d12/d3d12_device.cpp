@@ -19,6 +19,7 @@
 #include "util_string.hpp"
 #include "d3d12_resource.hpp"
 #include <algorithm>
+#include <bit>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -27,10 +28,19 @@
 #include <d3d12sdklayers.h>
 #include <windows.h>
 
+static bool dxmt_d3d12_env_enabled(const char *name) {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA(name, value, sizeof(value));
+  if (!len)
+    return false;
+  return value[0] == '1' || value[0] == 'y' || value[0] == 'Y' ||
+         value[0] == 't' || value[0] == 'T';
+}
+
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
   if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
       ep->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
-    FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       fprintf(f, "!!! EXCEPTION code=0x%lx addr=%p flags=0x%lx\n",
               ep->ExceptionRecord->ExceptionCode,
@@ -508,17 +518,31 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
   auto base = resource->GetMTLTexture();
   if (!base.handle)
     return;
-  uint32_t total_mips = resource_desc.MipLevels ? resource_desc.MipLevels : 1;
-  uint32_t total_slices =
-      resource_desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D
-          ? 1
-          : std::max<UINT>(resource_desc.DepthOrArraySize, 1);
+  uint16_t requested_mip_start = mip_start;
+  uint16_t requested_mip_count = mip_count;
+  uint16_t requested_slice_start = slice_start;
+  uint16_t requested_slice_count = slice_count;
+  uint32_t total_mips = std::max<uint32_t>(
+      1, static_cast<uint32_t>(base.mipmapLevelCount()));
+  uint32_t total_slices = std::max<uint32_t>(
+      1, static_cast<uint32_t>(base.arrayLength()));
   mip_start = std::min<uint16_t>(mip_start, total_mips - 1);
   mip_count = std::min<uint16_t>(std::max<uint16_t>(1, mip_count),
                                  total_mips - mip_start);
   slice_start = std::min<uint16_t>(slice_start, total_slices - 1);
   slice_count = std::min<uint16_t>(std::max<uint16_t>(1, slice_count),
                                    total_slices - slice_start);
+  if (mip_start != requested_mip_start ||
+      mip_count != requested_mip_count ||
+      slice_start != requested_slice_start ||
+      slice_count != requested_slice_count) {
+    TRACE("CreateDescriptorTextureView clamp res=%p fmt=%u type=%u "
+          "mip=%u+%u->%u+%u slice=%u+%u->%u+%u metal_bounds=%ux%u",
+          (void *)resource, (unsigned)format, (unsigned)type,
+          requested_mip_start, requested_mip_count, mip_start, mip_count,
+          requested_slice_start, requested_slice_count, slice_start,
+          slice_count, total_mips, total_slices);
+  }
   uint64_t gpu_id = 0;
   descriptor->metal_texture_view = base.newTextureView(
       metal_format, type, mip_start, mip_count, slice_start, slice_count,
@@ -1558,7 +1582,7 @@ static void device_vtable_watcher() {
                            current_m_device != g_device_expected_m_device);
       if (vtable_bad || m_device_bad) {
         g_watcher_restore_count++;
-        FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+        FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
         if (f) {
           fprintf(f,
                   "!!! CORRUPTION #%d after %d checks: this=%p "
@@ -1596,7 +1620,7 @@ static void device_vtable_watcher() {
       check_count++;
       snapshot_count++;
       if (snapshot_count % 10000 == 0) {
-        FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+        FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
         if (f) {
           fprintf(f, "watcher snapshot #%d: vtable=%p m_device=0x%llx OK\n",
                   snapshot_count, current,
@@ -1644,7 +1668,7 @@ MTLD3D12Device::~MTLD3D12Device() {
     g_device_expected_m_device = 0;
   }
   void *current_vt = *(void **)this;
-  FILE *f = fopen("Z:\\tmp\\dxmt_dxgi_trace.log", "a");
+  FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
   if (f) {
     fprintf(f, "Device REAL DTOR this=%p vtable=%p expected=%p m_refCount=%u\n",
             (void *)this, current_vt, m_expected_vtable, m_refCount.load());
@@ -2188,12 +2212,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *sm = (D3D12_FEATURE_DATA_SHADER_MODEL *)feature_data;
     if (feature_data_size < sizeof(*sm))
       return E_INVALIDARG;
-    constexpr D3D_SHADER_MODEL kMaxProvenShaderModel =
-        static_cast<D3D_SHADER_MODEL>(0x65); // D3D_SHADER_MODEL_6_5
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    const D3D_SHADER_MODEL max_shader_model =
+        ue_sm6_compat ? static_cast<D3D_SHADER_MODEL>(0x66)
+                      : static_cast<D3D_SHADER_MODEL>(0x65);
     if (sm->HighestShaderModel == 0 ||
-        sm->HighestShaderModel > kMaxProvenShaderModel)
-      sm->HighestShaderModel = kMaxProvenShaderModel;
-    TRACE("  SHADER_MODEL: HighestSM=%u", (unsigned)sm->HighestShaderModel);
+        sm->HighestShaderModel > max_shader_model)
+      sm->HighestShaderModel = max_shader_model;
+    TRACE("  SHADER_MODEL: HighestSM=%u ue_sm6_compat=%d",
+          (unsigned)sm->HighestShaderModel, ue_sm6_compat);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -2320,17 +2348,19 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS9 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
     o->MeshShaderPipelineStatsSupported = FALSE;
     o->MeshShaderSupportsFullRangeRenderTargetArrayIndex = FALSE;
-    o->AtomicInt64OnTypedResourceSupported = FALSE;
-    o->AtomicInt64OnGroupSharedSupported = FALSE;
+    o->AtomicInt64OnTypedResourceSupported = ue_sm6_compat ? TRUE : FALSE;
+    o->AtomicInt64OnGroupSharedSupported = ue_sm6_compat ? TRUE : FALSE;
     o->DerivativesInMeshAndAmplificationShadersSupported = FALSE;
     TRACE("  OPTIONS9: MeshStats=%d FullRTArray=%d Atomic64Typed=%d "
-          "Atomic64GroupShared=%d",
+          "Atomic64GroupShared=%d ue_sm6_compat=%d",
           o->MeshShaderPipelineStatsSupported,
           o->MeshShaderSupportsFullRangeRenderTargetArrayIndex,
           o->AtomicInt64OnTypedResourceSupported,
-          o->AtomicInt64OnGroupSharedSupported);
+          o->AtomicInt64OnGroupSharedSupported, ue_sm6_compat);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS10: {
@@ -2345,9 +2375,12 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS11 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->AtomicInt64OnDescriptorHeapResourceSupported = FALSE;
-    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d",
-          o->AtomicInt64OnDescriptorHeapResourceSupported);
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    o->AtomicInt64OnDescriptorHeapResourceSupported =
+        ue_sm6_compat ? TRUE : FALSE;
+    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d ue_sm6_compat=%d",
+          o->AtomicInt64OnDescriptorHeapResourceSupported, ue_sm6_compat);
     return S_OK;
   }
   case 41: { // D3D12_FEATURE_D3D12_OPTIONS12
@@ -2671,6 +2704,8 @@ MTLD3D12Device::CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *desc,
 
 UINT STDMETHODCALLTYPE MTLD3D12Device::GetDescriptorHandleIncrementSize(
     D3D12_DESCRIPTOR_HEAP_TYPE descriptor_heap_type) {
+  TRACE("GetDescriptorHandleIncrementSize type=%u -> %zu",
+        descriptor_heap_type, sizeof(D3D12Descriptor));
   return sizeof(D3D12Descriptor);
 }
 
@@ -3015,11 +3050,13 @@ MTLD3D12Device::GetResourceAllocationInfo(
   if (!__ret)
     return nullptr;
 
-  __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
   __ret->SizeInBytes = 0;
-  if (!resource_descs || !resource_desc_count)
+  if (!resource_descs || !resource_desc_count) {
+    __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     return __ret;
+  }
 
+  __ret->Alignment = 0;
   UINT64 cursor = 0;
   for (UINT i = 0; i < resource_desc_count; i++) {
     UINT64 alignment = ResourcePlacementAlignment(resource_descs[i]);
@@ -3048,11 +3085,13 @@ static D3D12_RESOURCE_ALLOCATION_INFO *FillResourceAllocationInfoWithSideband(
   if (!__ret)
     return nullptr;
 
-  __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
   __ret->SizeInBytes = 0;
-  if (!resource_descs || !resource_desc_count)
+  if (!resource_descs || !resource_desc_count) {
+    __ret->Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
     return __ret;
+  }
 
+  __ret->Alignment = 0;
   UINT64 cursor = 0;
   for (UINT i = 0; i < resource_desc_count; i++) {
     UINT64 alignment = ResourcePlacementAlignment(resource_descs[i]);
@@ -3227,7 +3266,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
     const D3D12_RESOURCE_DESC *desc, D3D12_RESOURCE_STATES initial_state,
     const D3D12_CLEAR_VALUE *optimized_clear_value, REFIID riid,
     void **resource) {
-  TRACE("CreateReservedResource dim=%u fmt=%u w=%llu -> E_NOTIMPL",
+  TRACE("CreateReservedResource dim=%u fmt=%u w=%llu",
         desc ? static_cast<unsigned>(desc->Dimension) : 0,
         desc ? static_cast<unsigned>(desc->Format) : 0,
         desc ? desc->Width : 0);
@@ -3237,7 +3276,25 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
   InitReturnPtr(resource);
   if (!desc)
     return E_INVALIDARG;
-  return E_NOTIMPL;
+
+  D3D12_HEAP_PROPERTIES heap_properties = {};
+  heap_properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+  heap_properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+  heap_properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  heap_properties.CreationNodeMask = 1;
+  heap_properties.VisibleNodeMask = 1;
+
+  auto res = new MTLD3D12Resource(this, *desc, initial_state, heap_properties,
+                                  D3D12_HEAP_FLAG_NONE);
+  HRESULT hr = res->QueryInterface(riid, resource);
+  TRACE("CreateReservedResource sparse-compat out=%p hr=0x%lx",
+        resource ? *resource : nullptr, hr);
+  Logger::info(str::format("M12 sparse reserved resource compat dim=",
+                           desc->Dimension, " width=", desc->Width,
+                           " flags=0x", (unsigned)desc->Flags));
+  if (FAILED(hr))
+    res->Release();
+  return hr;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateSharedHandle(
@@ -3382,12 +3439,17 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateQueryHeap(
     const D3D12_QUERY_HEAP_DESC *desc, REFIID riid, void **heap) {
+  TRACE("CreateQueryHeap desc=%p type=%u count=%u node=0x%x heap_out=%p",
+        (void *)desc, desc ? desc->Type : 0xFFFFFFFFu,
+        desc ? desc->Count : 0, desc ? desc->NodeMask : 0, (void *)heap);
   if (!desc || !heap)
     return E_POINTER;
   InitReturnPtr(heap);
 
   auto qh = new MTLD3D12QueryHeap(this, *desc);
   HRESULT hr = qh->QueryInterface(riid, heap);
+  TRACE("CreateQueryHeap DONE qh=%p out=%p hr=0x%lx", (void *)qh,
+        heap ? *heap : nullptr, hr);
   if (FAILED(hr))
     qh->Release();
   return hr;
@@ -3421,11 +3483,28 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetResourceTiling(
     D3D12_PACKED_MIP_INFO *packed_mip_info,
     D3D12_TILE_SHAPE *standard_tile_shape, UINT *sub_resource_tiling_count,
     UINT first_sub_resource_tiling,
-    D3D12_SUBRESOURCE_TILING *sub_resource_tilings) {}
+    D3D12_SUBRESOURCE_TILING *sub_resource_tilings) {
+  TRACE("GetResourceTiling res=%p total=%p packed=%p shape=%p count=%p "
+        "first=%u tilings=%p",
+        (void *)resource, (void *)total_tile_count, (void *)packed_mip_info,
+        (void *)standard_tile_shape, (void *)sub_resource_tiling_count,
+        first_sub_resource_tiling, (void *)sub_resource_tilings);
+  if (total_tile_count)
+    *total_tile_count = 0;
+  if (packed_mip_info)
+    *packed_mip_info = {};
+  if (standard_tile_shape)
+    *standard_tile_shape = {};
+  if (sub_resource_tiling_count)
+    *sub_resource_tiling_count = 0;
+}
 
 LUID *STDMETHODCALLTYPE MTLD3D12Device::GetAdapterLuid(LUID *__ret) {
   TRACE("GetAdapterLuid ret=%p", (void *)__ret);
-  *__ret = {};
+  if (!__ret)
+    return nullptr;
+  *__ret = std::bit_cast<LUID>(__builtin_bswap64(GetMTLDevice().registryID()));
+  TRACE("GetAdapterLuid -> %08lx:%08lx", __ret->HighPart, __ret->LowPart);
   return __ret;
 }
 
@@ -3484,6 +3563,33 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePipelineLibrary(
   return hr;
 }
 
+namespace {
+
+struct MultiFenceWait {
+  ID3D12Fence *fence;
+  UINT64 value;
+};
+
+struct MultiFenceWaitCtx {
+  std::vector<MultiFenceWait> waits;
+  HANDLE event;
+};
+
+DWORD WINAPI MultiFenceWaitThread(void *arg) {
+  auto *ctx = static_cast<MultiFenceWaitCtx *>(arg);
+  for (auto &wait : ctx->waits) {
+    wait.fence->SetEventOnCompletion(wait.value, nullptr);
+  }
+  for (auto &wait : ctx->waits) {
+    wait.fence->Release();
+  }
+  SetEvent(ctx->event);
+  delete ctx;
+  return 0;
+}
+
+} // namespace
+
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
     ID3D12Fence *const *fences, const UINT64 *values, UINT fence_count,
     D3D12_MULTIPLE_FENCE_WAIT_FLAGS flags, HANDLE event) {
@@ -3491,6 +3597,10 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
         fence_count, flags, (void *)(uintptr_t)event);
   if (!fences || !values || !event)
     return E_POINTER;
+  if (!fence_count) {
+    SetEvent(event);
+    return S_OK;
+  }
 
   bool all_signaled = true;
   for (UINT i = 0; i < fence_count; i++) {
@@ -3506,11 +3616,26 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
   }
 
   if (flags == D3D12_MULTIPLE_FENCE_WAIT_FLAG_ALL) {
+    auto *ctx = new MultiFenceWaitCtx{};
+    ctx->event = event;
+    ctx->waits.reserve(fence_count);
     for (UINT i = 0; i < fence_count; i++) {
-      HRESULT hr = fences[i]->SetEventOnCompletion(values[i], event);
-      if (FAILED(hr))
-        return hr;
+      if (!fences[i]) {
+        delete ctx;
+        return E_POINTER;
+      }
+      fences[i]->AddRef();
+      ctx->waits.push_back({fences[i], values[i]});
     }
+    HANDLE thread = CreateThread(nullptr, 0, MultiFenceWaitThread, ctx, 0,
+                                 nullptr);
+    if (!thread) {
+      for (auto &wait : ctx->waits)
+        wait.fence->Release();
+      delete ctx;
+      return E_FAIL;
+    }
+    CloseHandle(thread);
   } else {
     for (UINT i = 0; i < fence_count; i++) {
       if (fences[i]->GetCompletedValue() < values[i]) {
@@ -3524,6 +3649,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetResidencyPriority(
     UINT object_count, ID3D12Pageable *const *objects,
     const D3D12_RESIDENCY_PRIORITY *priorities) {
+  TRACE("SetResidencyPriority count=%u objects=%p priorities=%p",
+        object_count, (void *)objects, (void *)priorities);
   return S_OK;
 }
 

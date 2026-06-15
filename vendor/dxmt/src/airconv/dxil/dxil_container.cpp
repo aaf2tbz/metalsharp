@@ -1,5 +1,21 @@
 #include "dxil_container.hpp"
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+static FILE *
+dxmt_dxil_open_trace_log(const char *fallback_name) {
+  const char *root = std::getenv("DXMT_LOG_PATH");
+  const char *file = fallback_name && fallback_name[0] ? fallback_name : "dxmt-dxil-trace.log";
+  char path[4096];
+
+  if (!root || !root[0])
+    return std::fopen(file, "a");
+
+  std::snprintf(path, sizeof(path), "%s%s%s", root, (root[std::strlen(root) - 1] == '/' || root[std::strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return std::fopen(path, "a");
+}
 
 namespace dxmt::dxil {
 
@@ -27,7 +43,7 @@ std::optional<DXILContainer> DXILContainer::parse(const void *data, size_t size)
   uint32_t bitcode_offset = *reinterpret_cast<const uint32_t *>(base + 16);
   uint32_t bitcode_size = *reinterpret_cast<const uint32_t *>(base + 20);
 
-  FILE *_dbg = fopen("Z:\\tmp\\dxmt_dxil_trace.log", "a");
+  FILE *_dbg = dxmt_dxil_open_trace_log("dxmt-dxil-trace.log");
   if (_dbg) {
     fprintf(_dbg, "DXILContainer: ver=0x%08x prog_size=%u dxil_magic=0x%08x bc_off=%u bc_sz=%u blob_size=%zu\n",
       program_version, prog_size, dxil_magic, bitcode_offset, bitcode_size, size);

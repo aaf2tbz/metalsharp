@@ -27,13 +27,27 @@ winemetal_debug_enabled(void) {
 }
 
 static FILE *
+winemetal_open_log(const char *fallback_name) {
+  const char *root = getenv("DXMT_LOG_PATH");
+  const char *file = fallback_name && fallback_name[0] ? fallback_name : "winemetal-unix.log";
+  char path[4096];
+
+  if (!root || !root[0])
+    return fopen(file, "a");
+
+  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", file);
+  path[sizeof(path) - 1] = '\0';
+  return fopen(path, "a");
+}
+
+static FILE *
 winemetal_debug_log(void) {
-  return winemetal_debug_enabled() ? fopen("/tmp/winemetal_debug.log", "a") : NULL;
+  return winemetal_debug_enabled() ? winemetal_open_log("winemetal-unix-debug.log") : NULL;
 }
 
 static FILE *
 winemetal_critical_log(void) {
-  return fopen("/tmp/winemetal_debug.log", "a");
+  return winemetal_open_log("winemetal-unix-debug.log");
 }
 
 static bool
