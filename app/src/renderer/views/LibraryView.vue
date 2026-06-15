@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onUnmounted, watch, type Ref } from "vue";
+import { ref, inject, onMounted, onUnmounted, watch, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
