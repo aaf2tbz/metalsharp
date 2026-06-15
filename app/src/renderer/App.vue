@@ -531,14 +531,17 @@ async function initApp() {
 }
 :root[data-theme="developer"] .content {
   background:
-    linear-gradient(90deg, rgba(185, 255, 77, 0.05) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(0, 245, 255, 0.04) 1px, transparent 1px),
+    radial-gradient(circle at 18% 16%, rgba(185, 255, 77, 0.05) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 82% 24%, rgba(0, 245, 255, 0.045) 0 1px, transparent 1.8px),
+    linear-gradient(118deg, rgba(185, 255, 77, 0.025), transparent 36%, rgba(0, 245, 255, 0.03) 72%, transparent),
     radial-gradient(circle at 24% 16%, rgba(255, 46, 247, 0.14), transparent 34%),
     radial-gradient(circle at 84% 10%, rgba(0, 245, 255, 0.11), transparent 30%),
     var(--bg-deep);
   background-size:
-    34px 34px,
-    34px 34px,
+    29px 29px,
+    37px 37px,
+    auto,
+    auto,
     auto,
     auto,
     auto;

@@ -366,7 +366,7 @@ watch([library, search, filter], () => {
   overflow-x: hidden;
   background: var(--bg-deep);
 }
-:global(:root[data-theme="developer"]) .library-view {
+:global(:root[data-theme="developer"] .library-view) {
   background:
     radial-gradient(circle at 18% 4%, rgba(255, 46, 247, 0.15), transparent 30%),
     radial-gradient(circle at 90% 16%, rgba(0, 245, 255, 0.13), transparent 32%),
@@ -384,7 +384,7 @@ watch([library, search, filter], () => {
   position: relative;
   overflow: hidden;
 }
-:global(:root[data-theme="developer"]) .library-header {
+:global(:root[data-theme="developer"] .library-header) {
   border-bottom-color: rgba(185, 255, 77, 0.28);
   box-shadow:
     inset 0 -1px 0 rgba(0, 245, 255, 0.22),
@@ -398,10 +398,15 @@ watch([library, search, filter], () => {
               radial-gradient(ellipse 40% 60% at 80% 50%, rgba(95, 183, 232, 0.05) 0%, transparent 60%);
   pointer-events: none;
 }
-:global(:root[data-theme="developer"]) .library-header::after {
+:global(:root[data-theme="developer"] .library-header::after) {
   background:
-    repeating-linear-gradient(90deg, rgba(185, 255, 77, 0.08) 0 1px, transparent 1px 24px),
+    radial-gradient(circle at 18% 22%, rgba(185, 255, 77, 0.09) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 72% 36%, rgba(0, 245, 255, 0.07) 0 1px, transparent 1.8px),
     linear-gradient(90deg, rgba(255, 46, 247, 0.10), transparent 34%, rgba(0, 245, 255, 0.09) 78%, transparent);
+  background-size:
+    30px 30px,
+    43px 43px,
+    auto;
 }
 .library-title-row {
   display: grid;
@@ -420,7 +425,7 @@ watch([library, search, filter], () => {
   font-weight: 750;
   line-height: 1.1;
 }
-:global(:root[data-theme="developer"]) .library-header h1 {
+:global(:root[data-theme="developer"] .library-header h1) {
   color: var(--accent);
   font-family: var(--font-mono);
   font-weight: 800;

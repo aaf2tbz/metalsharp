@@ -96,9 +96,9 @@ const navItems: NavItem[] = [
   height: 100vh;
   min-height: 0;
   background: var(--sidebar-bg);
-  backdrop-filter: blur(28px) saturate(200%);
-  -webkit-backdrop-filter: blur(28px) saturate(200%);
-  border-right: 1px solid rgba(140, 170, 200, 0.1);
+  backdrop-filter: blur(34px) saturate(190%);
+  -webkit-backdrop-filter: blur(34px) saturate(190%);
+  border-right: 1px solid rgba(140, 170, 200, 0.16);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
@@ -111,7 +111,9 @@ const navItems: NavItem[] = [
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(30, 58, 82, 0.18) 0%, transparent 40%, rgba(26, 45, 66, 0.12) 100%);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 22%),
+    linear-gradient(115deg, rgba(95, 183, 232, 0.12), transparent 44%, rgba(255, 255, 255, 0.04));
   pointer-events: none;
   z-index: 0;
 }
@@ -286,33 +288,40 @@ const navItems: NavItem[] = [
   }
 }
 
-:global(:root[data-theme="light"]) .sidebar-nav-item.active {
+:global(:root[data-theme="light"] .sidebar-nav-item.active) {
   border-color: rgba(52, 127, 186, 0.26);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.42),
     inset 0 0 18px rgba(52, 127, 186, 0.06),
     0 0 0 1px rgba(52, 127, 186, 0.03);
 }
-:global(:root[data-theme="light"]) .sidebar-nav-item.active::before {
+:global(:root[data-theme="light"] .sidebar-nav-item.active::before) {
   background:
     linear-gradient(90deg, transparent 0%, rgba(52, 127, 186, 0.20) 48%, transparent 100%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 64%);
   opacity: 0.22;
 }
-:global(:root[data-theme="light"]) .sidebar-nav-item.active::after {
+:global(:root[data-theme="light"] .sidebar-nav-item.active::after) {
   border-color: rgba(52, 127, 186, 0.16);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.22),
     inset 0 0 14px rgba(52, 127, 186, 0.05);
 }
 
-:global(:root[data-theme="developer"]) .sidebar::before {
+:global(:root[data-theme="developer"] .sidebar::before) {
   background:
-    linear-gradient(180deg, rgba(255, 46, 247, 0.15) 0%, transparent 38%),
-    repeating-linear-gradient(180deg, rgba(185, 255, 77, 0.06) 0 1px, transparent 1px 18px);
+    linear-gradient(180deg, rgba(255, 46, 247, 0.16) 0%, transparent 34%),
+    linear-gradient(115deg, rgba(185, 255, 77, 0.10), transparent 42%, rgba(0, 245, 255, 0.08)),
+    radial-gradient(circle at 24% 18%, rgba(185, 255, 77, 0.08) 0 1px, transparent 1.7px),
+    repeating-linear-gradient(180deg, rgba(152, 242, 255, 0.035) 0 1px, transparent 1px 28px);
+  background-size:
+    auto,
+    auto,
+    34px 34px,
+    auto;
 }
 
-:global(:root[data-theme="developer"]) .sidebar-nav-item.active {
+:global(:root[data-theme="developer"] .sidebar-nav-item.active) {
   border-color: rgba(185, 255, 77, 0.48);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.14),
@@ -321,14 +330,14 @@ const navItems: NavItem[] = [
     0 0 24px rgba(185, 255, 77, 0.12);
 }
 
-:global(:root[data-theme="developer"]) .sidebar-nav-item.active::before {
+:global(:root[data-theme="developer"] .sidebar-nav-item.active::before) {
   background:
     linear-gradient(90deg, transparent 0%, rgba(185, 255, 77, 0.45) 45%, rgba(0, 245, 255, 0.28) 52%, transparent 100%),
     linear-gradient(180deg, rgba(255, 46, 247, 0.16), transparent 64%);
   opacity: 0.34;
 }
 
-:global(:root[data-theme="developer"]) .sidebar-nav-item.active::after {
+:global(:root[data-theme="developer"] .sidebar-nav-item.active::after) {
   border-color: rgba(0, 245, 255, 0.32);
   box-shadow:
     inset 0 0 0 1px rgba(185, 255, 77, 0.14),
