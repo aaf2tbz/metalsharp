@@ -204,6 +204,10 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         append_unique_launch_arg(launch_args, "-secure");
     }
 
+    if appid == 1962700 && pipeline == PipelineId::M12 {
+        launch_args.retain(|arg| !arg.eq_ignore_ascii_case("-steam"));
+    }
+
     match (appid, pipeline) {
         (1196590 | 1623730 | 1928870 | 2358720 | 2456740, PipelineId::M12) => {
             append_unique_launch_arg(launch_args, "-dx12");
@@ -331,6 +335,15 @@ fn resolve_game_exe_for_pipeline(
     game_dir: &Path,
     pipeline: Option<PipelineId>,
 ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    // Subnautica 2's M12 route must invoke the real game executable directly.
+    // Do not let a prepared start_protected_game.exe shim or Steam launch args
+    // take precedence over Subnautica2.exe for this path.
+    if appid == 1962700 && matches!(pipeline, Some(PipelineId::M12)) {
+        if let Some(path) = find_case_insensitive(game_dir, "Subnautica2.exe") {
+            return Ok(path);
+        }
+    }
+
     if matches!(pipeline, Some(PipelineId::Dxmt | PipelineId::M12)) {
         if let Some(path) = prepared_start_protected_game_exe(game_dir) {
             return Ok(path);
@@ -1114,6 +1127,27 @@ mod tests {
 
         assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-NoStartupMovies")));
         assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-NOSPLASH")));
+    }
+
+    #[test]
+    fn subnautica_m12_launches_without_steam_arg() {
+        let args = effective_launch_args(1962700, super::super::engine::get_pipeline(PipelineId::M12));
+
+        assert!(!args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")));
+    }
+
+    #[test]
+    fn subnautica_m12_prefers_direct_subnautica2_exe() {
+        let dir = test_dir("subnautica2-direct-exe");
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        std::fs::write(dir.join("start_protected_game.exe"), b"not pe").expect("write protected launcher");
+        std::fs::write(dir.join("start_protected_game.old"), b"not pe").expect("write prepared marker");
+        std::fs::write(dir.join("Subnautica2.exe"), b"not pe").expect("write direct exe");
+
+        let selected = resolve_game_exe_for_pipeline(1962700, &dir, Some(PipelineId::M12)).expect("select direct exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("Subnautica2.exe"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

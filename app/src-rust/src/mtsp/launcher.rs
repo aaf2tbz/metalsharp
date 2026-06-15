@@ -619,7 +619,7 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
     // winemetal requires at runtime.
     let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
     let unix_lib_dir = if matches!(pipeline, PipelineId::M12 | PipelineId::M13) {
-        let dir = ms_root.join("lib").join("dxmt-m12").join("x86_64-unix");
+        let dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
         for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
             let path = dir.join(sidecar);
             let present = path.exists();
@@ -4208,7 +4208,7 @@ mod tests {
     #[test]
     fn m12_pipeline_deploy_list_includes_d3d12_and_uses_isolated_dxmt_m12_surface() {
         // Phase 3 contract: M12 must deploy d3d12.dll (plus dxgi/d3d11/
-        // d3d10core/winemetal) from the isolated lib/dxmt-m12 surface.
+        // d3d10core/winemetal) from the isolated lib/dxmt_m12 surface.
         let node = get_pipeline(PipelineId::M12);
         let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
         for required in ["d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll"] {
@@ -4220,8 +4220,8 @@ mod tests {
                 "d3d12.dll" | "d3d11.dll" | "dxgi.dll" | "d3d10core.dll" | "winemetal.dll" | "dxgi_dxmt.dll"
             ) {
                 assert!(
-                    deploy.source_subpath.starts_with("lib/dxmt-m12/"),
-                    "M12 DLL {} must come from lib/dxmt-m12, got {}",
+                    deploy.source_subpath.starts_with("lib/dxmt_m12/"),
+                    "M12 DLL {} must come from lib/dxmt_m12, got {}",
                     deploy.filename,
                     deploy.source_subpath
                 );
@@ -4232,14 +4232,14 @@ mod tests {
     #[test]
     fn m11_pipeline_deploy_list_does_not_include_d3d12_and_uses_legacy_dxmt_surface() {
         // Phase 3 contract: M11 must NOT deploy d3d12.dll and must point at the
-        // legacy lib/dxmt surface, never lib/dxmt-m12.
+        // legacy lib/dxmt surface, never lib/dxmt_m12.
         let node = get_pipeline(PipelineId::M11);
         let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
         assert!(!filenames.contains(&"d3d12.dll"), "M11 deploy list must NOT include d3d12.dll (got {:?})", filenames);
         for deploy in &node.deploy_dlls {
             assert!(
-                !deploy.source_subpath.starts_with("lib/dxmt-m12/"),
-                "M11 DLL {} must not come from lib/dxmt-m12 (got {})",
+                !deploy.source_subpath.starts_with("lib/dxmt_m12/"),
+                "M11 DLL {} must not come from lib/dxmt_m12 (got {})",
                 deploy.filename,
                 deploy.source_subpath
             );
@@ -4343,13 +4343,13 @@ mod tests {
     #[test]
     fn m12_pipeline_env_vars_set_winemetal_overrides_and_shader_cache() {
         // Phase 3 contract: the M12 env builder must set the winemetal
-        // WINEDLLOVERRIDES, route the wine DLL path to dxmt-m12, and point the
+        // WINEDLLOVERRIDES, route the wine DLL path to dxmt_m12, and point the
         // shader cache at the isolated m12 lane.
         let node = get_pipeline(PipelineId::M12);
         assert!(node.wine_overrides.unwrap_or("").contains("winemetal"));
         assert!(
-            node.winedllpath_dirs.iter().any(|d| d.starts_with("lib/dxmt-m12")),
-            "M12 winedllpath must route to dxmt-m12"
+            node.winedllpath_dirs.iter().any(|d| d.starts_with("lib/dxmt_m12")),
+            "M12 winedllpath must route to dxmt_m12"
         );
         assert_eq!(node.shader_cache_subdir, Some("m12"), "M12 shader cache must be isolated under m12");
     }
@@ -4490,10 +4490,10 @@ mod tests {
         assert!(!keys.contains("WINEDATADIR"));
         assert!(!keys.contains("MS_ROOT"));
         let winedllpath = env_value(&env, "WINEDLLPATH").unwrap_or_default();
-        assert!(winedllpath.contains("dxmt-m12/x86_64-windows"));
+        assert!(winedllpath.contains("dxmt_m12/x86_64-windows"));
         assert!(!winedllpath.contains("lib/metalsharp"));
-        assert!(env_value(&env, "DYLD_LIBRARY_PATH").unwrap_or_default().contains("dxmt-m12/x86_64-unix"));
-        assert!(env_value(&env, "DYLD_FALLBACK_LIBRARY_PATH").unwrap_or_default().contains("dxmt-m12/x86_64-unix"));
+        assert!(env_value(&env, "DYLD_LIBRARY_PATH").unwrap_or_default().contains("dxmt_m12/x86_64-unix"));
+        assert!(env_value(&env, "DYLD_FALLBACK_LIBRARY_PATH").unwrap_or_default().contains("dxmt_m12/x86_64-unix"));
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -4511,7 +4511,7 @@ mod tests {
         assert_eq!(crate::platform::runtime_wine_binary(&ms_root), bin.join("metalsharp-wine"));
         assert_eq!(m12.requires_wine, m11.requires_wine);
         assert_eq!(m12.backend, m11.backend);
-        assert!(m12.winedllpath_dirs.iter().any(|path| path.contains("dxmt-m12")));
+        assert!(m12.winedllpath_dirs.iter().any(|path| path.contains("dxmt_m12")));
         let _ = std::fs::remove_dir_all(home);
     }
 
@@ -4735,9 +4735,9 @@ mod tests {
             assert!(!path.is_empty(), "{:?} WINEDLLPATH is empty", pipeline_id);
             assert!(path.contains("x86_64-windows"), "{:?} WINEDLLPATH missing windows dir: {}", pipeline_id, path);
             if pipeline_id == PipelineId::M12 {
-                assert!(path.contains("dxmt-m12"), "M12 should use isolated M12 DLL path: {}", path);
+                assert!(path.contains("dxmt_m12"), "M12 should use isolated M12 DLL path: {}", path);
             } else {
-                assert!(!path.contains("dxmt-m12"), "{:?} should not use isolated M12 DLL path: {}", pipeline_id, path);
+                assert!(!path.contains("dxmt_m12"), "{:?} should not use isolated M12 DLL path: {}", pipeline_id, path);
             }
             let _ = std::fs::remove_dir_all(&home);
         }
@@ -4755,7 +4755,7 @@ mod tests {
     #[test]
     fn m12_prefix_route_dlls_stage_into_system32() {
         let root = test_dir("m12-prefix-route");
-        let source_dir = root.join("runtime").join("wine").join("lib").join("dxmt-m12").join("x86_64-windows");
+        let source_dir = root.join("runtime").join("wine").join("lib").join("dxmt_m12").join("x86_64-windows");
         let prefix = root.join("prefix-steam");
         std::fs::create_dir_all(&source_dir).expect("create source dir");
 
@@ -4766,7 +4766,7 @@ mod tests {
                 let source_path = source_dir.join(dll);
                 std::fs::write(&source_path, format!("m12-{dll}")).expect("write route dll");
                 recipe::RecipeDll {
-                    source_subpath: "lib/dxmt-m12/x86_64-windows".to_string(),
+                    source_subpath: "lib/dxmt_m12/x86_64-windows".to_string(),
                     filename: (*dll).to_string(),
                     source_path,
                     dest_path: root.join("game").join(dll),
