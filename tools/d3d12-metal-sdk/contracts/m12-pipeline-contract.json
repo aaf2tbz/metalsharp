@@ -14,7 +14,7 @@
     },
     {
       "key": "WINEDLLPATH",
-      "value_contains": "lib/dxmt-m12/x86_64-windows",
+      "value_contains": "lib/dxmt_m12/x86_64-windows",
       "proves": "Game processes can find the isolated M12 Windows DLLs from the normal Steam prefix without borrowing the M11 DXMT surface."
     },
     {
@@ -88,7 +88,7 @@
     },
     {
       "id": "runtime-layout",
-      "command": "python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --profile local-m12-current --dxmt-runtime ~/.metalsharp/runtime/wine/lib/dxmt-m12 --wine-runtime ~/.metalsharp/runtime/wine --prefix ~/.metalsharp/prefix-steam",
+      "command": "python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --profile local-m12-current --dxmt-runtime ~/.metalsharp/runtime/wine/lib/dxmt_m12 --wine-runtime ~/.metalsharp/runtime/wine --prefix ~/.metalsharp/prefix-steam",
       "pinpoints": "Required DLLs, Unix sidecars, WineMetal ABI, prefix placement, and manifest drift."
     },
     {
@@ -110,7 +110,7 @@
   "source_comments": [
     {
       "path": "app/src-rust/src/mtsp/engine.rs",
-      "must_contain": "lib/dxmt-m12/x86_64-windows"
+      "must_contain": "lib/dxmt_m12/x86_64-windows"
     },
     {
       "path": "app/src-rust/src/mtsp/launcher.rs",

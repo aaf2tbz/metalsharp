@@ -6,7 +6,7 @@ PROJECT_ROOT="$(cd "$SDK_DIR/../.." && pwd)"
 PROFILE="${M12_DEV_PROFILE:-metalsharp}"
 RESULTS_DIR="${M12_DEV_RESULTS_DIR:-$SDK_DIR/results}"
 STAGE_ROOT="${M12_DEV_STAGE_ROOT:-/Volumes/AverySSD/MetalSharp-M12-CorpusLab}"
-M12_RUNTIME_DIR="${M12_DEV_RUNTIME_DIR:-$HOME/.metalsharp/runtime/wine/lib/dxmt-m12}"
+M12_RUNTIME_DIR="${M12_DEV_RUNTIME_DIR:-$HOME/.metalsharp/runtime/wine/lib/dxmt_m12}"
 
 usage() {
   cat <<'USAGE'

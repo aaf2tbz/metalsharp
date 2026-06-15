@@ -132,14 +132,14 @@ def validate_source_contract(data: dict[str, Any], errors: list[str]) -> None:
         "DXMT_PIPELINE_CACHE_PATH",
         "METALSHARP_SHADER_CACHE_PATH",
         "DXMT_LOG_PATH",
-        "dxmt-m12",
+        "dxmt_m12",
     ]:
         require(pattern in launcher, f"launcher missing `{pattern}`", errors)
 
     for pattern in [
         "id: PipelineId::M12",
-        "lib/dxmt-m12/x86_64-windows",
-        "lib/dxmt-m12/x86_64-unix",
+        "lib/dxmt_m12/x86_64-windows",
+        "lib/dxmt_m12/x86_64-unix",
         "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b",
         'shader_cache_subdir: Some("m12")',
     ]:
@@ -186,8 +186,8 @@ def validate_m12_route_guards(data: dict[str, Any], errors: list[str]) -> None:
     for pattern in [
         '!overrides.contains("mscompatdb")',
         '!m12.deploy_dlls.iter().any(|dll| dll.filename == "metalsharp_ntdll_hook.dll")',
-        'winedllpath.contains("dxmt-m12/x86_64-windows")',
-        'path.contains("dxmt-m12")',
+        'winedllpath.contains("dxmt_m12/x86_64-windows")',
+        'path.contains("dxmt_m12")',
     ]:
         require(pattern in engine + launcher, f"M12 route guard missing `{pattern}`", errors)
 

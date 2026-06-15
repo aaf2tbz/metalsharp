@@ -62,18 +62,18 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-windows/nvapi64.dll",
     "Graphics/dll/dxmt/x86_64-windows/nvngx.dll",
     "Graphics/dll/dxmt/x86_64-windows/winemetal.dll",
-    "Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so",
-    "Graphics/dll/dxmt-m12/x86_64-unix/libc++.1.dylib",
-    "Graphics/dll/dxmt-m12/x86_64-unix/libc++abi.1.dylib",
-    "Graphics/dll/dxmt-m12/x86_64-unix/libunwind.1.dylib",
-    "Graphics/dll/dxmt-m12/x86_64-windows/d3d10core.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/d3d11.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/d3d12.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/dxgi.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/dxgi_dxmt.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/nvapi64.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/nvngx.dll",
-    "Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll",
+    "Graphics/dll/dxmt_m12/x86_64-unix/winemetal.so",
+    "Graphics/dll/dxmt_m12/x86_64-unix/libc++.1.dylib",
+    "Graphics/dll/dxmt_m12/x86_64-unix/libc++abi.1.dylib",
+    "Graphics/dll/dxmt_m12/x86_64-unix/libunwind.1.dylib",
+    "Graphics/dll/dxmt_m12/x86_64-windows/d3d10core.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/d3d11.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/d3d12.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/dxgi.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/nvapi64.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/nvngx.dll",
+    "Graphics/dll/dxmt_m12/x86_64-windows/winemetal.dll",
 ];
 const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "assets/eac-toggle/x86_64-windows/_winhttp.dll",
@@ -1046,7 +1046,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
 
         let src_root = tmp.join("Graphics").join("dll");
         copy_graphics_runtime_surface(&src_root.join("dxmt"), &dxmt_dir)?;
-        copy_graphics_runtime_surface(&src_root.join("dxmt-m12"), &dxmt_m12_dir)?;
+        copy_graphics_runtime_surface(&src_root.join("dxmt_m12"), &dxmt_m12_dir)?;
 
         ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
         ensure_dxmt_runtime_compat_files(&dxmt_m12_dir)?;
@@ -1055,7 +1055,7 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         let _ = fs::remove_dir_all(&tmp);
     } else {
         let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
-        let dxmt_m12_src = home.join("metalsharp").join("runtime").join("dxmt-m12");
+        let dxmt_m12_src = home.join("metalsharp").join("runtime").join("dxmt_m12");
         if dxmt_src.join("x86_64-windows").join("d3d11.dll").exists() {
             for subdir in &["x86_64-unix", "x86_64-windows"] {
                 let src = dxmt_src.join(subdir);
@@ -1104,11 +1104,11 @@ fn dxmt_runtime_dir_for_home(home: &Path) -> PathBuf {
 }
 
 fn dxmt_m12_runtime_dir_for_home(home: &Path) -> PathBuf {
-    crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine").join("lib").join("dxmt-m12")
+    crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine").join("lib").join("dxmt_m12")
 }
 
 fn dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir: &Path) -> PathBuf {
-    dxmt_dir.parent().unwrap_or(dxmt_dir).join("dxmt-m12")
+    dxmt_dir.parent().unwrap_or(dxmt_dir).join("dxmt_m12")
 }
 
 pub fn dxmt_runtime_current_for_home(home: &Path) -> bool {
@@ -1166,8 +1166,8 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
         "requiredFiles": {
             "dxmt/x86_64-unix": DXMT_REQUIRED_UNIX,
             "x86_64-windows": DXMT_REQUIRED_PE,
-            "dxmt-m12/x86_64-unix": DXMT_M12_REQUIRED_UNIX,
-            "dxmt-m12/x86_64-windows": DXMT_REQUIRED_PE,
+            "dxmt_m12/x86_64-unix": DXMT_M12_REQUIRED_UNIX,
+            "dxmt_m12/x86_64-windows": DXMT_REQUIRED_PE,
         },
     });
     fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), serde_json::to_string_pretty(&manifest).unwrap_or_default())
@@ -1250,7 +1250,7 @@ pub fn runtime_artifact_report_for(home: &Path) -> Value {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
     let m11 = verify_required_files("dxmt", &dxmt_dir, DXMT_REQUIRED_UNIX, DXMT_REQUIRED_PE);
-    let m12 = verify_required_files_with_unix("dxmt-m12", &dxmt_m12_dir, DXMT_M12_REQUIRED_UNIX, DXMT_REQUIRED_PE);
+    let m12 = verify_required_files_with_unix("dxmt_m12", &dxmt_m12_dir, DXMT_M12_REQUIRED_UNIX, DXMT_REQUIRED_PE);
     let ok = m11.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false)
         && m12.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false);
     json!({
@@ -1322,12 +1322,12 @@ pub fn missing_m12_sidecars_for(home: &Path) -> Vec<String> {
     let mut missing = Vec::new();
     for name in DXMT_M12_REQUIRED_UNIX {
         if !file_nonempty(&unix_dir.join(name)) {
-            missing.push(format!("dxmt-m12/x86_64-unix/{}", name));
+            missing.push(format!("dxmt_m12/x86_64-unix/{}", name));
         }
     }
     for dll in DXMT_REQUIRED_PE {
         if !file_nonempty(&pe_dir.join(dll)) {
-            missing.push(format!("dxmt-m12/x86_64-windows/{}", dll));
+            missing.push(format!("dxmt_m12/x86_64-windows/{}", dll));
         }
     }
     missing
