@@ -38,11 +38,9 @@ repair_graphics_m12_bundle() {
   root="$tmp/root"
   mkdir -p "$root"
   tar --use-compress-program=unzstd -xf "$archive" -C "$root"
-  mkdir -p "$root/Graphics/dll"
-  rm -rf "$root/Graphics/dll/dxmt-m12"
-  mkdir -p "$root/Graphics/dll/dxmt-m12"
-  cp -R -p "$m12_root/x86_64-unix" "$root/Graphics/dll/dxmt-m12/x86_64-unix"
-  cp -R -p "$m12_root/x86_64-windows" "$root/Graphics/dll/dxmt-m12/x86_64-windows"
+  mkdir -p "$root/Graphics/dll/dxmt-m12/x86_64-unix" "$root/Graphics/dll/dxmt-m12/x86_64-windows"
+  cp -R -p "$m12_root/x86_64-unix/." "$root/Graphics/dll/dxmt-m12/x86_64-unix/"
+  cp -R -p "$m12_root/x86_64-windows/." "$root/Graphics/dll/dxmt-m12/x86_64-windows/"
   (
     cd "$root"
     tar -cf "$tmp/metalsharp-graphics-dll.tar" Graphics
