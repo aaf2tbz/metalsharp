@@ -63,10 +63,15 @@ TMP_APP_PATH="/Applications/.MetalSharp.app.update.$$"
 BACKUP_APP_PATH="/Applications/.MetalSharp.app.previous.$$"
 MOUNT_POINT=""
 
-cleanup() {
+detach_mount() {
     if [ -n "$MOUNT_POINT" ] && [ -d "$MOUNT_POINT" ]; then
         hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+        rmdir "$MOUNT_POINT" 2>/dev/null || true
     fi
+}
+
+cleanup() {
+    detach_mount
     rm -rf "$TMP_APP_PATH" 2>/dev/null || true
     if [ -d "$BACKUP_APP_PATH" ] && [ -d "$APP_PATH" ]; then
         rm -rf "$BACKUP_APP_PATH" 2>/dev/null || true
@@ -195,18 +200,19 @@ if ! hdiutil verify "$DMG_PATH" >/dev/null 2>&1; then
 fi
 
 write_status "mounting" 35 "Mounting update disk image..."
-MOUNT_OUTPUT=$(hdiutil attach -nobrowse "$DMG_PATH" 2>&1) || true
-if ! grep -q '/Volumes/' <<<"$MOUNT_OUTPUT"; then
-    MOUNT_OUTPUT=$(osascript -e "do shell script \"hdiutil attach -nobrowse \\\"$DMG_PATH\\\"\" with administrator privileges" 2>&1) || true
+MOUNT_POINT="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-update-mount.XXXXXX")" || {
+    write_status "error" 40 "Failed to create update mount point" "mount_failed"
+    exit 1
+}
+if ! hdiutil attach -nobrowse -mountpoint "$MOUNT_POINT" "$DMG_PATH" >/dev/null 2>&1; then
+    escaped_dmg="${DMG_PATH//\"/\\\"}"
+    escaped_mount="${MOUNT_POINT//\"/\\\"}"
+    osascript -e "do shell script \"hdiutil attach -nobrowse -mountpoint \\\"$escaped_mount\\\" \\\"$escaped_dmg\\\"\" with administrator privileges" >/dev/null 2>&1 || true
     sleep 2
 fi
 
-MOUNT_POINT=$(echo "$MOUNT_OUTPUT" | grep -o '/Volumes/.*' | head -1)
-if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ]; then
-    MOUNT_POINT=$(hdiutil info 2>/dev/null | grep -o "/Volumes/MetalSharp[^/]*/" | head -1)
-fi
-
-if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ]; then
+if [ -z "$MOUNT_POINT" ] || [ ! -d "$MOUNT_POINT" ] || [ -z "$(find "$MOUNT_POINT" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+    detach_mount
     write_status "error" 40 "Failed to mount DMG" "mount_failed"
     exit 1
 fi
@@ -277,7 +283,7 @@ mkdir -p "$MS_DIR"
 printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
 
 write_status "unmounting" 82 "Unmounting update disk..."
-hdiutil detach "$MOUNT_POINT" -quiet 2>/dev/null || true
+detach_mount
 MOUNT_POINT=""
 
 write_status "relaunching" 85 "Launching MetalSharp v$TARGET_VERSION_CLEAN..."

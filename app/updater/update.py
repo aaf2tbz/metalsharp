@@ -18,6 +18,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -118,22 +119,38 @@ def verify_all_dead(patterns, timeout=15):
 
 
 def mount_dmg(dmg_path):
-    r = run(["hdiutil", "attach", "-nobrowse", "-quiet", dmg_path])
-    if r.returncode == 0:
-        return _parse_mount(r.stdout)
+    mount_dir = tempfile.mkdtemp(prefix="metalsharp-update-mount-")
+    r = run(["hdiutil", "attach", "-nobrowse", "-quiet", "-mountpoint", mount_dir, dmg_path])
+    if r.returncode == 0 and os.path.isdir(mount_dir) and os.listdir(mount_dir):
+        return mount_dir
 
     apple = (
-        'do shell script "hdiutil attach -nobrowse -quiet '
+        'do shell script "hdiutil attach -nobrowse -quiet -mountpoint '
+        '\\"' + mount_dir + '\\" '
         '\\"' + dmg_path + '\\""'
         " with administrator privileges"
     )
     r = run(["osascript", "-e", apple])
     if r.returncode == 0:
         time.sleep(2)
-        info = run(["hdiutil", "info"])
-        return _parse_mount_info(info.stdout, dmg_path)
+        if os.path.isdir(mount_dir) and os.listdir(mount_dir):
+            return mount_dir
 
+    try:
+        os.rmdir(mount_dir)
+    except Exception:
+        pass
     return None
+
+
+def detach_mount(mount_point):
+    if not mount_point:
+        return
+    run(["hdiutil", "detach", mount_point, "-quiet"])
+    try:
+        os.rmdir(mount_point)
+    except Exception:
+        pass
 
 
 def _parse_mount(output):
@@ -329,7 +346,7 @@ def main():
 
     app_source = find_app_in_mount(mount_point)
     if not app_source:
-        run(["hdiutil", "detach", mount_point, "-quiet"])
+        detach_mount(mount_point)
         write_status(
             sf,
             "error",
@@ -342,7 +359,7 @@ def main():
 
     if os.path.exists(APP_PATH):
         if not admin_rm_rf(APP_PATH):
-            run(["hdiutil", "detach", mount_point, "-quiet"])
+            detach_mount(mount_point)
             write_status(
                 sf,
                 "error",
@@ -357,7 +374,7 @@ def main():
         sf, "installing", 60, "Copying new version to Applications...", new_version=tv
     )
     if not admin_cp_r(app_source, APP_PATH):
-        run(["hdiutil", "detach", mount_point, "-quiet"])
+        detach_mount(mount_point)
         write_status(
             sf,
             "error",
@@ -381,7 +398,7 @@ def main():
 
     # ── 7. Unmount ───────────────────────────────────────────────────
     write_status(sf, "unmounting", 82, "Unmounting update disk...", new_version=tv)
-    run(["hdiutil", "detach", mount_point, "-quiet"])
+    detach_mount(mount_point)
 
     # ── 8. Relaunch ──────────────────────────────────────────────────
     write_status(sf, "relaunching", 85, "Launching MetalSharp...", new_version=tv)
