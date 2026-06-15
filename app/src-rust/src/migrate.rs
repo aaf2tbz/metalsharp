@@ -585,7 +585,7 @@ fn run_migration() {
     // wineboot -u can fork Steam.exe twice for self-update. Let those updater
     // windows finish naturally so the next app launch is not left with a
     // half-completed Steam update.
-    wait_for_steam_update_windows_after_migration(&ms_dir, 90);
+    wait_for_steam_update_windows_after_migration(&ms_dir, 15);
 
     write_migrate_progress("complete", total_steps, total_steps, "MetalSharp is updated and ready.", None);
     log_to_file(&format!("Migration to v{} finished (install_ok=true)", MIGRATE_VERSION));
