@@ -9,6 +9,7 @@ METALSHARP_HOME_ARG=""
 APP_PID="0"
 APP_BUNDLE_ID="com.metalsharp.app"
 MOUNT_POINT=""
+APPLICATIONS_APP="/Applications/MetalSharp.app"
 
 write_status() {
     local phase="$1" percent="$2" message="$3" error="${4:-}"
@@ -183,6 +184,42 @@ detach_mount() {
     fi
 }
 
+applescript_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+copy_app_bundle() {
+    local source="$1" destination="$2"
+    mkdir -p "$(dirname "$destination")"
+
+    if /bin/rm -rf "$destination" 2>/dev/null && \
+       /usr/bin/ditto "$source" "$destination" 2>/dev/null; then
+        /usr/bin/xattr -dr com.apple.quarantine "$destination" >/dev/null 2>&1 || true
+        local direct_version
+        direct_version="$(normalize_version "$(read_app_version "$source")")"
+        [ -n "$direct_version" ] && verify_app_bundle "$destination" "$direct_version" && return 0
+    fi
+
+    local cmd escaped source_version
+    cmd="/bin/rm -rf $(printf '%q' "$destination") && /usr/bin/ditto $(printf '%q' "$source") $(printf '%q' "$destination") && (/usr/bin/xattr -dr com.apple.quarantine $(printf '%q' "$destination") >/dev/null 2>&1 || true)"
+    escaped="$(applescript_escape "$cmd")"
+    osascript -e "do shell script \"$escaped\" with administrator privileges" >/dev/null 2>&1 || return 1
+    source_version="$(normalize_version "$(read_app_version "$source")")"
+    [ -n "$source_version" ] && verify_app_bundle "$destination" "$source_version"
+}
+
+allow_installed_app() {
+    local app_path="$1"
+    if /bin/sh -c '/usr/bin/xattr -dr com.apple.quarantine "$1" 2>/dev/null || true; /usr/sbin/spctl --add --label MetalSharp "$1" 2>/dev/null || true; ! /usr/bin/xattr -p com.apple.quarantine "$1" >/dev/null 2>&1' allow-metalsharp "$app_path"; then
+        return 0
+    fi
+
+    local cmd escaped
+    cmd="/usr/bin/xattr -dr com.apple.quarantine $(printf '%q' "$app_path") 2>/dev/null || true; /usr/sbin/spctl --add --label MetalSharp $(printf '%q' "$app_path") 2>/dev/null || true; ! /usr/bin/xattr -p com.apple.quarantine $(printf '%q' "$app_path") >/dev/null 2>&1"
+    escaped="$(applescript_escape "$cmd")"
+    osascript -e "do shell script \"$escaped\" with administrator privileges" >/dev/null 2>&1
+}
+
 while [ "$#" -gt 0 ]; do
     case "$1" in
         -h|--help)
@@ -260,13 +297,30 @@ fi
 mkdir -p "$MS_DIR"
 printf '{"needed":true,"target_version":"%s","timestamp":%s}\n' "$TARGET_VERSION" "$(date +%s)" > "$MS_DIR/.post-update-migration" 2>/dev/null || true
 
-write_status "launching_dmg_app" 88 "Opening MetalSharp v$TARGET_VERSION_CLEAN from update DMG..."
-if ! open -n "$APP_SOURCE"; then
+write_status "installing_app" 86 "Installing MetalSharp v$TARGET_VERSION_CLEAN to /Applications..."
+if ! copy_app_bundle "$APP_SOURCE" "$APPLICATIONS_APP"; then
     detach_mount
-    write_status "error" 88 "Failed to open MetalSharp from update DMG." "open_failed"
+    write_status "error" 86 "Failed to replace MetalSharp in /Applications." "app_install_failed"
     exit 1
 fi
 
-# Do not detach the DMG on success. The new app is running from this volume and
-# can eject it after migration/restart if appropriate.
+if ! verify_app_bundle "$APPLICATIONS_APP" "$TARGET_VERSION_CLEAN"; then
+    detach_mount
+    exit 1
+fi
+
+detach_mount
+
+write_status "allowing_installed_app" 92 "Allowing installed MetalSharp app before first launch..."
+if ! allow_installed_app "$APPLICATIONS_APP"; then
+    write_status "error" 92 "Failed to allow MetalSharp before opening." "app_allow_failed"
+    exit 1
+fi
+
+write_status "launching_installed_app" 94 "Opening MetalSharp v$TARGET_VERSION_CLEAN from /Applications..."
+if ! open -n "$APPLICATIONS_APP"; then
+    write_status "error" 94 "Failed to open MetalSharp from /Applications." "open_failed"
+    exit 1
+fi
+
 write_status "complete" 100 "Update handoff complete. Opening migration wizard..."

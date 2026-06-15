@@ -8,7 +8,8 @@ DMG is downloaded, then this process owns the handoff:
 2. wait for the Electron app to exit, forcing it only if needed
 3. stop the backend after the app is gone
 4. mount the update DMG
-5. open MetalSharp.app directly from the mounted DMG
+5. replace /Applications/MetalSharp.app with the DMG app
+6. open the installed app from /Applications
 
 The launched app/backend version owns migration detection. A post-update marker
 is still written as a fallback so the migration wizard opens even if the backend
@@ -21,6 +22,7 @@ import argparse
 import json
 import os
 import plistlib
+import shlex
 import signal
 import subprocess
 import sys
@@ -34,6 +36,16 @@ except OSError:
     pass
 
 APP_BUNDLE_ID = "com.metalsharp.app"
+APPLICATIONS_APP = Path("/Applications/MetalSharp.app")
+ALLOW_INSTALLED_APP_SCRIPT = r'''
+set -e
+app="$1"
+/usr/bin/xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
+/usr/sbin/spctl --add --label MetalSharp "$app" 2>/dev/null || true
+if /usr/bin/xattr -p com.apple.quarantine "$app" >/dev/null 2>&1; then
+    exit 1
+fi
+'''
 BACKEND_PROCESS = "metalsharp-backend"
 APP_PROCESS_NAMES = [
     "MetalSharp",
@@ -316,7 +328,74 @@ def write_migration_marker(metalsharp_home: Path, target_version: str) -> None:
         pass
 
 
-def open_dmg_app(app_path: Path) -> bool:
+def escape_applescript(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def copy_app_bundle(source: Path, destination: Path) -> Tuple[bool, str]:
+    parent = destination.parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    def direct_copy() -> Tuple[bool, str]:
+        rm = run(["/bin/rm", "-rf", str(destination)], timeout=120)
+        if rm.returncode != 0:
+            return False, rm.stderr.strip() or "remove failed"
+        ditto = run(["/usr/bin/ditto", str(source), str(destination)], timeout=300)
+        if ditto.returncode != 0:
+            return False, ditto.stderr.strip() or "copy failed"
+        run(["/usr/bin/xattr", "-dr", "com.apple.quarantine", str(destination)], timeout=60)
+        return verify_app_bundle(destination, read_app_version(source))
+
+    direct_ok, _ = direct_copy()
+    if direct_ok:
+        return True, ""
+
+    shell_cmd = " && ".join(
+        [
+            f"/bin/rm -rf {shlex.quote(str(destination))}",
+            f"/usr/bin/ditto {shlex.quote(str(source))} {shlex.quote(str(destination))}",
+            f"(/usr/bin/xattr -dr com.apple.quarantine {shlex.quote(str(destination))} >/dev/null 2>&1 || true)",
+        ]
+    )
+    script = f'do shell script "{escape_applescript(shell_cmd)}" with administrator privileges'
+    try:
+        result = run(["osascript", "-e", script], timeout=600)
+    except Exception as exc:
+        return False, str(exc)
+    if result.returncode != 0:
+        return False, result.stderr.strip() or result.stdout.strip() or "copy failed"
+    ok, reason = verify_app_bundle(destination, read_app_version(source))
+    if not ok:
+        return False, reason
+    return True, ""
+
+
+def allow_installed_app(app_path: Path) -> Tuple[bool, str]:
+    try:
+        result = run(["/bin/sh", "-c", ALLOW_INSTALLED_APP_SCRIPT, "allow-metalsharp", str(app_path)], timeout=60)
+    except Exception as exc:
+        result = subprocess.CompletedProcess([], 1, "", str(exc))
+    if result.returncode == 0:
+        return True, ""
+
+    shell_cmd = " && ".join(
+        [
+            f"/usr/bin/xattr -dr com.apple.quarantine {shlex.quote(str(app_path))} 2>/dev/null || true",
+            f"(/usr/sbin/spctl --add --label MetalSharp {shlex.quote(str(app_path))} 2>/dev/null || true)",
+            f"! /usr/bin/xattr -p com.apple.quarantine {shlex.quote(str(app_path))} >/dev/null 2>&1",
+        ]
+    )
+    script = f'do shell script "{escape_applescript(shell_cmd)}" with administrator privileges'
+    try:
+        admin_result = run(["osascript", "-e", script], timeout=180)
+    except Exception as exc:
+        return False, str(exc)
+    if admin_result.returncode != 0:
+        return False, admin_result.stderr.strip() or admin_result.stdout.strip() or result.stderr.strip() or "allow failed"
+    return True, ""
+
+
+def open_installed_app(app_path: Path) -> bool:
     try:
         result = run(["open", "-n", str(app_path)], timeout=30)
         return result.returncode == 0
@@ -390,25 +469,69 @@ def main() -> int:
 
     write_status(
         status_file,
-        "launching_dmg_app",
-        88,
-        f"Opening MetalSharp v{clean_version(target_version)} from update DMG...",
+        "installing_app",
+        86,
+        f"Installing MetalSharp v{clean_version(target_version)} to /Applications...",
         new_version=target_version,
     )
-    if not open_dmg_app(app_source):
+    copied, copy_error = copy_app_bundle(app_source, APPLICATIONS_APP)
+    if not copied:
         detach_mount(mount_point)
         write_status(
             status_file,
             "error",
-            88,
-            "Failed to open MetalSharp from update DMG.",
+            86,
+            f"Failed to replace MetalSharp in /Applications: {copy_error}",
+            "app_install_failed",
+            target_version,
+        )
+        return 1
+
+    ok, error = verify_app_bundle(APPLICATIONS_APP, target_version)
+    if not ok:
+        detach_mount(mount_point)
+        write_status(status_file, "error", 88, error, "installed_app_invalid", target_version)
+        return 1
+
+    detach_mount(mount_point)
+
+    write_status(
+        status_file,
+        "allowing_installed_app",
+        92,
+        "Allowing installed MetalSharp app before first launch...",
+        new_version=target_version,
+    )
+    allowed, allow_error = allow_installed_app(APPLICATIONS_APP)
+    if not allowed:
+        write_status(
+            status_file,
+            "error",
+            92,
+            f"Failed to allow MetalSharp before opening: {allow_error}",
+            "app_allow_failed",
+            target_version,
+        )
+        return 1
+
+    write_status(
+        status_file,
+        "launching_installed_app",
+        94,
+        f"Opening MetalSharp v{clean_version(target_version)} from /Applications...",
+        new_version=target_version,
+    )
+    if not open_installed_app(APPLICATIONS_APP):
+        write_status(
+            status_file,
+            "error",
+            94,
+            "Failed to open MetalSharp from /Applications.",
             "open_failed",
             target_version,
         )
         return 1
 
-    # Do not detach the DMG on success. The new app is running from this volume
-    # and can eject it after migration/restart if appropriate.
     write_status(
         status_file,
         "complete",
