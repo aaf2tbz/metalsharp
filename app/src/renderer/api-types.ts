@@ -96,6 +96,9 @@ interface BackendResponse {
   error?: string;
   pid?: number;
   games?: unknown[];
+  drives?: unknown[];
+  prefixes?: unknown[];
+  mapped?: number;
 }
 
 interface SetupState {
@@ -165,6 +168,7 @@ type MetalsharpAPI = {
   updaterClearStatus: () => Promise<void>;
   backendGetPid: () => Promise<number | null>;
   migrateCheck: () => Promise<BackendResponse>;
+  migratePrepareExternalDrives: () => Promise<BackendResponse>;
   migrateStart: () => Promise<BackendResponse>;
   migrateProgress: () => Promise<BackendResponse>;
   quitApp: () => void;
