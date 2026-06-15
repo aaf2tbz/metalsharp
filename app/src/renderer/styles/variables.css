@@ -28,9 +28,9 @@
   --text-bright: #ffffff;
   --border: rgba(140, 170, 200, 0.12);
   --border-strong: rgba(140, 170, 200, 0.2);
-  --sidebar-bg: rgba(18, 28, 40, 0.72);
-  --sidebar-hover: rgba(29, 37, 46, 0.6);
-  --sidebar-active: rgba(95, 183, 232, 0.15);
+  --sidebar-bg: rgba(18, 28, 40, 0.58);
+  --sidebar-hover: rgba(95, 183, 232, 0.12);
+  --sidebar-active: rgba(95, 183, 232, 0.18);
   --sidebar-text: #ffffff;
   --sidebar-text-active: var(--sidebar-text);
   --sidebar-text-hover: #ffffff;
@@ -78,9 +78,9 @@
   --text-bright: #0e1a26;
   --border: rgba(30, 39, 50, 0.1);
   --border-strong: rgba(30, 39, 50, 0.18);
-  --sidebar-bg: rgba(255, 255, 255, 0.35);
-  --sidebar-hover: rgba(240, 243, 247, 0.4);
-  --sidebar-active: rgba(52, 127, 186, 0.1);
+  --sidebar-bg: rgba(255, 255, 255, 0.56);
+  --sidebar-hover: rgba(255, 255, 255, 0.38);
+  --sidebar-active: rgba(52, 127, 186, 0.11);
   --sidebar-text: #1e2732;
   --sidebar-text-active: var(--sidebar-text);
   --sidebar-text-hover: #0e1a26;
@@ -119,8 +119,8 @@
   --text-bright: #ffffff;
   --border: rgba(0, 245, 255, 0.18);
   --border-strong: rgba(185, 255, 77, 0.32);
-  --sidebar-bg: rgba(9, 7, 15, 0.88);
-  --sidebar-hover: rgba(255, 46, 247, 0.12);
+  --sidebar-bg: rgba(9, 7, 15, 0.58);
+  --sidebar-hover: rgba(255, 46, 247, 0.11);
   --sidebar-active: linear-gradient(90deg, rgba(185, 255, 77, 0.12), rgba(0, 245, 255, 0.08), rgba(255, 46, 247, 0.1));
   --sidebar-text: #f8ffe7;
   --sidebar-text-active: var(--sidebar-text);
@@ -131,8 +131,5 @@
     radial-gradient(circle at 12% 12%, rgba(255, 46, 247, 0.2), transparent 32%),
     radial-gradient(circle at 88% 18%, rgba(0, 245, 255, 0.18), transparent 30%),
     linear-gradient(100deg, #0a0611 0%, #191026 34%, #05232c 68%, #22082d 100%);
-  --radius-sm: 12px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
   --transition: 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }

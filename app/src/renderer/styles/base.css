@@ -22,7 +22,7 @@ body {
   font-family: var(--font-body);
   font-size: 14px;
   color: var(--text-primary);
-  background: transparent;
+  background: var(--bg-deep);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -31,6 +31,9 @@ body {
   display: flex;
   height: 100vh;
   width: 100vw;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--bg-deep);
 }
 
 ::-webkit-scrollbar {
