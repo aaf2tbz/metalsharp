@@ -2,20 +2,30 @@
   "schema": "metalsharp.m12.perf-profile.v1",
   "profile": "peak",
   "bounded_profile": "peak",
-  "appid": null,
+  "appid": 3527290,
   "display_name": "PEAK",
   "default_seconds": 180,
   "smoke_seconds": 60,
-  "cache_path": null,
-  "status": "profile placeholder; fill appid/game dir once local install target is confirmed",
+  "cache_path": "~/.metalsharp/shader-cache/m12/3527290",
   "scenarios": {
     "smoke": {
       "seconds": 60,
-      "markers": ["launch_started", "first_present", "gameplay_visible", "run_stopped"]
+      "markers": [
+        "launch_started",
+        "first_present",
+        "gameplay_visible",
+        "run_stopped"
+      ]
     },
     "gameplay-smoke": {
       "seconds": 180,
-      "markers": ["launch_started", "first_present", "gameplay_visible", "stutter_observed", "run_stopped"]
+      "markers": [
+        "launch_started",
+        "first_present",
+        "gameplay_visible",
+        "stutter_observed",
+        "run_stopped"
+      ]
     }
   }
 }

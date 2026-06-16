@@ -27,7 +27,7 @@ Usage:
   m12-bounded-launch.sh [options]
 
 Options:
-  --profile NAME          elden-ring or subnautica2. Default: elden-ring.
+  --profile NAME          elden-ring, subnautica2, schedule-1, or peak. Default: elden-ring.
   --seconds N             Bounded launch window. Default: $M12_BOUNDED_SECONDS or 45.
   --backend-url URL       Backend URL. Default: http://127.0.0.1:9277.
   --workers N             Override DXMT_D3D12_PSO_WORKERS through backend env hook.
@@ -77,6 +77,16 @@ case "$PROFILE" in
     APPID="1962700"
     GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2"
     ;;
+  schedule-1|schedule1|schedule-i|schedulei)
+    PROFILE="schedule-1"
+    APPID="3164500"
+    GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/Schedule I"
+    ;;
+  peak)
+    PROFILE="peak"
+    APPID="3527290"
+    GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/PEAK"
+    ;;
   *) echo "unknown profile: $PROFILE" >&2; exit 2 ;;
 esac
 
@@ -101,7 +111,7 @@ snapshot_sizes() {
 
 snapshot_files "$RUN_DIR/before-files.txt"
 snapshot_sizes "$RUN_DIR/before-sizes.tsv"
-python3 "$SDK_DIR/scripts/preflight-runtime-layout.py" --profile "$PROFILE" --game-dir "$GAME_DIR" --results-dir "$RUN_DIR" >/dev/null
+python3 "$SDK_DIR/scripts/preflight-runtime-layout.py" --profile "$PROFILE" --game-dir "$GAME_DIR" --dxmt-runtime "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12" --results-dir "$RUN_DIR" >/dev/null
 
 launch_env=()
 if [[ -n "$WORKERS" ]]; then launch_env+=("METALSHARP_M12_PSO_WORKERS=$WORKERS"); fi

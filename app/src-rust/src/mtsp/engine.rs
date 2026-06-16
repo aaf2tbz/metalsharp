@@ -141,7 +141,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_METALFX_TEMPORAL", value: "1" },
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                     EnvVar { key: "DXMT_D3D12_UE_SM6_COMPAT", value: "1" },
-                    EnvVar { key: "DXMT_D3D12_PSO_WORKERS", value: "6" },
+                    EnvVar { key: "DXMT_D3D12_PSO_WORKERS", value: "1" },
                     EnvVar { key: "DXMT_CONFIG", value: DXMT_M12_SAFE_CONFIG },
                 ],
                 launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes"],
@@ -634,7 +634,7 @@ mod tests {
         let m12_env_values: std::collections::HashMap<_, _> =
             m12.env_vars.iter().map(|env| (env.key, env.value)).collect();
         assert_eq!(m12_env_values.get("DXMT_ASYNC_PIPELINE_COMPILE"), Some(&"1"));
-        assert_eq!(m12_env_values.get("DXMT_D3D12_PSO_WORKERS"), Some(&"6"));
+        assert_eq!(m12_env_values.get("DXMT_D3D12_PSO_WORKERS"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_METALFX_SPATIAL"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_METALFX_TEMPORAL"), Some(&"1"));

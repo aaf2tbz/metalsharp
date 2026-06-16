@@ -658,3 +658,57 @@ max threads=93
 ```
 
 This is only the harness foundation. Next implementation layer should add native runtime perf trace events for PSO compile durations and texture/upload events, since process-level sampling alone can show pressure but cannot yet attribute it precisely.
+
+## Multi-game harness targets concretized — 2026-06-15
+
+Installed DX12 gameplay targets discovered locally:
+
+```text
+ELDEN RING    appid=1245620
+Subnautica 2  appid=1962700
+Schedule I    appid=3164500
+PEAK          appid=3527290
+```
+
+Harness/profile updates:
+
+```text
+tools/d3d12-metal-sdk/profiles/m12-perf/schedule-1.json
+tools/d3d12-metal-sdk/profiles/m12-perf/peak.json
+tools/d3d12-metal-sdk/scripts/m12-bounded-launch.sh
+```
+
+`m12-bounded-launch.sh` now supports:
+
+```text
+--profile elden-ring
+--profile subnautica-2
+--profile schedule-1
+--profile peak
+```
+
+Preflight now checks the isolated M12 runtime explicitly:
+
+```text
+~/.metalsharp/runtime/wine/lib/dxmt_m12
+```
+
+The static M12 pipeline metadata was aligned with the actual launcher default:
+
+```text
+DXMT_D3D12_PSO_WORKERS=1
+DXMT_ASYNC_PIPELINE_COMPILE=1
+```
+
+Dry-run verification was performed without gameplay launches for all four appids. Each reported:
+
+```text
+ok=true
+missing=[]
+d3d12_present=true
+workers=1
+async=1
+DXMT_SHADER_CACHE_PATH=~/.metalsharp/shader-cache/m12/<appid>/
+```
+
+Next safe step is controlled smoke runs, one game at a time, with the external perf harness only. Do not reintroduce native perf trace injection until launch/runtime staging is fully stable.
