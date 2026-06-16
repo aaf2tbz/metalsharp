@@ -285,7 +285,8 @@ int main() {
 
         run_case(device, "vertex_pixel", base, true, results);
 
-        auto sparse_slots = make_base_desc(root, vs, ps, sparse_slot_layout, static_cast<UINT>(std::size(sparse_slot_layout)));
+        auto sparse_slots =
+            make_base_desc(root, vs, ps, sparse_slot_layout, static_cast<UINT>(std::size(sparse_slot_layout)));
         run_case(device, "sparse_slots_explicit_offsets_instance_step1", sparse_slots, true, results);
 
         auto depth_only = base;
@@ -358,8 +359,8 @@ int main() {
 
     bool cases_ok = !results.empty();
     for (const auto& result : results) {
-        bool observation_only = std::string(result.name) == "cached_blob_roundtrip" ||
-                                std::string(result.name) == "hs_ds_rejected";
+        bool observation_only =
+            std::string(result.name) == "cached_blob_roundtrip" || std::string(result.name) == "hs_ds_rejected";
         cases_ok = cases_ok && (result.ok || observation_only);
     }
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(root_blob_hr) && SUCCEEDED(root_hr) && SUCCEEDED(vs_hr) &&

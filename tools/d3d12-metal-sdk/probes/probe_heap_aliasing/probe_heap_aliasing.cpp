@@ -26,12 +26,24 @@ static std::string json_escape(const std::string& input) {
     out.reserve(input.size() + 8);
     for (char c : input) {
         switch (c) {
-        case '\\': out += "\\\\"; break;
-        case '"': out += "\\\""; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default: out += c; break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            out += c;
+            break;
         }
     }
     return out;
@@ -120,10 +132,10 @@ int main() {
     ID3D12Resource* placed_a = nullptr;
     ID3D12Resource* placed_b = nullptr;
     HRESULT placed_a_hr = heap ? device->CreatePlacedResource(heap, 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                             IID_PPV_ARGS(&placed_a))
+                                                              IID_PPV_ARGS(&placed_a))
                                : E_FAIL;
     HRESULT placed_b_hr = heap ? device->CreatePlacedResource(heap, 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                             IID_PPV_ARGS(&placed_b))
+                                                              IID_PPV_ARGS(&placed_b))
                                : E_FAIL;
 
     D3D12_RESOURCE_DESC staging_desc = buffer_desc(bytes);
@@ -131,14 +143,14 @@ int main() {
     D3D12_HEAP_PROPERTIES readback_props = heap_props(D3D12_HEAP_TYPE_READBACK);
     ID3D12Resource* upload = nullptr;
     ID3D12Resource* readback = nullptr;
-    HRESULT upload_hr = device ? device->CreateCommittedResource(&upload_props, D3D12_HEAP_FLAG_NONE, &staging_desc,
-                                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                                 IID_PPV_ARGS(&upload))
-                               : E_FAIL;
-    HRESULT readback_hr = device ? device->CreateCommittedResource(&readback_props, D3D12_HEAP_FLAG_NONE, &staging_desc,
-                                                                   D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                                   IID_PPV_ARGS(&readback))
-                                 : E_FAIL;
+    HRESULT upload_hr =
+        device ? device->CreateCommittedResource(&upload_props, D3D12_HEAP_FLAG_NONE, &staging_desc,
+                                                 D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload))
+               : E_FAIL;
+    HRESULT readback_hr =
+        device ? device->CreateCommittedResource(&readback_props, D3D12_HEAP_FLAG_NONE, &staging_desc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback))
+               : E_FAIL;
 
     uint8_t* upload_ptr = nullptr;
     HRESULT map_upload_hr = upload ? upload->Map(0, nullptr, reinterpret_cast<void**>(&upload_ptr)) : E_FAIL;
@@ -155,10 +167,11 @@ int main() {
     ID3D12GraphicsCommandList* list = nullptr;
     ID3D12Fence* fence = nullptr;
     HRESULT queue_hr = device ? device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue)) : E_FAIL;
-    HRESULT allocator_hr = device ? device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)) : E_FAIL;
-    HRESULT list_hr = device ? device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
-                                                         IID_PPV_ARGS(&list))
-                             : E_FAIL;
+    HRESULT allocator_hr =
+        device ? device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)) : E_FAIL;
+    HRESULT list_hr =
+        device ? device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&list))
+               : E_FAIL;
     HRESULT fence_hr = device ? device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)) : E_FAIL;
 
     bool recorded_aliasing_barrier = false;
@@ -169,8 +182,8 @@ int main() {
     UINT64 completed_value = 0;
     if (list && upload && readback && placed_a && placed_b) {
         list->CopyBufferRegion(placed_a, 0, upload, 0, bytes);
-        D3D12_RESOURCE_BARRIER to_copy_source = transition_barrier(placed_a, D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                   D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER to_copy_source =
+            transition_barrier(placed_a, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &to_copy_source);
         list->CopyBufferRegion(readback, 0, placed_a, 0, bytes);
 
@@ -179,8 +192,8 @@ int main() {
         recorded_aliasing_barrier = true;
 
         list->CopyBufferRegion(placed_b, 0, upload, 0, bytes);
-        D3D12_RESOURCE_BARRIER b_to_copy_source = transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                     D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER b_to_copy_source =
+            transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &b_to_copy_source);
         list->CopyBufferRegion(readback, 0, placed_b, 0, bytes);
         recorded_copy_after_alias = true;
@@ -211,8 +224,8 @@ int main() {
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(create_heap_hr) && SUCCEEDED(placed_a_hr) && SUCCEEDED(placed_b_hr) &&
                 SUCCEEDED(upload_hr) && SUCCEEDED(readback_hr) && SUCCEEDED(map_upload_hr) && SUCCEEDED(queue_hr) &&
                 SUCCEEDED(allocator_hr) && SUCCEEDED(list_hr) && SUCCEEDED(fence_hr) && recorded_aliasing_barrier &&
-                recorded_copy_after_alias && SUCCEEDED(close_hr) && SUCCEEDED(execute_signal_hr) && SUCCEEDED(wait_hr) &&
-                completed_value >= 1;
+                recorded_copy_after_alias && SUCCEEDED(close_hr) && SUCCEEDED(execute_signal_hr) &&
+                SUCCEEDED(wait_hr) && completed_value >= 1;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-heap-aliasing.v1\",\n");
@@ -246,16 +259,26 @@ int main() {
     std::printf("}\n");
     std::fflush(stdout);
 
-    if (fence) fence->Release();
-    if (list) list->Release();
-    if (allocator) allocator->Release();
-    if (queue) queue->Release();
-    if (readback) readback->Release();
-    if (upload) upload->Release();
-    if (placed_b) placed_b->Release();
-    if (placed_a) placed_a->Release();
-    if (heap) heap->Release();
-    if (device) device->Release();
+    if (fence)
+        fence->Release();
+    if (list)
+        list->Release();
+    if (allocator)
+        allocator->Release();
+    if (queue)
+        queue->Release();
+    if (readback)
+        readback->Release();
+    if (upload)
+        upload->Release();
+    if (placed_b)
+        placed_b->Release();
+    if (placed_a)
+        placed_a->Release();
+    if (heap)
+        heap->Release();
+    if (device)
+        device->Release();
 
     TerminateProcess(GetCurrentProcess(), pass ? 0 : 1);
 }

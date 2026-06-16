@@ -260,9 +260,11 @@ int main() {
     std::printf("    \"enum_adapters1_luid_high\": %ld,\n", static_cast<long>(desc.AdapterLuid.HighPart));
     std::printf("    \"enum_adapters1_luid_low\": %lu,\n", static_cast<unsigned long>(desc.AdapterLuid.LowPart));
     std::printf("    \"enum_adapters1_repeat_luid_high\": %ld,\n", static_cast<long>(desc_second.AdapterLuid.HighPart));
-    std::printf("    \"enum_adapters1_repeat_luid_low\": %lu,\n", static_cast<unsigned long>(desc_second.AdapterLuid.LowPart));
+    std::printf("    \"enum_adapters1_repeat_luid_low\": %lu,\n",
+                static_cast<unsigned long>(desc_second.AdapterLuid.LowPart));
     std::printf("    \"gpu_preference_luid_high\": %ld,\n", static_cast<long>(desc_preference.AdapterLuid.HighPart));
-    std::printf("    \"gpu_preference_luid_low\": %lu,\n", static_cast<unsigned long>(desc_preference.AdapterLuid.LowPart));
+    std::printf("    \"gpu_preference_luid_low\": %lu,\n",
+                static_cast<unsigned long>(desc_preference.AdapterLuid.LowPart));
     std::printf("    \"enum_by_luid_luid_high\": %ld,\n", static_cast<long>(desc_luid.AdapterLuid.HighPart));
     std::printf("    \"enum_by_luid_luid_low\": %lu,\n", static_cast<unsigned long>(desc_luid.AdapterLuid.LowPart));
     std::printf("    \"description\": \"%s\",\n", json_escape(wide_to_utf8(desc.Description)).c_str());
