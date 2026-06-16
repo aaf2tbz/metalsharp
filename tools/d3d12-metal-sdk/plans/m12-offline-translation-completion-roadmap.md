@@ -1945,3 +1945,82 @@ Phase 4 core no-game runtime gauntlet is green on the restored known-good M12 ru
 No runtime staging is needed for this result.
 Next Phase 4 work should expand Apple-doc-backed probes, especially command-buffer diagnostics/resource-use hazards/vertex descriptor and binary-archive cache-key probes, rather than patching DXGI LUID behavior.
 ```
+
+## Phase 4 heap/aliasing hazard probe — 2026-06-16
+
+Added the first new Apple-doc-backed Phase 4 runtime behavior probe after the green core baseline:
+
+```text
+tools/d3d12-metal-sdk/probes/probe_heap_aliasing/probe_heap_aliasing.cpp
+```
+
+Wired into:
+
+```text
+tools/d3d12-metal-sdk/scripts/build-probes.sh
+tools/d3d12-metal-sdk/scripts/run-probes.sh
+tools/d3d12-metal-sdk/scripts/m12-runtime-gauntlet.sh phase4-core
+```
+
+Probe coverage:
+
+```text
+CreateHeap on a DEFAULT heap
+CreatePlacedResource twice at the same heap offset
+Copy into first placed resource
+Transition first resource to COPY_SOURCE
+Copy out to readback
+Record explicit D3D12_RESOURCE_BARRIER_TYPE_ALIASING from first to second resource
+Copy into second placed resource after aliasing
+Transition second resource to COPY_SOURCE
+Copy out to readback
+Execute command list
+Signal/wait fence and require completed_value >= 1
+```
+
+Apple Phase 3.5 mapping:
+
+```text
+heap_aliasing=true
+explicit_aliasing_barrier=true
+queue_fence_completion=true
+```
+
+Standalone proof:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/heap-aliasing-only-20260616-013504/probe-heap-aliasing-metalsharp.json  # initial wait helper false negative
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/heap-aliasing-only-20260616-*/probe-heap-aliasing-metalsharp.json      # corrected pass=true
+```
+
+Phase 4 core proof with the new probe included:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-013615/runtime-gauntlet-summary.md
+```
+
+Result:
+
+```text
+ok=true
+probe_json_count=13
+failure_count=0
+probe-heap-aliasing-metalsharp.json pass=true
+```
+
+Runtime state:
+
+```text
+No game launch.
+No runtime staging.
+Known-good M12 hashes preserved.
+```
+
+Next Phase 4 expansion targets:
+
+```text
+1. Command-buffer completion/status evidence probe.
+2. Descriptor/resource indirect-use probe covering tables and first-use binding hazards.
+3. Vertex descriptor reconstruction probe with sparse slots and per-instance step rates.
+4. Binary archive/cache-key freshness probe for descriptor-affecting state changes.
+```

@@ -149,6 +149,10 @@ build_probe \
   -o "$OUT_DIR/probe_resource_views_formats.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_heap_aliasing/probe_heap_aliasing.cpp" \
+  -o "$OUT_DIR/probe_heap_aliasing.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_render_headless/probe_render_headless.cpp" \
   -o "$OUT_DIR/probe_render_headless.exe"
 
@@ -206,6 +210,7 @@ echo "$OUT_DIR/probe_compute_pso.exe"
 echo "$OUT_DIR/probe_command_replay.exe"
 echo "$OUT_DIR/probe_barriers_render_pass.exe"
 echo "$OUT_DIR/probe_resource_views_formats.exe"
+echo "$OUT_DIR/probe_heap_aliasing.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
 echo "$OUT_DIR/probe_subnautica_stress_game.exe"
