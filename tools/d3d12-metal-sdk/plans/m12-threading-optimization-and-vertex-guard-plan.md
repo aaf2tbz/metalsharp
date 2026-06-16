@@ -222,3 +222,50 @@ workers=1,2,4,6
 ```
 
 Then parse any `vertex_range_oob` skips and decide whether the next change is threading, cache epoching, or guard math.
+
+## Corrected worker matrix — 2026-06-15
+
+Important correction: backend launch env such as `METALSHARP_M12_PSO_WORKERS` is read by the backend process, not by the `curl` client process. The corrected matrix restarted the backend with `METALSHARP_M12_PSO_WORKERS` for each run.
+
+Artifacts:
+
+```text
+/tmp/metalsharp-m12-threading-matrix-corrected-20260615-204746/matrix-summary.md
+/tmp/metalsharp-m12-threading-matrix-corrected-20260615-204746/matrix-summary.json
+/tmp/metalsharp-m12-threading-matrix-corrected-20260615-204746/vertex-range-workers-1.md
+/tmp/metalsharp-m12-threading-matrix-corrected-20260615-204746/vertex-range-workers-1.json
+```
+
+Corrected matrix:
+
+| workers | drawn/present | gfx PSO | render failed | vertex missing | varying mismatch | unsafe skips | tess fallback | new render PSO |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 23/23 | 837 | 0 | 0 | 0 | 43 | 58 | 4 |
+| 2 | 23/23 | 625 | 0 | 0 | 0 | 0 | 34 | 0 |
+| 4 | 23/23 | 706 | 0 | 0 | 0 | 0 | 58 | 0 |
+| 6 | 23/23 | 717 | 0 | 0 | 0 | 0 | 58 | 0 |
+
+Findings:
+
+- Render PSO creation remained clean for all worker counts.
+- Workers `2`, `4`, and `6` were clean for unsafe draw skips.
+- Workers `1` produced `43` vertex-range unsafe skips despite rendering.
+- The guard bucket is narrow:
+  - reason: `vertex_range_oob`
+  - indexed: `1` for all rows
+  - slot: `0` for all rows
+  - stage_in: `0` for all rows
+  - tess_fallback: `0` for all rows
+  - no negative base vertex
+  - `large_start_count=32/43`
+- Top VS hashes in workers=1 guard bucket:
+  - `35c8291d8f42aabd` × 14
+  - `422831802103242e` × 6
+  - `25714213ee8f7dfc` × 6
+
+Initial decision:
+
+- Do not optimize toward workers=1; it is slower/noisier and exposes the guard bucket.
+- Keep/default workers at runtime default `4` for now unless a later timing sample proves `2` or `6` is better.
+- Next test should compare async pipeline compile at workers `4` and possibly `6`.
+- Vertex range guard analysis should focus on indexed vertex-pulling slot-0 draws with large start offsets.
