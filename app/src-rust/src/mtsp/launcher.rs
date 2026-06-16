@@ -2057,6 +2057,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
                 cmd.env("DXMT_ASYNC_PIPELINE_COMPILE", async_compile.trim());
             }
         }
+        if let Ok(typed_stage_in) = std::env::var("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") {
+            if !typed_stage_in.trim().is_empty() {
+                cmd.env("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR", typed_stage_in.trim());
+            }
+        }
     }
 }
 
