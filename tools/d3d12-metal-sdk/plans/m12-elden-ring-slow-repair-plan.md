@@ -580,3 +580,25 @@ Environment was reset after testing:
 - Backend restarted without gates.
 - Live shader cache restored to `7975` files from:
   `/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-pre-reflected-descriptor-test-20260615-194234`.
+
+## M12 default enablement — 2026-06-15
+
+The clean Elden Ring render PSO gate is now the default M12 launch behavior in the backend launcher:
+
+```text
+DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=1
+DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE=1
+```
+
+The launcher still honors explicit overrides for rollback/debug:
+
+```text
+METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=0
+METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=0
+```
+
+The topology experiment remains opt-in only and is not part of the default:
+
+```text
+METALSHARP_M12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY=1
+```

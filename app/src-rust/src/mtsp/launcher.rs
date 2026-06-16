@@ -2057,11 +2057,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
                 cmd.env("DXMT_ASYNC_PIPELINE_COMPILE", async_compile.trim());
             }
         }
-        if let Ok(typed_stage_in) = std::env::var("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") {
-            if !typed_stage_in.trim().is_empty() {
-                cmd.env("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR", typed_stage_in.trim());
-            }
-        }
+        let typed_stage_in = std::env::var("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "1".to_string());
+        cmd.env("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR", typed_stage_in.trim());
         if let Ok(log_failure_keys) = std::env::var("METALSHARP_M12_LOG_RENDER_PSO_FAILURE_KEYS") {
             if !log_failure_keys.trim().is_empty() {
                 cmd.env("DXMT_D3D12_LOG_RENDER_PSO_FAILURE_KEYS", log_failure_keys.trim());
@@ -2072,11 +2072,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
                 cmd.env("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY", unspecified_topology.trim());
             }
         }
-        if let Ok(force_source_compile) = std::env::var("METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE") {
-            if !force_source_compile.trim().is_empty() {
-                cmd.env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", force_source_compile.trim());
-            }
-        }
+        let force_source_compile = std::env::var("METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "1".to_string());
+        cmd.env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", force_source_compile.trim());
     }
 }
 

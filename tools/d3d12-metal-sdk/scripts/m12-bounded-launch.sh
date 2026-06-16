@@ -11,6 +11,7 @@ LAUNCH_METHOD="${M12_BOUNDED_LAUNCH_METHOD:-dxmt_metal12}"
 WORKERS="${METALSHARP_M12_PSO_WORKERS:-}"
 ASYNC_COMPILE="${METALSHARP_M12_ASYNC_PIPELINE_COMPILE:-}"
 TYPED_STAGE_IN="${METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR:-}"
+FORCE_SOURCE_COMPILE="${METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE:-}"
 RUN_REPLAY=0
 RUN_OFFLINE_PSO=0
 KILL_AFTER=1
@@ -30,6 +31,7 @@ Options:
   --workers N             Override DXMT_D3D12_PSO_WORKERS through backend env hook.
   --async-compile 0|1     Override DXMT_ASYNC_PIPELINE_COMPILE through backend env hook.
   --typed-stage-in 0|1    Override DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR through backend env hook.
+  --force-source-compile 0|1 Override DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE through backend env hook.
   --results-dir PATH      Output directory for bounded run artifacts.
   --replay                Replay newly available corpus through metal-shaderconverter after launch.
   --offline-pso           Run offline PSO factory after launch.
@@ -51,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --workers) WORKERS="$2"; shift 2 ;;
     --async-compile) ASYNC_COMPILE="$2"; shift 2 ;;
     --typed-stage-in) TYPED_STAGE_IN="$2"; shift 2 ;;
+    --force-source-compile) FORCE_SOURCE_COMPILE="$2"; shift 2 ;;
     --results-dir) RESULTS_DIR="$2"; shift 2 ;;
     --replay) RUN_REPLAY=1; shift ;;
     --offline-pso) RUN_OFFLINE_PSO=1; shift ;;
@@ -102,6 +105,7 @@ launch_env=()
 if [[ -n "$WORKERS" ]]; then launch_env+=("METALSHARP_M12_PSO_WORKERS=$WORKERS"); fi
 if [[ -n "$ASYNC_COMPILE" ]]; then launch_env+=("METALSHARP_M12_ASYNC_PIPELINE_COMPILE=$ASYNC_COMPILE"); fi
 if [[ -n "$TYPED_STAGE_IN" ]]; then launch_env+=("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=$TYPED_STAGE_IN"); fi
+if [[ -n "$FORCE_SOURCE_COMPILE" ]]; then launch_env+=("METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=$FORCE_SOURCE_COMPILE"); fi
 
 (
   if [[ ${#launch_env[@]} -gt 0 ]]; then
@@ -151,7 +155,7 @@ if [[ "$KILL_AFTER" == "1" && -n "$PID" ]]; then
   curl -fsS -X POST "$BACKEND_URL/kill" -H 'Content-Type: application/json' -d "{\"appid\":$APPID,\"pid\":$PID}" > "$RUN_DIR/kill.json" 2>/dev/null || true
 fi
 
-RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
+RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
 import json, os, re
 from pathlib import Path
 run = Path(os.environ['RUN_DIR'])
@@ -244,6 +248,7 @@ summary = {
   'workers_override': os.environ['WORKERS'],
   'async_compile_override': os.environ['ASYNC_COMPILE'],
   'typed_stage_in_override': os.environ['TYPED_STAGE_IN'],
+  'force_source_compile_override': os.environ['FORCE_SOURCE_COMPILE'],
   'corpus_dir': os.environ['CORPUS_DIR'],
   'launch_ok': bool(launch.get('ok')),
   'launch_log': launch.get('launch_log'),
@@ -254,7 +259,7 @@ summary = {
   'translation_issue_examples': translation_issue_lines[:20],
 }
 (run/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
+md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- force_source_compile_override: `{summary['force_source_compile_override']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
 for k,v in counts.items(): md.append(f"- `{k}`: {v}")
 md += ['', '## Per-run runtime metrics']
 for k,v in metrics.items(): md.append(f"- `{k}`: {v}")
