@@ -1651,3 +1651,28 @@ winemetal.so   167d16f1280ce4f78f842576758c46cdc6db59c37c2e20aa3b7060fba7f49d58
 ```
 
 Use the full set for future Elden Ring/Subnautica 2/Armored Core VI validation until an intentional runtime update is proven.
+
+## Phase 3.5 completion audit — 2026-06-16
+
+Phase 3.5 safe/offline work is complete and documented in:
+
+```text
+tools/d3d12-metal-sdk/plans/m12-phase3.5-completion-audit.md
+```
+
+Final refreshed Phase 3.5 reports:
+
+```text
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/final-20260616-011003/metal-errors/metal-errors.md
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/final-20260616-011003/vertex-descriptors/vertex-descriptors.md
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/final-20260616-011003/cache-freshness/cache-freshness.md
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/final-20260616-011003/live-hang/live-hang-analysis.md
+```
+
+Decision:
+
+```text
+Phase 4 may begin as Apple-doc-backed probe planning/implementation.
+Do not stage broad runtime diagnostic rebuilds as part of Phase 3.5 closure.
+Runtime diagnostics are deferred to isolated, full-runtime-hash-gated patches.
+```
