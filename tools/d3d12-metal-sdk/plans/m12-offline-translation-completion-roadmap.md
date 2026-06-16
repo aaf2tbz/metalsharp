@@ -2319,3 +2319,41 @@ tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-021149/image-diffs/wi
 The optional windowed path also verifies present count progression, backbuffer
 index progression, resize replacement, device ownership, frame latency handle,
 color-space calls, and fullscreen-windowed state handling.
+
+### Phase 5 compute-to-texture visual path — 2026-06-16
+
+The headless visual probe now includes a deterministic compute-to-texture-then-sample/draw path:
+
+```text
+compute shader writes RWTexture2D<float4>
+texture transitions UAV -> pixel shader resource
+pixel shader samples the compute-written texture
+render readback verifies compute_texture=[34,68,204,255]
+```
+
+Proof:
+
+```text
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-021622/visual-gauntlet-summary.md
+```
+
+Result:
+
+```text
+ok=true
+compute_buffer_draw_verified=true
+compute_texture_draw_verified=true
+compute_draw_pixel=[136,119,102,255]
+compute_texture_pixel=[34,68,204,255]
+depth_verified=true
+```
+
+Optional windowed-present remained green after the compute-to-texture addition:
+
+```text
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-021632/visual-gauntlet-summary.md
+ok=true
+windowed_buffer0_pixel=[255,0,0,255]
+windowed_buffer1_pixel=[0,255,0,255]
+windowed_resized_buffer_pixel=[0,0,255,255]
+```

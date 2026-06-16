@@ -254,6 +254,8 @@ int main() {
     D3D12_RESOURCE_DESC depth_desc =
         texture_desc(render_width, render_height, DXGI_FORMAT_D32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
     D3D12_RESOURCE_DESC sample_desc = texture_desc(2, 2, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_NONE);
+    D3D12_RESOURCE_DESC compute_texture_desc =
+        texture_desc(2, 2, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     D3D12_RESOURCE_DESC uav_desc = buffer_desc(uav_buffer_bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
 
     D3D12_CLEAR_VALUE render_clear = {};
@@ -270,6 +272,7 @@ int main() {
     ID3D12Resource* depth_target = nullptr;
     ID3D12Resource* sample_texture = nullptr;
     ID3D12Resource* sample_upload = nullptr;
+    ID3D12Resource* compute_texture = nullptr;
     ID3D12Resource* render_readback = nullptr;
     ID3D12Resource* uav_buffer = nullptr;
     ID3D12Resource* uav_readback = nullptr;
@@ -277,6 +280,7 @@ int main() {
     ID3D12Resource* triangle_vb = nullptr;
     ID3D12Resource* compute_draw_vb = nullptr;
     ID3D12Resource* textured_vb = nullptr;
+    ID3D12Resource* compute_texture_vb = nullptr;
     ID3D12Resource* indexed_vb = nullptr;
     ID3D12Resource* quad_ib = nullptr;
     ID3D12Resource* depth_far_vb = nullptr;
@@ -293,6 +297,11 @@ int main() {
     HRESULT sample_texture_hr =
         device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &sample_desc,
                                                  D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&sample_texture))
+               : E_FAIL;
+    HRESULT compute_texture_hr =
+        device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &compute_texture_desc,
+                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                 IID_PPV_ARGS(&compute_texture))
                : E_FAIL;
     HRESULT uav_buffer_hr =
         device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &uav_desc,
@@ -353,6 +362,11 @@ int main() {
         {{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}}, {{1.0f, 1.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
         {{1.0f, 0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}}, {{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
     };
+    const TexVertex compute_texture_vertices[] = {
+        {{0.75f, -0.75f, 0.0f, 1.0f}, {0.0f, 0.0f}}, {{1.0f, -0.75f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+        {{0.75f, -1.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},  {{1.0f, -0.75f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+        {{1.0f, -1.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},   {{0.75f, -1.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    };
     const ColorVertex indexed_vertices[] = {
         {{-1.0f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 1.0f}},
         {{-0.5f, -0.5f, 0.0f, 1.0f}, {1.0f, 1.0f, 0.0f, 1.0f}},
@@ -395,6 +409,8 @@ int main() {
     HRESULT compute_draw_vb_hr =
         create_upload_buffer(compute_draw_vertices, sizeof(compute_draw_vertices), &compute_draw_vb);
     HRESULT textured_vb_hr = create_upload_buffer(textured_vertices, sizeof(textured_vertices), &textured_vb);
+    HRESULT compute_texture_vb_hr =
+        create_upload_buffer(compute_texture_vertices, sizeof(compute_texture_vertices), &compute_texture_vb);
     HRESULT indexed_vb_hr = create_upload_buffer(indexed_vertices, sizeof(indexed_vertices), &indexed_vb);
     HRESULT depth_far_vb_hr = create_upload_buffer(depth_far_vertices, sizeof(depth_far_vertices), &depth_far_vb);
     HRESULT depth_near_vb_hr = create_upload_buffer(depth_near_vertices, sizeof(depth_near_vertices), &depth_near_vb);
@@ -441,7 +457,7 @@ int main() {
     dsv_heap_desc.NumDescriptors = 1;
     D3D12_DESCRIPTOR_HEAP_DESC srv_uav_heap_desc = {};
     srv_uav_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-    srv_uav_heap_desc.NumDescriptors = 3;
+    srv_uav_heap_desc.NumDescriptors = 5;
     srv_uav_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ID3D12DescriptorHeap* rtv_heap = nullptr;
     ID3D12DescriptorHeap* dsv_heap = nullptr;
@@ -492,6 +508,20 @@ int main() {
         uav_view.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
         device->CreateUnorderedAccessView(uav_buffer, nullptr, &uav_view,
                                           offset_cpu(srv_uav_cpu, srv_uav_increment, 1));
+        if (compute_texture) {
+            D3D12_UNORDERED_ACCESS_VIEW_DESC texture_uav = {};
+            texture_uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            texture_uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+            device->CreateUnorderedAccessView(compute_texture, nullptr, &texture_uav,
+                                              offset_cpu(srv_uav_cpu, srv_uav_increment, 2));
+            D3D12_SHADER_RESOURCE_VIEW_DESC texture_srv = {};
+            texture_srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            texture_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            texture_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            texture_srv.Texture2D.MipLevels = 1;
+            device->CreateShaderResourceView(compute_texture, &texture_srv,
+                                             offset_cpu(srv_uav_cpu, srv_uav_increment, 4));
+        }
         D3D12_SHADER_RESOURCE_VIEW_DESC raw_srv = {};
         raw_srv.Format = DXGI_FORMAT_R32_TYPELESS;
         raw_srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -499,7 +529,7 @@ int main() {
         raw_srv.Buffer.FirstElement = 0;
         raw_srv.Buffer.NumElements = uav_buffer_bytes / 4;
         raw_srv.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-        device->CreateShaderResourceView(uav_buffer, &raw_srv, offset_cpu(srv_uav_cpu, srv_uav_increment, 2));
+        device->CreateShaderResourceView(uav_buffer, &raw_srv, offset_cpu(srv_uav_cpu, srv_uav_increment, 3));
     }
     const char* shader_source = R"(
 struct VSColorIn {
@@ -522,6 +552,7 @@ struct PSTexIn {
 Texture2D tex0 : register(t0);
 SamplerState samp0 : register(s0);
 RWByteAddressBuffer outbuf : register(u0);
+RWTexture2D<float4> outtex : register(u1);
 ByteAddressBuffer inbuf : register(t0);
 
 PSColorIn vs_color(VSColorIn input) {
@@ -561,8 +592,13 @@ float4 ps_compute_buffer(PSColorIn input) : SV_Target {
 
 [numthreads(1, 1, 1)]
 void cs_write(uint3 tid : SV_DispatchThreadID) {
-  if (tid.x == 0 && tid.y == 0 && tid.z == 0)
+  if (tid.x == 0 && tid.y == 0 && tid.z == 0) {
     outbuf.Store(4, 0x55667788u);
+    outtex[uint2(0, 0)] = float4(34.0f / 255.0f, 68.0f / 255.0f, 204.0f / 255.0f, 1.0f);
+    outtex[uint2(1, 0)] = float4(34.0f / 255.0f, 68.0f / 255.0f, 204.0f / 255.0f, 1.0f);
+    outtex[uint2(0, 1)] = float4(34.0f / 255.0f, 68.0f / 255.0f, 204.0f / 255.0f, 1.0f);
+    outtex[uint2(1, 1)] = float4(34.0f / 255.0f, 68.0f / 255.0f, 204.0f / 255.0f, 1.0f);
+  }
 }
 )";
 
@@ -614,7 +650,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     texture_root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     D3D12_DESCRIPTOR_RANGE uav_range = {};
     uav_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    uav_range.NumDescriptors = 1;
+    uav_range.NumDescriptors = 2;
     uav_range.BaseShaderRegister = 0;
     uav_range.OffsetInDescriptorsFromTableStart = 0;
     D3D12_ROOT_PARAMETER uav_param = {};
@@ -750,6 +786,10 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     textured_view.BufferLocation = textured_vb ? textured_vb->GetGPUVirtualAddress() : 0;
     textured_view.SizeInBytes = sizeof(textured_vertices);
     textured_view.StrideInBytes = sizeof(TexVertex);
+    D3D12_VERTEX_BUFFER_VIEW compute_texture_view = {};
+    compute_texture_view.BufferLocation = compute_texture_vb ? compute_texture_vb->GetGPUVirtualAddress() : 0;
+    compute_texture_view.SizeInBytes = sizeof(compute_texture_vertices);
+    compute_texture_view.StrideInBytes = sizeof(TexVertex);
     D3D12_VERTEX_BUFFER_VIEW indexed_view = {};
     indexed_view.BufferLocation = indexed_vb ? indexed_vb->GetGPUVirtualAddress() : 0;
     indexed_view.SizeInBytes = sizeof(indexed_vertices);
@@ -775,8 +815,8 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     D3D12_RECT scissor = {0, 0, static_cast<LONG>(render_width), static_cast<LONG>(render_height)};
 
     bool command_recorded = false;
-    if (list && sample_texture && sample_upload && uav_buffer && uav_zero_upload && render_target && render_readback &&
-        uav_readback) {
+    if (list && sample_texture && sample_upload && compute_texture && uav_buffer && uav_zero_upload && render_target &&
+        render_readback && uav_readback) {
         D3D12_TEXTURE_COPY_LOCATION sample_src = {};
         sample_src.pResource = sample_upload;
         sample_src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
@@ -862,20 +902,34 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
 
         D3D12_RESOURCE_BARRIER compute_draw_barriers[] = {
             uav_barrier(uav_buffer),
+            uav_barrier(compute_texture),
             transition_barrier(uav_buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+            transition_barrier(compute_texture, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                               D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         };
-        list->ResourceBarrier(2, compute_draw_barriers);
+        list->ResourceBarrier(4, compute_draw_barriers);
 
         if (compute_draw_pso && texture_root && compute_draw_vb && srv_uav_heap) {
             ID3D12DescriptorHeap* heaps[] = {srv_uav_heap};
             list->SetDescriptorHeaps(1, heaps);
             list->SetGraphicsRootSignature(texture_root);
             list->SetPipelineState(compute_draw_pso);
-            list->SetGraphicsRootDescriptorTable(0, offset_gpu(srv_uav_gpu, srv_uav_increment, 2));
+            list->SetGraphicsRootDescriptorTable(0, offset_gpu(srv_uav_gpu, srv_uav_increment, 3));
             list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             list->IASetVertexBuffers(0, 1, &compute_draw_view);
             list->DrawInstanced(3, 1, 0, 0);
+        }
+
+        if (texture_pso && texture_root && compute_texture_vb && srv_uav_heap) {
+            ID3D12DescriptorHeap* heaps[] = {srv_uav_heap};
+            list->SetDescriptorHeaps(1, heaps);
+            list->SetGraphicsRootSignature(texture_root);
+            list->SetPipelineState(texture_pso);
+            list->SetGraphicsRootDescriptorTable(0, offset_gpu(srv_uav_gpu, srv_uav_increment, 4));
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &compute_texture_view);
+            list->DrawInstanced(6, 1, 0, 0);
         }
 
         D3D12_RESOURCE_BARRIER post_draw_barriers[] = {
@@ -923,6 +977,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     Pixel triangle_pixel = {};
     Pixel indexed_pixel = {};
     Pixel compute_draw_pixel = {};
+    Pixel compute_texture_pixel = {};
     Pixel textured_tl = {};
     Pixel textured_tr = {};
     Pixel textured_bl = {};
@@ -934,6 +989,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     bool triangle_ok = false;
     bool indexed_ok = false;
     bool compute_draw_ok = false;
+    bool compute_texture_ok = false;
     bool textured_ok = false;
     bool depth_ok = false;
     bool render_changed = false;
@@ -944,6 +1000,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
         triangle_pixel = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 2, 2);
         indexed_pixel = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 1, 13);
         compute_draw_pixel = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 5, 10);
+        compute_texture_pixel = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 15, 15);
         textured_tl = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 9, 1);
         textured_tr = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 14, 1);
         textured_bl = read_pixel(render_ptr, render_footprint.Footprint.RowPitch, 9, 6);
@@ -953,6 +1010,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
         triangle_ok = pixel_not_clear(triangle_pixel);
         indexed_ok = pixel_equals(indexed_pixel, 255, 255, 0, 255);
         compute_draw_ok = pixel_equals(compute_draw_pixel, 136, 119, 102, 255);
+        compute_texture_ok = pixel_equals(compute_texture_pixel, 34, 68, 204, 255);
         textured_ok = pixel_equals(textured_tl, 255, 255, 0, 255) && pixel_equals(textured_tr, 0, 255, 255, 255) &&
                       pixel_equals(textured_bl, 255, 0, 255, 255);
         depth_ok = pixel_equals(depth_edge, 255, 0, 0, 255) && pixel_equals(depth_center, 0, 255, 0, 255);
@@ -977,11 +1035,11 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     const bool entrypoints_valid = d3d12 && d3dcompiler && create_device && compile && serialize;
     const bool resources_valid =
         SUCCEEDED(render_target_hr) && SUCCEEDED(depth_target_hr) && SUCCEEDED(sample_texture_hr) &&
-        SUCCEEDED(sample_upload_hr) && SUCCEEDED(render_readback_hr) && SUCCEEDED(uav_buffer_hr) &&
-        SUCCEEDED(uav_readback_hr) && SUCCEEDED(uav_zero_upload_hr) && SUCCEEDED(triangle_vb_hr) &&
-        SUCCEEDED(compute_draw_vb_hr) && SUCCEEDED(textured_vb_hr) && SUCCEEDED(indexed_vb_hr) &&
-        SUCCEEDED(depth_far_vb_hr) && SUCCEEDED(depth_near_vb_hr) && SUCCEEDED(quad_ib_hr) &&
-        SUCCEEDED(sample_map_hr) && SUCCEEDED(uav_zero_map_hr);
+        SUCCEEDED(sample_upload_hr) && SUCCEEDED(compute_texture_hr) && SUCCEEDED(render_readback_hr) &&
+        SUCCEEDED(uav_buffer_hr) && SUCCEEDED(uav_readback_hr) && SUCCEEDED(uav_zero_upload_hr) &&
+        SUCCEEDED(triangle_vb_hr) && SUCCEEDED(compute_draw_vb_hr) && SUCCEEDED(textured_vb_hr) &&
+        SUCCEEDED(compute_texture_vb_hr) && SUCCEEDED(indexed_vb_hr) && SUCCEEDED(depth_far_vb_hr) &&
+        SUCCEEDED(depth_near_vb_hr) && SUCCEEDED(quad_ib_hr) && SUCCEEDED(sample_map_hr) && SUCCEEDED(uav_zero_map_hr);
     const bool heap_valid = SUCCEEDED(rtv_heap_hr) && SUCCEEDED(dsv_heap_hr) && SUCCEEDED(srv_uav_heap_hr) &&
                             SUCCEEDED(sampler_heap_hr) && srv_uav_increment != 0;
     const bool graphics_uav_supported = SUCCEEDED(ps_uav_hr) && SUCCEEDED(graphics_uav_pso_hr);
@@ -997,7 +1055,8 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
                              SUCCEEDED(fence_hr) && SUCCEEDED(close_hr) && SUCCEEDED(execute_hr) &&
                              SUCCEEDED(signal_hr) && SUCCEEDED(wait_hr);
     const bool readback_valid = SUCCEEDED(render_map_hr) && SUCCEEDED(uav_map_hr);
-    const bool draw_valid = triangle_ok && indexed_ok && compute_draw_ok && textured_ok && depth_ok && background_ok;
+    const bool draw_valid =
+        triangle_ok && indexed_ok && compute_draw_ok && compute_texture_ok && textured_ok && depth_ok && background_ok;
     const bool uav_valid = compute_uav_ok && (!graphics_uav_supported || graphics_uav_ok);
     const bool pass = entrypoints_valid && SUCCEEDED(create_hr) && resources_valid && heap_valid && compile_valid &&
                       roots_valid && pipelines_valid && command_recorded && queue_valid && readback_valid &&
@@ -1053,6 +1112,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     print_hr("color_create", render_target_hr);
     print_hr("depth_create", depth_target_hr);
     print_hr("sample_texture_create", sample_texture_hr);
+    print_hr("compute_texture_create", compute_texture_hr);
     print_hr("sample_upload_map", sample_map_hr);
     print_hr("render_readback_map", render_map_hr, false);
     std::printf("  },\n");
@@ -1061,6 +1121,7 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
     std::printf("    \"triangle_changed_pixels\": %s,\n", triangle_ok ? "true" : "false");
     std::printf("    \"indexed_geometry_verified\": %s,\n", indexed_ok ? "true" : "false");
     std::printf("    \"compute_buffer_draw_verified\": %s,\n", compute_draw_ok ? "true" : "false");
+    std::printf("    \"compute_texture_draw_verified\": %s,\n", compute_texture_ok ? "true" : "false");
     std::printf("    \"indexed_texture_verified\": %s,\n", textured_ok ? "true" : "false");
     std::printf("    \"depth_verified\": %s,\n", depth_ok ? "true" : "false");
     std::printf("    \"render_changed_from_clear\": %s\n", render_changed ? "true" : "false");
@@ -1084,6 +1145,8 @@ void cs_write(uint3 tid : SV_DispatchThreadID) {
                 indexed_pixel.a);
     std::printf("    \"compute_draw\": [%u, %u, %u, %u],\n", compute_draw_pixel.r, compute_draw_pixel.g,
                 compute_draw_pixel.b, compute_draw_pixel.a);
+    std::printf("    \"compute_texture\": [%u, %u, %u, %u],\n", compute_texture_pixel.r, compute_texture_pixel.g,
+                compute_texture_pixel.b, compute_texture_pixel.a);
     std::printf("    \"textured_tl\": [%u, %u, %u, %u],\n", textured_tl.r, textured_tl.g, textured_tl.b, textured_tl.a);
     std::printf("    \"textured_tr\": [%u, %u, %u, %u],\n", textured_tr.r, textured_tr.g, textured_tr.b, textured_tr.a);
     std::printf("    \"textured_bl\": [%u, %u, %u, %u],\n", textured_bl.r, textured_bl.g, textured_bl.b, textured_bl.a);

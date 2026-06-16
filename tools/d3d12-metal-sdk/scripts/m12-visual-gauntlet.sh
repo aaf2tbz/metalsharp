@@ -184,9 +184,10 @@ def add(name, ok, actual=None, expected=None, artifact=None):
 
 add("headless_probe_pass", headless.get("pass") is True, headless.get("pass"), True, str(headless_path))
 add("actual_pixels_compared", bool(headless.get("readback")), list(headless.get("readback", {}).keys()), "readback pixel fields", str(headless_path))
-for key in ["background_preserved", "triangle_changed_pixels", "indexed_geometry_verified", "compute_buffer_draw_verified", "indexed_texture_verified", "depth_verified", "render_changed_from_clear"]:
+for key in ["background_preserved", "triangle_changed_pixels", "indexed_geometry_verified", "compute_buffer_draw_verified", "compute_texture_draw_verified", "indexed_texture_verified", "depth_verified", "render_changed_from_clear"]:
     add(key, headless.get("draw_checks", {}).get(key) is True, headless.get("draw_checks", {}).get(key), True, str(headless_path))
 add("compute_draw_pixel", headless.get("readback", {}).get("compute_draw") == [136, 119, 102, 255], headless.get("readback", {}).get("compute_draw"), [136, 119, 102, 255], str(headless_path))
+add("compute_texture_pixel", headless.get("readback", {}).get("compute_texture") == [34, 68, 204, 255], headless.get("readback", {}).get("compute_texture"), [34, 68, 204, 255], str(headless_path))
 add("compute_uav_verified", headless.get("uav_checks", {}).get("compute_verified") is True, headless.get("uav_checks", {}).get("compute_verified"), True, str(headless_path))
 add("readback_differs_from_clear", headless.get("readback", {}).get("checksum") != headless.get("readback", {}).get("clear_checksum"), {"checksum": headless.get("readback", {}).get("checksum"), "clear_checksum": headless.get("readback", {}).get("clear_checksum")}, "different", str(headless_path))
 pixels_path = results / "image-diffs" / "readback-pixels.json"
@@ -229,7 +230,7 @@ summary = {
     "checks": checks,
     "residual_risks": [
         "This is a no-game deterministic visual probe baseline, not Subnautica 2 visual correctness.",
-        "Compute writes are verified through UAV readback and a compute-buffer-then-draw pixel path; compute-to-texture remains future coverage.",
+        "Compute writes are verified through UAV readback, compute-buffer-then-draw, and compute-texture-then-sample/draw pixel paths.",
         "Windowed present has explicit pixel evidence when --windowed-present is used, but remains optional because it can interact with local desktop/window server state.",
     ],
 }
