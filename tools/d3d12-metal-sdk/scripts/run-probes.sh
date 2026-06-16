@@ -80,6 +80,7 @@ Options:
   --no-queues           Skip probe_queues.
   --no-descriptors      Skip probe_descriptors.
   --no-shaders          Skip probe_shaders.
+  --no-dxil-semantics   Skip the DXIL semantic opcode-group probe.
   --dxil-semantics      Run the DXIL semantic opcode-group probe.
   --semantic-only       Run only the DXIL semantic opcode-group probe.
   --no-shader-corpus    Skip the synthetic shader corpus probe.
@@ -265,6 +266,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-shaders)
       RUN_SHADERS=0
+      shift
+      ;;
+    --no-dxil-semantics)
+      RUN_DXIL_SEMANTICS=0
       shift
       ;;
     --dxil-semantics)

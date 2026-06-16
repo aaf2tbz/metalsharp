@@ -672,11 +672,11 @@ No live Elden Ring cache mutation from offline tools.
 
 ---
 
-# Phase 4 — D3D12/DXGI behavior gauntlet
+# Phase 4 — D3D12/DXGI behavior gauntlet — ACTIVE
 
 ## Goal
 
-Validate runtime behavior beyond shader translation.
+Validate runtime behavior beyond shader translation with no-game probes, using the Phase 3.5 Apple-doc-backed requirements as the probe map. Phase 4 is not permission to stage broad runtime tracing builds; it starts from the restored known-good M12 runtime and adds bounded probe evidence.
 
 ## Probe areas
 
@@ -687,7 +687,7 @@ fullscreen/windowed mode behavior
 render target/depth format support
 resource creation
 committed/placed resources
-heaps
+heaps and aliasing
 resource barriers
 copy/upload paths
 descriptor heaps and descriptor tables
@@ -695,6 +695,11 @@ CBV/SRV/UAV views
 root signatures
 fences/queues/synchronization
 pipeline state cache
+Metal command-buffer error/status evidence
+Metal resource-use declarations: useResource(s), useHeap(s), indirect resources
+Metal storage-mode and hazard-tracking assumptions
+Metal vertex descriptor reconstruction evidence
+Metal binary archive/cache freshness inputs
 ```
 
 ## Existing probes to leverage
@@ -705,26 +710,49 @@ tools/d3d12-metal-sdk/probes/probe_resources
 tools/d3d12-metal-sdk/probes/probe_queues
 tools/d3d12-metal-sdk/probes/probe_descriptors
 tools/d3d12-metal-sdk/probes/probe_resource_views_formats
+tools/d3d12-metal-sdk/probes/probe_command_replay
+tools/d3d12-metal-sdk/probes/probe_barriers_render_pass
 tools/d3d12-metal-sdk/probes/probe_present_windowed
 tools/d3d12-metal-sdk/probes/probe_render_headless
 tools/d3d12-metal-sdk/probes/probe_compute_pso
 tools/d3d12-metal-sdk/probes/probe_graphics_pso
 ```
 
-## Tasks
+## Phase 4 gauntlet wrapper
 
-Create a gauntlet wrapper:
+Created/active:
 
 ```text
 tools/d3d12-metal-sdk/scripts/m12-runtime-gauntlet.sh
 ```
 
-It should run probes under the exact M12 runtime and produce:
+Default behavior:
 
 ```text
-runtime-gauntlet-summary.json
-runtime-gauntlet-summary.md
-probe-failures.md
+probe_set=phase4-core
+no game launch
+no runtime staging
+full known-good M12 hash gate before probes
+runs: Winemetal ABI, loader, agility, caps, DXGI, resources, queues, descriptors, command replay, barriers/render-pass, resource/view/format probes
+skips by default: shader corpus, SM 6.6, wave ops, reflection ABI, PSO matrix, mini probes, headless/windowed visual probes
+```
+
+Output:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/<timestamp>/runtime-gauntlet-summary.json
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/<timestamp>/runtime-gauntlet-summary.md
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/<timestamp>/probe-failures.md
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/<timestamp>/run-probes.stdout
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/<timestamp>/run-probes.stderr
+```
+
+Optional probe sets:
+
+```text
+--probe-set phase4-core  # no-game runtime behavior core, default
+--probe-set phase4-pso   # adds graphics/compute PSO probes
+--probe-set all          # broad existing probe matrix; still no games, but may include windowed/headless probes
 ```
 
 ## Acceptance criteria
@@ -733,10 +761,15 @@ probe-failures.md
 - Uses the frozen/runtime-under-test hashes.
 - Captures stdout/stderr/logs per probe.
 - Classifies probe failures separately from game failures.
+- Produces a baseline Phase 4 result directory before any runtime change.
 
 ## No-regression gate
 
-Any runtime change must pass all probes that passed before.
+Any runtime change must pass every Phase 4 probe that passed on the known-good baseline, using the full-runtime hash gate to prove exactly what runtime was tested.
+
+## Runtime instrumentation rule
+
+Runtime-side probes may be added only as tiny isolated patches with full-runtime hash gates and rollback coverage. Do not repeat the Phase 3.5 broad diagnostic relink/stage failure pattern.
 
 ---
 
@@ -1676,3 +1709,95 @@ Phase 4 may begin as Apple-doc-backed probe planning/implementation.
 Do not stage broad runtime diagnostic rebuilds as part of Phase 3.5 closure.
 Runtime diagnostics are deferred to isolated, full-runtime-hash-gated patches.
 ```
+
+## Phase 4 implementation start — runtime gauntlet wrapper and baseline — 2026-06-16
+
+Phase 4 has started as Apple-doc-backed no-game probe work.
+
+Added wrapper:
+
+```text
+tools/d3d12-metal-sdk/scripts/m12-runtime-gauntlet.sh
+```
+
+Corrected probe runner control:
+
+```text
+tools/d3d12-metal-sdk/scripts/run-probes.sh --no-dxil-semantics
+```
+
+Baseline run:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-011839/runtime-gauntlet-summary.md
+```
+
+Runtime hash gate used:
+
+```text
+d3d12.dll      2612e228a5efa9d65f6923b3ed1cc50b1c6ce40abb2c0043c51d32ec5b60dd7c
+dxgi.dll       dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24
+dxgi_dxmt.dll  659ea3c4dddf658038eab67f26e71497ba11a4787e41c636766222ac2d8b028d
+winemetal.dll  7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85
+winemetal.so   167d16f1280ce4f78f842576758c46cdc6db59c37c2e20aa3b7060fba7f49d58
+```
+
+Baseline result:
+
+```text
+probe_json_count=12
+passed=9 probe result JSONs plus Winemetal ABI
+failed=2
+run_probes_exit=0
+```
+
+Passing Phase 4 core probes:
+
+```text
+winemetal-abi
+probe-loader
+probe-agility-ue5
+probe-resources
+probe-queues
+probe-descriptors
+probe-command-replay
+probe-barriers-render-pass
+probe-resource-views-formats
+```
+
+Known Phase 4 baseline failures:
+
+```text
+probe-device-caps-metalsharp.json
+probe-dxgi-factory-metalsharp.json
+```
+
+Device caps failure details:
+
+```text
+D3D12CreateDevice succeeds
+feature_level max=12_1
+shader_model highest=6_5
+shader_model_6_6_or_better=false
+CreateReservedResource hr=0x00000000, so reserved_resources_unsupported=false
+CreateStateObject hr=0x80004001, so state_objects_unsupported=true
+```
+
+DXGI failure details:
+
+```text
+CreateDXGIFactory/CreateDXGIFactory1/CreateDXGIFactory2 succeed
+IDXGIFactory through IDXGIFactory6 supported
+IDXGIFactory7 unsupported: 0x80004002
+EnumAdapters/EnumAdapters1/EnumAdapterByGpuPreference succeed
+EnumAdapterByLuid returns DXGI_ERROR_NOT_FOUND
+factory_versions_supported=false
+adapter_stable=false
+```
+
+Interpretation:
+
+- Phase 4 has a hash-gated no-game baseline.
+- Baseline failures are now explicit runtime-surface targets, separate from game failures.
+- Do not treat these as regressions from the Phase 3.5 rollback; they are current known-good runtime probe findings.
+- Next safe Phase 4 work should inspect whether these probe expectations are too strict vs desired M12 policy, or whether DXGI/device capability reporting should be corrected.
