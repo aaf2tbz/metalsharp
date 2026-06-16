@@ -471,6 +471,35 @@ def discover_pso_manifests(roots: list[Path]) -> list[Path]:
     return sorted(set(manifests))
 
 
+def remap_shader_to_corpus(shader: object, root: Path) -> object:
+    if not isinstance(shader, dict):
+        return shader
+    metallib = shader.get("metallib")
+    if not metallib:
+        return shader
+    stem = Path(str(metallib)).stem
+    if not stem:
+        return shader
+    copy = dict(shader)
+    copy["metallib"] = str(root / f"{stem}.metallib")
+    reflection = root / f"{stem}.json"
+    if reflection.exists() or "reflection" in copy:
+        copy["reflection"] = str(reflection)
+    return copy
+
+
+def remap_pipeline_to_corpus(pipeline: dict, root: Path) -> dict:
+    copy = dict(pipeline)
+    for key in ("shader", "vertex", "fragment"):
+        if key in copy:
+            copy[key] = remap_shader_to_corpus(copy[key], root)
+    for key in ("vertex_linked_functions", "fragment_linked_functions"):
+        linked = copy.get(key)
+        if isinstance(linked, list):
+            copy[key] = [remap_shader_to_corpus(item, root) for item in linked]
+    return copy
+
+
 def attach_inferred_stage_in_linked_function(pipeline: dict) -> dict:
     metal = pipeline.get("metal") if isinstance(pipeline.get("metal"), dict) else {}
     vertex = pipeline.get("vertex") if isinstance(pipeline.get("vertex"), dict) else {}
@@ -503,9 +532,11 @@ def merged_pso_manifest(roots: list[Path], limit: int) -> dict | None:
         if not manifest or not isinstance(manifest.get("pipelines"), list):
             continue
         source_manifests.append(str(manifest_path))
+        root = manifest_path.parent
         for pipeline in manifest["pipelines"]:
             if isinstance(pipeline, dict):
-                copy = attach_inferred_stage_in_linked_function(dict(pipeline))
+                copy = remap_pipeline_to_corpus(dict(pipeline), root)
+                copy = attach_inferred_stage_in_linked_function(copy)
                 copy.setdefault("captured_manifest", str(manifest_path))
                 pipelines.append(copy)
                 if limit > 0 and len(pipelines) >= limit:

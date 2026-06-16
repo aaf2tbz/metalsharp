@@ -72,13 +72,18 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
     ok = completed.returncode == 0 and metallib.exists() and reflection.exists() and (
         not uses_stage_in or stage_in.exists()
     )
+    fail_marker_error = ""
     if not ok:
-        fail_marker.write_text(
-            f"command={' '.join(command)}\n"
-            f"returncode={completed.returncode}\n"
-            f"stdout={completed.stdout}\n"
-            f"stderr={completed.stderr}\n"
-        )
+        try:
+            fail_marker.parent.mkdir(parents=True, exist_ok=True)
+            fail_marker.write_text(
+                f"command={' '.join(command)}\n"
+                f"returncode={completed.returncode}\n"
+                f"stdout={completed.stdout}\n"
+                f"stderr={completed.stderr}\n"
+            )
+        except OSError as error:
+            fail_marker_error = str(error)
     return {
         "dxbc": str(dxbc),
         "status": "ok" if ok else "failed",
@@ -90,6 +95,7 @@ def run_converter(tool: str, dxbc: Path, force: bool) -> dict:
         "stage_in": str(stage_in) if uses_stage_in else "",
         "stage_in_exists": stage_in.exists() if uses_stage_in else False,
         "fail_marker": str(fail_marker) if not ok else "",
+        "fail_marker_error": fail_marker_error,
         "uses_gs_ts_emulation": uses_stage_in,
         "stdout_tail": completed.stdout[-1000:],
         "stderr_tail": completed.stderr[-1000:],

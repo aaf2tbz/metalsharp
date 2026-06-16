@@ -207,3 +207,70 @@ No change is considered successful unless:
 - default-off rebuilt runtime renders before gate-on testing
 - bounded launch metrics do not regress drawn presents or unsafe draw skips
 - the final commit contains the game-test evidence
+
+## Phase 0/1/2 findings — 2026-06-15
+
+Scratch corpus created from stable baseline:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-CorpusLab/elden-ring-scratch/stable-20260615-192733
+```
+
+Results:
+
+```text
+/tmp/metalsharp-m12-slow-repair/stable-20260615-192733
+```
+
+Scratch corpus counts:
+
+```text
+file_count=7975
+dxbc=1584
+metallib=238
+pso_render=1172
+```
+
+Structural graphics PSO audit:
+
+```text
+render_pso_count=1172
+violation_count=6
+warning_count=1172
+violations: invalid-active-color-format=6
+warnings: input-layout-without-stage-in=1172
+```
+
+Compute PSO audit:
+
+```text
+compute_pso_count=0
+violation_count=0
+```
+
+Scratch shader replay:
+
+```text
+shader_count=1584
+failure_count=0
+```
+
+Tooling bug found and fixed: captured PSO manifests contain absolute shader paths back to the live cache. `offline-pso-factory.py` now remaps shader `.metallib`/reflection paths to the selected `--corpus` root by shader hash before running the Metal PSO harness. This prevents scratch validation from accidentally reading live-cache artifacts.
+
+Scratch-isolated offline PSO result after remapping:
+
+```text
+pipeline_count=1172
+failure_count=0
+skipped_count=76
+ok/render_pso_created=1096
+zero_vertex_output=54
+incomplete_capture=22
+```
+
+Interpretation:
+
+- The stable corpus can replay in scratch without converter failures.
+- Most captured render PSOs can be created offline when the scratch-replayed metallibs/reflections are used.
+- The dominant structural warning remains `input-layout-without-stage-in` for all render manifests. This matches the current stable runtime behavior and must not be changed directly until a rebuilt baseline is proven.
+- Remaining offline residuals are incomplete/offline-incompatible captures, not current hard PSO factory failures.
