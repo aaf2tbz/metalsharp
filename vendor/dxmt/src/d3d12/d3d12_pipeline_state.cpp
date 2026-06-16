@@ -1879,6 +1879,19 @@ bool MTLD3D12PipelineState::Compile() {
           (unsigned)m_rasterizer_desc.FrontCounterClockwise,
           (unsigned)m_rasterizer_desc.DepthClipEnable);
 
+  size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
+      vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
+      m_dsv_format, m_sample_count ? m_sample_count : 1,
+      m_input_layout.NumElements, m_ia_slot_mask, m_vs_uses_stage_in);
+  DumpRenderPSOManifest(
+      pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
+      m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
+      m_sample_count ? m_sample_count : 1, m_input_layout.NumElements,
+      m_ia_slot_mask, m_ia_input_elements,
+      m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
+      info.rasterization_enabled, (uintptr_t)vs_func.handle,
+      (uintptr_t)ps_func.handle);
+
   std::string render_err_desc = "unknown";
   for (uint32_t attempt = 0; attempt < 4; attempt++) {
     err = nullptr;
@@ -1902,20 +1915,7 @@ bool MTLD3D12PipelineState::Compile() {
                                 str::format("Metal render PSO creation failed: ",
                                             render_err_desc));
   }
-  {
-    size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
-        vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
-        m_dsv_format, m_sample_count ? m_sample_count : 1,
-        m_input_layout.NumElements, m_ia_slot_mask, m_vs_uses_stage_in);
-    DumpRenderPSOManifest(
-        pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
-        m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
-        m_sample_count ? m_sample_count : 1, m_input_layout.NumElements,
-        m_ia_slot_mask, m_ia_input_elements,
-        m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
-        info.rasterization_enabled, (uintptr_t)vs_func.handle,
-        (uintptr_t)ps_func.handle);
-  }
+  PSTRACE("Render PSO ready with manifest hash=%016zx", pso_manifest_hash);
 
   struct WMTDepthStencilInfo ds_info = {};
   ds_info.depth_compare_function = WMTCompareFunctionAlways;
