@@ -2285,3 +2285,37 @@ Next Phase 5 target:
 ```text
 Add optional windowed present/swapchain capture checks and/or compute-to-texture coverage before any Subnautica 2 visual retest.
 ```
+
+### Phase 5 optional windowed-present pixel evidence — 2026-06-16
+
+The visual gauntlet wrapper now records and gates sampled swapchain pixels when
+`--windowed-present` is used. The probe remains optional because it depends on
+local desktop/window-server behavior, but its output is no longer a present-count
+only check.
+
+Proof:
+
+```text
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-021149/visual-gauntlet-summary.md
+```
+
+Result:
+
+```text
+ok=true
+windowed_present_probe_pass=true
+windowed_buffer0_pixel=[255,0,0,255]
+windowed_buffer1_pixel=[0,255,0,255]
+windowed_resized_buffer_pixel=[0,0,255,255]
+windowed_pixel_artifact=true
+```
+
+Pixel evidence artifact:
+
+```text
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-021149/image-diffs/windowed-present-pixels.json
+```
+
+The optional windowed path also verifies present count progression, backbuffer
+index progression, resize replacement, device ownership, frame latency handle,
+color-space calls, and fullscreen-windowed state handling.

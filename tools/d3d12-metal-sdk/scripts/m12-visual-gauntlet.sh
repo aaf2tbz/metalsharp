@@ -201,7 +201,21 @@ raw_path = results / "image-diffs" / "render-headless-rgba.bin"
 add("pixel_artifact", pixels_path.exists(), str(pixels_path), "exists", str(pixels_path))
 add("raw_readback_artifact_optional", True, str(raw_path) if raw_path.exists() else "not emitted", "optional", str(raw_path))
 if windowed is not None:
+    windowed_pixels_path = results / "image-diffs" / "windowed-present-pixels.json"
+    windowed_pixels_path.write_text(json.dumps({
+        "schema": "metalsharp.m12.visual-gauntlet.windowed-present-pixels.v1",
+        "source": str(windowed_path),
+        "sampled_pixels": windowed.get("sampled_pixels", {}),
+        "present_counts": windowed.get("present_counts", {}),
+        "backbuffer_indices": windowed.get("backbuffer_indices", {}),
+        "checks": windowed.get("checks", {}),
+    }, indent=2) + "\n")
+    sampled = windowed.get("sampled_pixels", {})
     add("windowed_present_probe_pass", windowed.get("pass") is True, windowed.get("pass"), True, str(windowed_path))
+    add("windowed_buffer0_pixel", sampled.get("buffer0_center") == [255, 0, 0, 255], sampled.get("buffer0_center"), [255, 0, 0, 255], str(windowed_path))
+    add("windowed_buffer1_pixel", sampled.get("buffer1_center") == [0, 255, 0, 255], sampled.get("buffer1_center"), [0, 255, 0, 255], str(windowed_path))
+    add("windowed_resized_buffer_pixel", sampled.get("resized_buffer_center") == [0, 0, 255, 255], sampled.get("resized_buffer_center"), [0, 0, 255, 255], str(windowed_path))
+    add("windowed_pixel_artifact", windowed_pixels_path.exists(), str(windowed_pixels_path), "exists", str(windowed_pixels_path))
 
 ok = run_exit == 0 and all(item["ok"] for item in checks)
 summary = {
@@ -216,7 +230,7 @@ summary = {
     "residual_risks": [
         "This is a no-game deterministic visual probe baseline, not Subnautica 2 visual correctness.",
         "Compute writes are verified through UAV readback and a compute-buffer-then-draw pixel path; compute-to-texture remains future coverage.",
-        "Windowed present is optional because it can interact with local desktop/window server state.",
+        "Windowed present has explicit pixel evidence when --windowed-present is used, but remains optional because it can interact with local desktop/window server state.",
     ],
 }
 (results / "visual-gauntlet-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
