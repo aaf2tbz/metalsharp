@@ -269,3 +269,45 @@ Initial decision:
 - Keep/default workers at runtime default `4` for now unless a later timing sample proves `2` or `6` is better.
 - Next test should compare async pipeline compile at workers `4` and possibly `6`.
 - Vertex range guard analysis should focus on indexed vertex-pulling slot-0 draws with large start offsets.
+
+## Async pipeline compile probe — 2026-06-15
+
+Artifacts:
+
+```text
+/tmp/metalsharp-m12-async-matrix-20260615-205656/async-summary.md
+/tmp/metalsharp-m12-async-matrix-20260615-205656/async-summary.json
+/tmp/metalsharp-m12-async-matrix-20260615-205656/vertex-range-async1-workers-4.md
+/tmp/metalsharp-m12-async-matrix-20260615-205656/vertex-range-async1-workers-4.json
+```
+
+Backend was restarted with:
+
+```text
+METALSHARP_M12_ASYNC_PIPELINE_COMPILE=1
+```
+
+Results:
+
+| workers | async | drawn/present | gfx PSO | render failed | vertex missing | varying mismatch | unsafe skips | tess fallback |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 1 | 23/23 | 970 | 0 | 0 | 0 | 70 | 72 |
+| 6 | 1 | 23/23 | 696 | 0 | 0 | 0 | 0 | 56 |
+
+Findings:
+
+- Async compile does not regress render PSO creation.
+- Async workers=4 exposes the same vertex-range guard family:
+  - reason: `vertex_range_oob`
+  - indexed: `1` for all rows
+  - slot: `0` for all rows
+  - stage_in: `0` for all rows
+  - tess_fallback: `0` for all rows
+  - `large_start_count=51/70`
+- Async workers=6 stayed clean in this bounded run.
+
+Initial decision:
+
+- Do not default async compile yet.
+- If async compile is pursued, workers=6 is the only currently clean async point from this matrix.
+- The guard bucket is consistent across workers=1 and async workers=4, so next investigation should target indexed vertex-pulling range math / resource state timing rather than render PSO creation.
