@@ -94,7 +94,55 @@ Which exact runtime subsystem produced the pressure?
 Did an optimization improve frame pacing without reducing correctness?
 ```
 
-The harness should be reusable across M12 games, not Elden Ring-only.
+The harness must be reusable across M12 games, not Elden Ring-only. From this point forward, performance validation should include multiple real DX12 gameplay titles.
+
+## Required multi-game coverage
+
+The performance harness should treat Elden Ring as only one workload. Required coverage should include:
+
+```text
+Elden Ring
+Schedule 1 or PEAK
+Subnautica 2
+```
+
+All of these support DX12 gameplay and should expose different M12 pressure patterns:
+
+- **Elden Ring**: heavy PSO churn, long loading, character creation/menu responsiveness, large asset streaming
+- **Schedule 1 or PEAK**: additional Unity/modern DX12-style gameplay coverage; useful as a second non-FromSoftware workload
+- **Subnautica 2**: broad streaming/texture/effects workload and existing M12 correctness corpus coverage
+
+The harness should support per-game profiles instead of hardcoding Elden Ring:
+
+```text
+tools/d3d12-metal-sdk/profiles/m12-perf/elden-ring.json
+tools/d3d12-metal-sdk/profiles/m12-perf/schedule-1.json
+tools/d3d12-metal-sdk/profiles/m12-perf/peak.json
+tools/d3d12-metal-sdk/profiles/m12-perf/subnautica-2.json
+```
+
+Each profile should define:
+
+```text
+appid or launcher target
+default run duration
+cache path
+known DX12 launch flags, if any
+scenario names
+manual marker labels
+expected log locations
+comparison baseline path
+```
+
+Minimum performance matrix for future optimization work:
+
+```text
+Elden Ring smoke/loading/character-creation
+Schedule 1 or PEAK smoke/gameplay
+Subnautica 2 smoke/loading/gameplay
+empty-cache first run for at least one title
+warm-cache second run for all tested titles
+```
 
 ## Phase 1 — performance telemetry foundation
 
@@ -187,7 +235,7 @@ Extend or add a script:
 tools/d3d12-metal-sdk/scripts/m12-performance-run.sh
 ```
 
-It should wrap bounded launch but add performance collection:
+It should wrap bounded launch but add performance collection and work for any configured M12 perf profile:
 
 ```text
 --profile elden-ring
@@ -223,7 +271,22 @@ upload-pressure.md
 cache-pressure.md
 ```
 
-## Phase 3 — character creation progression timing
+## Phase 3 — game progression timing
+
+The harness must support both game-specific progression scenarios and generic smoke/gameplay scenarios. Elden Ring character creation is the first known stress point, but it should not be the only scenario.
+
+Required scenario examples:
+
+```text
+elden-ring-character-creation
+elden-ring-loading-to-gameplay
+schedule-1-gameplay-smoke
+peak-gameplay-smoke
+subnautica-2-loading-to-gameplay
+subnautica-2-gameplay-streaming
+```
+
+## Phase 3A — Elden Ring character creation progression timing
 
 The current symptom appears only after enough loading progress, so a simple 45–60s launch is no longer sufficient.
 
@@ -468,15 +531,16 @@ ranked list of M11 patterns to port/adapt to M12
 
 ## Phase 7 — performance gates for future updates
 
-Every future M12 optimization should run through this matrix:
+Every future M12 optimization should run through this multi-game matrix:
 
 ```text
 Elden Ring 60s smoke
 Elden Ring 180s loading/character-creation perf scenario
+Schedule 1 or PEAK 60s smoke/gameplay
 Subnautica 2 60s smoke
-Subnautica 2 loading perf scenario, if available
-empty cache first-run
-warm cache second-run
+Subnautica 2 loading/gameplay perf scenario
+empty cache first-run for at least one representative title
+warm cache second-run for all titles under test
 ```
 
 Required pass conditions:
@@ -508,11 +572,13 @@ better character-creation interaction timing
 4. Add runtime trace events for PSO compile start/end first.
 5. Add runtime trace events for texture create/upload next.
 6. Add `analyze-m12-perf-trace.py` to correlate stalls with PSO/upload pressure.
-7. Run baseline scenarios:
-   - empty cache, default workers=1 async=1
-   - warm cache, default workers=1 async=1
-   - character-creation manual progression run
-8. Use the baseline to choose the first real optimization track:
+7. Run baseline scenarios across multiple games:
+   - Elden Ring empty cache, default workers=1 async=1
+   - Elden Ring warm cache, default workers=1 async=1
+   - Elden Ring character-creation manual progression run
+   - Schedule 1 or PEAK warm-cache gameplay smoke
+   - Subnautica 2 warm-cache gameplay/loading smoke
+8. Use the multi-game baseline to choose the first real optimization track:
    - persistent refreshed shader cache
    - PSO queue pacing
    - texture upload pacing
@@ -547,4 +613,4 @@ texture/upload bursts
 cache regeneration cost
 ```
 
-across Elden Ring and other M12 games.
+across Elden Ring, Schedule 1/PEAK, Subnautica 2, and other M12 games.
