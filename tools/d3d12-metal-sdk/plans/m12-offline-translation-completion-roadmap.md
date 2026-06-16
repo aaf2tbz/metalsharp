@@ -766,3 +766,72 @@ Dry-run passed for all four appids without gameplay launches:
 ```
 
 Phase 0 is complete.
+
+## Phase 1 implementation result — 2026-06-15
+
+Implemented read-only corpus inventory:
+
+```text
+tools/d3d12-metal-sdk/scripts/m12-corpus-inventory.py
+```
+
+Phase 1 inventory artifact:
+
+```text
+tools/d3d12-metal-sdk/results/m12-translation-gauntlet/phase1-20260615-222706/corpus-inventory.md
+tools/d3d12-metal-sdk/results/m12-translation-gauntlet/phase1-20260615-222706/corpus-inventory.json
+```
+
+Corpora indexed:
+
+```text
+elden-ring-live
+subnautica-2-live
+schedule-1-live
+peak-live
+elden-ring-scratch
+perf-runs
+live-captures
+bounded-launches
+```
+
+Summary:
+
+```text
+elden-ring-live:    files=8044  dxbc=1590  msl=1587  metallib=238   pso_render=1215 pso_compute=2   msl_errors=0  fail_markers=0 unique_shaders=1589
+elden-ring-scratch: files=10671 dxbc=1584  msl=1581  metallib=1586  pso_render=1172 pso_compute=0   msl_errors=0  fail_markers=0 unique_shaders=1583
+subnautica-2-live:  files=4546  dxbc=775   msl=774   metallib=0     pso_render=1    pso_compute=673 msl_errors=99 fail_markers=0 unique_shaders=775
+schedule-1-live:    files=4     no shader corpus yet
+peak-live:          files=0     no shader corpus yet
+```
+
+Subnautica 2 MSL error categories:
+
+```text
+msl_vector_type_conversion: 36
+msl_compile_error_other:   33
+msl_threadgroup_pointer:   20
+msl_address_space:          8
+msl_type_conversion:        1
+msl_undeclared_identifier:  1
+```
+
+Representative Subnautica 2 failure hashes/categories:
+
+```text
+239a65c38a4992bd msl_vector_type_conversion
+2973397b09b5fbbb msl_type_conversion / atomic buffer pointer issue
+d49a91efb562a061 msl_compile_error_other / threadgroup char* assigned float
+833c8509da39368a msl_address_space
+09f767d72f068de1 msl_threadgroup_pointer
+ce673c6b5ed6cb14 msl_threadgroup_pointer
+```
+
+Interpretation:
+
+- Elden Ring render-oriented corpus is currently clean by file-level MSL/fail-marker inventory.
+- Elden Ring character creation live hang likely requires command/progress/hot-loop analysis rather than obvious MSL compile-failure triage.
+- Subnautica 2 is the strongest offline translation completion target because it has a broad compute corpus and many classified MSL failures.
+- Phase 2 should fetch/reference Agility/DXC payloads, but Phase 3 can already start by building a translation gauntlet around Subnautica 2 compute failures.
+
+Phase 1 is complete.
