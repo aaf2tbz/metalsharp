@@ -494,3 +494,89 @@ Interpretation:
 - Runtime bridge descriptor data appears plausible, so do not churn descriptor ABI first.
 - Next behavior candidate should target generated vertex output/user-varying emission or cache freshness for broad `output_v` / `input_v` contracts.
 - Keep the descriptor gate off by default until the VS/PS mismatch bucket is reduced and unsafe draw skips return to zero.
+
+## Reflected descriptor + DXIL source compile gate — 2026-06-15
+
+Additional commits:
+
+```text
+ff65c4d test: gate reflected descriptor topology mode
+82858ad test: gate DXIL source recompilation
+```
+
+The topology gate was tested because offline PSO factory leaves `inputPrimitiveTopology` unspecified:
+
+```text
+DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY=1
+METALSHARP_M12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY=1
+```
+
+Result: it did not improve the mismatch bucket. It remained safe (`unsafe_draw_skips=0`) but had more varying mismatches than descriptor-only, so it is not the fix path.
+
+The successful candidate combines:
+
+```text
+DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=1
+DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE=1
+```
+
+Backend env equivalents:
+
+```text
+METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=1
+METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=1
+```
+
+This forces cached DXIL metallibs to be ignored for the current process and recompiles from source without deleting cache files. It was tested only after restoring the known cache snapshot.
+
+Default/off after staging current runtime remained safe:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-202158/summary.md
+present_count=22
+drawn_present_count=22
+render_pso_failed=354
+vertex_descriptor_missing=406
+vs_ps_varying_mismatch=302
+unsafe_draw_skips=0
+```
+
+Gate-on 35s result:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-202336/summary.md
+present_count=22
+drawn_present_count=22
+render_pso_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+unsafe_draw_skips=0
+```
+
+Gate-on 60s confirmation:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-202526/summary.md
+present_count=23
+drawn_present_count=23
+render_pso_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+unsafe_draw_skips=0
+```
+
+Interpretation:
+
+- Reflected descriptors are necessary to remove the missing vertex descriptor bucket.
+- Cached DXIL metallibs are the likely source of the VS/PS varying mismatch once descriptors unblock PSO validation.
+- Forcing source compilation plus reflected descriptors produced clean render PSO creation in bounded Elden Ring tests.
+- This should remain gated until we decide whether to:
+  1. keep it as an Elden Ring/M12 compatibility gate,
+  2. replace it with a narrower cache-epoch/version bump for affected shaders,
+  3. or teach runtime to persist refreshed metallibs safely.
+
+Environment was reset after testing:
+
+- Backend restarted without gates.
+- Live shader cache restored to `7975` files from:
+  `/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-pre-reflected-descriptor-test-20260615-194234`.
