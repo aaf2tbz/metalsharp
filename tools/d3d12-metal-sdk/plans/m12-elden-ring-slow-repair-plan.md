@@ -316,3 +316,47 @@ unix_call_failed=0
 ```
 
 Conclusion: future runtime fixes can proceed from current source, but only if the stable cache is preserved/restored and offline work remains scratch-isolated.
+
+## Vertex attribute inspection — 2026-06-15
+
+Added scratch-only inspection of `MTLFunction.vertexAttributes` for captured render PSOs.
+
+Result:
+
+```text
+/tmp/metalsharp-m12-slow-repair/stable-20260615-192733/metal-vertex-attributes-elden-ring-stable-scratch-v2.json
+/tmp/metalsharp-m12-slow-repair/stable-20260615-192733/metal-vertex-attributes-elden-ring-stable-scratch-v2.md
+```
+
+Findings:
+
+```text
+pipelines=1172
+has_metal_vertex_attributes=1150
+metallib_not_readable=22
+```
+
+Metal vertex attributes are present for almost every readable vertex function. They are commonly indexed starting at 11 and include typed data such as Float/Float2/Float3/Float4 and UInt/UInt4. Example:
+
+```text
+render-000dffeebad6e96c
+  vs=063ef13e839de754
+  d3d12_inputs=11
+  reflection_inputs=11
+  attrs:
+    position0[11] type=Float3
+    position1[12] type=Float3
+    normal0[13] type=UInt4
+    normal1[14] type=UInt4
+    tangent0[15] type=UInt4
+    tangent1[16] type=UInt4
+    binormal0[17] type=UInt2
+    blendindices0[18] type=UInt4
+    blendweight0[19] type=Float4
+    color1[20] type=Float4
+    texcoord0[21] type=Int4
+```
+
+Implication:
+
+The runtime should not guess a synthetic all-Float4 vertex descriptor. A safe fix likely needs a Winemetal reflection API that exposes `MTLFunction.vertexAttributes` to the D3D12 pipeline builder, then an env-gated descriptor path that constructs a descriptor from actual Metal function attributes. This API can be added unused-by-default before any behavior change.
