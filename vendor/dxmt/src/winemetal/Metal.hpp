@@ -757,7 +757,13 @@ public:
   }
 };
 
-class Function : public Object {};
+class Function : public Object {
+public:
+  uint32_t
+  copyVertexAttributes(WMTFunctionVertexAttribute *attributes, uint32_t max_attributes) const {
+    return MTLFunction_copyVertexAttributes(handle, attributes, max_attributes);
+  }
+};
 
 class Library : public Object {
 public:

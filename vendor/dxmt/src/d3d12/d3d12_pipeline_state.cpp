@@ -109,6 +109,85 @@ uint32_t AsyncPipelineWorkerCount() {
   return std::max(1u, std::min<uint32_t>((uint32_t)parsed, 12u));
 }
 
+bool EnvFlagEnabled(const char *name) {
+  char value[16] = {};
+  DWORD len = GetEnvironmentVariableA(name, value, sizeof(value));
+  return len > 0 && value[0] && value[0] != '0';
+}
+
+WMTAttributeFormat AttributeFormatForMetalDataType(uint32_t type) {
+  switch (type) {
+  case 3: return WMTAttributeFormatFloat;
+  case 4: return WMTAttributeFormatFloat2;
+  case 5: return WMTAttributeFormatFloat3;
+  case 6: return WMTAttributeFormatFloat4;
+  case 29: return WMTAttributeFormatInt;
+  case 30: return WMTAttributeFormatInt2;
+  case 31: return WMTAttributeFormatInt3;
+  case 32: return WMTAttributeFormatInt4;
+  case 33: return WMTAttributeFormatUInt;
+  case 34: return WMTAttributeFormatUInt2;
+  case 35: return WMTAttributeFormatUInt3;
+  case 36: return WMTAttributeFormatUInt4;
+  default: return WMTAttributeFormatInvalid;
+  }
+}
+
+uint32_t AttributeFormatByteSize(WMTAttributeFormat format) {
+  switch (format) {
+  case WMTAttributeFormatFloat:
+  case WMTAttributeFormatInt:
+  case WMTAttributeFormatUInt:
+    return 4;
+  case WMTAttributeFormatFloat2:
+  case WMTAttributeFormatInt2:
+  case WMTAttributeFormatUInt2:
+    return 8;
+  case WMTAttributeFormatFloat3:
+  case WMTAttributeFormatInt3:
+  case WMTAttributeFormatUInt3:
+    return 12;
+  default:
+    return 16;
+  }
+}
+
+bool BuildVertexDescriptorFromMetalFunction(WMT::Function function,
+                                            WMTVertexDescriptor &desc) {
+  WMTFunctionVertexAttribute attributes[WMT_MAX_VERTEX_ATTRIBUTES] = {};
+  uint32_t count = function.copyVertexAttributes(attributes, WMT_MAX_VERTEX_ATTRIBUTES);
+  if (!count)
+    return false;
+
+  uint32_t stride = 0;
+  uint32_t emitted = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    const auto &src = attributes[i];
+    if (!src.active || src.attribute_index >= WMT_MAX_VERTEX_ATTRIBUTES)
+      continue;
+    auto format = AttributeFormatForMetalDataType(src.attribute_type);
+    if (format == WMTAttributeFormatInvalid)
+      continue;
+    auto &attr = desc.attributes[src.attribute_index];
+    attr.format = format;
+    attr.offset = stride;
+    attr.buffer_index = 0;
+    stride += AttributeFormatByteSize(format);
+    emitted = std::max(emitted, src.attribute_index + 1);
+    PSTRACE("D3D12 PSO reflected vertex attr[%u] name=%s mtl_type=%u fmt=%u offset=%u",
+            src.attribute_index, src.name, src.attribute_type, (unsigned)format,
+            attr.offset);
+  }
+  if (!emitted)
+    return false;
+  desc.attribute_count = emitted;
+  desc.layout_count = 1;
+  desc.layouts[0].stride = stride ? stride : 16;
+  desc.layouts[0].step_function = WMTVertexStepFunctionPerVertex;
+  desc.layouts[0].step_rate = 1;
+  return true;
+}
+
 class AsyncPipelineCompiler {
 public:
   void Enqueue(MTLD3D12PipelineState *pso) {
@@ -1733,6 +1812,7 @@ bool MTLD3D12PipelineState::Compile() {
   info.immutable_fragment_buffers = (1 << 29) | (1 << 30);
 
   WMTVertexDescriptor vtx_desc = {};
+  WMTVertexDescriptor reflected_vtx_desc = {};
   if (m_input_layout.NumElements > 0 && m_input_layout.pInputElementDescs) {
     uint32_t append_offset[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
     uint32_t slot_stride[WMT_MAX_VERTEX_BUFFER_LAYOUTS] = {};
@@ -1845,7 +1925,15 @@ bool MTLD3D12PipelineState::Compile() {
               s, slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function);
     }
     if (!m_vs_uses_stage_in) {
-      PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
+      if (EnvFlagEnabled("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") &&
+          BuildVertexDescriptorFromMetalFunction(vs_func, reflected_vtx_desc)) {
+        info.vertex_descriptor = &reflected_vtx_desc;
+        PSTRACE("D3D12 PSO experimental reflected vertex descriptor attached attrs=%u stride=%u",
+                reflected_vtx_desc.attribute_count,
+                reflected_vtx_desc.layouts[0].stride);
+      } else {
+        PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
+      }
     }
   }
   if (m_vs_uses_stage_in) {
