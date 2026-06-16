@@ -332,3 +332,40 @@ Safe-draw policy candidate:
 - rely on shader-side `m12_load_vertex_attr` bounds checks to return zero for OOB vertex attributes
 - expose rollback with:
   `DXMT_D3D12_VERTEX_RANGE_SAFE_DRAW=0` / `METALSHARP_M12_VERTEX_RANGE_SAFE_DRAW=0`
+
+## Safe vertex-range draw candidate test — 2026-06-15
+
+Commit:
+
+```text
+0d3e71b fix: allow safe M12 vertex range draws
+```
+
+Policy implemented:
+
+- missing resources, unresolved resources, bad index buffers, and index-buffer OOB still skip
+- indexed vertex-pulling draws no longer skip solely for CPU-side vertex range OOB
+- shader-side `m12_load_vertex_attr` already bounds-checks each vertex attribute load and returns zero for OOB attributes
+- rollback/debug override:
+  `METALSHARP_M12_VERTEX_RANGE_SAFE_DRAW=0`
+
+Test artifacts:
+
+```text
+/tmp/metalsharp-m12-safe-draw-test-20260615-210742/safe-draw-summary.json
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-210747/summary.md
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-210951/summary.md
+```
+
+Previously unsafe target configs now clean:
+
+| case | workers | async | drawn/present | gfx PSO | render failed | vertex missing | varying mismatch | unsafe skips | tess fallback |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| workers1 | 1 | 0 | 23/23 | 1418 | 0 | 0 | 0 | 0 | 102 |
+| workers4-async | 4 | 1 | 23/23 | 776 | 0 | 0 | 0 | 0 | 58 |
+
+Interpretation:
+
+- The vertex-range guard bucket was a false-positive/overconservative CPU guard for indexed vertex-pulling draws.
+- Turning those into shader-clamped safe draws removes unsafe skips without regressing render PSO creation.
+- Workers=4 + async is now a viable recommended scheduling direction for further loading/character-creation profiling.
