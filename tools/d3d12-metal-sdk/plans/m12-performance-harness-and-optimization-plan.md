@@ -1049,3 +1049,60 @@ tools/d3d12-metal-sdk/scripts/m12-live-state-capture.sh --profile elden-ring --l
 ```
 
 4. Then kill manually after capture.
+
+## Elden Ring character creation live hang capture — 2026-06-15
+
+Live capture artifact:
+
+```text
+tools/d3d12-metal-sdk/results/live-captures/elden-ring-character-creation-hung-20260615-221626
+```
+
+Captured while the game process was still open/hung, without killing it.
+
+Process state:
+
+```text
+pid=64619
+stat=R
+elapsed=00:52
+process_root=start_protected_game.exe -windowed -ResX=1280 -ResY=720 -ForceRes
+samples=58
+max_cpu_percent=83.2
+max_rss_bytes=1856286720
+max_threads=91
+```
+
+Runtime/game-local DLLs matched the corrected working baseline:
+
+```text
+d3d12.dll=8cdcec40588018dafaa3cdd1cfb140c1fd7edba6f1160cd7559d61be8b946500
+```
+
+Cache state at hang:
+
+```text
+cache_files=8006
+msl_errors=0
+fail_markers=0
+```
+
+Initial interpretation:
+
+- This is confirmed as a live hang, not process exit.
+- The process remains runnable (`STAT=R`) and CPU-active, so it is likely spinning or blocked in a hot loop rather than sleeping dead.
+- No MSL error files or fail markers were present at capture time.
+- Runtime hashes were correct, so this is not a stale-DLL/runtime-regression issue.
+
+Next analysis steps:
+
+1. Parse the captured latest launch log for the final present count and last command-list/PSO activity before the hang.
+2. Compare cache file delta against the previous clean smoke baseline.
+3. Add a focused analyzer for live-hang captures that reports:
+   - final present count
+   - last drawn present
+   - last PSO compile
+   - last command list summary
+   - repeated command-list patterns near hang
+   - wait_ms/replay_ms spikes
+4. If no log-side failure appears, use a process sample/spindump-style capture next to identify CPU hot stacks.
