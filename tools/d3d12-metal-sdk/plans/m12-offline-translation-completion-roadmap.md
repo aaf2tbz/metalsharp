@@ -714,3 +714,55 @@ Recommended first implementation order:
 5. `analyze-m12-live-hang.py` focused on the Elden Ring character creation capture
 
 Only after these are in place should we do more long interactive game launches.
+
+## Phase 0 implementation result — 2026-06-15
+
+Implemented:
+
+```text
+tools/d3d12-metal-sdk/scripts/verify-m12-runtime-hashes.py
+tools/d3d12-metal-sdk/scripts/restore-known-working-current-m12-runtime.sh
+```
+
+Phase 0 initially caught stale/mismatched game-local M12 DLLs in:
+
+```text
+/Volumes/AverySSD/SteamLibrary/steamapps/common/Schedule I
+/Volumes/AverySSD/SteamLibrary/steamapps/common/PEAK
+```
+
+Those mismatched pre-normalization DLLs were preserved at:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/phase0-pre-normalize-schedule-peak-20260615-222454
+```
+
+Then Schedule I and PEAK were normalized from the frozen working runtime:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/working-current-source-runtime-elden-ring-20260615-220308
+```
+
+Phase 0 verification artifact:
+
+```text
+tools/d3d12-metal-sdk/results/m12-phase0-baseline-20260615-222455/runtime-hashes.md
+tools/d3d12-metal-sdk/results/m12-phase0-baseline-20260615-222455/dry-run-summary.md
+```
+
+All checked runtime/game-local DLLs now match the known working baseline, including:
+
+```text
+d3d12.dll=8cdcec40588018dafaa3cdd1cfb140c1fd7edba6f1160cd7559d61be8b946500
+```
+
+Dry-run passed for all four appids without gameplay launches:
+
+```text
+1245620  Elden Ring    ok=true missing=[] d3d12_present=true workers=1 async=1
+1962700  Subnautica 2  ok=true missing=[] d3d12_present=true workers=1 async=1
+3164500  Schedule I    ok=true missing=[] d3d12_present=true workers=1 async=1
+3527290  PEAK          ok=true missing=[] d3d12_present=true workers=1 async=1
+```
+
+Phase 0 is complete.
