@@ -1801,3 +1801,53 @@ Interpretation:
 - Baseline failures are now explicit runtime-surface targets, separate from game failures.
 - Do not treat these as regressions from the Phase 3.5 rollback; they are current known-good runtime probe findings.
 - Next safe Phase 4 work should inspect whether these probe expectations are too strict vs desired M12 policy, or whether DXGI/device capability reporting should be corrected.
+
+## Phase 4 baseline refinement — 2026-06-16
+
+After correcting probe policy strictness, Phase 4 core now has one hard baseline failure.
+
+Updated probes:
+
+```text
+tools/d3d12-metal-sdk/probes/probe_device_caps/probe_device_caps.cpp
+tools/d3d12-metal-sdk/probes/probe_dxgi_factory/probe_dxgi_factory.cpp
+```
+
+Changes:
+
+- `probe_device_caps` no longer fails merely because WaveOps are reported consistently or reserved resources are implemented. It still fails if hard minimums fail or unsafe advanced capabilities are advertised.
+- `probe_dxgi_factory` no longer requires optional `IDXGIFactory7` support for core pass. It records Factory7 separately.
+
+Refined baseline:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-012333/runtime-gauntlet-summary.md
+```
+
+Result:
+
+```text
+probe_json_count=12
+failure_count=1
+remaining_failure=probe-dxgi-factory-metalsharp.json
+```
+
+Remaining hard DXGI finding:
+
+```text
+CreateDXGIFactory/CreateDXGIFactory1/CreateDXGIFactory2 succeed
+IDXGIFactory through IDXGIFactory6 supported
+IDXGIFactory7 unsupported but optional for core pass
+EnumAdapters succeeds
+EnumAdapters1 succeeds
+EnumAdapters1 repeat succeeds
+EnumAdapterByGpuPreference succeeds
+EnumAdapterByLuid returns DXGI_ERROR_NOT_FOUND for the LUID returned by EnumAdapters1
+adapter_stable=false
+```
+
+Why this matters:
+
+- This is directly relevant to UE/D3D12 adapter-selection behavior.
+- It is not proof of the Phase 3.5 diagnostic rebuild regression, but it is in the same risk family: DXGI adapter identity must be internally stable.
+- Next Phase 4 runtime-source work should fix `EnumAdapterByLuid`/adapter identity consistency, then stage only that tiny DXGI change with full-runtime hash gates and rerun the Phase 4 core gauntlet before any game launch.

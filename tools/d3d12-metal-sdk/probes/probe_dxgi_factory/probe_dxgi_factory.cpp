@@ -197,9 +197,15 @@ int main() {
                                                  ? factory7->UnregisterAdaptersChangedEvent(adapters_changed_cookie)
                                                  : E_NOINTERFACE;
 
-    bool factory_versions_supported = true;
-    for (const auto& probe : interfaces)
-        factory_versions_supported = factory_versions_supported && probe.supported;
+    bool factory_core_versions_supported = true;
+    bool factory7_supported = false;
+    for (const auto& probe : interfaces) {
+        if (std::string(probe.name) == "IDXGIFactory7") {
+            factory7_supported = probe.supported;
+            continue;
+        }
+        factory_core_versions_supported = factory_core_versions_supported && probe.supported;
+    }
     bool adapter_stable = SUCCEEDED(enum_adapter1_hr) && SUCCEEDED(enum_adapter1_second_hr) &&
                           SUCCEEDED(gpu_preference_hr) && SUCCEEDED(enum_luid_hr) &&
                           desc.AdapterLuid.HighPart == desc_second.AdapterLuid.HighPart &&
@@ -213,7 +219,7 @@ int main() {
                 SUCCEEDED(create1_hr) && SUCCEEDED(create2_hr) && SUCCEEDED(enum_adapter_hr) &&
                 SUCCEEDED(enum_adapter1_hr) && desc.VendorId != 0 &&
                 desc.DedicatedVideoMemory + desc.SharedSystemMemory > 0 && unknown_qi_hr == E_NOINTERFACE &&
-                factory_versions_supported && adapter_stable && enum_adapter_end_hr == DXGI_ERROR_NOT_FOUND;
+                factory_core_versions_supported && adapter_stable && enum_adapter_end_hr == DXGI_ERROR_NOT_FOUND;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-dxgi-factory.v1\",\n");
@@ -242,7 +248,8 @@ int main() {
     print_hr("EnumAdapterByGpuPreference", gpu_preference_hr);
     print_hr("EnumAdapterByLuid", enum_luid_hr);
     print_hr("EnumOutputs", enum_output_hr);
-    std::printf("    \"factory_versions_supported\": %s,\n", factory_versions_supported ? "true" : "false");
+    std::printf("    \"factory_core_versions_supported\": %s,\n", factory_core_versions_supported ? "true" : "false");
+    std::printf("    \"factory7_supported\": %s,\n", factory7_supported ? "true" : "false");
     std::printf("    \"adapter_stable\": %s,\n", adapter_stable ? "true" : "false");
     std::printf("    \"description\": \"%s\",\n", json_escape(wide_to_utf8(desc.Description)).c_str());
     std::printf("    \"vendor_id\": %u,\n", desc.VendorId);

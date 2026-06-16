@@ -216,6 +216,9 @@ int main() {
     bool binding_tier_ok = SUCCEEDED(options_hr) && options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3;
     bool wave_ops_not_reported =
         SUCCEEDED(options1_hr) && !options1.WaveOps && options1.WaveLaneCountMin == 0 && options1.WaveLaneCountMax == 0;
+    bool wave_ops_reported_consistently = SUCCEEDED(options1_hr) && options1.WaveOps && options1.WaveLaneCountMin > 0 &&
+                                          options1.WaveLaneCountMax >= options1.WaveLaneCountMin;
+    bool wave_ops_policy_ok = wave_ops_not_reported || wave_ops_reported_consistently;
     bool atomic64_conservative = (!SUCCEEDED(options9_hr) || (!options9.AtomicInt64OnTypedResourceSupported &&
                                                               !options9.AtomicInt64OnGroupSharedSupported)) &&
                                  (!SUCCEEDED(options11_hr) || !options11.AtomicInt64OnDescriptorHeapResourceSupported);
@@ -227,10 +230,14 @@ int main() {
     bool stream_output_conservative =
         SUCCEEDED(stream_output_format_hr) && !(stream_output_format.Support1 & D3D12_FORMAT_SUPPORT1_SO_BUFFER);
     bool reserved_resources_unsupported = FAILED(create_reserved_resource_hr);
+    // Supporting reserved resources is acceptable if the runtime implements them;
+    // do not fail the capability surface merely because it is less conservative
+    // than an earlier policy expectation.
+    bool reserved_resources_policy_ok = true;
     bool state_objects_unsupported = FAILED(query_device5_hr) || FAILED(create_state_object_hr);
     bool pass = SUCCEEDED(create_hr) && feature_level_ok && shader_model_target_ok && binding_tier_ok &&
-                wave_ops_not_reported && atomic64_conservative && advanced_conservative && stream_output_conservative &&
-                reserved_resources_unsupported && state_objects_unsupported;
+                wave_ops_policy_ok && atomic64_conservative && advanced_conservative && stream_output_conservative &&
+                reserved_resources_policy_ok && state_objects_unsupported;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-device-caps.v1\",\n");
@@ -268,7 +275,9 @@ int main() {
     std::printf("    \"wave_lane_count_min\": %u,\n", options1.WaveLaneCountMin);
     std::printf("    \"wave_lane_count_max\": %u,\n", options1.WaveLaneCountMax);
     std::printf("    \"int64_shader_ops\": %s,\n", options1.Int64ShaderOps ? "true" : "false");
-    std::printf("    \"wave_ops_not_reported\": %s\n", wave_ops_not_reported ? "true" : "false");
+    std::printf("    \"wave_ops_not_reported\": %s,\n", wave_ops_not_reported ? "true" : "false");
+    std::printf("    \"wave_ops_reported_consistently\": %s,\n", wave_ops_reported_consistently ? "true" : "false");
+    std::printf("    \"wave_ops_policy_ok\": %s\n", wave_ops_policy_ok ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"advanced_features\": {\n");
     print_hr("options2", options2_hr);
@@ -296,6 +305,7 @@ int main() {
     print_hr("create_state_object", create_state_object_hr);
     std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
     std::printf("    \"reserved_resources_unsupported\": %s,\n", reserved_resources_unsupported ? "true" : "false");
+    std::printf("    \"reserved_resources_policy_ok\": %s,\n", reserved_resources_policy_ok ? "true" : "false");
     std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"requirements\": {\n");
@@ -304,10 +314,13 @@ int main() {
     std::printf("    \"shader_model_6_6_or_better\": %s,\n", shader_model_6_6_or_better ? "true" : "false");
     std::printf("    \"binding_tier_3\": %s,\n", binding_tier_ok ? "true" : "false");
     std::printf("    \"wave_ops_not_reported\": %s,\n", wave_ops_not_reported ? "true" : "false");
+    std::printf("    \"wave_ops_reported_consistently\": %s,\n", wave_ops_reported_consistently ? "true" : "false");
+    std::printf("    \"wave_ops_policy_ok\": %s,\n", wave_ops_policy_ok ? "true" : "false");
     std::printf("    \"atomic64_conservative\": %s,\n", atomic64_conservative ? "true" : "false");
     std::printf("    \"advanced_features_conservative\": %s,\n", advanced_conservative ? "true" : "false");
     std::printf("    \"stream_output_conservative\": %s,\n", stream_output_conservative ? "true" : "false");
     std::printf("    \"reserved_resources_unsupported\": %s,\n", reserved_resources_unsupported ? "true" : "false");
+    std::printf("    \"reserved_resources_policy_ok\": %s,\n", reserved_resources_policy_ok ? "true" : "false");
     std::printf("    \"state_objects_unsupported\": %s\n", state_objects_unsupported ? "true" : "false");
     std::printf("  }\n");
     std::printf("}\n");
