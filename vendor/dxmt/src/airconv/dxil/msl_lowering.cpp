@@ -4309,7 +4309,17 @@ std::optional<TypedMSLShader> MSLLowering::lower(
                 auto decl_it = ctx.function_decls.find(callee);
                 if (decl_it != ctx.function_decls.end()) callee_name = decl_it->second;
                 else if (callee < ctx.value_table.size()) callee_name = ctx.value_table[callee];
+                if (callee_name.empty()) {
+                    for (const auto &dfn : module.functions) {
+                        if (dfn.value_id == callee && dfn.is_declaration) {
+                            callee_name = dfn.name;
+                            break;
+                        }
+                    }
+                }
                 uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
+                if (intrinsic_id == 0 && startsWith(callee_name, "dx.op.") && inst.operands.size() > 2)
+                    intrinsic_id = literalFromValue(ctx, inst.operands[2], 0);
                 if (intrinsic_id != 0 && inst.operands.size() > 2) {
                     std::vector<uint32_t> fn_args;
                     if (intrinsic_id == DXOP_Unary || intrinsic_id == DXOP_Binary ||
@@ -4378,6 +4388,29 @@ std::optional<TypedMSLShader> MSLLowering::lower(
             return false;
         default:
             break;
+        }
+
+        if (inst.opcode == LLVMInstruction::Call && !inst.operands.empty()) {
+            std::string call_name;
+            uint32_t callee = inst.operands[0];
+            auto decl_it = ctx.function_decls.find(callee);
+            if (decl_it != ctx.function_decls.end())
+                call_name = decl_it->second;
+            else if (callee < ctx.value_table.size())
+                call_name = ctx.value_table[callee];
+            if (call_name.empty()) {
+                for (const auto &dfn : module.functions) {
+                    if (dfn.value_id == callee && dfn.is_declaration) {
+                        call_name = dfn.name;
+                        break;
+                    }
+                }
+            }
+            uint32_t intrinsic_id = intrinsicIdFromCalleeName(call_name);
+            if (intrinsic_id == DXOP_TextureStore || intrinsic_id == DXOP_BufferStore ||
+                intrinsic_id == DXOP_RawBufferStore || intrinsic_id == DXOP_Barrier ||
+                intrinsic_id == 225 || intrinsic_id == 1026)
+                return false;
         }
 
         MSLType type = resultTypeForPredecl(inst);

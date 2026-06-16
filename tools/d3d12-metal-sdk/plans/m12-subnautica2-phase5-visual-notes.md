@@ -105,3 +105,47 @@ Next repair order:
 2. Re-run a no-game/offline replay or targeted compiler probe first.
 3. Only then perform another hash-gated Subnautica 2 visual retest.
 4. If the black window persists after the atomic fix, investigate the two zero-stride unsafe draw skips as the next visual blocker.
+
+## Offline atomic typing fix proof — 2026-06-16
+
+Patch target:
+
+```text
+vendor/dxmt/src/airconv/dxil/msl_lowering.cpp
+```
+
+The dispatch predeclare pass now treats void DX ops as non-producing calls so the predeclared SSA value numbering stays aligned with call emission. This prevents the atomic return value for `c117351693325b0b` from being polluted by a later pointer use.
+
+Proof artifact:
+
+```text
+tools/d3d12-metal-sdk/results/phase5-subnautica-visual/atomic-fix-c117351693325b0b-20260616-023722/atomic-fix-summary.md
+```
+
+Result:
+
+```text
+ok=true
+shader=c117351693325b0b
+air_exists=true
+atomic_predecl_uint=true
+bad_atomic_pointer_assignment=false
+metal_error_count=0
+```
+
+The fixed generated MSL predeclares the atomic result as `uint`:
+
+```text
+uint v114 = 0u; // dispatch pre-decl
+v114 = atomic_fetch_add_explicit(...);
+```
+
+Validation performed without staging runtime DLLs:
+
+```text
+ninja -C vendor/dxmt/build-metalsharp-x64 src/airconv/darwin/airconv
+ninja -C vendor/dxmt/build-metalsharp-x64 src/d3d12/d3d12.dll
+xcrun -sdk macosx metal -std=macos-metal2.4 -c -x metal c117351693325b0b.fixed.msl
+```
+
+Next step remains hash-gated runtime staging and a Subnautica 2 visual retest only after deciding to stage this narrow fix.
