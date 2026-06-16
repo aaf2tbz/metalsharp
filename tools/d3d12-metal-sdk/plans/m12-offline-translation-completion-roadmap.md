@@ -921,3 +921,86 @@ PEAK          ok=true missing=[]
 ```
 
 Phase 2 is complete for known retail Agility and pinned DXC. Preview Agility payloads and DirectX sample-source acquisition remain optional future expansion, not required before starting Phase 3.
+
+## Four-game baseline expansion — Obj-C nil-array guard — 2026-06-15
+
+After Phase 2 made PEAK/Schedule I staging valid, both games still failed before useful reports with:
+
+```text
+NSInvalidArgumentException: -[__NSPlaceholderArray initWithObjects:count:]: attempt to insert nil object from objects[1]
+```
+
+Root class:
+
+- Winemetal was constructing Objective-C `NSArray` objects directly from raw C handle arrays for linked functions and binary archives.
+- If any C-side handle was `0`, Objective-C raised before DXMT could return a normal failed PSO/status.
+- This was an Obj-C bridge robustness issue, not a payload staging issue.
+
+Runtime change:
+
+- Added `winemetal_array_from_handles(...)` in `vendor/dxmt/src/winemetal/unix/winemetal_unix.c`.
+- It filters nil handles, logs label/index/count, and returns nil if all entries are nil.
+- Replaced raw `[NSArray arrayWithObjects:... count:...]` calls in compute/render/mesh/tile PSO paths.
+- Added `@try/@catch` around compute and render PSO creation, matching the existing mesh exception handling style.
+
+Preserved pre-change runtime:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/pre-objc-array-guard-20260615-224259
+```
+
+New staged runtime hash:
+
+```text
+d3d12.dll sha256=c8786bd25a4be2d6893967b3c0e2d5b19763579e1ee3c8408129dd854ab57ec2
+```
+
+Four-game bounded smoke artifacts on the patched runtime:
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/elden-ring-smoke-20260615-224539/perf-analysis.md
+tools/d3d12-metal-sdk/results/perf-runs/subnautica-2-smoke-20260615-224700/perf-analysis.md
+tools/d3d12-metal-sdk/results/perf-runs/peak-smoke-20260615-224331/perf-analysis.md
+tools/d3d12-metal-sdk/results/perf-runs/schedule-1-smoke-20260615-224423/perf-analysis.md
+```
+
+Results:
+
+```text
+Elden Ring:
+  drawn/present=28/28
+  render_pso_failed=0
+  dxil_msl_compile_failed=0
+  vertex_descriptor_missing=0
+  vs_ps_varying_mismatch=0
+  unsafe_draw_skips=0
+
+Subnautica 2:
+  drawn/present=6/7
+  render_pso_failed=0
+  dxil_msl_compile_failed=40
+  vertex_descriptor_missing=0
+  vs_ps_varying_mismatch=0
+  unsafe_draw_skips=0
+
+PEAK:
+  no Obj-C nil-array abort after guard
+  drawn/present=0/0
+  later failure: Wine page fault after D3D11/DXMT init
+
+Schedule I:
+  no Obj-C nil-array abort after guard
+  drawn/present=0/0
+  later failure: frame-0 PSO/device error
+  `MTLCommandBufferErrorDomain Code=8 Insufficient Memory`
+```
+
+Classification update:
+
+- PEAK and Schedule I should now be included in the wide-gap baseline.
+- They are not yet visual/perf targets, but they are no longer blocked by Agility staging or Obj-C bridge abort.
+- Next wide-gap fixes:
+  1. PEAK D3D11/Wine page fault after swapchain/device init.
+  2. Schedule I frame-0 PSO/device error / Metal command-buffer OOM.
+  3. Subnautica 2 compute DXIL→MSL failures.
+  4. Elden Ring character-creation live hang.
