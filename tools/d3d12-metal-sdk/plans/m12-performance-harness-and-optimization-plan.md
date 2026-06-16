@@ -1000,3 +1000,52 @@ Next work should combine correctness and performance harnessing:
 1. Elden Ring long interactive character-creation crash capture.
 2. Subnautica 2 compute-failure classification and visual-output diagnosis.
 3. Continue performance-pressure instrumentation only after these scenario-specific failures are understood.
+
+## Elden Ring character creation is a live hang, not process exit — 2026-06-15
+
+Revision from interactive testing:
+
+- Elden Ring does **not** crash/exit on its own at character creation.
+- It remains open and rendered but becomes hung/unresponsive.
+- Treat this as a live-process hang / UI deadlock / GPU-CPU synchronization stall until evidence says otherwise.
+
+Harness update:
+
+```text
+tools/d3d12-metal-sdk/scripts/m12-live-state-capture.sh
+```
+
+Purpose:
+
+- capture a live/hung M12 game state without killing it
+- sample process CPU/RSS/thread count
+- preserve latest launch log tail and interesting M12 lines
+- preserve runtime and game-local DLL hashes
+- preserve cache counts, MSL error counts, and fail marker counts
+
+Updated Elden Ring character creation markers:
+
+```text
+launch_started
+first_present
+main_menu_visible
+load_started
+character_creation_visible
+menu_first_click_attempt
+menu_hung
+live_capture_started
+manual_kill_requested
+run_stopped
+```
+
+Next Elden Ring procedure:
+
+1. Launch normally with the working `8cdcec...` runtime.
+2. User navigates to character creation until the menu hangs.
+3. Without killing the game, run:
+
+```text
+tools/d3d12-metal-sdk/scripts/m12-live-state-capture.sh --profile elden-ring --label character-creation-hung --seconds 15
+```
+
+4. Then kill manually after capture.

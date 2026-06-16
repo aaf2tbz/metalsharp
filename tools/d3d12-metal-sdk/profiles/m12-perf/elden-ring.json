@@ -10,15 +10,36 @@
   "scenarios": {
     "smoke": {
       "seconds": 60,
-      "markers": ["launch_started", "first_present", "run_stopped"]
+      "markers": [
+        "launch_started",
+        "first_present",
+        "run_stopped"
+      ]
     },
     "character-creation": {
       "seconds": 300,
-      "markers": ["launch_started", "first_present", "main_menu_visible", "load_started", "character_creation_visible", "menu_first_click_attempt", "menu_unresponsive", "menu_responsive_again", "run_stopped"]
+      "markers": [
+        "launch_started",
+        "first_present",
+        "main_menu_visible",
+        "load_started",
+        "character_creation_visible",
+        "menu_first_click_attempt",
+        "menu_hung",
+        "live_capture_started",
+        "manual_kill_requested",
+        "run_stopped"
+      ]
     },
     "loading-to-gameplay": {
       "seconds": 240,
-      "markers": ["launch_started", "first_present", "load_started", "gameplay_visible", "run_stopped"]
+      "markers": [
+        "launch_started",
+        "first_present",
+        "load_started",
+        "gameplay_visible",
+        "run_stopped"
+      ]
     }
   }
 }
