@@ -1366,3 +1366,145 @@ new staged d3d12.dll sha256:
 ```
 
 Phase 3 is complete for the known Subnautica 2 MSL error corpus. Next validation should be a controlled bounded Subnautica 2 run with the patched runtime to confirm runtime-side `dxil_msl_compile_failed` drops, followed by a four-game no-regression smoke.
+
+## Phase 3.5 implementation result — Apple Metal docs diagnostic gate foundation — 2026-06-16
+
+Implemented the first Apple-doc-backed Phase 3.5 diagnostic/audit foundation. These tools are read-only for live shader caches and write reports only under result directories.
+
+New plan:
+
+```text
+tools/d3d12-metal-sdk/plans/m12-apple-metal-docs-integration-plan.md
+```
+
+New tools:
+
+```text
+tools/d3d12-metal-sdk/scripts/audit-m12-metal-errors.py
+tools/d3d12-metal-sdk/scripts/audit-m12-vertex-descriptors.py
+tools/d3d12-metal-sdk/scripts/verify-m12-cache-freshness.py
+tools/d3d12-metal-sdk/scripts/analyze-m12-live-hang.py
+```
+
+Default Phase 3.5 inputs:
+
+```text
+~/.metalsharp/shader-cache/m12/1245620        # Elden Ring live cache
+~/.metalsharp/shader-cache/m12/1962700        # Subnautica 2 live cache
+~/.metalsharp/shader-cache/m12/1888160        # Armored Core VI live cache
+/Volumes/AverySSD/MetalSharp-M12-CorpusLab/elden-ring-scratch/stable-20260615-192733
+```
+
+Generated evidence:
+
+```text
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/metal-errors/metal-errors.md
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/vertex-descriptors/vertex-descriptors.md
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/cache-freshness/cache-freshness.md
+tools/d3d12-metal-sdk/results/phase3.5-apple-metal-docs/live-hang/live-hang-analysis.md
+```
+
+Metal error audit result:
+
+```text
+events=921
+render_pso_failure=720
+metal_library_compile_error=189
+msl_ctz_ambiguous=12
+```
+
+Important interpretation:
+
+- Armored Core VI's four current shader failures are now explicitly classifiable as `msl_ctz_ambiguous` instead of generic MSL compile failures.
+- The audit preserves Apple `NSError` domain/code/text where present and identifies places where runtime logs still need richer M12 context.
+- Older Subnautica 2 `.msl.err.txt` artifacts remain visible in the live cache even though the current runtime smoke reached zero DXIL/MSL compile failures. Cache freshness tooling must distinguish active from stale errors.
+
+Vertex descriptor audit result:
+
+```text
+elden-ring-live:       render_psos=1216  missing_vertex_msl=23  ok_or_vertex_pulling=1193
+subnautica-2-live:     render_psos=1     ok_or_vertex_pulling=1
+armored-core-vi-live:  render_psos=483   missing_vertex_msl=10  ok_or_vertex_pulling=473
+elden-ring-scratch:    render_psos=1172  missing_vertex_msl=22  ok_or_vertex_pulling=1150
+```
+
+Important interpretation:
+
+- Current Elden Ring and AC6 render PSO manifests are mostly internally sane from available offline evidence.
+- `missing_vertex_msl` means a render PSO manifest references a vertex shader hash whose `.msl` file is absent from the cache input; it is not the same as runtime `vertex_descriptor_missing`.
+- Future runtime `vertex_descriptor_missing` or `vs_ps_varying_mismatch` should be correlated with this audit plus reflected Metal attributes and final `MTLVertexDescriptor` dumps.
+
+Cache freshness audit result:
+
+```text
+runtime d3d12.dll sha256=2612e228a5efa9d65f6923b3ed1cc50b1c6ce40abb2c0043c51d32ec5b60dd7c
+elden-ring-live:       shaders=1619 metallib_older_than_msl=235 dxbc_without_msl=2
+subnautica-2-live:     shaders=776  has_msl_error=99 active_msl_error=39 stale_msl_error_older_than_msl=60
+armored-core-vi-live:  shaders=556  has_msl_error=4 active_msl_error=4 dxbc_without_msl=1
+elden-ring-scratch:    shaders=1611 dxbc_without_msl=2
+```
+
+Required cache key contract recorded from Apple's `MTLBinaryArchive`/pipeline descriptor model:
+
+```text
+device_identity
+os_version
+metal_family_or_sdk
+translator_commit_or_epoch
+dxbc_sha256
+generated_msl_sha256
+entry_point
+function_constants
+render_or_compute_descriptor_state
+vertex_descriptor_state
+attachment_formats
+sample_count
+root_signature_hash
+```
+
+Elden Ring live-hang analyzer result:
+
+```text
+capture=tools/d3d12-metal-sdk/results/live-captures/elden-ring-character-creation-hung-20260615-221626
+categories=present_progress_observed, submission_without_completion_evidence
+max_present_number=960
+command/progress lines found=80
+Apple command-buffer errors near capture=0
+pipeline/translation errors near capture=0
+```
+
+Important interpretation:
+
+- The captured Elden Ring character-creation issue still looks like a live no-progress/hang, not a shader compile or PSO creation failure.
+- Current capture artifacts do not include enough command-buffer completion/status/encoder/fence data to reduce the hang to a queue/wait state.
+- Runtime logging gaps to close:
+
+```text
+command_buffer_label
+command_buffer_status
+command_buffer_error_domain_code_userInfo
+encoder_info
+queue_id
+command_list_id
+last_submitted_serial
+last_completed_serial
+present_count_at_submit
+fence_event_wait_state
+```
+
+Phase 4 probe requirements generated by this gate:
+
+1. Command-buffer diagnostics probe with Apple domain/code/userInfo/encoder info.
+2. Resource declaration/hazard probe covering indirect resources, heaps, and aliasing.
+3. Heap/storage synchronization probe for upload/readback/fence/event ordering.
+4. Vertex descriptor reconstruction probe with sparse/multi-slot/per-instance attributes.
+5. Binary archive/cache freshness probe for descriptor-affecting state changes.
+6. Capture/validation record probe that records Metal API Validation/GPU capture/System Trace status.
+
+Remaining Phase 3.5 runtime work before broad Phase 4:
+
+- Add richer runtime Metal failure context around library/function/PSO creation and command-buffer completion.
+- Add compact failed/first-use PSO descriptor dumps if missing from current runtime paths.
+- Add final `MTLVertexDescriptor`/reflected attribute dump linkage to PSO artifacts.
+- Add cache-key enforcement beyond the offline verifier.
+- Define explicit capture/API validation env hooks, off by default.
