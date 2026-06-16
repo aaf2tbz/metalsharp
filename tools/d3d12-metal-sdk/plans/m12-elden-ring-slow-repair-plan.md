@@ -360,3 +360,61 @@ render-000dffeebad6e96c
 Implication:
 
 The runtime should not guess a synthetic all-Float4 vertex descriptor. A safe fix likely needs a Winemetal reflection API that exposes `MTLFunction.vertexAttributes` to the D3D12 pipeline builder, then an env-gated descriptor path that constructs a descriptor from actual Metal function attributes. This API can be added unused-by-default before any behavior change.
+
+## Reflected vertex descriptor gated test — 2026-06-15
+
+Implemented two commits:
+
+```text
+4772fbf feat: expose Metal vertex attribute reflection
+1f2c8d1 fix: gate reflected M12 vertex descriptors
+```
+
+The first commit adds an inert Winemetal API for `MTLFunction.vertexAttributes`. The second uses it only when:
+
+```text
+DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=1
+```
+
+Default-off bounded launch after staging the candidate rendered:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-194241/summary.md
+present_count=23
+drawn_present_count=23
+render_pso_failed=410
+vertex_descriptor_missing=482
+vs_ps_varying_mismatch=338
+unsafe_draw_skips=0
+```
+
+True gate-on test required restarting the backend with:
+
+```bash
+METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=1
+```
+
+Gate-on bounded launch rendered but is not shippable:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-194702/summary.md
+present_count=23
+drawn_present_count=23
+render_pso_failed=308
+vertex_descriptor_missing=2
+vs_ps_varying_mismatch=690
+unsafe_draw_skips=79
+```
+
+Interpretation:
+
+- The reflected vertex descriptor path addresses the missing vertex descriptor class.
+- It exposes or worsens VS/PS varying mismatch failures and causes unsafe draw skips.
+- Therefore the descriptor gate must remain opt-in and off by default.
+- Next repair target should be VS/PS signature compatibility for the newly unblocked PSOs, not further descriptor guessing.
+
+Environment reset after the gate-on test:
+
+- Backend restarted without `METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR`.
+- Live shader cache restored from the pre-test snapshot:
+  `/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-pre-reflected-descriptor-test-20260615-194234`.
