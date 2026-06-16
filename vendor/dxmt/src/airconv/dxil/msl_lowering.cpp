@@ -848,6 +848,27 @@ static bool exprContainsPointerTypedValue(const LowerContext &ctx, const std::st
     return false;
 }
 
+static bool exprContainsThreadgroupPointerTypedValue(const LowerContext &ctx, const std::string &value) {
+    size_t pos = value.find('v');
+    while (pos != std::string::npos) {
+        bool start_ok = pos == 0 ||
+            (!std::isalnum((unsigned char)value[pos - 1]) && value[pos - 1] != '_');
+        size_t end = pos + 1;
+        while (end < value.size() && std::isdigit((unsigned char)value[end]))
+            end++;
+        bool has_digits = end > pos + 1;
+        bool end_ok = end >= value.size() ||
+            (!std::isalnum((unsigned char)value[end]) && value[end] != '_');
+        if (start_ok && has_digits && end_ok) {
+            MSLType type = typeForResolvedValueName(ctx, value.substr(pos, end - pos));
+            if (type.kind == MSLTypeKind::ThreadgroupCharPtr)
+                return true;
+        }
+        pos = value.find('v', pos + 1);
+    }
+    return false;
+}
+
 static MSLType firstVectorTypedValueType(const LowerContext &ctx, const std::string &value) {
     size_t pos = value.find('v');
     while (pos != std::string::npos) {
@@ -1071,8 +1092,7 @@ static std::string vectorZeroForExpression(const std::string &value) {
         {"int4(", "int4(0)"},
     };
     for (const auto &zero : zeros) {
-        if (startsWith(stripped, zero.first) ||
-            stripped.find(zero.first) != std::string::npos)
+        if (startsWith(stripped, zero.first))
             return zero.second;
     }
     if (stripped.find("reinterpret_cast<device float4&>") != std::string::npos ||
@@ -1084,6 +1104,10 @@ static std::string vectorZeroForExpression(const std::string &value) {
         return "uint4(0)";
     if (stripped.find("reinterpret_cast<device int4&>") != std::string::npos)
         return "int4(0)";
+    for (const auto &zero : zeros) {
+        if (stripped.find(zero.first) != std::string::npos)
+            return zero.second;
+    }
     return "";
 }
 
@@ -1727,7 +1751,9 @@ static std::string textureCoordComponent(LowerContext &ctx,
                                          uint32_t component) {
     std::string sanitized = sanitizeThreadVectorCasts(value);
     MSLType source_type = typeForResolvedExpression(ctx, sanitized);
-    if (DXILIRBuilder::isVectorType(source_type))
+    if (typeLooksResourceHandle(source_type))
+        sanitized = "0";
+    else if (DXILIRBuilder::isVectorType(source_type))
         sanitized = componentAccess(sanitized, component, source_type);
     else if (exprLooksVectorValue(sanitized))
         sanitized = "(" + sanitized + ")" + componentSuffix(component);
@@ -1739,7 +1765,9 @@ static std::string sampleCoordComponent(LowerContext &ctx,
                                         uint32_t component) {
     std::string sanitized = sanitizeThreadVectorCasts(value);
     MSLType source_type = typeForResolvedExpression(ctx, sanitized);
-    if (DXILIRBuilder::isVectorType(source_type))
+    if (typeLooksResourceHandle(source_type))
+        sanitized = "0";
+    else if (DXILIRBuilder::isVectorType(source_type))
         sanitized = componentAccess(sanitized, component, source_type);
     else if (exprLooksVectorValue(sanitized))
         sanitized = "(" + sanitized + ")" + componentSuffix(component);
@@ -2654,14 +2682,27 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case 78: {
         if (args.size() < 4) return "0";
         auto handle = handleArg(1, "buf", "buf0");
-        auto off = ensureScalarIndex(numericArg(2, "0"));
+        auto off_raw = ensureScalarIndex(numericArg(2, "0"));
+        MSLType off_type = typeForResolvedExpression(ctx, off_raw);
+        if (DXILIRBuilder::isVectorType(off_type))
+            off_raw = "(" + off_raw + ").x";
+        if (typeLooksResourceHandle(off_type))
+            off_raw = "0";
+        auto off = "static_cast<int>(" + off_raw + ")";
         auto val = ensureScalarIndex(numericArg(3, "0"));
         return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + off + ")), (uint)(" + val + "), memory_order_relaxed)";
     }
     case 79: {
         if (args.size() < 2) return "0";
         auto handle = handleArg(0, "buf", "buf0");
-        return "atomic_load_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + ensureScalarIndex(valueArg(1, "0")) + ")), memory_order_relaxed)";
+        std::string off_raw = ensureScalarIndex(valueArg(1, "0"));
+        MSLType off_type = typeForResolvedExpression(ctx, off_raw);
+        if (DXILIRBuilder::isVectorType(off_type))
+            off_raw = "(" + off_raw + ").x";
+        if (typeLooksResourceHandle(off_type))
+            off_raw = "0";
+        std::string off = "static_cast<int>(" + off_raw + ")";
+        return "atomic_load_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + off + ")), memory_order_relaxed)";
     }
     case 75: case 76: case 97: case 98: return "0.5";
     case 77: return "1";
@@ -3080,6 +3121,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
 
     auto coerceOperand = [&](uint32_t idx, const MSLType &target) -> std::string {
         std::string value = getValue(idx);
+        if (idx >= value_counter) {
+            MSLType fallback = isUsableType(target) ? target : MSLType{MSLTypeKind::Int, 0, {}};
+            return defaultForType(fallback);
+        }
         MSLType source = operandType(idx);
         uint32_t resolved_id = 0;
         if (!typeLooksResourceHandle(source) &&
@@ -3117,6 +3162,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return castExpr(value, target);
         if (!isUsableType(target) || target.kind == source.kind)
             return value;
+
+        if (DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(value)) {
+            MSLType inferred = inferTypeFromExpr(value);
+            if (DXILIRBuilder::isVectorType(inferred) &&
+                (DXILIRBuilder::vectorWidth(inferred) != DXILIRBuilder::vectorWidth(target) ||
+                 DXILIRBuilder::scalarType(inferred).kind != DXILIRBuilder::scalarType(target).kind))
+                return coerceVectorWidth(value, inferred, target);
+            return castExpr(value, target);
+        }
 
         if (isPointerType(source)) {
             if (DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target))
@@ -3225,7 +3279,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         if (type.kind == MSLTypeKind::ThreadgroupCharPtr)
             return "threadgroup";
         std::string value = getValue(idx);
-        if (startsWith(value, "(threadgroup") || startsWith(value, "threadgroup"))
+        if (startsWith(value, "(threadgroup") || startsWith(value, "threadgroup") ||
+            exprContainsThreadgroupPointerTypedValue(ctx, value))
             return "threadgroup";
         if (startsWith(value, "(thread") || startsWith(value, "thread"))
             return "thread";
@@ -3332,14 +3387,17 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     fallback_type = getTypeForInst(inst.type_id);
                 if (!isUsableType(fallback_type))
                     fallback_type = {MSLTypeKind::Int, 0, {}};
+                auto pre_it = ctx.predeclared_types.find(result);
                 if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end()) {
-                    os << "  " << result << " = " << defaultForType(fallback_type) << ";\n";
+                    MSLType target_type = pre_it != ctx.predeclared_types.end() ? pre_it->second : fallback_type;
+                    os << "  " << result << " = " << defaultForType(target_type) << ";\n";
+                    ctx.value_types[value_counter] = target_type;
                 } else {
                     os << "  " << typedDecl(result, fallback_type) << " = "
                        << defaultForType(fallback_type) << ";\n";
+                    ctx.value_types[value_counter] = fallback_type;
                 }
                 ctx.value_table[value_counter] = result;
-                ctx.value_types[value_counter] = fallback_type;
             } else if (translated.find('=') == std::string::npos) {
                 if (!translated.empty() && translated[0] != ' ') {
                     bool is_resource_handle = startsWith(translated, "buf") ||
@@ -3370,10 +3428,13 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             if (!isUsableType(result_type))
                 result_type = {MSLTypeKind::Int, 0, {}};
             if (inst.type_id != 0) {
-                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
-                    os << "  " << result << " = " << defaultForType(result_type) << "; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
-                else
-                    os << "  " << typedDecl(result, result_type) << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                auto pre_it = ctx.predeclared_types.find(result);
+                if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end()) {
+                    MSLType target_type = pre_it != ctx.predeclared_types.end() ? pre_it->second : result_type;
+                    result_type = target_type;
+                    os << "  " << result << " = " << defaultForType(target_type) << "; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
+                } else
+                    os << "  " << typedDecl(result, result_type) << " = " << defaultForType(result_type) << "; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
             } else {
                 os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
                 result_type = {MSLTypeKind::Int, 0, {}};
@@ -3795,6 +3856,25 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 inst.opcode == LLVMInstruction::FCmp ? MSLTypeKind::Float : MSLTypeKind::Int);
             auto lhs = coerceOperand(inst.operands[1], cmp_type);
             auto rhs = coerceOperand(inst.operands[2], cmp_type);
+            MSLType lhs_expr_type = typeForResolvedExpression(ctx, lhs);
+            if (!DXILIRBuilder::isVectorType(lhs_expr_type))
+                lhs_expr_type = inferTypeFromExpr(lhs);
+            MSLType rhs_expr_type = typeForResolvedExpression(ctx, rhs);
+            if (!DXILIRBuilder::isVectorType(rhs_expr_type))
+                rhs_expr_type = inferTypeFromExpr(rhs);
+            MSLType compare_vector_type = DXILIRBuilder::isVectorType(lhs_expr_type) ? lhs_expr_type :
+                (DXILIRBuilder::isVectorType(rhs_expr_type) ? rhs_expr_type : MSLType{});
+            if (DXILIRBuilder::isVectorType(compare_vector_type)) {
+                if (!DXILIRBuilder::isVectorType(lhs_expr_type))
+                    lhs = castExpr(lhs, compare_vector_type);
+                else if (lhs_expr_type.kind != compare_vector_type.kind)
+                    lhs = coerceVectorWidth(lhs, lhs_expr_type, compare_vector_type);
+                if (!DXILIRBuilder::isVectorType(rhs_expr_type))
+                    rhs = castExpr(rhs, compare_vector_type);
+                else if (rhs_expr_type.kind != compare_vector_type.kind)
+                    rhs = coerceVectorWidth(rhs, rhs_expr_type, compare_vector_type);
+                cmp_type = compare_vector_type;
+            }
             const char *cmp = "==";
             MSLType result_type = {MSLTypeKind::Bool, 0, {}};
             std::string cmp_result;
@@ -3920,6 +4000,9 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             if (startsWith(ptr, "tex") || startsWith(ptr, "samp") ||
                 exprContainsRawResourceHandle(ptr) || exprLooksScalarLiteral(ptr)) {
                 os << "  // skipped store through resource handle " << ptr << "\n";
+            } else if (isUsableType(ptr_name_type) && !isPointerType(ptr_name_type) &&
+                       !exprContainsPointerSyntax(ptr)) {
+                os << "  // skipped store through resolved non-pointer " << ptr << "\n";
             } else if (isPointerType(val_type) || typeLooksResourceHandle(val_type) ||
                        exprLooksResourceHandle(val) || exprContainsRawResourceHandle(val)) {
                 os << "  // skipped store of pointer/resource value " << val << "\n";

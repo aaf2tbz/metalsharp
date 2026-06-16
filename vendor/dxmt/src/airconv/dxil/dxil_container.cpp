@@ -20,7 +20,7 @@ dxmt_dxil_open_trace_log(const char *fallback_name) {
 namespace dxmt::dxil {
 
 std::optional<DXILContainer> DXILContainer::parse(const void *data, size_t size) {
-  if (!data || size < 16)
+  if (!data || size < 24)
     return std::nullopt;
 
   auto *base = static_cast<const uint8_t *>(data);

@@ -1004,3 +1004,89 @@ Classification update:
   2. Schedule I frame-0 PSO/device error / Metal command-buffer OOM.
   3. Subnautica 2 compute DXIL→MSL failures.
   4. Elden Ring character-creation live hang.
+
+## Phase 3 implementation result — Subnautica 2 compute MSL closure — 2026-06-15
+
+Implemented the first Phase 3 offline DXIL/MSL gauntlet and translation fixes.
+
+Tooling added/extended:
+
+```text
+tools/d3d12-metal-sdk/scripts/m12-translation-gauntlet.py
+vendor/dxmt/src/airconv/airconv_cli.cpp --emit-msl
+```
+
+`airconv --emit-msl` now unwraps DXBC containers, extracts the DXIL chunk, parses DXIL bitcode, runs `MSLLowering`, and emits generated MSL to a scratch path. This gives Phase 3 a no-game no-cache-mutation regeneration loop.
+
+Initial read-only corpus result:
+
+```text
+Subnautica 2 live cache:
+  dxbc=775
+  msl=774
+  dxil_reports=774
+  pso_json=674
+  msl_errors=99
+```
+
+Original Subnautica 2 MSL failure classes:
+
+```text
+msl_vector_type_conversion=36
+msl_threadgroup_assignment=23
+msl_threadgroup_pointer=20
+msl_compile_error_other=9
+msl_address_space=8
+msl_undeclared_identifier=1
+msl_vector_scalar_conversion=1
+msl_type_conversion=1
+```
+
+Translation fixes made in `vendor/dxmt/src/airconv/dxil/msl_lowering.cpp`:
+
+- Skip stores through resolved non-pointer variables instead of emitting pointer stores through integer/math values.
+- Honor predeclared target type for unsupported call fallbacks, preventing float defaults from being assigned into `threadgroup char*` variables.
+- Infer threadgroup address space through referenced typed values inside pointer expressions such as `v389 + offset`.
+- Coerce vector-looking operands to target vector type when tracked source type is unknown.
+- Prefer outer vector constructor type when choosing zero vectors for bool coercion; avoid nested `tex.read()` causing `int4(...) != float4(0)`.
+- Coerce future/self operand references to typed zero to avoid undeclared forward references.
+- Coerce atomic buffer offsets through scalar/vector `.x` and integer casts before pointer arithmetic.
+- Default resource/pointer values used as texture coordinates to zero instead of casting `device char*` to uint.
+
+Scratch-only validation, no game launches and no live cache mutation:
+
+```text
+tools/d3d12-metal-sdk/results/m12-translation-gauntlet/phase3-patched-99-20260615-231519/summary.md
+```
+
+Intermediate result before final vector-zero fix:
+
+```text
+total=99
+ok=83
+fail=16
+remaining=vector_type_conversion
+```
+
+Final Phase 3 Subnautica 2 result:
+
+```text
+tools/d3d12-metal-sdk/results/m12-translation-gauntlet/phase3-patched-99-20260615-231641/summary.md
+
+total=99
+ok=99
+fail=0
+emitfail=0
+```
+
+Runtime state:
+
+```text
+pre-change runtime preserved at:
+/Volumes/AverySSD/MetalSharp-M12-Preserved/pre-phase3-msl-lowering-20260615-231721
+
+new staged d3d12.dll sha256:
+341ddc23256a0f94e17a20aa74331dc0271927ee434fb473ca041f4341c5b117
+```
+
+Phase 3 is complete for the known Subnautica 2 MSL error corpus. Next validation should be a controlled bounded Subnautica 2 run with the patched runtime to confirm runtime-side `dxil_msl_compile_failed` drops, followed by a four-game no-regression smoke.

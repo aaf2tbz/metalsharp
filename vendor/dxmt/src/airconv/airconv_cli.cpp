@@ -16,11 +16,15 @@
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/WithColor.h"
 #include <system_error>
+#include <cstring>
 
 #ifdef __WIN32
 #include "d3dcompiler.h"
 #endif
 #include "dxbc_converter.hpp"
+#include "dxil/dxil_container.hpp"
+#include "dxil/llvm_bitcode.hpp"
+#include "dxil/msl_lowering.hpp"
 
 using namespace llvm;
 
@@ -51,6 +55,9 @@ static cl::opt<bool>
 
 static cl::opt<bool>
   EmitMetallib("A", cl::init(false), cl::desc("Write output as .metallib"));
+
+static cl::opt<bool>
+  EmitMSL("emit-msl", cl::init(false), cl::desc("Write DXIL input as generated MSL source"));
 
 static cl::opt<bool> DisassembleDXBC(
   "disas-dxbc", cl::init(false), cl::desc("Disassemble dxbc shader")
@@ -154,6 +161,7 @@ int main(int argc, char **argv) {
                                                 : IFN)
                          .str();
       OutputFilename += DisassembleDXBC ? ".txt"
+                        : EmitMSL       ? ".msl"
                         : EmitMetallib  ? ".metallib"
                         : EmitLLVM      ? ".ll"
                                         : ".air";
@@ -171,6 +179,77 @@ int main(int argc, char **argv) {
     return 1;
   }
   auto MemRef = FileOrErr->get()->getMemBufferRef();
+
+  if (EmitMSL) {
+    const uint8_t *dxilData = reinterpret_cast<const uint8_t *>(MemRef.getBufferStart());
+    size_t dxilSize = MemRef.getBufferSize();
+    if (dxilSize >= 32 && std::memcmp(dxilData, "DXBC", 4) == 0) {
+      auto readU32 = [&](size_t offset, uint32_t &value) -> bool {
+        if (offset > dxilSize || dxilSize - offset < sizeof(uint32_t))
+          return false;
+        std::memcpy(&value, dxilData + offset, sizeof(uint32_t));
+        return true;
+      };
+      uint32_t chunkCount = 0;
+      if (!readU32(28, chunkCount)) {
+        errs() << "truncated DXBC header\n";
+        return 1;
+      }
+      size_t offsetTableBytes = static_cast<size_t>(chunkCount) * sizeof(uint32_t);
+      if (dxilSize < 32 || offsetTableBytes > dxilSize - 32) {
+        errs() << "truncated DXBC chunk offset table\n";
+        return 1;
+      }
+      bool foundDxil = false;
+      for (uint32_t i = 0; i < chunkCount; i++) {
+        uint32_t off32 = 0;
+        if (!readU32(32 + static_cast<size_t>(i) * sizeof(uint32_t), off32))
+          break;
+        size_t off = off32;
+        if (off > dxilSize || dxilSize - off < 8)
+          continue;
+        uint32_t fourcc = 0;
+        uint32_t chunkSize32 = 0;
+        if (!readU32(off, fourcc) || !readU32(off + 4, chunkSize32))
+          continue;
+        size_t chunkSize = chunkSize32;
+        if (fourcc == dxmt::dxil::DXIL_FOURCC && chunkSize <= dxilSize - off - 8) {
+          dxilData = dxilData + off + 8;
+          dxilSize = chunkSize;
+          foundDxil = true;
+          break;
+        }
+      }
+      if (!foundDxil) {
+        errs() << "DXBC input does not contain a DXIL chunk\n";
+        return 1;
+      }
+    }
+    auto container = dxmt::dxil::DXILContainer::parse(dxilData, dxilSize);
+    if (!container) {
+      errs() << "input is not a DXIL program\n";
+      return 1;
+    }
+    auto module = dxmt::dxil::BitcodeReader::parse(container->shader().bitcode.data, container->shader().bitcode.size);
+    if (!module) {
+      errs() << "failed to parse DXIL bitcode\n";
+      return 1;
+    }
+    auto lowered = dxmt::dxil::MSLLowering::lower(*module, container->shader());
+    if (!lowered) {
+      errs() << "failed to lower DXIL to MSL\n";
+      return 1;
+    }
+    std::error_code EC;
+    std::unique_ptr<ToolOutputFile> Out(new ToolOutputFile(OutputFilename, EC, sys::fs::OF_Text));
+    if (EC) {
+      errs() << EC.message() << '\n';
+      return 1;
+    }
+    Out->os() << lowered->source;
+    Out->keep();
+    return 0;
+  }
 
   if (DisassembleDXBC) {
 #ifdef __WIN32
