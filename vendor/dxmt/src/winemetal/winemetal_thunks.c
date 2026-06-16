@@ -26,11 +26,33 @@ winemetal_open_log(const char *fallback_name) {
   return fopen(path, "a");
 }
 
+static const char *
+winemetal_unix_call_name(unsigned int code) {
+  switch (code) {
+  case 25: return "MTLDevice_newLibrary";
+  case 29: return "MTLDevice_newComputePipelineState";
+  case 34: return "MTLDevice_newRenderPipelineState";
+  case 35: return "MTLDevice_newMeshRenderPipelineState";
+  case 36: return "MTLBlitCommandEncoder_encodeCommands";
+  case 37: return "MTLComputeCommandEncoder_encodeCommands";
+  case 38: return "MTLRenderCommandEncoder_encodeCommands";
+  case 74: return "SM50Initialize";
+  case 75: return "SM50Destroy";
+  case 76: return "SM50Compile";
+  case 77: return "SM50GetCompiledBitcode";
+  case 78: return "SM50DestroyBitcode";
+  case 79: return "SM50GetErrorMessage";
+  case 80: return "SM50FreeError";
+  default: return "unknown";
+  }
+}
+
 static void
 winemetal_log_unix_status(unsigned int code, NTSTATUS status) {
   FILE *f = winemetal_open_log("winemetal-pe.log");
   if (f) {
-    fprintf(f, "unix_call_failed code=%u status=0x%08lx\n", code, (unsigned long)status);
+    fprintf(f, "unix_call_failed code=%u name=%s status=0x%08lx\n",
+            code, winemetal_unix_call_name(code), (unsigned long)status);
     fclose(f);
   }
 }
@@ -51,6 +73,39 @@ winemetal_unix_call_ok(unsigned int code, void *params) {
     return false;
   }
   return true;
+}
+
+static void
+winemetal_log_render_encode_failure(obj_handle_t encoder, const struct wmtcmd_base *cmd_head) {
+  FILE *f = winemetal_open_log("winemetal-pe.log");
+  if (!f)
+    return;
+  fprintf(f, "render_encode_failed encoder=%llu cmd=%p",
+          (unsigned long long)encoder, (const void *)cmd_head);
+  if (cmd_head) {
+    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type,
+            (void *)cmd_head->next.ptr);
+    if (cmd_head->type == WMTRenderCommandDraw) {
+      const struct wmtcmd_render_draw *body =
+          (const struct wmtcmd_render_draw *)cmd_head;
+      fprintf(f, " draw prim=%u start=%llu count=%llu inst=%u base_inst=%u",
+              (unsigned)body->primitive_type,
+              (unsigned long long)body->vertex_start,
+              (unsigned long long)body->vertex_count,
+              body->instance_count, body->base_instance);
+    } else if (cmd_head->type == WMTRenderCommandDrawIndexed) {
+      const struct wmtcmd_render_draw_indexed *body =
+          (const struct wmtcmd_render_draw_indexed *)cmd_head;
+      fprintf(f, " draw_indexed prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
+              (unsigned)body->primitive_type, (unsigned)body->index_type,
+              (unsigned long long)body->index_count,
+              (unsigned long long)body->index_buffer,
+              (unsigned long long)body->index_buffer_offset,
+              body->instance_count, body->base_vertex, body->base_instance);
+    }
+  }
+  fprintf(f, "\n");
+  fclose(f);
 }
 
 #define PtrToUInt64(v) ((uint64_t)(uintptr_t)(v))
@@ -508,7 +563,10 @@ MTLRenderCommandEncoder_encodeCommands(obj_handle_t encoder, const struct wmtcmd
   params.encoder = encoder;
   WMT_MEMPTR_SET(params.cmd_head, cmd_head);
   winemetal_log_render_encode_call(encoder, cmd_head);
-  return winemetal_unix_call_ok(38, &params);
+  bool ok = winemetal_unix_call_ok(38, &params);
+  if (!ok)
+    winemetal_log_render_encode_failure(encoder, cmd_head);
+  return ok;
 }
 
 WINEMETAL_API enum WMTPixelFormat

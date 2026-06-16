@@ -9,7 +9,8 @@ SECONDS_TO_RUN="20"
 RESULTS_DIR="$SDK_DIR/results"
 BACKEND_URL="${METALSHARP_BACKEND_URL:-http://127.0.0.1:9274}"
 GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/Subnautica2/Binaries/Win64"
-CORPUS_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2/.metalsharp-cache/shader-cache/m12/1962700"
+CORPUS_DIR="${HOME}/.metalsharp/shader-cache/m12/1962700"
+KILL_PATTERN='[S]ubnautica2-Win64-Shipping.exe|[S]ubnautica2|[C]rashReportClient.exe|[c]rashpad_handler.exe'
 START_STEAM=0
 
 usage() {
@@ -26,6 +27,7 @@ Options:
   --game-dir PATH         Win64 game directory for runtime preflight.
   --corpus-dir PATH       Expected shader corpus directory.
   --results-dir PATH      Result output directory.
+  --kill-pattern REGEX    pkill -f regex used before/after capture.
   --start-steam           Ask backend to launch Steam before capture.
   -h, --help              Show this help.
 
@@ -72,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       RESULTS_DIR="$2"
       shift 2
       ;;
+    --kill-pattern)
+      KILL_PATTERN="$2"
+      shift 2
+      ;;
     --start-steam)
       START_STEAM=1
       shift
@@ -90,6 +96,22 @@ done
 
 mkdir -p "$RESULTS_DIR"
 
+kill_matching_processes() {
+  local pattern="$1"
+  [[ -n "$pattern" ]] || return 0
+  pgrep -f "$pattern" 2>/dev/null | while read -r pid; do
+    [[ -n "$pid" ]] || continue
+    case "$pid" in
+      "$$"|"$BASHPID"|"$PPID") continue ;;
+    esac
+    command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    case "$command_line" in
+      *capture-game-shader-corpus.sh*|*m12-game-lab.sh*|*"$pattern"*) continue ;;
+    esac
+    kill -9 "$pid" 2>/dev/null || true
+  done
+}
+
 python3 "$SDK_DIR/scripts/preflight-runtime-layout.py" \
   --profile "$PROFILE" \
   --game-dir "$GAME_DIR" \
@@ -105,10 +127,7 @@ trap cleanup EXIT
 
 find "$CORPUS_DIR" -type f \( -name '*.dxbc' -o -name 'pso-*.json' \) 2>/dev/null | sort > "$before_file" || true
 
-curl -fsS -X POST "$BACKEND_URL/kill" \
-  -H 'Content-Type: application/json' \
-  -d "{\"appid\":$APPID,\"pid\":0}" >/dev/null || true
-pkill -9 -f '[S]ubnautica2-Win64-Shipping.exe|[S]ubnautica2|[C]rashReportClient.exe|[c]rashpad_handler.exe' || true
+kill_matching_processes "$KILL_PATTERN"
 
 if [[ "$START_STEAM" == "1" ]]; then
   curl -fsS -X POST "$BACKEND_URL/steam/launch" \
@@ -123,10 +142,7 @@ curl -fsS -X POST "$BACKEND_URL/steam/launch-game" \
 
 sleep "$SECONDS_TO_RUN"
 
-curl -fsS -X POST "$BACKEND_URL/kill" \
-  -H 'Content-Type: application/json' \
-  -d "{\"appid\":$APPID,\"pid\":0}" >/dev/null || true
-pkill -9 -f '[S]ubnautica2-Win64-Shipping.exe|[S]ubnautica2|[C]rashReportClient.exe|[c]rashpad_handler.exe' || true
+kill_matching_processes "$KILL_PATTERN"
 
 find "$CORPUS_DIR" -type f \( -name '*.dxbc' -o -name 'pso-*.json' \) 2>/dev/null | sort > "$after_file" || true
 
@@ -136,6 +152,7 @@ APPID="$APPID" \
 LAUNCH_METHOD="$LAUNCH_METHOD" \
 SECONDS_TO_RUN="$SECONDS_TO_RUN" \
 CORPUS_DIR="$CORPUS_DIR" \
+KILL_PATTERN="$KILL_PATTERN" \
 BEFORE_FILE="$before_file" \
 AFTER_FILE="$after_file" \
 LAUNCH_FILE="$launch_file" \
@@ -162,6 +179,7 @@ result = {
     "launch_method": os.environ["LAUNCH_METHOD"],
     "seconds": int(os.environ["SECONDS_TO_RUN"]),
     "corpus_dir": os.environ["CORPUS_DIR"],
+    "kill_pattern": os.environ["KILL_PATTERN"],
     "before_count": len(before),
     "after_count": len(after),
     "new_count": len(new_files),

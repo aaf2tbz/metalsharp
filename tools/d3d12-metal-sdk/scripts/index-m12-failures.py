@@ -40,6 +40,7 @@ def tail(path: Path, limit: int = 4000) -> str:
 def default_log_roots(appid: int) -> list[Path]:
     home = Path.home()
     return [
+        home / ".metalsharp" / "logs" / "m12-pipeline" / str(appid),
         home / ".metalsharp" / "pipeline-cache" / "m12" / str(appid),
         home / ".metalsharp" / "compatdata" / str(appid) / "logs",
         home / ".metalsharp" / "bottles" / f"steam_{appid}" / "logs",

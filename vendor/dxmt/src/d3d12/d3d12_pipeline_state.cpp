@@ -1256,8 +1256,23 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
     FormatShaderCachePath(dxbc_path, sizeof(dxbc_path),
                           "%016zx.sm50_compile_failed.dxbc", hash);
     DumpShaderBlob(dxbc_path, bytecode, size);
-    PSTRACE("SM50Compile failed for %s: %s (dumped %s)",
-            func_name, err_buf, dxbc_path);
+    char diag_path[1024];
+    FormatShaderCachePath(diag_path, sizeof(diag_path),
+                          "%016zx.sm50_compile_failed.txt", hash);
+    if (FILE *diag = fopen(diag_path, "w")) {
+      fprintf(diag, "function=%s\n", func_name);
+      fprintf(diag, "hash=%016zx\n", hash);
+      fprintf(diag, "shader_type=%u\n", static_cast<unsigned>(type));
+      fprintf(diag, "bytecode_size=%zu\n", static_cast<size_t>(size));
+      fprintf(diag, "sm50_error=%s\n", err_buf[0] ? err_buf : "<empty>");
+      fprintf(diag, "ia_elements=%zu\n", ia_elements.size());
+      fprintf(diag, "ia_slot_mask=0x%x\n", ia_slot_mask);
+      fprintf(diag, "dxbc=%s\n", dxbc_path);
+      fprintf(diag, "note=If metal-shaderconverter can compile this DXBC offline, investigate the runtime SM50Compile/airconv bridge path.\n");
+      fclose(diag);
+    }
+    PSTRACE("SM50Compile failed for %s: %s (dumped %s, diag %s)",
+            func_name, err_buf, dxbc_path, diag_path);
     Logger::err(str::format("SM50Compile failed for ", func_name, ": ", err_buf));
     SM50FreeError(sm50_err);
     SM50Destroy(shader);
