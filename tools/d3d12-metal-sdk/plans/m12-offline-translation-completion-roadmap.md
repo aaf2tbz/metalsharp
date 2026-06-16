@@ -72,13 +72,16 @@ Phases:
 2. Build offline corpus inventory.
 3. Fetch/install compiler/runtime references.
 4. Build DXIL/MSL translation gauntlet.
-5. Build D3D12/DXGI behavior probe gauntlet.
-6. Build visual/headless output gauntlet.
-7. Fix translation classes one at a time.
-8. Add cache/PSO persistence and pressure tests.
-9. Return to controlled multi-game scenario testing.
+5. **Mandatory Apple official Metal documentation integration gate before Phase 4.**
+6. Build D3D12/DXGI behavior probe gauntlet.
+7. Build visual/headless output gauntlet.
+8. Fix translation classes one at a time.
+9. Add cache/PSO persistence and pressure tests.
+10. Return to controlled multi-game scenario testing.
 
 Each phase has explicit acceptance criteria and no-regression gates.
+
+The Apple documentation integration gate is not optional cleanup. It captures official Apple guidance that can directly improve M12 correctness, diagnostics, cache freshness, GPU-hang analysis, and performance. Complete as much of that gate as practical before starting Phase 4 probe expansion.
 
 ---
 
@@ -393,6 +396,279 @@ Elden Ring failures do not increase
 Subnautica 2 total failures decrease or category changes are explained
 no new MSL errors in previously passing shaders
 ```
+
+---
+
+# Phase 3.5 — Apple official Metal documentation integration gate
+
+## Goal
+
+Incorporate as much official Apple Developer Documentation guidance as practical before Phase 4 begins. This is work we absolutely want in M12 because it comes from Apple's own Metal documentation and gives us direct leverage on the exact classes of problems we are seeing: shader/library failures, render/compute PSO creation, vertex descriptor correctness, command-buffer failures, resource hazards, cache freshness, GPU hangs, and performance pressure.
+
+Phase 4 must not start as a broad D3D12/DXGI probe expansion until this official-guidance pass is complete enough to inform the probes and runtime diagnostics.
+
+## Official documentation sources to anchor on
+
+Primary Apple docs hub:
+
+```text
+https://developer.apple.com/documentation/metal
+https://developer.apple.com/documentation/metalfx
+https://developer.apple.com/documentation/xcode
+```
+
+Key Metal API areas from the research pass:
+
+```text
+MTLDevice
+MTLLibrary
+MTLFunction
+MTLCompileOptions
+MTLRenderPipelineDescriptor
+MTLRenderPipelineState
+MTLComputePipelineDescriptor
+MTLComputePipelineState
+MTLPipelineOption
+MTLRenderPipelineReflection
+MTLComputePipelineReflection
+MTLBinaryArchive
+MTLBinaryArchiveDescriptor
+MTLArgumentEncoder
+MTLHeap
+MTLFence
+MTLEvent
+MTLSharedEvent
+MTLCommandQueue
+MTLCommandBuffer
+MTLRenderCommandEncoder
+MTLComputeCommandEncoder
+MTLBlitCommandEncoder
+MTLVertexDescriptor
+MTLVertexAttributeDescriptor
+MTLVertexBufferLayoutDescriptor
+MTLHazardTrackingMode
+MTLResourceOptions
+MTLStorageMode
+MTLCommandBufferError
+MTLCommandBufferEncoderInfo
+MTLCaptureManager
+MTLCaptureDescriptor
+MTLCaptureScope
+Metal API Validation
+Metal System Trace / Instruments
+MetalFX spatial/temporal scaler descriptors and support checks
+```
+
+## Required workstreams
+
+### 1. Preserve full Metal error context
+
+Use Apple's `NSError`, `MTLLibraryError`, render/compute pipeline creation, and command-buffer error docs to make failures actionable.
+
+Tasks:
+
+- Audit all M12 `newLibrary`, `newFunction`, render PSO, compute PSO, binary archive, and command-buffer completion error paths.
+- Log Apple error domain, numeric code, localized description, and `userInfo` where available.
+- Include M12 context with every Metal failure:
+  - appid/profile
+  - shader hash
+  - generated MSL path/hash
+  - function name
+  - PSO key/hash
+  - root signature hash
+  - render target/depth/stencil formats
+  - sample count
+  - vertex descriptor summary
+  - binary archive state
+  - command-list id / queue id / present count where relevant
+- Do not collapse `MTLCommandBufferError` classes into generic failure. Distinguish timeout, page fault, out-of-memory, invalid resource, device removal, and unknown execution errors.
+
+Acceptance:
+
+```text
+Every M12 Metal failure path emits Apple error domain/code/text plus M12 shader/PSO/queue context.
+No blank Metal error lines remain in the M12 paths under test.
+```
+
+### 2. Use official pipeline/reflection docs to harden PSO diagnostics
+
+Use Apple's `MTLRenderPipelineDescriptor`, `MTLComputePipelineDescriptor`, `MTLPipelineOption`, and reflection docs to make render/compute PSO probes more precise.
+
+Tasks:
+
+- Add a compact M12 PSO descriptor dump for failed and first-use render/compute PSOs.
+- Record whether reflection was requested/available.
+- Compare reflected Metal vertex attributes and resource bindings against M12 expectations where possible.
+- Ensure PSO cache keys include descriptor-affecting state, not only shader hashes.
+
+Acceptance:
+
+```text
+Failed PSO artifacts are sufficient to reconstruct the Metal-visible descriptor contract offline.
+Reflected stage-in/vertex descriptor mismatches are classified separately from shader compile failures.
+```
+
+### 3. Turn Apple vertex-layout guidance into a dedicated M12 vertex descriptor audit
+
+Use Apple's `MTLVertexDescriptor`, attribute descriptor, buffer layout, and stage-in documentation as the source of truth for our reflected stage-in path.
+
+Tasks:
+
+- Build/extend an audit that compares:
+  - D3D12 input layout semantic/slot/format/offset/stride/step-rate
+  - generated MSL `[[attribute(n)]]` / `[[stage_in]]`
+  - reflected Metal vertex attributes
+  - final `MTLVertexDescriptor`
+- Keep the existing safe vertex-pulling zero-fill guard intact.
+- Add specific failure buckets for missing attribute, wrong format, wrong buffer index, wrong offset, wrong stride, and wrong step function/rate.
+
+Acceptance:
+
+```text
+Elden Ring render PSO path still has zero vertex_descriptor_missing and zero vs_ps_varying_mismatch.
+New vertex descriptor audit can explain any future attribute mismatch without a game launch.
+```
+
+### 4. Resource binding, heap, and hazard audit from official docs
+
+Use Apple's argument buffer, heap, resource usage, fence/event, storage mode, and hazard tracking docs to identify correctness risks before building Phase 4 probes.
+
+Tasks:
+
+- Audit M12 resource binding paths for argument-buffer/descriptor-table equivalents.
+- Check whether indirect resources need explicit `useResource(s)` / `useHeap(s)` declarations.
+- Audit heap/placed-resource aliasing and reuse against command-buffer completion/fence/event ordering.
+- Audit storage modes and CPU/GPU synchronization for upload/readback/managed-resource paths.
+- Create Phase 4 probe requirements from this audit rather than writing generic probes first.
+
+Acceptance:
+
+```text
+A resource-hazard checklist exists and maps each checklist item to a current M12 code path or explicit gap.
+Phase 4 probe list includes Apple-doc-backed tests for resource use declarations, heap aliasing, barriers, and synchronization.
+```
+
+### 5. Command-buffer hang and OOM diagnostics
+
+Use Apple's `MTLCommandBuffer.error`, `MTLCommandBufferError`, encoder info, and Metal System Trace docs to improve Elden Ring hang and Schedule-like OOM analysis without shifting focus back to DX11.
+
+Tasks:
+
+- Add or extend M12 command-buffer completion logging with status, error domain/code, encoder info, command queue label, command buffer label, and last command-list id.
+- Add labels to key Metal objects in debug builds where feasible:
+  - command queues
+  - command buffers
+  - render/compute/blit encoders
+  - swapchain textures
+  - high-pressure buffers/textures
+  - render/compute pipeline states
+- Build `analyze-m12-live-hang.py` around this evidence:
+  - final present count
+  - last submitted/completed command buffer
+  - repeated command-list patterns
+  - waits/fences/events seen near the stall
+  - no-progress windows
+
+Acceptance:
+
+```text
+Elden Ring live-hang capture can be summarized as a command-buffer/queue/wait state, not only as a process still running.
+Command-buffer OOM/page-fault/timeout cases are classified distinctly when Apple reports them.
+```
+
+### 6. Binary archive and PSO cache freshness plan
+
+Use Apple's `MTLBinaryArchive` documentation to make M12 PSO/cache freshness more principled.
+
+Tasks:
+
+- Define a binary archive/cache key contract that includes:
+  - GPU/device identity
+  - OS/SDK/Metal version where available
+  - M12 translator version or source commit
+  - generated MSL hash
+  - function constants
+  - render/compute descriptor state
+  - vertex descriptor state
+  - attachment formats/sample count
+- Add stale-cache detection for changed translator output and descriptor-affecting changes.
+- Ensure force-DXIL-source-compile and reflected descriptor defaults cannot silently reuse incompatible artifacts.
+
+Acceptance:
+
+```text
+M12 cache freshness rules are documented and enforced by at least one offline hash/cache verifier.
+Known clean Subnautica/Elden paths do not require manual cache deletion to pick up translator fixes.
+```
+
+### 7. Capture and validation workflow
+
+Use Apple's Metal API Validation, GPU capture, and Metal System Trace docs to define repeatable validation hooks.
+
+Tasks:
+
+- Document how to run a bounded M12 launch with Metal API Validation enabled.
+- Add optional env/debug hooks for programmatic capture if feasible:
+  - capture next frame
+  - capture on PSO failure
+  - capture on command-buffer error
+  - capture around present count N
+- Add an Instruments/Metal System Trace recipe for Elden Ring hang and Subnautica render validation.
+- Make validation artifacts record whether API validation/capture/trace was enabled.
+
+Acceptance:
+
+```text
+A developer can reproduce the same M12 validation setup and know which Apple tooling was active.
+Capture/trace requests are explicit and off by default.
+```
+
+### 8. MetalFX capability/descriptor checks
+
+Use official MetalFX docs only for D3D12/M12-relevant paths. Do not reopen DX11-focused work.
+
+Tasks:
+
+- Audit M12 MetalFX usage for capability checks and descriptor validation.
+- Gate MetalFX construction on official support checks.
+- Record descriptor dimensions/formats and reset/resizing behavior in diagnostics.
+- Keep MetalFX disabled where it would obscure M12 correctness validation.
+
+Acceptance:
+
+```text
+M12 validation can clearly state whether MetalFX was enabled, supported, and descriptor-valid.
+Visual correctness tests can run with MetalFX disabled to avoid hiding base-render failures.
+```
+
+## Deliverables before Phase 4 starts
+
+Required artifacts:
+
+```text
+tools/d3d12-metal-sdk/plans/m12-apple-metal-docs-integration-plan.md
+tools/d3d12-metal-sdk/scripts/analyze-m12-live-hang.py
+tools/d3d12-metal-sdk/scripts/audit-m12-metal-errors.py              # or equivalent checker
+tools/d3d12-metal-sdk/scripts/audit-m12-vertex-descriptors.py        # or extension of existing inspector
+tools/d3d12-metal-sdk/scripts/verify-m12-cache-freshness.py          # or equivalent verifier
+```
+
+Required evidence:
+
+```text
+Subnautica 2 bounded smoke remains at dxil_msl_compile_failed=0.
+Elden Ring bounded smoke remains at render_pso_failed=0 and vertex_descriptor_missing=0.
+M12 runtime/game-local DLL hashes are recorded for every validation run.
+No live Elden Ring cache mutation from offline tools.
+```
+
+## Stop rules
+
+- Do not use this phase to restart PEAK/Schedule/DX11 work.
+- Do not start broad Phase 4 D3D12/DXGI probes until the Apple-doc-backed diagnostic and audit requirements above have been mapped into concrete probe requirements.
+- Do not treat present/drawn counts as visual correctness.
+- Do not mutate the live Elden Ring cache from offline tools.
+- If an Apple doc recommendation conflicts with current M12 behavior, record the conflict and either fix it or add an explicit deferred-risk entry before Phase 4.
 
 ---
 
