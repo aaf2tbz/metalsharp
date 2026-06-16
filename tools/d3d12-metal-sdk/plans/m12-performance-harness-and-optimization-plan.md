@@ -712,3 +712,102 @@ DXMT_SHADER_CACHE_PATH=~/.metalsharp/shader-cache/m12/<appid>/
 ```
 
 Next safe step is controlled smoke runs, one game at a time, with the external perf harness only. Do not reintroduce native perf trace injection until launch/runtime staging is fully stable.
+
+## First multi-game smoke findings — 2026-06-15
+
+The initial external-harness multi-game pass was intentionally short and safe. Native runtime perf tracing remains disabled.
+
+### PEAK
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/peak-smoke-20260615-215309/perf-analysis.md
+```
+
+Result:
+
+```text
+launch_ok=false
+pid=None
+error="Agility SDK x64 payload not found for version 611"
+```
+
+Interpretation:
+
+- PEAK is currently prelaunch-blocked by Agility SDK 611 staging.
+- This is not an M12 render/runtime failure.
+- Harness now captures this as a structured failed launch instead of aborting the script.
+
+### Subnautica 2
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/subnautica-2-smoke-20260615-215329/perf-analysis.md
+tools/d3d12-metal-sdk/results/perf-runs/subnautica-2-smoke-20260615-215329/bounded-summary.md
+```
+
+Result:
+
+```text
+launch_ok=true
+drawn/present=20/21
+render_pso_failed=0
+unsafe_draw_skips=0
+graphics_pso_compiled=1
+compute_pso_compiled=156
+dxil_msl_compile_failed=21
+new_msl_errors=21
+```
+
+Interpretation:
+
+- Subnautica 2 reaches M12 presents and is a valid multi-game perf target.
+- It exposes compute shader lowering/MSL failures and heavy compute PSO pressure.
+- Treat it as a separate M12 coverage item before using it as pure performance evidence.
+
+### Schedule I
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/schedule-1-smoke-20260615-215451/perf-analysis.md
+tools/d3d12-metal-sdk/results/perf-runs/schedule-1-smoke-20260615-215451/bounded-summary.md
+```
+
+Result:
+
+```text
+launch_ok=true
+present_count=0
+process samples=111
+max CPU %=81.9
+max RSS bytes=700764160
+max threads=59
+```
+
+The launch log reaches M12/DXMT initialization:
+
+```text
+Maximum supported feature level: D3D_FEATURE_LEVEL_12_1
+Using feature level D3D_FEATURE_LEVEL_11_1
+```
+
+then terminates before presents with:
+
+```text
+NSInvalidArgumentException: attempt to insert nil object from objects[1]
+libc++abi: terminating due to uncaught exception of type NSException
+```
+
+Interpretation:
+
+- Schedule I launches far enough to initialize M12, but is not yet a valid frame-pacing target.
+- This should be classified separately from Elden Ring performance work.
+
+### Harness behavior improvement
+
+`m12-bounded-launch.sh` now records backend launch error JSON instead of exiting on HTTP 500. This lets the multi-game matrix classify prelaunch blockers such as missing Agility payloads without losing the run directory.
+
+Next logical step:
+
+1. Keep Elden Ring as the primary long-run performance target.
+2. Fix/prepare PEAK Agility staging so it can enter the matrix.
+3. Classify Subnautica 2 compute MSL failures separately from performance.
+4. Classify Schedule I native exception separately from performance.
+5. Continue adding external measurements before any native runtime instrumentation.

@@ -121,11 +121,11 @@ if [[ -n "$FORCE_SOURCE_COMPILE" ]]; then launch_env+=("METALSHARP_M12_FORCE_DXI
 
 (
   if [[ ${#launch_env[@]} -gt 0 ]]; then
-    env "${launch_env[@]}" curl -m 45 -fsS -X POST "$BACKEND_URL/steam/launch-game" \
+    env "${launch_env[@]}" curl -m 45 -sS -X POST "$BACKEND_URL/steam/launch-game" \
       -H 'Content-Type: application/json' \
       -d "{\"appid\":$APPID,\"launchMethod\":\"$LAUNCH_METHOD\"}"
   else
-    curl -m 45 -fsS -X POST "$BACKEND_URL/steam/launch-game" \
+    curl -m 45 -sS -X POST "$BACKEND_URL/steam/launch-game" \
       -H 'Content-Type: application/json' \
       -d "{\"appid\":$APPID,\"launchMethod\":\"$LAUNCH_METHOD\"}"
   fi
