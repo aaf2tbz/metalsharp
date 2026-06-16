@@ -835,3 +835,89 @@ Interpretation:
 - Phase 2 should fetch/reference Agility/DXC payloads, but Phase 3 can already start by building a translation gauntlet around Subnautica 2 compute failures.
 
 Phase 1 is complete.
+
+## Phase 2 implementation result — 2026-06-15
+
+Implemented reference payload tooling:
+
+```text
+tools/d3d12-metal-sdk/scripts/fetch-agility-matrix.sh
+tools/d3d12-metal-sdk/scripts/fetch-dxc-matrix.sh
+tools/d3d12-metal-sdk/scripts/m12-reference-payload-inventory.py
+```
+
+Agility SDK retail matrix fetched and mirrored into both SDK output and user runtime redist cache:
+
+```text
+tools/d3d12-metal-sdk/out/agility/<version>
+~/.metalsharp/runtime/redist/agility/<version>
+```
+
+Fetched retail Agility versions:
+
+```text
+1.4.10
+1.600.10
+1.602.4
+1.606.4
+1.608.3
+1.610.4
+1.611.2
+1.613.3
+1.614.1
+1.615.1
+1.616.1
+1.618.5
+1.619.3
+```
+
+Phase 2 artifacts:
+
+```text
+tools/d3d12-metal-sdk/results/m12-reference-payloads/agility-20260615-222921/reference-payloads.md  # first 1.611.2 fetch
+tools/d3d12-metal-sdk/results/m12-reference-payloads/agility-20260615-222943/reference-payloads.md  # all retail
+tools/d3d12-metal-sdk/results/m12-reference-payloads/dxc-20260615-223122/reference-payloads.md
+tools/d3d12-metal-sdk/results/m12-reference-payloads/phase2-20260615-223043/reference-payload-inventory.md
+```
+
+Important result:
+
+- PEAK's previous prelaunch blocker was resolved at dry-run level.
+- Before Phase 2, PEAK launch returned:
+
+```text
+Agility SDK x64 payload not found for version 611
+```
+
+- After fetching/mirroring `1.611.2`, PEAK dry-run reports:
+
+```text
+ok=true
+missing=[]
+```
+
+DXC matrix:
+
+```text
+v1.9.2602 / dxc_2026_02_20.zip
+archive sha256=a1e89031421cf3c1fca6627766ab3020ca4f962ac7e2caa7fab2b33a8436151e
+```
+
+Reference payload inventory confirmed local DXC binaries:
+
+```text
+dxc.exe
+dxcompiler.dll
+dxil.dll
+```
+
+Dry-run verification after Phase 2, no gameplay launches:
+
+```text
+Elden Ring    ok=true missing=[]
+Subnautica 2  ok=true missing=[]
+Schedule I    ok=true missing=[]
+PEAK          ok=true missing=[]
+```
+
+Phase 2 is complete for known retail Agility and pinned DXC. Preview Agility payloads and DirectX sample-source acquisition remain optional future expansion, not required before starting Phase 3.
