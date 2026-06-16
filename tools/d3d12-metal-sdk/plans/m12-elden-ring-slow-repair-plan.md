@@ -418,3 +418,79 @@ Environment reset after the gate-on test:
 - Backend restarted without `METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR`.
 - Live shader cache restored from the pre-test snapshot:
   `/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-pre-reflected-descriptor-test-20260615-194234`.
+
+## VS/PS varying mismatch diagnostics after reflected descriptors — 2026-06-15
+
+Additional commits:
+
+```text
+9f05472 chore: log M12 render PSO failure keys
+8b5ea20 test: analyze M12 varying mismatch failures
+a949ed9 test: log reflected M12 descriptor details
+```
+
+A diagnostic gate was added:
+
+```text
+DXMT_D3D12_LOG_RENDER_PSO_FAILURE_KEYS=1
+```
+
+It is log-only/default-off. It records failed render PSO identity and render state without writing manifests or mutating cache.
+
+Diagnostic launch evidence:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-195823/summary.md
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-200551/summary.md
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-200916/summary.md
+```
+
+The game continued to render during diagnostic gate-on launches. Environment was reset afterward and live cache restored from:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-pre-reflected-descriptor-test-20260615-194234
+```
+
+Read-only analysis artifacts:
+
+```text
+/tmp/metalsharp-m12-varying-analysis/failure-keys-195823.log
+/tmp/metalsharp-m12-varying-analysis/varying-failure-analysis.json
+/tmp/metalsharp-m12-varying-analysis/varying-failure-analysis.md
+/tmp/metalsharp-m12-varying-analysis/failure-keys-200551.log
+/tmp/metalsharp-m12-varying-analysis/failure-detail-200916.log
+```
+
+Key findings:
+
+- Failure-key run parsed `326` render PSO failures.
+- All parsed failures had `uses_stage_in=0`.
+- Split by descriptor path:
+  - `reflected_descriptor=0`: `176`
+  - `reflected_descriptor=1`: `150`
+- Reflected-descriptor mismatch dominant bucket:
+  - `locn0` requested by fragment but missing from VS reflection: `104/150`
+- Non-reflected mismatch dominant bucket remains semantic-style names:
+  - `texcoord*`, `normal0`, `position1`, `tangent*`, `color0`.
+- Reflected descriptor details show the bridge is not garbage. Representative failures use:
+  - `attrs=13 layouts=1 stride0=24`
+  - populated attrs commonly `attr=11 fmt=Float4 offset=0`, `attr=12 fmt=Float2 offset=16`
+
+Exact VS/PS failure pairs were replayed offline from scratch with matching RT/depth state using generated manifests under `/tmp/metalsharp-m12-varying-analysis`. The offline factory still created the PSOs:
+
+```text
+offline-pso-factory-exact-failure-pairs.json
+pipeline_count=188
+failure_count=0
+skipped_count=14
+render_pso_created=174
+zero_vertex_output_skipped=14
+```
+
+Interpretation:
+
+- The reflected descriptor path is useful: it nearly eliminates the missing-descriptor bucket.
+- The new blocker is VS/PS interface compatibility once those PSOs get past descriptor validation.
+- Runtime bridge descriptor data appears plausible, so do not churn descriptor ABI first.
+- Next behavior candidate should target generated vertex output/user-varying emission or cache freshness for broad `output_v` / `input_v` contracts.
+- Keep the descriptor gate off by default until the VS/PS mismatch bucket is reduced and unsafe draw skips return to zero.
