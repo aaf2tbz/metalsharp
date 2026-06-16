@@ -2014,6 +2014,25 @@ bool MTLD3D12PipelineState::Compile() {
           " samples=", (unsigned)(m_sample_count ? m_sample_count : 1),
           " topology=", (unsigned)m_topology,
           " error=", render_err_desc));
+      if (reflected_descriptor_enabled) {
+        Logger::err(str::format(
+            "Render PSO reflected descriptor key pso=", std::hex, pso_manifest_hash,
+            " attrs=", std::dec, reflected_vtx_desc.attribute_count,
+            " layouts=", reflected_vtx_desc.layout_count,
+            " stride0=", reflected_vtx_desc.layouts[0].stride));
+        for (uint32_t i = 0; i < reflected_vtx_desc.attribute_count &&
+                             i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
+          const auto &attr = reflected_vtx_desc.attributes[i];
+          if (attr.format == WMTAttributeFormatInvalid)
+            continue;
+          Logger::err(str::format(
+              "Render PSO reflected descriptor attr pso=", std::hex, pso_manifest_hash,
+              " attr=", std::dec, i,
+              " fmt=", (unsigned)attr.format,
+              " offset=", attr.offset,
+              " buffer=", attr.buffer_index));
+        }
+      }
     }
     Logger::err(str::format("Failed to create render PSO: ", render_err_desc));
     return RecordCompileFailure("pso/metal_render_pso",
