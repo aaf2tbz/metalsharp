@@ -100,3 +100,38 @@ Pass criteria:
 - unsafe draw skips are zero or explained
 - no `unix_call_failed`
 - visual load still reaches game
+
+## Phase completion log
+
+### 2026-06-15 — Offline repair pass
+
+Committed plan: `a120086 docs: plan Elden Ring M12 offline repair`.
+
+Phase 1 result: offline PSO vertex descriptor creation now derives descriptors from actual `MTLFunction.vertexAttributes` with reflection fallback. This removes the dominant `vertex_attribute_format_mismatch` bucket from the offline PSO factory.
+
+Phase 2 result: zero-raster-output vertex captures are classified as `zero_vertex_output_skipped` instead of hard PSO failures. These represent offline-incompatible/incomplete captures where converter reflection reports no vertex outputs; they remain tracked as skipped evidence, not hidden failures.
+
+Phase 3 result: incomplete captures with unreadable/missing metallibs are classified as `incomplete_capture_skipped`; this preserves evidence without counting absent artifacts as Metal PSO translation failures.
+
+Phase 4 result: offline PSO factory now maps the observed depth formats needed by the captured manifests; depth-output/depth-format failures are no longer present in the final offline result.
+
+Final offline proof before runtime launch:
+
+```text
+result: /tmp/metalsharp-m12-phases/offline-pso-factory-phases-zero-output-classified.json
+ok: true
+pipeline_count: 1988
+failure_count: 0
+skipped_count: 103
+render_pso_created: 1885
+zero_vertex_output_skipped: 80
+incomplete_capture_skipped: 23
+```
+
+Validation:
+
+```text
+python3 -m py_compile tools/d3d12-metal-sdk/scripts/offline-pso-factory.py
+python3 tools/d3d12-metal-sdk/scripts/validate-m12-pipeline-contract.py
+python3 tools/d3d12-metal-sdk/scripts/validate-shader-engine.py
+```

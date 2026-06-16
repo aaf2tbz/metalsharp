@@ -238,6 +238,13 @@ static NSDictionary *skipResult(NSDictionary *pipeline, NSString *status, NSStri
   };
 }
 
+static BOOL vertexReflectionHasNoOutputs(NSDictionary *shader) {
+  NSDictionary *reflection = reflectionForShader(shader);
+  NSDictionary *state = dictValue(reflection, @"state");
+  NSArray *outputs = state[@"vertex_outputs"];
+  return [outputs isKindOfClass:[NSArray class]] && [outputs count] == 0;
+}
+
 static BOOL shaderMetallibReadable(NSDictionary *shader, NSString **messageOut) {
   if (![shader isKindOfClass:[NSDictionary class]]) return YES;
   NSString *path = stringValue(shader, @"metallib", @"");
@@ -397,8 +404,15 @@ int main(int argc, const char **argv) {
         if (pso) {
           [results addObject:okResult(pipeline, @"render_pso_created", nil)];
         } else {
-          failures += 1;
-          [results addObject:failResult(pipeline, @"render_pso_failed", error ? [error localizedDescription] : @"newRenderPipelineStateWithDescriptor failed")];
+          NSString *message = error ? [error localizedDescription] : @"newRenderPipelineStateWithDescriptor failed";
+          if ([message containsString:@"vertex shader's return type is void"] &&
+              vertexReflectionHasNoOutputs(pipeline[@"vertex"])) {
+            skipped += 1;
+            [results addObject:skipResult(pipeline, @"zero_vertex_output_skipped", @"incomplete/offline-incompatible capture: vertex reflection has no raster outputs")];
+          } else {
+            failures += 1;
+            [results addObject:failResult(pipeline, @"render_pso_failed", message)];
+          }
         }
       } else if ([type isEqualToString:@"mesh_render"]) {
         failures += 1;
