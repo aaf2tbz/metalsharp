@@ -1,0 +1,29 @@
+{
+  "schema": "metalsharp.m12.perf-profile.v1",
+  "profile": "armored-core-vi",
+  "bounded_profile": "armored-core-vi",
+  "appid": 1888160,
+  "display_name": "ARMORED CORE VI FIRES OF RUBICON",
+  "default_seconds": 180,
+  "smoke_seconds": 60,
+  "cache_path": "~/.metalsharp/shader-cache/m12/1888160",
+  "scenarios": {
+    "smoke": {
+      "seconds": 60,
+      "markers": [
+        "launch_started",
+        "first_present",
+        "run_stopped"
+      ]
+    },
+    "startup": {
+      "seconds": 180,
+      "markers": [
+        "launch_started",
+        "first_present",
+        "title_or_intro_visible",
+        "run_stopped"
+      ]
+    }
+  }
+}

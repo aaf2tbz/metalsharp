@@ -27,7 +27,7 @@ Usage:
   m12-bounded-launch.sh [options]
 
 Options:
-  --profile NAME          elden-ring, subnautica2, schedule-1, or peak. Default: elden-ring.
+  --profile NAME          elden-ring, subnautica2, armored-core-vi, schedule-1, or peak. Default: elden-ring.
   --seconds N             Bounded launch window. Default: $M12_BOUNDED_SECONDS or 45.
   --backend-url URL       Backend URL. Default: http://127.0.0.1:9277.
   --workers N             Override DXMT_D3D12_PSO_WORKERS through backend env hook.
@@ -76,6 +76,11 @@ case "$PROFILE" in
     PROFILE="subnautica2"
     APPID="1962700"
     GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2"
+    ;;
+  armored-core-vi|armoredcore6|ac6)
+    PROFILE="armored-core-vi"
+    APPID="1888160"
+    GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game"
     ;;
   schedule-1|schedule1|schedule-i|schedulei)
     PROFILE="schedule-1"
