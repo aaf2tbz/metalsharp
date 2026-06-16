@@ -2232,7 +2232,7 @@ writes image-diffs/readback-pixels.json
 Baseline proof:
 
 ```text
-tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-015537/visual-gauntlet-summary.md
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-020043/visual-gauntlet-summary.md
 ```
 
 Result:
@@ -2245,6 +2245,8 @@ actual_pixels_compared=true
 background_preserved=true
 triangle_changed_pixels=true
 indexed_geometry_verified=true
+compute_buffer_draw_verified=true
+compute_draw_pixel=[136,119,102,255]
 indexed_texture_verified=true
 depth_verified=true
 render_changed_from_clear=true
@@ -2256,7 +2258,7 @@ pixel_artifact=true
 Pixel evidence artifact:
 
 ```text
-tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-015537/image-diffs/readback-pixels.json
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-020043/image-diffs/readback-pixels.json
 ```
 
 Known-good runtime hashes were preserved:
@@ -2272,7 +2274,8 @@ winemetal.so   167d16f1280ce4f78f842576758c46cdc6db59c37c2e20aa3b7060fba7f49d58
 Current residual Phase 5 gaps:
 
 ```text
-compute writes are verified through UAV readback, but not yet compute-to-texture-then-draw
+compute writes are verified through UAV readback and a compute-buffer-then-draw deterministic pixel path
+compute-to-texture remains future coverage
 windowed present/readback remains optional and not part of the default headless baseline
 Subnautica 2 visual correctness is not proven by this no-game probe baseline
 ```
@@ -2280,5 +2283,5 @@ Subnautica 2 visual correctness is not proven by this no-game probe baseline
 Next Phase 5 target:
 
 ```text
-Add a compute-to-texture or compute-to-buffer-then-draw deterministic pixel probe before any Subnautica 2 visual retest.
+Add optional windowed present/swapchain capture checks and/or compute-to-texture coverage before any Subnautica 2 visual retest.
 ```
