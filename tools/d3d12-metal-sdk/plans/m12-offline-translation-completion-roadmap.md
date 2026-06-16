@@ -2205,3 +2205,80 @@ Known-good M12 hash set preserved.
 Visual correctness moves to Phase 5.
 AC6 ctz lowering remains translation repair work outside Phase 4.
 ```
+
+## Phase 5 implementation start — visual/headless gauntlet wrapper — 2026-06-16
+
+Phase 5 has started as a no-game visual correctness gauntlet.
+
+Added wrapper:
+
+```text
+tools/d3d12-metal-sdk/scripts/m12-visual-gauntlet.sh
+```
+
+Current behavior:
+
+```text
+no game launch
+no runtime staging
+full known-good M12 hash gate before probes
+runs deterministic probe_render_headless
+optional --windowed-present probe is available but not enabled by default
+writes visual-gauntlet-summary.json
+writes visual-gauntlet-summary.md
+writes image-diffs/readback-pixels.json
+```
+
+Baseline proof:
+
+```text
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-015537/visual-gauntlet-summary.md
+```
+
+Result:
+
+```text
+ok=true
+run_probes_exit=0
+headless_probe_pass=true
+actual_pixels_compared=true
+background_preserved=true
+triangle_changed_pixels=true
+indexed_geometry_verified=true
+indexed_texture_verified=true
+depth_verified=true
+render_changed_from_clear=true
+compute_uav_verified=true
+readback_differs_from_clear=true
+pixel_artifact=true
+```
+
+Pixel evidence artifact:
+
+```text
+tools/d3d12-metal-sdk/results/m12-visual-gauntlet/20260616-015537/image-diffs/readback-pixels.json
+```
+
+Known-good runtime hashes were preserved:
+
+```text
+d3d12.dll      2612e228a5efa9d65f6923b3ed1cc50b1c6ce40abb2c0043c51d32ec5b60dd7c
+dxgi.dll       dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24
+dxgi_dxmt.dll  659ea3c4dddf658038eab67f26e71497ba11a4787e41c636766222ac2d8b028d
+winemetal.dll  7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85
+winemetal.so   167d16f1280ce4f78f842576758c46cdc6db59c37c2e20aa3b7060fba7f49d58
+```
+
+Current residual Phase 5 gaps:
+
+```text
+compute writes are verified through UAV readback, but not yet compute-to-texture-then-draw
+windowed present/readback remains optional and not part of the default headless baseline
+Subnautica 2 visual correctness is not proven by this no-game probe baseline
+```
+
+Next Phase 5 target:
+
+```text
+Add a compute-to-texture or compute-to-buffer-then-draw deterministic pixel probe before any Subnautica 2 visual retest.
+```
