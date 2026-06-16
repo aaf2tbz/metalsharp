@@ -1928,6 +1928,10 @@ bool MTLD3D12PipelineState::Compile() {
       if (EnvFlagEnabled("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") &&
           BuildVertexDescriptorFromMetalFunction(vs_func, reflected_vtx_desc)) {
         info.vertex_descriptor = &reflected_vtx_desc;
+        if (EnvFlagEnabled("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY")) {
+          info.input_primitive_topology = WMTPrimitiveTopologyClassUnspecified;
+          PSTRACE("D3D12 PSO experimental reflected vertex descriptor using unspecified topology");
+        }
         PSTRACE("D3D12 PSO experimental reflected vertex descriptor attached attrs=%u stride=%u",
                 reflected_vtx_desc.attribute_count,
                 reflected_vtx_desc.layouts[0].stride);
@@ -2001,6 +2005,9 @@ bool MTLD3D12PipelineState::Compile() {
           " ia_slot_mask=0x", std::hex, m_ia_slot_mask,
           " uses_stage_in=", m_vs_uses_stage_in ? 1 : 0,
           " reflected_descriptor=", reflected_descriptor_enabled ? 1 : 0,
+          " reflected_unspecified_topology=",
+          (reflected_descriptor_enabled &&
+           EnvFlagEnabled("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY")) ? 1 : 0,
           " rts=", std::dec, m_num_render_targets,
           " rtv0=", (unsigned)m_rtv_formats[0],
           " rtv1=", (unsigned)m_rtv_formats[1],

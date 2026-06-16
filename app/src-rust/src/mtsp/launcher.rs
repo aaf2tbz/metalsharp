@@ -2067,6 +2067,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
                 cmd.env("DXMT_D3D12_LOG_RENDER_PSO_FAILURE_KEYS", log_failure_keys.trim());
             }
         }
+        if let Ok(unspecified_topology) = std::env::var("METALSHARP_M12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY") {
+            if !unspecified_topology.trim().is_empty() {
+                cmd.env("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY", unspecified_topology.trim());
+            }
+        }
     }
 }
 
