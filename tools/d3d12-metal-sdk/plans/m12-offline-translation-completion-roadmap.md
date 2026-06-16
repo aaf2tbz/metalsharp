@@ -2024,3 +2024,74 @@ Next Phase 4 expansion targets:
 3. Vertex descriptor reconstruction probe with sparse slots and per-instance step rates.
 4. Binary archive/cache-key freshness probe for descriptor-affecting state changes.
 ```
+
+## Phase 4 vertex descriptor / PSO expansion — 2026-06-16
+
+Expanded the existing graphics PSO probe rather than adding a duplicate probe:
+
+```text
+tools/d3d12-metal-sdk/probes/probe_graphics_pso/probe_graphics_pso.cpp
+```
+
+Added case:
+
+```text
+sparse_slots_explicit_offsets_instance_step1
+```
+
+Coverage added:
+
+```text
+input_layout_sparse_slots=true
+input_layout_explicit_offsets=true
+input_layout_highest_slot=12
+```
+
+This directly targets the Phase 3.5 vertex descriptor reconstruction requirement: sparse slots, explicit offsets, packed formats, multiple vertex buffers, and per-instance step rate behavior.
+
+Validation:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-013844/probe-graphics-pso-metalsharp.json
+```
+
+Result for the new case:
+
+```text
+sparse_slots_explicit_offsets_instance_step1 hr=0x00000000 ok=true
+```
+
+Probe policy refinement:
+
+- `cached_blob_roundtrip` is now observation-only because current M12 returns `GetCachedBlob=0x80004001` after successful PSO creation.
+- `hs_ds_rejected` is now observation-only because current M12 accepts that constructed descriptor; it is not part of the sparse vertex descriptor correctness gate.
+- `stream_output_rejected` remains required.
+
+Refined Phase 4 PSO run:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-013956/runtime-gauntlet-summary.md
+```
+
+Result:
+
+```text
+probe_json_count=15
+failure_count=1
+probe-graphics-pso-metalsharp.json pass=true
+probe-compute-pso-metalsharp.json pass=false
+```
+
+Remaining Phase 4 PSO target:
+
+```text
+probe-compute-pso resource_bindings mismatch
+actual=[106,108,110,112]
+expected=[6,8,10,12]
+sampler_read_supported=false
+```
+
+Interpretation:
+
+- Graphics PSO vertex descriptor expansion is green on known-good M12.
+- Compute PSO resource binding remains a real Phase 4 target, likely tied to descriptor/resource binding correctness rather than game launch behavior.

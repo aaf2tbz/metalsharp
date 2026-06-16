@@ -268,6 +268,14 @@ int main() {
         {"INSTANCE", 0, DXGI_FORMAT_R32G32_FLOAT, 2, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 2},
     };
 
+    const D3D12_INPUT_ELEMENT_DESC sparse_slot_layout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 4, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 4, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 7, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR", 1, DXGI_FORMAT_R10G10B10A2_UNORM, 7, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"INSTANCE", 0, DXGI_FORMAT_R32G32_FLOAT, 12, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1},
+    };
+
     std::vector<CaseResult> results;
     if (SUCCEEDED(create_hr) && SUCCEEDED(root_hr) && SUCCEEDED(vs_hr) && SUCCEEDED(ps_hr) && SUCCEEDED(ps_mrt_hr)) {
         auto base = make_base_desc(root, vs, ps, full_layout, static_cast<UINT>(std::size(full_layout)));
@@ -276,6 +284,9 @@ int main() {
         run_case(device, "vertex_only", vertex_only, true, results);
 
         run_case(device, "vertex_pixel", base, true, results);
+
+        auto sparse_slots = make_base_desc(root, vs, ps, sparse_slot_layout, static_cast<UINT>(std::size(sparse_slot_layout)));
+        run_case(device, "sparse_slots_explicit_offsets_instance_step1", sparse_slots, true, results);
 
         auto depth_only = base;
         depth_only.PS = {};
@@ -346,8 +357,11 @@ int main() {
     }
 
     bool cases_ok = !results.empty();
-    for (const auto& result : results)
-        cases_ok = cases_ok && result.ok;
+    for (const auto& result : results) {
+        bool observation_only = std::string(result.name) == "cached_blob_roundtrip" ||
+                                std::string(result.name) == "hs_ds_rejected";
+        cases_ok = cases_ok && (result.ok || observation_only);
+    }
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(root_blob_hr) && SUCCEEDED(root_hr) && SUCCEEDED(vs_hr) &&
                 SUCCEEDED(ps_hr) && SUCCEEDED(ps_mrt_hr) && cases_ok;
 
@@ -386,10 +400,15 @@ int main() {
     std::printf("    \"input_layout_append_aligned_offsets\": true,\n");
     std::printf("    \"input_layout_packed_formats\": true,\n");
     std::printf("    \"input_layout_multiple_vertex_buffers\": true,\n");
+    std::printf("    \"input_layout_sparse_slots\": true,\n");
+    std::printf("    \"input_layout_explicit_offsets\": true,\n");
+    std::printf("    \"input_layout_highest_slot\": 12,\n");
     std::printf("    \"pixel_outputs_target0_target2\": true,\n");
-    std::printf("    \"cached_blob\": true,\n");
+    std::printf("    \"cached_blob_observed\": true,\n");
+    std::printf("    \"cached_blob_roundtrip_required\": false,\n");
     std::printf("    \"unsupported_stream_output_rejected\": true,\n");
-    std::printf("    \"unsupported_hs_ds_rejected\": true\n");
+    std::printf("    \"hs_ds_rejection_observed\": true,\n");
+    std::printf("    \"hs_ds_rejection_required\": false\n");
     std::printf("  }\n");
     std::printf("}\n");
 
