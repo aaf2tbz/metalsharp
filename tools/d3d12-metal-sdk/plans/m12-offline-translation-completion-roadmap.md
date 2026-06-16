@@ -2357,3 +2357,38 @@ windowed_buffer0_pixel=[255,0,0,255]
 windowed_buffer1_pixel=[0,255,0,255]
 windowed_resized_buffer_pixel=[0,0,255,255]
 ```
+
+## Phase 5 Subnautica 2 visual retest — 2026-06-16
+
+A hash-gated Subnautica 2 visual retest was run after the no-game Phase 5 probes.
+
+Tracked notes:
+
+```text
+tools/d3d12-metal-sdk/plans/m12-subnautica2-phase5-visual-notes.md
+```
+
+Result summary:
+
+```text
+launch_ok=true
+drawn/present=16/18
+dxil_msl_compile_failed=2
+render_pso_failed=0
+compute_pso_failed=0
+vertex_descriptor_missing=0
+unsafe_draw_skips=2
+verdict=black_window_observed
+```
+
+The raised-window capture shows the Subnautica 2 Wine window is black, so this is visual incorrectness despite present/drawn progress.
+
+Primary next repair target:
+
+```text
+~/.metalsharp/shader-cache/m12/1962700/c117351693325b0b.msl.err.txt
+program_source:307:10: error: incompatible integer to pointer conversion assigning to 'device char *'
+from atomic_fetch_add_explicit(...) returning uint
+```
+
+Next step: fix this DXIL->MSL atomic return typing issue offline before another Subnautica 2 visual retest.
