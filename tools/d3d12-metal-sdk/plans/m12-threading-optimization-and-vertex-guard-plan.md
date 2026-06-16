@@ -407,3 +407,41 @@ METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=0
 METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=0
 METALSHARP_M12_VERTEX_RANGE_SAFE_DRAW=0
 ```
+
+## Default workers=1 async verification — 2026-06-15
+
+Commit:
+
+```text
+f9b3c3d fix: default M12 to single async worker
+```
+
+Default verification was run with no explicit worker/async env on the backend. The bounded launcher summary shows empty overrides, so this exercised launcher defaults:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-211750/summary.md
+workers_override=
+async_compile_override=
+present_count=23
+drawn_present_count=23
+graphics_pso_compiled=800
+render_pso_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+dxil_msl_compile_failed=0
+unsafe_draw_skips=0
+```
+
+This locks in the useful default for future update work:
+
+```text
+DXMT_D3D12_PSO_WORKERS=1
+DXMT_ASYNC_PIPELINE_COMPILE=1
+```
+
+with existing rollback overrides:
+
+```text
+METALSHARP_M12_PSO_WORKERS=<n>
+METALSHARP_M12_ASYNC_PIPELINE_COMPILE=0
+```
