@@ -101,7 +101,12 @@ static void print_interface_json(const InterfaceProbe& probe, bool last) {
 int main() {
     std::string profile = getenv_string("D3D12_METAL_SDK_PROFILE");
 
-    HMODULE dxgi = LoadLibraryA("dxgi.dll");
+    const char* loaded_dxgi_name = "dxgi_dxmt.dll";
+    HMODULE dxgi = LoadLibraryA(loaded_dxgi_name);
+    if (!dxgi) {
+        loaded_dxgi_name = "dxgi.dll";
+        dxgi = LoadLibraryA(loaded_dxgi_name);
+    }
     using CreateFactoryFn = HRESULT(WINAPI*)(REFIID, void**);
     using CreateFactory2Fn = HRESULT(WINAPI*)(UINT, REFIID, void**);
     auto create_factory = reinterpret_cast<CreateFactoryFn>(
@@ -226,6 +231,7 @@ int main() {
     std::printf("  \"profile\": \"%s\",\n", json_escape(profile).c_str());
     std::printf("  \"pass\": %s,\n", pass ? "true" : "false");
     std::printf("  \"entrypoints\": {\n");
+    std::printf("    \"dxgi_module\": \"%s\",\n", loaded_dxgi_name);
     std::printf("    \"dxgi_loaded\": %s,\n", dxgi ? "true" : "false");
     std::printf("    \"CreateDXGIFactory\": %s,\n", create_factory ? "true" : "false");
     std::printf("    \"CreateDXGIFactory1\": %s,\n", create_factory1 ? "true" : "false");

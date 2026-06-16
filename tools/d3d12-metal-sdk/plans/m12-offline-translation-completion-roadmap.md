@@ -1897,3 +1897,51 @@ Validation rule before game launch:
 2. Preserve current known-good runtime and game-local DLL surfaces first.
 3. Run full-runtime hash-gated Phase 4 core gauntlet.
 4. Require `probe-dxgi-factory-metalsharp.json pass=true` before considering any game launch.
+
+## Phase 4 DXGI probe correction — 2026-06-16
+
+Follow-up showed the previous hard DXGI failure was a probe harness issue, not a DXMT `dxgi_dxmt.dll` implementation failure.
+
+Problem:
+
+```text
+probe_dxgi_factory loaded dxgi.dll, which Wine reported as a builtin-style module in the standalone probe context.
+The observed failure path logged: DXGIFactory::EnumAdapterByLuid: not implemented
+```
+
+Correction:
+
+```text
+probe_dxgi_factory now loads dxgi_dxmt.dll directly when available, falling back to dxgi.dll only if dxgi_dxmt.dll is absent.
+```
+
+Validated restored baseline:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-013022/runtime-gauntlet-summary.md
+```
+
+Result:
+
+```text
+ok=true
+failure_count=0
+dxgi_module=dxgi_dxmt.dll
+EnumAdapterByLuid=0x00000000
+adapter_stable=true
+factory7_supported=true
+```
+
+Important correction:
+
+```text
+The temporary single-adapter EnumAdapterByLuid fallback candidate is withdrawn. Baseline dxgi_dxmt.dll already passes once the probe targets the real DXMT implementation.
+```
+
+Phase 4 current status:
+
+```text
+Phase 4 core no-game runtime gauntlet is green on the restored known-good M12 runtime.
+No runtime staging is needed for this result.
+Next Phase 4 work should expand Apple-doc-backed probes, especially command-buffer diagnostics/resource-use hazards/vertex descriptor and binary-archive cache-key probes, rather than patching DXGI LUID behavior.
+```
