@@ -916,3 +916,87 @@ Guardrail update:
 - If source is clean but runtime behavior regresses, force-rebuild the relevant DXMT target before deciding the source is bad.
 - Preserve and compare runtime/game-local DLL hashes for every perf baseline.
 - The current working performance baseline is the `8cdcec...` runtime, not the old `92fba...` restore and not the stale bad `a1e7...` artifact.
+
+## Current interactive findings — 2026-06-15
+
+Runtime baseline for these findings:
+
+```text
+working current-source M12 d3d12.dll sha=8cdcec40588018dafaa3cdd1cfb140c1fd7edba6f1160cd7559d61be8b946500
+preserved_runtime=/Volumes/AverySSD/MetalSharp-M12-Preserved/working-current-source-runtime-elden-ring-20260615-220308
+```
+
+User interactive testing after the clean 20s Elden Ring smoke found that short smoke correctness is not sufficient.
+
+### Elden Ring
+
+Observed behavior:
+
+- launches successfully
+- renders normally through early flow
+- consistently reaches character creation menu
+- then dies/crashes in character creation
+
+Interpretation:
+
+- The basic M12 render path is no longer the main issue.
+- The character creation path consistently reaches a new workload that triggers a crash.
+- This could be a later shader/effect path, texture/upload/resource transition path, compute path, descriptor/resource binding edge, or accumulated pipeline pressure.
+- Future Elden Ring validation must include a character-creation progression scenario, not only bounded 20–60s launch smoke.
+
+Required next evidence for Elden Ring:
+
+```text
+capture launch log around character creation crash
+mark progression: launch -> menu -> character creation visible -> crash
+compare last successful PSO/compute/upload/resource events before crash
+preserve cache and game-local DLL hashes for the run
+```
+
+### Subnautica 2
+
+Observed behavior:
+
+- launches into a game window
+- the window is clearly rendering/active at the process/window level
+- fails to actually put visible pixels on screen
+
+Recent harness smoke already showed:
+
+```text
+drawn/present=20/21
+render_pso_failed=0
+unsafe_draw_skips=0
+compute_pso_compiled=156
+dxil_msl_compile_failed=21
+new_msl_errors=21
+```
+
+Interpretation:
+
+- Subnautica 2 is not just a performance target yet.
+- It exposes remaining M12 correctness gaps, especially compute shader lowering/MSL failures and/or output/present visibility issues.
+- A present can be counted as drawn while the user-visible output is blank/incorrect, so the harness needs visual/output validation beyond present counters.
+
+Required next evidence for Subnautica 2:
+
+```text
+classify the 21 compute MSL failures by shader hash/error category
+capture a screenshot/window-output sample if possible
+confirm whether swapchain presents contain black/transparent output or never receive expected rendered content
+identify whether compute failures feed the main rendered image, postprocessing, or resource initialization
+```
+
+### Updated conclusion
+
+M12 has made major progress, but it is not done:
+
+- Elden Ring short smoke is clean, but character creation consistently crashes.
+- Subnautica 2 reaches a rendered window/process state but does not produce visible pixels.
+- Multi-game coverage is already proving useful by exposing issues Elden Ring smoke does not.
+
+Next work should combine correctness and performance harnessing:
+
+1. Elden Ring long interactive character-creation crash capture.
+2. Subnautica 2 compute-failure classification and visual-output diagnosis.
+3. Continue performance-pressure instrumentation only after these scenario-specific failures are understood.
