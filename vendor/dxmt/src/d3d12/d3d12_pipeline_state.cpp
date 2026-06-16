@@ -2001,6 +2001,18 @@ bool MTLD3D12PipelineState::Compile() {
           " ia_slot_mask=0x", std::hex, m_ia_slot_mask,
           " uses_stage_in=", m_vs_uses_stage_in ? 1 : 0,
           " reflected_descriptor=", reflected_descriptor_enabled ? 1 : 0,
+          " rts=", std::dec, m_num_render_targets,
+          " rtv0=", (unsigned)m_rtv_formats[0],
+          " rtv1=", (unsigned)m_rtv_formats[1],
+          " rtv2=", (unsigned)m_rtv_formats[2],
+          " rtv3=", (unsigned)m_rtv_formats[3],
+          " rtv4=", (unsigned)m_rtv_formats[4],
+          " rtv5=", (unsigned)m_rtv_formats[5],
+          " rtv6=", (unsigned)m_rtv_formats[6],
+          " rtv7=", (unsigned)m_rtv_formats[7],
+          " dsv=", (unsigned)m_dsv_format,
+          " samples=", (unsigned)(m_sample_count ? m_sample_count : 1),
+          " topology=", (unsigned)m_topology,
           " error=", render_err_desc));
     }
     Logger::err(str::format("Failed to create render PSO: ", render_err_desc));
