@@ -355,6 +355,20 @@ public:
       }
     }
 
+    if (adapter_count == 1 && (luid.HighPart != 0 || luid.LowPart != 0)) {
+      auto candidate = CreateAdapter(devices.object(0), this, Config::getInstance());
+      DXGI_ADAPTER_DESC1 desc = {};
+      HRESULT desc_hr = candidate->GetDesc1(&desc);
+      WARN("EnumAdapterByLuid: exact LUID match not found on single-adapter system; "
+           "falling back to adapter 0 requested=", luid.HighPart, ":", luid.LowPart,
+           " candidate=", desc.AdapterLuid.HighPart, ":", desc.AdapterLuid.LowPart,
+           " desc_hr=", desc_hr);
+      HRESULT hr = candidate->QueryInterface(iid, adapter);
+      DGTRACE("EnumAdapterByLuid single-adapter fallback -> hr=0x%lx out=%p",
+              hr, adapter ? *adapter : nullptr);
+      return hr;
+    }
+
     DGTRACE("EnumAdapterByLuid -> DXGI_ERROR_NOT_FOUND");
     return DXGI_ERROR_NOT_FOUND;
   }

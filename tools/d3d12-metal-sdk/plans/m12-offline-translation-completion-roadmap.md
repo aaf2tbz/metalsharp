@@ -1851,3 +1851,49 @@ Why this matters:
 - This is directly relevant to UE/D3D12 adapter-selection behavior.
 - It is not proof of the Phase 3.5 diagnostic rebuild regression, but it is in the same risk family: DXGI adapter identity must be internally stable.
 - Next Phase 4 runtime-source work should fix `EnumAdapterByLuid`/adapter identity consistency, then stage only that tiny DXGI change with full-runtime hash gates and rerun the Phase 4 core gauntlet before any game launch.
+
+## Phase 4 DXGI LUID evidence and source candidate — 2026-06-16
+
+Enhanced `probe_dxgi_factory` to print the actual adapter LUIDs.
+
+Evidence run:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-012502/runtime-gauntlet-summary.md
+```
+
+Observed values:
+
+```text
+EnumAdapterByLuid=0x887a0002
+adapter_stable=false
+EnumAdapters1 LUID high=-1190985728 low=16777216
+EnumAdapters1 repeat LUID high=-1190985728 low=16777216
+EnumAdapterByGpuPreference LUID high=-1190985728 low=16777216
+EnumAdapterByLuid output LUID high=0 low=0
+```
+
+Interpretation:
+
+- Adapter identity is stable across `EnumAdapters1` and `EnumAdapterByGpuPreference`.
+- The hard failure is specifically `EnumAdapterByLuid` failing to resolve that same LUID.
+- This is a good Phase 4 target because UE/D3D12 adapter selection paths commonly rely on stable DXGI adapter identity.
+
+Tiny runtime-source candidate added, not staged yet:
+
+```text
+vendor/dxmt/src/dxgi/dxgi_factory.cpp
+```
+
+Candidate behavior:
+
+```text
+If EnumAdapterByLuid cannot find an exact match on a single-adapter system and the requested LUID is non-zero, return adapter 0 as a fallback and log the requested/candidate LUIDs.
+```
+
+Validation rule before game launch:
+
+1. Build/stage only this DXGI candidate, not a broad runtime diagnostic rebuild.
+2. Preserve current known-good runtime and game-local DLL surfaces first.
+3. Run full-runtime hash-gated Phase 4 core gauntlet.
+4. Require `probe-dxgi-factory-metalsharp.json pass=true` before considering any game launch.
