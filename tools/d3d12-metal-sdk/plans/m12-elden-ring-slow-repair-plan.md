@@ -116,15 +116,17 @@ rsync -a ~/.metalsharp/shader-cache/m12/1245620/ "$SCRATCH/"
 ### Phase 1 — Structural manifest audits
 
 ```bash
+mkdir -p /tmp/metalsharp-m12-slow-repair
+
 python3 tools/d3d12-metal-sdk/scripts/d3d12-graphics-pso-audit.py \
   --corpus "$SCRATCH" \
-  --profile elden-ring-stable-scratch \
-  --results-dir /tmp/metalsharp-m12-slow-repair
+  --markdown /tmp/metalsharp-m12-slow-repair/d3d12-graphics-pso-audit.md \
+  --json /tmp/metalsharp-m12-slow-repair/d3d12-graphics-pso-audit.json
 
 python3 tools/d3d12-metal-sdk/scripts/d3d12-compute-pso-audit.py \
   --corpus "$SCRATCH" \
-  --profile elden-ring-stable-scratch \
-  --results-dir /tmp/metalsharp-m12-slow-repair
+  --markdown /tmp/metalsharp-m12-slow-repair/d3d12-compute-pso-audit.md \
+  --json /tmp/metalsharp-m12-slow-repair/d3d12-compute-pso-audit.json
 ```
 
 Purpose: identify invalid manifests, stage-in/input-layout mismatches, geometry/tessellation PSOs, depth/stencil issues, and structural warnings before changing runtime.
