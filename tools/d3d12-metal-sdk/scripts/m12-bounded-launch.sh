@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+SDK_DIR="$ROOT_DIR/tools/d3d12-metal-sdk"
+PROFILE="elden-ring"
+SECONDS_TO_RUN="${M12_BOUNDED_SECONDS:-45}"
+BACKEND_URL="${METALSHARP_BACKEND_URL:-http://127.0.0.1:9277}"
+RESULTS_DIR="${M12_BOUNDED_RESULTS_DIR:-$SDK_DIR/results/bounded-launches}"
+LAUNCH_METHOD="${M12_BOUNDED_LAUNCH_METHOD:-dxmt_metal12}"
+WORKERS="${METALSHARP_M12_PSO_WORKERS:-}"
+ASYNC_COMPILE="${METALSHARP_M12_ASYNC_PIPELINE_COMPILE:-}"
+RUN_REPLAY=0
+RUN_OFFLINE_PSO=0
+KILL_AFTER=1
+SAMPLE_PROCESS=1
+SAMPLE_DURATION=5
+SAMPLE_INTERVAL_MS=10
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  m12-bounded-launch.sh [options]
+
+Options:
+  --profile NAME          elden-ring or subnautica2. Default: elden-ring.
+  --seconds N             Bounded launch window. Default: $M12_BOUNDED_SECONDS or 45.
+  --backend-url URL       Backend URL. Default: http://127.0.0.1:9277.
+  --workers N             Override DXMT_D3D12_PSO_WORKERS through backend env hook.
+  --async-compile 0|1     Override DXMT_ASYNC_PIPELINE_COMPILE through backend env hook.
+  --results-dir PATH      Output directory for bounded run artifacts.
+  --replay                Replay newly available corpus through metal-shaderconverter after launch.
+  --offline-pso           Run offline PSO factory after launch.
+  --no-kill-after         Leave the launched game running.
+  --no-sample             Skip macOS sample(1) capture.
+  -h, --help              Show this help.
+
+This is for short, repeatable M12 quality/perf probes. It launches a profile,
+waits a bounded window, captures process/log/corpus evidence, optionally kills
+only the launched PID, then writes a JSON + Markdown summary.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile) PROFILE="$2"; shift 2 ;;
+    --seconds) SECONDS_TO_RUN="$2"; shift 2 ;;
+    --backend-url) BACKEND_URL="$2"; shift 2 ;;
+    --workers) WORKERS="$2"; shift 2 ;;
+    --async-compile) ASYNC_COMPILE="$2"; shift 2 ;;
+    --results-dir) RESULTS_DIR="$2"; shift 2 ;;
+    --replay) RUN_REPLAY=1; shift ;;
+    --offline-pso) RUN_OFFLINE_PSO=1; shift ;;
+    --no-kill-after) KILL_AFTER=0; shift ;;
+    --no-sample) SAMPLE_PROCESS=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+case "$PROFILE" in
+  elden-ring|eldenring)
+    PROFILE="elden-ring"
+    APPID="1245620"
+    GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game"
+    ;;
+  subnautica2|subnautica-2)
+    PROFILE="subnautica2"
+    APPID="1962700"
+    GAME_DIR="/Volumes/AverySSD/SteamLibrary/steamapps/common/Subnautica2"
+    ;;
+  *) echo "unknown profile: $PROFILE" >&2; exit 2 ;;
+esac
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+RUN_DIR="$RESULTS_DIR/$PROFILE-$STAMP"
+mkdir -p "$RUN_DIR"
+CORPUS_DIR="$HOME/.metalsharp/shader-cache/m12/$APPID"
+LOG_ROOT="$HOME/.metalsharp/logs/m12-pipeline/$APPID"
+COMPAT_LOG_ROOT="$HOME/.metalsharp/compatdata/$APPID/logs"
+
+snapshot_files() {
+  local out="$1"
+  find "$CORPUS_DIR" "$LOG_ROOT" "$COMPAT_LOG_ROOT" -maxdepth 2 -type f 2>/dev/null | sort > "$out" || true
+}
+
+snapshot_files "$RUN_DIR/before-files.txt"
+python3 "$SDK_DIR/scripts/preflight-runtime-layout.py" --profile "$PROFILE" --game-dir "$GAME_DIR" --results-dir "$RUN_DIR" >/dev/null
+
+launch_env=()
+if [[ -n "$WORKERS" ]]; then launch_env+=("METALSHARP_M12_PSO_WORKERS=$WORKERS"); fi
+if [[ -n "$ASYNC_COMPILE" ]]; then launch_env+=("METALSHARP_M12_ASYNC_PIPELINE_COMPILE=$ASYNC_COMPILE"); fi
+
+(
+  if [[ ${#launch_env[@]} -gt 0 ]]; then
+    env "${launch_env[@]}" curl -m 45 -fsS -X POST "$BACKEND_URL/steam/launch-game" \
+      -H 'Content-Type: application/json' \
+      -d "{\"appid\":$APPID,\"launchMethod\":\"$LAUNCH_METHOD\"}"
+  else
+    curl -m 45 -fsS -X POST "$BACKEND_URL/steam/launch-game" \
+      -H 'Content-Type: application/json' \
+      -d "{\"appid\":$APPID,\"launchMethod\":\"$LAUNCH_METHOD\"}"
+  fi
+) > "$RUN_DIR/launch.json"
+
+PID="$(python3 - <<PY
+import json
+from pathlib import Path
+try:
+    print(json.loads(Path('$RUN_DIR/launch.json').read_text()).get('pid') or '')
+except Exception:
+    print('')
+PY
+)"
+
+if [[ -n "$PID" && "$SAMPLE_PROCESS" == "1" ]]; then
+  (sleep 3; sample "$PID" "$SAMPLE_DURATION" "$SAMPLE_INTERVAL_MS" -file "$RUN_DIR/sample-$PID.txt" >/dev/null 2>&1 || true) &
+fi
+
+sleep "$SECONDS_TO_RUN"
+
+if [[ -n "$PID" ]]; then
+  ps -p "$PID" -o pid,stat,etime,pcpu,pmem,command > "$RUN_DIR/process.txt" 2>/dev/null || true
+fi
+snapshot_files "$RUN_DIR/after-files.txt"
+comm -13 "$RUN_DIR/before-files.txt" "$RUN_DIR/after-files.txt" > "$RUN_DIR/new-files.txt" || true
+
+python3 "$SDK_DIR/scripts/index-m12-failures.py" --appid "$APPID" --profile "$PROFILE-$STAMP" --results-dir "$RUN_DIR" >/dev/null || true
+
+if [[ "$RUN_REPLAY" == "1" ]]; then
+  python3 "$SDK_DIR/scripts/replay-shader-corpus.py" --corpus "$CORPUS_DIR" --profile "$PROFILE-$STAMP" --results-dir "$RUN_DIR" --allow-empty > "$RUN_DIR/replay.stdout" 2> "$RUN_DIR/replay.stderr" || true
+fi
+if [[ "$RUN_OFFLINE_PSO" == "1" ]]; then
+  python3 "$SDK_DIR/scripts/offline-pso-factory.py" --corpus "$CORPUS_DIR" --profile "$PROFILE-$STAMP" --results-dir "$RUN_DIR" --allow-empty > "$RUN_DIR/offline-pso.stdout" 2> "$RUN_DIR/offline-pso.stderr" || true
+fi
+
+if [[ "$KILL_AFTER" == "1" && -n "$PID" ]]; then
+  curl -fsS -X POST "$BACKEND_URL/kill" -H 'Content-Type: application/json' -d "{\"appid\":$APPID,\"pid\":$PID}" > "$RUN_DIR/kill.json" 2>/dev/null || true
+fi
+
+RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
+import json, os, re
+from pathlib import Path
+run = Path(os.environ['RUN_DIR'])
+new_files = [Path(x) for x in (run/'new-files.txt').read_text(errors='replace').splitlines() if x]
+counts = {
+  'new_files': len(new_files),
+  'new_dxbc': sum(p.suffix == '.dxbc' for p in new_files),
+  'new_msl': sum(p.suffix == '.msl' for p in new_files),
+  'new_metallib': sum(p.suffix == '.metallib' for p in new_files),
+  'new_pso_render': sum(p.name.startswith('pso-render-') and p.suffix == '.json' for p in new_files),
+  'new_pso_compute': sum(p.name.startswith('pso-compute-') and p.suffix == '.json' for p in new_files),
+  'new_dxil_reports': sum(p.name.endswith('.dxil_report.txt') for p in new_files),
+  'new_msl_errors': sum(p.name.endswith('.msl.err.txt') for p in new_files),
+  'new_fail_markers': sum(p.name.endswith('.fail') for p in new_files),
+}
+log_text = ''
+for root in [Path.home()/'.metalsharp'/'logs'/'m12-pipeline'/os.environ['APPID'], Path.home()/'.metalsharp'/'compatdata'/os.environ['APPID']/'logs']:
+    if root.exists():
+        for p in sorted(root.rglob('*'), key=lambda x: x.stat().st_mtime if x.is_file() else 0, reverse=True)[:12]:
+            if p.is_file() and p.suffix in {'.log','.txt'}:
+                log_text += '\n' + p.read_text(errors='replace')[-200000:]
+metrics = {
+  'present_count': len(re.findall(r'M12 present entry', log_text)),
+  'drawn_present_count': len(re.findall(r'classification=drawn', log_text)),
+  'graphics_pso_compiled': len(re.findall(r'Graphics PSO compiled', log_text)),
+  'compute_pso_compiled': len(re.findall(r'Compute PSO compiled', log_text)),
+  'sm50_compile_failed': len(re.findall(r'SM50Compile failed', log_text)),
+  'dxil_msl_compile_failed': len(re.findall(r'DXIL MSL compilation failed|MSL compile failed', log_text)),
+  'unix_call_failed': len(re.findall(r'unix_call_failed', log_text)),
+  'unsafe_draw_skips': len(re.findall(r'skipping unsafe Draw', log_text)),
+}
+launch = {}
+try: launch = json.loads((run/'launch.json').read_text())
+except Exception: pass
+summary = {
+  'schema': 'metalsharp.m12.bounded-launch.v1',
+  'profile': os.environ['PROFILE'],
+  'appid': int(os.environ['APPID']),
+  'pid': int(os.environ['PID']) if os.environ['PID'] else None,
+  'seconds': int(os.environ['SECONDS_TO_RUN']),
+  'workers_override': os.environ['WORKERS'],
+  'async_compile_override': os.environ['ASYNC_COMPILE'],
+  'corpus_dir': os.environ['CORPUS_DIR'],
+  'launch_ok': bool(launch.get('ok')),
+  'launch_log': launch.get('launch_log'),
+  'counts': counts,
+  'metrics': metrics,
+}
+(run/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
+for k,v in counts.items(): md.append(f"- `{k}`: {v}")
+md += ['', '## Runtime metrics']
+for k,v in metrics.items(): md.append(f"- `{k}`: {v}")
+(run/'summary.md').write_text('\n'.join(md)+'\n')
+print(run/'summary.md')
+print(run/'summary.json')
+PY

@@ -2045,6 +2045,19 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
             cmd.env(key, value);
         }
     }
+
+    if pipeline_id == PipelineId::M12 {
+        if let Ok(workers) = std::env::var("METALSHARP_M12_PSO_WORKERS") {
+            if !workers.trim().is_empty() {
+                cmd.env("DXMT_D3D12_PSO_WORKERS", workers.trim());
+            }
+        }
+        if let Ok(async_compile) = std::env::var("METALSHARP_M12_ASYNC_PIPELINE_COMPILE") {
+            if !async_compile.trim().is_empty() {
+                cmd.env("DXMT_ASYNC_PIPELINE_COMPILE", async_compile.trim());
+            }
+        }
+    }
 }
 
 fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) {
