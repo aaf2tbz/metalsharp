@@ -1008,6 +1008,11 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           DumpShaderBlob(dxbc_path, bytecode, size);
 
           FILE *mf = fopen(metallib_path, "rb");
+          if (mf && EnvFlagEnabled("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE")) {
+            fclose(mf);
+            mf = nullptr;
+            PSTRACE("  cached metallib ignored by DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
+          }
           if (!mf) {
             PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
 

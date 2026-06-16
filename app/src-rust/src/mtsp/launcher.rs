@@ -2072,6 +2072,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
                 cmd.env("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY", unspecified_topology.trim());
             }
         }
+        if let Ok(force_source_compile) = std::env::var("METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE") {
+            if !force_source_compile.trim().is_empty() {
+                cmd.env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", force_source_compile.trim());
+            }
+        }
     }
 }
 
