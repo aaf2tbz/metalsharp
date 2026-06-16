@@ -274,3 +274,45 @@ Interpretation:
 - Most captured render PSOs can be created offline when the scratch-replayed metallibs/reflections are used.
 - The dominant structural warning remains `input-layout-without-stage-in` for all render manifests. This matches the current stable runtime behavior and must not be changed directly until a rebuilt baseline is proven.
 - Remaining offline residuals are incomplete/offline-incompatible captures, not current hard PSO factory failures.
+
+## Rebuilt source baseline proof — 2026-06-15
+
+After restoring the stable cache, current source rebuilt and rendered. This proves the earlier no-render behavior was caused by live shader-cache pollution, not by current source alone.
+
+Preserved rebuilt-source rendering baseline:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-current-source-rendering-baseline-20260615-193352
+```
+
+Bounded launch evidence:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-193204/summary.md
+```
+
+Runtime hashes for rebuilt current source:
+
+```text
+d3d12.dll      d768b14ea63d741383ac695aad831727113b142009acac290a0a031378c8e090
+dxgi_dxmt.dll  ff1e67e088c5dcf3ff7e82124caba95c0e562096c4c6b09bc280096b3da7b60d
+winemetal.so   e82da21aca2a5b748cefdacc9794be9d96c1d028b90d4f94414c14214993daaa
+```
+
+Bounded metrics:
+
+```text
+present_count=22
+drawn_present_count=22
+graphics_pso_compiled=994
+render_pso_failed=478
+vertex_descriptor_missing=570
+vs_ps_varying_mismatch=386
+tessellation_fallback=115
+unsafe_draw_skips=0
+SM50Compile failed=0
+DXIL MSL compilation failed=0
+unix_call_failed=0
+```
+
+Conclusion: future runtime fixes can proceed from current source, but only if the stable cache is preserved/restored and offline work remains scratch-isolated.
