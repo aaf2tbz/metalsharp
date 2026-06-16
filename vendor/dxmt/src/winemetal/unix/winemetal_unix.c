@@ -661,6 +661,36 @@ _MTLLibrary_newFunction(void *obj) {
 }
 
 static NTSTATUS
+_MTLFunction_copyVertexAttributes(void *obj) {
+  struct unixcall_mtlfunction_vertex_attributes *params = obj;
+  id<MTLFunction> function = (id<MTLFunction>)params->function;
+  struct WMTFunctionVertexAttribute *out = (struct WMTFunctionVertexAttribute *)(uintptr_t)params->attributes;
+  params->ret_count = 0;
+  if (!function || !out || !params->max_attributes)
+    return STATUS_SUCCESS;
+
+  NSArray<MTLVertexAttribute *> *attributes = [function vertexAttributes];
+  uint32_t count = 0;
+  for (MTLVertexAttribute *attribute in attributes) {
+    if (count >= params->max_attributes)
+      break;
+    struct WMTFunctionVertexAttribute *dst = &out[count];
+    memset(dst, 0, sizeof(*dst));
+    dst->attribute_index = (uint32_t)[attribute attributeIndex];
+    dst->attribute_type = (uint32_t)[attribute attributeType];
+    dst->active = [attribute isActive] ? true : false;
+    dst->patch_data = [attribute isPatchData] ? true : false;
+    dst->patch_control_point_data = [attribute isPatchControlPointData] ? true : false;
+    const char *name = [[attribute name] UTF8String];
+    if (name)
+      snprintf(dst->name, sizeof(dst->name), "%s", name);
+    count++;
+  }
+  params->ret_count = count;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 _NSString_lengthOfBytesUsingEncoding(void *obj) {
   struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
   params->ret = (uint64_t)[(NSString *)params->handle lengthOfBytesUsingEncoding:(NSStringEncoding)params->arg];
@@ -3597,6 +3627,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLDevice_newTileRenderPipelineState,
     &_MTLDevice_newLibraryWithSource,
     &_MTLLibrary_newFunctionWithDescriptor,
+    &_MTLFunction_copyVertexAttributes,
 };
 
 #ifndef DXMT_NATIVE
@@ -3735,5 +3766,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLDevice_newTileRenderPipelineState,
     &_MTLDevice_newLibraryWithSource,
     &_MTLLibrary_newFunctionWithDescriptor,
+    &_MTLFunction_copyVertexAttributes,
 };
 #endif

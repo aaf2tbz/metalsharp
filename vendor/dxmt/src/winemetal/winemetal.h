@@ -588,6 +588,20 @@ WINEMETAL_API obj_handle_t MTLDevice_newLibraryWithSource(obj_handle_t device, c
 
 WINEMETAL_API obj_handle_t MTLLibrary_newFunction(obj_handle_t library, const char *name);
 
+struct WMTFunctionVertexAttribute {
+  uint32_t attribute_index;
+  uint32_t attribute_type;
+  bool active;
+  bool patch_data;
+  bool patch_control_point_data;
+  char name[64];
+};
+
+WINEMETAL_API uint32_t MTLFunction_copyVertexAttributes(
+    obj_handle_t function, struct WMTFunctionVertexAttribute *attributes,
+    uint32_t max_attributes
+);
+
 WINEMETAL_API uint64_t NSString_lengthOfBytesUsingEncoding(obj_handle_t str, enum WMTStringEncoding encoding);
 
 WINEMETAL_API obj_handle_t NSObject_description(obj_handle_t nserror);

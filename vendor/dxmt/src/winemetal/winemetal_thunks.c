@@ -443,6 +443,20 @@ MTLLibrary_newFunction(obj_handle_t library, const char *name) {
   return params.ret;
 }
 
+WINEMETAL_API uint32_t
+MTLFunction_copyVertexAttributes(
+    obj_handle_t function, struct WMTFunctionVertexAttribute *attributes,
+    uint32_t max_attributes
+) {
+  struct unixcall_mtlfunction_vertex_attributes params;
+  params.function = function;
+  params.attributes = PtrToUInt64(attributes);
+  params.max_attributes = max_attributes;
+  params.ret_count = 0;
+  UNIX_CALL(134, &params);
+  return params.ret_count;
+}
+
 WINEMETAL_API uint64_t
 NSString_lengthOfBytesUsingEncoding(obj_handle_t str, enum WMTStringEncoding encoding) {
   struct unixcall_generic_obj_uint64_uint64_ret params;

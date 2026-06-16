@@ -25,6 +25,13 @@ struct unixcall_generic_obj_uint64_obj_ret {
   obj_handle_t ret;
 };
 
+struct unixcall_mtlfunction_vertex_attributes {
+  obj_handle_t function;
+  uint64_t attributes;
+  uint32_t max_attributes;
+  uint32_t ret_count;
+};
+
 struct unixcall_generic_obj_uint64_ret {
   obj_handle_t handle;
   uint64_t ret;
