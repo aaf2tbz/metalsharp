@@ -1,0 +1,24 @@
+{
+  "schema": "metalsharp.m12.perf-profile.v1",
+  "profile": "elden-ring",
+  "bounded_profile": "elden-ring",
+  "appid": 1245620,
+  "display_name": "Elden Ring",
+  "default_seconds": 180,
+  "smoke_seconds": 60,
+  "cache_path": "~/.metalsharp/shader-cache/m12/1245620",
+  "scenarios": {
+    "smoke": {
+      "seconds": 60,
+      "markers": ["launch_started", "first_present", "run_stopped"]
+    },
+    "character-creation": {
+      "seconds": 300,
+      "markers": ["launch_started", "first_present", "main_menu_visible", "load_started", "character_creation_visible", "menu_first_click_attempt", "menu_unresponsive", "menu_responsive_again", "run_stopped"]
+    },
+    "loading-to-gameplay": {
+      "seconds": 240,
+      "markers": ["launch_started", "first_present", "load_started", "gameplay_visible", "run_stopped"]
+    }
+  }
+}

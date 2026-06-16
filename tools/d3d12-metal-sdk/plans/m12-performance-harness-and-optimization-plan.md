@@ -614,3 +614,47 @@ cache regeneration cost
 ```
 
 across Elden Ring, Schedule 1/PEAK, Subnautica 2, and other M12 games.
+
+## Harness foundation started — 2026-06-15
+
+Initial implementation added:
+
+```text
+tools/d3d12-metal-sdk/profiles/m12-perf/elden-ring.json
+tools/d3d12-metal-sdk/profiles/m12-perf/subnautica-2.json
+tools/d3d12-metal-sdk/profiles/m12-perf/schedule-1.json
+tools/d3d12-metal-sdk/profiles/m12-perf/peak.json
+tools/d3d12-metal-sdk/scripts/m12-performance-run.sh
+tools/d3d12-metal-sdk/scripts/sample-m12-process.py
+tools/d3d12-metal-sdk/scripts/analyze-m12-perf-run.py
+```
+
+`m12-bounded-launch.sh` now supports concurrent process CSV sampling through:
+
+```text
+M12_PROCESS_SAMPLE_CSV=<path>
+M12_PROCESS_SAMPLE_INTERVAL_MS=250
+```
+
+First smoke proof:
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/elden-ring-smoke-20260615-213811/perf-analysis.md
+```
+
+Captured:
+
+```text
+drawn/present=22/22
+render_pso_failed=0
+dxil_msl_compile_failed=0
+unsafe_draw_skips=0
+PSO compiles total=445
+process samples=77
+max CPU %=345.4
+avg CPU %=168.69
+max RSS bytes=3127136256
+max threads=93
+```
+
+This is only the harness foundation. Next implementation layer should add native runtime perf trace events for PSO compile durations and texture/upload events, since process-level sampling alone can show pressure but cannot yet attribute it precisely.

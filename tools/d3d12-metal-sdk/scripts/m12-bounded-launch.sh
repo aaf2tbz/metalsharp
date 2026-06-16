@@ -18,6 +18,8 @@ KILL_AFTER=1
 SAMPLE_PROCESS=1
 SAMPLE_DURATION=5
 SAMPLE_INTERVAL_MS=10
+PROCESS_SAMPLE_CSV="${M12_PROCESS_SAMPLE_CSV:-}"
+PROCESS_SAMPLE_INTERVAL_MS="${M12_PROCESS_SAMPLE_INTERVAL_MS:-250}"
 
 usage() {
   cat <<'USAGE'
@@ -132,8 +134,15 @@ PY
 if [[ -n "$PID" && "$SAMPLE_PROCESS" == "1" ]]; then
   (sleep 3; sample "$PID" "$SAMPLE_DURATION" "$SAMPLE_INTERVAL_MS" -file "$RUN_DIR/sample-$PID.txt" >/dev/null 2>&1 || true) &
 fi
+if [[ -n "$PID" && -n "$PROCESS_SAMPLE_CSV" ]]; then
+  python3 "$SDK_DIR/scripts/sample-m12-process.py" --pid "$PID" --seconds "$SECONDS_TO_RUN" --interval-ms "$PROCESS_SAMPLE_INTERVAL_MS" --out "$PROCESS_SAMPLE_CSV" &
+  PROCESS_SAMPLE_PID=$!
+fi
 
 sleep "$SECONDS_TO_RUN"
+if [[ -n "${PROCESS_SAMPLE_PID:-}" ]]; then
+  wait "$PROCESS_SAMPLE_PID" 2>/dev/null || true
+fi
 
 if [[ -n "$PID" ]]; then
   ps -p "$PID" -o pid,stat,etime,pcpu,pmem,command > "$RUN_DIR/process.txt" 2>/dev/null || true

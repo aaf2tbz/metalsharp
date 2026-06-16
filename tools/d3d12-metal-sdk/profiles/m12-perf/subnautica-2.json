@@ -1,0 +1,24 @@
+{
+  "schema": "metalsharp.m12.perf-profile.v1",
+  "profile": "subnautica-2",
+  "bounded_profile": "subnautica2",
+  "appid": 1962700,
+  "display_name": "Subnautica 2",
+  "default_seconds": 180,
+  "smoke_seconds": 60,
+  "cache_path": "~/.metalsharp/shader-cache/m12/1962700",
+  "scenarios": {
+    "smoke": {
+      "seconds": 60,
+      "markers": ["launch_started", "first_present", "run_stopped"]
+    },
+    "loading-to-gameplay": {
+      "seconds": 240,
+      "markers": ["launch_started", "first_present", "load_started", "gameplay_visible", "run_stopped"]
+    },
+    "gameplay-streaming": {
+      "seconds": 300,
+      "markers": ["launch_started", "first_present", "streaming_area_entered", "stutter_observed", "run_stopped"]
+    }
+  }
+}
