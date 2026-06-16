@@ -225,6 +225,7 @@ struct D3D12DrawSafetyDesc {
   int32_t base_vertex = 0;
   uint32_t start_instance = 0;
   D3D12DrawSafetyIndexRange index_range = {};
+  bool allow_vertex_range_oob_safe_draw = false;
   std::vector<D3D12ResolvedIAInputElementMetadata> inputs;
   std::vector<D3D12DrawSafetyVertexBuffer> vertex_buffers;
 };
@@ -374,6 +375,8 @@ D3D12ValidateDrawSafety(const D3D12DrawSafetyDesc &desc) {
     const uint64_t available =
         view->stride_in_bytes ? view->size_in_bytes / view->stride_in_bytes : 0;
     if (required > available) {
+      if (desc.allow_vertex_range_oob_safe_draw && index.indexed)
+        continue;
       result.reason = D3D12DrawSafetySkipReason::VertexRangeOutOfBounds;
       result.required_vertices = required;
       result.available_vertices = available;

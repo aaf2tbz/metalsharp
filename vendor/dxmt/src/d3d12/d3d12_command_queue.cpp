@@ -109,6 +109,16 @@ bool DXMTD3D12DisableCBVStaging() {
   return enabled != 0;
 }
 
+bool DXMTD3D12VertexRangeSafeDraw() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_VERTEX_RANGE_SAFE_DRAW");
+    if (!value || !value[0])
+      return 1;
+    return value[0] != '0' ? 1 : 0;
+  }();
+  return enabled != 0;
+}
+
 static uint32_t AlignReadbackPitch(uint32_t value, uint32_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -1233,6 +1243,9 @@ struct ReplayState {
     desc.start_element = start_element;
     desc.base_vertex = base_vertex;
     desc.start_instance = start_instance;
+    desc.allow_vertex_range_oob_safe_draw =
+        indexed && DXMTD3D12VertexRangeSafeDraw() && pso &&
+        !pso->UsesStageInVertexDescriptor();
 
     if (pso) {
       desc.inputs.reserve(pso->GetIAInputElements().size());

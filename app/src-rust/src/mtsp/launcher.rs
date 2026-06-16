@@ -2077,6 +2077,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| "1".to_string());
         cmd.env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", force_source_compile.trim());
+        if let Ok(vertex_range_safe_draw) = std::env::var("METALSHARP_M12_VERTEX_RANGE_SAFE_DRAW") {
+            if !vertex_range_safe_draw.trim().is_empty() {
+                cmd.env("DXMT_D3D12_VERTEX_RANGE_SAFE_DRAW", vertex_range_safe_draw.trim());
+            }
+        }
     }
 }
 

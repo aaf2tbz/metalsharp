@@ -311,3 +311,24 @@ Initial decision:
 - Do not default async compile yet.
 - If async compile is pursued, workers=6 is the only currently clean async point from this matrix.
 - The guard bucket is consistent across workers=1 and async workers=4, so next investigation should target indexed vertex-pulling range math / resource state timing rather than render PSO creation.
+
+## User performance correction and safe-draw direction — 2026-06-15
+
+Manual timing observation supersedes interpreting lower worker counts as worse because of unsafe-skip counts alone:
+
+- workers `1` is fastest
+- workers `2` is second fastest
+- workers `4` is slow
+- workers `6` is very slow and can look clean only because it does not reach as far into the game
+- game is slow while loading and gets much slower at character creation
+- recommended scheduling direction is workers `4` with async compile, while fixing unsafe draws instead of skipping them
+
+This strengthens the diagnosis that the next issue is resource timing / indexed vertex-pulling range math rather than render PSO creation.
+
+Safe-draw policy candidate:
+
+- keep all missing-resource and index-buffer guards intact
+- for indexed vertex-pulling draws only, do not skip solely because the CPU-side vertex range estimate says OOB
+- rely on shader-side `m12_load_vertex_attr` bounds checks to return zero for OOB vertex attributes
+- expose rollback with:
+  `DXMT_D3D12_VERTEX_RANGE_SAFE_DRAW=0` / `METALSHARP_M12_VERTEX_RANGE_SAFE_DRAW=0`
