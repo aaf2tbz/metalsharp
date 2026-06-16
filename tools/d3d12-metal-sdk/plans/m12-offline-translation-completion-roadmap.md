@@ -2159,3 +2159,49 @@ No runtime staging.
 No game launch.
 Known-good M12 runtime hashes preserved.
 ```
+
+## Phase 4 completion audit — 2026-06-16
+
+Phase 4 is complete as the no-game D3D12/DXGI runtime behavior gauntlet.
+
+Tracked completion audit:
+
+```text
+tools/d3d12-metal-sdk/plans/m12-phase4-completion-audit.md
+```
+
+Tracked verifier:
+
+```text
+tools/d3d12-metal-sdk/scripts/audit-m12-phase4-completion.py
+```
+
+Generated verifier output:
+
+```text
+tools/d3d12-metal-sdk/results/m12-phase4-completion/phase4-completion-audit.md
+tools/d3d12-metal-sdk/results/m12-phase4-completion/phase4-completion-audit.json
+```
+
+Verifier result:
+
+```text
+ok=true
+```
+
+Required green artifacts:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-013615/runtime-gauntlet-summary.md  # phase4-core ok=true
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-014142/runtime-gauntlet-summary.md  # phase4-pso ok=true
+```
+
+Scope boundaries retained:
+
+```text
+No game launch.
+No runtime staging.
+Known-good M12 hash set preserved.
+Visual correctness moves to Phase 5.
+AC6 ctz lowering remains translation repair work outside Phase 4.
+```
