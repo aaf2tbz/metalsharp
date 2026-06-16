@@ -109,12 +109,6 @@ uint32_t AsyncPipelineWorkerCount() {
   return std::max(1u, std::min<uint32_t>((uint32_t)parsed, 12u));
 }
 
-bool EnvFlagEnabled(const char *name) {
-  char value[16] = {};
-  DWORD len = GetEnvironmentVariableA(name, value, sizeof(value));
-  return len > 0 && value[0] && value[0] != '0';
-}
-
 class AsyncPipelineCompiler {
 public:
   void Enqueue(MTLD3D12PipelineState *pso) {
@@ -1851,13 +1845,7 @@ bool MTLD3D12PipelineState::Compile() {
               s, slot_stride[s], (unsigned)vtx_desc.layouts[s].step_function);
     }
     if (!m_vs_uses_stage_in) {
-      if (EnvFlagEnabled("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") && attribute_count > 0) {
-        info.vertex_descriptor = &vtx_desc;
-        PSTRACE("D3D12 PSO experimental typed vertex descriptor attached for vertex-pulling shader attrs=%u slots=%u",
-                vtx_desc.attribute_count, vtx_desc.layout_count);
-      } else {
-        PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
-      }
+      PSTRACE("D3D12 PSO input-layout compiled for SM50 vertex pulling; Metal vertex descriptor disabled");
     }
   }
   if (m_vs_uses_stage_in) {
