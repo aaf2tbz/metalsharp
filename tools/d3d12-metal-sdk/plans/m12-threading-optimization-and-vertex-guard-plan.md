@@ -445,3 +445,50 @@ with existing rollback overrides:
 METALSHARP_M12_PSO_WORKERS=<n>
 METALSHARP_M12_ASYNC_PIPELINE_COMPILE=0
 ```
+
+## Empty cache default M12 test — 2026-06-15
+
+A fully empty live shader cache was tested with current M12 defaults. The pre-test cache was preserved at:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/elden-ring-pre-empty-cache-test-20260615-212204
+```
+
+Test evidence:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-212209/summary.md
+present_count=24
+drawn_present_count=24
+graphics_pso_compiled=2238
+compute_pso_compiled=2
+render_pso_failed=0
+compute_pso_failed=0
+sm50_compile_failed=0
+dxil_msl_compile_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+unsafe_draw_skips=0
+```
+
+Generated cache after the run contained approximately:
+
+```text
+file_count=9702
+dxbc=2030
+msl=2029
+metallib=2
+json=1582
+dxil_report=2029
+msl_errors=0
+fail_markers=0
+```
+
+Interpretation:
+
+- The preserved/stable cache is not required for correctness.
+- M12 can generate from an empty cache with the new defaults and still render cleanly.
+- First-run cost remains high because `DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE=1` compiles from source and does not currently persist refreshed DXIL metallibs for reuse.
+- Future update work should add cache epoching/persistent refreshed metallibs so first-run generation becomes one-time rather than every run.
+
+After the test, live cache was restored from the pre-test preservation snapshot.
