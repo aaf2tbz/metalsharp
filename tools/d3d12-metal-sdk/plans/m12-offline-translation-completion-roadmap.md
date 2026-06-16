@@ -2095,3 +2095,67 @@ Interpretation:
 
 - Graphics PSO vertex descriptor expansion is green on known-good M12.
 - Compute PSO resource binding remains a real Phase 4 target, likely tied to descriptor/resource binding correctness rather than game launch behavior.
+
+## Phase 4 compute PSO expectation correction — 2026-06-16
+
+The remaining `phase4-pso` failure was a probe expectation bug, not a runtime binding failure.
+
+Previous probe result:
+
+```text
+actual=[106,108,110,112]
+expected=[6,8,10,12]
+sampler_read_supported=false
+```
+
+The shader intentionally samples a 1x1 texture cleared to RGBA values:
+
+```text
+10 + 20 + 30 + 40 = 100
+```
+
+The correct expected output is therefore:
+
+```text
+input + addend + sample + dispatch_id
+[1,2,3,4] + 5 + 100 + [0,1,2,3] = [106,108,110,112]
+```
+
+Updated:
+
+```text
+tools/d3d12-metal-sdk/probes/probe_compute_pso/probe_compute_pso.cpp
+```
+
+Corrected semantics:
+
+```text
+expected=[106,108,110,112]
+sampler_read_supported=true
+```
+
+Validation:
+
+```text
+tools/d3d12-metal-sdk/results/m12-runtime-gauntlet/20260616-014142/runtime-gauntlet-summary.md
+```
+
+Result:
+
+```text
+phase4-pso ok=true
+probe_json_count=15
+failure_count=0
+probe-compute-pso-metalsharp.json pass=true
+probe-graphics-pso-metalsharp.json pass=true
+```
+
+Current Phase 4 status:
+
+```text
+phase4-core green
+phase4-pso green
+No runtime staging.
+No game launch.
+Known-good M12 runtime hashes preserved.
+```
