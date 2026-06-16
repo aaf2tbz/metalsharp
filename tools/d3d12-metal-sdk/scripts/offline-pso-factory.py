@@ -47,6 +47,7 @@ static MTLPixelFormat pixelFormat(NSString *name) {
   if ([n isEqualToString:@"rgba32float"] || [n isEqualToString:@"r32g32b32a32_float"]) return MTLPixelFormatRGBA32Float;
   if ([n isEqualToString:@"r32float"] || [n isEqualToString:@"r32_float"]) return MTLPixelFormatR32Float;
   if ([n isEqualToString:@"r32uint"] || [n isEqualToString:@"r32_uint"]) return MTLPixelFormatR32Uint;
+  if ([n isEqualToString:@"depth16unorm"] || [n isEqualToString:@"d16_unorm"]) return MTLPixelFormatDepth16Unorm;
   if ([n isEqualToString:@"depth32float"] || [n isEqualToString:@"d32_float"]) return MTLPixelFormatDepth32Float;
   if ([n isEqualToString:@"depth24unorm_stencil8"] || [n isEqualToString:@"d24_unorm_s8_uint"]) return MTLPixelFormatDepth24Unorm_Stencil8;
   if ([n isEqualToString:@"depth32float_stencil8"] || [n isEqualToString:@"d32_float_s8x24_uint"]) return MTLPixelFormatDepth32Float_Stencil8;
@@ -82,6 +83,96 @@ static NSString *entryPointFromReflection(NSDictionary *shader, NSString *metall
   NSDictionary *reflection = loadJSON(reflectionPath);
   if (![reflection isKindOfClass:[NSDictionary class]]) return @"";
   return stringValue(reflection, @"EntryPoint", @"");
+}
+
+static NSDictionary *reflectionForShader(NSDictionary *shader) {
+  NSString *path = stringValue(shader, @"metallib", @"");
+  NSString *reflectionPath = stringValue(shader, @"reflection", @"");
+  if ([reflectionPath length] == 0 && [path length] > 0) {
+    reflectionPath = [[path stringByDeletingPathExtension] stringByAppendingPathExtension:@"json"];
+  }
+  NSDictionary *reflection = loadJSON(reflectionPath);
+  return [reflection isKindOfClass:[NSDictionary class]] ? reflection : nil;
+}
+
+static MTLVertexFormat vertexFormatForReflectionInput(NSDictionary *input) {
+  NSString *type = stringValue(input, @"elementType", @"Float");
+  NSUInteger columns = uintValue(input, @"columnCount", 4);
+  if ([type isEqualToString:@"Uint32"]) {
+    if (columns <= 1) return MTLVertexFormatUInt;
+    if (columns == 2) return MTLVertexFormatUInt2;
+    if (columns == 3) return MTLVertexFormatUInt3;
+    return MTLVertexFormatUInt4;
+  }
+  if ([type isEqualToString:@"Int32"]) {
+    if (columns <= 1) return MTLVertexFormatInt;
+    if (columns == 2) return MTLVertexFormatInt2;
+    if (columns == 3) return MTLVertexFormatInt3;
+    return MTLVertexFormatInt4;
+  }
+  if (columns <= 1) return MTLVertexFormatFloat;
+  if (columns == 2) return MTLVertexFormatFloat2;
+  if (columns == 3) return MTLVertexFormatFloat3;
+  return MTLVertexFormatFloat4;
+}
+
+static NSUInteger vertexFormatByteSize(MTLVertexFormat format) {
+  switch (format) {
+    case MTLVertexFormatFloat:
+    case MTLVertexFormatInt:
+    case MTLVertexFormatUInt: return 4;
+    case MTLVertexFormatFloat2:
+    case MTLVertexFormatInt2:
+    case MTLVertexFormatUInt2: return 8;
+    case MTLVertexFormatFloat3:
+    case MTLVertexFormatInt3:
+    case MTLVertexFormatUInt3: return 12;
+    default: return 16;
+  }
+}
+
+static MTLVertexFormat vertexFormatForDataType(MTLDataType type) {
+  switch (type) {
+    case MTLDataTypeFloat: return MTLVertexFormatFloat;
+    case MTLDataTypeFloat2: return MTLVertexFormatFloat2;
+    case MTLDataTypeFloat3: return MTLVertexFormatFloat3;
+    case MTLDataTypeFloat4: return MTLVertexFormatFloat4;
+    case MTLDataTypeInt: return MTLVertexFormatInt;
+    case MTLDataTypeInt2: return MTLVertexFormatInt2;
+    case MTLDataTypeInt3: return MTLVertexFormatInt3;
+    case MTLDataTypeInt4: return MTLVertexFormatInt4;
+    case MTLDataTypeUInt: return MTLVertexFormatUInt;
+    case MTLDataTypeUInt2: return MTLVertexFormatUInt2;
+    case MTLDataTypeUInt3: return MTLVertexFormatUInt3;
+    case MTLDataTypeUInt4: return MTLVertexFormatUInt4;
+    default: return MTLVertexFormatInvalid;
+  }
+}
+
+static MTLVertexDescriptor *vertexDescriptorFromFunctionAttributes(id<MTLFunction> vertex) {
+  NSArray *attributes = [vertex vertexAttributes];
+  if (![attributes isKindOfClass:[NSArray class]] || [attributes count] == 0) return nil;
+
+  MTLVertexDescriptor *vertexDescriptor = [MTLVertexDescriptor vertexDescriptor];
+  NSUInteger stride = 0;
+  NSUInteger emitted = 0;
+  for (MTLVertexAttribute *attribute in attributes) {
+    if (![attribute isKindOfClass:[MTLVertexAttribute class]]) continue;
+    NSUInteger attributeIndex = [attribute attributeIndex];
+    if (attributeIndex >= 31) continue;
+    MTLVertexFormat format = vertexFormatForDataType([attribute attributeType]);
+    if (format == MTLVertexFormatInvalid) continue;
+    vertexDescriptor.attributes[attributeIndex].format = format;
+    vertexDescriptor.attributes[attributeIndex].offset = stride;
+    vertexDescriptor.attributes[attributeIndex].bufferIndex = 0;
+    stride += vertexFormatByteSize(format);
+    emitted += 1;
+  }
+  if (emitted == 0) return nil;
+  vertexDescriptor.layouts[0].stride = stride > 0 ? stride : 16;
+  vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+  vertexDescriptor.layouts[0].stepRate = 1;
+  return vertexDescriptor;
 }
 
 static id<MTLFunction> loadFunction(id<MTLDevice> device, NSDictionary *shader, NSString **errorOut) {
@@ -136,6 +227,26 @@ static NSDictionary *failResult(NSDictionary *pipeline, NSString *status, NSStri
   };
 }
 
+static NSDictionary *skipResult(NSDictionary *pipeline, NSString *status, NSString *message) {
+  return @{
+    @"name": stringValue(pipeline, @"name", @""),
+    @"type": stringValue(pipeline, @"type", @""),
+    @"ok": @YES,
+    @"skipped": @YES,
+    @"status": status,
+    @"message": message ? message : @"skipped",
+  };
+}
+
+static BOOL shaderMetallibReadable(NSDictionary *shader, NSString **messageOut) {
+  if (![shader isKindOfClass:[NSDictionary class]]) return YES;
+  NSString *path = stringValue(shader, @"metallib", @"");
+  if ([path length] == 0) return YES;
+  if ([[NSFileManager defaultManager] isReadableFileAtPath:path]) return YES;
+  if (messageOut) *messageOut = [NSString stringWithFormat:@"incomplete capture: metallib not readable: %@", path];
+  return NO;
+}
+
 int main(int argc, const char **argv) {
   @autoreleasepool {
     if (argc < 2) {
@@ -158,6 +269,7 @@ int main(int argc, const char **argv) {
     NSArray *pipelines = manifest[@"pipelines"];
     NSMutableArray *results = [NSMutableArray array];
     NSUInteger failures = 0;
+    NSUInteger skipped = 0;
 
     for (NSDictionary *pipeline in pipelines) {
       if (![pipeline isKindOfClass:[NSDictionary class]]) continue;
@@ -165,6 +277,11 @@ int main(int argc, const char **argv) {
       NSString *errorText = nil;
 
       if ([type isEqualToString:@"function"]) {
+        if (!shaderMetallibReadable(pipeline[@"shader"], &errorText)) {
+          skipped += 1;
+          [results addObject:skipResult(pipeline, @"incomplete_capture_skipped", errorText)];
+          continue;
+        }
         id<MTLFunction> fn = loadFunction(device, pipeline[@"shader"], &errorText);
         if (fn) {
           [results addObject:okResult(pipeline, @"function_loaded", @{@"function_type": @((NSUInteger)[fn functionType])})];
@@ -173,6 +290,11 @@ int main(int argc, const char **argv) {
           [results addObject:failResult(pipeline, @"function_failed", errorText)];
         }
       } else if ([type isEqualToString:@"compute"]) {
+        if (!shaderMetallibReadable(pipeline[@"shader"], &errorText)) {
+          skipped += 1;
+          [results addObject:skipResult(pipeline, @"incomplete_capture_skipped", errorText)];
+          continue;
+        }
         id<MTLFunction> fn = loadFunction(device, pipeline[@"shader"], &errorText);
         if (!fn) {
           failures += 1;
@@ -188,6 +310,18 @@ int main(int argc, const char **argv) {
           [results addObject:failResult(pipeline, @"compute_pso_failed", error ? [error localizedDescription] : @"newComputePipelineStateWithFunction failed")];
         }
       } else if ([type isEqualToString:@"render"]) {
+        if (!shaderMetallibReadable(pipeline[@"vertex"], &errorText)) {
+          skipped += 1;
+          [results addObject:skipResult(pipeline, @"incomplete_capture_skipped", errorText)];
+          continue;
+        }
+        id fragmentShaderForCompleteness = pipeline[@"fragment"];
+        if ([fragmentShaderForCompleteness isKindOfClass:[NSDictionary class]] &&
+            !shaderMetallibReadable(fragmentShaderForCompleteness, &errorText)) {
+          skipped += 1;
+          [results addObject:skipResult(pipeline, @"incomplete_capture_skipped", errorText)];
+          continue;
+        }
         id<MTLFunction> vertex = loadFunction(device, pipeline[@"vertex"], &errorText);
         if (!vertex) {
           failures += 1;
@@ -220,18 +354,33 @@ int main(int argc, const char **argv) {
         }
         NSDictionary *d3d12 = dictValue(pipeline, @"d3d12");
         NSUInteger inputElements = d3d12 ? uintValue(d3d12, @"input_elements", 0) : 0;
-        if (inputElements > 0) {
-          MTLVertexDescriptor *vertexDescriptor = [MTLVertexDescriptor vertexDescriptor];
-          NSUInteger stride = 0;
-          for (NSUInteger i = 0; i < 31; i++) {
-            vertexDescriptor.attributes[i].format = MTLVertexFormatFloat4;
-            vertexDescriptor.attributes[i].offset = i * 16;
-            vertexDescriptor.attributes[i].bufferIndex = 0;
-            stride = (i + 1) * 16;
+        MTLVertexDescriptor *functionVertexDescriptor = vertexDescriptorFromFunctionAttributes(vertex);
+        if (functionVertexDescriptor) {
+          desc.vertexDescriptor = functionVertexDescriptor;
+        } else if (inputElements > 0) {
+          NSDictionary *vertexReflection = reflectionForShader(pipeline[@"vertex"]);
+          NSDictionary *state = dictValue(vertexReflection, @"state");
+          NSArray *vertexInputs = state[@"vertex_inputs"];
+          if ([vertexInputs isKindOfClass:[NSArray class]] && [vertexInputs count] > 0) {
+            MTLVertexDescriptor *vertexDescriptor = [MTLVertexDescriptor vertexDescriptor];
+            NSUInteger stride = 0;
+            NSUInteger baseAttribute = uintValue(state, @"instance_id_index", 0);
+            for (NSDictionary *input in vertexInputs) {
+              if (![input isKindOfClass:[NSDictionary class]]) continue;
+              NSUInteger inputIndex = uintValue(input, @"index", NSUIntegerMax);
+              if (inputIndex == NSUIntegerMax || baseAttribute + inputIndex >= 31) continue;
+              MTLVertexFormat fmt = vertexFormatForReflectionInput(input);
+              NSUInteger attr = baseAttribute + inputIndex;
+              vertexDescriptor.attributes[attr].format = fmt;
+              vertexDescriptor.attributes[attr].offset = stride;
+              vertexDescriptor.attributes[attr].bufferIndex = 0;
+              stride += vertexFormatByteSize(fmt);
+            }
+            vertexDescriptor.layouts[0].stride = stride > 0 ? stride : 16;
+            vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
+            vertexDescriptor.layouts[0].stepRate = 1;
+            desc.vertexDescriptor = vertexDescriptor;
           }
-          vertexDescriptor.layouts[0].stride = stride > 0 ? stride : 16;
-          vertexDescriptor.layouts[0].stepFunction = MTLVertexStepFunctionPerVertex;
-          desc.vertexDescriptor = vertexDescriptor;
         }
         desc.rasterSampleCount = uintValue(pipeline, @"sample_count", 1);
         NSArray *colorFormats = pipeline[@"color_formats"];
@@ -266,6 +415,7 @@ int main(int argc, const char **argv) {
       @"device": [device name] ? [device name] : @"",
       @"pipeline_count": @([results count]),
       @"failure_count": @(failures),
+      @"skipped_count": @(skipped),
       @"pipelines": results,
     };
     NSData *json = [NSJSONSerialization dataWithJSONObject:output options:NSJSONWritingPrettyPrinted error:nil];
@@ -478,6 +628,7 @@ def main() -> int:
             "manifest_mode": manifest.get("mode", "explicit"),
             "pipeline_count": raw.get("pipeline_count", len(pipelines)),
             "failure_count": raw.get("failure_count", len(pipelines)),
+            "skipped_count": raw.get("skipped_count", 0),
             "device": raw.get("device", ""),
             "pipelines": raw.get("pipelines", []),
             "stderr_tail": completed.stderr[-4000:],
