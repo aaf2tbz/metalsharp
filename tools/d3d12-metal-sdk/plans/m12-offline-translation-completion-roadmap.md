@@ -1508,3 +1508,79 @@ Remaining Phase 3.5 runtime work before broad Phase 4:
 - Add final `MTLVertexDescriptor`/reflected attribute dump linkage to PSO artifacts.
 - Add cache-key enforcement beyond the offline verifier.
 - Define explicit capture/API validation env hooks, off by default.
+
+## Phase 3.5 runtime diagnostic staging rollback — 2026-06-16
+
+Attempted to stage an experimental Phase 3.5 runtime diagnostic build that added Winemetal `NSError` descriptor logging and command-buffer serial/status traces.
+
+Bad diagnostic staged hashes:
+
+```text
+d3d12.dll    eac6959befe45ce1ce75e2fac9ca75527f432b0304ace296299c05f7f752c6cf
+winemetal.so 5ec36f518fd99b20f0590f13c5f8938a19019baf32448e7973143335647d1ec6
+```
+
+Observed regression symptoms:
+
+```text
+Subnautica 2: UE reported "Failed to choose a D3D12 Adapter" / user-visible "DX12 not supported on your system" style failure.
+Armored Core VI: user observed winedbg crash behavior, unlike the previous successful AC6 smoke.
+```
+
+The Subnautica failed run artifact did use `dxmt_m12` and the bad diagnostic hash, but produced no useful render validation:
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/subnautica-2-smoke-20260616-004928
+runtime d3d12.dll=eac6959befe45ce1ce75e2fac9ca75527f432b0304ace296299c05f7f752c6cf
+present/drawn=0/0
+launch log: Failed to choose a D3D12 Adapter
+```
+
+Rollback performed from:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/pre-phase35-runtime-diagnostics-20260616-004852
+```
+
+Restored known-good hashes:
+
+```text
+d3d12.dll    2612e228a5efa9d65f6923b3ed1cc50b1c6ce40abb2c0043c51d32ec5b60dd7c
+winemetal.so 167d16f1280ce4f78f842576758c46cdc6db59c37c2e20aa3b7060fba7f49d58
+dxgi_dxmt.dll 659ea3c4dddf658038eab67f26e71497ba11a4787e41c636766222ac2d8b028d
+winemetal.dll 7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85
+```
+
+Important correction: rollback must restore all of these, not only root `d3d12.dll`/`dxgi.dll`:
+
+```text
+~/.metalsharp/runtime/wine/lib/dxmt_m12
+~/.metalsharp/runtime/wine/lib/wine/x86_64-windows/winemetal.dll
+~/.metalsharp/runtime/wine/lib/wine/x86_64-unix/winemetal.so
+Elden Ring game-local M12 DLL set
+Subnautica 2 root M12 DLL set
+Subnautica 2 Engine/Binaries/Win64 M12 DLL set
+Armored Core VI game-local M12 DLL set
+```
+
+Post-rollback dry-run verified all three active targets without game launch:
+
+```text
+Elden Ring appid=1245620:    ok=true missing=[] pipeline=m12 d3d12=2612e228... winemetal.so=167d16...
+Subnautica 2 appid=1962700:  ok=true missing=[] pipeline=m12 d3d12=2612e228... winemetal.so=167d16...
+Armored Core VI appid=1888160: ok=true missing=[] pipeline=m12 d3d12=2612e228... winemetal.so=167d16...
+```
+
+Action taken to prevent repeat ambiguity:
+
+```text
+m12-bounded-launch.sh now supports --expect-d3d12-sha and --expect-winemetal-so-sha.
+m12-performance-run.sh forwards those gates.
+The gate verifies source runtime before launch and deployed d3d12.dll destinations from launch.json after launch.
+```
+
+Decision:
+
+- Do not re-stage runtime diagnostics as a broad d3d12/winemetal rebuild during Phase 3.5.
+- Keep Phase 3.5 completion focused on offline analyzers, strict hash gates, Apple-doc-backed probe requirements, and future tiny runtime patches only after isolated build/runtime proof.
+- Any future runtime diagnostic patch must first run behind strict expected-hash gates and must restore **all** runtime/game-local DLL surfaces on rollback.

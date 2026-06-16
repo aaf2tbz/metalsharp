@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 ERROR_DOMAIN_RE = re.compile(r"Error Domain=([^\s]+) Code=(-?\d+) \"(.*?)\"", re.S)
+WINEMETAL_NSERROR_RE = re.compile(r"\[winemetal\] NSError label=([^\s]+) domain=([^\s]+) code=(-?\d+) localized=(.*?) userInfo=(.*)")
 PROGRAM_RE = re.compile(r"program_source:(\d+):(\d+):\s*(error|warning):\s*(.*)")
 HASH_RE = re.compile(r"^[0-9a-fA-F]{16}$")
 
@@ -97,7 +98,7 @@ def parse_file(label: str, path: Path) -> list[dict[str, Any]]:
     if not text:
         return []
     interesting = any(s in text for s in [
-        "Error Domain=", "MTLCommandBufferError", "MTLLibraryError", "render_pso_failed",
+        "Error Domain=", "[winemetal] NSError", "MTLCommandBufferError", "MTLLibraryError", "render_pso_failed",
         "compute_pso_failed", "dxil_msl_compile_failed", "vertex_descriptor_missing",
         "vs_ps_varying_mismatch", "call to 'ctz' is ambiguous", "Insufficient Memory",
     ])
@@ -105,6 +106,26 @@ def parse_file(label: str, path: Path) -> list[dict[str, Any]]:
         return []
 
     rows: list[dict[str, Any]] = []
+    winemetal_matches = list(WINEMETAL_NSERROR_RE.finditer(text))
+    for m in winemetal_matches[-80:]:
+        snippet = text[max(0, m.start() - 500): min(len(text), m.end() + 1200)]
+        rows.append({
+            "input": label,
+            "path": str(path),
+            "shader_hash": shader_hash_for(path),
+            "category": classify(snippet),
+            "apple_error_label": m.group(1),
+            "apple_error_domain": m.group(2),
+            "apple_error_code": int(m.group(3)),
+            "apple_error_text": " ".join(m.group(4).split())[:2000],
+            "apple_error_user_info": " ".join(m.group(5).split())[:2000],
+            "program_diagnostics": [
+                {"line": int(pm.group(1)), "column": int(pm.group(2)), "severity": pm.group(3), "message": pm.group(4).strip()}
+                for pm in PROGRAM_RE.finditer(snippet)
+            ][:20],
+            "snippet": " ".join(snippet.split())[:2500],
+        })
+
     domain_matches = list(ERROR_DOMAIN_RE.finditer(text))
     if domain_matches:
         if len(domain_matches) > 30:
@@ -120,14 +141,16 @@ def parse_file(label: str, path: Path) -> list[dict[str, Any]]:
                 "category": classify(snippet),
                 "apple_error_domain": m.group(1),
                 "apple_error_code": int(m.group(2)),
+                "apple_error_label": None,
                 "apple_error_text": " ".join(m.group(3).split())[:2000],
+                "apple_error_user_info": None,
                 "program_diagnostics": [
                     {"line": int(pm.group(1)), "column": int(pm.group(2)), "severity": pm.group(3), "message": pm.group(4).strip()}
                     for pm in PROGRAM_RE.finditer(snippet)
                 ][:20],
                 "snippet": " ".join(snippet.split())[:2500],
             })
-    elif interesting:
+    elif interesting and not rows:
         rows.append({
             "input": label,
             "path": str(path),
@@ -135,7 +158,9 @@ def parse_file(label: str, path: Path) -> list[dict[str, Any]]:
             "category": classify(text),
             "apple_error_domain": None,
             "apple_error_code": None,
+            "apple_error_label": None,
             "apple_error_text": None,
+            "apple_error_user_info": None,
             "program_diagnostics": [
                 {"line": int(pm.group(1)), "column": int(pm.group(2)), "severity": pm.group(3), "message": pm.group(4).strip()}
                 for pm in PROGRAM_RE.finditer(text)
