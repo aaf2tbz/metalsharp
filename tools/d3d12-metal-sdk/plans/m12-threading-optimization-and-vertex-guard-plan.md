@@ -369,3 +369,41 @@ Interpretation:
 - The vertex-range guard bucket was a false-positive/overconservative CPU guard for indexed vertex-pulling draws.
 - Turning those into shader-clamped safe draws removes unsafe skips without regressing render PSO creation.
 - Workers=4 + async is now a viable recommended scheduling direction for further loading/character-creation profiling.
+
+## M12 worker/async default — 2026-06-15
+
+After safe vertex-range draws were verified, workers `1` with async pipeline compile was tested and became the preferred useful default based on manual performance observation and clean bounded metrics.
+
+Test evidence:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-211333/summary.md
+present_count=24
+drawn_present_count=24
+graphics_pso_compiled=1328
+render_pso_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+dxil_msl_compile_failed=0
+unsafe_draw_skips=0
+```
+
+M12 launcher defaults now include:
+
+```text
+DXMT_D3D12_PSO_WORKERS=1
+DXMT_ASYNC_PIPELINE_COMPILE=1
+DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=1
+DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE=1
+DXMT_D3D12_VERTEX_RANGE_SAFE_DRAW=1  # runtime default, disable with env override
+```
+
+Rollback/debug overrides remain:
+
+```text
+METALSHARP_M12_PSO_WORKERS=<n>
+METALSHARP_M12_ASYNC_PIPELINE_COMPILE=0
+METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=0
+METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=0
+METALSHARP_M12_VERTEX_RANGE_SAFE_DRAW=0
+```

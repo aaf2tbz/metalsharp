@@ -2047,16 +2047,16 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
     }
 
     if pipeline_id == PipelineId::M12 {
-        if let Ok(workers) = std::env::var("METALSHARP_M12_PSO_WORKERS") {
-            if !workers.trim().is_empty() {
-                cmd.env("DXMT_D3D12_PSO_WORKERS", workers.trim());
-            }
-        }
-        if let Ok(async_compile) = std::env::var("METALSHARP_M12_ASYNC_PIPELINE_COMPILE") {
-            if !async_compile.trim().is_empty() {
-                cmd.env("DXMT_ASYNC_PIPELINE_COMPILE", async_compile.trim());
-            }
-        }
+        let workers = std::env::var("METALSHARP_M12_PSO_WORKERS")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "1".to_string());
+        cmd.env("DXMT_D3D12_PSO_WORKERS", workers.trim());
+        let async_compile = std::env::var("METALSHARP_M12_ASYNC_PIPELINE_COMPILE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "1".to_string());
+        cmd.env("DXMT_ASYNC_PIPELINE_COMPILE", async_compile.trim());
         let typed_stage_in = std::env::var("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR")
             .ok()
             .filter(|value| !value.trim().is_empty())
