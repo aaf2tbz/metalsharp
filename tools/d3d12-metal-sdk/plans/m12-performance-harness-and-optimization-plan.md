@@ -811,3 +811,43 @@ Next logical step:
 3. Classify Subnautica 2 compute MSL failures separately from performance.
 4. Classify Schedule I native exception separately from performance.
 5. Continue adding external measurements before any native runtime instrumentation.
+
+## Runtime restage rollback lesson — 2026-06-15
+
+Attempting to restage the latest built DXMT runtime before the multi-game matrix regressed Elden Ring immediately:
+
+```text
+crash evidence: /tmp/metalsharp-m12-latest-runtime-elden-crash-20260615-220004
+latest-built d3d12.dll sha: a1e7b22a10717f66217c2a730151a6d60122711cccd9d365c01186469b7a0761
+failure: wine fell back to unimplemented builtin d3d12.dll.101 / D3D12CreateDevice
+```
+
+Important finding:
+
+- Restoring `~/.metalsharp/runtime/wine/lib/dxmt_m12` is not enough after a failed launch.
+- The launch route deploys M12 DLLs into the game directory too.
+- The failed restage copied the bad latest-built DLLs into:
+
+```text
+/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game
+```
+
+The game-local DLLs had to be normalized back to the restored runtime. Working restored `d3d12.dll` SHA:
+
+```text
+92fba1da24895a9bb3c66c7f5a595001caf6f4375e6195966ccbdbabf3525a16
+```
+
+Guardrail for future perf work:
+
+1. Do not restage latest built DXMT over the working runtime before performance testing unless the build is explicitly validated.
+2. Any runtime rollback must also normalize game-local deployed DLLs for the target game.
+3. The performance harness should capture deployed game-local DLL hashes before/after each launch.
+4. Treat latest-built runtime validation as its own task, separate from FPS/loading optimization.
+
+Current safe state after rollback:
+
+```text
+Elden Ring game-local d3d12.dll restored to 92fba1da24895a9bb3c66c7f5a595001caf6f4375e6195966ccbdbabf3525a16
+runtime dxmt_m12 d3d12.dll restored to 92fba1da24895a9bb3c66c7f5a595001caf6f4375e6195966ccbdbabf3525a16
+```
