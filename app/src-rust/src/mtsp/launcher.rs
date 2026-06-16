@@ -2062,6 +2062,11 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
                 cmd.env("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR", typed_stage_in.trim());
             }
         }
+        if let Ok(log_failure_keys) = std::env::var("METALSHARP_M12_LOG_RENDER_PSO_FAILURE_KEYS") {
+            if !log_failure_keys.trim().is_empty() {
+                cmd.env("DXMT_D3D12_LOG_RENDER_PSO_FAILURE_KEYS", log_failure_keys.trim());
+            }
+        }
     }
 }
 

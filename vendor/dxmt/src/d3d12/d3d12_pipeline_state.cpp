@@ -1967,6 +1967,14 @@ bool MTLD3D12PipelineState::Compile() {
           (unsigned)m_rasterizer_desc.FrontCounterClockwise,
           (unsigned)m_rasterizer_desc.DepthClipEnable);
 
+  size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
+      vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
+      m_dsv_format, m_sample_count ? m_sample_count : 1,
+      m_input_layout.NumElements, m_ia_slot_mask, m_vs_uses_stage_in);
+  const bool reflected_descriptor_enabled =
+      EnvFlagEnabled("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") &&
+      info.vertex_descriptor == &reflected_vtx_desc;
+
   std::string render_err_desc = "unknown";
   for (uint32_t attempt = 0; attempt < 4; attempt++) {
     err = nullptr;
@@ -1985,16 +1993,22 @@ bool MTLD3D12PipelineState::Compile() {
     Sleep(50 * (attempt + 1));
   }
   if (!m_render_pso.handle) {
+    if (EnvFlagEnabled("DXMT_D3D12_LOG_RENDER_PSO_FAILURE_KEYS")) {
+      Logger::err(str::format(
+          "Render PSO failure key pso=", std::hex, pso_manifest_hash,
+          " vs=", vs_hash, " ps=", ps_hash, " gs=", gs_hash,
+          " input_elements=", std::dec, m_input_layout.NumElements,
+          " ia_slot_mask=0x", std::hex, m_ia_slot_mask,
+          " uses_stage_in=", m_vs_uses_stage_in ? 1 : 0,
+          " reflected_descriptor=", reflected_descriptor_enabled ? 1 : 0,
+          " error=", render_err_desc));
+    }
     Logger::err(str::format("Failed to create render PSO: ", render_err_desc));
     return RecordCompileFailure("pso/metal_render_pso",
                                 str::format("Metal render PSO creation failed: ",
                                             render_err_desc));
   }
   {
-    size_t pso_manifest_hash = ComputeRenderPSOManifestHash(
-        vs_hash, ps_hash, gs_hash, m_num_render_targets, m_rtv_formats,
-        m_dsv_format, m_sample_count ? m_sample_count : 1,
-        m_input_layout.NumElements, m_ia_slot_mask, m_vs_uses_stage_in);
     DumpRenderPSOManifest(
         pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
         m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
