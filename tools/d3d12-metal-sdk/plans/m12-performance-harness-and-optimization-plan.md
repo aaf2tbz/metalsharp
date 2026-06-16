@@ -851,3 +851,68 @@ Current safe state after rollback:
 Elden Ring game-local d3d12.dll restored to 92fba1da24895a9bb3c66c7f5a595001caf6f4375e6195966ccbdbabf3525a16
 runtime dxmt_m12 d3d12.dll restored to 92fba1da24895a9bb3c66c7f5a595001caf6f4375e6195966ccbdbabf3525a16
 ```
+
+## Corrected working current-source runtime — 2026-06-15
+
+Correction to the prior runtime rollback interpretation:
+
+- The old restored runtime was **not** the desired final state.
+- The first "latest built" restage failed because the DXMT build directory still contained stale output from the uncommitted native perf-trace experiment.
+- Rebuilding `src/d3d12/d3d12.dll` from the clean current source produced a new working runtime.
+
+Working current-source runtime preservation:
+
+```text
+/Volumes/AverySSD/MetalSharp-M12-Preserved/working-current-source-runtime-elden-ring-20260615-220308
+```
+
+Working `d3d12.dll` SHA:
+
+```text
+8cdcec40588018dafaa3cdd1cfb140c1fd7edba6f1160cd7559d61be8b946500
+```
+
+This SHA is now installed in both:
+
+```text
+~/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll
+/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/d3d12.dll
+```
+
+Elden Ring control smoke with this corrected current-source runtime:
+
+```text
+tools/d3d12-metal-sdk/results/perf-runs/elden-ring-smoke-20260615-220308/perf-analysis.md
+tools/d3d12-metal-sdk/results/perf-runs/elden-ring-smoke-20260615-220308/bounded-summary.md
+```
+
+Metrics:
+
+```text
+launch_ok=true
+present_count=25
+drawn_present_count=25
+graphics_pso_compiled=276
+compute_pso_compiled=0
+render_pso_failed=0
+compute_pso_failed=0
+sm50_compile_failed=0
+dxil_msl_compile_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+tessellation_fallback=11
+unix_call_failed=0
+unsafe_draw_skips=0
+process_samples=77
+max_cpu_percent=294.8
+avg_cpu_percent=152.26493506493506
+max_rss_bytes=3862872064
+max_threads=88
+```
+
+Guardrail update:
+
+- Do not trust stale build artifacts after experimental native instrumentation.
+- If source is clean but runtime behavior regresses, force-rebuild the relevant DXMT target before deciding the source is bad.
+- Preserve and compare runtime/game-local DLL hashes for every perf baseline.
+- The current working performance baseline is the `8cdcec...` runtime, not the old `92fba...` restore and not the stale bad `a1e7...` artifact.
