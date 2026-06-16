@@ -602,3 +602,50 @@ The topology experiment remains opt-in only and is not part of the default:
 ```text
 METALSHARP_M12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY=1
 ```
+
+## Default M12 clean render PSO verification — 2026-06-15
+
+Commit:
+
+```text
+a80e87e fix: default clean M12 render PSO path
+```
+
+Default M12 backend launch now injects the previously successful gates automatically. No explicit `METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR` or `METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE` env was provided for verification runs.
+
+First default verification after staging:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-203114/summary.md
+present_count=23
+drawn_present_count=23
+render_pso_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+unsafe_draw_skips=82
+```
+
+This proved render PSO failures were clean by default, but one run exposed a separate vertex-range guard bucket.
+
+Repeat default verification from restored cache:
+
+```text
+tools/d3d12-metal-sdk/results/bounded-launches/elden-ring-20260615-203328/summary.md
+present_count=23
+drawn_present_count=23
+render_pso_failed=0
+vertex_descriptor_missing=0
+vs_ps_varying_mismatch=0
+unsafe_draw_skips=0
+```
+
+Current interpretation:
+
+- The render PSO fix is now default for M12.
+- Render PSO creation is clean by default in bounded verification.
+- Remaining CPU/GPU threading/optimization and any intermittent vertex-range guard behavior should be handled as the next separate workstream.
+
+Environment reset after verification:
+
+- Backend restarted without external gates.
+- Live cache restored to `7975` files.
