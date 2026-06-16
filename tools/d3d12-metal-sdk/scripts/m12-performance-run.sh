@@ -28,6 +28,9 @@ Options:
   --workers N                Forward worker override to bounded launch.
   --async-compile 0|1        Forward async override to bounded launch.
   --expect-d3d12-sha SHA     Forward strict d3d12.dll hash gate to bounded launch.
+  --expect-dxgi-sha SHA      Forward strict dxgi.dll hash gate to bounded launch.
+  --expect-dxgi-dxmt-sha SHA Forward strict dxgi_dxmt.dll hash gate to bounded launch.
+  --expect-winemetal-dll-sha SHA Forward strict winemetal.dll hash gate to bounded launch.
   --expect-winemetal-so-sha SHA Forward strict winemetal.so hash gate to bounded launch.
   -h, --help                 Show help.
 
@@ -45,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     --results-dir) RESULTS_DIR="$2"; shift 2 ;;
     --sample-interval-ms) SAMPLE_INTERVAL_MS="$2"; shift 2 ;;
     --no-kill-after|--no-sample) BOUNDED_EXTRA+=("$1"); shift ;;
-    --workers|--async-compile|--typed-stage-in|--force-source-compile|--expect-d3d12-sha|--expect-winemetal-so-sha) BOUNDED_EXTRA+=("$1" "$2"); shift 2 ;;
+    --workers|--async-compile|--typed-stage-in|--force-source-compile|--expect-d3d12-sha|--expect-dxgi-sha|--expect-dxgi-dxmt-sha|--expect-winemetal-dll-sha|--expect-winemetal-so-sha) BOUNDED_EXTRA+=("$1" "$2"); shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac

@@ -1584,3 +1584,70 @@ Decision:
 - Do not re-stage runtime diagnostics as a broad d3d12/winemetal rebuild during Phase 3.5.
 - Keep Phase 3.5 completion focused on offline analyzers, strict hash gates, Apple-doc-backed probe requirements, and future tiny runtime patches only after isolated build/runtime proof.
 - Any future runtime diagnostic patch must first run behind strict expected-hash gates and must restore **all** runtime/game-local DLL surfaces on rollback.
+
+## Phase 3.5 diagnostic runtime regression postmortem refinement — 2026-06-16
+
+Further investigation of the bad diagnostic staging showed:
+
+```text
+Known-good Subnautica 2 launch-1781588605:
+  D3D12CreateDevice created device with FL 45056
+  LogD3D12RHI: Creating D3D12 RHI with Max Feature Level SM6
+  later smoke reached presents/draws
+
+Bad diagnostic Subnautica 2 launch-1781592577:
+  DXGIFactory unknown-interface query occurred
+  immediately failed with: LogD3D12RHI: Error: Failed to choose a D3D12 Adapter
+  no useful presents/draws
+```
+
+The bad diagnostic runtime was not a legacy/DX11 pipeline selection mistake. It loaded `dxmt_m12`, but with a bad staged runtime set:
+
+```text
+bad d3d12.dll     eac6959befe45ce1ce75e2fac9ca75527f432b0304ace296299c05f7f752c6cf
+bad dxgi_dxmt.dll 7776ff3c98182558c1182a26465affe7fe8861f5513f690b2f8290a8ebca2431
+bad winemetal.so  5ec36f518fd99b20f0590f13c5f8938a19019baf32448e7973143335647d1ec6
+```
+
+Only bad `d3d12.dll` contained the experimental `command_buffer_*` trace strings, but the failure happened before command-buffer execution. Therefore, do **not** assume the command-buffer trace itself executed and caused the failure. The safer conclusion is:
+
+```text
+A broad runtime diagnostic rebuild/relink changed the D3D12/DXGI runtime surface enough to break UE adapter selection.
+```
+
+Practical lessons:
+
+1. Do not stage broad runtime diagnostics while trying to finish Phase 3.5.
+2. Do not rely on checking only `d3d12.dll`; mixed-runtime states involving `dxgi_dxmt.dll`, `winemetal.dll`, and `winemetal.so` can still invalidate a run.
+3. Runtime diagnostics must be isolated and bisected:
+   - one source file / one behavior class at a time,
+   - no broad relink unless unavoidable,
+   - strict full-runtime hash gate before and after launch,
+   - immediate rollback of all runtime and game-local DLL surfaces on first adapter-selection or winedbg regression.
+
+Hash gate revision:
+
+```text
+m12-bounded-launch.sh supports:
+  --expect-d3d12-sha
+  --expect-dxgi-sha
+  --expect-dxgi-dxmt-sha
+  --expect-winemetal-dll-sha
+  --expect-winemetal-so-sha
+
+m12-performance-run.sh forwards all of these.
+```
+
+The gate now verifies source runtime before launch and deployed game-local DLLs from `launch.json` after launch for all expected Windows DLLs. It also verifies both source and `lib/wine` `winemetal.so` before launch.
+
+Current known-good active M12 hash set:
+
+```text
+d3d12.dll      2612e228a5efa9d65f6923b3ed1cc50b1c6ce40abb2c0043c51d32ec5b60dd7c
+dxgi.dll       dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24
+dxgi_dxmt.dll  659ea3c4dddf658038eab67f26e71497ba11a4787e41c636766222ac2d8b028d
+winemetal.dll  7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85
+winemetal.so   167d16f1280ce4f78f842576758c46cdc6db59c37c2e20aa3b7060fba7f49d58
+```
+
+Use the full set for future Elden Ring/Subnautica 2/Armored Core VI validation until an intentional runtime update is proven.

@@ -21,6 +21,9 @@ SAMPLE_INTERVAL_MS=10
 PROCESS_SAMPLE_CSV="${M12_PROCESS_SAMPLE_CSV:-}"
 PROCESS_SAMPLE_INTERVAL_MS="${M12_PROCESS_SAMPLE_INTERVAL_MS:-250}"
 EXPECT_D3D12_SHA="${M12_EXPECT_D3D12_SHA:-}"
+EXPECT_DXGI_SHA="${M12_EXPECT_DXGI_SHA:-}"
+EXPECT_DXGI_DXMT_SHA="${M12_EXPECT_DXGI_DXMT_SHA:-}"
+EXPECT_WINEMETAL_DLL_SHA="${M12_EXPECT_WINEMETAL_DLL_SHA:-}"
 EXPECT_WINEMETAL_SO_SHA="${M12_EXPECT_WINEMETAL_SO_SHA:-}"
 
 usage() {
@@ -42,7 +45,10 @@ Options:
   --no-kill-after         Leave the launched game running.
   --no-sample             Skip macOS sample(1) capture.
   --expect-d3d12-sha SHA  Fail unless source and deployed game-local d3d12.dll match SHA.
-  --expect-winemetal-so-sha SHA Fail unless source winemetal.so matches SHA.
+  --expect-dxgi-sha SHA    Fail unless source and deployed game-local dxgi.dll match SHA.
+  --expect-dxgi-dxmt-sha SHA Fail unless source and deployed game-local dxgi_dxmt.dll match SHA.
+  --expect-winemetal-dll-sha SHA Fail unless source and deployed game-local winemetal.dll match SHA.
+  --expect-winemetal-so-sha SHA Fail unless source/lib-wine winemetal.so match SHA.
   -h, --help              Show this help.
 
 This is for short, repeatable M12 quality/perf probes. It launches a profile,
@@ -66,6 +72,9 @@ while [[ $# -gt 0 ]]; do
     --no-kill-after) KILL_AFTER=0; shift ;;
     --no-sample) SAMPLE_PROCESS=0; shift ;;
     --expect-d3d12-sha) EXPECT_D3D12_SHA="$2"; shift 2 ;;
+    --expect-dxgi-sha) EXPECT_DXGI_SHA="$2"; shift 2 ;;
+    --expect-dxgi-dxmt-sha) EXPECT_DXGI_DXMT_SHA="$2"; shift 2 ;;
+    --expect-winemetal-dll-sha) EXPECT_WINEMETAL_DLL_SHA="$2"; shift 2 ;;
     --expect-winemetal-so-sha) EXPECT_WINEMETAL_SO_SHA="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -129,20 +138,27 @@ hash_file() {
   shasum -a 256 "$1" | awk '{print $1}'
 }
 
-if [[ -n "$EXPECT_D3D12_SHA" ]]; then
-  actual_d3d12="$(hash_file "$DXMT_RUNTIME/x86_64-windows/d3d12.dll")"
-  if [[ "$actual_d3d12" != "$EXPECT_D3D12_SHA" ]]; then
-    echo "M12 runtime d3d12.dll hash mismatch: expected $EXPECT_D3D12_SHA got $actual_d3d12 path=$DXMT_RUNTIME/x86_64-windows/d3d12.dll" >&2
+check_expected_hash() {
+  local path="$1" expected="$2" label="$3"
+  if [[ -z "$expected" ]]; then return 0; fi
+  if [[ ! -f "$path" ]]; then
+    echo "M12 runtime hash gate missing $label path=$path" >&2
     exit 3
   fi
-fi
-if [[ -n "$EXPECT_WINEMETAL_SO_SHA" ]]; then
-  actual_winemetal_so="$(hash_file "$DXMT_RUNTIME/x86_64-unix/winemetal.so")"
-  if [[ "$actual_winemetal_so" != "$EXPECT_WINEMETAL_SO_SHA" ]]; then
-    echo "M12 runtime winemetal.so hash mismatch: expected $EXPECT_WINEMETAL_SO_SHA got $actual_winemetal_so path=$DXMT_RUNTIME/x86_64-unix/winemetal.so" >&2
+  local actual
+  actual="$(hash_file "$path")"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "M12 runtime $label hash mismatch: expected $expected got $actual path=$path" >&2
     exit 3
   fi
-fi
+}
+
+check_expected_hash "$DXMT_RUNTIME/x86_64-windows/d3d12.dll" "$EXPECT_D3D12_SHA" "d3d12.dll"
+check_expected_hash "$DXMT_RUNTIME/x86_64-windows/dxgi.dll" "$EXPECT_DXGI_SHA" "dxgi.dll"
+check_expected_hash "$DXMT_RUNTIME/x86_64-windows/dxgi_dxmt.dll" "$EXPECT_DXGI_DXMT_SHA" "dxgi_dxmt.dll"
+check_expected_hash "$DXMT_RUNTIME/x86_64-windows/winemetal.dll" "$EXPECT_WINEMETAL_DLL_SHA" "winemetal.dll"
+check_expected_hash "$DXMT_RUNTIME/x86_64-unix/winemetal.so" "$EXPECT_WINEMETAL_SO_SHA" "winemetal.so"
+check_expected_hash "$HOME/.metalsharp/runtime/wine/lib/wine/x86_64-unix/winemetal.so" "$EXPECT_WINEMETAL_SO_SHA" "lib/wine winemetal.so"
 
 launch_env=()
 if [[ -n "$WORKERS" ]]; then launch_env+=("METALSHARP_M12_PSO_WORKERS=$WORKERS"); fi
@@ -162,31 +178,46 @@ if [[ -n "$FORCE_SOURCE_COMPILE" ]]; then launch_env+=("METALSHARP_M12_FORCE_DXI
   fi
 ) > "$RUN_DIR/launch.json"
 
-if [[ -n "$EXPECT_D3D12_SHA" ]]; then
-  LAUNCH_JSON="$RUN_DIR/launch.json" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" python3 - <<'PY'
-import json, os, sys
+if [[ -n "$EXPECT_D3D12_SHA$EXPECT_DXGI_SHA$EXPECT_DXGI_DXMT_SHA$EXPECT_WINEMETAL_DLL_SHA" ]]; then
+  LAUNCH_JSON="$RUN_DIR/launch.json" \
+  EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" \
+  EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" \
+  EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" \
+  EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" \
+  python3 - <<'PY'
+import json, os
 from pathlib import Path
 import hashlib
 launch_path = Path(os.environ['LAUNCH_JSON'])
-expected = os.environ['EXPECT_D3D12_SHA'].lower()
+expected_by_name = {
+    'd3d12.dll': os.environ.get('EXPECT_D3D12_SHA', '').lower(),
+    'dxgi.dll': os.environ.get('EXPECT_DXGI_SHA', '').lower(),
+    'dxgi_dxmt.dll': os.environ.get('EXPECT_DXGI_DXMT_SHA', '').lower(),
+    'winemetal.dll': os.environ.get('EXPECT_WINEMETAL_DLL_SHA', '').lower(),
+}
+expected_by_name = {k: v for k, v in expected_by_name.items() if v}
 try:
     launch = json.loads(launch_path.read_text())
 except Exception as exc:
     raise SystemExit(f"failed to parse launch json for hash gate: {exc}")
-paths = []
+paths_by_name = {name: [] for name in expected_by_name}
 for dll in (launch.get('recipe') or {}).get('dlls') or []:
-    if dll.get('filename') == 'd3d12.dll' and dll.get('dest_path'):
-        paths.append(Path(dll['dest_path']))
-if not paths:
-    raise SystemExit('hash gate failed: launch recipe did not list deployed d3d12.dll destinations')
+    name = dll.get('filename')
+    if name in paths_by_name and dll.get('dest_path'):
+        paths_by_name[name].append(Path(dll['dest_path']))
 errors = []
-for path in paths:
-    if not path.exists():
-        errors.append(f"missing deployed d3d12.dll: {path}")
+for name, expected in expected_by_name.items():
+    paths = paths_by_name.get(name) or []
+    if not paths:
+        errors.append(f"hash gate failed: launch recipe did not list deployed {name} destinations")
         continue
-    h = hashlib.sha256(path.read_bytes()).hexdigest()
-    if h != expected:
-        errors.append(f"deployed d3d12.dll hash mismatch: expected {expected} got {h} path={path}")
+    for path in paths:
+        if not path.exists():
+            errors.append(f"missing deployed {name}: {path}")
+            continue
+        h = hashlib.sha256(path.read_bytes()).hexdigest()
+        if h != expected:
+            errors.append(f"deployed {name} hash mismatch: expected {expected} got {h} path={path}")
 if errors:
     raise SystemExit('\n'.join(errors))
 PY
@@ -235,7 +266,7 @@ if [[ "$KILL_AFTER" == "1" && -n "$PID" ]]; then
   curl -fsS -X POST "$BACKEND_URL/kill" -H 'Content-Type: application/json' -d "{\"appid\":$APPID,\"pid\":$PID}" > "$RUN_DIR/kill.json" 2>/dev/null || true
 fi
 
-RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
+RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
 import json, os, re
 from pathlib import Path
 run = Path(os.environ['RUN_DIR'])
@@ -330,6 +361,9 @@ summary = {
   'typed_stage_in_override': os.environ['TYPED_STAGE_IN'],
   'force_source_compile_override': os.environ['FORCE_SOURCE_COMPILE'],
   'expected_d3d12_sha': os.environ.get('EXPECT_D3D12_SHA', ''),
+  'expected_dxgi_sha': os.environ.get('EXPECT_DXGI_SHA', ''),
+  'expected_dxgi_dxmt_sha': os.environ.get('EXPECT_DXGI_DXMT_SHA', ''),
+  'expected_winemetal_dll_sha': os.environ.get('EXPECT_WINEMETAL_DLL_SHA', ''),
   'expected_winemetal_so_sha': os.environ.get('EXPECT_WINEMETAL_SO_SHA', ''),
   'corpus_dir': os.environ['CORPUS_DIR'],
   'launch_ok': bool(launch.get('ok')),
@@ -341,7 +375,7 @@ summary = {
   'translation_issue_examples': translation_issue_lines[:20],
 }
 (run/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- force_source_compile_override: `{summary['force_source_compile_override']}`", f"- expected_d3d12_sha: `{summary['expected_d3d12_sha']}`", f"- expected_winemetal_so_sha: `{summary['expected_winemetal_so_sha']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
+md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- force_source_compile_override: `{summary['force_source_compile_override']}`", f"- expected_d3d12_sha: `{summary['expected_d3d12_sha']}`", f"- expected_dxgi_sha: `{summary['expected_dxgi_sha']}`", f"- expected_dxgi_dxmt_sha: `{summary['expected_dxgi_dxmt_sha']}`", f"- expected_winemetal_dll_sha: `{summary['expected_winemetal_dll_sha']}`", f"- expected_winemetal_so_sha: `{summary['expected_winemetal_so_sha']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
 for k,v in counts.items(): md.append(f"- `{k}`: {v}")
 md += ['', '## Per-run runtime metrics']
 for k,v in metrics.items(): md.append(f"- `{k}`: {v}")
