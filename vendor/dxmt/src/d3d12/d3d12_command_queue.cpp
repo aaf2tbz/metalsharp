@@ -3102,6 +3102,11 @@ struct ReplayState {
     return true;
   }
 
+  /* Phase 5 migration seam: libm12core now supplies root binding lookup/layout
+   * plans, but null/default Metal resource materialization stays PE-local here.
+   * Keep this compatibility policy separate until a future native command-binding
+   * replay migration can validate fallback resource ownership and lifetime.
+   */
   bool EnsureNullDirectTexture(MTLD3D12Device *device) {
     if (null_direct_texture.handle)
       return true;

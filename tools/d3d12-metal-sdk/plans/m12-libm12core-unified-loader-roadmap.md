@@ -353,9 +353,9 @@ Validation evidence:
 - Root descriptor lookup slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-110331/summary.md`: `22/22` drawn/present, failures `0`, lookup mismatches `0`.
 - Argument-layout/root-constants slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-112955/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `arg_resources`/`arg_samplers`/`arg_root_desc` layout lines emitted for 6 root signatures, lookup mismatches `0`, features `0x7ff`.
 - PE-local lookup seam slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-113823/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, lookup mismatches `0`, native render creation active (`metal_render_create_native=1298`).
-- Plan-consumption slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-115924/summary.md`: `23/23` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, `lookup_mismatches=0`, exact plan-path mismatches `0`, native render creation active (`metal_render_create_native=1330`).
+- Plan-consumption/final seam slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-120652/summary.md`: `23/23` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, `lookup_mismatches=0`, exact plan-path mismatches `0`, native render creation active (`metal_render_create_native=1328`).
 
-The migration remains fallback-safe: live descriptor binding now consults the persisted M12Core binding plan first and falls back to the legacy PE-local scan when the plan is unavailable; root-signature creation constructs the native binding-plan model and verifies that descriptor-table, root descriptor, root constant, static sampler, and exact plan-first lookup paths agree with PE-local semantics. Phase 6 starts from this key/layout substrate to import oracle/prewarm data.
+The migration remains fallback-safe: live descriptor binding now consults the persisted M12Core binding plan first and falls back to the legacy PE-local scan when the plan is unavailable; root-signature creation constructs the native binding-plan model and verifies that descriptor-table, root descriptor, root constant, static sampler, and exact plan-first lookup paths agree with PE-local semantics. Null/default resource materialization remains an explicit PE-local compatibility seam for now, backed by existing fallback resource counters and source comments, so Phase 5 does not move fallback resource lifetime/ownership across the ABI. Phase 6 starts from this key/layout substrate to import oracle/prewarm data.
 
 ### Work
 
@@ -379,7 +379,7 @@ vendor/dxmt/src/d3d12/d3d12_command_queue.cpp
 
 ### Done when
 
-- [x] Argument buffer construction can be driven by `libm12core` binding plans: `libm12core` now emits persistent binding-plan summaries and compact argument-layout metadata, `MTLD3D12RootSignature` retains the flattened POD plan, and live descriptor-table/static-sampler/root-descriptor/root-constant lookup helpers consume that plan first with legacy PE-local fallback.
+- [x] Argument buffer construction can be driven by `libm12core` binding plans: `libm12core` now emits persistent binding-plan summaries and compact argument-layout metadata, `MTLD3D12RootSignature` retains the flattened POD plan, and live descriptor-table/static-sampler/root-descriptor/root-constant lookup helpers consume that plan first with legacy PE-local fallback. Null/default resource policy is explicitly documented as a retained PE-local compatibility seam rather than a native-owned lifetime policy.
 - [x] D3DMetal oracle root/pipeline linkage can be imported into the same key space: root structural keys feed PSO cache keys, and Phase 6 will consume oracle/prewarm packs using these root/pipeline/shader key namespaces.
 - [x] Root mapping diffs become first-class diagnostics: root-signature creation logs native-vs-PE descriptor-table, root-descriptor, root-constant, and static-sampler lookup checks with mismatch counters (`lookup_mismatches=0` in AC6 validations).
 
