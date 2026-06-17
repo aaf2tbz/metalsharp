@@ -27,6 +27,7 @@ extern "C" {
 enum M12CoreFeatureFlags {
   M12CORE_FEATURE_INERT_LOADER = 1u << 0,
   M12CORE_FEATURE_COUNTERS = 1u << 1,
+  M12CORE_FEATURE_SHADER_INTROSPECTION = 1u << 2,
 };
 
 typedef struct M12CoreVersion {
@@ -69,6 +70,28 @@ typedef struct M12CoreCounterSnapshot {
   uint64_t values[M12CORE_COUNTER_COUNT];
 } M12CoreCounterSnapshot;
 
+/* Shader stages use stable ABI values rather than D3D12 enums so future
+ * non-D3D12 callers can share the same cache namespace.  Keep append-only.
+ */
+typedef enum M12CoreShaderStage {
+  M12CORE_SHADER_STAGE_UNKNOWN = 0,
+  M12CORE_SHADER_STAGE_VERTEX = 1,
+  M12CORE_SHADER_STAGE_PIXEL = 2,
+  M12CORE_SHADER_STAGE_GEOMETRY = 3,
+  M12CORE_SHADER_STAGE_HULL = 4,
+  M12CORE_SHADER_STAGE_DOMAIN = 5,
+  M12CORE_SHADER_STAGE_COMPUTE = 6,
+} M12CoreShaderStage;
+
+typedef struct M12CoreShaderBytecodeInfo {
+  uint32_t abi_version;
+  uint32_t stage;
+  uint64_t bytecode_hash;
+  uint64_t bytecode_size;
+  uint32_t contains_dxil;
+  uint32_t reserved;
+} M12CoreShaderBytecodeInfo;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -88,6 +111,16 @@ const char *m12core_build_string(void);
 int m12core_record_counter(uint32_t counter_id, uint64_t delta);
 int m12core_get_counters(M12CoreCounterSnapshot *out_snapshot);
 void m12core_reset_counters(void);
+
+/* Phase-3 shader introspection foundation.  These helpers deliberately do not
+ * create Metal objects yet; they centralize the cheap, platform-neutral pieces
+ * of shader cache keying first so later refactors can move compilation and
+ * reflection without changing key semantics at the same time.
+ */
+int m12core_hash_shader_bytecode(const void *bytecode, uint64_t bytecode_size,
+                                 uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
+int m12core_shader_contains_dxil(const void *bytecode, uint64_t bytecode_size,
+                                 uint32_t *out_contains_dxil);
 
 #ifdef __cplusplus
 }

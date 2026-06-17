@@ -251,6 +251,8 @@ Counters are low-risk and prove the library is participating without moving rend
 
 ## Phase 3: Move shader function cache into `libm12core`
 
+Status: shader bytecode keying and DXIL-detection foundation implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase3-shader-introspection-20260617-005139/summary.md`. Remaining work: move actual shader cache lookup, DXIL->MSL compilation, Metal function ownership, and reflection compatibility handling in later slices.
+
 ### Work
 
 Centralize:
