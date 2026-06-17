@@ -426,21 +426,9 @@ static bool FindRootDescriptorParameter(
   if (!root_signature || !root_index)
     return false;
 
-  const auto &params = root_signature->GetParameters();
-  for (uint32_t pass = 0; pass < 2; pass++) {
-    for (uint32_t p = 0;
-         p < params.size() && p < kD3D12RootParameterSlotCount; p++) {
-      if (params[p].type == type &&
-          params[p].register_index == arg.SM50BindingSlot &&
-          params[p].register_space == arg.SM50RegisterSpace &&
-          ShaderVisibilityMatches(params[p].shader_visibility,
-                                  shader_visibility, pass == 0)) {
-        *root_index = p;
-        return true;
-      }
-    }
-  }
-  return false;
+  return root_signature->FindRootDescriptorParameter(
+      type, arg.SM50BindingSlot, arg.SM50RegisterSpace, shader_visibility,
+      root_index, kD3D12RootParameterSlotCount);
 }
 
 static uint32_t FormatByteSize(DXGI_FORMAT format) {

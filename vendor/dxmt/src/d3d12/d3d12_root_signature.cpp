@@ -2,6 +2,7 @@
 #include "d3d12_device.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
+#include <algorithm>
 #include <cstring>
 #include <iomanip>
 
@@ -1177,6 +1178,55 @@ const RootStaticSampler *MTLD3D12RootSignature::FindStaticSampler(
     }
   }
   return nullptr;
+}
+
+bool MTLD3D12RootSignature::FindRootDescriptorParameter(
+    D3D12_ROOT_PARAMETER_TYPE type, uint32_t shader_register,
+    uint32_t register_space, D3D12_SHADER_VISIBILITY shader_visibility,
+    uint32_t *root_parameter_index, uint32_t max_root_parameters) const {
+  if (!root_parameter_index)
+    return false;
+
+  /* Phase 5 PE-local lookup seam: command binding can ask the root-signature
+   * object for root descriptor/root constant mappings instead of open-coding
+   * parameter scans.  This remains PE-local and bounded by the caller's root
+   * state arrays; native/libm12core lookup remains diagnostic-only for now.
+   */
+  const uint32_t limit = std::min<uint32_t>(static_cast<uint32_t>(m_parameters.size()),
+                                            max_root_parameters);
+  for (uint32_t pass = 0; pass < 2; pass++) {
+    for (uint32_t p = 0; p < limit; p++) {
+      const auto &param = m_parameters[p];
+      if (param.type != type || param.register_index != shader_register ||
+          param.register_space != register_space)
+        continue;
+      if (pass == 0 && param.shader_visibility != shader_visibility)
+        continue;
+      if (pass == 1 && param.shader_visibility != D3D12_SHADER_VISIBILITY_ALL)
+        continue;
+      *root_parameter_index = p;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MTLD3D12RootSignature::FindRootConstantsParameter(
+    uint32_t shader_register, uint32_t register_space,
+    D3D12_SHADER_VISIBILITY shader_visibility,
+    uint32_t *root_parameter_index, uint32_t *num_32bit_values,
+    uint32_t max_root_parameters) const {
+  uint32_t root = UINT32_MAX;
+  if (!FindRootDescriptorParameter(D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS,
+                                   shader_register, register_space,
+                                   shader_visibility, &root,
+                                   max_root_parameters))
+    return false;
+  if (root_parameter_index)
+    *root_parameter_index = root;
+  if (num_32bit_values)
+    *num_32bit_values = m_parameters[root].num_32bit_values;
+  return true;
 }
 
 HRESULT STDMETHODCALLTYPE

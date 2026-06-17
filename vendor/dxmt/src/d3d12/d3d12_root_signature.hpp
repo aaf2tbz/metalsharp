@@ -97,6 +97,16 @@ public:
   const RootStaticSampler *FindStaticSampler(
       uint32_t shader_register, uint32_t register_space,
       D3D12_SHADER_VISIBILITY shader_visibility) const;
+  bool FindRootDescriptorParameter(
+      D3D12_ROOT_PARAMETER_TYPE type, uint32_t shader_register,
+      uint32_t register_space, D3D12_SHADER_VISIBILITY shader_visibility,
+      uint32_t *root_parameter_index,
+      uint32_t max_root_parameters = UINT32_MAX) const;
+  bool FindRootConstantsParameter(
+      uint32_t shader_register, uint32_t register_space,
+      D3D12_SHADER_VISIBILITY shader_visibility,
+      uint32_t *root_parameter_index, uint32_t *num_32bit_values,
+      uint32_t max_root_parameters = UINT32_MAX) const;
   uint32_t GetNumParameters() const { return m_parameters.size(); }
   uint32_t GetNumStaticSamplers() const { return m_num_static_samplers; }
   const std::vector<RootStaticSampler> &GetStaticSamplers() const { return m_static_samplers; }
