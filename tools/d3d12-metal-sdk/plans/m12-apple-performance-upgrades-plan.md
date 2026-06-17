@@ -41,3 +41,9 @@ Implemented backend-scoped, opt-in env forwarding for GPTK/D3DMetal `D3DM_*`/`MT
 Artifact: `tools/d3d12-metal-sdk/results/m12-pso-pressure-instrumentation-20260616-231318/summary.md`.
 
 Implemented M12 `PSO_PRESSURE` runtime counters for PSO requests, unique/repeated descriptor hashes, shader/metallib cache hits/misses, Metal pipeline creation calls, and compile wait time. `analyze-m12-perf-run.py` now folds those counters into `perf-analysis.json` and `perf-analysis.md`.
+
+## Phase C cache-pressure note
+
+Artifact: `tools/d3d12-metal-sdk/results/m12-dxil-function-pipeline-cache-20260616-233802/summary.md`.
+
+DXIL-backed shaders now reuse the in-process function cache even when the D3D12 path requested SM50 reflection outputs, avoiding repeated DXIL-to-MSL/source-library work for duplicate shaders in the same process. A conservative Metal pipeline object cache was also added. AC6 validation remained correct (`20/20` drawn/present, zero failures), but counters still show many unique PSO descriptors, so the next optimization step should be oracle/prewarm guided rather than higher worker fanout.

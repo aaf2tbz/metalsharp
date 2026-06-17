@@ -12,20 +12,20 @@
       "source": {
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/d3d12/d3d12.dll",
         "exists": true,
-        "size": 54141071,
-        "sha256": "d155d62c7777de0763ab31cc50a46ad90372fa8dc7da66e1c07881962b7096f1"
+        "size": 54553806,
+        "sha256": "0714fb0b3ab40dcc64a5270a451b729b1f80cd39793dece06f196b786c4798ec"
       },
       "destination_before": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
         "exists": true,
-        "size": 53995468,
-        "sha256": "d747bf4675a5b90ad8db6a2332be0d10fd17263f7b8c5ecad0f060d008f44c10"
+        "size": 54553806,
+        "sha256": "cbd1428975f69b442f831751335577b08acf58b400cf5ea364f2d48152a7e5ee"
       },
       "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
         "exists": true,
-        "size": 54141071,
-        "sha256": "d155d62c7777de0763ab31cc50a46ad90372fa8dc7da66e1c07881962b7096f1"
+        "size": 54553806,
+        "sha256": "0714fb0b3ab40dcc64a5270a451b729b1f80cd39793dece06f196b786c4798ec"
       },
       "copied": true,
       "match": true
@@ -57,19 +57,19 @@
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/dxgi/dxgi_dxmt.dll",
         "exists": true,
         "size": 20376965,
-        "sha256": "fb1a3ff802c79ad6821a4cda6c62f6c9121299820c2a795a56f7c9e2531a713d"
+        "sha256": "869b8fe1a7860c3c615735f36d48b7a6591df030042b0824b09136bd41cbc537"
       },
       "destination_before": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
         "exists": true,
         "size": 20376965,
-        "sha256": "fb1a3ff802c79ad6821a4cda6c62f6c9121299820c2a795a56f7c9e2531a713d"
+        "sha256": "869b8fe1a7860c3c615735f36d48b7a6591df030042b0824b09136bd41cbc537"
       },
       "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
         "exists": true,
         "size": 20376965,
-        "sha256": "fb1a3ff802c79ad6821a4cda6c62f6c9121299820c2a795a56f7c9e2531a713d"
+        "sha256": "869b8fe1a7860c3c615735f36d48b7a6591df030042b0824b09136bd41cbc537"
       },
       "copied": true,
       "match": true

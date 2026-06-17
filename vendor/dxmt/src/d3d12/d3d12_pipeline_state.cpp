@@ -45,8 +45,16 @@ std::atomic<uint64_t> g_shader_metallib_cache_hits{0};
 std::atomic<uint64_t> g_shader_metallib_cache_misses{0};
 std::atomic<uint64_t> g_metal_compute_pipeline_creates{0};
 std::atomic<uint64_t> g_metal_render_pipeline_creates{0};
+std::atomic<uint64_t> g_render_pipeline_cache_hits{0};
+std::atomic<uint64_t> g_render_pipeline_cache_misses{0};
+std::atomic<uint64_t> g_compute_pipeline_cache_hits{0};
+std::atomic<uint64_t> g_compute_pipeline_cache_misses{0};
 std::atomic<uint64_t> g_compile_wait_count{0};
 std::atomic<uint64_t> g_compile_wait_ns{0};
+
+std::mutex g_metal_pipeline_cache_mutex;
+std::unordered_map<size_t, WMT::Reference<WMT::RenderPipelineState>> g_render_pipeline_cache;
+std::unordered_map<size_t, WMT::Reference<WMT::ComputePipelineState>> g_compute_pipeline_cache;
 
 std::string ShaderCacheDir() {
   const char *env_path = std::getenv("DXMT_SHADER_CACHE_PATH");
@@ -256,6 +264,20 @@ AsyncPipelineCompiler &GetAsyncPipelineCompiler() {
   return *compiler;
 }
 
+bool ShaderBytecodeContainsDxil(const void *bytecode, SIZE_T size) {
+  if (!bytecode || size < 4)
+    return false;
+  using namespace microsoft;
+  CDXBCParser dxbc_parser;
+  if (FAILED(dxbc_parser.ReadDXBC(bytecode, size)))
+    return false;
+  for (UINT32 i = 0; i < dxbc_parser.GetBlobCount(); i++) {
+    if (dxbc_parser.GetBlobFourCC(i) == dxmt::dxil::DXIL_FOURCC)
+      return true;
+  }
+  return false;
+}
+
 size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
                               ShaderType type,
                               const D3D12_INPUT_LAYOUT_DESC *input_layout) {
@@ -323,6 +345,94 @@ const char *PixelFormatManifestName(WMTPixelFormat format) {
   case WMTPixelFormatBC7_RGBAUnorm_sRGB: return "bc7_rgbaunorm_srgb";
   default: return "invalid";
   }
+}
+
+void PsoCacheHashCombine(size_t &hash, size_t value) {
+  hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+}
+
+void PsoCacheHashFloat(size_t &hash, float value) {
+  uint32_t bits = 0;
+  static_assert(sizeof(bits) == sizeof(value));
+  memcpy(&bits, &value, sizeof(bits));
+  PsoCacheHashCombine(hash, bits);
+}
+
+void PsoCacheHashRenderTargetBlend(size_t &hash,
+                                   const D3D12_RENDER_TARGET_BLEND_DESC &rt) {
+  PsoCacheHashCombine(hash, rt.BlendEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, rt.LogicOpEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, rt.SrcBlend);
+  PsoCacheHashCombine(hash, rt.DestBlend);
+  PsoCacheHashCombine(hash, rt.BlendOp);
+  PsoCacheHashCombine(hash, rt.SrcBlendAlpha);
+  PsoCacheHashCombine(hash, rt.DestBlendAlpha);
+  PsoCacheHashCombine(hash, rt.BlendOpAlpha);
+  PsoCacheHashCombine(hash, rt.LogicOp);
+  PsoCacheHashCombine(hash, rt.RenderTargetWriteMask);
+}
+
+void PsoCacheHashStencilOp(size_t &hash, const D3D12_DEPTH_STENCILOP_DESC &op) {
+  PsoCacheHashCombine(hash, op.StencilFailOp);
+  PsoCacheHashCombine(hash, op.StencilDepthFailOp);
+  PsoCacheHashCombine(hash, op.StencilPassOp);
+  PsoCacheHashCombine(hash, op.StencilFunc);
+}
+
+size_t ComputeRenderMetalPipelineCacheHash(
+    size_t base_hash, D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
+    const D3D12_BLEND_DESC &blend_desc,
+    const D3D12_RASTERIZER_DESC &rasterizer_desc,
+    const D3D12_DEPTH_STENCIL_DESC &depth_stencil_desc,
+    const WMTVertexDescriptor *vertex_descriptor,
+    bool reflected_descriptor_enabled,
+    bool reflected_unspecified_topology) {
+  size_t hash = base_hash;
+  PsoCacheHashCombine(hash, (size_t)topology);
+  PsoCacheHashCombine(hash, reflected_descriptor_enabled ? 1 : 0);
+  PsoCacheHashCombine(hash, reflected_unspecified_topology ? 1 : 0);
+  PsoCacheHashCombine(hash, blend_desc.AlphaToCoverageEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, blend_desc.IndependentBlendEnable ? 1 : 0);
+  for (const auto &rt : blend_desc.RenderTarget)
+    PsoCacheHashRenderTargetBlend(hash, rt);
+  PsoCacheHashCombine(hash, rasterizer_desc.FillMode);
+  PsoCacheHashCombine(hash, rasterizer_desc.CullMode);
+  PsoCacheHashCombine(hash, rasterizer_desc.FrontCounterClockwise ? 1 : 0);
+  PsoCacheHashCombine(hash, rasterizer_desc.DepthBias);
+  PsoCacheHashFloat(hash, rasterizer_desc.DepthBiasClamp);
+  PsoCacheHashFloat(hash, rasterizer_desc.SlopeScaledDepthBias);
+  PsoCacheHashCombine(hash, rasterizer_desc.DepthClipEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, rasterizer_desc.MultisampleEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, rasterizer_desc.AntialiasedLineEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, rasterizer_desc.ForcedSampleCount);
+  PsoCacheHashCombine(hash, rasterizer_desc.ConservativeRaster);
+  PsoCacheHashCombine(hash, depth_stencil_desc.DepthEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, depth_stencil_desc.DepthWriteMask);
+  PsoCacheHashCombine(hash, depth_stencil_desc.DepthFunc);
+  PsoCacheHashCombine(hash, depth_stencil_desc.StencilEnable ? 1 : 0);
+  PsoCacheHashCombine(hash, depth_stencil_desc.StencilReadMask);
+  PsoCacheHashCombine(hash, depth_stencil_desc.StencilWriteMask);
+  PsoCacheHashStencilOp(hash, depth_stencil_desc.FrontFace);
+  PsoCacheHashStencilOp(hash, depth_stencil_desc.BackFace);
+  if (vertex_descriptor) {
+    PsoCacheHashCombine(hash, vertex_descriptor->attribute_count);
+    PsoCacheHashCombine(hash, vertex_descriptor->layout_count);
+    for (uint32_t i = 0; i < vertex_descriptor->attribute_count &&
+                         i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
+      const auto &attr = vertex_descriptor->attributes[i];
+      PsoCacheHashCombine(hash, attr.format);
+      PsoCacheHashCombine(hash, attr.offset);
+      PsoCacheHashCombine(hash, attr.buffer_index);
+    }
+    for (uint32_t i = 0; i < vertex_descriptor->layout_count &&
+                         i < WMT_MAX_VERTEX_BUFFER_LAYOUTS; i++) {
+      const auto &layout = vertex_descriptor->layouts[i];
+      PsoCacheHashCombine(hash, layout.stride);
+      PsoCacheHashCombine(hash, layout.step_function);
+      PsoCacheHashCombine(hash, layout.step_rate);
+    }
+  }
+  return hash;
 }
 
 size_t ComputeRenderPSOManifestHash(size_t vs_hash, size_t ps_hash,
@@ -939,18 +1049,33 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                                        type == ShaderType::Vertex
                                            ? &m_input_layout
                                            : nullptr);
+  std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
+  uint32_t ia_slot_mask = 0;
+  if (type == ShaderType::Vertex) {
+    BuildIAInputLayout(bytecode, size, ia_elements, ia_slot_mask);
+    m_ia_slot_mask = ia_slot_mask;
+  }
+
+  bool dxil_shader = ShaderBytecodeContainsDxil(bytecode, size);
+  bool reflection_independent_cache = dxil_shader || (!out_shader_handle && !out_reflection);
   {
     std::lock_guard<std::mutex> lock(s_shader_mutex);
-    PSTRACE("CompileShader: %s hash=0x%zx size=%zu cache_entries=%zu", func_name, hash, size, s_shader_cache.size());
+    PSTRACE("CompileShader: %s hash=0x%zx size=%zu cache_entries=%zu dxil=%u", func_name, hash, size, s_shader_cache.size(), dxil_shader ? 1u : 0u);
     auto it = s_shader_cache.find(hash);
-    if (it != s_shader_cache.end() && !out_shader_handle && !out_reflection) {
+    if (it != s_shader_cache.end() && reflection_independent_cache) {
       out_func = it->second;
+      if (out_shader_handle)
+        *out_shader_handle = nullptr;
+      if (out_reflection)
+        *out_reflection = {};
+      if (type == ShaderType::Vertex)
+        m_vs_uses_stage_in = false;
       uint64_t hits = ++g_shader_memory_cache_hits;
       Logger::info(str::format("PSO_PRESSURE shader_memory_cache_hit stage=", func_name,
                                " hash=0x", std::hex, hash, std::dec, " hits=", hits));
       return true;
     }
-    if (!out_shader_handle && !out_reflection) {
+    if (reflection_independent_cache) {
       uint64_t misses = ++g_shader_memory_cache_misses;
       Logger::info(str::format("PSO_PRESSURE shader_memory_cache_miss stage=", func_name,
                                " hash=0x", std::hex, hash, std::dec, " misses=", misses));
@@ -981,13 +1106,6 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   sm50_error_t sm50_err = nullptr;
   sm50_shader_t shader = nullptr;
   MTL_SHADER_REFLECTION reflection = {};
-  std::vector<SM50_IA_INPUT_ELEMENT> ia_elements;
-  uint32_t ia_slot_mask = 0;
-  if (type == ShaderType::Vertex) {
-    BuildIAInputLayout(bytecode, size, ia_elements, ia_slot_mask);
-    m_ia_slot_mask = ia_slot_mask;
-  }
-
   const uint32_t sm50_options = 0;
   if (SM50InitializeWithOptions(bytecode, size, sm50_options,
                                 &shader, &reflection, &sm50_err)) {
@@ -1647,26 +1765,51 @@ bool MTLD3D12PipelineState::Compile() {
     WMT::InitializeComputePipelineInfo(info);
     info.compute_function = cs_func.handle;
 
+    size_t compute_pipeline_cache_key = cs_hash;
+    PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
+    {
+      std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
+      auto cached = g_compute_pipeline_cache.find(compute_pipeline_cache_key);
+      if (cached != g_compute_pipeline_cache.end()) {
+        m_compute_pso = cached->second;
+        uint64_t hits = ++g_compute_pipeline_cache_hits;
+        Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_hit key=0x",
+                                 std::hex, compute_pipeline_cache_key, std::dec,
+                                 " hits=", hits));
+      } else {
+        uint64_t misses = ++g_compute_pipeline_cache_misses;
+        Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_miss key=0x",
+                                 std::hex, compute_pipeline_cache_key, std::dec,
+                                 " misses=", misses));
+      }
+    }
+
     std::string err_desc = "unknown";
-    for (uint32_t attempt = 0; attempt < 4; attempt++) {
-      err = nullptr;
-      uint64_t total = ++g_metal_compute_pipeline_creates;
-      Logger::info(str::format("PSO_PRESSURE metal_compute_create total=", total,
-                               " attempt=", attempt + 1,
-                               " cs=0x", std::hex, cs_hash, std::dec));
-      m_compute_pso = wmt_device.newComputePipelineState(info, err);
-      if (m_compute_pso.handle)
-        break;
+    if (!m_compute_pso.handle) {
+      for (uint32_t attempt = 0; attempt < 4; attempt++) {
+        err = nullptr;
+        uint64_t total = ++g_metal_compute_pipeline_creates;
+        Logger::info(str::format("PSO_PRESSURE metal_compute_create total=", total,
+                                 " attempt=", attempt + 1,
+                                 " cs=0x", std::hex, cs_hash, std::dec));
+        m_compute_pso = wmt_device.newComputePipelineState(info, err);
+        if (m_compute_pso.handle)
+          break;
 
-      err_desc = DescribeNSObject(err.handle);
-      if (!IsTransientMetalCompilerError(err_desc) || attempt == 3)
-        break;
+        err_desc = DescribeNSObject(err.handle);
+        if (!IsTransientMetalCompilerError(err_desc) || attempt == 3)
+          break;
 
-      Logger::warn(str::format("Retrying compute PSO after transient Metal compiler error attempt=",
-                               attempt + 1, " detail=", err_desc));
-      PSTRACE("Compute PSO transient Metal compiler failure attempt=%u detail=%s",
-              attempt + 1, err_desc.c_str());
-      Sleep(50 * (attempt + 1));
+        Logger::warn(str::format("Retrying compute PSO after transient Metal compiler error attempt=",
+                                 attempt + 1, " detail=", err_desc));
+        PSTRACE("Compute PSO transient Metal compiler failure attempt=%u detail=%s",
+                attempt + 1, err_desc.c_str());
+        Sleep(50 * (attempt + 1));
+      }
+      if (m_compute_pso.handle) {
+        std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
+        g_compute_pipeline_cache[compute_pipeline_cache_key] = m_compute_pso;
+      }
     }
     if (!m_compute_pso.handle) {
       Logger::err(str::format("Failed to create compute PSO: ",
@@ -2023,27 +2166,60 @@ bool MTLD3D12PipelineState::Compile() {
       EnvFlagEnabled("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR") &&
       info.vertex_descriptor == &reflected_vtx_desc;
 
+  const bool reflected_unspecified_topology =
+      reflected_descriptor_enabled &&
+      EnvFlagEnabled("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY");
+  size_t render_pipeline_cache_key = ComputeRenderMetalPipelineCacheHash(
+      pso_manifest_hash, m_topology, m_blend_desc, m_rasterizer_desc,
+      m_depth_stencil_desc, info.vertex_descriptor, reflected_descriptor_enabled,
+      reflected_unspecified_topology);
+  PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
+  {
+    std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
+    auto cached = g_render_pipeline_cache.find(render_pipeline_cache_key);
+    if (cached != g_render_pipeline_cache.end()) {
+      m_render_pso = cached->second;
+      uint64_t hits = ++g_render_pipeline_cache_hits;
+      Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_hit key=0x",
+                               std::hex, render_pipeline_cache_key,
+                               " pso=0x", pso_manifest_hash, std::dec,
+                               " hits=", hits));
+    } else {
+      uint64_t misses = ++g_render_pipeline_cache_misses;
+      Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_miss key=0x",
+                               std::hex, render_pipeline_cache_key,
+                               " pso=0x", pso_manifest_hash, std::dec,
+                               " misses=", misses));
+    }
+  }
+
   std::string render_err_desc = "unknown";
-  for (uint32_t attempt = 0; attempt < 4; attempt++) {
-    err = nullptr;
-    uint64_t total = ++g_metal_render_pipeline_creates;
-    Logger::info(str::format("PSO_PRESSURE metal_render_create total=", total,
-                             " attempt=", attempt + 1,
-                             " pso=0x", std::hex, pso_manifest_hash,
-                             " vs=0x", vs_hash, " ps=0x", ps_hash, std::dec));
-    m_render_pso = wmt_device.newRenderPipelineState(info, err);
-    if (m_render_pso.handle)
-      break;
+  if (!m_render_pso.handle) {
+    for (uint32_t attempt = 0; attempt < 4; attempt++) {
+      err = nullptr;
+      uint64_t total = ++g_metal_render_pipeline_creates;
+      Logger::info(str::format("PSO_PRESSURE metal_render_create total=", total,
+                               " attempt=", attempt + 1,
+                               " pso=0x", std::hex, pso_manifest_hash,
+                               " vs=0x", vs_hash, " ps=0x", ps_hash, std::dec));
+      m_render_pso = wmt_device.newRenderPipelineState(info, err);
+      if (m_render_pso.handle)
+        break;
 
-    render_err_desc = DescribeNSObject(err.handle);
-    if (!IsTransientMetalCompilerError(render_err_desc) || attempt == 3)
-      break;
+      render_err_desc = DescribeNSObject(err.handle);
+      if (!IsTransientMetalCompilerError(render_err_desc) || attempt == 3)
+        break;
 
-    Logger::warn(str::format("Retrying render PSO after transient Metal compiler error attempt=",
-                             attempt + 1, " detail=", render_err_desc));
-    PSTRACE("Render PSO transient Metal compiler failure attempt=%u detail=%s",
-            attempt + 1, render_err_desc.c_str());
-    Sleep(50 * (attempt + 1));
+      Logger::warn(str::format("Retrying render PSO after transient Metal compiler error attempt=",
+                               attempt + 1, " detail=", render_err_desc));
+      PSTRACE("Render PSO transient Metal compiler failure attempt=%u detail=%s",
+              attempt + 1, render_err_desc.c_str());
+      Sleep(50 * (attempt + 1));
+    }
+    if (m_render_pso.handle) {
+      std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
+      g_render_pipeline_cache[render_pipeline_cache_key] = m_render_pso;
+    }
   }
   if (!m_render_pso.handle) {
     if (EnvFlagEnabled("DXMT_D3D12_LOG_RENDER_PSO_FAILURE_KEYS")) {

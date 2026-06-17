@@ -64,6 +64,10 @@ def summarize_pso_pressure(run: Path, bounded: dict) -> dict:
         "compute_repeated": 0,
         "metal_render_creates": 0,
         "metal_compute_creates": 0,
+        "render_pipeline_cache_hits": 0,
+        "render_pipeline_cache_misses": 0,
+        "compute_pipeline_cache_hits": 0,
+        "compute_pipeline_cache_misses": 0,
         "shader_memory_cache_hits": 0,
         "shader_memory_cache_misses": 0,
         "shader_metallib_cache_hits": 0,
@@ -110,6 +114,14 @@ def summarize_pso_pressure(run: Path, bounded: dict) -> dict:
                 summary["metal_render_creates"] = max(summary["metal_render_creates"], parse_int(kv.get("total", "0")) or 0)
             elif kind == "metal_compute_create":
                 summary["metal_compute_creates"] = max(summary["metal_compute_creates"], parse_int(kv.get("total", "0")) or 0)
+            elif kind == "render_pipeline_cache_hit":
+                summary["render_pipeline_cache_hits"] = max(summary["render_pipeline_cache_hits"], parse_int(kv.get("hits", "0")) or 0)
+            elif kind == "render_pipeline_cache_miss":
+                summary["render_pipeline_cache_misses"] = max(summary["render_pipeline_cache_misses"], parse_int(kv.get("misses", "0")) or 0)
+            elif kind == "compute_pipeline_cache_hit":
+                summary["compute_pipeline_cache_hits"] = max(summary["compute_pipeline_cache_hits"], parse_int(kv.get("hits", "0")) or 0)
+            elif kind == "compute_pipeline_cache_miss":
+                summary["compute_pipeline_cache_misses"] = max(summary["compute_pipeline_cache_misses"], parse_int(kv.get("misses", "0")) or 0)
             elif kind == "compile_wait":
                 summary["compile_waits"] = max(summary["compile_waits"], parse_int(kv.get("waits", "0")) or 0)
                 summary["compile_wait_ns_total"] = max(
@@ -145,6 +157,8 @@ def main() -> int:
         "new_pso_artifacts": counts.get("new_pso_render", 0) + counts.get("new_pso_compute", 0),
         "pso_request_repeats": pso_pressure.get("graphics_repeated", 0) + pso_pressure.get("compute_repeated", 0),
         "metal_pipeline_creates": pso_pressure.get("metal_render_creates", 0) + pso_pressure.get("metal_compute_creates", 0),
+        "metal_pipeline_cache_hits": pso_pressure.get("render_pipeline_cache_hits", 0) + pso_pressure.get("compute_pipeline_cache_hits", 0),
+        "metal_pipeline_cache_misses": pso_pressure.get("render_pipeline_cache_misses", 0) + pso_pressure.get("compute_pipeline_cache_misses", 0),
         "compile_wait_ms_total": (pso_pressure.get("compile_wait_ns_total", 0) or 0) / 1_000_000,
         "failures_total": metrics.get("render_pso_failed", 0) + metrics.get("compute_pso_failed", 0) + metrics.get("dxil_msl_compile_failed", 0) + metrics.get("unsafe_draw_skips", 0),
     }
@@ -180,6 +194,8 @@ def main() -> int:
         f"- graphics PSO requests unique/repeated/total: `{pso_pressure['graphics_unique']}/{pso_pressure['graphics_repeated']}/{pso_pressure['graphics_requests']}`",
         f"- compute PSO requests unique/repeated/total: `{pso_pressure['compute_unique']}/{pso_pressure['compute_repeated']}/{pso_pressure['compute_requests']}`",
         f"- Metal pipeline creates render/compute: `{pso_pressure['metal_render_creates']}/{pso_pressure['metal_compute_creates']}`",
+        f"- Metal pipeline cache hits/misses render: `{pso_pressure['render_pipeline_cache_hits']}/{pso_pressure['render_pipeline_cache_misses']}`",
+        f"- Metal pipeline cache hits/misses compute: `{pso_pressure['compute_pipeline_cache_hits']}/{pso_pressure['compute_pipeline_cache_misses']}`",
         f"- shader cache hits/misses memory: `{pso_pressure['shader_memory_cache_hits']}/{pso_pressure['shader_memory_cache_misses']}`",
         f"- shader cache hits/misses metallib: `{pso_pressure['shader_metallib_cache_hits']}/{pso_pressure['shader_metallib_cache_misses']}`",
         f"- compile waits: `{pso_pressure['compile_waits']}` total_ms=`{pressure['compile_wait_ms_total']}`",
