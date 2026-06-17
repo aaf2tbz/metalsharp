@@ -52,6 +52,8 @@ winemetal_unix_call_name(unsigned int code) {
   case 141: return "WMTM12CoreCreateShaderFunction";
   case 142: return "WMTM12CoreLowerDXILToMSL";
   case 143: return "WMTM12CoreReflectSM50Shader";
+  case 144: return "WMTM12CoreLookupPipelineCache";
+  case 145: return "WMTM12CoreStorePipelineCache";
   default: return "unknown";
   }
 }
@@ -310,6 +312,32 @@ WMTM12CoreLowerDXILToMSL(const M12CoreDXILToMSLDesc *desc,
 
   *out_result = params.ret_result;
   return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query,
+                              M12CorePipelineCacheResult *out_result) {
+  struct unixcall_m12core_lookup_pipeline_cache params;
+  memset(&params, 0, sizeof(params));
+  if (!query || !out_result)
+    return false;
+  params.query = *query;
+  if (!winemetal_unix_call_ok(144, &params) || !params.ret_success)
+    return false;
+  *out_result = params.ret_result;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query,
+                             obj_handle_t pipeline_handle) {
+  struct unixcall_m12core_store_pipeline_cache params;
+  memset(&params, 0, sizeof(params));
+  if (!query || !pipeline_handle)
+    return false;
+  params.query = *query;
+  params.pipeline_handle = pipeline_handle;
+  return winemetal_unix_call_ok(145, &params) && params.ret_success;
 }
 
 WINEMETAL_API bool

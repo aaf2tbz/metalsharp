@@ -294,7 +294,7 @@ int m12core_get_shader_reflection(...);
 
 ## Phase 4: Move graphics/compute PSO keying and Metal pipeline cache into `libm12core`
 
-Status: device-scoped pipeline cache key foundation implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-key-foundation-20260617-014138/summary.md`. Remaining work: move normalized render/compute PSO field accumulation and Metal pipeline object cache ownership in later slices.
+Status: device-scoped pipeline cache key foundation implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-key-foundation-20260617-014138/summary.md`; retained native pipeline cache storage implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-cache-storage-20260617-025034/summary.md`. Remaining work: move normalized render/compute PSO field accumulation and actual Metal pipeline creation ownership in later slices.
 
 ### Work
 

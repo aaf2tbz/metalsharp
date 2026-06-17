@@ -29,7 +29,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000006u; // Phase-3 native SM50 reflection foundation.
+constexpr uint32_t kBuildIdHigh = 0x00000007u; // Phase-4 native pipeline cache storage foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -141,14 +141,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_SHADER_INTROSPECTION |
                                M12CORE_FEATURE_SHADER_FUNCTIONS |
                                M12CORE_FEATURE_DXIL_TO_MSL |
-                               M12CORE_FEATURE_SM50_REFLECTION;
+                               M12CORE_FEATURE_SM50_REFLECTION |
+                               M12CORE_FEATURE_PIPELINE_CACHE;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase3 sm50-reflection abi=1";
+  return "libm12core phase4 pipeline-cache abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {

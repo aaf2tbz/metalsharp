@@ -89,6 +89,10 @@ WINEMETAL_API bool WMTM12CoreCreateShaderFunction(obj_handle_t device,
                                                    M12CoreShaderFunctionResult *out_result);
 WINEMETAL_API bool WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input,
                                                    M12CorePipelineCacheKey *out_key);
+WINEMETAL_API bool WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query,
+                                                  M12CorePipelineCacheResult *out_result);
+WINEMETAL_API bool WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query,
+                                                 obj_handle_t pipeline_handle);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,

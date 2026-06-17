@@ -23,6 +23,8 @@
 
 static pthread_mutex_t g_shader_function_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NSMutableDictionary<NSString *, id<MTLFunction>> *g_shader_function_cache;
+static pthread_mutex_t g_pipeline_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+static NSMutableDictionary<NSString *, id> *g_pipeline_cache;
 
 static void m12core_copy_cstr(char *dst, size_t dst_size, const char *src) {
   if (!dst || !dst_size)
@@ -44,6 +46,12 @@ static const char *m12core_default_entry_for_stage(uint32_t stage) {
   default:
     return "main";
   }
+}
+
+static NSString *m12core_pipeline_cache_key(const M12CorePipelineCacheQuery *query) {
+  return [NSString stringWithFormat:@"%u:%016llx",
+                                    query ? query->kind : 0,
+                                    (unsigned long long)(query ? query->key : 0)];
 }
 
 static NSString *m12core_shader_function_cache_key(const M12CoreShaderFunctionDesc *desc) {
@@ -93,6 +101,49 @@ static id<MTLFunction> m12core_lookup_function_with_fallbacks(id<MTLLibrary> lib
     }
   }
   return nil;
+}
+
+int m12core_lookup_pipeline_cache(const M12CorePipelineCacheQuery *query,
+                                  M12CorePipelineCacheResult *out_result) {
+  if (!out_result)
+    return 1;
+
+  memset(out_result, 0, sizeof(*out_result));
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  if (!query || query->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+
+  out_result->kind = query->kind;
+  NSString *key = m12core_pipeline_cache_key(query);
+  pthread_mutex_lock(&g_pipeline_cache_mutex);
+  id cached = g_pipeline_cache ? [g_pipeline_cache objectForKey:key] : nil;
+  if (cached) {
+    [cached retain];
+    out_result->hit = 1;
+    out_result->pipeline_handle = (uint64_t)(uintptr_t)cached;
+  }
+  pthread_mutex_unlock(&g_pipeline_cache_mutex);
+  return 0;
+}
+
+int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
+                                 uint64_t pipeline_handle) {
+  if (!query || query->abi_version != M12CORE_ABI_VERSION || !pipeline_handle)
+    return 1;
+
+  /* Phase 4 pipeline-cache seam.  libm12core now owns retained in-process Metal
+   * pipeline cache storage, while D3D12 still owns key normalization and actual
+   * `new*PipelineState` creation.  Later Phase 4 slices can move creation into
+   * this native cache without changing the lookup/store API.
+   */
+  NSString *key = m12core_pipeline_cache_key(query);
+  id pipeline = (id)(uintptr_t)pipeline_handle;
+  pthread_mutex_lock(&g_pipeline_cache_mutex);
+  if (!g_pipeline_cache)
+    g_pipeline_cache = [[NSMutableDictionary alloc] init];
+  [g_pipeline_cache setObject:pipeline forKey:key];
+  pthread_mutex_unlock(&g_pipeline_cache_mutex);
+  return 0;
 }
 
 int m12core_create_shader_function(const M12CoreShaderFunctionDesc *desc,

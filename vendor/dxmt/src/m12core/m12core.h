@@ -31,6 +31,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_SHADER_FUNCTIONS = 1u << 3,
   M12CORE_FEATURE_DXIL_TO_MSL = 1u << 4,
   M12CORE_FEATURE_SM50_REFLECTION = 1u << 5,
+  M12CORE_FEATURE_PIPELINE_CACHE = 1u << 6,
 };
 
 typedef struct M12CoreVersion {
@@ -229,6 +230,20 @@ typedef struct M12CorePipelineCacheKey {
   uint64_t key;
 } M12CorePipelineCacheKey;
 
+typedef struct M12CorePipelineCacheQuery {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint64_t key;
+} M12CorePipelineCacheQuery;
+
+typedef struct M12CorePipelineCacheResult {
+  uint32_t abi_version;
+  uint32_t hit;
+  uint32_t kind;
+  uint32_t reserved;
+  uint64_t pipeline_handle;
+} M12CorePipelineCacheResult;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -321,6 +336,10 @@ int m12core_reflect_sm50_shader(const void *bytecode, uint64_t bytecode_size,
                                 M12CoreSM50ReflectionResult *out_result);
 int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
                                     M12CorePipelineCacheKey *out_key);
+int m12core_lookup_pipeline_cache(const M12CorePipelineCacheQuery *query,
+                                  M12CorePipelineCacheResult *out_result);
+int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
+                                 uint64_t pipeline_handle);
 
 #ifdef __cplusplus
 }

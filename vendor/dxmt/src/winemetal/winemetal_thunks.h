@@ -458,6 +458,20 @@ struct unixcall_m12core_lower_dxil_to_msl {
   M12CoreDXILToMSLResult ret_result;
 };
 
+struct unixcall_m12core_lookup_pipeline_cache {
+  M12CorePipelineCacheQuery query;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CorePipelineCacheResult ret_result;
+};
+
+struct unixcall_m12core_store_pipeline_cache {
+  M12CorePipelineCacheQuery query;
+  obj_handle_t pipeline_handle;
+  uint32_t ret_success;
+  uint32_t reserved;
+};
+
 struct unixcall_m12core_reflect_sm50_shader {
   struct WMTConstMemoryPointer bytecode;
   uint64_t bytecode_size;

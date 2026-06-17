@@ -564,6 +564,33 @@ bool LowerDXILToMSLWithM12Core(const void *dxil_container,
   return true;
 }
 
+template <typename PipelineRef>
+bool LookupM12CorePipelineCache(uint32_t kind, size_t key, PipelineRef &out_pipeline,
+                                bool &out_hit) {
+  M12CorePipelineCacheQuery query = {};
+  query.abi_version = M12CORE_ABI_VERSION;
+  query.kind = kind;
+  query.key = (uint64_t)key;
+  M12CorePipelineCacheResult result = {};
+  if (!WMTM12CoreLookupPipelineCache(&query, &result) ||
+      result.abi_version != M12CORE_ABI_VERSION || result.kind != kind)
+    return false;
+  out_hit = result.hit != 0;
+  if (out_hit && result.pipeline_handle)
+    out_pipeline = PipelineRef(result.pipeline_handle);
+  return true;
+}
+
+bool StoreM12CorePipelineCache(uint32_t kind, size_t key, obj_handle_t pipeline_handle) {
+  if (!pipeline_handle)
+    return false;
+  M12CorePipelineCacheQuery query = {};
+  query.abi_version = M12CORE_ABI_VERSION;
+  query.kind = kind;
+  query.key = (uint64_t)key;
+  return WMTM12CoreStorePipelineCache(&query, pipeline_handle);
+}
+
 bool FinalizeM12CorePipelineCacheKey(size_t base_hash, uint64_t device_id,
                                      uint32_t kind, uint64_t flags,
                                      size_t &out_key) {
@@ -2166,23 +2193,35 @@ bool MTLD3D12PipelineState::Compile() {
                                          M12CORE_PIPELINE_KIND_COMPUTE, 0,
                                          compute_pipeline_cache_key))
       PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
-    {
+    bool compute_core_cache_available = false;
+    bool compute_cache_hit = false;
+    compute_core_cache_available = LookupM12CorePipelineCache(
+        M12CORE_PIPELINE_KIND_COMPUTE, compute_pipeline_cache_key,
+        m_compute_pso, compute_cache_hit);
+    if (!compute_core_cache_available) {
       std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
       auto cached = g_compute_pipeline_cache.find(compute_pipeline_cache_key);
       if (cached != g_compute_pipeline_cache.end()) {
         m_compute_pso = cached->second;
-        uint64_t hits = ++g_compute_pipeline_cache_hits;
-        dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_HITS);
-        Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_hit key=0x",
-                                 std::hex, compute_pipeline_cache_key, std::dec,
-                                 " hits=", hits));
-      } else {
-        uint64_t misses = ++g_compute_pipeline_cache_misses;
-        dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_MISSES);
-        Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_miss key=0x",
-                                 std::hex, compute_pipeline_cache_key, std::dec,
-                                 " misses=", misses));
+        compute_cache_hit = true;
       }
+    }
+    if (m_compute_pso.handle) {
+      uint64_t hits = ++g_compute_pipeline_cache_hits;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_HITS);
+      Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_hit key=0x",
+                               std::hex, compute_pipeline_cache_key, std::dec,
+                               " native=", compute_core_cache_available ? 1 : 0,
+                               " native_hit=", compute_cache_hit ? 1 : 0,
+                               " hits=", hits));
+    } else {
+      uint64_t misses = ++g_compute_pipeline_cache_misses;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_MISSES);
+      Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_miss key=0x",
+                               std::hex, compute_pipeline_cache_key, std::dec,
+                               " native=", compute_core_cache_available ? 1 : 0,
+                               " native_hit=", compute_cache_hit ? 1 : 0,
+                               " misses=", misses));
     }
 
     std::string err_desc = "unknown";
@@ -2209,8 +2248,12 @@ bool MTLD3D12PipelineState::Compile() {
         Sleep(50 * (attempt + 1));
       }
       if (m_compute_pso.handle) {
-        std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
-        g_compute_pipeline_cache[compute_pipeline_cache_key] = m_compute_pso;
+        if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_COMPUTE,
+                                       compute_pipeline_cache_key,
+                                       m_compute_pso.handle)) {
+          std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
+          g_compute_pipeline_cache[compute_pipeline_cache_key] = m_compute_pso;
+        }
       }
     }
     if (!m_compute_pso.handle) {
@@ -2582,25 +2625,37 @@ bool MTLD3D12PipelineState::Compile() {
                                        M12CORE_PIPELINE_KIND_RENDER, 0,
                                        render_pipeline_cache_key))
     PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
-  {
+  bool render_core_cache_available = false;
+  bool render_cache_hit = false;
+  render_core_cache_available = LookupM12CorePipelineCache(
+      M12CORE_PIPELINE_KIND_RENDER, render_pipeline_cache_key,
+      m_render_pso, render_cache_hit);
+  if (!render_core_cache_available) {
     std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
     auto cached = g_render_pipeline_cache.find(render_pipeline_cache_key);
     if (cached != g_render_pipeline_cache.end()) {
       m_render_pso = cached->second;
-      uint64_t hits = ++g_render_pipeline_cache_hits;
-      dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_HITS);
-      Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_hit key=0x",
-                               std::hex, render_pipeline_cache_key,
-                               " pso=0x", pso_manifest_hash, std::dec,
-                               " hits=", hits));
-    } else {
-      uint64_t misses = ++g_render_pipeline_cache_misses;
-      dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_MISSES);
-      Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_miss key=0x",
-                               std::hex, render_pipeline_cache_key,
-                               " pso=0x", pso_manifest_hash, std::dec,
-                               " misses=", misses));
+      render_cache_hit = true;
     }
+  }
+  if (m_render_pso.handle) {
+    uint64_t hits = ++g_render_pipeline_cache_hits;
+    dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_HITS);
+    Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_hit key=0x",
+                             std::hex, render_pipeline_cache_key,
+                             " pso=0x", pso_manifest_hash, std::dec,
+                             " native=", render_core_cache_available ? 1 : 0,
+                             " native_hit=", render_cache_hit ? 1 : 0,
+                             " hits=", hits));
+  } else {
+    uint64_t misses = ++g_render_pipeline_cache_misses;
+    dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_MISSES);
+    Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_miss key=0x",
+                             std::hex, render_pipeline_cache_key,
+                             " pso=0x", pso_manifest_hash, std::dec,
+                             " native=", render_core_cache_available ? 1 : 0,
+                             " native_hit=", render_cache_hit ? 1 : 0,
+                             " misses=", misses));
   }
 
   std::string render_err_desc = "unknown";
@@ -2628,8 +2683,12 @@ bool MTLD3D12PipelineState::Compile() {
       Sleep(50 * (attempt + 1));
     }
     if (m_render_pso.handle) {
-      std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
-      g_render_pipeline_cache[render_pipeline_cache_key] = m_render_pso;
+      if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_RENDER,
+                                     render_pipeline_cache_key,
+                                     m_render_pso.handle)) {
+        std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
+        g_render_pipeline_cache[render_pipeline_cache_key] = m_render_pso;
+      }
     }
   }
   if (!m_render_pso.handle) {

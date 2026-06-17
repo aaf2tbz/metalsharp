@@ -1,0 +1,35 @@
+4602840:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+4604728:[m12core] counter_bridge first_batch counters=17 delta_total=64
+4698294:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+4700182:[m12core] counter_bridge first_batch counters=17 delta_total=64
+4794515:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0xf build_id=00000004:4d313243 build=libm12core phase3 shader-functions abi=1
+4796391:[m12core] counter_bridge first_batch counters=17 delta_total=64
+5127144:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0xf build_id=00000004:4d313243 build=libm12core phase3 shader-functions abi=1
+5127184:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+5129021:[m12core] counter_bridge first_batch counters=17 delta_total=64
+5443847:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x1f build_id=00000005:4d313243 build=libm12core phase3 dxil-to-msl abi=1
+5443887:[m12core] dxil_to_msl first_call stage=1 bytes=1524 status=5 required=8529 success=1
+5443888:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+5445725:[m12core] counter_bridge first_batch counters=17 delta_total=64
+5809523:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x3f build_id=00000006:4d313243 build=libm12core phase3 sm50-reflection abi=1
+5809563:[m12core] dxil_to_msl first_call stage=1 bytes=1524 status=5 required=8529 success=1
+5809564:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+5809565:[m12core] sm50_reflection first_call bytes=3950 status=2 cb=0 args=0 success=1
+5811402:[m12core] counter_bridge first_batch counters=17 delta_total=64
+6137736:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x3f build_id=00000006:4d313243 build=libm12core phase3 sm50-reflection abi=1
+6137776:[m12core] dxil_to_msl first_call stage=1 bytes=1524 status=5 required=8529 success=1
+6137777:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+6139614:[m12core] counter_bridge first_batch counters=17 delta_total=64
+6150021:[m12core] sm50_reflection first_call bytes=684 status=3 cb=1 args=0 success=1
+6403567:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x3f build_id=00000006:4d313243 build=libm12core phase3 sm50-reflection abi=1
+6403607:[m12core] dxil_to_msl first_call stage=1 bytes=1524 status=5 required=8529 success=1
+6403608:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+6403609:[m12core] pipeline_cache first_lookup kind=1 key=0xade5e9b817fa02a2 hit=0 success=1
+6405446:[m12core] counter_bridge first_batch counters=17 delta_total=64
+6415853:[m12core] sm50_reflection first_call bytes=684 status=3 cb=1 args=0 success=1
+6735036:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7f build_id=00000007:4d313243 build=libm12core phase4 pipeline-cache abi=1
+6735076:[m12core] dxil_to_msl first_call stage=1 bytes=1524 status=5 required=8529 success=1
+6735077:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+6735078:[m12core] pipeline_cache first_lookup kind=1 key=0xade7ebd067ddf482 hit=0 success=1
+6736915:[m12core] counter_bridge first_batch counters=17 delta_total=64
+6747322:[m12core] sm50_reflection first_call bytes=684 status=3 cb=1 args=0 success=1
