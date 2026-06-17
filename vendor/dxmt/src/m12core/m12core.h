@@ -37,6 +37,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_ROOT_BINDING_PLAN = 1u << 9,
   M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT = 1u << 10,
   M12CORE_FEATURE_PREWARM_PACKS = 1u << 11,
+  M12CORE_FEATURE_DRAW_PLANNING = 1u << 12,
 };
 
 typedef struct M12CoreVersion {
@@ -496,6 +497,54 @@ typedef struct M12CorePrewarmPackSummary {
   uint64_t prewarm_pack_key;
 } M12CorePrewarmPackSummary;
 
+typedef enum M12CoreDrawPlanStatus {
+  M12CORE_DRAW_PLAN_STATUS_OK = 0,
+  M12CORE_DRAW_PLAN_STATUS_INVALID = 1,
+} M12CoreDrawPlanStatus;
+
+typedef enum M12CoreDrawPlanFlags {
+  M12CORE_DRAW_PLAN_INDEXED = 1u << 0,
+  M12CORE_DRAW_PLAN_INDIRECT = 1u << 1,
+  M12CORE_DRAW_PLAN_HAS_GRAPHICS_PSO = 1u << 2,
+  M12CORE_DRAW_PLAN_HAS_ROOT_SIGNATURE = 1u << 3,
+  M12CORE_DRAW_PLAN_HAS_RENDER_TARGET = 1u << 4,
+  M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL = 1u << 5,
+} M12CoreDrawPlanFlags;
+
+typedef struct M12CoreDrawPlanDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint64_t pso_key;
+  uint64_t root_signature_key;
+  uint64_t binding_plan_key;
+  uint32_t root_parameter_count;
+  uint32_t descriptor_table_count;
+  uint32_t root_descriptor_count;
+  uint32_t root_constant_count;
+  uint32_t argument_resource_slot_count;
+  uint32_t argument_sampler_slot_count;
+  uint32_t argument_root_descriptor_slot_count;
+  uint32_t argument_root_constant_dword_count;
+  uint32_t render_target_count;
+  uint32_t resource_barrier_count;
+  uint32_t descriptor_heap_count;
+  uint32_t reserved;
+} M12CoreDrawPlanDesc;
+
+typedef struct M12CoreDrawPlanSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t validation_flags;
+  uint32_t resource_usage_count;
+  uint32_t binding_validation_count;
+  uint32_t redundant_binding_candidate_count;
+  uint32_t render_pass_attachment_count;
+  uint32_t descriptor_pressure_score;
+  uint32_t reserved;
+  uint64_t draw_plan_key;
+} M12CoreDrawPlanSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -604,6 +653,8 @@ int m12core_lookup_root_binding(const M12CoreRootBindingLookupDesc *desc,
                                 M12CoreRootBindingLookupResult *out_result);
 int m12core_summarize_prewarm_pack(const M12CorePrewarmPackDesc *desc,
                                    M12CorePrewarmPackSummary *out_summary);
+int m12core_build_draw_plan(const M12CoreDrawPlanDesc *desc,
+                            M12CoreDrawPlanSummary *out_summary);
 
 #ifdef __cplusplus
 }

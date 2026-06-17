@@ -30,7 +30,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x0000000cu; // Phase-6 compact prewarm pack foundation.
+constexpr uint32_t kBuildIdHigh = 0x0000000du; // Phase-7 draw planning foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -148,14 +148,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
                                M12CORE_FEATURE_ROOT_BINDING_PLAN |
                                M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT |
-                               M12CORE_FEATURE_PREWARM_PACKS;
+                               M12CORE_FEATURE_PREWARM_PACKS |
+                               M12CORE_FEATURE_DRAW_PLANNING;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase6 prewarm-pack-summary abi=1";
+  return "libm12core phase7 draw-planning abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1013,5 +1014,77 @@ extern "C" int m12core_summarize_prewarm_pack(
   out_summary->expected_root_descriptor_slots = expected_root_descriptor_slots;
   out_summary->expected_root_constant_dwords = expected_root_constant_dwords;
   out_summary->prewarm_pack_key = key;
+  return 0;
+}
+
+extern "C" int m12core_build_draw_plan(
+    const M12CoreDrawPlanDesc *desc,
+    M12CoreDrawPlanSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Phase 7 command-planning seam.  The native core receives only compact
+   * scalar state needed to classify draw work: PSO/root/binding keys, argument
+   * layout pressure, attachment count, descriptor heap count, and barrier
+   * count.  It does not receive command-list objects, descriptor heap pointers,
+   * Metal encoders, or resource handles, and it never executes commands here.
+   */
+  uint64_t key = 0x4d31324452415750ull; // "M12DRAWP" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->pso_key);
+  pipelineHashCombine(key, desc->root_signature_key);
+  pipelineHashCombine(key, desc->binding_plan_key);
+  pipelineHashCombine(key, desc->root_parameter_count);
+  pipelineHashCombine(key, desc->descriptor_table_count);
+  pipelineHashCombine(key, desc->root_descriptor_count);
+  pipelineHashCombine(key, desc->root_constant_count);
+  pipelineHashCombine(key, desc->argument_resource_slot_count);
+  pipelineHashCombine(key, desc->argument_sampler_slot_count);
+  pipelineHashCombine(key, desc->argument_root_descriptor_slot_count);
+  pipelineHashCombine(key, desc->argument_root_constant_dword_count);
+  pipelineHashCombine(key, desc->render_target_count);
+  pipelineHashCombine(key, desc->resource_barrier_count);
+  pipelineHashCombine(key, desc->descriptor_heap_count);
+
+  uint32_t validation_flags = 0;
+  if (!(desc->flags & M12CORE_DRAW_PLAN_HAS_GRAPHICS_PSO) || !desc->pso_key)
+    validation_flags |= 1u << 0;
+  if (!(desc->flags & M12CORE_DRAW_PLAN_HAS_ROOT_SIGNATURE) ||
+      !desc->root_signature_key || !desc->binding_plan_key)
+    validation_flags |= 1u << 1;
+  if (!(desc->flags & M12CORE_DRAW_PLAN_HAS_RENDER_TARGET))
+    validation_flags |= 1u << 2;
+  if (desc->descriptor_table_count > desc->root_parameter_count)
+    validation_flags |= 1u << 3;
+
+  uint32_t resource_usage = desc->argument_resource_slot_count +
+                            desc->argument_root_descriptor_slot_count +
+                            desc->render_target_count +
+                            ((desc->flags & M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL) ? 1u : 0u);
+  uint32_t binding_validations = desc->descriptor_table_count +
+                                 desc->root_descriptor_count +
+                                 desc->root_constant_count;
+  uint32_t redundant_candidates = desc->descriptor_heap_count > 1
+                                      ? desc->descriptor_heap_count - 1
+                                      : 0;
+  uint32_t attachments = desc->render_target_count +
+                         ((desc->flags & M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL) ? 1u : 0u);
+  uint32_t descriptor_pressure = desc->argument_resource_slot_count +
+                                 desc->argument_sampler_slot_count +
+                                 desc->argument_root_descriptor_slot_count +
+                                 desc->argument_root_constant_dword_count +
+                                 desc->descriptor_table_count;
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_DRAW_PLAN_STATUS_OK;
+  out_summary->flags = desc->flags;
+  out_summary->validation_flags = validation_flags;
+  out_summary->resource_usage_count = resource_usage;
+  out_summary->binding_validation_count = binding_validations;
+  out_summary->redundant_binding_candidate_count = redundant_candidates;
+  out_summary->render_pass_attachment_count = attachments;
+  out_summary->descriptor_pressure_score = descriptor_pressure;
+  out_summary->draw_plan_key = key;
   return 0;
 }
