@@ -565,6 +565,50 @@ tools/d3d12-metal-sdk/scripts/verify-m12-cache-freshness.py
 - Cache invalidation can be demonstrated by changing a runtime ABI/build id or translator version and observing stale entries rebuild rather than reuse.
 - No raw D3DMetal metallibs/cache payloads are committed or trusted as compatible runtime artifacts.
 
+## Phase 11: Public translation-layer detection interface
+
+### Why
+
+External tools and games should be able to detect that they are running on MetalSharp/DXMT M12 instead of native Windows D3D12.  This helps tools such as D3D12 capability/report databases group M12 reports separately from native Windows results, similar to how `vkd3d-proton` exposes a detectable interface while normal `vkd3d` may not.
+
+The interface should be explicit and stable rather than relying on heuristics such as adapter names, DLL filenames, debug strings, or vendor/device quirks.
+
+### Work
+
+Add a MetalSharp/DXMT-specific detection interface exposed through D3D12 `QueryInterface`:
+
+- define a stable custom GUID/IID for the M12 translation-layer interface
+- expose it from the D3D12 device object, and optionally the DXGI adapter/factory if useful for diagnostics
+- return a small POD/versioned info structure containing:
+  - implementation name, e.g. `MetalSharp DXMT M12`
+  - backend kind, e.g. `d3d12-metal`
+  - translation-layer version/build id
+  - `libm12core` ABI/build id when loaded
+  - feature flags for shader cache, PSO cache, root binding plans, prewarm metadata, command planning, cache-first warm start
+  - optional runtime paths only in developer/diagnostic mode, not by default
+- document the GUID and expected call pattern so external tools can query it without linking against MetalSharp headers
+- keep behavior safe for apps that do not know the interface: unknown GUIDs still return `E_NOINTERFACE`, and normal D3D12 interfaces remain unchanged
+- add a tiny probe under `tools/d3d12-metal-sdk/probes/` that creates a D3D12 device, queries the GUID, and prints JSON evidence
+
+### Interface shape
+
+The preferred shape is a minimal COM-style extension with stable C/POD data:
+
+```text
+ID3D12Device::QueryInterface(IID_IMetalSharpM12TranslationLayerInfo, ...)
+  -> GetTranslationLayerInfo(MetalSharpM12TranslationLayerInfo *out)
+```
+
+Avoid returning STL/C++ objects, process-local pointers, Objective-C objects, or native Metal handles.  The interface is for detection and reporting only, not control of runtime behavior.
+
+### Done when
+
+- A standalone probe can distinguish native Windows D3D12 from MetalSharp/DXMT M12 by querying the custom GUID.
+- The probe emits stable JSON that report collectors can consume.
+- D3D12 apps that do not query the GUID observe no behavior change.
+- The interface reports enough version/feature information for external tools to group M12 reports separately from native Windows, `vkd3d`, and `vkd3d-proton`.
+- Bounded AC6 validation still passes with no new rendering behavior changes.
+
 ## Validation matrix
 
 Each phase should pass:
