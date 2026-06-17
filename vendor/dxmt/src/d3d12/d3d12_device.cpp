@@ -2083,7 +2083,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
       MetalSharpM12TranslationLayerFeatureDrawPlanning |
       MetalSharpM12TranslationLayerFeaturePresentPlanning |
       MetalSharpM12TranslationLayerFeatureReplayPlanning |
-      MetalSharpM12TranslationLayerFeatureCommandStreamDescriptors;
+      MetalSharpM12TranslationLayerFeatureCommandStreamDescriptors |
+      MetalSharpM12TranslationLayerFeatureRenderPassHazardPlanning;
   local.m12core_abi_version = M12CORE_ABI_VERSION;
   local.m12core_feature_flags = M12CORE_FEATURE_ALL;
   local.m12core_build_id_low = M12CORE_BUILD_ID_LOW;
@@ -2093,7 +2094,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
   m12_copy_fixed_string(local.backend_name, sizeof(local.backend_name),
                         "DXMT D3D12 over Metal");
   std::snprintf(local.build_string, sizeof(local.build_string),
-                "MetalSharp DXMT M12 phase9 command stream abi=%u",
+                "MetalSharp DXMT M12 phase9 render pass abi=%u",
                 MetalSharpM12TranslationLayerInfoAbiVersion);
 
   *info = local;

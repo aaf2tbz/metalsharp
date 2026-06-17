@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase9 command-stream-shadow abi=1";
+  return "libm12core phase9 render-pass-hazard-shadow abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1389,5 +1389,92 @@ m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
   out_summary->binding_change_count = binding_changes;
   out_summary->command_stream_key = key;
   out_summary->scheduled_work_count = scheduled;
+  return 0;
+}
+
+extern "C" int
+m12core_plan_render_pass(const M12CoreRenderPassPlanDesc *desc,
+                         M12CoreRenderPassPlanSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Slice 3 render-pass/hazard planning seam.  The native core owns scalar
+   * render-pass classification and hazard scoring here.  PE/DXMT still owns
+   * Metal encoder creation, load/store actions, command emission, barriers,
+   * command-buffer commits, and synchronization.
+   */
+  uint32_t expected_flags = 0;
+  if (desc->render_target_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_RENDER_TARGETS;
+  if (desc->dsv_format)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_DSV;
+  if (desc->flags & M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TARGET)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TARGET;
+  if (desc->swapchain_touched_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TOUCH;
+  if (desc->draw_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_DRAW_WORK;
+  if (desc->clear_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_CLEAR_WORK;
+  if (desc->dispatch_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_COMPUTE_WORK;
+  if (desc->resource_barrier_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_BARRIERS;
+  if (desc->descriptor_heap_count)
+    expected_flags |= M12CORE_RENDER_PASS_PLAN_HAS_DESCRIPTOR_HEAPS;
+
+  uint64_t key = 0x4d31325250415353ull; // "M12RPASS" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, expected_flags);
+  pipelineHashCombine(key, desc->queue_type);
+  pipelineHashCombine(key, desc->command_list_index);
+  pipelineHashCombine(key, desc->render_target_count);
+  pipelineHashCombine(key, desc->dsv_format);
+  pipelineHashCombine(key, desc->rtv0_format);
+  pipelineHashCombine(key, desc->rtv_format_xor);
+  pipelineHashCombine(key, desc->draw_count);
+  pipelineHashCombine(key, desc->clear_count);
+  pipelineHashCombine(key, desc->dispatch_count);
+  pipelineHashCombine(key, desc->resource_barrier_count);
+  pipelineHashCombine(key, desc->descriptor_heap_count);
+  pipelineHashCombine(key, desc->swapchain_touched_count);
+  pipelineHashCombine(key, desc->command_buffer_status);
+  pipelineHashCombine(key, desc->command_list_id);
+  pipelineHashCombine(key, desc->queue_serial);
+
+  uint32_t classification = 0;
+  if (desc->render_target_count && desc->draw_count)
+    classification = 1;
+  else if (desc->render_target_count && desc->clear_count)
+    classification = 2;
+  else if (desc->dispatch_count)
+    classification = 3;
+  else if (desc->resource_barrier_count)
+    classification = 4;
+
+  uint32_t hazard_score = 0;
+  hazard_score += desc->resource_barrier_count;
+  if (desc->flags & M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TARGET)
+    hazard_score += 2;
+  if (desc->swapchain_touched_count)
+    hazard_score += 1;
+  if (desc->render_target_count > 1)
+    hazard_score += desc->render_target_count - 1;
+  if (desc->dsv_format && desc->draw_count)
+    hazard_score += 1;
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_RENDER_PASS_PLAN_STATUS_OK;
+  out_summary->input_flags = desc->flags;
+  out_summary->expected_flags = expected_flags;
+  out_summary->drift_flags = desc->flags ^ expected_flags;
+  out_summary->render_pass_classification = classification;
+  out_summary->hazard_score = hazard_score;
+  out_summary->attachment_count =
+      desc->render_target_count + (desc->dsv_format ? 1u : 0u);
+  out_summary->resource_transition_count = desc->resource_barrier_count;
+  out_summary->descriptor_pressure_score = desc->descriptor_heap_count;
+  out_summary->render_pass_plan_key = key;
   return 0;
 }

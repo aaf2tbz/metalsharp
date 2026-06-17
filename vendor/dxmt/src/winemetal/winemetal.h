@@ -104,6 +104,8 @@ WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc, M12CorePresentPla
 WINEMETAL_API bool WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary);
 WINEMETAL_API bool
 WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCommandStreamSummary *out_summary);
+WINEMETAL_API bool
+WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,

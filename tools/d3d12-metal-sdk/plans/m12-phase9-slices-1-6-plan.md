@@ -81,6 +81,35 @@ Exit criteria:
 
 ## Slice 3 — Core-owned render-pass and hazard planning
 
+Status: complete.
+
+Implemented evidence:
+
+- Added `M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING` with `M12CORE_BUILD_ID_HIGH = 0x00000011`.
+- Added scalar C/POD `M12CoreRenderPassPlanDesc` and `M12CoreRenderPassPlanSummary`.
+- Added `m12core_plan_render_pass` for native render-pass classification, hazard scoring, attachment counts, transition counts, descriptor pressure, expected flags, and drift flags.
+- Added winemetal PE/unix bridge on append-only unixcall `156`.
+- Added `resource_barrier_count` to `D3D12CommandStreamStats`.
+- Added bounded post-execution `M12_RENDER_PASS_PLAN` diagnostics beside Slice 2 command-stream shadow diagnostics.
+- Runtime build passed: `./tools/d3d12-metal-sdk/scripts/m12-dev.sh build-runtime`.
+- Probe build passed: `./tools/d3d12-metal-sdk/scripts/build-probes.sh`.
+- Formatting passed: `clang-format --dry-run --Werror ...` for touched Slice 3 files.
+- Autoreview returned no findings for ABI/table/fallback/execution-semantics safety.
+- Runtime staged to `~/.metalsharp/runtime/wine/lib/dxmt_m12` with `tools/d3d12-metal-sdk/results/stage-runtime-metalsharp.json`.
+- `probe_command_replay` passed under staged `dxmt_m12` runtime: `tools/d3d12-metal-sdk/results/probe-command-replay-metalsharp.json`.
+- `probe_barriers_render_pass` passed under staged `dxmt_m12` runtime: `tools/d3d12-metal-sdk/results/probe-barriers-render-pass-metalsharp.json`.
+- M12 detection probe passed with feature flags `0x00000000000003ff`, core feature flags `0x0001ffff`, and build high `0x00000011`: `tools/d3d12-metal-sdk/results/probe-m12-detection-metalsharp.json`.
+- Native render-pass shadow bridge exercised with `DXMT_M12CORE_ENABLE=1`; captured `M12_RENDER_PASS_PLAN ... drift=0x0` lines in `tools/d3d12-metal-sdk/results/probe-barriers-render-pass-m12core-enabled.log`.
+- Backend dry-run matrix passed for all five games: `tools/d3d12-metal-sdk/results/m12-phase9-slice3-dryrun-20260617-162500/summary.json`.
+
+Pre-implementation discrepancy check:
+
+- RT/DSV final state is available from `ReplayState::rt_count`, `has_dsv`, `rt_handles[]`, and `dsv_handle`.
+- Swapchain target/touch state is available from `HasSwapchainRenderTarget()` and `swapchain_touched_count`.
+- Descriptor formats can be summarized as DXGI integer values from `D3D12Descriptor::rtv/dsv`, falling back to zero when unavailable.
+- Barrier count is not currently in `D3D12CommandStreamStats`; Slice 3 must add scalar `resource_barrier_count`.
+- No Metal encoder/resource/COM handles need to cross ABI; render-pass/hazard descriptor can be scalar-only.
+
 Plan before implementation:
 
 - Add POD render-pass/hazard planning ABI keyed by scalar attachment counts/formats, clear/draw counts, swapchain target flag, DSV flag, and barrier count.

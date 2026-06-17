@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000010u /* Phase-9 command-stream shadow foundation. */
+  0x00000011u /* Phase-9 render-pass hazard planning foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -44,6 +44,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13,
   M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14,
   M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS = 1u << 15,
+  M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING = 1u << 16,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -53,7 +54,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT | M12CORE_FEATURE_PREWARM_PACKS |
       M12CORE_FEATURE_DRAW_PLANNING | M12CORE_FEATURE_PRESENT_PLANNING |
       M12CORE_FEATURE_REPLAY_PLANNING |
-      M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS,
+      M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS |
+      M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING,
 };
 
 typedef struct M12CoreVersion {
@@ -731,6 +733,59 @@ typedef struct M12CoreCommandStreamSummary {
   uint64_t scheduled_work_count;
 } M12CoreCommandStreamSummary;
 
+typedef enum M12CoreRenderPassPlanStatus {
+  M12CORE_RENDER_PASS_PLAN_STATUS_OK = 0,
+  M12CORE_RENDER_PASS_PLAN_STATUS_INVALID = 1,
+} M12CoreRenderPassPlanStatus;
+
+typedef enum M12CoreRenderPassPlanFlags {
+  M12CORE_RENDER_PASS_PLAN_HAS_RENDER_TARGETS = 1u << 0,
+  M12CORE_RENDER_PASS_PLAN_HAS_DSV = 1u << 1,
+  M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TARGET = 1u << 2,
+  M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TOUCH = 1u << 3,
+  M12CORE_RENDER_PASS_PLAN_HAS_DRAW_WORK = 1u << 4,
+  M12CORE_RENDER_PASS_PLAN_HAS_CLEAR_WORK = 1u << 5,
+  M12CORE_RENDER_PASS_PLAN_HAS_COMPUTE_WORK = 1u << 6,
+  M12CORE_RENDER_PASS_PLAN_HAS_BARRIERS = 1u << 7,
+  M12CORE_RENDER_PASS_PLAN_HAS_DESCRIPTOR_HEAPS = 1u << 8,
+} M12CoreRenderPassPlanFlags;
+
+typedef struct M12CoreRenderPassPlanDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t render_target_count;
+  uint32_t dsv_format;
+  uint32_t rtv0_format;
+  uint32_t rtv_format_xor;
+  uint32_t draw_count;
+  uint32_t clear_count;
+  uint32_t dispatch_count;
+  uint32_t resource_barrier_count;
+  uint32_t descriptor_heap_count;
+  uint32_t swapchain_touched_count;
+  uint32_t command_buffer_status;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+} M12CoreRenderPassPlanDesc;
+
+typedef struct M12CoreRenderPassPlanSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t input_flags;
+  uint32_t expected_flags;
+  uint32_t drift_flags;
+  uint32_t render_pass_classification;
+  uint32_t hazard_score;
+  uint32_t attachment_count;
+  uint32_t resource_transition_count;
+  uint32_t descriptor_pressure_score;
+  uint32_t reserved[2];
+  uint64_t render_pass_plan_key;
+} M12CoreRenderPassPlanSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -849,6 +904,8 @@ int m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
                               M12CoreReplayPlanSummary *out_summary);
 int m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
                                     M12CoreCommandStreamSummary *out_summary);
+int m12core_plan_render_pass(const M12CoreRenderPassPlanDesc *desc,
+                             M12CoreRenderPassPlanSummary *out_summary);
 
 #ifdef __cplusplus
 }

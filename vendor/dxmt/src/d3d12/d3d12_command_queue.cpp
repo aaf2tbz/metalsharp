@@ -209,6 +209,7 @@ static uint32_t g_draw_safety_skip_logs = 0;
 static uint32_t g_draw_plan_logs = 0;
 static uint32_t g_replay_plan_logs = 0;
 static uint32_t g_command_stream_shadow_logs = 0;
+static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
 
@@ -6042,6 +6043,105 @@ static void LogM12CoreCommandStreamShadow(
       " status=", command_buffer_status));
 }
 
+static uint32_t M12RTVFormatAt(const ReplayState &state, uint32_t index) {
+  if (index >= state.rt_count || index >= 8)
+    return 0;
+  auto *desc =
+      reinterpret_cast<const D3D12Descriptor *>(state.rt_handles[index].ptr);
+  if (!desc)
+    return 0;
+  DXGI_FORMAT format = desc->rtv.Format;
+  if (format == DXGI_FORMAT_UNKNOWN && desc->resource) {
+    auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+    D3D12_RESOURCE_DESC resource_desc = {};
+    res->GetDesc(&resource_desc);
+    format = resource_desc.Format;
+  }
+  return (uint32_t)format;
+}
+
+static uint32_t M12DSVFormat(const ReplayState &state) {
+  if (!state.has_dsv)
+    return 0;
+  auto *desc = reinterpret_cast<const D3D12Descriptor *>(state.dsv_handle.ptr);
+  DXGI_FORMAT format = desc ? desc->dsv.Format : DXGI_FORMAT_UNKNOWN;
+  if (format == DXGI_FORMAT_UNKNOWN && state.pso)
+    format = state.pso->GetDSVFormat();
+  return (uint32_t)format;
+}
+
+static void LogM12CoreRenderPassPlan(uint32_t queue_type, uint32_t list_index,
+                                     uint64_t command_list_id,
+                                     uint64_t queue_serial,
+                                     const D3D12CommandStreamStats &stats,
+                                     const ReplayState &state,
+                                     bool has_swapchain_target,
+                                     uint32_t command_buffer_status) {
+  if (!TakeLogBudget(&g_render_pass_plan_logs, 192))
+    return;
+
+  const uint32_t draw_work =
+      stats.draw_count + stats.indexed_draw_count + stats.indirect_count;
+  const uint32_t clear_work =
+      stats.clear_rtv_count + stats.clear_dsv_count + stats.clear_uav_count;
+
+  M12CoreRenderPassPlanDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  if (state.rt_count)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_RENDER_TARGETS;
+  if (state.has_dsv)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_DSV;
+  if (has_swapchain_target)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TARGET;
+  if (state.swapchain_touched_count)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_SWAPCHAIN_TOUCH;
+  if (draw_work)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_DRAW_WORK;
+  if (clear_work)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_CLEAR_WORK;
+  if (stats.dispatch_count)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_COMPUTE_WORK;
+  if (stats.resource_barrier_count)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_BARRIERS;
+  if (state.desc_heap_count)
+    desc.flags |= M12CORE_RENDER_PASS_PLAN_HAS_DESCRIPTOR_HEAPS;
+  desc.queue_type = queue_type;
+  desc.command_list_index = list_index;
+  desc.render_target_count = state.rt_count;
+  desc.dsv_format = M12DSVFormat(state);
+  desc.rtv0_format = M12RTVFormatAt(state, 0);
+  for (uint32_t i = 0; i < state.rt_count && i < 8; i++)
+    desc.rtv_format_xor ^= M12RTVFormatAt(state, i) << (i % 8);
+  desc.draw_count = draw_work;
+  desc.clear_count = clear_work;
+  desc.dispatch_count = stats.dispatch_count;
+  desc.resource_barrier_count = stats.resource_barrier_count;
+  desc.descriptor_heap_count = state.desc_heap_count;
+  desc.swapchain_touched_count = state.swapchain_touched_count;
+  desc.command_buffer_status = command_buffer_status;
+  desc.command_list_id = command_list_id;
+  desc.queue_serial = queue_serial;
+
+  M12CoreRenderPassPlanSummary summary = {};
+  if (!WMTM12CorePlanRenderPass(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_RENDER_PASS_PLAN_STATUS_OK)
+    return;
+
+  Logger::info(str::format(
+      "M12_RENDER_PASS_PLAN queue=", queue_type, " list=", list_index,
+      " cmdlist_id=", (unsigned long long)command_list_id,
+      " serial=", (unsigned long long)queue_serial, " key=0x", std::hex,
+      summary.render_pass_plan_key, " input=0x", summary.input_flags,
+      " expected=0x", summary.expected_flags, " drift=0x", summary.drift_flags,
+      std::dec, " class=", summary.render_pass_classification, " hazard=",
+      summary.hazard_score, " attachments=", summary.attachment_count,
+      " transitions=", summary.resource_transition_count,
+      " descriptor_pressure=", summary.descriptor_pressure_score,
+      " rtv0=", desc.rtv0_format, " dsv=", desc.dsv_format,
+      " status=", command_buffer_status));
+}
+
 WMTIndexType DXGIToWMTIndexFormat(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R16_UINT:
@@ -9011,6 +9111,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       LogM12CoreCommandStreamShadow(
           (uint32_t)m_desc.Type, li, command_list_id, queue_serial,
           stream_stats, st, has_swapchain_work_target, (uint32_t)status);
+      LogM12CoreRenderPassPlan((uint32_t)m_desc.Type, li, command_list_id,
+                               queue_serial, stream_stats, st,
+                               has_swapchain_work_target, (uint32_t)status);
     }
     if (interesting_list && TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::info(str::format(

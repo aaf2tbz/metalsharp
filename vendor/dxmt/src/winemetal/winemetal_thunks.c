@@ -102,6 +102,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreBuildReplayPlan";
   case 155:
     return "WMTM12CoreValidateCommandStream";
+  case 156:
+    return "WMTM12CorePlanRenderPass";
   default:
     return "unknown";
   }
@@ -667,6 +669,24 @@ WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCom
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(155, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary) {
+  struct unixcall_m12core_plan_render_pass params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Slice 3 render-pass/hazard bridge: scalar shadow planning only.  The PE
+   * path continues to own Metal encoder creation and resource hazard execution.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(156, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

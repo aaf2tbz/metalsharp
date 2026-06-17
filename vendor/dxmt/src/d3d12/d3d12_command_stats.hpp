@@ -15,6 +15,7 @@ struct D3D12CommandStreamStats {
   uint32_t clear_rtv_count = 0;
   uint32_t clear_dsv_count = 0;
   uint32_t clear_uav_count = 0;
+  uint32_t resource_barrier_count = 0;
   uint32_t set_pso_count = 0;
   uint32_t set_graphics_root_sig_count = 0;
   uint32_t set_graphics_root_constants_count = 0;
@@ -38,22 +39,17 @@ struct D3D12CommandStreamStats {
   uint32_t corrupt_type = 0;
   uint32_t corrupt_size = 0;
 
-  uint32_t DirectDrawCount() const {
-    return draw_count + indexed_draw_count;
-  }
+  uint32_t DirectDrawCount() const { return draw_count + indexed_draw_count; }
 
-  uint32_t AnyDrawCount() const {
-    return DirectDrawCount() + indirect_count;
-  }
+  uint32_t AnyDrawCount() const { return DirectDrawCount() + indirect_count; }
 
   bool HasGraphicsSetup() const {
     return set_pso_count || set_graphics_root_sig_count ||
            set_graphics_root_constants_count || set_graphics_root_cbv_count ||
            set_graphics_root_srv_count || set_graphics_root_uav_count ||
-           set_graphics_root_table_count ||
-           om_set_render_targets_count || ia_set_vertex_buffers_count ||
-           ia_set_index_buffer_count || rs_set_viewports_count ||
-           rs_set_scissors_count;
+           set_graphics_root_table_count || om_set_render_targets_count ||
+           ia_set_vertex_buffers_count || ia_set_index_buffer_count ||
+           rs_set_viewports_count || rs_set_scissors_count;
   }
 
   bool HasClearOrComputeWork() const {
@@ -68,7 +64,8 @@ struct D3D12CommandStreamStats {
   bool IsDrawBearing() const { return AnyDrawCount() != 0; }
 
   bool IsFrameProgressCandidate() const {
-    return IsDrawBearing() || IsZeroDrawGraphicsList() || HasClearOrComputeWork();
+    return IsDrawBearing() || IsZeroDrawGraphicsList() ||
+           HasClearOrComputeWork();
   }
 };
 
@@ -95,6 +92,9 @@ inline void D3D12AccumulateCommandType(D3D12CommandStreamStats &stats,
     break;
   case CmdType::ClearUnorderedAccessView:
     stats.clear_uav_count++;
+    break;
+  case CmdType::ResourceBarrier:
+    stats.resource_barrier_count++;
     break;
   case CmdType::SetPipelineState:
     stats.set_pso_count++;
