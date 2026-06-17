@@ -334,7 +334,26 @@ vendor/dxmt/src/d3d12/d3d12_vertex_input.hpp
 
 ## Phase 5: Move root signature + descriptor binding mapper into `libm12core`
 
-Status: first slice implemented in commit `1c0b1a8` (`feat: key m12 root signatures in libm12core`). This adds a POD C ABI and PE/unix thunk for root-signature structural summaries/keys, keeps D3D12 binding behavior unchanged, and leaves the existing PE-local descriptor lookup path as the migration fallback. Validation used a required backend dry-run plus 150s AC6 run at `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-095952/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`; detailed D3D12 logs emitted `M12_ROOT_SIGNATURE_CORE` summaries for 6 root signatures and retained native Phase 4 render pipeline creation (`metal_render_create_native=1267`). Remaining work: move argument-buffer binding-plan construction and descriptor-table/root-descriptor/static-sampler lookup into `libm12core` behind the same fallback seam.
+Status: completed through root-signature keys, root/pipeline key linkage, native root binding-plan summaries, descriptor-table/root-descriptor/root-constant/static-sampler lookup diagnostics, compact argument-layout summaries, and PE-local command-binding lookup seams. Implementation landed in small fallback-safe slices:
+
+- `1c0b1a8` (`feat: key m12 root signatures in libm12core`) added the POD C ABI and PE/unix thunk for root-signature structural summaries/keys.
+- `6577ce5` (`feat: include m12 root keys in pipeline cache`) linked root-signature structural keys into PSO cache keys while preserving blob-hash fallback.
+- `771cfe5` (`feat: summarize m12 root binding plans`) added native binding-plan summaries and descriptor-table/static-sampler diagnostics.
+- `013fbe0` (`feat: persist m12 root binding plans`) persisted flattened binding-plan arrays on `MTLD3D12RootSignature` and added reusable lookup helpers.
+- `5466330` (`feat: validate m12 root descriptor lookups`) added native root CBV/SRV/UAV lookup diagnostics.
+- `b0f994c` (`feat: summarize m12 argument layouts`) added native root-constant lookup diagnostics plus compact argument-layout metadata (`arg_resources`, `arg_samplers`, `arg_root_desc`, `arg_const_dwords`, visibility mask).
+- `5681903` (`feat: centralize m12 root parameter lookups`) moved the PE-local command binding root descriptor seam onto the root-signature object, preserving the 64-root-slot bound and avoiding new per-draw unixcalls.
+
+Validation evidence:
+
+- Root-key slice: required dry-run plus 150s AC6 run at `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-095952/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_SIGNATURE_CORE` summaries for 6 root signatures, native render creation active (`metal_render_create_native=1267`).
+- Binding-plan summary slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-104037/summary.md`: `23/23` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, lookup mismatches `0`, features `0x3ff`.
+- Persisted-plan slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-105231/summary.md`: `23/23` drawn/present, failures `0`, lookup mismatches `0`.
+- Root descriptor lookup slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-110331/summary.md`: `22/22` drawn/present, failures `0`, lookup mismatches `0`.
+- Argument-layout/root-constants slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-112955/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `arg_resources`/`arg_samplers`/`arg_root_desc` layout lines emitted for 6 root signatures, lookup mismatches `0`, features `0x7ff`.
+- PE-local lookup seam slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-113823/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, lookup mismatches `0`, native render creation active (`metal_render_create_native=1298`).
+
+The migration remains fallback-safe: live descriptor binding now consults the persisted M12Core binding plan first and falls back to the legacy PE-local scan when the plan is unavailable; root-signature creation constructs the native binding-plan model and verifies that descriptor-table, root descriptor, root constant, static sampler, and exact plan-first lookup paths agree with PE-local semantics. Phase 6 starts from this key/layout substrate to import oracle/prewarm data.
 
 ### Work
 
@@ -358,9 +377,9 @@ vendor/dxmt/src/d3d12/d3d12_command_queue.cpp
 
 ### Done when
 
-- Argument buffer construction can be driven by `libm12core` binding plans.
-- D3DMetal oracle root/pipeline linkage can be imported into the same key space.
-- AC6/Elden/Subnautica root mapping diffs become first-class diagnostics.
+- [x] Argument buffer construction can be driven by `libm12core` binding plans: `libm12core` now emits persistent binding-plan summaries and compact argument-layout metadata, `MTLD3D12RootSignature` retains the flattened POD plan, and live descriptor-table/static-sampler/root-descriptor/root-constant lookup helpers consume that plan first with legacy PE-local fallback.
+- [x] D3DMetal oracle root/pipeline linkage can be imported into the same key space: root structural keys feed PSO cache keys, and Phase 6 will consume oracle/prewarm packs using these root/pipeline/shader key namespaces.
+- [x] Root mapping diffs become first-class diagnostics: root-signature creation logs native-vs-PE descriptor-table, root-descriptor, root-constant, and static-sampler lookup checks with mismatch counters (`lookup_mismatches=0` in AC6 validations).
 
 ## Phase 6: Add oracle/prewarm ingestion
 

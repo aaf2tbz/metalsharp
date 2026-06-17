@@ -140,6 +140,13 @@ private:
                                   uint32_t register_space,
                                   D3D12_SHADER_VISIBILITY shader_visibility,
                                   M12CoreRootBindingLookupResult *out_result) const;
+  bool FindDescriptorTableRangeForVisibilityPELocal(
+      D3D12_DESCRIPTOR_RANGE_TYPE range_type, uint32_t shader_register,
+      uint32_t register_space, D3D12_SHADER_VISIBILITY shader_visibility,
+      uint32_t *root_parameter_index, uint32_t *descriptor_offset) const;
+  const RootStaticSampler *FindStaticSamplerPELocal(
+      uint32_t shader_register, uint32_t register_space,
+      D3D12_SHADER_VISIBILITY shader_visibility) const;
   void ValidateM12CoreBindingPlanLookups(uint32_t *out_lookup_checks,
                                          uint32_t *out_lookup_mismatches) const;
 
