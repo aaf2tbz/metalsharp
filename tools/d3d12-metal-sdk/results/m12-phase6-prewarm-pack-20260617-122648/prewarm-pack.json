@@ -1,0 +1,2314 @@
+{
+  "schema": "metalsharp.m12-prewarm-pack.v1",
+  "source_schema": "metalsharp.d3dmetal-root-pipeline-linkage.v1",
+  "source_linkage_manifest": "tools/d3d12-metal-sdk/results/d3dmetal-root-pipeline-linkage-20260616-204728/manifest.json",
+  "source_linkage_manifest_sha256": "6a5d0817a5257479e7f8b11dbd8d57b0066bf2c0156b52d6ed5d93b6dccb99dd",
+  "game": "armored-core-vi",
+  "appid": "1888160",
+  "profile": "armored-core-vi-phase6-canary",
+  "offline_profile_gated": true,
+  "raw_payloads_included": false,
+  "max_pipelines": 64,
+  "pipeline_count": 64,
+  "root_signature_count": 3,
+  "shader_key_count": 78,
+  "shader_bytecode_hash_count": 78,
+  "accepted_statuses": [
+    "unique",
+    "unique_psv_resources"
+  ],
+  "roots": [
+    {
+      "record_key": "4e3426240db34ed78814503de9ddc482",
+      "compact_signature_sha256": "e9af2c6675cb2768c3cb7a1b2ba24ca8623bccb3b4c89443d80ae895ebed8250",
+      "structural_signature_sha256": "900ad54a33337bbf7c47a50da7a0da77d215ce12ddc79692b5d26dc26a7a194f",
+      "num_parameters": 4,
+      "num_static_samplers": 0,
+      "descriptor_table_count": 2,
+      "descriptor_range_count": 2,
+      "root_descriptor_count": 2,
+      "root_constant_count": 0,
+      "static_sampler_count": 0,
+      "resource_range_count": 1,
+      "sampler_range_count": 1,
+      "unbounded_range_count": 0,
+      "register_space_count": 1,
+      "visibility": [
+        "pixel",
+        "vertex"
+      ]
+    },
+    {
+      "record_key": "58eddcc40689df70e8af0a5d9483c4ef",
+      "compact_signature_sha256": "8aeaba6fd5d0fafdd79cf802cb9faac38c053d04a5faec8aed9f86ce1e399043",
+      "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+      "num_parameters": 36,
+      "num_static_samplers": 0,
+      "descriptor_table_count": 36,
+      "descriptor_range_count": 36,
+      "root_descriptor_count": 0,
+      "root_constant_count": 0,
+      "static_sampler_count": 0,
+      "resource_range_count": 26,
+      "sampler_range_count": 10,
+      "unbounded_range_count": 0,
+      "register_space_count": 1,
+      "visibility": [
+        "all",
+        "domain",
+        "geometry",
+        "hull",
+        "pixel",
+        "vertex"
+      ]
+    },
+    {
+      "record_key": "99050a109bdb87e3bde1d89affae0045",
+      "compact_signature_sha256": "ff5b2ec4b4b80d54e152512edf2c2d8cccbdfde35e25b424849b138abc37fb67",
+      "structural_signature_sha256": "b6a8490ff3f9af3c219f7791933d054211735be71c77b571916661d0a549c530",
+      "num_parameters": 4,
+      "num_static_samplers": 0,
+      "descriptor_table_count": 4,
+      "descriptor_range_count": 4,
+      "root_descriptor_count": 0,
+      "root_constant_count": 0,
+      "static_sampler_count": 0,
+      "resource_range_count": 3,
+      "sampler_range_count": 1,
+      "unbounded_range_count": 0,
+      "register_space_count": 1,
+      "visibility": [
+        "all"
+      ]
+    }
+  ],
+  "pipelines": [
+    {
+      "prewarm_order": 0,
+      "pipeline_key": "d5a90b1f2dfad5cf0c9a4fc9d56c24c5",
+      "pipeline_key_u64": 6492753959904709503,
+      "pipeline_offset": 0,
+      "root_signature_keys": [
+        "99050a109bdb87e3bde1d89affae0045"
+      ],
+      "root_structural_signatures": [
+        "b6a8490ff3f9af3c219f7791933d054211735be71c77b571916661d0a549c530"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "76e608c9d81f22c51bf40c67efb27d71",
+          "shader_bytecode_sha256": "ad10450a3829a63810f36e86092e59def1a4f717af54e09a4bdb7a2ef1eaf96c",
+          "structural_signature_sha256": "",
+          "function_names": [
+            "TitleTexVs"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "6ba340d621a406e266e7ba0e273f5ba1",
+          "shader_bytecode_sha256": "0baf2004acb015be8ffcc185a58ac124b8fee295d9b2bf2c778936d1e3fa1904",
+          "structural_signature_sha256": "",
+          "function_names": [
+            "ChromaticAberrationAndNoisePs"
+          ]
+        }
+      ],
+      "root_inference_status": "unique_psv_resources",
+      "psv_best_score": [
+        1,
+        4,
+        104
+      ]
+    },
+    {
+      "prewarm_order": 1,
+      "pipeline_key": "ab30502e4424608fb2865d65b3143110",
+      "pipeline_key_u64": 16545992644340971322,
+      "pipeline_offset": 160,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "f3d00b65be673710baef67fd62849927",
+          "shader_bytecode_sha256": "7d42e3197e5a07e316df353d36c20cfab592f271d5854d65344a31093a527886",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "SimpleVS_Single2DTexture"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "13646f90b532e6a1f676471fd2a0639f",
+          "shader_bytecode_sha256": "16646b1b60deda90134ff8d0579ebe6ea3a3710c09deb3d56a4fa1d2d2b9df24",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "BlendUI_SDR2SDR"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 2,
+      "pipeline_key": "4a52e71bc8e15832070edabccbc05832",
+      "pipeline_key_u64": 6759725360340476680,
+      "pipeline_offset": 320,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "4bda91bcc6b35e327cd0f656bea55bab",
+          "shader_bytecode_sha256": "009765274ab2b81a8087aba1fdad905d115a665357e1f8623df9cc5906980ca7",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VertexMain"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "d9d733394953d3c6a92f3314531b9e1a",
+          "shader_bytecode_sha256": "e78ecb2754eef3667dc088e57ac26831eaf6d8314be95539cf14023a34df772f",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PixelMain"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 3,
+      "pipeline_key": "8d12d1981ef20f257693e33fe9f2b73c",
+      "pipeline_key_u64": 1279911470253221490,
+      "pipeline_offset": 480,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "9c638f3fe481b13c50f594525d591ab9",
+          "shader_bytecode_sha256": "43a1d59f809f479ab52687a846a6bbb067a35dc2077a5687ac87028b9d1a6a16",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadScaleShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "b03bc2ad61bd10293583cb9f2e5c6ca7",
+          "shader_bytecode_sha256": "4f22037f34aed73ebe2dfe8c5e8d6f2e120ff71f0cdad3610c39b8a735021445",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "SampleBilateralDepthBlurTwoOptPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 4,
+      "pipeline_key": "a972fbb38a658bb4e5cfc864e4b26354",
+      "pipeline_key_u64": 16793749183117915003,
+      "pipeline_offset": 640,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "62ec9664e9c16554ff1874d8989896ce",
+          "shader_bytecode_sha256": "2ae6b88e36628a0e6cb3d60ccbcd0fb9e4d035bc6c5c21308c5baf63c7e75620",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_LightAcc"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "3efeeeb3d286c03c455194f1f85f6bbe",
+          "shader_bytecode_sha256": "0727f155584b87c4e8b9cbbb0a6c4c188fa3c3faeee5f6617ae8546b2b4f3c65",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_CopyShadowMapDepth"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 5,
+      "pipeline_key": "b6177bfd666f83cbd1ffb0b3f7ba2cdc",
+      "pipeline_key_u64": 11030123218881463972,
+      "pipeline_offset": 800,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "0e6d100abaa517f33aa0c47149e8e912",
+          "shader_bytecode_sha256": "e549a8da1bbc61c4c45379034ab45840189b607ed7b4f1b025f14f9c8e9af8e5",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "DepthScale2x2OutputDepthPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 6,
+      "pipeline_key": "f7b3f208e9cf1b34629781b3f7ba2cdc",
+      "pipeline_key_u64": 2402882166940403569,
+      "pipeline_offset": 960,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "09509e0c578b6e40b21baf683a2ed4c1",
+          "shader_bytecode_sha256": "2861942d88461470b33f4b9a1e0f6cb637cc88177865ef6e367fa79e2a699c27",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceAO2PS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 7,
+      "pipeline_key": "945ae9488ba32120120ae164e4b26354",
+      "pipeline_key_u64": 6319903337167919291,
+      "pipeline_offset": 1120,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "62ec9664e9c16554ff1874d8989896ce",
+          "shader_bytecode_sha256": "2ae6b88e36628a0e6cb3d60ccbcd0fb9e4d035bc6c5c21308c5baf63c7e75620",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_LightAcc"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "db9cedd7d57a401ccc98b5499157ce04",
+          "shader_bytecode_sha256": "c63c3c022a75438fa54dfa5a66840bdc6745a121a7cb37da64343bf2d50f3fc6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_DeferredAO"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 8,
+      "pipeline_key": "71b5755fdf3d791d14f4772f45ee1c0c",
+      "pipeline_key_u64": 6604426695202126606,
+      "pipeline_offset": 1280,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "2858ee2f489d1a0c9251fcd4a60b8db7",
+          "shader_bytecode_sha256": "c7ba3f1d8a8ce08ba41d203c9c65896d59de8fb2d8af0e0c9478b78ad5495fad",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_ScreenSpaceShadow"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "0f8671f1ff03eb897b65ebe0acd4c675",
+          "shader_bytecode_sha256": "9ae048bedf194f8da73be76a6fec189c294c94e946360a17ae0a7cea890d5c1a",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_ScreenSpaceCascadedShadow_PCF"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 9,
+      "pipeline_key": "6f5bccc0d1ec5ffee6fd5f64e4b26354",
+      "pipeline_key_u64": 15585521805956684023,
+      "pipeline_offset": 1440,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "62ec9664e9c16554ff1874d8989896ce",
+          "shader_bytecode_sha256": "2ae6b88e36628a0e6cb3d60ccbcd0fb9e4d035bc6c5c21308c5baf63c7e75620",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_LightAcc"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "6946c3990de16dda18367d722c517f77",
+          "shader_bytecode_sha256": "b898c5468171fb00aad7ed37906cacaedaaa0d9579266abccbbe12375b3730da",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_LightAcc_DirLight1"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 10,
+      "pipeline_key": "24aa2310b887e350b678da64e4b26354",
+      "pipeline_key_u64": 1589838689262939284,
+      "pipeline_offset": 1600,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "62ec9664e9c16554ff1874d8989896ce",
+          "shader_bytecode_sha256": "2ae6b88e36628a0e6cb3d60ccbcd0fb9e4d035bc6c5c21308c5baf63c7e75620",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_LightAcc"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "9ec5ea5148b62ca8db8190646bf15da4",
+          "shader_bytecode_sha256": "ca69339fefd06280c277550b005d8a8347ecd26761405f53733fc6a09a59c411",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_CombineAlbedo"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 11,
+      "pipeline_key": "e5905d62d39309a25e23c264e4b26354",
+      "pipeline_key_u64": 7483577920205683875,
+      "pipeline_offset": 1760,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "62ec9664e9c16554ff1874d8989896ce",
+          "shader_bytecode_sha256": "2ae6b88e36628a0e6cb3d60ccbcd0fb9e4d035bc6c5c21308c5baf63c7e75620",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_LightAcc"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "7e3620fc5504f62fb0a73e16840565d9",
+          "shader_bytecode_sha256": "c8e3944d10a5581235d9b69abcecf5bbf9f77396ffc121852f214791130fef26",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_CompositeShadowMask"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 12,
+      "pipeline_key": "d5c5409e7a806d4ffe2ad964e4b26354",
+      "pipeline_key_u64": 5845643303639674775,
+      "pipeline_offset": 1920,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "62ec9664e9c16554ff1874d8989896ce",
+          "shader_bytecode_sha256": "2ae6b88e36628a0e6cb3d60ccbcd0fb9e4d035bc6c5c21308c5baf63c7e75620",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_LightAcc"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "4b5474e0c16081df080ff03d571c0c26",
+          "shader_bytecode_sha256": "c1ee0c70dd112f103d615033e052e801009f74546be88ec979992f3670142b26",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_Composite"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 13,
+      "pipeline_key": "0281019119ec30621b23d0473b6756ae",
+      "pipeline_key_u64": 15330574400393692566,
+      "pipeline_offset": 2080,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 1,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "b93cd3471d6552ae7b5fed4da871466e",
+          "shader_bytecode_sha256": "cbb5c987cc231f0cbe2ab20f2d28f1a50186a6424dc2d2d35606168af05d3e5b",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "SimpleVS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 14,
+      "pipeline_key": "05d41703dd30c8c6f810dcfa0fd637cd",
+      "pipeline_key_u64": 10000564384177091086,
+      "pipeline_offset": 2216,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "fe4c9efa02a531cd90cba8c6a25e5aa4",
+          "shader_bytecode_sha256": "b131d24f7fb6b3d3c06513a580d9f212082e083e48905119e7fb5838782fcc8d",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderZVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "64e5badce9cbae36685b7b8155e7c4c9",
+          "shader_bytecode_sha256": "fc4c1af4fe399410e1ebc90afff63fe2fba2458dc9c2d284b09d6ffe555f2304",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "OutputColorPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 15,
+      "pipeline_key": "fb4a9df630806abde495d14127bb5e61",
+      "pipeline_key_u64": 8075964987209524015,
+      "pipeline_offset": 2376,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "44da60412ac858617b38d26bbcdf3c24",
+          "shader_bytecode_sha256": "60dfba21f8ae06bf28e89d0d21a4b21cc066f31fd5f1d19a94d1069057ad32e0",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_ScreenSpaceSSS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "681233825c5c4b9ff06330d6421fd631",
+          "shader_bytecode_sha256": "5acfa6dd5e0e93805974ab33e5fb5a0bf8cdf93155e81192407b6eafa3a05d3c",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_ScreenSpaceSSSBlurX"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 16,
+      "pipeline_key": "a94436600ff6d4e34ed9b6b3f7ba2cdc",
+      "pipeline_key_u64": 2186782838401185026,
+      "pipeline_offset": 2536,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "bb4e8130d0fce4b42eff6964da9fb315",
+          "shader_bytecode_sha256": "168e466a1e2530bc86246b4b8e64b8f6191fb118986d5f7291490a39bfc46874",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "Outline_StencilToColorPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 17,
+      "pipeline_key": "7364ebe7abc4ea28e495d14127bb5e61",
+      "pipeline_key_u64": 8528343825812192141,
+      "pipeline_offset": 2696,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "44da60412ac858617b38d26bbcdf3c24",
+          "shader_bytecode_sha256": "60dfba21f8ae06bf28e89d0d21a4b21cc066f31fd5f1d19a94d1069057ad32e0",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_ScreenSpaceSSS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "ebcb9ff8ea8499853110d42ad0698682",
+          "shader_bytecode_sha256": "a838e9cf4fd02f513e5c0681a57689f50d2303a35de16030a479a227239f9dd7",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_ScreenSpaceSSSBlurY"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 18,
+      "pipeline_key": "bf50083f6e84db5b5cfdecf12c226271",
+      "pipeline_key_u64": 12870676088016102770,
+      "pipeline_offset": 2856,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "2fa907ce9d85610929b05b1db25815f0",
+          "shader_bytecode_sha256": "94430ff4c613d4049049108397c9ce5fafd6340e0d8c27522ae3eee54120870c",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_ResetAdaptedLuminancePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 19,
+      "pipeline_key": "28f98ffa3a797766a6cf9db3f7ba2cdc",
+      "pipeline_key_u64": 10090838942514944389,
+      "pipeline_offset": 3016,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "53fa5f208b323943163fe33d55c470e0",
+          "shader_bytecode_sha256": "aae4b7412532190fac595fcb5856266ff4d02f40203b2fbe698f179d6340b2b8",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "Outline_BoxShrinkFinalPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 20,
+      "pipeline_key": "e0a0d21362dd5301086cfff12c226271",
+      "pipeline_key_u64": 8937498913714860639,
+      "pipeline_offset": 3176,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "186c32f0ade43b57c1a714a596191d1c",
+          "shader_bytecode_sha256": "a70e16a7fde97dd3b133eed7723a507a7b5cd9e7866287c2f2836664d09da316",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_WriteSensitometricToneMappingTablePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 21,
+      "pipeline_key": "cabf00d0d04340e9632c4f6602358b24",
+      "pipeline_key_u64": 12287254348196554056,
+      "pipeline_offset": 3336,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "cd53cf660f468d24253f5e8872b1596e",
+          "shader_bytecode_sha256": "71079128406894df554106277387827117e90bff3c53d343a654a17cea1f1b5a",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapAdaptVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "6a16e8004bcdf79e781b9f41d2c3696c",
+          "shader_bytecode_sha256": "88fd2d41c474e701e6fa665346ade90e90a030d1d74ffcb9843880a3334c3def",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_TabledToneMapLUTPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 22,
+      "pipeline_key": "f5eebeaa19e53fd4ec97f5f12c226271",
+      "pipeline_key_u64": 181326466860982104,
+      "pipeline_offset": 3496,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "7c2ba419f548dbe6cd9dd674216f3add",
+          "shader_bytecode_sha256": "6637cc3f4bc330ec479476aeabae0a665186bc9f023a793e2b213d6bb3505cba",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_ResetSmoothAdaptedLuminancePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 23,
+      "pipeline_key": "f7be2468107503c1bc4304537d177576",
+      "pipeline_key_u64": 12829857825162732497,
+      "pipeline_offset": 3656,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 1,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "8e1f07535b157176590a0e5b82f496b4",
+          "shader_bytecode_sha256": "f1688afae1b34ebde137255dcca1e7a2b97cc3219e30142b90cadc8fce20cba4",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "SimpleVS_Transform"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 24,
+      "pipeline_key": "6b3db4a968628659b2d5b6b3f7ba2cdc",
+      "pipeline_key_u64": 1725568722336030227,
+      "pipeline_offset": 3792,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "c2b30c3536366a7b2fe3ed432574046c",
+          "shader_bytecode_sha256": "57d10a2195aa2a4ea881bb0b1b1548a66d245be29a0464ba0d9b183bb09dd5b3",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PointSampleColor1PS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 25,
+      "pipeline_key": "94481e6ec6da63f326b6c43fe9f2b73c",
+      "pipeline_key_u64": 12487282447056129409,
+      "pipeline_offset": 3952,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "9c638f3fe481b13c50f594525d591ab9",
+          "shader_bytecode_sha256": "43a1d59f809f479ab52687a846a6bbb067a35dc2077a5687ac87028b9d1a6a16",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadScaleShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "63cc3ee939af175489aeb18990f3837b",
+          "shader_bytecode_sha256": "fc8ac48f9a149d59c5b5693fd5289bb629c828b933ba4a18b77602be4190d1fa",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "EmissiveToGlowPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 26,
+      "pipeline_key": "2e9c636d01cc22ff31d5a41e89a23e68",
+      "pipeline_key_u64": 17651074961243876062,
+      "pipeline_offset": 4112,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "151ccd1e84d13868341ddc1351e75711",
+          "shader_bytecode_sha256": "0d74c7ee015427b79c0a3ba4156ac4304dc1763db3163585356776f488b058b4",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "FxaaVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "9852bd8b476c75676d4539924ee4caf2",
+          "shader_bytecode_sha256": "ac533e980c9799073c7872f49a6c33e0518c7bc6d525b8508181971b8e981da0",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "StencilAndMotionVectorPreprocessPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 27,
+      "pipeline_key": "854aa6b9e211db7be6367bb3f7ba2cdc",
+      "pipeline_key_u64": 16400954772142145720,
+      "pipeline_offset": 4272,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "7f3a1d080c18e2e400e245258def658b",
+          "shader_bytecode_sha256": "5ed70d7d2ebcecc3eba48a338f3d0ceaa70531b0197808f7869156d6f4cbe417",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceAO2_WithNormalPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 28,
+      "pipeline_key": "0d8ee667a68bac80166aa4b3f7ba2cdc",
+      "pipeline_key_u64": 4937941736779972958,
+      "pipeline_offset": 4432,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "04df4645bc62376b795140096480ff4d",
+          "shader_bytecode_sha256": "e41592689061e2ba95b2744c1d1779f7656c468f29d19c23a2394f5a35825bb4",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "Sample13WeightPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 29,
+      "pipeline_key": "5a87a2185ba5072eaa2c9fb3f7ba2cdc",
+      "pipeline_key_u64": 4539586398098802465,
+      "pipeline_offset": 4592,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "847747cb76646b598911588d597c62d7",
+          "shader_bytecode_sha256": "a27371cbf3548be67d8f3d579711ed001fc43848d036ee55bd74b166c7926dc8",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_ComputeCoCFPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 30,
+      "pipeline_key": "b62cde86eadfdc5fa6718bb3f7ba2cdc",
+      "pipeline_key_u64": 16712856202019766920,
+      "pipeline_offset": 4752,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "6626878cc4d736513fdd6e41fa9d924f",
+          "shader_bytecode_sha256": "6149d0740e5089121f2522c7976e533577df759e37b34120200f0b98ddb56094",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceAO2_SeparatedReProjPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 31,
+      "pipeline_key": "1e6286e598baba573b47a6bffd6668ea",
+      "pipeline_key_u64": 535499624206060266,
+      "pipeline_offset": 4912,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "4f56d7bff0156eea1929f34ecfab32e9",
+          "shader_bytecode_sha256": "282f6af7a6728ad3160573a1cee7c693f45f33d2bc69938710f42d64c8a8ec05",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "TempAAVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "b465aed570ced382fce83a9952fef6ce",
+          "shader_bytecode_sha256": "1c247df7a70718892004df0c581a531743dc7a9f6caca16c818b40f9391fd212",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "TempAAFirstFramePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 32,
+      "pipeline_key": "e97496302595312daa2c9fb3f7ba2cdc",
+      "pipeline_key_u64": 363323483804859890,
+      "pipeline_offset": 5072,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "b6cee55e059afebd62b48ffa3e6d9daa",
+          "shader_bytecode_sha256": "b6324073d37a47a7df91453f6ddaa826843ab3817c3c2d31e478667bfc5270a0",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "MotionBlurWriteCMBVelocityPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 33,
+      "pipeline_key": "15afbbc3849e5408ea669eb3f7ba2cdc",
+      "pipeline_key_u64": 5255727991900858129,
+      "pipeline_offset": 5232,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "a2977da84cd6de4338895f7a925b7715",
+          "shader_bytecode_sha256": "2374d06e6eb3c748a42cfcb7fc4cd3424fe417b13b007e1dbe5a7f18d2170995",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_ScaleCoCPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 34,
+      "pipeline_key": "89b60244cd77f48636a397b3f7ba2cdc",
+      "pipeline_key_u64": 12225056064292399005,
+      "pipeline_offset": 5392,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "a3520a1c654bfceeb665939313c07992",
+          "shader_bytecode_sha256": "a36c0fa9df2cb9fb1923fea256c76b2b8b04f56be3af1cfa4dba5367601f72c3",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceAO2_BilateralUpScalePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 35,
+      "pipeline_key": "77ac0998ac163fbafe21aab3f7ba2cdc",
+      "pipeline_key_u64": 4955274050304996236,
+      "pipeline_offset": 5552,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "539302f0912ad7b903a1813157a6d8d4",
+          "shader_bytecode_sha256": "d573fb04651cad72efa11a741154396b94bbf3a4d1cacad1b8c584a47c0d096f",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "GlowCompositeSinglePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 36,
+      "pipeline_key": "88160169956fee1db2d5b6b3f7ba2cdc",
+      "pipeline_key_u64": 6314603757208713954,
+      "pipeline_offset": 5712,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "c2b30c3536366a7b2fe3ed432574046c",
+          "shader_bytecode_sha256": "57d10a2195aa2a4ea881bb0b1b1548a66d245be29a0464ba0d9b183bb09dd5b3",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PointSampleColor1PS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 37,
+      "pipeline_key": "e0a1cdad904627650c88b0ef1f1a6762",
+      "pipeline_key_u64": 11669103360534967849,
+      "pipeline_offset": 5872,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "0a3a32ef1269616260fb76b765bbe4fb",
+          "shader_bytecode_sha256": "35e5ee7059fcc6322706f42569ae729819e4cb9c580aa36e9798b23fa2bb9642",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_FullScreenQuad"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "7a7e32d7d08e7e077fbada47119ec08b",
+          "shader_bytecode_sha256": "f1126f13e9991c5576206da37a80a4ae2f5746cf37e758d8d240694d8bed547c",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_SceneComposite"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 38,
+      "pipeline_key": "2200a80f5a7b498e3af29eb3f7ba2cdc",
+      "pipeline_key_u64": 18097860566224021616,
+      "pipeline_offset": 6032,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "e5c5e222f1bbda43b509579edf825119",
+          "shader_bytecode_sha256": "c7bc45f4a1328cb27290531702d1e85fc312f5ecee1b62a521132b9ba91d4d24",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_DownSample2x2RGBMFPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 39,
+      "pipeline_key": "cad4d10e68ab450234c8533548276574",
+      "pipeline_key_u64": 15105241319502697775,
+      "pipeline_offset": 6192,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "086304354554637408a387a71392192d",
+          "shader_bytecode_sha256": "c8f6247bca0a78f3b2580de83e913fdd787f716508511c8c8aadb95ec5ea3126",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_ScreenSpaceReflections"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "688e98b23001725e21a89d28688296c1",
+          "shader_bytecode_sha256": "19823926c339045fd6c6bf9b6eee61aec7e9e1de6f4dc0f715dd5f43ea28fd01",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_TexBlur2"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 40,
+      "pipeline_key": "ccbef0920ab1a4075a7e9bb3f7ba2cdc",
+      "pipeline_key_u64": 475580994876546841,
+      "pipeline_offset": 6352,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "e8e730b5549824cdd2d4349728c06263",
+          "shader_bytecode_sha256": "b6b69327482da6c16bc9b1ac3f96bffafefe311168ba75f0cb27025aa94778ae",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_BlurCoCPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 41,
+      "pipeline_key": "75d5b25f2e852296aa9995b3f7ba2cdc",
+      "pipeline_key_u64": 11925171208712126151,
+      "pipeline_offset": 6512,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "81ee394b462bfd6cabf32c01fc334bc2",
+          "shader_bytecode_sha256": "b605e1a967ef9f5f8923c561d1e71da6bdbebeaeeb56fbb7aac3badd80c9ffba",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_MakeBlurBufferPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 42,
+      "pipeline_key": "bec7d77b22fd2d620cf1553548276574",
+      "pipeline_key_u64": 7315319910226251940,
+      "pipeline_offset": 6672,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "086304354554637408a387a71392192d",
+          "shader_bytecode_sha256": "c8f6247bca0a78f3b2580de83e913fdd787f716508511c8c8aadb95ec5ea3126",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "VS_ScreenSpaceReflections"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "36b7f2a40b2e72718d56504b8ced2823",
+          "shader_bytecode_sha256": "f56d43e80af964dc857979731c44ebe89a9604dc689fe62f8e2cced10e0a00ef",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PS_TexDownScale"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 43,
+      "pipeline_key": "fe725961eb5dc0b426dcd487f972e8d8",
+      "pipeline_key_u64": 4765899585560658227,
+      "pipeline_offset": 6832,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "a8579d87f401eed82f0e8032cfbf03f1",
+          "shader_bytecode_sha256": "8dddf1758005f9819a58a8f381408349dd529c432f5f54c0f23478f4b9c3fd89",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapDynamicResolutionVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "09b495a617eb2446616febbf6dd79e6e",
+          "shader_bytecode_sha256": "e76918ec16c1cd3f04a6ba9cc0f201ee7371cf8194d9d75cee70a897de47c7e1",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_DownSample2x2PS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 44,
+      "pipeline_key": "f7b29bd574ccf24aa68494b3f7ba2cdc",
+      "pipeline_key_u64": 16703801154221043918,
+      "pipeline_offset": 6992,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "f30975e7fb9a30b2a480e1f51de26ff8",
+          "shader_bytecode_sha256": "8d4291d013b4225a6936a7b801bfbaf3624e20e22152d92acfc732b4c52dbfe1",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_MakeBlurBufferPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 45,
+      "pipeline_key": "15b9b1cb4fe81d4278dfc6f12c226271",
+      "pipeline_key_u64": 6422087086397863751,
+      "pipeline_offset": 7152,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "18ff3e30acebae61662321ead0746c86",
+          "shader_bytecode_sha256": "a050dcccc77060a22edfa42f1a662eba78befcfed3374d485d639b5e00ad6e86",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_ColorToLuminancePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 46,
+      "pipeline_key": "38f9ca6b212db22ce82fe3f12c226271",
+      "pipeline_key_u64": 2790375492446392624,
+      "pipeline_offset": 7312,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "097c38a21969b56175fa61d4dd63f630",
+          "shader_bytecode_sha256": "952ea159f036446d74dfe5d0c348d020ad7ed22b4b559d0b5386d3d8cd768517",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_ScaleLuminancePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 47,
+      "pipeline_key": "1fbb63a9225d7337e0aaf6f12c226271",
+      "pipeline_key_u64": 15621474131762160456,
+      "pipeline_offset": 7472,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "4995aa17847da7c32b6ec8553d7d304b",
+          "shader_bytecode_sha256": "c5dd340f0f9384d02f30fc602d1615c666716fb3de68b065090a100eef1b4a29",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_AdaptedLuminancePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 48,
+      "pipeline_key": "d0aa549a99626fdb4662a5b3f7ba2cdc",
+      "pipeline_key_u64": 5891415938387584975,
+      "pipeline_offset": 7632,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "c0b0cde19c8551abcfba7cf04e3a1e3b",
+          "shader_bytecode_sha256": "b5d7486d17b384ca4521513641ee9241bea9c47ce25062c3a81d229cba613c23",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "LensSimu2_FinalCompositePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 49,
+      "pipeline_key": "359aadbe318c71a0983efff12c226271",
+      "pipeline_key_u64": 10369953146822757921,
+      "pipeline_offset": 7792,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "43f640b535a1ce06f336d5bf940b05f3",
+          "shader_bytecode_sha256": "a39615b2abe1cb97b13d90712f8cbffa4b6e260b0a061b8ee849ee5937dd1dfa",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_WriteReinhardExToneMappingTablePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 50,
+      "pipeline_key": "aba6e1e049738eaa62d62fa373a810d7",
+      "pipeline_key_u64": 11101836434811944376,
+      "pipeline_offset": 7952,
+      "root_signature_keys": [
+        "4e3426240db34ed78814503de9ddc482"
+      ],
+      "root_structural_signatures": [
+        "900ad54a33337bbf7c47a50da7a0da77d215ce12ddc79692b5d26dc26a7a194f"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "ded829a37edb16d7068e6844498f14ec",
+          "shader_bytecode_sha256": "7ef2fcd687fcec90062f20a5efb36244d5cedfe1e0ed6339fe33ce41bd0c7187",
+          "structural_signature_sha256": "900ad54a33337bbf7c47a50da7a0da77d215ce12ddc79692b5d26dc26a7a194f",
+          "function_names": [
+            "main"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "c6f17799fda0e90e73c7a95d2103eb78",
+          "shader_bytecode_sha256": "feaf39ac6fd5b4ffab2bf813649e8b8073cabba8dd391a90044a48a108237a58",
+          "structural_signature_sha256": "900ad54a33337bbf7c47a50da7a0da77d215ce12ddc79692b5d26dc26a7a194f",
+          "function_names": [
+            "main"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 51,
+      "pipeline_key": "9340d37f4ca05c9832a799b3f7ba2cdc",
+      "pipeline_key_u64": 4768295275294829712,
+      "pipeline_offset": 8112,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "4ee2ee62d3281ae4b8893262eaaa3ed7",
+          "shader_bytecode_sha256": "0a5465260ca18fd8a1a87da33e5147cf75c6fa5f8b49bb0d9475f7f71a6ee5d8",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "MotionBlur_WriteVelocityAndDepthPack_DownScalePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 52,
+      "pipeline_key": "b38681a721a8846a266199b3f7ba2cdc",
+      "pipeline_key_u64": 13837422969809035651,
+      "pipeline_offset": 8272,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "64acfe5d6d29f723fa5b8890aa9ac8c5",
+          "shader_bytecode_sha256": "50514472dcdf8d830d2b328d9f67b6341dcb9efed94450e8a44c4b58e79f5433",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "MotionBlur_DownSampleVelocity_KeepMaxLengthPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 53,
+      "pipeline_key": "e699b5934b0ceff2aed799b3f7ba2cdc",
+      "pipeline_key_u64": 14481954719161605160,
+      "pipeline_offset": 8432,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "571d1dbae39b3e26730fd01d439df998",
+          "shader_bytecode_sha256": "aee35b1c698740606a56f751fb4f53f05807fe9bce5ccf30618e64aaa22435bf",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "MotionBlur_DilateVelocityAdaptiveX_KeepMaxLengthPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 54,
+      "pipeline_key": "6dc0bccf14db73c24f5cb86602358b24",
+      "pipeline_key_u64": 15198354778581039761,
+      "pipeline_offset": 8592,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "cd53cf660f468d24253f5e8872b1596e",
+          "shader_bytecode_sha256": "71079128406894df554106277387827117e90bff3c53d343a654a17cea1f1b5a",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapAdaptVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "e1b2fa09717f5ef20b2b7aed44497e87",
+          "shader_bytecode_sha256": "b937a75eb4a3b0906c6f19142af9422b4822ced8a52416a1616515bb7a114f4c",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_BrightPassTemporalPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 55,
+      "pipeline_key": "0f3b10e992aa3f92aed799b3f7ba2cdc",
+      "pipeline_key_u64": 18346458008533685664,
+      "pipeline_offset": 8752,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "c4eab8ab25a5e26b4b7b258bfabab1d2",
+          "shader_bytecode_sha256": "105df112cd10ee3823fbd66cfef83452bbffe24a9cef3e87d9f8f535e3830d29",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "MotionBlur_DilateVelocityAdaptiveY_KeepMaxLengthPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 56,
+      "pipeline_key": "6b8885be538167d76c03f4f12c226271",
+      "pipeline_key_u64": 3866784574492634570,
+      "pipeline_offset": 8912,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "3607acf121516471bc3d1e3df779f51a",
+          "shader_bytecode_sha256": "524c9785b5d4bf3d30ec66b69a836b9bfc30eae8ce37f6cd9620794b0722f079",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "704ac00c1c0a6d991643e7fa64861057",
+          "shader_bytecode_sha256": "feaa9bf5c876ec83af9194d034cb40d89306072427c574a0e6cd466292fb7207",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_BloomGaussBlurPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 57,
+      "pipeline_key": "ec0be74af309d0c0eab788b3f7ba2cdc",
+      "pipeline_key_u64": 17657584793067562654,
+      "pipeline_offset": 9072,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "00dbffb3fac92adc7d94cb72f07f1ac5",
+          "shader_bytecode_sha256": "293feffc70674ff7c378e72eca13ef98e01b906709a84b3084607f5782fbc0a6",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "1716e02b28c2e05da375138bcb9d4882",
+          "shader_bytecode_sha256": "c64a1a85b488a88071747da9c497a5d754bad0e3383c7eaea74f70d9f60951e8",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "MotionBlur_WriteMotionBlurPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 58,
+      "pipeline_key": "dd80bd0f8802859c9a26c63fe9f2b73c",
+      "pipeline_key_u64": 4256693681689261836,
+      "pipeline_offset": 9232,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "9c638f3fe481b13c50f594525d591ab9",
+          "shader_bytecode_sha256": "43a1d59f809f479ab52687a846a6bbb067a35dc2077a5687ac87028b9d1a6a16",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ScreenSpaceQuadScaleShaderVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "c2b30c3536366a7b2fe3ed432574046c",
+          "shader_bytecode_sha256": "57d10a2195aa2a4ea881bb0b1b1548a66d245be29a0464ba0d9b183bb09dd5b3",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "PointSampleColor1PS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 59,
+      "pipeline_key": "ae756a63ff20a4cdea9cfc87f972e8d8",
+      "pipeline_key_u64": 12168995515867753699,
+      "pipeline_offset": 9392,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "a8579d87f401eed82f0e8032cfbf03f1",
+          "shader_bytecode_sha256": "8dddf1758005f9819a58a8f381408349dd529c432f5f54c0f23478f4b9c3fd89",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapDynamicResolutionVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "3a63b01b9f25e9e329d98c6f35b776a7",
+          "shader_bytecode_sha256": "b82c5c9fd6a8c503b9a28423f3ba97c957a9616329a26d34e2b03b4140912cda",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_BloomCompositeUpScalePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 60,
+      "pipeline_key": "78ba235916b014b6063cc487f972e8d8",
+      "pipeline_key_u64": 13837278138201253878,
+      "pipeline_offset": 9552,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "a8579d87f401eed82f0e8032cfbf03f1",
+          "shader_bytecode_sha256": "8dddf1758005f9819a58a8f381408349dd529c432f5f54c0f23478f4b9c3fd89",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapDynamicResolutionVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "afd9ac89f72609eb6c63e9c71505df58",
+          "shader_bytecode_sha256": "d18db9a78ab6118251a5b0f516952fa017c735600779f8c1655499b1613bb9eb",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_BloomCompositeSinglePS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 61,
+      "pipeline_key": "6b090ee7996ead0c632c4f6602358b24",
+      "pipeline_key_u64": 10295174030967857468,
+      "pipeline_offset": 9712,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "cd53cf660f468d24253f5e8872b1596e",
+          "shader_bytecode_sha256": "71079128406894df554106277387827117e90bff3c53d343a654a17cea1f1b5a",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapAdaptVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "6a16e8004bcdf79e781b9f41d2c3696c",
+          "shader_bytecode_sha256": "88fd2d41c474e701e6fa665346ade90e90a030d1d74ffcb9843880a3334c3def",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_TabledToneMapLUTPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 62,
+      "pipeline_key": "212437be0d225d195f4dac6602358b24",
+      "pipeline_key_u64": 8514937559137442407,
+      "pipeline_offset": 9872,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "cd53cf660f468d24253f5e8872b1596e",
+          "shader_bytecode_sha256": "71079128406894df554106277387827117e90bff3c53d343a654a17cea1f1b5a",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMapAdaptVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "e14832df2f0a1b47180553b3a9deb8c6",
+          "shader_bytecode_sha256": "821e4aaae52f6f450726a363875eec261ce0c6113ef16edeb32643a3b5eda4fd",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "ToneMap_PostOETF"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    },
+    {
+      "prewarm_order": 63,
+      "pipeline_key": "fd470bf15f8c6166c39742bffd6668ea",
+      "pipeline_key_u64": 13159818045102772385,
+      "pipeline_offset": 10032,
+      "root_signature_keys": [
+        "58eddcc40689df70e8af0a5d9483c4ef"
+      ],
+      "root_structural_signatures": [
+        "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3"
+      ],
+      "stage_mask": 3,
+      "stage_linkage": [
+        {
+          "stage": "vertex",
+          "shader_key": "4f56d7bff0156eea1929f34ecfab32e9",
+          "shader_bytecode_sha256": "282f6af7a6728ad3160573a1cee7c693f45f33d2bc69938710f42d64c8a8ec05",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "TempAAVS"
+          ]
+        },
+        {
+          "stage": "pixel",
+          "shader_key": "61656ec863c712104ae143826d84a459",
+          "shader_bytecode_sha256": "2b7b001044ea0b26436841dbc834cae1883e08a8003ed0402fba69a0b47f4042",
+          "structural_signature_sha256": "2734f067b86f48d00329360df90bcf35e2c54a3318b47be62e703595ad15c2f3",
+          "function_names": [
+            "TempAAPS"
+          ]
+        }
+      ],
+      "root_inference_status": "unique",
+      "psv_best_score": []
+    }
+  ],
+  "pack_sha256": "99020faac3d7a97d6da7c6deed4cab3dc191a27411f986934bda6deda58d8cb3"
+}
