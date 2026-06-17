@@ -1,0 +1,235 @@
+# D3DMetal root signature decode
+
+- D3DMetal reference root: `tools/d3d12-metal-sdk/results/d3dmetal-working-cache-reference-20260616-185155`
+
+| Game | Root signatures | Unique compact layouts | Versions | Static samplers | Root params | Descriptor ranges | Root descriptors |
+|---|---:|---:|---|---:|---:|---:|---:|
+| elden-ring | 8 | 8 | `{'1': 8}` | 0 | 74 | 74 | 2 |
+| armored-core-vi | 9 | 9 | `{'1': 9}` | 0 | 77 | 76 | 3 |
+| subnautica-2 | 234 | 234 | `{'2': 234}` | 1398 | 2049 | 642 | 1351 |
+
+## elden-ring
+
+- key=`6043d7c85a0f1aa4962b8cfe47092d6f` compact=`861f61bbc4f78347` structural=`f893af77ef055345` version=`1` params=`16` static_samplers=`0` flags=`allow_input_assembler_input_layout,allow_stream_output`
+  - root[0] table vis=vertex srv 0 space0 count=128 off=0
+  - root[1] table vis=vertex cbv 0 space0 count=14 off=0
+  - root[2] table vis=vertex sampler 0 space0 count=16 off=0
+  - root[3] table vis=hull srv 0 space0 count=128 off=0
+  - root[4] table vis=hull cbv 0 space0 count=14 off=0
+  - root[5] table vis=hull sampler 0 space0 count=16 off=0
+  - root[6] table vis=domain srv 0 space0 count=128 off=0
+  - root[7] table vis=domain cbv 0 space0 count=14 off=0
+  - ... 8 more root params
+- key=`f7f749156e52dde61e137eaf232da1df` compact=`24479278ff41950c` structural=`b88869fc2a64b2d9` version=`1` params=`4` static_samplers=`0` flags=`deny_vertex_shader_root_access,deny_hull_shader_root_access,deny_domain_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=128 off=0
+  - root[1] table vis=all cbv 0 space0 count=14 off=0
+  - root[2] table vis=all sampler 0 space0 count=16 off=0
+  - root[3] table vis=all uav 0 space0 count=8 off=0
+- key=`58eddcc40689df70e8af0a5d9483c4ef` compact=`8aeaba6fd5d0fafd` structural=`2734f067b86f48d0` version=`1` params=`36` static_samplers=`0` flags=`allow_input_assembler_input_layout`
+  - root[0] table vis=vertex cbv 0 space0 count=4 off=0
+  - root[1] table vis=vertex cbv 4 space0 count=10 off=0
+  - root[2] table vis=vertex srv 0 space0 count=4 off=0
+  - root[3] table vis=vertex srv 4 space0 count=16 off=0
+  - root[4] table vis=vertex srv 20 space0 count=46 off=0
+  - root[5] table vis=vertex sampler 0 space0 count=4 off=0
+  - root[6] table vis=vertex sampler 4 space0 count=12 off=0
+  - root[7] table vis=hull cbv 0 space0 count=4 off=0
+  - ... 28 more root params
+- key=`99050a109bdb87e3bde1d89affae0045` compact=`ff5b2ec4b4b80d54` structural=`b6a8490ff3f9af3c` version=`1` params=`4` static_samplers=`0` flags=`deny_vertex_shader_root_access,deny_hull_shader_root_access,deny_domain_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=66 off=0
+  - root[1] table vis=all cbv 0 space0 count=14 off=0
+  - root[2] table vis=all sampler 0 space0 count=16 off=0
+  - root[3] table vis=all uav 0 space0 count=8 off=0
+- key=`bea0a4c5ce05c48210b4b9982bdcdbac` compact=`bd5b313452d788ea` structural=`f1a4ed4cc5c589bf` version=`1` params=`4` static_samplers=`0` flags=`none`
+  - root[0] table vis=all cbv 0 space0 count=1 off=0; cbv 8 space0 count=2 off=1
+  - root[1] table vis=all srv 64 space0 count=3 off=0
+  - root[2] table vis=all uav 0 space0 count=4 off=0
+  - root[3] table vis=all sampler 0 space0 count=16 off=0
+- key=`9f6deea427b2e9cf2bed730e56b26560` compact=`e212cc2feeb98a01` structural=`75150da761b10ce7` version=`1` params=`3` static_samplers=`0` flags=`local_root_signature`
+  - root[0] table vis=all cbv 16 space0 count=4 off=0
+  - root[1] table vis=all srv 67 space0 count=2 off=0
+  - root[2] table vis=all uav 16 space0 count=4 off=0
+- key=`081c7aa3891788965728f7d248ef337e` compact=`307c3d2968ecd75c` structural=`635b4f4b0856604f` version=`1` params=`3` static_samplers=`0` flags=`local_root_signature`
+  - root[0] table vis=all cbv 16 space0 count=1 off=0; cbv 1 space0 count=3 off=1
+  - root[1] table vis=all srv 67 space0 count=4 off=0
+  - root[2] table vis=all srv 0 space0 count=25 off=0
+- key=`4e3426240db34ed78814503de9ddc482` compact=`e9af2c6675cb2768` structural=`900ad54a33337bbf` version=`1` params=`4` static_samplers=`0` flags=`allow_input_assembler_input_layout`
+  - root[0] cbv vis=vertex reg=0 space=0 flags=
+  - root[1] cbv vis=pixel reg=1 space=0 flags=
+  - root[2] table vis=pixel srv 0 space0 count=4 off=0
+  - root[3] table vis=pixel sampler 0 space0 count=4 off=0
+
+## armored-core-vi
+
+- key=`6043d7c85a0f1aa4962b8cfe47092d6f` compact=`861f61bbc4f78347` structural=`f893af77ef055345` version=`1` params=`16` static_samplers=`0` flags=`allow_input_assembler_input_layout,allow_stream_output`
+  - root[0] table vis=vertex srv 0 space0 count=128 off=0
+  - root[1] table vis=vertex cbv 0 space0 count=14 off=0
+  - root[2] table vis=vertex sampler 0 space0 count=16 off=0
+  - root[3] table vis=hull srv 0 space0 count=128 off=0
+  - root[4] table vis=hull cbv 0 space0 count=14 off=0
+  - root[5] table vis=hull sampler 0 space0 count=16 off=0
+  - root[6] table vis=domain srv 0 space0 count=128 off=0
+  - root[7] table vis=domain cbv 0 space0 count=14 off=0
+  - ... 8 more root params
+- key=`f7f749156e52dde61e137eaf232da1df` compact=`24479278ff41950c` structural=`b88869fc2a64b2d9` version=`1` params=`4` static_samplers=`0` flags=`deny_vertex_shader_root_access,deny_hull_shader_root_access,deny_domain_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=128 off=0
+  - root[1] table vis=all cbv 0 space0 count=14 off=0
+  - root[2] table vis=all sampler 0 space0 count=16 off=0
+  - root[3] table vis=all uav 0 space0 count=8 off=0
+- key=`58eddcc40689df70e8af0a5d9483c4ef` compact=`8aeaba6fd5d0fafd` structural=`2734f067b86f48d0` version=`1` params=`36` static_samplers=`0` flags=`allow_input_assembler_input_layout`
+  - root[0] table vis=vertex cbv 0 space0 count=4 off=0
+  - root[1] table vis=vertex cbv 4 space0 count=10 off=0
+  - root[2] table vis=vertex srv 0 space0 count=4 off=0
+  - root[3] table vis=vertex srv 4 space0 count=16 off=0
+  - root[4] table vis=vertex srv 20 space0 count=46 off=0
+  - root[5] table vis=vertex sampler 0 space0 count=4 off=0
+  - root[6] table vis=vertex sampler 4 space0 count=12 off=0
+  - root[7] table vis=hull cbv 0 space0 count=4 off=0
+  - ... 28 more root params
+- key=`99050a109bdb87e3bde1d89affae0045` compact=`ff5b2ec4b4b80d54` structural=`b6a8490ff3f9af3c` version=`1` params=`4` static_samplers=`0` flags=`deny_vertex_shader_root_access,deny_hull_shader_root_access,deny_domain_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=66 off=0
+  - root[1] table vis=all cbv 0 space0 count=14 off=0
+  - root[2] table vis=all sampler 0 space0 count=16 off=0
+  - root[3] table vis=all uav 0 space0 count=8 off=0
+- key=`bea0a4c5ce05c48210b4b9982bdcdbac` compact=`bd5b313452d788ea` structural=`f1a4ed4cc5c589bf` version=`1` params=`4` static_samplers=`0` flags=`none`
+  - root[0] table vis=all cbv 0 space0 count=1 off=0; cbv 8 space0 count=2 off=1
+  - root[1] table vis=all srv 64 space0 count=3 off=0
+  - root[2] table vis=all uav 0 space0 count=4 off=0
+  - root[3] table vis=all sampler 0 space0 count=16 off=0
+- key=`9f6deea427b2e9cf2bed730e56b26560` compact=`e212cc2feeb98a01` structural=`75150da761b10ce7` version=`1` params=`3` static_samplers=`0` flags=`local_root_signature`
+  - root[0] table vis=all cbv 16 space0 count=4 off=0
+  - root[1] table vis=all srv 67 space0 count=2 off=0
+  - root[2] table vis=all uav 16 space0 count=4 off=0
+- key=`081c7aa3891788965728f7d248ef337e` compact=`307c3d2968ecd75c` structural=`635b4f4b0856604f` version=`1` params=`3` static_samplers=`0` flags=`local_root_signature`
+  - root[0] table vis=all cbv 16 space0 count=1 off=0; cbv 1 space0 count=3 off=1
+  - root[1] table vis=all srv 67 space0 count=4 off=0
+  - root[2] table vis=all srv 0 space0 count=25 off=0
+- key=`4e3426240db34ed78814503de9ddc482` compact=`e9af2c6675cb2768` structural=`900ad54a33337bbf` version=`1` params=`4` static_samplers=`0` flags=`allow_input_assembler_input_layout`
+  - root[0] cbv vis=vertex reg=0 space=0 flags=
+  - root[1] cbv vis=pixel reg=1 space=0 flags=
+  - root[2] table vis=pixel srv 0 space0 count=4 off=0
+  - root[3] table vis=pixel sampler 0 space0 count=4 off=0
+- key=`4c8d829659488b6f4c7af2c834b99070` compact=`c2d831ca3b636a41` structural=`a6659bbf479c103c` version=`1` params=`3` static_samplers=`0` flags=`none`
+  - root[0] table vis=pixel srv 0 space0 count=5 off=0
+  - root[1] cbv vis=all reg=0 space=0 flags=
+  - root[2] table vis=pixel sampler 0 space0 count=1 off=0
+
+## subnautica-2
+
+- key=`4dc42e488ba16fa60d86e3f74e26085f` compact=`2cc469b4ead04f57` structural=`939696f46915561b` version=`2` params=`0` static_samplers=`0` flags=`local_root_signature`
+- key=`4efd6756f67b56bdb4cb4b9aada0366c` compact=`d3e91ce451d73306` structural=`646e3de8a4abc9ba` version=`2` params=`3` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+  - root[2] cbv vis=all reg=0 space=0 flags=data_static
+- key=`b3b19d3d72cf76c0a90265cf780b4229` compact=`8f361ce8ab3839ba` structural=`8b8519f10ae4cd45` version=`2` params=`4` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+- key=`21ebfdf6f83f461b2cf9c8a4bae94010` compact=`dc876cf09ed63a39` structural=`649acae2a107b695` version=`2` params=`1` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all uav 0 space0 count=16 off=append
+- key=`81445e9cf8a401875969c81c6c47a64d` compact=`41d2fb4b26c7bcab` structural=`7597e05da6589e8f` version=`2` params=`2` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all uav 0 space0 count=16 off=append
+  - root[1] cbv vis=all reg=0 space=0 flags=data_static
+- key=`997d0f0ec546b70d11a14ce4acc65018` compact=`1ed9b787158a38af` structural=`42681a23840eb2bf` version=`2` params=`3` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+- key=`e1a7bd9aea8cc447f37f35c18d2c9ca9` compact=`14e56094f2c75d79` structural=`f02d233ccb4e2d1a` version=`2` params=`5` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+  - root[4] cbv vis=all reg=1 space=0 flags=data_static
+- key=`6f3df375ce106c678b520e8cad9d1c33` compact=`7064bdcdd21a32a7` structural=`15305c150ffe7d18` version=`2` params=`6` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+  - root[4] cbv vis=all reg=1 space=0 flags=data_static
+  - root[5] cbv vis=all reg=2 space=0 flags=data_static
+- key=`3be9f6df60f6d1bd77ca90ce9c3be2d0` compact=`14ac522b8a93425b` structural=`f3fbea5efa382755` version=`2` params=`2` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+- key=`ed5e3d7c3b76b7b594fa3aed552168c7` compact=`dfb8e5088e1dd7fd` structural=`eb08d18906b65744` version=`2` params=`4` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+  - root[2] cbv vis=all reg=0 space=0 flags=data_static
+  - root[3] cbv vis=all reg=1 space=0 flags=data_static
+- key=`4446179cde4efe135e3765beea1a5ad4` compact=`78aa39a62f4c232c` structural=`9be3dd5299879f9b` version=`2` params=`2` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all uav 0 space0 count=16 off=append
+  - root[1] uav vis=all reg=0 space=999 flags=data_volatile
+- key=`6b714c4875f76147f8934b9a25e832d1` compact=`b46505487751d321` structural=`7c172362924e83cb` version=`2` params=`5` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+  - root[2] cbv vis=all reg=0 space=0 flags=data_static
+  - root[3] cbv vis=all reg=1 space=0 flags=data_static
+  - root[4] cbv vis=all reg=2 space=0 flags=data_static
+- key=`9025e26687e28cace84d33265edc0da7` compact=`96da6e5ba560137f` structural=`aa7828530ad22ac8` version=`2` params=`8` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+  - root[4] cbv vis=all reg=1 space=0 flags=data_static
+  - root[5] cbv vis=all reg=2 space=0 flags=data_static
+  - root[6] cbv vis=all reg=3 space=0 flags=data_static
+  - root[7] cbv vis=all reg=4 space=0 flags=data_static
+- key=`e93c4609e93c139ee8cf86209024b726` compact=`bd095e556da25a3c` structural=`d21139baa38a357f` version=`2` params=`9` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+  - root[4] cbv vis=all reg=1 space=0 flags=data_static
+  - root[5] cbv vis=all reg=2 space=0 flags=data_static
+  - root[6] cbv vis=all reg=3 space=0 flags=data_static
+  - root[7] cbv vis=all reg=4 space=0 flags=data_static
+  - ... 1 more root params
+- key=`7ee8e3905f8fcf0c6661fb548f998732` compact=`88acbf5e72143abe` structural=`bf9f5639fa5bb621` version=`2` params=`10` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+  - root[4] cbv vis=all reg=1 space=0 flags=data_static
+  - root[5] cbv vis=all reg=2 space=0 flags=data_static
+  - root[6] cbv vis=all reg=3 space=0 flags=data_static
+  - root[7] cbv vis=all reg=4 space=0 flags=data_static
+  - ... 2 more root params
+- key=`595a530aef60d7ade73287548a562aa2` compact=`9f0d9bcfea0190a3` structural=`0f872c7ac298150d` version=`2` params=`5` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all uav 0 space0 count=16 off=append
+  - root[1] cbv vis=all reg=0 space=0 flags=data_static
+  - root[2] cbv vis=all reg=1 space=0 flags=data_static
+  - root[3] cbv vis=all reg=2 space=0 flags=data_static
+  - root[4] cbv vis=all reg=3 space=0 flags=data_static
+- key=`73a5342b6af61353c02e5922afaaa659` compact=`aa0163acd0b9e354` structural=`2730c84f8e563590` version=`2` params=`6` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+  - root[2] cbv vis=all reg=0 space=0 flags=data_static
+  - root[3] cbv vis=all reg=1 space=0 flags=data_static
+  - root[4] cbv vis=all reg=2 space=0 flags=data_static
+  - root[5] cbv vis=all reg=3 space=0 flags=data_static
+- key=`1502cd40afd0170c7e73126cac87d68e` compact=`3d0be9f6f6873677` structural=`f0bdb4da542cb47b` version=`2` params=`7` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all sampler 0 space0 count=32 off=append
+  - root[2] table vis=all uav 0 space0 count=16 off=append
+  - root[3] cbv vis=all reg=0 space=0 flags=data_static
+  - root[4] cbv vis=all reg=1 space=0 flags=data_static
+  - root[5] cbv vis=all reg=2 space=0 flags=data_static
+  - root[6] cbv vis=all reg=3 space=0 flags=data_static
+- key=`7945284ab54e42d20c003d01fbb8121d` compact=`834e7d84224d6fc8` structural=`7fd0f67dcfb00ac0` version=`2` params=`7` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+  - root[2] cbv vis=all reg=0 space=0 flags=data_static
+  - root[3] cbv vis=all reg=1 space=0 flags=data_static
+  - root[4] cbv vis=all reg=2 space=0 flags=data_static
+  - root[5] cbv vis=all reg=3 space=0 flags=data_static
+  - root[6] cbv vis=all reg=4 space=0 flags=data_static
+- key=`20ab921d0981a0d579419a675569fa28` compact=`062540b097f6bde7` structural=`fdeec5a9a6c1eb13` version=`2` params=`8` static_samplers=`6` flags=`deny_vertex_shader_root_access,deny_geometry_shader_root_access,deny_pixel_shader_root_access,deny_amplification_shader_root_access,deny_mesh_shader_root_access`
+  - root[0] table vis=all srv 0 space0 count=64 off=append
+  - root[1] table vis=all uav 0 space0 count=16 off=append
+  - root[2] cbv vis=all reg=0 space=0 flags=data_static
+  - root[3] cbv vis=all reg=1 space=0 flags=data_static
+  - root[4] cbv vis=all reg=2 space=0 flags=data_static
+  - root[5] cbv vis=all reg=3 space=0 flags=data_static
+  - root[6] cbv vis=all reg=4 space=0 flags=data_static
+  - root[7] cbv vis=all reg=5 space=0 flags=data_static
+- ... 214 more root signatures in manifest.json

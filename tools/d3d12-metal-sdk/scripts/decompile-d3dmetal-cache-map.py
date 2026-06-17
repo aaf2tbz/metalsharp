@@ -207,11 +207,17 @@ def scan_pipeline_records(path: Path, by_key: dict[str, dict[str, Any]]) -> list
         if span < 64 or span > 1024 * 1024 or pos + span > len(data):
             break
         rec = data[pos:pos + span]
+        # Some D3DMetal records, notably Subnautica 2 compute-heavy PSO records,
+        # store source bytecode keys so close to the conservative span boundary
+        # that the 16-byte key crosses into the next span. Scan a tiny
+        # cross-boundary window for known bytecode keys while still reporting the
+        # key start relative to the current record.
+        rec_scan = data[pos:min(len(data), pos + span + 16)]
         record_key = rec[40:56].hex() if len(rec) >= 56 else ""
         source_keys = []
         seen = set()
-        for idx in range(0, max(0, len(rec) - 15)):
-            key = rec[idx:idx + 16].hex()
+        for idx in range(0, max(0, len(rec_scan) - 15)):
+            key = rec_scan[idx:idx + 16].hex()
             if key in by_key and key not in seen:
                 seen.add(key)
                 src = by_key[key]
