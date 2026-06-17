@@ -385,6 +385,8 @@ vendor/dxmt/src/d3d12/d3d12_command_queue.cpp
 
 ## Phase 6: Add oracle/prewarm ingestion
 
+Status: completed for compact metadata pack generation, POD summary ABI plumbing, PE/unix bridge coverage, and profile-gated AC6 canary scheduling. Evidence is recorded in `tools/d3d12-metal-sdk/plans/m12-phase6-completion-audit.md`; corrected final validation is under `tools/d3d12-metal-sdk/results/m12-phase6-final-validation-corrected-20260617-130844/` with `23/23` drawn/present, failures `0`, `unix_call_failed=0`, no new raw DXBC/MSL/metallib artifacts, and AC6 canary logs for `M12_PREWARM_PACK_SUMMARY` plus `M12_PREWARM_PACK_SCHEDULE`. The runtime canary deliberately embeds a fixed 8-record compact metadata subset instead of doing runtime JSON/file I/O; loading an on-disk `prewarm-pack.json` into that POD ABI is deferred. Phase 6 remains metadata-only by design: actual Metal PSO creation from oracle/prewarm data is deferred until ABI/resource-layout compatibility is proven.
+
 ### Work
 
 Teach `libm12core` to consume compact oracle/prewarm packs, not raw copied D3DMetal payloads:
@@ -409,9 +411,9 @@ tools/d3d12-metal-sdk/results/d3dmetal-root-pipeline-linkage-*/summary.md
 
 ### Done when
 
-- AC6 can prewarm a known subset of high-value PSOs before gameplay.
-- Prewarm is offline/profile-gated.
-- No raw D3DMetal metallibs or cache payloads are committed.
+- [x] AC6 can exercise a prewarm-schedule canary for a known subset of high-value PSOs before gameplay within the Phase 6 metadata-summary/scheduling scope: the corrected final launch logs 8 ordered profile-gated canary records before normal runtime PSO pressure (`M12_PREWARM_PACK_SUMMARY` and `M12_PREWARM_PACK_SCHEDULE`, `queue=metadata-only action=defer-metal-create`). The canary is a fixed compact in-source subset; runtime `prewarm-pack.json` file loading remains deferred.
+- [x] Prewarm is offline/profile-gated by `SteamAppId=1888160` plus `METALSHARP_M12_PREWARM_PROFILE=armored-core-vi-phase6-canary`; backend env override forwarding was fixed in `e73c15f` and the final launch reports the override applied.
+- [x] No raw D3DMetal metallibs or cache payloads are committed; the final corrected validation reports `new_dxbc=0`, `new_msl=0`, `new_metallib=0`, and `new_pso_render=0`/`new_pso_compute=0`.
 
 ## Phase 7: Move command replay planning, not necessarily command execution
 
