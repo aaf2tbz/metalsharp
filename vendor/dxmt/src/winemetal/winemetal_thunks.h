@@ -498,6 +498,30 @@ struct unixcall_m12core_create_shader_function {
   M12CoreShaderFunctionResult ret_result;
 };
 
+struct unixcall_m12core_make_pipeline_cache_key_from_fields {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint64_t base_hash;
+  uint64_t device_id;
+  uint64_t flags;
+  struct WMTConstMemoryPointer fields;
+  uint32_t field_count;
+  uint32_t ret_success;
+  M12CorePipelineCacheKey ret_key;
+};
+
+struct unixcall_m12core_create_pipeline_state {
+  obj_handle_t device;
+  uint32_t kind;
+  uint32_t reserved0;
+  uint64_t cache_key;
+  struct WMTConstMemoryPointer pipeline_info;
+  uint64_t pipeline_info_size;
+  uint32_t ret_success;
+  uint32_t reserved1;
+  M12CorePipelineCreateResult ret_result;
+};
+
 #pragma pack(pop)
 
 #endif

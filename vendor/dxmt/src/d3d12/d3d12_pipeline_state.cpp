@@ -591,53 +591,145 @@ bool StoreM12CorePipelineCache(uint32_t kind, size_t key, obj_handle_t pipeline_
   return WMTM12CoreStorePipelineCache(&query, pipeline_handle);
 }
 
-bool FinalizeM12CorePipelineCacheKey(size_t base_hash, uint64_t device_id,
-                                     uint32_t kind, uint64_t flags,
-                                     size_t &out_key) {
-  /* Phase 4 foundation seam: libm12core owns the final device-scoped pipeline
-   * cache key namespace when available.  Descriptor normalization and Metal PSO
-   * object lifetime stay in the existing D3D12 path until later Phase 4 slices.
+bool FinalizeM12CorePipelineCacheKeyFromFields(size_t base_hash, uint64_t device_id,
+                                               uint32_t kind, uint64_t flags,
+                                               const std::vector<uint64_t> &fields,
+                                               size_t &out_key) {
+  /* Phase 4 normalized-key seam: D3D12 still maps its descriptor state into
+   * stable scalar fields, but libm12core owns the ordered field accumulation
+   * and final device/kind namespace.  If the native core is unavailable, the
+   * caller falls back to the legacy PE-local hash combiner below.
    */
-  M12CorePipelineCacheKeyInput input = {};
+  M12CorePipelineKeyFields input = {};
   input.abi_version = M12CORE_ABI_VERSION;
   input.kind = kind;
   input.base_hash = (uint64_t)base_hash;
   input.device_id = device_id;
   input.flags = flags;
+  input.fields = fields.empty() ? nullptr : fields.data();
+  input.field_count = static_cast<uint32_t>(fields.size());
   M12CorePipelineCacheKey key = {};
-  if (!WMTM12CoreMakePipelineCacheKey(&input, &key) ||
+  if (!WMTM12CoreMakePipelineCacheKeyFromFields(&input, &key) ||
       key.abi_version != M12CORE_ABI_VERSION || key.kind != kind)
     return false;
   out_key = (size_t)key.key;
   return true;
 }
 
-void PsoCacheHashFloat(size_t &hash, float value) {
+template <typename PipelineRef>
+bool CreateM12CorePipelineState(obj_handle_t device, uint32_t kind,
+                                size_t cache_key, const void *pipeline_info,
+                                size_t pipeline_info_size,
+                                PipelineRef &out_pipeline,
+                                WMT::Reference<WMT::Error> &out_error,
+                                bool &out_cache_hit) {
+  M12CorePipelineCreateResult result = {};
+  if (!WMTM12CoreCreatePipelineState(device, kind, (uint64_t)cache_key,
+                                     pipeline_info, pipeline_info_size,
+                                     &result) ||
+      result.abi_version != M12CORE_ABI_VERSION || result.kind != kind)
+    return false;
+  out_cache_hit = result.cache_hit != 0;
+  if (result.status == M12CORE_PIPELINE_CREATE_STATUS_OK && result.pipeline_handle) {
+    out_pipeline = PipelineRef(result.pipeline_handle);
+    return true;
+  }
+  /* Phase 4 fallback seam: native creation may return a retained NSError for
+   * diagnostics, but D3D12 immediately falls back to the legacy WMT creation
+   * path.  Keep that fallback's error slot clean and release the native error
+   * here so the fallback cannot overwrite/leak it.
+   */
+  if (result.error_handle) {
+    WMT::Reference<WMT::Error> native_error(result.error_handle);
+    (void)native_error;
+  }
+  return false;
+}
+
+uint64_t PsoFieldFloat(float value) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(value));
   memcpy(&bits, &value, sizeof(bits));
-  PsoCacheHashCombine(hash, bits);
+  return bits;
 }
 
-void PsoCacheHashRenderTargetBlend(size_t &hash,
+void AppendRenderTargetBlendFields(std::vector<uint64_t> &fields,
                                    const D3D12_RENDER_TARGET_BLEND_DESC &rt) {
-  PsoCacheHashCombine(hash, rt.BlendEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, rt.LogicOpEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, rt.SrcBlend);
-  PsoCacheHashCombine(hash, rt.DestBlend);
-  PsoCacheHashCombine(hash, rt.BlendOp);
-  PsoCacheHashCombine(hash, rt.SrcBlendAlpha);
-  PsoCacheHashCombine(hash, rt.DestBlendAlpha);
-  PsoCacheHashCombine(hash, rt.BlendOpAlpha);
-  PsoCacheHashCombine(hash, rt.LogicOp);
-  PsoCacheHashCombine(hash, rt.RenderTargetWriteMask);
+  fields.push_back(rt.BlendEnable ? 1 : 0);
+  fields.push_back(rt.LogicOpEnable ? 1 : 0);
+  fields.push_back(rt.SrcBlend);
+  fields.push_back(rt.DestBlend);
+  fields.push_back(rt.BlendOp);
+  fields.push_back(rt.SrcBlendAlpha);
+  fields.push_back(rt.DestBlendAlpha);
+  fields.push_back(rt.BlendOpAlpha);
+  fields.push_back(rt.LogicOp);
+  fields.push_back(rt.RenderTargetWriteMask);
 }
 
-void PsoCacheHashStencilOp(size_t &hash, const D3D12_DEPTH_STENCILOP_DESC &op) {
-  PsoCacheHashCombine(hash, op.StencilFailOp);
-  PsoCacheHashCombine(hash, op.StencilDepthFailOp);
-  PsoCacheHashCombine(hash, op.StencilPassOp);
-  PsoCacheHashCombine(hash, op.StencilFunc);
+void AppendStencilOpFields(std::vector<uint64_t> &fields,
+                           const D3D12_DEPTH_STENCILOP_DESC &op) {
+  fields.push_back(op.StencilFailOp);
+  fields.push_back(op.StencilDepthFailOp);
+  fields.push_back(op.StencilPassOp);
+  fields.push_back(op.StencilFunc);
+}
+
+std::vector<uint64_t> BuildRenderMetalPipelineKeyFields(
+    D3D12_PRIMITIVE_TOPOLOGY_TYPE topology,
+    const D3D12_BLEND_DESC &blend_desc,
+    const D3D12_RASTERIZER_DESC &rasterizer_desc,
+    const D3D12_DEPTH_STENCIL_DESC &depth_stencil_desc,
+    const WMTVertexDescriptor *vertex_descriptor,
+    bool reflected_descriptor_enabled,
+    bool reflected_unspecified_topology) {
+  std::vector<uint64_t> fields;
+  fields.reserve(128);
+  fields.push_back((size_t)topology);
+  fields.push_back(reflected_descriptor_enabled ? 1 : 0);
+  fields.push_back(reflected_unspecified_topology ? 1 : 0);
+  fields.push_back(blend_desc.AlphaToCoverageEnable ? 1 : 0);
+  fields.push_back(blend_desc.IndependentBlendEnable ? 1 : 0);
+  for (const auto &rt : blend_desc.RenderTarget)
+    AppendRenderTargetBlendFields(fields, rt);
+  fields.push_back(rasterizer_desc.FillMode);
+  fields.push_back(rasterizer_desc.CullMode);
+  fields.push_back(rasterizer_desc.FrontCounterClockwise ? 1 : 0);
+  fields.push_back(rasterizer_desc.DepthBias);
+  fields.push_back(PsoFieldFloat(rasterizer_desc.DepthBiasClamp));
+  fields.push_back(PsoFieldFloat(rasterizer_desc.SlopeScaledDepthBias));
+  fields.push_back(rasterizer_desc.DepthClipEnable ? 1 : 0);
+  fields.push_back(rasterizer_desc.MultisampleEnable ? 1 : 0);
+  fields.push_back(rasterizer_desc.AntialiasedLineEnable ? 1 : 0);
+  fields.push_back(rasterizer_desc.ForcedSampleCount);
+  fields.push_back(rasterizer_desc.ConservativeRaster);
+  fields.push_back(depth_stencil_desc.DepthEnable ? 1 : 0);
+  fields.push_back(depth_stencil_desc.DepthWriteMask);
+  fields.push_back(depth_stencil_desc.DepthFunc);
+  fields.push_back(depth_stencil_desc.StencilEnable ? 1 : 0);
+  fields.push_back(depth_stencil_desc.StencilReadMask);
+  fields.push_back(depth_stencil_desc.StencilWriteMask);
+  AppendStencilOpFields(fields, depth_stencil_desc.FrontFace);
+  AppendStencilOpFields(fields, depth_stencil_desc.BackFace);
+  if (vertex_descriptor) {
+    fields.push_back(vertex_descriptor->attribute_count);
+    fields.push_back(vertex_descriptor->layout_count);
+    for (uint32_t i = 0; i < vertex_descriptor->attribute_count &&
+                         i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
+      const auto &attr = vertex_descriptor->attributes[i];
+      fields.push_back(attr.format);
+      fields.push_back(attr.offset);
+      fields.push_back(attr.buffer_index);
+    }
+    for (uint32_t i = 0; i < vertex_descriptor->layout_count &&
+                         i < WMT_MAX_VERTEX_BUFFER_LAYOUTS; i++) {
+      const auto &layout = vertex_descriptor->layouts[i];
+      fields.push_back(layout.stride);
+      fields.push_back(layout.step_function);
+      fields.push_back(layout.step_rate);
+    }
+  }
+  return fields;
 }
 
 size_t ComputeRenderMetalPipelineCacheHash(
@@ -649,50 +741,12 @@ size_t ComputeRenderMetalPipelineCacheHash(
     bool reflected_descriptor_enabled,
     bool reflected_unspecified_topology) {
   size_t hash = base_hash;
-  PsoCacheHashCombine(hash, (size_t)topology);
-  PsoCacheHashCombine(hash, reflected_descriptor_enabled ? 1 : 0);
-  PsoCacheHashCombine(hash, reflected_unspecified_topology ? 1 : 0);
-  PsoCacheHashCombine(hash, blend_desc.AlphaToCoverageEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, blend_desc.IndependentBlendEnable ? 1 : 0);
-  for (const auto &rt : blend_desc.RenderTarget)
-    PsoCacheHashRenderTargetBlend(hash, rt);
-  PsoCacheHashCombine(hash, rasterizer_desc.FillMode);
-  PsoCacheHashCombine(hash, rasterizer_desc.CullMode);
-  PsoCacheHashCombine(hash, rasterizer_desc.FrontCounterClockwise ? 1 : 0);
-  PsoCacheHashCombine(hash, rasterizer_desc.DepthBias);
-  PsoCacheHashFloat(hash, rasterizer_desc.DepthBiasClamp);
-  PsoCacheHashFloat(hash, rasterizer_desc.SlopeScaledDepthBias);
-  PsoCacheHashCombine(hash, rasterizer_desc.DepthClipEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, rasterizer_desc.MultisampleEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, rasterizer_desc.AntialiasedLineEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, rasterizer_desc.ForcedSampleCount);
-  PsoCacheHashCombine(hash, rasterizer_desc.ConservativeRaster);
-  PsoCacheHashCombine(hash, depth_stencil_desc.DepthEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, depth_stencil_desc.DepthWriteMask);
-  PsoCacheHashCombine(hash, depth_stencil_desc.DepthFunc);
-  PsoCacheHashCombine(hash, depth_stencil_desc.StencilEnable ? 1 : 0);
-  PsoCacheHashCombine(hash, depth_stencil_desc.StencilReadMask);
-  PsoCacheHashCombine(hash, depth_stencil_desc.StencilWriteMask);
-  PsoCacheHashStencilOp(hash, depth_stencil_desc.FrontFace);
-  PsoCacheHashStencilOp(hash, depth_stencil_desc.BackFace);
-  if (vertex_descriptor) {
-    PsoCacheHashCombine(hash, vertex_descriptor->attribute_count);
-    PsoCacheHashCombine(hash, vertex_descriptor->layout_count);
-    for (uint32_t i = 0; i < vertex_descriptor->attribute_count &&
-                         i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
-      const auto &attr = vertex_descriptor->attributes[i];
-      PsoCacheHashCombine(hash, attr.format);
-      PsoCacheHashCombine(hash, attr.offset);
-      PsoCacheHashCombine(hash, attr.buffer_index);
-    }
-    for (uint32_t i = 0; i < vertex_descriptor->layout_count &&
-                         i < WMT_MAX_VERTEX_BUFFER_LAYOUTS; i++) {
-      const auto &layout = vertex_descriptor->layouts[i];
-      PsoCacheHashCombine(hash, layout.stride);
-      PsoCacheHashCombine(hash, layout.step_function);
-      PsoCacheHashCombine(hash, layout.step_rate);
-    }
-  }
+  auto fields = BuildRenderMetalPipelineKeyFields(
+      topology, blend_desc, rasterizer_desc, depth_stencil_desc,
+      vertex_descriptor, reflected_descriptor_enabled,
+      reflected_unspecified_topology);
+  for (uint64_t field : fields)
+    PsoCacheHashCombine(hash, field);
   return hash;
 }
 
@@ -2189,9 +2243,11 @@ bool MTLD3D12PipelineState::Compile() {
     info.compute_function = cs_func.handle;
 
     size_t compute_pipeline_cache_key = cs_hash;
-    if (!FinalizeM12CorePipelineCacheKey(cs_hash, (uint64_t)wmt_device.handle,
-                                         M12CORE_PIPELINE_KIND_COMPUTE, 0,
-                                         compute_pipeline_cache_key))
+    const std::vector<uint64_t> compute_key_fields;
+    if (!FinalizeM12CorePipelineCacheKeyFromFields(cs_hash, (uint64_t)wmt_device.handle,
+                                                   M12CORE_PIPELINE_KIND_COMPUTE, 0,
+                                                   compute_key_fields,
+                                                   compute_pipeline_cache_key))
       PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
     bool compute_core_cache_available = false;
     bool compute_cache_hit = false;
@@ -2225,6 +2281,7 @@ bool MTLD3D12PipelineState::Compile() {
     }
 
     std::string err_desc = "unknown";
+    bool compute_core_creation_used = false;
     if (!m_compute_pso.handle) {
       for (uint32_t attempt = 0; attempt < 4; attempt++) {
         err = nullptr;
@@ -2233,6 +2290,20 @@ bool MTLD3D12PipelineState::Compile() {
         Logger::info(str::format("PSO_PRESSURE metal_compute_create total=", total,
                                  " attempt=", attempt + 1,
                                  " cs=0x", std::hex, cs_hash, std::dec));
+        bool core_create_cache_hit = false;
+        if (CreateM12CorePipelineState(wmt_device.handle,
+                                       M12CORE_PIPELINE_KIND_COMPUTE,
+                                       compute_pipeline_cache_key,
+                                       &info, sizeof(info),
+                                       m_compute_pso, err,
+                                       core_create_cache_hit)) {
+          compute_core_creation_used = true;
+          Logger::info(str::format("PSO_PRESSURE metal_compute_create_native key=0x",
+                                   std::hex, compute_pipeline_cache_key,
+                                   " cs=0x", cs_hash, std::dec,
+                                   " cache_hit=", core_create_cache_hit ? 1 : 0));
+          break;
+        }
         m_compute_pso = wmt_device.newComputePipelineState(info, err);
         if (m_compute_pso.handle)
           break;
@@ -2247,7 +2318,7 @@ bool MTLD3D12PipelineState::Compile() {
                 attempt + 1, err_desc.c_str());
         Sleep(50 * (attempt + 1));
       }
-      if (m_compute_pso.handle) {
+      if (m_compute_pso.handle && !compute_core_creation_used) {
         if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_COMPUTE,
                                        compute_pipeline_cache_key,
                                        m_compute_pso.handle)) {
@@ -2617,14 +2688,21 @@ bool MTLD3D12PipelineState::Compile() {
   const bool reflected_unspecified_topology =
       reflected_descriptor_enabled &&
       EnvFlagEnabled("DXMT_D3D12_REFLECTED_DESCRIPTOR_UNSPECIFIED_TOPOLOGY");
-  size_t render_pipeline_cache_key = ComputeRenderMetalPipelineCacheHash(
-      pso_manifest_hash, m_topology, m_blend_desc, m_rasterizer_desc,
-      m_depth_stencil_desc, info.vertex_descriptor, reflected_descriptor_enabled,
+  auto render_key_fields = BuildRenderMetalPipelineKeyFields(
+      m_topology, m_blend_desc, m_rasterizer_desc, m_depth_stencil_desc,
+      info.vertex_descriptor, reflected_descriptor_enabled,
       reflected_unspecified_topology);
-  if (!FinalizeM12CorePipelineCacheKey(render_pipeline_cache_key, (uint64_t)wmt_device.handle,
-                                       M12CORE_PIPELINE_KIND_RENDER, 0,
-                                       render_pipeline_cache_key))
+  size_t render_pipeline_cache_key = pso_manifest_hash;
+  if (!FinalizeM12CorePipelineCacheKeyFromFields(pso_manifest_hash, (uint64_t)wmt_device.handle,
+                                                 M12CORE_PIPELINE_KIND_RENDER, 0,
+                                                 render_key_fields,
+                                                 render_pipeline_cache_key)) {
+    render_pipeline_cache_key = ComputeRenderMetalPipelineCacheHash(
+        pso_manifest_hash, m_topology, m_blend_desc, m_rasterizer_desc,
+        m_depth_stencil_desc, info.vertex_descriptor, reflected_descriptor_enabled,
+        reflected_unspecified_topology);
     PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
+  }
   bool render_core_cache_available = false;
   bool render_cache_hit = false;
   render_core_cache_available = LookupM12CorePipelineCache(
@@ -2659,6 +2737,7 @@ bool MTLD3D12PipelineState::Compile() {
   }
 
   std::string render_err_desc = "unknown";
+  bool render_core_creation_used = false;
   if (!m_render_pso.handle) {
     for (uint32_t attempt = 0; attempt < 4; attempt++) {
       err = nullptr;
@@ -2668,6 +2747,21 @@ bool MTLD3D12PipelineState::Compile() {
                                " attempt=", attempt + 1,
                                " pso=0x", std::hex, pso_manifest_hash,
                                " vs=0x", vs_hash, " ps=0x", ps_hash, std::dec));
+      bool core_create_cache_hit = false;
+      if (CreateM12CorePipelineState(wmt_device.handle,
+                                     M12CORE_PIPELINE_KIND_RENDER,
+                                     render_pipeline_cache_key,
+                                     &info, sizeof(info),
+                                     m_render_pso, err,
+                                     core_create_cache_hit)) {
+        render_core_creation_used = true;
+        Logger::info(str::format("PSO_PRESSURE metal_render_create_native key=0x",
+                                 std::hex, render_pipeline_cache_key,
+                                 " pso=0x", pso_manifest_hash,
+                                 " vs=0x", vs_hash, " ps=0x", ps_hash, std::dec,
+                                 " cache_hit=", core_create_cache_hit ? 1 : 0));
+        break;
+      }
       m_render_pso = wmt_device.newRenderPipelineState(info, err);
       if (m_render_pso.handle)
         break;
@@ -2682,7 +2776,7 @@ bool MTLD3D12PipelineState::Compile() {
               attempt + 1, render_err_desc.c_str());
       Sleep(50 * (attempt + 1));
     }
-    if (m_render_pso.handle) {
+    if (m_render_pso.handle && !render_core_creation_used) {
       if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_RENDER,
                                      render_pipeline_cache_key,
                                      m_render_pso.handle)) {

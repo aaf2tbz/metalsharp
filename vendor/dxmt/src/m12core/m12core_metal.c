@@ -1,9 +1,11 @@
 #include "m12core.h"
+#include "../winemetal/winemetal.h"
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include <dispatch/dispatch.h>
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -131,10 +133,10 @@ int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
   if (!query || query->abi_version != M12CORE_ABI_VERSION || !pipeline_handle)
     return 1;
 
-  /* Phase 4 pipeline-cache seam.  libm12core now owns retained in-process Metal
-   * pipeline cache storage, while D3D12 still owns key normalization and actual
-   * `new*PipelineState` creation.  Later Phase 4 slices can move creation into
-   * this native cache without changing the lookup/store API.
+  /* Phase 4 pipeline-cache seam.  libm12core owns retained in-process Metal
+   * pipeline cache storage.  The newer create_pipeline_state ABI below can
+   * populate this cache itself; this older store call remains as the PE-side
+   * direct-creation fallback seam.
    */
   NSString *key = m12core_pipeline_cache_key(query);
   id pipeline = (id)(uintptr_t)pipeline_handle;
@@ -143,6 +145,279 @@ int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
     g_pipeline_cache = [[NSMutableDictionary alloc] init];
   [g_pipeline_cache setObject:pipeline forKey:key];
   pthread_mutex_unlock(&g_pipeline_cache_mutex);
+  return 0;
+}
+
+static MTLPixelFormat m12core_to_metal_pixel_format(enum WMTPixelFormat format) {
+  return (MTLPixelFormat)ORIGINAL_FORMAT(format);
+}
+
+static NSArray *m12core_array_from_handles(const obj_handle_t *handles, uint32_t count) {
+  if (!handles || !count)
+    return nil;
+  NSMutableArray *array = [NSMutableArray arrayWithCapacity:count];
+  for (uint32_t i = 0; i < count; i++) {
+    id object = (id)(uintptr_t)handles[i];
+    if (object)
+      [array addObject:object];
+  }
+  return array.count ? array : nil;
+}
+
+#ifndef DXMT_NO_PRIVATE_API
+typedef NS_ENUM(NSUInteger, MTLLogicOperation) {
+  MTLLogicOperationClear,
+  MTLLogicOperationSet,
+  MTLLogicOperationCopy,
+  MTLLogicOperationCopyInverted,
+  MTLLogicOperationNoop,
+  MTLLogicOperationInvert,
+  MTLLogicOperationAnd,
+  MTLLogicOperationNand,
+  MTLLogicOperationOr,
+  MTLLogicOperationNor,
+  MTLLogicOperationXor,
+  MTLLogicOperationEquivalence,
+  MTLLogicOperationAndReverse,
+  MTLLogicOperationAndInverted,
+  MTLLogicOperationOrReverse,
+  MTLLogicOperationOrInverted,
+};
+
+@interface MTLRenderPipelineDescriptor ()
+- (void)setLogicOperationEnabled:(BOOL)enable;
+- (void)setLogicOperation:(MTLLogicOperation)op;
+@end
+#endif
+
+static id<MTLComputePipelineState> m12core_create_compute_pipeline(
+    id<MTLDevice> device,
+    const struct WMTComputePipelineInfo *info,
+    NSError **error_out) {
+  MTLComputePipelineDescriptor *descriptor = [[MTLComputePipelineDescriptor alloc] init];
+  descriptor.computeFunction = (id<MTLFunction>)(uintptr_t)info->compute_function;
+  descriptor.threadGroupSizeIsMultipleOfThreadExecutionWidth = info->tgsize_is_multiple_of_sgwidth;
+  for (unsigned i = 0; i < 31; i++) {
+    if (info->immutable_buffers & (1u << i))
+      descriptor.buffers[i].mutability = MTLMutabilityImmutable;
+  }
+  if (info->num_binary_archives_for_lookup && info->binary_archives_for_lookup.ptr)
+    descriptor.binaryArchives = m12core_array_from_handles(
+        (const obj_handle_t *)info->binary_archives_for_lookup.ptr,
+        info->num_binary_archives_for_lookup);
+  MTLPipelineOption options =
+      info->fail_on_binary_archive_miss ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
+  id<MTLComputePipelineState> pipeline = nil;
+  NSError *error = nil;
+  @try {
+    pipeline = [device newComputePipelineStateWithDescriptor:descriptor
+                                                     options:options
+                                                  reflection:nil
+                                                       error:&error];
+  } @catch (NSException *exception) {
+    pipeline = nil;
+  }
+  if (pipeline && !error && info->binary_archive_for_serialization) {
+    [(id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization addComputePipelineFunctionsWithDescriptor:descriptor
+                                                                                                                 error:&error];
+  }
+  if (error_out)
+    *error_out = error;
+  [descriptor release];
+  return pipeline;
+}
+
+static id<MTLRenderPipelineState> m12core_create_render_pipeline(
+    id<MTLDevice> device,
+    const struct WMTRenderPipelineInfo *info,
+    NSError **error_out) {
+  MTLRenderPipelineDescriptor *descriptor = [[MTLRenderPipelineDescriptor alloc] init];
+
+  for (unsigned i = 0; i < 8; i++) {
+    descriptor.colorAttachments[i].pixelFormat = m12core_to_metal_pixel_format(info->colors[i].pixel_format);
+    descriptor.colorAttachments[i].blendingEnabled = info->colors[i].blending_enabled;
+    descriptor.colorAttachments[i].writeMask = (MTLColorWriteMask)info->colors[i].write_mask;
+    descriptor.colorAttachments[i].alphaBlendOperation = (MTLBlendOperation)info->colors[i].alpha_blend_operation;
+    descriptor.colorAttachments[i].rgbBlendOperation = (MTLBlendOperation)info->colors[i].rgb_blend_operation;
+    descriptor.colorAttachments[i].sourceRGBBlendFactor = (MTLBlendFactor)info->colors[i].src_rgb_blend_factor;
+    descriptor.colorAttachments[i].sourceAlphaBlendFactor = (MTLBlendFactor)info->colors[i].src_alpha_blend_factor;
+    descriptor.colorAttachments[i].destinationRGBBlendFactor = (MTLBlendFactor)info->colors[i].dst_rgb_blend_factor;
+    descriptor.colorAttachments[i].destinationAlphaBlendFactor = (MTLBlendFactor)info->colors[i].dst_alpha_blend_factor;
+  }
+
+  for (unsigned i = 0; i < 31; i++) {
+    if (info->immutable_fragment_buffers & (1u << i))
+      descriptor.fragmentBuffers[i].mutability = MTLMutabilityImmutable;
+    if (info->immutable_vertex_buffers & (1u << i))
+      descriptor.vertexBuffers[i].mutability = MTLMutabilityImmutable;
+  }
+
+#ifndef DXMT_NO_PRIVATE_API
+  [descriptor setLogicOperationEnabled:info->logic_operation_enabled];
+  [descriptor setLogicOperation:(MTLLogicOperation)info->logic_operation];
+#endif
+  descriptor.depthAttachmentPixelFormat = m12core_to_metal_pixel_format(info->depth_pixel_format);
+  descriptor.stencilAttachmentPixelFormat = m12core_to_metal_pixel_format(info->stencil_pixel_format);
+  descriptor.alphaToCoverageEnabled = info->alpha_to_coverage_enabled;
+  descriptor.rasterizationEnabled = info->rasterization_enabled;
+  descriptor.rasterSampleCount = info->raster_sample_count;
+  descriptor.inputPrimitiveTopology = (MTLPrimitiveTopologyClass)info->input_primitive_topology;
+  descriptor.tessellationPartitionMode = (MTLTessellationPartitionMode)info->tessellation_partition_mode;
+  descriptor.tessellationFactorStepFunction = (MTLTessellationFactorStepFunction)info->tessellation_factor_step;
+  descriptor.tessellationOutputWindingOrder = (MTLWinding)info->tessellation_output_winding_order;
+  descriptor.maxTessellationFactor = info->max_tessellation_factor;
+  descriptor.vertexFunction = (id<MTLFunction>)(uintptr_t)info->vertex_function;
+  descriptor.fragmentFunction = (id<MTLFunction>)(uintptr_t)info->fragment_function;
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 130000
+  if (@available(macOS 13, *)) {
+    if (info->num_vertex_linked_functions && info->vertex_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.functions = m12core_array_from_handles(
+          (const obj_handle_t *)info->vertex_linked_functions.ptr,
+          info->num_vertex_linked_functions);
+      descriptor.vertexLinkedFunctions = linked;
+      [linked release];
+    }
+    if (info->num_fragment_linked_functions && info->fragment_linked_functions.ptr) {
+      MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
+      linked.functions = m12core_array_from_handles(
+          (const obj_handle_t *)info->fragment_linked_functions.ptr,
+          info->num_fragment_linked_functions);
+      descriptor.fragmentLinkedFunctions = linked;
+      [linked release];
+    }
+  }
+#endif
+
+  if (info->vertex_descriptor &&
+      (info->vertex_descriptor->attribute_count > 0 || info->vertex_descriptor->layout_count > 0)) {
+    MTLVertexDescriptor *vd = [[MTLVertexDescriptor alloc] init];
+    for (uint32_t i = 0; i < info->vertex_descriptor->layout_count && i < WMT_MAX_VERTEX_BUFFER_LAYOUTS; i++) {
+      struct WMTVertexBufferLayoutDesc layout = info->vertex_descriptor->layouts[i];
+      if (layout.stride > 0) {
+        vd.layouts[i].stride = layout.stride;
+        vd.layouts[i].stepFunction = (MTLVertexStepFunction)layout.step_function;
+        vd.layouts[i].stepRate = layout.step_rate;
+      }
+    }
+    for (uint32_t i = 0; i < info->vertex_descriptor->attribute_count && i < WMT_MAX_VERTEX_ATTRIBUTES; i++) {
+      struct WMTVertexAttributeDesc attr = info->vertex_descriptor->attributes[i];
+      if (attr.format != WMTAttributeFormatInvalid) {
+        vd.attributes[i].format = (MTLVertexFormat)attr.format;
+        vd.attributes[i].offset = attr.offset;
+        vd.attributes[i].bufferIndex = attr.buffer_index;
+      }
+    }
+    descriptor.vertexDescriptor = vd;
+    [vd release];
+  }
+
+  if (info->num_binary_archives_for_lookup && info->binary_archives_for_lookup.ptr)
+    descriptor.binaryArchives = m12core_array_from_handles(
+        (const obj_handle_t *)info->binary_archives_for_lookup.ptr,
+        info->num_binary_archives_for_lookup);
+
+  MTLPipelineOption options =
+      info->fail_on_binary_archive_miss ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
+  NSError *error = nil;
+  id<MTLRenderPipelineState> pipeline = nil;
+  @try {
+    pipeline = [device newRenderPipelineStateWithDescriptor:descriptor
+                                                    options:options
+                                                 reflection:nil
+                                                      error:&error];
+  } @catch (NSException *exception) {
+    pipeline = nil;
+  }
+  if (pipeline && !error && info->binary_archive_for_serialization) {
+    [(id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization addRenderPipelineFunctionsWithDescriptor:descriptor
+                                                                                                                error:&error];
+  }
+  if (error_out)
+    *error_out = error;
+  [descriptor release];
+  return pipeline;
+}
+
+int m12core_create_pipeline_state(const M12CorePipelineCreateDesc *desc,
+                                  M12CorePipelineCreateResult *out_result) {
+  if (!out_result)
+    return 1;
+
+  memset(out_result, 0, sizeof(*out_result));
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  if (!desc || desc->abi_version != M12CORE_ABI_VERSION || !desc->device_handle ||
+      !desc->pipeline_info || !desc->pipeline_info_size) {
+    out_result->status = M12CORE_PIPELINE_CREATE_STATUS_INVALID;
+    return 0;
+  }
+  out_result->kind = desc->kind;
+
+  /* Phase 4 native PSO creation seam.  D3D12 still builds the compatibility
+   * WMT*PipelineInfo POD block, but libm12core now owns cache lookup, actual
+   * Metal new*PipelineState creation, and retained cache insertion.  The PE
+   * caller keeps a direct WMT fallback if this ABI is absent or returns no PSO.
+   */
+  M12CorePipelineCacheQuery query;
+  memset(&query, 0, sizeof(query));
+  query.abi_version = M12CORE_ABI_VERSION;
+  query.kind = desc->kind;
+  query.key = desc->cache_key;
+  NSString *key = m12core_pipeline_cache_key(&query);
+  pthread_mutex_lock(&g_pipeline_cache_mutex);
+  id cached = g_pipeline_cache ? [g_pipeline_cache objectForKey:key] : nil;
+  if (cached) {
+    [cached retain];
+    pthread_mutex_unlock(&g_pipeline_cache_mutex);
+    out_result->status = M12CORE_PIPELINE_CREATE_STATUS_OK;
+    out_result->cache_hit = 1;
+    out_result->pipeline_handle = (uint64_t)(uintptr_t)cached;
+    return 0;
+  }
+  pthread_mutex_unlock(&g_pipeline_cache_mutex);
+
+  id<MTLDevice> device = (id<MTLDevice>)(uintptr_t)desc->device_handle;
+  NSError *error = nil;
+  id pipeline = nil;
+  if (desc->kind == M12CORE_PIPELINE_KIND_COMPUTE) {
+    if (desc->pipeline_info_size < sizeof(struct WMTComputePipelineInfo)) {
+      out_result->status = M12CORE_PIPELINE_CREATE_STATUS_INVALID;
+      return 0;
+    }
+    pipeline = m12core_create_compute_pipeline(device,
+        (const struct WMTComputePipelineInfo *)desc->pipeline_info,
+        &error);
+  } else if (desc->kind == M12CORE_PIPELINE_KIND_RENDER) {
+    if (desc->pipeline_info_size < sizeof(struct WMTRenderPipelineInfo)) {
+      out_result->status = M12CORE_PIPELINE_CREATE_STATUS_INVALID;
+      return 0;
+    }
+    pipeline = m12core_create_render_pipeline(device,
+        (const struct WMTRenderPipelineInfo *)desc->pipeline_info,
+        &error);
+  } else {
+    out_result->status = M12CORE_PIPELINE_CREATE_STATUS_UNSUPPORTED_KIND;
+    return 0;
+  }
+
+  if (!pipeline) {
+    out_result->status = M12CORE_PIPELINE_CREATE_STATUS_CREATE_FAILED;
+    if (error) {
+      [error retain];
+      out_result->error_handle = (uint64_t)(uintptr_t)error;
+    }
+    return 0;
+  }
+
+  pthread_mutex_lock(&g_pipeline_cache_mutex);
+  if (!g_pipeline_cache)
+    g_pipeline_cache = [[NSMutableDictionary alloc] init];
+  [g_pipeline_cache setObject:pipeline forKey:key];
+  pthread_mutex_unlock(&g_pipeline_cache_mutex);
+
+  out_result->status = M12CORE_PIPELINE_CREATE_STATUS_OK;
+  out_result->pipeline_handle = (uint64_t)(uintptr_t)pipeline;
   return 0;
 }
 

@@ -54,6 +54,8 @@ winemetal_unix_call_name(unsigned int code) {
   case 143: return "WMTM12CoreReflectSM50Shader";
   case 144: return "WMTM12CoreLookupPipelineCache";
   case 145: return "WMTM12CoreStorePipelineCache";
+  case 146: return "WMTM12CoreMakePipelineCacheKeyFromFields";
+  case 147: return "WMTM12CoreCreatePipelineState";
   default: return "unknown";
   }
 }
@@ -410,6 +412,55 @@ WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input,
     return false;
 
   *out_key = params.ret_key;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreMakePipelineCacheKeyFromFields(const M12CorePipelineKeyFields *input,
+                                         M12CorePipelineCacheKey *out_key) {
+  struct unixcall_m12core_make_pipeline_cache_key_from_fields params;
+  memset(&params, 0, sizeof(params));
+  if (!input || !out_key)
+    return false;
+
+  /* Keep the unixcall payload fixed-width: M12CorePipelineKeyFields contains
+   * a native pointer, so PE callers pass its scalar fields and the field stream
+   * separately for the unix side to reconstruct.
+   */
+  params.abi_version = input->abi_version;
+  params.kind = input->kind;
+  params.base_hash = input->base_hash;
+  params.device_id = input->device_id;
+  params.flags = input->flags;
+  params.field_count = input->field_count;
+  WMT_MEMPTR_SET(params.fields, input->fields);
+  if (!winemetal_unix_call_ok(146, &params) || !params.ret_success)
+    return false;
+
+  *out_key = params.ret_key;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreCreatePipelineState(obj_handle_t device, uint32_t kind,
+                              uint64_t cache_key,
+                              const void *pipeline_info,
+                              uint64_t pipeline_info_size,
+                              M12CorePipelineCreateResult *out_result) {
+  struct unixcall_m12core_create_pipeline_state params;
+  memset(&params, 0, sizeof(params));
+  if (!device || !pipeline_info || !pipeline_info_size || !out_result)
+    return false;
+
+  params.device = device;
+  params.kind = kind;
+  params.cache_key = cache_key;
+  WMT_MEMPTR_SET(params.pipeline_info, pipeline_info);
+  params.pipeline_info_size = pipeline_info_size;
+  if (!winemetal_unix_call_ok(147, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
   return true;
 }
 

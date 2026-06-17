@@ -32,6 +32,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_DXIL_TO_MSL = 1u << 4,
   M12CORE_FEATURE_SM50_REFLECTION = 1u << 5,
   M12CORE_FEATURE_PIPELINE_CACHE = 1u << 6,
+  M12CORE_FEATURE_PIPELINE_CREATION = 1u << 7,
 };
 
 typedef struct M12CoreVersion {
@@ -224,6 +225,17 @@ typedef struct M12CorePipelineCacheKeyInput {
   uint64_t flags;
 } M12CorePipelineCacheKeyInput;
 
+typedef struct M12CorePipelineKeyFields {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint64_t base_hash;
+  uint64_t device_id;
+  uint64_t flags;
+  const uint64_t *fields;
+  uint32_t field_count;
+  uint32_t reserved;
+} M12CorePipelineKeyFields;
+
 typedef struct M12CorePipelineCacheKey {
   uint32_t abi_version;
   uint32_t kind;
@@ -243,6 +255,31 @@ typedef struct M12CorePipelineCacheResult {
   uint32_t reserved;
   uint64_t pipeline_handle;
 } M12CorePipelineCacheResult;
+
+typedef enum M12CorePipelineCreateStatus {
+  M12CORE_PIPELINE_CREATE_STATUS_OK = 0,
+  M12CORE_PIPELINE_CREATE_STATUS_INVALID = 1,
+  M12CORE_PIPELINE_CREATE_STATUS_UNSUPPORTED_KIND = 2,
+  M12CORE_PIPELINE_CREATE_STATUS_CREATE_FAILED = 3,
+} M12CorePipelineCreateStatus;
+
+typedef struct M12CorePipelineCreateDesc {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint64_t device_handle;
+  uint64_t cache_key;
+  const void *pipeline_info;
+  uint64_t pipeline_info_size;
+} M12CorePipelineCreateDesc;
+
+typedef struct M12CorePipelineCreateResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t kind;
+  uint32_t cache_hit;
+  uint64_t pipeline_handle;
+  uint64_t error_handle;
+} M12CorePipelineCreateResult;
 
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
@@ -336,10 +373,14 @@ int m12core_reflect_sm50_shader(const void *bytecode, uint64_t bytecode_size,
                                 M12CoreSM50ReflectionResult *out_result);
 int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
                                     M12CorePipelineCacheKey *out_key);
+int m12core_make_pipeline_cache_key_from_fields(const M12CorePipelineKeyFields *input,
+                                                M12CorePipelineCacheKey *out_key);
 int m12core_lookup_pipeline_cache(const M12CorePipelineCacheQuery *query,
                                   M12CorePipelineCacheResult *out_result);
 int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
                                  uint64_t pipeline_handle);
+int m12core_create_pipeline_state(const M12CorePipelineCreateDesc *desc,
+                                  M12CorePipelineCreateResult *out_result);
 
 #ifdef __cplusplus
 }

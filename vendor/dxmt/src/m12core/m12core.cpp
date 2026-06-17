@@ -29,7 +29,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000007u; // Phase-4 native pipeline cache storage foundation.
+constexpr uint32_t kBuildIdHigh = 0x00000008u; // Phase-4 native PSO key/creation ownership.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -142,14 +142,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_SHADER_FUNCTIONS |
                                M12CORE_FEATURE_DXIL_TO_MSL |
                                M12CORE_FEATURE_SM50_REFLECTION |
-                               M12CORE_FEATURE_PIPELINE_CACHE;
+                               M12CORE_FEATURE_PIPELINE_CACHE |
+                               M12CORE_FEATURE_PIPELINE_CREATION;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase4 pipeline-cache abi=1";
+  return "libm12core phase4 pipeline-key-create abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -548,12 +549,35 @@ extern "C" int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInpu
   if (!input || !out_key || input->abi_version != M12CORE_ABI_VERSION)
     return 1;
 
-  /* Phase 4 foundation: libm12core owns the device-scoped final pipeline cache
-   * key namespace.  Full render/compute descriptor normalization and Metal PSO
-   * object ownership remain in D3D12 for now, but future Phase 4 slices can
-   * move fields into this ABI without changing the cache namespace boundary.
+  /* Phase 4 compatibility entry point retained for already-migrated callers.
+   * New render/compute PSO sites should prefer the field-stream API below so
+   * libm12core, not PE-side D3D12, owns ordered key accumulation.
+   */
+  M12CorePipelineKeyFields fields = {};
+  fields.abi_version = input->abi_version;
+  fields.kind = input->kind;
+  fields.base_hash = input->base_hash;
+  fields.device_id = input->device_id;
+  fields.flags = input->flags;
+  return m12core_make_pipeline_cache_key_from_fields(&fields, out_key);
+}
+
+extern "C" int m12core_make_pipeline_cache_key_from_fields(
+    const M12CorePipelineKeyFields *input,
+    M12CorePipelineCacheKey *out_key) {
+  if (!input || !out_key || input->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  if (input->field_count && !input->fields)
+    return 1;
+
+  /* Phase 4 normalized PSO key seam.  PE-side D3D12 still knows how to map its
+   * descriptors into stable scalar fields, but libm12core now owns the ordered
+   * accumulation recipe and final device-scoped namespace.  This is the safe
+   * midpoint before root-signature/binding ownership moves in Phase 5.
    */
   uint64_t key = input->base_hash;
+  for (uint32_t i = 0; i < input->field_count; i++)
+    pipelineHashCombine(key, input->fields[i]);
   pipelineHashCombine(key, input->device_id);
   pipelineHashCombine(key, input->kind);
   pipelineHashCombine(key, input->flags);

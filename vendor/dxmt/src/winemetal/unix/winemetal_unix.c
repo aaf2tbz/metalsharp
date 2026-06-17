@@ -96,6 +96,10 @@ typedef int (*PFN_m12core_lookup_pipeline_cache)(const M12CorePipelineCacheQuery
                                                  M12CorePipelineCacheResult *out_result);
 typedef int (*PFN_m12core_store_pipeline_cache)(const M12CorePipelineCacheQuery *query,
                                                 uint64_t pipeline_handle);
+typedef int (*PFN_m12core_make_pipeline_cache_key_from_fields)(const M12CorePipelineKeyFields *input,
+                                                               M12CorePipelineCacheKey *out_key);
+typedef int (*PFN_m12core_create_pipeline_state)(const M12CorePipelineCreateDesc *desc,
+                                                 M12CorePipelineCreateResult *out_result);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -113,12 +117,15 @@ static PFN_m12core_lower_dxil_to_msl p_m12core_lower_dxil_to_msl;
 static PFN_m12core_reflect_sm50_shader p_m12core_reflect_sm50_shader;
 static PFN_m12core_lookup_pipeline_cache p_m12core_lookup_pipeline_cache;
 static PFN_m12core_store_pipeline_cache p_m12core_store_pipeline_cache;
+static PFN_m12core_make_pipeline_cache_key_from_fields p_m12core_make_pipeline_cache_key_from_fields;
+static PFN_m12core_create_pipeline_state p_m12core_create_pipeline_state;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
 static _Atomic uint64_t m12core_dxil_to_msl_calls;
 static _Atomic uint64_t m12core_sm50_reflection_calls;
 static _Atomic uint64_t m12core_pipeline_cache_calls;
+static _Atomic uint64_t m12core_pipeline_create_calls;
 
 static bool
 m12core_env_enabled(const char *name) {
@@ -200,6 +207,10 @@ m12core_try_load(void) {
       (PFN_m12core_lookup_pipeline_cache)dlsym(m12core_handle, "m12core_lookup_pipeline_cache");
   p_m12core_store_pipeline_cache =
       (PFN_m12core_store_pipeline_cache)dlsym(m12core_handle, "m12core_store_pipeline_cache");
+  p_m12core_make_pipeline_cache_key_from_fields =
+      (PFN_m12core_make_pipeline_cache_key_from_fields)dlsym(m12core_handle, "m12core_make_pipeline_cache_key_from_fields");
+  p_m12core_create_pipeline_state =
+      (PFN_m12core_create_pipeline_state)dlsym(m12core_handle, "m12core_create_pipeline_state");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -491,12 +502,66 @@ _WMTM12CoreMakePipelineCacheKey(void *obj) {
   if (!params || !p_m12core_make_pipeline_cache_key)
     return STATUS_SUCCESS;
 
-  /* Phase 4 foundation bridge.  This finalizes device-scoped pipeline cache
-   * keys in libm12core while D3D12 still owns descriptor normalization and Metal
-   * PSO object lifetime.
-   */
+  /* Phase 4 compatibility bridge retained for earlier cache-key callers. */
   params->ret_success =
       p_m12core_make_pipeline_cache_key(&params->input, &params->ret_key) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreMakePipelineCacheKeyFromFields(void *obj) {
+  struct unixcall_m12core_make_pipeline_cache_key_from_fields *params = obj;
+  if (!params || !p_m12core_make_pipeline_cache_key_from_fields)
+    return STATUS_SUCCESS;
+
+  /* Phase 4 normalized-key bridge.  The PE side passes a stable scalar field
+   * stream; libm12core performs the ordered accumulation and final namespace
+   * combine so future PSO descriptors can migrate without changing key policy.
+   */
+  M12CorePipelineKeyFields input = {0};
+  input.abi_version = params->abi_version;
+  input.kind = params->kind;
+  input.base_hash = params->base_hash;
+  input.device_id = params->device_id;
+  input.flags = params->flags;
+  input.fields = params->fields.ptr;
+  input.field_count = params->field_count;
+  params->ret_success =
+      p_m12core_make_pipeline_cache_key_from_fields(&input, &params->ret_key) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreCreatePipelineState(void *obj) {
+  struct unixcall_m12core_create_pipeline_state *params = obj;
+  if (!params || !p_m12core_create_pipeline_state)
+    return STATUS_SUCCESS;
+
+  /* Phase 4 native PSO creation bridge.  This moves actual Metal pipeline
+   * creation/cache insertion behind libm12core while D3D12 keeps a direct WMT
+   * fallback when the feature is disabled or returns no pipeline.
+   */
+  M12CorePipelineCreateDesc desc = {0};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.kind = params->kind;
+  desc.device_handle = params->device;
+  desc.cache_key = params->cache_key;
+  desc.pipeline_info = params->pipeline_info.ptr;
+  desc.pipeline_info_size = params->pipeline_info_size;
+  params->ret_success = p_m12core_create_pipeline_state(&desc, &params->ret_result) == 0;
+  uint64_t calls = atomic_fetch_add(&m12core_pipeline_create_calls, 1) + 1;
+  if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
+    FILE *log = winemetal_debug_log();
+    if (log) {
+      fprintf(log,
+              "[m12core] pipeline_create first_call kind=%u key=0x%llx status=%u cache_hit=%u pso=%p success=%u\n",
+              params->kind, (unsigned long long)params->cache_key,
+              params->ret_result.status, params->ret_result.cache_hit,
+              (void *)(uintptr_t)params->ret_result.pipeline_handle,
+              params->ret_success);
+      fclose(log);
+    }
+  }
   return STATUS_SUCCESS;
 }
 
@@ -4172,6 +4237,8 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreReflectSM50Shader,
     &_WMTM12CoreLookupPipelineCache,
     &_WMTM12CoreStorePipelineCache,
+    &_WMTM12CoreMakePipelineCacheKeyFromFields,
+    &_WMTM12CoreCreatePipelineState,
 };
 
 #ifndef DXMT_NATIVE
@@ -4322,5 +4389,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreReflectSM50Shader,
     &_WMTM12CoreLookupPipelineCache,
     &_WMTM12CoreStorePipelineCache,
+    &_WMTM12CoreMakePipelineCacheKeyFromFields,
+    &_WMTM12CoreCreatePipelineState,
 };
 #endif
