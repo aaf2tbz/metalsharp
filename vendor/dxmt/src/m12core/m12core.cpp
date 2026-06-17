@@ -30,7 +30,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x0000000bu; // Phase-5 root argument layout foundation.
+constexpr uint32_t kBuildIdHigh = 0x0000000cu; // Phase-6 compact prewarm pack foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -147,14 +147,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_PIPELINE_CREATION |
                                M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
                                M12CORE_FEATURE_ROOT_BINDING_PLAN |
-                               M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT;
+                               M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT |
+                               M12CORE_FEATURE_PREWARM_PACKS;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase5 root-argument-layout abi=1";
+  return "libm12core phase6 prewarm-pack-summary abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -910,4 +911,107 @@ extern "C" int m12core_lookup_root_binding(
 
   out_result->status = M12CORE_ROOT_SIGNATURE_STATUS_INVALID;
   return 1;
+}
+
+extern "C" int m12core_summarize_prewarm_pack(
+    const M12CorePrewarmPackDesc *desc,
+    M12CorePrewarmPackSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+  if ((desc->pipeline_count && !desc->pipelines) ||
+      (desc->stage_count && !desc->stages))
+    return 1;
+
+  /* Phase 6 oracle/prewarm ingestion seam.  libm12core consumes only compact,
+   * profile-gated metadata: pipeline/root/shader keys, stage linkage, and
+   * expected resource-layout summaries.  Raw D3DMetal cache payloads,
+   * extracted metallibs, and DXBC blobs deliberately stay outside this ABI.
+   * Later slices can use this validated POD model to schedule actual profile
+   * prewarm work without proving binary compatibility in the same change.
+   */
+  uint64_t key = desc->source_pack_key ? desc->source_pack_key
+                                       : 0x4d3132505245574dull;
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->appid);
+  pipelineHashCombine(key, desc->profile_key);
+  pipelineHashCombine(key, desc->pipeline_count);
+  pipelineHashCombine(key, desc->stage_count);
+
+  uint32_t render_pipelines = 0;
+  uint32_t compute_pipelines = 0;
+  uint32_t ordered_pipelines = 0;
+  uint32_t max_stage_links = 0;
+  uint32_t expected_resource_slots = 0;
+  uint32_t expected_sampler_slots = 0;
+  uint32_t expected_root_descriptor_slots = 0;
+  uint32_t expected_root_constant_dwords = 0;
+  std::vector<uint64_t> unique_roots;
+  std::vector<uint64_t> unique_shaders;
+
+  for (uint32_t i = 0; i < desc->pipeline_count; i++) {
+    const auto &pipeline = desc->pipelines[i];
+    pipelineHashCombine(key, pipeline.pipeline_key);
+    pipelineHashCombine(key, pipeline.root_signature_key);
+    pipelineHashCombine(key, pipeline.root_structural_hash);
+    pipelineHashCombine(key, pipeline.stage_mask);
+    pipelineHashCombine(key, pipeline.prewarm_order);
+    pipelineHashCombine(key, pipeline.stage_start);
+    pipelineHashCombine(key, pipeline.stage_count);
+    pipelineHashCombine(key, pipeline.argument_resource_slot_count);
+    pipelineHashCombine(key, pipeline.argument_sampler_slot_count);
+    pipelineHashCombine(key, pipeline.argument_root_descriptor_slot_count);
+    pipelineHashCombine(key, pipeline.argument_root_constant_dword_count);
+    pipelineHashCombine(key, pipeline.expected_layout_flags);
+
+    if (pipeline.stage_start > desc->stage_count ||
+        pipeline.stage_count > desc->stage_count - pipeline.stage_start) {
+      out_summary->abi_version = M12CORE_ABI_VERSION;
+      out_summary->status = M12CORE_PREWARM_PACK_STATUS_INVALID;
+      return 0;
+    }
+
+    if (pipeline.stage_mask & M12CORE_PREWARM_STAGE_MASK_COMPUTE)
+      compute_pipelines++;
+    else
+      render_pipelines++;
+    if (pipeline.prewarm_order != UINT32_MAX)
+      ordered_pipelines++;
+    max_stage_links = std::max(max_stage_links, pipeline.stage_count);
+    expected_resource_slots += pipeline.argument_resource_slot_count;
+    expected_sampler_slots += pipeline.argument_sampler_slot_count;
+    expected_root_descriptor_slots += pipeline.argument_root_descriptor_slot_count;
+    expected_root_constant_dwords += pipeline.argument_root_constant_dword_count;
+    if (pipeline.root_signature_key &&
+        std::find(unique_roots.begin(), unique_roots.end(), pipeline.root_signature_key) == unique_roots.end())
+      unique_roots.push_back(pipeline.root_signature_key);
+  }
+
+  for (uint32_t i = 0; i < desc->stage_count; i++) {
+    const auto &stage = desc->stages[i];
+    pipelineHashCombine(key, stage.stage);
+    pipelineHashCombine(key, stage.shader_key);
+    pipelineHashCombine(key, stage.shader_bytecode_hash);
+    pipelineHashCombine(key, stage.root_structural_hash);
+    if (stage.shader_key &&
+        std::find(unique_shaders.begin(), unique_shaders.end(), stage.shader_key) == unique_shaders.end())
+      unique_shaders.push_back(stage.shader_key);
+  }
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_PREWARM_PACK_STATUS_OK;
+  out_summary->pipeline_count = desc->pipeline_count;
+  out_summary->stage_link_count = desc->stage_count;
+  out_summary->render_pipeline_count = render_pipelines;
+  out_summary->compute_pipeline_count = compute_pipelines;
+  out_summary->unique_root_count = static_cast<uint32_t>(unique_roots.size());
+  out_summary->unique_shader_count = static_cast<uint32_t>(unique_shaders.size());
+  out_summary->ordered_pipeline_count = ordered_pipelines;
+  out_summary->max_stage_links_per_pipeline = max_stage_links;
+  out_summary->expected_resource_slots = expected_resource_slots;
+  out_summary->expected_sampler_slots = expected_sampler_slots;
+  out_summary->expected_root_descriptor_slots = expected_root_descriptor_slots;
+  out_summary->expected_root_constant_dwords = expected_root_constant_dwords;
+  out_summary->prewarm_pack_key = key;
+  return 0;
 }

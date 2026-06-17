@@ -36,6 +36,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_ROOT_SIGNATURE_KEYS = 1u << 8,
   M12CORE_FEATURE_ROOT_BINDING_PLAN = 1u << 9,
   M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT = 1u << 10,
+  M12CORE_FEATURE_PREWARM_PACKS = 1u << 11,
 };
 
 typedef struct M12CoreVersion {
@@ -416,6 +417,85 @@ typedef struct M12CoreRootBindingLookupResult {
   uint32_t reserved;
 } M12CoreRootBindingLookupResult;
 
+typedef enum M12CorePrewarmPackStatus {
+  M12CORE_PREWARM_PACK_STATUS_OK = 0,
+  M12CORE_PREWARM_PACK_STATUS_INVALID = 1,
+} M12CorePrewarmPackStatus;
+
+typedef enum M12CorePrewarmPackFlags {
+  M12CORE_PREWARM_PACK_OFFLINE_PROFILE_GATED = 1u << 0,
+  M12CORE_PREWARM_PACK_HAS_PREWARM_ORDER = 1u << 1,
+} M12CorePrewarmPackFlags;
+
+/* Compact prewarm packs use dense stage-mask bits so masks remain stable even
+ * if the public M12CoreShaderStage enum grows append-only values later.
+ */
+typedef enum M12CorePrewarmStageMask {
+  M12CORE_PREWARM_STAGE_MASK_VERTEX = 1u << 0,
+  M12CORE_PREWARM_STAGE_MASK_PIXEL = 1u << 1,
+  M12CORE_PREWARM_STAGE_MASK_GEOMETRY = 1u << 2,
+  M12CORE_PREWARM_STAGE_MASK_HULL = 1u << 3,
+  M12CORE_PREWARM_STAGE_MASK_DOMAIN = 1u << 4,
+  M12CORE_PREWARM_STAGE_MASK_COMPUTE = 1u << 5,
+  M12CORE_PREWARM_STAGE_MASK_UNKNOWN = 1u << 31,
+} M12CorePrewarmStageMask;
+
+typedef struct M12CorePrewarmStageRecord {
+  uint32_t stage;
+  uint32_t reserved;
+  uint64_t shader_key;
+  uint64_t shader_bytecode_hash;
+  uint64_t root_structural_hash;
+} M12CorePrewarmStageRecord;
+
+typedef struct M12CorePrewarmPipelineRecord {
+  uint64_t pipeline_key;
+  uint64_t root_signature_key;
+  uint64_t root_structural_hash;
+  uint32_t stage_mask;
+  uint32_t prewarm_order;
+  uint32_t stage_start;
+  uint32_t stage_count;
+  uint32_t argument_resource_slot_count;
+  uint32_t argument_sampler_slot_count;
+  uint32_t argument_root_descriptor_slot_count;
+  uint32_t argument_root_constant_dword_count;
+  uint32_t expected_layout_flags;
+  uint32_t reserved;
+} M12CorePrewarmPipelineRecord;
+
+typedef struct M12CorePrewarmPackDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint64_t appid;
+  uint64_t profile_key;
+  uint64_t source_pack_key;
+  const M12CorePrewarmPipelineRecord *pipelines;
+  uint32_t pipeline_count;
+  uint32_t reserved0;
+  const M12CorePrewarmStageRecord *stages;
+  uint32_t stage_count;
+  uint32_t reserved1;
+} M12CorePrewarmPackDesc;
+
+typedef struct M12CorePrewarmPackSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t pipeline_count;
+  uint32_t stage_link_count;
+  uint32_t render_pipeline_count;
+  uint32_t compute_pipeline_count;
+  uint32_t unique_root_count;
+  uint32_t unique_shader_count;
+  uint32_t ordered_pipeline_count;
+  uint32_t max_stage_links_per_pipeline;
+  uint32_t expected_resource_slots;
+  uint32_t expected_sampler_slots;
+  uint32_t expected_root_descriptor_slots;
+  uint32_t expected_root_constant_dwords;
+  uint64_t prewarm_pack_key;
+} M12CorePrewarmPackSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -522,6 +602,8 @@ int m12core_build_root_binding_plan(const M12CoreRootBindingPlanDesc *desc,
                                     M12CoreRootBindingPlanSummary *out_summary);
 int m12core_lookup_root_binding(const M12CoreRootBindingLookupDesc *desc,
                                 M12CoreRootBindingLookupResult *out_result);
+int m12core_summarize_prewarm_pack(const M12CorePrewarmPackDesc *desc,
+                                   M12CorePrewarmPackSummary *out_summary);
 
 #ifdef __cplusplus
 }
