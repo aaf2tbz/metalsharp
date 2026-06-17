@@ -252,17 +252,17 @@ def write_summary(result: dict[str, Any], path: Path) -> None:
     lines.append(f"- D3DMetal reference root: `{result['d3dmetal_reference_root']}`")
     lines.append(f"- M12 cache root: `{result['m12_cache_root']}`")
     lines.append("")
-    lines.append("| Game | Bytecode records | Stage metallibs | Pipeline records | Linked stages | Linked source bytecodes | M12 raw bytecode overlap | Unlinked stages |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
+    lines.append("| Game | Bytecode records | Stage metallibs | Pipeline records | Root signatures | Linked stages | Linked source bytecodes | M12 raw bytecode overlap | Unlinked stages |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|---:|")
     for g in result["games"]:
         s = g["summary"]
-        lines.append(f"| {g['game']} | {s['bytecode_records']} | {s['stage_metallibs']} | {s['pipeline_records']} | {s['linked_stage_records']} | {s['linked_bytecode_records']} | {s['m12_raw_bytecode_overlap']} | {s['unlinked_stage_records']} |")
+        lines.append(f"| {g['game']} | {s['bytecode_records']} | {s['stage_metallibs']} | {s['pipeline_records']} | {s['root_signature_records']} | {s['linked_stage_records']} | {s['linked_bytecode_records']} | {s['m12_raw_bytecode_overlap']} | {s['unlinked_stage_records']} |")
     lines.append("")
     for g in result["games"]:
         s = g["summary"]
         lines.append(f"## {g['game']}")
         lines.append("")
-        for k in ["bytecode_records", "stage_metallibs", "pipeline_records", "pipeline_records_with_bytecode_keys", "pipeline_bytecode_key_refs", "linked_stage_records", "linked_bytecode_records", "m12_raw_bytecode_overlap", "unlinked_stage_records"]:
+        for k in ["bytecode_records", "stage_metallibs", "pipeline_records", "root_signature_records", "pipeline_records_with_bytecode_keys", "pipeline_bytecode_key_refs", "linked_stage_records", "linked_bytecode_records", "m12_raw_bytecode_overlap", "unlinked_stage_records"]:
             lines.append(f"- {k}: `{s[k]}`")
         lines.append(f"- shader_kind_counts: `{s['shader_kind_counts']}`")
         lines.append(f"- top_function_names: `{s['top_function_names']}`")
@@ -287,6 +287,7 @@ def main() -> int:
         stages = scan_stage_records(cache / "stage_cache.bin")
         by_key = {r["record_key"]: r for r in bytecode if r["record_key"]}
         pipelines = scan_pipeline_records(cache / "pipeline_cache.bin", by_key)
+        root_signatures = scan_bytecode_records(cache / "rootsignature_cache.bin")
         m12 = m12_bytecode_index(args.m12_cache_root / appid)
         linked = []
         linked_bytecode_keys = set()
@@ -326,6 +327,7 @@ def main() -> int:
             "bytecode_records": len(bytecode),
             "stage_metallibs": len(stages),
             "pipeline_records": len(pipelines),
+            "root_signature_records": len(root_signatures),
             "pipeline_records_with_bytecode_keys": sum(1 for p in pipelines if p["source_keys"]),
             "pipeline_bytecode_key_refs": sum(len(p["source_keys"]) for p in pipelines),
             "linked_stage_records": len(linked),
@@ -344,6 +346,7 @@ def main() -> int:
             "stage_records": stages[:200],
             "pipeline_records_sample": pipelines[:200],
             "pipeline_records": pipelines,
+            "root_signature_records": root_signatures,
             "linked_records": linked,
         })
     result = {
