@@ -53,10 +53,52 @@ struct ID3D12Device12Compat : public ID3D12Device11Compat {
       D3D12_RESOURCE_ALLOCATION_INFO1 *resource_allocation_info1) = 0;
 };
 
+static const GUID IID_IMetalSharpM12TranslationLayerInfo = {
+    0x4d315232,
+    0x4d53,
+    0x4458,
+    {0x8c, 0x3a, 0x31, 0x6f, 0xc7, 0x42, 0x7a, 0x11}};
+
+static constexpr UINT MetalSharpM12TranslationLayerInfoAbiVersion = 1;
+static constexpr UINT MetalSharpM12TranslationLayerVendorMetalSharp = 0x4d533132u; /* MS12 */
+static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;       /* DX12 */
+
+enum MetalSharpM12TranslationLayerFeatureFlags : UINT64 {
+  MetalSharpM12TranslationLayerFeatureD3D12 = 1ull << 0,
+  MetalSharpM12TranslationLayerFeatureDXMT = 1ull << 1,
+  MetalSharpM12TranslationLayerFeatureLibM12Core = 1ull << 2,
+  MetalSharpM12TranslationLayerFeatureRootBindingPlans = 1ull << 3,
+  MetalSharpM12TranslationLayerFeaturePrewarmPacks = 1ull << 4,
+  MetalSharpM12TranslationLayerFeatureDrawPlanning = 1ull << 5,
+};
+
+struct MetalSharpM12TranslationLayerInfo {
+  UINT abi_version;
+  UINT struct_size;
+  UINT vendor_id;
+  UINT layer_id;
+  UINT64 feature_flags;
+  UINT m12core_abi_version;
+  UINT m12core_feature_flags;
+  UINT m12core_build_id_low;
+  UINT m12core_build_id_high;
+  UINT reserved0;
+  UINT64 reserved1[4];
+  char layer_name[32];
+  char backend_name[32];
+  char build_string[64];
+};
+
+struct IMetalSharpM12TranslationLayerInfo : public IUnknown {
+  virtual HRESULT STDMETHODCALLTYPE GetMetalSharpM12TranslationLayerInfo(
+      MetalSharpM12TranslationLayerInfo *info) = 0;
+};
+
 const D3D12_COMMAND_SIGNATURE_DESC *
 GetD3D12CommandSignatureDesc(ID3D12CommandSignature *signature);
 
-class MTLD3D12Device : public ID3D12Device12Compat {
+class MTLD3D12Device : public ID3D12Device12Compat,
+                       public IMetalSharpM12TranslationLayerInfo {
 public:
   MTLD3D12Device(std::unique_ptr<Device> &&device,
                    IMTLDXGIAdapter *pAdapter);
@@ -85,6 +127,10 @@ public:
                                             void **ppvObject) override;
   ULONG STDMETHODCALLTYPE AddRef() override;
   ULONG STDMETHODCALLTYPE Release() override;
+
+  /*** IMetalSharpM12TranslationLayerInfo ***/
+  HRESULT STDMETHODCALLTYPE GetMetalSharpM12TranslationLayerInfo(
+      MetalSharpM12TranslationLayerInfo *info) override;
 
   /*** ID3D12Object ***/
   HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID guid, UINT *data_size,

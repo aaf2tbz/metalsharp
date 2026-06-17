@@ -29,8 +29,8 @@
 
 namespace {
 
-constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x0000000du; // Phase-7 draw planning foundation.
+constexpr uint32_t kBuildIdLow = M12CORE_BUILD_ID_LOW;
+constexpr uint32_t kBuildIdHigh = M12CORE_BUILD_ID_HIGH;
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -138,18 +138,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
     return 1;
 
   out_version->abi_version = M12CORE_ABI_VERSION;
-  out_version->feature_flags = M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
-                               M12CORE_FEATURE_SHADER_INTROSPECTION |
-                               M12CORE_FEATURE_SHADER_FUNCTIONS |
-                               M12CORE_FEATURE_DXIL_TO_MSL |
-                               M12CORE_FEATURE_SM50_REFLECTION |
-                               M12CORE_FEATURE_PIPELINE_CACHE |
-                               M12CORE_FEATURE_PIPELINE_CREATION |
-                               M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
-                               M12CORE_FEATURE_ROOT_BINDING_PLAN |
-                               M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT |
-                               M12CORE_FEATURE_PREWARM_PACKS |
-                               M12CORE_FEATURE_DRAW_PLANNING;
+  out_version->feature_flags = M12CORE_FEATURE_ALL;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;

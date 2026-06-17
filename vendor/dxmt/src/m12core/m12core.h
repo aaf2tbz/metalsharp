@@ -19,6 +19,8 @@ extern "C" {
 #endif
 
 #define M12CORE_ABI_VERSION 1u
+#define M12CORE_BUILD_ID_LOW 0x4d313243u  /* "M12C" marker. */
+#define M12CORE_BUILD_ID_HIGH 0x0000000du /* Phase-7 draw planning foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -38,6 +40,19 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT = 1u << 10,
   M12CORE_FEATURE_PREWARM_PACKS = 1u << 11,
   M12CORE_FEATURE_DRAW_PLANNING = 1u << 12,
+  M12CORE_FEATURE_ALL = M12CORE_FEATURE_INERT_LOADER |
+                        M12CORE_FEATURE_COUNTERS |
+                        M12CORE_FEATURE_SHADER_INTROSPECTION |
+                        M12CORE_FEATURE_SHADER_FUNCTIONS |
+                        M12CORE_FEATURE_DXIL_TO_MSL |
+                        M12CORE_FEATURE_SM50_REFLECTION |
+                        M12CORE_FEATURE_PIPELINE_CACHE |
+                        M12CORE_FEATURE_PIPELINE_CREATION |
+                        M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
+                        M12CORE_FEATURE_ROOT_BINDING_PLAN |
+                        M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT |
+                        M12CORE_FEATURE_PREWARM_PACKS |
+                        M12CORE_FEATURE_DRAW_PLANNING,
 };
 
 typedef struct M12CoreVersion {

@@ -29,10 +29,20 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#include <cstdio>
 #include <cstring>
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
 #include <windows.h>
+
+static void m12_copy_fixed_string(char *dst, size_t dst_size, const char *src) {
+  if (!dst || !dst_size)
+    return;
+  if (!src)
+    src = "";
+  std::snprintf(dst, dst_size, "%s", src);
+  dst[dst_size - 1] = '\0';
+}
 
 static bool dxmt_d3d12_env_enabled(const char *name) {
   char value[16] = {};
@@ -1817,6 +1827,7 @@ namespace dxmt {
 static void *g_device_this = nullptr;
 static void *g_device_expected_vtable = nullptr;
 static uint64_t g_device_expected_m_device = 0;
+static size_t g_device_m_device_offset = 0;
 static std::atomic<bool> g_device_watcher_running{false};
 static int g_watcher_restore_count = 0;
 
@@ -1833,9 +1844,12 @@ static void device_vtable_watcher() {
   while (g_device_watcher_running.load()) {
     if (g_device_this) {
       void *current = *(void **)g_device_this;
-      uint64_t current_m_device = *((uint64_t *)((char *)g_device_this + 8));
+      uint64_t current_m_device = 0;
+      if (g_device_m_device_offset)
+        current_m_device = *((uint64_t *)((char *)g_device_this + g_device_m_device_offset));
       bool vtable_bad = (current != g_device_expected_vtable);
       bool m_device_bad = (g_device_expected_m_device != 0 &&
+                           g_device_m_device_offset != 0 &&
                            current_m_device != g_device_expected_m_device);
       if (vtable_bad || m_device_bad) {
         g_watcher_restore_count++;
@@ -1867,8 +1881,8 @@ static void device_vtable_watcher() {
           fclose(f);
         }
         *(void **)g_device_this = g_device_expected_vtable;
-        if (g_device_expected_m_device != 0) {
-          *((uint64_t *)((char *)g_device_this + 8)) =
+        if (g_device_expected_m_device != 0 && g_device_m_device_offset != 0) {
+          *((uint64_t *)((char *)g_device_this + g_device_m_device_offset)) =
               g_device_expected_m_device;
         }
         check_count = 0;
@@ -1900,6 +1914,7 @@ MTLD3D12Device::MTLD3D12Device(std::unique_ptr<Device> &&device,
   g_device_this = (void *)this;
   g_device_expected_vtable = m_expected_vtable;
   g_device_expected_m_device = (uint64_t)m_device.get();
+  g_device_m_device_offset = (size_t)((char *)&m_device - (char *)this);
   TRACE("M12 feature contract build=full_caps_current_pipeline_20260517");
   TRACE("Device ctor: this=%p vtable=%p m_device=%p sizeof=%zu", (void *)this,
         m_expected_vtable, (void *)m_device.get(), sizeof(MTLD3D12Device));
@@ -1978,6 +1993,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::QueryInterface(REFIID riid,
     return S_OK;
   }
 
+  if (riid == IID_IMetalSharpM12TranslationLayerInfo) {
+    *ppvObject = static_cast<IMetalSharpM12TranslationLayerInfo *>(this);
+    AddRef();
+    TRACE("D3D12Device::QI(%s) -> S_OK (m12 translation layer info)",
+          str::format(riid).c_str());
+    return S_OK;
+  }
+
   if (riid == __uuidof(IMTLDXGIDevice) && m_dxgi_device) {
     TRACE("D3D12Device::QI(%s) -> delegating to dxgi_device",
           str::format(riid).c_str());
@@ -1995,6 +2018,38 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::QueryInterface(REFIID riid,
   Logger::warn(str::format("D3D12Device::QueryInterface: unknown IID ", riid));
   TRACE("D3D12Device::QI(%s) -> E_NOINTERFACE", str::format(riid).c_str());
   return E_NOINTERFACE;
+}
+
+HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
+    MetalSharpM12TranslationLayerInfo *info) {
+  if (!info)
+    return E_POINTER;
+
+  MetalSharpM12TranslationLayerInfo local = {};
+  local.abi_version = MetalSharpM12TranslationLayerInfoAbiVersion;
+  local.struct_size = sizeof(local);
+  local.vendor_id = MetalSharpM12TranslationLayerVendorMetalSharp;
+  local.layer_id = MetalSharpM12TranslationLayerIdDxmtM12;
+  local.feature_flags = MetalSharpM12TranslationLayerFeatureD3D12 |
+                        MetalSharpM12TranslationLayerFeatureDXMT |
+                        MetalSharpM12TranslationLayerFeatureLibM12Core |
+                        MetalSharpM12TranslationLayerFeatureRootBindingPlans |
+                        MetalSharpM12TranslationLayerFeaturePrewarmPacks |
+                        MetalSharpM12TranslationLayerFeatureDrawPlanning;
+  local.m12core_abi_version = M12CORE_ABI_VERSION;
+  local.m12core_feature_flags = M12CORE_FEATURE_ALL;
+  local.m12core_build_id_low = M12CORE_BUILD_ID_LOW;
+  local.m12core_build_id_high = M12CORE_BUILD_ID_HIGH;
+  m12_copy_fixed_string(local.layer_name, sizeof(local.layer_name),
+                        "MetalSharp DXMT M12");
+  m12_copy_fixed_string(local.backend_name, sizeof(local.backend_name),
+                        "DXMT D3D12 over Metal");
+  std::snprintf(local.build_string, sizeof(local.build_string),
+                "MetalSharp DXMT M12 detection abi=%u",
+                MetalSharpM12TranslationLayerInfoAbiVersion);
+
+  *info = local;
+  return S_OK;
 }
 
 ULONG STDMETHODCALLTYPE MTLD3D12Device::AddRef() {
