@@ -9,6 +9,7 @@ m12core_src = [
 m12core_dylib = shared_library('m12core', m12core_src,
   name_prefix      : 'lib',
   include_directories : dxmt_include_path,
+  dependencies     : [ airconv_dep_darwin ],
   native           : true,
   build_by_default : true,
   c_args           : ['-ObjC'],

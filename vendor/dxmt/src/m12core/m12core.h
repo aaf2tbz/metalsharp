@@ -29,6 +29,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_COUNTERS = 1u << 1,
   M12CORE_FEATURE_SHADER_INTROSPECTION = 1u << 2,
   M12CORE_FEATURE_SHADER_FUNCTIONS = 1u << 3,
+  M12CORE_FEATURE_DXIL_TO_MSL = 1u << 4,
 };
 
 typedef struct M12CoreVersion {
@@ -127,6 +128,51 @@ typedef struct M12CoreShaderReflectionSummary {
   uint32_t threadgroup_size[3];
 } M12CoreShaderReflectionSummary;
 
+typedef struct M12CoreVertexInputElement {
+  uint32_t shader_register;
+  uint32_t table_index;
+  uint32_t input_slot;
+  uint32_t aligned_byte_offset;
+  uint32_t dxgi_format;
+  uint32_t metal_format;
+  uint32_t per_instance;
+  uint32_t instance_step_rate;
+  uint32_t table_indexing_mode;
+  uint32_t system_value;
+  uint32_t reserved[2];
+} M12CoreVertexInputElement;
+
+typedef enum M12CoreDXILToMSLStatus {
+  M12CORE_DXIL_TO_MSL_STATUS_OK = 0,
+  M12CORE_DXIL_TO_MSL_STATUS_INVALID = 1,
+  M12CORE_DXIL_TO_MSL_STATUS_CONTAINER_PARSE_FAILED = 2,
+  M12CORE_DXIL_TO_MSL_STATUS_BITCODE_PARSE_FAILED = 3,
+  M12CORE_DXIL_TO_MSL_STATUS_LOWERING_FAILED = 4,
+  M12CORE_DXIL_TO_MSL_STATUS_OUTPUT_TOO_SMALL = 5,
+} M12CoreDXILToMSLStatus;
+
+typedef struct M12CoreDXILToMSLDesc {
+  uint32_t abi_version;
+  uint32_t stage;
+  const void *dxil_container;
+  uint64_t dxil_container_size;
+  const M12CoreVertexInputElement *vertex_inputs;
+  uint32_t vertex_input_count;
+  uint32_t reserved;
+} M12CoreDXILToMSLDesc;
+
+typedef struct M12CoreDXILToMSLResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint64_t required_source_size;
+  char entry_point[M12CORE_SHADER_ENTRY_POINT_CAPACITY];
+  uint32_t threadgroup_size[3];
+  uint32_t unsupported_intrinsics;
+  uint32_t unsupported_opcodes;
+  uint32_t used_typed_lowering;
+  uint32_t reserved;
+} M12CoreDXILToMSLResult;
+
 typedef enum M12CoreShaderFunctionInputKind {
   M12CORE_SHADER_FUNCTION_INPUT_UNKNOWN = 0,
   M12CORE_SHADER_FUNCTION_INPUT_METALLIB = 1,
@@ -218,6 +264,10 @@ int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
                                M12CoreShaderCacheLookup *out_lookup);
 int m12core_parse_shader_reflection(const char *reflection_text, uint64_t reflection_text_size,
                                     M12CoreShaderReflectionSummary *out_summary);
+int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
+                              char *out_source,
+                              uint64_t out_source_capacity,
+                              M12CoreDXILToMSLResult *out_result);
 int m12core_create_shader_function(const M12CoreShaderFunctionDesc *desc,
                                    M12CoreShaderFunctionResult *out_result);
 int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,

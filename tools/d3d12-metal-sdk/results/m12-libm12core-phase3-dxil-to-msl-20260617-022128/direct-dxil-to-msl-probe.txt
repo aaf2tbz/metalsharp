@@ -1,0 +1,1 @@
+status=0 required=16570 entry=vs_main tg=1,1,1 typed=1 unsupported=0/0 prefix=#include <metal_stdlib>

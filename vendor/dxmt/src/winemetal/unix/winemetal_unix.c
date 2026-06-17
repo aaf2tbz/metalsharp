@@ -79,6 +79,10 @@ typedef int (*PFN_m12core_make_pipeline_cache_key)(const M12CorePipelineCacheKey
                                                    M12CorePipelineCacheKey *out_key);
 typedef int (*PFN_m12core_create_shader_function)(const M12CoreShaderFunctionDesc *desc,
                                                   M12CoreShaderFunctionResult *out_result);
+typedef int (*PFN_m12core_lower_dxil_to_msl)(const M12CoreDXILToMSLDesc *desc,
+                                             char *out_source,
+                                             uint64_t out_source_capacity,
+                                             M12CoreDXILToMSLResult *out_result);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -92,9 +96,11 @@ static PFN_m12core_probe_shader_cache p_m12core_probe_shader_cache;
 static PFN_m12core_parse_shader_reflection p_m12core_parse_shader_reflection;
 static PFN_m12core_make_pipeline_cache_key p_m12core_make_pipeline_cache_key;
 static PFN_m12core_create_shader_function p_m12core_create_shader_function;
+static PFN_m12core_lower_dxil_to_msl p_m12core_lower_dxil_to_msl;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
+static _Atomic uint64_t m12core_dxil_to_msl_calls;
 
 static bool
 m12core_env_enabled(const char *name) {
@@ -168,6 +174,8 @@ m12core_try_load(void) {
       (PFN_m12core_make_pipeline_cache_key)dlsym(m12core_handle, "m12core_make_pipeline_cache_key");
   p_m12core_create_shader_function =
       (PFN_m12core_create_shader_function)dlsym(m12core_handle, "m12core_create_shader_function");
+  p_m12core_lower_dxil_to_msl =
+      (PFN_m12core_lower_dxil_to_msl)dlsym(m12core_handle, "m12core_lower_dxil_to_msl");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -308,6 +316,44 @@ _WMTM12CoreParseShaderReflection(void *obj) {
       p_m12core_parse_shader_reflection(params->reflection_text.ptr,
                                         params->reflection_text_size,
                                         &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreLowerDXILToMSL(void *obj) {
+  struct unixcall_m12core_lower_dxil_to_msl *params = obj;
+  if (!params || !p_m12core_lower_dxil_to_msl)
+    return STATUS_SUCCESS;
+
+  /* Phase 3 DXIL->MSL bridge.  libm12core owns DXIL container parsing, LLVM
+   * bitcode parsing, typed MSL lowering, and fallback DXILToMSL conversion.
+   * File diagnostics and Metal function creation remain separate seams.
+   */
+  M12CoreDXILToMSLDesc desc = {0};
+  desc.abi_version = params->abi_version;
+  desc.stage = params->stage;
+  desc.dxil_container = params->dxil_container.ptr;
+  desc.dxil_container_size = params->dxil_container_size;
+  desc.vertex_inputs = params->vertex_inputs.ptr;
+  desc.vertex_input_count = params->vertex_input_count;
+
+  params->ret_success = p_m12core_lower_dxil_to_msl(
+      &desc, params->out_source.ptr, params->out_source_capacity,
+      &params->ret_result) == 0;
+  uint64_t calls = atomic_fetch_add(&m12core_dxil_to_msl_calls, 1) + 1;
+  if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
+    FILE *log = winemetal_debug_log();
+    if (log) {
+      fprintf(log,
+              "[m12core] dxil_to_msl first_call stage=%u bytes=%llu status=%u required=%llu success=%u\n",
+              params->stage,
+              (unsigned long long)params->dxil_container_size,
+              params->ret_result.status,
+              (unsigned long long)params->ret_result.required_source_size,
+              params->ret_success);
+      fclose(log);
+    }
+  }
   return STATUS_SUCCESS;
 }
 
@@ -4033,6 +4079,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreParseShaderReflection,
     &_WMTM12CoreMakePipelineCacheKey,
     &_WMTM12CoreCreateShaderFunction,
+    &_WMTM12CoreLowerDXILToMSL,
 };
 
 #ifndef DXMT_NATIVE
@@ -4179,5 +4226,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreParseShaderReflection,
     &_WMTM12CoreMakePipelineCacheKey,
     &_WMTM12CoreCreateShaderFunction,
+    &_WMTM12CoreLowerDXILToMSL,
 };
 #endif

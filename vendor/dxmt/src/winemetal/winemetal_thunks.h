@@ -443,6 +443,21 @@ struct unixcall_m12core_make_pipeline_cache_key {
   M12CorePipelineCacheKey ret_key;
 };
 
+struct unixcall_m12core_lower_dxil_to_msl {
+  uint32_t abi_version;
+  uint32_t stage;
+  struct WMTConstMemoryPointer dxil_container;
+  uint64_t dxil_container_size;
+  struct WMTConstMemoryPointer vertex_inputs;
+  uint32_t vertex_input_count;
+  uint32_t reserved0;
+  struct WMTMemoryPointer out_source;
+  uint64_t out_source_capacity;
+  uint32_t ret_success;
+  uint32_t reserved1;
+  M12CoreDXILToMSLResult ret_result;
+};
+
 struct unixcall_m12core_create_shader_function {
   obj_handle_t device;
   uint32_t stage;

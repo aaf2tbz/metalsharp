@@ -50,6 +50,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 139: return "WMTM12CoreParseShaderReflection";
   case 140: return "WMTM12CoreMakePipelineCacheKey";
   case 141: return "WMTM12CoreCreateShaderFunction";
+  case 142: return "WMTM12CoreLowerDXILToMSL";
   default: return "unknown";
   }
 }
@@ -281,6 +282,32 @@ WMTM12CoreParseShaderReflection(const char *reflection_text, uint64_t reflection
     return false;
 
   *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreLowerDXILToMSL(const M12CoreDXILToMSLDesc *desc,
+                         char *out_source,
+                         uint64_t out_source_capacity,
+                         M12CoreDXILToMSLResult *out_result) {
+  struct unixcall_m12core_lower_dxil_to_msl params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_result)
+    return false;
+
+  params.abi_version = desc->abi_version;
+  params.stage = desc->stage;
+  WMT_MEMPTR_SET(params.dxil_container, desc->dxil_container);
+  params.dxil_container_size = desc->dxil_container_size;
+  WMT_MEMPTR_SET(params.vertex_inputs, desc->vertex_inputs);
+  params.vertex_input_count = desc->vertex_input_count;
+  WMT_MEMPTR_SET(params.out_source, out_source);
+  params.out_source_capacity = out_source_capacity;
+
+  if (!winemetal_unix_call_ok(142, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
   return true;
 }
 

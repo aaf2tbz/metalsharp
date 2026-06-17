@@ -14,6 +14,7 @@ airconv_src = files([
  'dxil/dxil_ir.cpp',
  'dxil/llvm_bitcode.cpp',
  'dxil/msl_lowering.cpp',
+ 'dxil/dxil_to_msl.cpp',
  'metallib_writer.cpp',
  'nt/air_builder.cpp',
  'nt/dxbc_converter_base.cpp',

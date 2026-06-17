@@ -1,10 +1,17 @@
 #include "m12core.h"
 
+#include "dxil/dxil_container.hpp"
+#include "dxil/dxil_to_msl.hpp"
+#include "dxil/llvm_bitcode.hpp"
+#include "dxil/msl_lowering.hpp"
+
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <utility>
 #include <sys/stat.h>
 
 /*
@@ -21,7 +28,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000004u; // Phase-3 native shader function cache foundation.
+constexpr uint32_t kBuildIdHigh = 0x00000005u; // Phase-3 native DXIL->MSL lowering foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -131,14 +138,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
   out_version->abi_version = M12CORE_ABI_VERSION;
   out_version->feature_flags = M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
                                M12CORE_FEATURE_SHADER_INTROSPECTION |
-                               M12CORE_FEATURE_SHADER_FUNCTIONS;
+                               M12CORE_FEATURE_SHADER_FUNCTIONS |
+                               M12CORE_FEATURE_DXIL_TO_MSL;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase3 shader-functions abi=1";
+  return "libm12core phase3 dxil-to-msl abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -196,6 +204,45 @@ bool regularFileExists(const char *path) {
 
 void pipelineHashCombine(uint64_t &hash, uint64_t value) {
   hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+}
+
+dxmt::dxil::MSLShader toRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
+  dxmt::dxil::MSLShader shader;
+  shader.source = std::move(typed.source);
+  shader.entry_point = std::move(typed.entry_point);
+  shader.tg_size[0] = typed.tg_size[0];
+  shader.tg_size[1] = typed.tg_size[1];
+  shader.tg_size[2] = typed.tg_size[2];
+  shader.unsupported_intrinsics = typed.unsupported_intrinsics;
+  shader.unsupported_opcodes = typed.unsupported_opcodes;
+  shader.diagnostics = std::move(typed.diagnostics);
+  shader.diagnostics.push_back("MSLLowering runtime path active in libm12core");
+  return shader;
+}
+
+void copyMslVertexInputs(const M12CoreDXILToMSLDesc *desc,
+                         dxmt::dxil::MSLLoweringOptions &options) {
+  if (!desc || !desc->vertex_inputs || !desc->vertex_input_count)
+    return;
+  const uint32_t count = std::min(desc->vertex_input_count, 64u);
+  options.vertex_inputs.reserve(count);
+  for (uint32_t i = 0; i < count; i++) {
+    const auto &src = desc->vertex_inputs[i];
+    dxmt::dxil::MSLVertexInputElement dst = {};
+    dst.shader_register = src.shader_register;
+    dst.table_index = src.table_index;
+    dst.input_slot = src.input_slot;
+    dst.aligned_byte_offset = src.aligned_byte_offset;
+    dst.dxgi_format = src.dxgi_format;
+    dst.metal_format = src.metal_format;
+    dst.per_instance = src.per_instance != 0;
+    dst.instance_step_rate = src.instance_step_rate ? src.instance_step_rate : 1;
+    dst.table_indexing_mode = src.table_indexing_mode == 1
+      ? dxmt::dxil::MSLVertexTableIndexingMode::RawSlot
+      : dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
+    dst.system_value = src.system_value != 0;
+    options.vertex_inputs.push_back(dst);
+  }
 }
 
 extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
@@ -317,6 +364,80 @@ extern "C" int m12core_parse_shader_reflection(const char *reflection_text,
   std::memcpy(local, reflection_text, (size_t)copy_size);
   local[copy_size] = 0;
   parseReflectionText(local, out_summary);
+  return 0;
+}
+
+extern "C" int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
+                                         char *out_source,
+                                         uint64_t out_source_capacity,
+                                         M12CoreDXILToMSLResult *out_result) {
+  if (!out_result)
+    return 1;
+
+  std::memset(out_result, 0, sizeof(*out_result));
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  out_result->threadgroup_size[0] = 1;
+  out_result->threadgroup_size[1] = 1;
+  out_result->threadgroup_size[2] = 1;
+
+  if (!desc || desc->abi_version != M12CORE_ABI_VERSION || !desc->dxil_container ||
+      desc->dxil_container_size == 0) {
+    out_result->status = M12CORE_DXIL_TO_MSL_STATUS_INVALID;
+    return 0;
+  }
+
+  /* Phase 3 DXIL->MSL ownership seam.  libm12core now parses the DXIL
+   * container, LLVM bitcode, and vertex-input lowering metadata to generate MSL
+   * source.  The PE side still writes diagnostics/cache files and asks the
+   * shader-function ABI to create Metal objects so each ownership transfer stays
+   * independently reviewable.
+   */
+  auto container = dxmt::dxil::DXILContainer::parse(desc->dxil_container,
+                                                   (size_t)desc->dxil_container_size);
+  if (!container) {
+    out_result->status = M12CORE_DXIL_TO_MSL_STATUS_CONTAINER_PARSE_FAILED;
+    return 0;
+  }
+
+  const auto &shader_info = container->shader();
+  auto module = dxmt::dxil::BitcodeReader::parse(shader_info.bitcode.data,
+                                                 shader_info.bitcode.size);
+  if (!module) {
+    out_result->status = M12CORE_DXIL_TO_MSL_STATUS_BITCODE_PARSE_FAILED;
+    return 0;
+  }
+
+  dxmt::dxil::MSLLoweringOptions lowering_options = {};
+  copyMslVertexInputs(desc, lowering_options);
+  auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader_info, lowering_options);
+  auto msl_result = typed_msl
+      ? std::optional<dxmt::dxil::MSLShader>(std::in_place, toRuntimeMSLShader(std::move(*typed_msl)))
+      : dxmt::dxil::DXILToMSL::convert(*module, shader_info);
+  if (!msl_result) {
+    out_result->status = M12CORE_DXIL_TO_MSL_STATUS_LOWERING_FAILED;
+    return 0;
+  }
+
+  out_result->required_source_size = msl_result->source.size();
+  std::snprintf(out_result->entry_point, sizeof(out_result->entry_point), "%s",
+                msl_result->entry_point.c_str());
+  out_result->threadgroup_size[0] = msl_result->tg_size[0];
+  out_result->threadgroup_size[1] = msl_result->tg_size[1];
+  out_result->threadgroup_size[2] = msl_result->tg_size[2];
+  out_result->unsupported_intrinsics = msl_result->unsupported_intrinsics;
+  out_result->unsupported_opcodes = msl_result->unsupported_opcodes;
+  out_result->used_typed_lowering = typed_msl ? 1u : 0u;
+
+  if (!out_source || out_source_capacity <= msl_result->source.size()) {
+    out_result->status = M12CORE_DXIL_TO_MSL_STATUS_OUTPUT_TOO_SMALL;
+    if (out_source && out_source_capacity)
+      out_source[0] = 0;
+    return 0;
+  }
+
+  std::memcpy(out_source, msl_result->source.data(), msl_result->source.size());
+  out_source[msl_result->source.size()] = 0;
+  out_result->status = M12CORE_DXIL_TO_MSL_STATUS_OK;
   return 0;
 }
 
