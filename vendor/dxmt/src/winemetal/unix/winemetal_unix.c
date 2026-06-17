@@ -69,6 +69,9 @@ typedef int (*PFN_m12core_hash_shader_bytecode)(const void *bytecode, uint64_t b
                                                 uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
 typedef int (*PFN_m12core_format_shader_cache_paths)(const char *cache_root, uint64_t shader_hash,
                                                      M12CoreShaderCachePaths *out_paths);
+typedef int (*PFN_m12core_probe_shader_cache)(const char *cache_root, uint64_t shader_hash,
+                                              uint32_t force_source_compile,
+                                              M12CoreShaderCacheLookup *out_lookup);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -78,6 +81,7 @@ static PFN_m12core_record_counter p_m12core_record_counter;
 static PFN_m12core_get_counters p_m12core_get_counters;
 static PFN_m12core_hash_shader_bytecode p_m12core_hash_shader_bytecode;
 static PFN_m12core_format_shader_cache_paths p_m12core_format_shader_cache_paths;
+static PFN_m12core_probe_shader_cache p_m12core_probe_shader_cache;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 
@@ -145,6 +149,8 @@ m12core_try_load(void) {
       (PFN_m12core_hash_shader_bytecode)dlsym(m12core_handle, "m12core_hash_shader_bytecode");
   p_m12core_format_shader_cache_paths =
       (PFN_m12core_format_shader_cache_paths)dlsym(m12core_handle, "m12core_format_shader_cache_paths");
+  p_m12core_probe_shader_cache =
+      (PFN_m12core_probe_shader_cache)dlsym(m12core_handle, "m12core_probe_shader_cache");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -253,6 +259,22 @@ _WMTM12CoreFormatShaderCachePaths(void *obj) {
   params->ret_success =
       p_m12core_format_shader_cache_paths(params->cache_root.ptr, params->shader_hash,
                                           &params->ret_paths) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreProbeShaderCache(void *obj) {
+  struct unixcall_m12core_probe_shader_cache *params = obj;
+  if (!params || !p_m12core_probe_shader_cache)
+    return STATUS_SUCCESS;
+
+  /* Phase 3.2 shader cache lookup bridge.  libm12core determines whether a
+   * metallib cache entry should be used, while PE-side code still performs the
+   * file read and Metal library creation for compatibility.
+   */
+  params->ret_success =
+      p_m12core_probe_shader_cache(params->cache_root.ptr, params->shader_hash,
+                                   params->force_source_compile, &params->ret_lookup) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -3920,6 +3942,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreRecordCounters,
     &_WMTM12CoreHashShaderBytecode,
     &_WMTM12CoreFormatShaderCachePaths,
+    &_WMTM12CoreProbeShaderCache,
 };
 
 #ifndef DXMT_NATIVE
@@ -4062,5 +4085,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreRecordCounters,
     &_WMTM12CoreHashShaderBytecode,
     &_WMTM12CoreFormatShaderCachePaths,
+    &_WMTM12CoreProbeShaderCache,
 };
 #endif

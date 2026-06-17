@@ -60,6 +60,9 @@ WINEMETAL_API bool WMTM12CoreHashShaderBytecode(const void *bytecode, uint64_t b
                                                  uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
 WINEMETAL_API bool WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash,
                                                      M12CoreShaderCachePaths *out_paths);
+WINEMETAL_API bool WMTM12CoreProbeShaderCache(const char *cache_root, uint64_t shader_hash,
+                                               uint32_t force_source_compile,
+                                               M12CoreShaderCacheLookup *out_lookup);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,

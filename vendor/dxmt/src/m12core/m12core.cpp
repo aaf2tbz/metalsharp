@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <sys/stat.h>
 
 /*
  * Native M12 core bootstrap
@@ -187,6 +188,11 @@ extern "C" int m12core_shader_contains_dxil(const void *bytecode,
   return 0;
 }
 
+bool regularFileExists(const char *path) {
+  struct stat st;
+  return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
 extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
                                                  uint64_t shader_hash,
                                                  M12CoreShaderCachePaths *out_paths) {
@@ -220,5 +226,27 @@ extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
   formatCachePath(out_paths->dxil_report_path, sizeof(out_paths->dxil_report_path), root, suffix);
   std::snprintf(suffix, sizeof(suffix), "%016llx.metallib.err.txt", (unsigned long long)shader_hash);
   formatCachePath(out_paths->metallib_error_path, sizeof(out_paths->metallib_error_path), root, suffix);
+  return 0;
+}
+
+extern "C" int m12core_probe_shader_cache(const char *cache_root,
+                                          uint64_t shader_hash,
+                                          uint32_t force_source_compile,
+                                          M12CoreShaderCacheLookup *out_lookup) {
+  if (!out_lookup)
+    return 1;
+
+  /* Phase 3.2: native ownership of shader cache lookup results.  The core now
+   * decides whether a metallib cache entry is usable, but PE-side code still
+   * opens/reads the file and creates Metal libraries.  This keeps IO/object
+   * lifetime out of the ABI until the full shader compiler migration lands.
+   */
+  out_lookup->abi_version = M12CORE_ABI_VERSION;
+  out_lookup->force_source_compile = force_source_compile ? 1u : 0u;
+  if (m12core_format_shader_cache_paths(cache_root, shader_hash, &out_lookup->paths) != 0)
+    return 1;
+  out_lookup->metallib_exists = regularFileExists(out_lookup->paths.metallib_path) ? 1u : 0u;
+  out_lookup->metallib_available =
+      (!force_source_compile && out_lookup->metallib_exists) ? 1u : 0u;
   return 0;
 }

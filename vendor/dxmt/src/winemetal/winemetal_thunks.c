@@ -46,6 +46,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 135: return "WMTM12CoreRecordCounters";
   case 136: return "WMTM12CoreHashShaderBytecode";
   case 137: return "WMTM12CoreFormatShaderCachePaths";
+  case 138: return "WMTM12CoreProbeShaderCache";
   default: return "unknown";
   }
 }
@@ -241,6 +242,25 @@ WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash,
     return false;
 
   *out_paths = params.ret_paths;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreProbeShaderCache(const char *cache_root, uint64_t shader_hash,
+                           uint32_t force_source_compile,
+                           M12CoreShaderCacheLookup *out_lookup) {
+  struct unixcall_m12core_probe_shader_cache params;
+  memset(&params, 0, sizeof(params));
+  if (!out_lookup)
+    return false;
+
+  WMT_MEMPTR_SET(params.cache_root, cache_root);
+  params.shader_hash = shader_hash;
+  params.force_source_compile = force_source_compile;
+  if (!winemetal_unix_call_ok(138, &params) || !params.ret_success)
+    return false;
+
+  *out_lookup = params.ret_lookup;
   return true;
 }
 

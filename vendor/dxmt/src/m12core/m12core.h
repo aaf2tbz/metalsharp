@@ -107,6 +107,14 @@ typedef struct M12CoreShaderCachePaths {
   char metallib_error_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
 } M12CoreShaderCachePaths;
 
+typedef struct M12CoreShaderCacheLookup {
+  uint32_t abi_version;
+  uint32_t metallib_available;
+  uint32_t metallib_exists;
+  uint32_t force_source_compile;
+  M12CoreShaderCachePaths paths;
+} M12CoreShaderCacheLookup;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -138,6 +146,9 @@ int m12core_shader_contains_dxil(const void *bytecode, uint64_t bytecode_size,
                                  uint32_t *out_contains_dxil);
 int m12core_format_shader_cache_paths(const char *cache_root, uint64_t shader_hash,
                                       M12CoreShaderCachePaths *out_paths);
+int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
+                               uint32_t force_source_compile,
+                               M12CoreShaderCacheLookup *out_lookup);
 
 #ifdef __cplusplus
 }

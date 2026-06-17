@@ -420,6 +420,14 @@ struct unixcall_m12core_format_shader_cache_paths {
   M12CoreShaderCachePaths ret_paths;
 };
 
+struct unixcall_m12core_probe_shader_cache {
+  struct WMTConstMemoryPointer cache_root;
+  uint64_t shader_hash;
+  uint32_t force_source_compile;
+  uint32_t ret_success;
+  M12CoreShaderCacheLookup ret_lookup;
+};
+
 #pragma pack(pop)
 
 #endif

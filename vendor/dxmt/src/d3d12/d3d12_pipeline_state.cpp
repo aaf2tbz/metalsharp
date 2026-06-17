@@ -72,18 +72,6 @@ void FormatShaderCachePath(char *out, size_t out_size, const char *suffix_fmt,
   snprintf(out, out_size, "%s/%s", ShaderCacheDir().c_str(), suffix);
 }
 
-bool FormatM12CoreShaderCachePaths(size_t hash, M12CoreShaderCachePaths &paths) {
-  /* Phase 3.1 migration seam: libm12core owns shader cache path policy when
-   * available, but the legacy PE formatter remains the fallback.  This keeps
-   * cache lookup migration independent from DXIL->MSL compilation and Metal
-   * function ownership.
-   */
-  auto root = ShaderCacheDir();
-  return WMTM12CoreFormatShaderCachePaths(root.c_str(), (uint64_t)hash, &paths) &&
-         paths.abi_version == M12CORE_ABI_VERSION &&
-         paths.path_capacity == M12CORE_SHADER_CACHE_PATH_CAPACITY;
-}
-
 void EnsureShaderCacheDir() {
   auto dir = ShaderCacheDir();
   if (dir == "/tmp/dxmt_shader_cache")
@@ -1175,15 +1163,23 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           char dxbc_path[1024], metallib_path[1024], reflection_path[1024],
               module_summary_path[1024], dxil_report_path[1024],
               metallib_error_path[1024];
-          M12CoreShaderCachePaths core_paths = {};
-          if (FormatM12CoreShaderCachePaths(hash, core_paths)) {
-            snprintf(cache_path, sizeof(cache_path), "%s", core_paths.cache_path);
-            snprintf(dxbc_path, sizeof(dxbc_path), "%s", core_paths.dxbc_path);
-            snprintf(metallib_path, sizeof(metallib_path), "%s", core_paths.metallib_path);
-            snprintf(reflection_path, sizeof(reflection_path), "%s", core_paths.reflection_path);
-            snprintf(module_summary_path, sizeof(module_summary_path), "%s", core_paths.module_summary_path);
-            snprintf(dxil_report_path, sizeof(dxil_report_path), "%s", core_paths.dxil_report_path);
-            snprintf(metallib_error_path, sizeof(metallib_error_path), "%s", core_paths.metallib_error_path);
+          bool force_source_compile = EnvFlagEnabled("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE");
+          bool core_lookup_valid = false;
+          M12CoreShaderCacheLookup core_lookup = {};
+          auto cache_root = ShaderCacheDir();
+          if (WMTM12CoreProbeShaderCache(cache_root.c_str(), (uint64_t)hash,
+                                         force_source_compile ? 1u : 0u,
+                                         &core_lookup) &&
+              core_lookup.abi_version == M12CORE_ABI_VERSION &&
+              core_lookup.paths.path_capacity == M12CORE_SHADER_CACHE_PATH_CAPACITY) {
+            core_lookup_valid = true;
+            snprintf(cache_path, sizeof(cache_path), "%s", core_lookup.paths.cache_path);
+            snprintf(dxbc_path, sizeof(dxbc_path), "%s", core_lookup.paths.dxbc_path);
+            snprintf(metallib_path, sizeof(metallib_path), "%s", core_lookup.paths.metallib_path);
+            snprintf(reflection_path, sizeof(reflection_path), "%s", core_lookup.paths.reflection_path);
+            snprintf(module_summary_path, sizeof(module_summary_path), "%s", core_lookup.paths.module_summary_path);
+            snprintf(dxil_report_path, sizeof(dxil_report_path), "%s", core_lookup.paths.dxil_report_path);
+            snprintf(metallib_error_path, sizeof(metallib_error_path), "%s", core_lookup.paths.metallib_error_path);
           } else {
             FormatShaderCachePath(cache_path, sizeof(cache_path), "%016zx", hash);
             snprintf(dxbc_path, sizeof(dxbc_path), "%s.dxbc", cache_path);
@@ -1199,11 +1195,20 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           EnsureShaderCacheDir();
           DumpShaderBlob(dxbc_path, bytecode, size);
 
-          FILE *mf = fopen(metallib_path, "rb");
-          if (mf && EnvFlagEnabled("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE")) {
-            fclose(mf);
-            mf = nullptr;
-            PSTRACE("  cached metallib ignored by DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
+          FILE *mf = nullptr;
+          if (core_lookup_valid) {
+            if (core_lookup.metallib_available)
+              mf = fopen(metallib_path, "rb");
+            if (!core_lookup.metallib_available && core_lookup.force_source_compile &&
+                core_lookup.metallib_exists)
+              PSTRACE("  cached metallib ignored by libm12core lookup policy due to DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
+          } else {
+            mf = fopen(metallib_path, "rb");
+            if (mf && force_source_compile) {
+              fclose(mf);
+              mf = nullptr;
+              PSTRACE("  cached metallib ignored by DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
+            }
           }
           if (!mf) {
             uint64_t misses = ++g_shader_metallib_cache_misses;

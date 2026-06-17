@@ -1,0 +1,1 @@
+abi=1 exists=1 avail=1 forced_avail=0 path=/tmp/m12-lookup-probe/000000001234abcd.metallib
