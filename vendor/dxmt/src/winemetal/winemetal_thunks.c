@@ -60,6 +60,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 149: return "WMTM12CoreBuildRootBindingPlan";
   case 150: return "WMTM12CoreLookupRootBinding";
   case 151: return "WMTM12CoreSummarizePrewarmPack";
+  case 152: return "WMTM12CoreBuildDrawPlan";
   default: return "unknown";
   }
 }
@@ -570,6 +571,26 @@ WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc,
   params.stage_count = desc->stage_count;
   WMT_MEMPTR_SET(params.stages, desc->stages);
   if (!winemetal_unix_call_ok(151, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc,
+                        M12CoreDrawPlanSummary *out_summary) {
+  struct unixcall_m12core_build_draw_plan params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Phase 7 draw-planning bridge: pass compact scalar keys/counts only.  The
+   * native core summarizes planned work; command execution and resource/Metal
+   * object ownership remain in the PE replay path.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(152, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

@@ -584,6 +584,13 @@ struct unixcall_m12core_summarize_prewarm_pack {
   M12CorePrewarmPackSummary ret_summary;
 };
 
+struct unixcall_m12core_build_draw_plan {
+  M12CoreDrawPlanDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreDrawPlanSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

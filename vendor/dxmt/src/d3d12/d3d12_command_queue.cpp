@@ -206,6 +206,7 @@ static uint32_t g_tessellation_fallback_draw_logs = 0;
 static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
+static uint32_t g_draw_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
 
@@ -5260,6 +5261,73 @@ struct ReplayState {
     return cull_mode;
   }
 
+  void LogM12CoreDrawPlan(const char *label, bool indexed) {
+    if (!pso || !graphics_root_sig)
+      return;
+    if (!TakeLogBudget(&g_draw_plan_logs, 192))
+      return;
+
+    M12CoreDrawPlanDesc desc = {};
+    desc.abi_version = M12CORE_ABI_VERSION;
+    desc.flags = M12CORE_DRAW_PLAN_HAS_GRAPHICS_PSO |
+                 M12CORE_DRAW_PLAN_HAS_ROOT_SIGNATURE;
+    if (indexed)
+      desc.flags |= M12CORE_DRAW_PLAN_INDEXED;
+    if (rt_count > 0)
+      desc.flags |= M12CORE_DRAW_PLAN_HAS_RENDER_TARGET;
+    if (has_dsv)
+      desc.flags |= M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL;
+    desc.pso_key = pso->GetM12CoreRenderPipelineKey();
+    desc.root_signature_key = graphics_root_sig->GetM12CoreRootSignatureKey();
+    desc.root_parameter_count = graphics_root_sig->GetNumParameters();
+    desc.render_target_count = rt_count;
+    desc.descriptor_heap_count = desc_heap_count;
+
+    if (graphics_root_sig->HasM12CoreBindingPlan()) {
+      const auto &plan = graphics_root_sig->GetM12CoreBindingPlanSummary();
+      desc.binding_plan_key = plan.binding_plan_key;
+      desc.descriptor_table_count = plan.descriptor_table_count;
+      desc.root_descriptor_count = plan.root_descriptor_count;
+      desc.root_constant_count = plan.root_constant_count;
+      desc.argument_resource_slot_count = plan.argument_resource_slot_count;
+      desc.argument_sampler_slot_count = plan.argument_sampler_slot_count;
+      desc.argument_root_descriptor_slot_count = plan.argument_root_descriptor_slot_count;
+      desc.argument_root_constant_dword_count = plan.argument_root_constant_dword_count;
+    } else {
+      for (const auto &param : graphics_root_sig->GetParameters()) {
+        if (param.type == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+          desc.descriptor_table_count++;
+        else if (param.type == D3D12_ROOT_PARAMETER_TYPE_CBV ||
+                 param.type == D3D12_ROOT_PARAMETER_TYPE_SRV ||
+                 param.type == D3D12_ROOT_PARAMETER_TYPE_UAV)
+          desc.root_descriptor_count++;
+        else if (param.type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+          desc.root_constant_count++;
+      }
+    }
+
+    M12CoreDrawPlanSummary summary = {};
+    if (!WMTM12CoreBuildDrawPlan(&desc, &summary) ||
+        summary.abi_version != M12CORE_ABI_VERSION ||
+        summary.status != M12CORE_DRAW_PLAN_STATUS_OK)
+      return;
+
+    Logger::info(str::format(
+        "M12_DRAW_PLAN label=", label ? label : "draw",
+        " indexed=", indexed ? 1u : 0u,
+        " key=0x", std::hex, summary.draw_plan_key,
+        " pso=0x", desc.pso_key,
+        " root=0x", desc.root_signature_key,
+        " binding=0x", desc.binding_plan_key,
+        std::dec,
+        " validation=0x", std::hex, summary.validation_flags, std::dec,
+        " resources=", summary.resource_usage_count,
+        " binding_checks=", summary.binding_validation_count,
+        " redundant_candidates=", summary.redundant_binding_candidate_count,
+        " attachments=", summary.render_pass_attachment_count,
+        " descriptor_pressure=", summary.descriptor_pressure_score));
+  }
+
   void ApplyRootBindings(MTLD3D12Device *device) {
     if (!render_enc_open || !pso)
       return;
@@ -6778,6 +6846,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                (void *)st.pso, st.pso ? st.pso->IsCompiled() : 0,
                TraceCompileFailureStage(st.pso),
                TraceCompileFailureDetail(st.pso));
+        st.LogM12CoreDrawPlan("DrawInstanced", false);
 
         if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
             st.EncodeGeometryDraw(m_device, cmd->vertex_count,
@@ -6974,6 +7043,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                  (void *)st.pso, st.pso ? st.pso->IsCompiled() : 0,
                  TraceCompileFailureStage(st.pso),
                  TraceCompileFailureDetail(st.pso));
+          st.LogM12CoreDrawPlan("DrawIndexedInstanced", true);
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_vertex_sample_logs, 24)) {
             uint32_t first_index = cmd->start_index;

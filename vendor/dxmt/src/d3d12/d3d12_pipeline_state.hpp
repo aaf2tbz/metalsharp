@@ -145,6 +145,8 @@ public:
   bool RequiresMSCStageInFunction() const { return m_vs_requires_msc_stage_in; }
   bool UsesGeometryMeshPipeline() const { return m_uses_geometry_mesh_pipeline; }
   bool UsesTessellationFallback() const { return m_uses_tessellation_fallback; }
+  uint64_t GetM12CoreRenderPipelineKey() const { return m_render_pipeline_cache_key; }
+  uint64_t GetM12CoreComputePipelineKey() const { return m_compute_pipeline_cache_key; }
 
   static WMTPixelFormat DXGIToMTLPixelFormat(DXGI_FORMAT format);
 
@@ -204,6 +206,8 @@ private:
   WMT::Reference<WMT::RenderPipelineState> m_render_pso;
   WMT::Reference<WMT::ComputePipelineState> m_compute_pso;
   WMT::Reference<WMT::DepthStencilState> m_depth_stencil_state;
+  uint64_t m_render_pipeline_cache_key = 0;
+  uint64_t m_compute_pipeline_cache_key = 0;
   struct { uint32_t width = 1, height = 1, depth = 1; } m_threadgroup_size;
 
   MTL_SHADER_REFLECTION m_cs_reflection = {};

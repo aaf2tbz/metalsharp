@@ -2268,6 +2268,7 @@ bool MTLD3D12PipelineState::Compile() {
       PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
       PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)compute_root_key);
     }
+    m_compute_pipeline_cache_key = (uint64_t)compute_pipeline_cache_key;
     bool compute_core_cache_available = false;
     bool compute_cache_hit = false;
     compute_core_cache_available = LookupM12CorePipelineCache(
@@ -2726,6 +2727,7 @@ bool MTLD3D12PipelineState::Compile() {
     PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
     PsoCacheHashCombine(render_pipeline_cache_key, (size_t)render_root_key);
   }
+  m_render_pipeline_cache_key = (uint64_t)render_pipeline_cache_key;
   bool render_core_cache_available = false;
   bool render_cache_hit = false;
   render_core_cache_available = LookupM12CorePipelineCache(
