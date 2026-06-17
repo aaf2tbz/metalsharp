@@ -294,7 +294,7 @@ int m12core_get_shader_reflection(...);
 
 ## Phase 4: Move graphics/compute PSO keying and Metal pipeline cache into `libm12core`
 
-Status: device-scoped pipeline cache key foundation implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-key-foundation-20260617-014138/summary.md`; retained native pipeline cache storage implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-cache-storage-20260617-025034/summary.md`. Remaining work: move normalized render/compute PSO field accumulation and actual Metal pipeline creation ownership in later slices.
+Status: complete for the enabled native path. Device-scoped pipeline cache key foundation is implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-key-foundation-20260617-014138/summary.md`; retained native pipeline cache storage is implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase4-pipeline-cache-storage-20260617-025034/summary.md`; normalized render/compute PSO field accumulation and actual Metal pipeline creation ownership are implemented in commit `ea84a85` (`feat: create m12 pipelines in libm12core`). Post-fix validation used a required pre-launch backend dry-run plus 150s AC6 run at `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-093253/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, and detailed D3D12 logs showed `metal_render_create_native=1287`, `native=1` cache/creation lines `1310`, `native=0` lines `0`.
 
 ### Work
 
@@ -325,7 +325,7 @@ vendor/dxmt/src/d3d12/d3d12_vertex_input.hpp
 
 ### Done when
 
-- D3D12 PE side no longer calls `newRenderPipelineState` directly.
+- With `DXMT_M12CORE_ENABLE=1`, D3D12 PE routes render pipeline creation through `libm12core`; the legacy direct `newRenderPipelineState`/`newComputePipelineState` calls remain only as migration-seam fallbacks when native core calls are unavailable or return no pipeline.
 - AC6 counters clearly distinguish:
   - D3D12 PSO requests
   - normalized unique PSO keys
