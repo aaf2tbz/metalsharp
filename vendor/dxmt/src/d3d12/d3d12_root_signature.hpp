@@ -17,6 +17,7 @@ struct RootDescriptorRange {
   uint32_t base_register;
   uint32_t register_space;
   uint32_t offset_in_table;
+  uint32_t flags;
 };
 
 struct RootParameter {
@@ -25,6 +26,8 @@ struct RootParameter {
   uint32_t register_space;
   uint32_t register_index;
   uint32_t num_descriptors;
+  uint32_t num_32bit_values;
+  uint32_t descriptor_flags;
   D3D12_DESCRIPTOR_RANGE_TYPE range_type;
   uint32_t descriptor_table_entries;
   std::vector<RootDescriptorRange> ranges;
@@ -34,6 +37,15 @@ struct RootStaticSampler {
   uint32_t shader_register;
   uint32_t register_space;
   uint32_t shader_visibility;
+  uint32_t filter;
+  uint32_t address_u;
+  uint32_t address_v;
+  uint32_t address_w;
+  uint32_t max_anisotropy;
+  uint32_t comparison_func;
+  uint32_t border_color;
+  uint64_t min_lod_bits;
+  uint64_t max_lod_bits;
   uint64_t sampler_gpu_id;
   uint64_t sampler_cube_gpu_id;
   uint64_t lod_bias_bits;
@@ -90,9 +102,13 @@ public:
   const std::vector<RootStaticSampler> &GetStaticSamplers() const { return m_static_samplers; }
   D3D12_ROOT_SIGNATURE_FLAGS GetFlags() const { return m_flags; }
   size_t GetBlobHash() const { return m_blob_hash; }
+  bool HasM12CoreSummary() const { return m_core_summary_valid; }
+  uint64_t GetM12CoreRootSignatureKey() const { return m_core_root_signature_key; }
+  const M12CoreRootSignatureSummary &GetM12CoreSummary() const { return m_core_summary; }
 
 private:
   void Parse(const void *blob, SIZE_T blob_size);
+  void SummarizeWithM12Core();
 
   MTLD3D12Device *m_device;
   std::vector<RootParameter> m_parameters;
@@ -100,6 +116,9 @@ private:
   uint32_t m_num_static_samplers = 0;
   D3D12_ROOT_SIGNATURE_FLAGS m_flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
   size_t m_blob_hash = 0;
+  bool m_core_summary_valid = false;
+  uint64_t m_core_root_signature_key = 0;
+  M12CoreRootSignatureSummary m_core_summary = {};
   std::atomic<uint32_t> m_refCount = {1ul};
 };
 

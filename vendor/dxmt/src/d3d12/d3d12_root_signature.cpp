@@ -256,13 +256,26 @@ static uint64_t sampler_lod_bias_bits(float lod_bias) {
   return bits;
 }
 
+static uint64_t m12_root_field(uint8_t tag, uint64_t payload) {
+  return (uint64_t(tag) << 56) | (payload & 0x00ffffffffffffffull);
+}
+
 RootStaticSampler make_static_sampler(WMT::Device device,
                                       const D3D12_STATIC_SAMPLER_DESC &desc) {
   RootStaticSampler sampler = {};
   sampler.shader_register = desc.ShaderRegister;
   sampler.register_space = desc.RegisterSpace;
   sampler.shader_visibility = desc.ShaderVisibility;
+  sampler.filter = desc.Filter;
+  sampler.address_u = desc.AddressU;
+  sampler.address_v = desc.AddressV;
+  sampler.address_w = desc.AddressW;
+  sampler.max_anisotropy = desc.MaxAnisotropy;
+  sampler.comparison_func = desc.ComparisonFunc;
+  sampler.border_color = desc.BorderColor;
   sampler.lod_bias_bits = sampler_lod_bias_bits(desc.MipLODBias);
+  sampler.min_lod_bits = sampler_lod_bias_bits(desc.MinLOD);
+  sampler.max_lod_bits = sampler_lod_bias_bits(desc.MaxLOD);
 
   WMTSamplerInfo info = sampler_info_from_static_desc(desc);
   sampler.sampler = device.newSamplerState(info);
@@ -294,6 +307,7 @@ MTLD3D12RootSignature::MTLD3D12RootSignature(MTLD3D12Device *device,
       m_blob_hash = m_blob_hash * 131 + bytes[i];
   }
   Parse(blob, blob_size);
+  SummarizeWithM12Core();
   Logger::info(str::format("D3D12RootSignature: ", m_parameters.size(),
                             " params, ", m_num_static_samplers,
                             " static samplers, flags=", m_flags,
@@ -301,6 +315,94 @@ MTLD3D12RootSignature::MTLD3D12RootSignature(MTLD3D12Device *device,
 }
 
 MTLD3D12RootSignature::~MTLD3D12RootSignature() { m_device->Release(); }
+
+void MTLD3D12RootSignature::SummarizeWithM12Core() {
+  /* Phase 5 migration seam: D3D12 still owns Windows blob parsing and all live
+   * descriptor binding behavior, while libm12core owns the stable structural
+   * key/summary that future binding-plan migration will consume.  If the
+   * native core is disabled or lacks this ABI, the existing blob-hash path and
+   * PE-local lookup helpers remain the fallback.
+   */
+  std::vector<uint64_t> fields;
+  fields.reserve(m_parameters.size() * 4 + m_static_samplers.size());
+  for (uint32_t i = 0; i < m_parameters.size(); i++) {
+    const auto &param = m_parameters[i];
+    uint8_t tag = 0x50;
+    if (param.type == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+      tag = 0x51;
+    else if (param.type == D3D12_ROOT_PARAMETER_TYPE_CBV ||
+             param.type == D3D12_ROOT_PARAMETER_TYPE_SRV ||
+             param.type == D3D12_ROOT_PARAMETER_TYPE_UAV)
+      tag = 0x53;
+    else if (param.type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+      tag = 0x54;
+
+    fields.push_back(m12_root_field(tag, uint64_t(i) |
+                                         (uint64_t(param.type) << 8) |
+                                         (uint64_t(param.shader_visibility) << 16)));
+    fields.push_back(m12_root_field(0x56, param.register_index));
+    fields.push_back(m12_root_field(0x56, param.register_space));
+    fields.push_back(m12_root_field(0x56, param.num_descriptors));
+    fields.push_back(m12_root_field(0x56, param.num_32bit_values));
+    fields.push_back(m12_root_field(0x56, param.descriptor_flags));
+    fields.push_back(m12_root_field(0x56, param.descriptor_table_entries));
+    for (uint32_t r = 0; r < param.ranges.size(); r++) {
+      const auto &range = param.ranges[r];
+      fields.push_back(m12_root_field(0x52, uint64_t(i) |
+                                           (uint64_t(r) << 8) |
+                                           (uint64_t(range.range_type) << 24)));
+      fields.push_back(m12_root_field(0x56, range.base_register));
+      fields.push_back(m12_root_field(0x56, range.register_space));
+      fields.push_back(m12_root_field(0x56, range.num_descriptors));
+      fields.push_back(m12_root_field(0x56, range.offset_in_table));
+      fields.push_back(m12_root_field(0x56, range.flags));
+    }
+  }
+  for (uint32_t i = 0; i < m_static_samplers.size(); i++) {
+    const auto &sampler = m_static_samplers[i];
+    fields.push_back(m12_root_field(0x55, uint64_t(i) |
+                                         (uint64_t(sampler.shader_visibility) << 8)));
+    fields.push_back(m12_root_field(0x56, sampler.shader_register));
+    fields.push_back(m12_root_field(0x56, sampler.register_space));
+    fields.push_back(m12_root_field(0x56, sampler.filter));
+    fields.push_back(m12_root_field(0x56, sampler.address_u));
+    fields.push_back(m12_root_field(0x56, sampler.address_v));
+    fields.push_back(m12_root_field(0x56, sampler.address_w));
+    fields.push_back(m12_root_field(0x56, sampler.max_anisotropy));
+    fields.push_back(m12_root_field(0x56, sampler.comparison_func));
+    fields.push_back(m12_root_field(0x56, sampler.border_color));
+    fields.push_back(m12_root_field(0x56, sampler.lod_bias_bits));
+    fields.push_back(m12_root_field(0x56, sampler.min_lod_bits));
+    fields.push_back(m12_root_field(0x56, sampler.max_lod_bits));
+  }
+
+  M12CoreRootSignatureDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.parameter_count = static_cast<uint32_t>(m_parameters.size());
+  desc.static_sampler_count = static_cast<uint32_t>(m_static_samplers.size());
+  desc.flags = static_cast<uint32_t>(m_flags);
+  desc.blob_hash = static_cast<uint64_t>(m_blob_hash);
+  desc.fields = fields.empty() ? nullptr : fields.data();
+  desc.field_count = static_cast<uint32_t>(fields.size());
+
+  M12CoreRootSignatureSummary summary = {};
+  if (!WMTM12CoreSummarizeRootSignature(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_ROOT_SIGNATURE_STATUS_OK)
+    return;
+
+  m_core_summary = summary;
+  m_core_root_signature_key = summary.root_signature_key;
+  m_core_summary_valid = true;
+  Logger::info(str::format("M12_ROOT_SIGNATURE_CORE key=0x", std::hex,
+                           m_core_root_signature_key, std::dec,
+                           " params=", summary.parameter_count,
+                           " tables=", summary.descriptor_table_count,
+                           " ranges=", summary.descriptor_range_count,
+                           " root_desc=", summary.root_descriptor_count,
+                           " root_constants=", summary.root_constant_count,
+                           " static_samplers=", summary.static_sampler_count));
+}
 
 void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
   if (!blob || blob_size < sizeof(RSHeader))
@@ -354,6 +456,8 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
             data + src.parameter_offset);
         rp.register_space = constants->register_space;
         rp.register_index = constants->shader_register;
+        rp.num_32bit_values = constants->num_32bit_values;
+        rp.num_descriptors = constants->num_32bit_values;
         break;
       }
       case D3D12_ROOT_PARAMETER_TYPE_CBV:
@@ -368,6 +472,10 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
             data + src.parameter_offset);
         rp.register_space = descriptor->register_space;
         rp.register_index = descriptor->shader_register;
+        if (header->version == D3D_ROOT_SIGNATURE_VERSION_1_1)
+          memcpy(&rp.descriptor_flags,
+                 data + src.parameter_offset + sizeof(DXRootDescriptor10),
+                 sizeof(rp.descriptor_flags));
         break;
       }
       case D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE: {
@@ -413,6 +521,7 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
             range.base_register = src_range->base_shader_register;
             range.register_space = src_range->register_space;
             range.offset_in_table = src_range->offset_in_table;
+            range.flags = src_range->flags;
           }
 
           range.offset_in_table =
@@ -533,6 +642,8 @@ void MTLD3D12RootSignature::Parse(const void *blob, SIZE_T blob_size) {
     if (p->type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS) {
       rp.register_space = p->constants.register_space;
       rp.register_index = p->constants.register_index;
+      rp.num_32bit_values = p->constants.num_32bit_values;
+      rp.num_descriptors = p->constants.num_32bit_values;
     } else if (p->type == D3D12_ROOT_PARAMETER_TYPE_CBV ||
                p->type == D3D12_ROOT_PARAMETER_TYPE_SRV ||
                p->type == D3D12_ROOT_PARAMETER_TYPE_UAV) {

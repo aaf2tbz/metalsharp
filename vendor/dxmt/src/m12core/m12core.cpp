@@ -29,7 +29,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000008u; // Phase-4 native PSO key/creation ownership.
+constexpr uint32_t kBuildIdHigh = 0x00000009u; // Phase-5 root-signature key foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -143,14 +143,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_DXIL_TO_MSL |
                                M12CORE_FEATURE_SM50_REFLECTION |
                                M12CORE_FEATURE_PIPELINE_CACHE |
-                               M12CORE_FEATURE_PIPELINE_CREATION;
+                               M12CORE_FEATURE_PIPELINE_CREATION |
+                               M12CORE_FEATURE_ROOT_SIGNATURE_KEYS;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase4 pipeline-key-create abi=1";
+  return "libm12core phase5 root-signature-key abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -585,5 +586,54 @@ extern "C" int m12core_make_pipeline_cache_key_from_fields(
   out_key->abi_version = M12CORE_ABI_VERSION;
   out_key->kind = input->kind;
   out_key->key = key;
+  return 0;
+}
+
+extern "C" int m12core_summarize_root_signature(
+    const M12CoreRootSignatureDesc *desc,
+    M12CoreRootSignatureSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  if (desc->field_count && !desc->fields)
+    return 1;
+
+  /* Phase 5 root-signature seam.  D3D12 still parses the Windows root-signature
+   * blob and performs descriptor binding lookups, but libm12core now owns the
+   * stable structural key and summary counts that later binding-plan migration
+   * will use.  The field stream is intentionally scalar/POD-only so PE and
+   * native sides do not share C++ containers or D3D12 structs.
+   */
+  uint64_t key = 0x4d313252534947ull;
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->parameter_count);
+  pipelineHashCombine(key, desc->static_sampler_count);
+
+  uint32_t descriptor_tables = 0;
+  uint32_t descriptor_ranges = 0;
+  uint32_t root_descriptors = 0;
+  uint32_t root_constants = 0;
+  for (uint32_t i = 0; i < desc->field_count; i++) {
+    const uint64_t field = desc->fields[i];
+    pipelineHashCombine(key, field);
+    const uint32_t tag = (uint32_t)(field >> 56);
+    if (tag == 0x51u)
+      descriptor_tables++;
+    else if (tag == 0x52u)
+      descriptor_ranges++;
+    else if (tag == 0x53u)
+      root_descriptors++;
+    else if (tag == 0x54u)
+      root_constants++;
+  }
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_ROOT_SIGNATURE_STATUS_OK;
+  out_summary->parameter_count = desc->parameter_count;
+  out_summary->descriptor_table_count = descriptor_tables;
+  out_summary->descriptor_range_count = descriptor_ranges;
+  out_summary->root_descriptor_count = root_descriptors;
+  out_summary->root_constant_count = root_constants;
+  out_summary->static_sampler_count = desc->static_sampler_count;
+  out_summary->root_signature_key = key;
   return 0;
 }

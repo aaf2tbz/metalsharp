@@ -101,6 +101,8 @@ WINEMETAL_API bool WMTM12CoreCreatePipelineState(obj_handle_t device,
                                                   const void *pipeline_info,
                                                   uint64_t pipeline_info_size,
                                                   M12CorePipelineCreateResult *out_result);
+WINEMETAL_API bool WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc,
+                                                     M12CoreRootSignatureSummary *out_summary);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,

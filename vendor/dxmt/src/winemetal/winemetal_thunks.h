@@ -522,6 +522,18 @@ struct unixcall_m12core_create_pipeline_state {
   M12CorePipelineCreateResult ret_result;
 };
 
+struct unixcall_m12core_summarize_root_signature {
+  uint32_t abi_version;
+  uint32_t parameter_count;
+  uint32_t static_sampler_count;
+  uint32_t flags;
+  uint64_t blob_hash;
+  struct WMTConstMemoryPointer fields;
+  uint32_t field_count;
+  uint32_t ret_success;
+  M12CoreRootSignatureSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

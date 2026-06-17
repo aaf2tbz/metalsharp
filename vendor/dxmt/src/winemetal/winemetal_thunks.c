@@ -56,6 +56,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 145: return "WMTM12CoreStorePipelineCache";
   case 146: return "WMTM12CoreMakePipelineCacheKeyFromFields";
   case 147: return "WMTM12CoreCreatePipelineState";
+  case 148: return "WMTM12CoreSummarizeRootSignature";
   default: return "unknown";
   }
 }
@@ -461,6 +462,32 @@ WMTM12CoreCreatePipelineState(obj_handle_t device, uint32_t kind,
     return false;
 
   *out_result = params.ret_result;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc,
+                                 M12CoreRootSignatureSummary *out_summary) {
+  struct unixcall_m12core_summarize_root_signature params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Phase 5 root-signature bridge: keep the thunk payload fixed-width and pass
+   * the scalar field stream separately so future PE/native ABI work does not
+   * inherit pointer-bearing D3D12/C++ structures.
+   */
+  params.abi_version = desc->abi_version;
+  params.parameter_count = desc->parameter_count;
+  params.static_sampler_count = desc->static_sampler_count;
+  params.flags = desc->flags;
+  params.blob_hash = desc->blob_hash;
+  params.field_count = desc->field_count;
+  WMT_MEMPTR_SET(params.fields, desc->fields);
+  if (!winemetal_unix_call_ok(148, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
   return true;
 }
 

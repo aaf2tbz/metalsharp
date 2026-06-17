@@ -33,6 +33,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_SM50_REFLECTION = 1u << 5,
   M12CORE_FEATURE_PIPELINE_CACHE = 1u << 6,
   M12CORE_FEATURE_PIPELINE_CREATION = 1u << 7,
+  M12CORE_FEATURE_ROOT_SIGNATURE_KEYS = 1u << 8,
 };
 
 typedef struct M12CoreVersion {
@@ -281,6 +282,34 @@ typedef struct M12CorePipelineCreateResult {
   uint64_t error_handle;
 } M12CorePipelineCreateResult;
 
+typedef enum M12CoreRootSignatureStatus {
+  M12CORE_ROOT_SIGNATURE_STATUS_OK = 0,
+  M12CORE_ROOT_SIGNATURE_STATUS_INVALID = 1,
+} M12CoreRootSignatureStatus;
+
+typedef struct M12CoreRootSignatureDesc {
+  uint32_t abi_version;
+  uint32_t parameter_count;
+  uint32_t static_sampler_count;
+  uint32_t flags;
+  uint64_t blob_hash;
+  const uint64_t *fields;
+  uint32_t field_count;
+  uint32_t reserved;
+} M12CoreRootSignatureDesc;
+
+typedef struct M12CoreRootSignatureSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t parameter_count;
+  uint32_t descriptor_table_count;
+  uint32_t descriptor_range_count;
+  uint32_t root_descriptor_count;
+  uint32_t root_constant_count;
+  uint32_t static_sampler_count;
+  uint64_t root_signature_key;
+} M12CoreRootSignatureSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -381,6 +410,8 @@ int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
                                  uint64_t pipeline_handle);
 int m12core_create_pipeline_state(const M12CorePipelineCreateDesc *desc,
                                   M12CorePipelineCreateResult *out_result);
+int m12core_summarize_root_signature(const M12CoreRootSignatureDesc *desc,
+                                     M12CoreRootSignatureSummary *out_summary);
 
 #ifdef __cplusplus
 }
