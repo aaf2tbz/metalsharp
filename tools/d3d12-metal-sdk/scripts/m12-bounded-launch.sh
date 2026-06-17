@@ -179,7 +179,8 @@ for diagnostic_var in \
   METALSHARP_M12CORE_ENABLE \
   METALSHARP_M12CORE_REQUIRED \
   METALSHARP_M12CORE_PATH \
-  METALSHARP_M12CORE_DUMP_COUNTERS; do
+  METALSHARP_M12CORE_DUMP_COUNTERS \
+  METALSHARP_M12_PREWARM_PROFILE; do
   if [[ -n "${!diagnostic_var:-}" ]]; then
     launch_env+=("$diagnostic_var=${!diagnostic_var}")
   fi
