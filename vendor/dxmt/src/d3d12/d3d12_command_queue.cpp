@@ -1503,7 +1503,7 @@ struct ReplayState {
   uint32_t ac6_producer_candidate_logs = 0;
 
   TextureReadbackProbe ac6_upstream_rtv_readback;
-  TextureReadbackProbe ac6_upstream_srv_readback[4];
+  TextureReadbackProbe ac6_upstream_srv_readback[8];
   WMT::Reference<WMT::Buffer> ac6_upstream_vs_cbv_readback;
   void *ac6_upstream_vs_cbv_mapped = nullptr;
   uint32_t ac6_upstream_vs_cbv_size = 0;
@@ -2038,13 +2038,76 @@ struct ReplayState {
       Logger::info("M12 AC6 upstream root signature null");
     }
 
-    for (uint32_t i = 0; i < 4; i++) {
-      auto *srv = FindPixelSrvByOrdinal(i);
-      Logger::info(str::format("M12 AC6 upstream srv[", i, "] ",
-                               ResourceSummary(srv)));
-      ac6_upstream_srv_readback[i].slot = i;
-      ac6_upstream_srv_readback[i].reg = i;
-      CaptureTextureReadback(device, cmdbuf, srv, ac6_upstream_srv_readback[i]);
+    uint32_t upstream_probe = 0;
+    if (sig) {
+      const auto &params = sig->GetParameters();
+      for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+        const auto &param = params[i];
+        if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
+            !ShaderVisibilityCoversShader(param.shader_visibility,
+                                          D3D12_SHADER_VISIBILITY_PIXEL))
+          continue;
+        Logger::info(str::format(
+            "M12 AC6 upstream ps table root[", i, "] bound=", root_table_set[i],
+            " gpu=0x", std::hex, (unsigned long long)root_tables[i].ptr,
+            std::dec, " ranges=", (unsigned)param.ranges.size()));
+        if (!root_table_set[i])
+          continue;
+        for (uint32_t r = 0; r < param.ranges.size(); r++) {
+          const auto &range = param.ranges[r];
+          uint32_t descriptor_count =
+              range.num_descriptors == UINT32_MAX ? 1u : range.num_descriptors;
+          Logger::info(str::format(
+              "M12 AC6 upstream ps table root[", i, "] range[", r,
+              "] type=", DescriptorRangeTypeName(range.range_type),
+              " base=", range.base_register,
+              " space=", range.register_space,
+              " count=", range.num_descriptors,
+              " offset=", range.offset_in_table));
+          if (range.range_type != D3D12_DESCRIPTOR_RANGE_TYPE_SRV)
+            continue;
+          uint32_t limit = std::min<uint32_t>(descriptor_count, 16u);
+          for (uint32_t d = 0; d < limit; d++) {
+            D3D12Descriptor *desc = nullptr;
+            for (uint32_t h = 0; h < desc_heap_count && !desc; h++) {
+              auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+              if (!heap)
+                continue;
+              desc = heap->GetDescriptorFromGPUHandle(
+                  root_tables[i], range.offset_in_table + d);
+            }
+            auto *srv = desc && desc->resource
+                            ? static_cast<MTLD3D12Resource *>(desc->resource)
+                            : nullptr;
+            Logger::info(str::format(
+                "M12 AC6 upstream ps srv ordinal=", upstream_probe,
+                " root=", i, " range=", r, " desc=", d,
+                " reg=", range.base_register + d,
+                " ", DescriptorSummary(desc, D3D12_DESCRIPTOR_RANGE_TYPE_SRV),
+                " ", ResourceSummary(srv)));
+            if (upstream_probe < std::size(ac6_upstream_srv_readback)) {
+              ac6_upstream_srv_readback[upstream_probe].slot = upstream_probe;
+              ac6_upstream_srv_readback[upstream_probe].reg =
+                  range.base_register + d;
+              CaptureTextureReadback(device, cmdbuf, srv,
+                                     ac6_upstream_srv_readback[upstream_probe]);
+            }
+            upstream_probe++;
+          }
+        }
+      }
+    }
+
+    if (!upstream_probe) {
+      Logger::info("M12 AC6 upstream no pixel SRV descriptor-table entries; falling back to ordinal probe");
+      for (uint32_t i = 0; i < std::size(ac6_upstream_srv_readback); i++) {
+        auto *srv = FindPixelSrvByOrdinal(i);
+        Logger::info(str::format("M12 AC6 upstream srv[", i, "] ",
+                                 ResourceSummary(srv)));
+        ac6_upstream_srv_readback[i].slot = i;
+        ac6_upstream_srv_readback[i].reg = i;
+        CaptureTextureReadback(device, cmdbuf, srv, ac6_upstream_srv_readback[i]);
+      }
     }
 
     ac6_upstream_rtv_readback.slot = 0;
@@ -2357,10 +2420,11 @@ struct ReplayState {
       }
     }
     log_probe("M12 AC6 upstream", "rtv", ac6_upstream_rtv_readback);
-    log_probe("M12 AC6 upstream", "srv0", ac6_upstream_srv_readback[0]);
-    log_probe("M12 AC6 upstream", "srv1", ac6_upstream_srv_readback[1]);
-    log_probe("M12 AC6 upstream", "srv2", ac6_upstream_srv_readback[2]);
-    log_probe("M12 AC6 upstream", "srv3", ac6_upstream_srv_readback[3]);
+    for (uint32_t i = 0; i < std::size(ac6_upstream_srv_readback); i++) {
+      char label[16] = {};
+      snprintf(label, sizeof(label), "srv%u", i);
+      log_probe("M12 AC6 upstream", label, ac6_upstream_srv_readback[i]);
+    }
   }
 
   bool PrimeAC6FinalCompositeMask(MTLD3D12Device *device,
