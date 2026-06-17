@@ -265,7 +265,31 @@ AsyncPipelineCompiler &GetAsyncPipelineCompiler() {
   return *compiler;
 }
 
+uint32_t M12CoreStageForShaderType(ShaderType type) {
+  switch (type) {
+  case ShaderType::Vertex:
+    return M12CORE_SHADER_STAGE_VERTEX;
+  case ShaderType::Pixel:
+    return M12CORE_SHADER_STAGE_PIXEL;
+  case ShaderType::Geometry:
+    return M12CORE_SHADER_STAGE_GEOMETRY;
+  case ShaderType::Hull:
+    return M12CORE_SHADER_STAGE_HULL;
+  case ShaderType::Domain:
+    return M12CORE_SHADER_STAGE_DOMAIN;
+  case ShaderType::Compute:
+    return M12CORE_SHADER_STAGE_COMPUTE;
+  default:
+    return M12CORE_SHADER_STAGE_UNKNOWN;
+  }
+}
+
 bool ShaderBytecodeContainsDxil(const void *bytecode, SIZE_T size) {
+  M12CoreShaderBytecodeInfo core_info = {};
+  if (WMTM12CoreHashShaderBytecode(bytecode, size, M12CORE_SHADER_STAGE_UNKNOWN,
+                                   &core_info))
+    return core_info.contains_dxil != 0;
+
   if (!bytecode || size < 4)
     return false;
   using namespace microsoft;
@@ -283,13 +307,19 @@ size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
                               ShaderType type,
                               const D3D12_INPUT_LAYOUT_DESC *input_layout) {
   size_t hash = 0;
-  hash = hash * 131 + (size_t)type;
-  if (type == ShaderType::Vertex)
-    hash = hash * 131 + 0x4d3132506833ull; // M12 Phase 3 explicit varying contract.
-  if (bytecode && size > 0) {
-    const uint8_t *p = (const uint8_t *)bytecode;
-    for (SIZE_T i = 0; i < size; i++)
-      hash = hash * 131 + p[i];
+  M12CoreShaderBytecodeInfo core_info = {};
+  if (WMTM12CoreHashShaderBytecode(bytecode, size, M12CoreStageForShaderType(type),
+                                   &core_info)) {
+    hash = (size_t)core_info.bytecode_hash;
+  } else {
+    hash = hash * 131 + (size_t)type;
+    if (type == ShaderType::Vertex)
+      hash = hash * 131 + 0x4d3132506833ull; // M12 Phase 3 explicit varying contract.
+    if (bytecode && size > 0) {
+      const uint8_t *p = (const uint8_t *)bytecode;
+      for (SIZE_T i = 0; i < size; i++)
+        hash = hash * 131 + p[i];
+    }
   }
   if (type == ShaderType::Vertex && input_layout) {
     hash = hash * 131 + input_layout->NumElements;

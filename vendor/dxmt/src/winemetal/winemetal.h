@@ -11,6 +11,8 @@
 #define STATIC_ASSERT(x)
 #endif
 
+#include "../m12core/m12core.h"
+
 #ifdef _WIN32
 #define WINEMETAL_IMPORT __declspec(dllimport)
 #else
@@ -48,6 +50,14 @@ WINEMETAL_API obj_handle_t WMTCopyAllDevices();
  * correctness-critical state on the existing path.
  */
 WINEMETAL_API bool WMTM12CoreRecordCounters(const uint64_t *deltas, uint32_t count);
+
+/* Phase-3 shader-key bridge.  This crosses PE->Unix only at shader compile/key
+ * points, not per draw, and falls back to PE-local hashing if libm12core is not
+ * enabled.  It lets us migrate deterministic cache-key ownership before moving
+ * Metal function/reflection ownership.
+ */
+WINEMETAL_API bool WMTM12CoreHashShaderBytecode(const void *bytecode, uint64_t bytecode_size,
+                                                 uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,

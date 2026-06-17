@@ -60,10 +60,34 @@ bool shaderContainsDxil(const void *bytecode, uint64_t bytecode_size) {
   return false;
 }
 
+uint32_t legacyShaderTypeValue(uint32_t stage) {
+  /* Match the existing PE-side `ShaderType` enum values so enabling the native
+   * helper does not invalidate live shader/metallib cache filenames.  The ABI
+   * still exposes stable M12CORE_SHADER_STAGE_* values; this mapping is only for
+   * preserving the current hash namespace during the migration.
+   */
+  switch (stage) {
+  case M12CORE_SHADER_STAGE_VERTEX:
+    return 0;
+  case M12CORE_SHADER_STAGE_PIXEL:
+    return 1;
+  case M12CORE_SHADER_STAGE_COMPUTE:
+    return 2;
+  case M12CORE_SHADER_STAGE_HULL:
+    return 3;
+  case M12CORE_SHADER_STAGE_DOMAIN:
+    return 4;
+  case M12CORE_SHADER_STAGE_GEOMETRY:
+    return 5;
+  default:
+    return 0;
+  }
+}
+
 uint64_t hashShaderBytecode(const void *bytecode, uint64_t bytecode_size,
                             uint32_t stage) {
   uint64_t hash = 0;
-  hash = hash * 131 + stage;
+  hash = hash * 131 + legacyShaderTypeValue(stage);
   /* Preserve the current vertex shader namespace marker from the PE cache key.
    * Input-layout normalization will move later; keeping this marker now avoids
    * conflating old vertex keys with the new native-core key namespace.

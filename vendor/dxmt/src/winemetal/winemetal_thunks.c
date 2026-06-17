@@ -44,6 +44,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 79: return "SM50GetErrorMessage";
   case 80: return "SM50FreeError";
   case 135: return "WMTM12CoreRecordCounters";
+  case 136: return "WMTM12CoreHashShaderBytecode";
   default: return "unknown";
   }
 }
@@ -205,6 +206,24 @@ WMTM12CoreRecordCounters(const uint64_t *deltas, uint32_t count) {
     params.deltas[i] = deltas[i];
 
   return winemetal_unix_call_ok(135, &params);
+}
+
+WINEMETAL_API bool
+WMTM12CoreHashShaderBytecode(const void *bytecode, uint64_t bytecode_size, uint32_t stage,
+                             M12CoreShaderBytecodeInfo *out_info) {
+  struct unixcall_m12core_hash_shader_bytecode params;
+  memset(&params, 0, sizeof(params));
+  if (!out_info)
+    return false;
+
+  WMT_MEMPTR_SET(params.bytecode, bytecode);
+  params.bytecode_size = bytecode_size;
+  params.stage = stage;
+  if (!winemetal_unix_call_ok(136, &params) || !params.ret_success)
+    return false;
+
+  *out_info = params.ret_info;
+  return true;
 }
 
 WINEMETAL_API uint64_t

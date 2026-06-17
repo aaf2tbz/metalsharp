@@ -404,6 +404,14 @@ struct unixcall_m12core_record_counters {
   uint64_t deltas[M12CORE_COUNTER_COUNT];
 };
 
+struct unixcall_m12core_hash_shader_bytecode {
+  struct WMTConstMemoryPointer bytecode;
+  uint64_t bytecode_size;
+  uint32_t stage;
+  uint32_t ret_success;
+  M12CoreShaderBytecodeInfo ret_info;
+};
+
 #pragma pack(pop)
 
 #endif

@@ -65,6 +65,8 @@ typedef int (*PFN_m12core_get_version)(M12CoreVersion *out_version);
 typedef const char *(*PFN_m12core_build_string)(void);
 typedef int (*PFN_m12core_record_counter)(uint32_t counter_id, uint64_t delta);
 typedef int (*PFN_m12core_get_counters)(M12CoreCounterSnapshot *out_snapshot);
+typedef int (*PFN_m12core_hash_shader_bytecode)(const void *bytecode, uint64_t bytecode_size,
+                                                uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -72,6 +74,7 @@ static PFN_m12core_get_version p_m12core_get_version;
 static PFN_m12core_build_string p_m12core_build_string;
 static PFN_m12core_record_counter p_m12core_record_counter;
 static PFN_m12core_get_counters p_m12core_get_counters;
+static PFN_m12core_hash_shader_bytecode p_m12core_hash_shader_bytecode;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 
@@ -135,6 +138,8 @@ m12core_try_load(void) {
       (PFN_m12core_record_counter)dlsym(m12core_handle, "m12core_record_counter");
   p_m12core_get_counters =
       (PFN_m12core_get_counters)dlsym(m12core_handle, "m12core_get_counters");
+  p_m12core_hash_shader_bytecode =
+      (PFN_m12core_hash_shader_bytecode)dlsym(m12core_handle, "m12core_hash_shader_bytecode");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -211,6 +216,22 @@ _WMTM12CoreRecordCounters(void *obj) {
       fclose(log);
     }
   }
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreHashShaderBytecode(void *obj) {
+  struct unixcall_m12core_hash_shader_bytecode *params = obj;
+  if (!params || !p_m12core_hash_shader_bytecode)
+    return STATUS_SUCCESS;
+
+  /* Phase 3 shader-key bridge.  Only bytecode bytes and a stable stage enum
+   * cross the ABI; Metal objects and reflection stay on the old path until the
+   * later cache/compile ownership slice is validated.
+   */
+  params->ret_success =
+      p_m12core_hash_shader_bytecode(params->bytecode.ptr, params->bytecode_size,
+                                     params->stage, &params->ret_info) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -3876,6 +3897,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLLibrary_newFunctionWithDescriptor,
     &_MTLFunction_copyVertexAttributes,
     &_WMTM12CoreRecordCounters,
+    &_WMTM12CoreHashShaderBytecode,
 };
 
 #ifndef DXMT_NATIVE
@@ -4016,5 +4038,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLLibrary_newFunctionWithDescriptor,
     &_MTLFunction_copyVertexAttributes,
     &_WMTM12CoreRecordCounters,
+    &_WMTM12CoreHashShaderBytecode,
 };
 #endif
