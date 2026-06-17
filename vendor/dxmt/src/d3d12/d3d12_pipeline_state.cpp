@@ -653,6 +653,20 @@ uint64_t PsoFieldFloat(float value) {
   return bits;
 }
 
+uint64_t RootSignaturePipelineKey(ID3D12RootSignature *root_signature) {
+  if (!root_signature)
+    return 0;
+  auto *m12_root = static_cast<MTLD3D12RootSignature *>(root_signature);
+  /* Phase 5 PSO/root linkage seam: prefer libm12core's canonical structural
+   * root-signature key so pipeline/oracle keys share the same namespace.  If
+   * the native core is disabled or unavailable, fall back to the existing blob
+   * hash and keep all descriptor binding behavior on the PE-local path.
+   */
+  if (m12_root->HasM12CoreSummary())
+    return m12_root->GetM12CoreRootSignatureKey();
+  return static_cast<uint64_t>(m12_root->GetBlobHash());
+}
+
 void AppendRenderTargetBlendFields(std::vector<uint64_t> &fields,
                                    const D3D12_RENDER_TARGET_BLEND_DESC &rt) {
   fields.push_back(rt.BlendEnable ? 1 : 0);
@@ -2243,12 +2257,17 @@ bool MTLD3D12PipelineState::Compile() {
     info.compute_function = cs_func.handle;
 
     size_t compute_pipeline_cache_key = cs_hash;
-    const std::vector<uint64_t> compute_key_fields;
+    std::vector<uint64_t> compute_key_fields;
+    const uint64_t compute_root_key = RootSignaturePipelineKey(m_root_sig);
+    if (compute_root_key)
+      compute_key_fields.push_back(compute_root_key);
     if (!FinalizeM12CorePipelineCacheKeyFromFields(cs_hash, (uint64_t)wmt_device.handle,
                                                    M12CORE_PIPELINE_KIND_COMPUTE, 0,
                                                    compute_key_fields,
-                                                   compute_pipeline_cache_key))
+                                                   compute_pipeline_cache_key)) {
       PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
+      PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)compute_root_key);
+    }
     bool compute_core_cache_available = false;
     bool compute_cache_hit = false;
     compute_core_cache_available = LookupM12CorePipelineCache(
@@ -2692,6 +2711,9 @@ bool MTLD3D12PipelineState::Compile() {
       m_topology, m_blend_desc, m_rasterizer_desc, m_depth_stencil_desc,
       info.vertex_descriptor, reflected_descriptor_enabled,
       reflected_unspecified_topology);
+  const uint64_t render_root_key = RootSignaturePipelineKey(m_root_sig);
+  if (render_root_key)
+    render_key_fields.push_back(render_root_key);
   size_t render_pipeline_cache_key = pso_manifest_hash;
   if (!FinalizeM12CorePipelineCacheKeyFromFields(pso_manifest_hash, (uint64_t)wmt_device.handle,
                                                  M12CORE_PIPELINE_KIND_RENDER, 0,
@@ -2702,6 +2724,7 @@ bool MTLD3D12PipelineState::Compile() {
         m_depth_stencil_desc, info.vertex_descriptor, reflected_descriptor_enabled,
         reflected_unspecified_topology);
     PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
+    PsoCacheHashCombine(render_pipeline_cache_key, (size_t)render_root_key);
   }
   bool render_core_cache_available = false;
   bool render_cache_hit = false;
