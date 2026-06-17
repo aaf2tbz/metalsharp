@@ -208,6 +208,7 @@ static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
 static uint32_t g_draw_plan_logs = 0;
 static uint32_t g_replay_plan_logs = 0;
+static uint32_t g_command_stream_shadow_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
 
@@ -5945,6 +5946,102 @@ struct ReplayState {
   }
 };
 
+static void LogM12CoreCommandStreamShadow(
+    uint32_t queue_type, uint32_t list_index, uint64_t command_list_id,
+    uint64_t queue_serial, const D3D12CommandStreamStats &stats,
+    const ReplayState &state, bool has_swapchain_target,
+    uint32_t command_buffer_status) {
+  if (!TakeLogBudget(&g_command_stream_shadow_logs, 192))
+    return;
+
+  const uint32_t draw_work =
+      stats.draw_count + stats.indexed_draw_count + stats.indirect_count;
+  const uint32_t clear_work =
+      stats.clear_rtv_count + stats.clear_dsv_count + stats.clear_uav_count;
+  const uint32_t graphics_bindings =
+      stats.set_graphics_root_constants_count +
+      stats.set_graphics_root_cbv_count + stats.set_graphics_root_srv_count +
+      stats.set_graphics_root_uav_count + stats.set_graphics_root_table_count;
+  const uint32_t compute_bindings =
+      stats.set_compute_root_constants_count +
+      stats.set_compute_root_cbv_count + stats.set_compute_root_srv_count +
+      stats.set_compute_root_uav_count + stats.set_compute_root_table_count;
+
+  M12CoreCommandStreamDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  if (stats.command_count)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_COMMANDS;
+  if (draw_work)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_GRAPHICS_WORK;
+  if (stats.dispatch_count)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_COMPUTE_WORK;
+  if (clear_work)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_CLEAR_WORK;
+  if (stats.HasGraphicsSetup())
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_GRAPHICS_SETUP;
+  if (stats.set_compute_root_sig_count || compute_bindings)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_COMPUTE_SETUP;
+  if (state.rt_count)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_RENDER_TARGETS;
+  if (state.has_dsv)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_DSV;
+  if (state.desc_heap_count)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_DESCRIPTOR_HEAPS;
+  if (state.swapchain_touched_count)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TOUCH;
+  if (has_swapchain_target)
+    desc.flags |= M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TARGET;
+  if (stats.corrupt)
+    desc.flags |= M12CORE_COMMAND_STREAM_CORRUPT;
+  desc.queue_type = queue_type;
+  desc.command_list_index = list_index;
+  desc.command_buffer_status = command_buffer_status;
+  desc.command_count = stats.command_count;
+  desc.draw_count = stats.draw_count;
+  desc.indexed_draw_count = stats.indexed_draw_count;
+  desc.indirect_count = stats.indirect_count;
+  desc.dispatch_count = stats.dispatch_count;
+  desc.clear_rtv_count = stats.clear_rtv_count;
+  desc.clear_dsv_count = stats.clear_dsv_count;
+  desc.clear_uav_count = stats.clear_uav_count;
+  desc.set_pso_count = stats.set_pso_count;
+  desc.set_graphics_root_sig_count = stats.set_graphics_root_sig_count;
+  desc.set_graphics_root_binding_count = graphics_bindings;
+  desc.set_compute_root_sig_count = stats.set_compute_root_sig_count;
+  desc.set_compute_root_binding_count = compute_bindings;
+  desc.om_set_render_targets_count = stats.om_set_render_targets_count;
+  desc.ia_binding_count =
+      stats.ia_set_vertex_buffers_count + stats.ia_set_index_buffer_count;
+  desc.viewport_scissor_count =
+      stats.rs_set_viewports_count + stats.rs_set_scissors_count;
+  desc.final_render_target_count = state.rt_count;
+  desc.final_has_dsv = state.has_dsv ? 1u : 0u;
+  desc.final_descriptor_heap_count = state.desc_heap_count;
+  desc.swapchain_touched_count = state.swapchain_touched_count;
+  desc.command_list_id = command_list_id;
+  desc.queue_serial = queue_serial;
+
+  M12CoreCommandStreamSummary summary = {};
+  if (!WMTM12CoreValidateCommandStream(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_COMMAND_STREAM_STATUS_OK)
+    return;
+
+  Logger::info(str::format(
+      "M12_COMMAND_STREAM_SHADOW queue=", queue_type, " list=", list_index,
+      " cmdlist_id=", (unsigned long long)command_list_id,
+      " serial=", (unsigned long long)queue_serial, " key=0x", std::hex,
+      summary.command_stream_key, " input=0x", summary.input_flags,
+      " expected=0x", summary.expected_flags, " drift=0x", summary.drift_flags,
+      std::dec, " class=", summary.work_classification,
+      " path=", summary.execution_path,
+      " scheduled=", (unsigned long long)summary.scheduled_work_count,
+      " attachments=", summary.attachment_count,
+      " binding_changes=", summary.binding_change_count,
+      " descriptor_pressure=", summary.descriptor_pressure_score,
+      " status=", command_buffer_status));
+}
+
 WMTIndexType DXGIToWMTIndexFormat(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R16_UINT:
@@ -8911,6 +9008,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                            clear_rtv_count, clear_dsv_count, clear_uav_count,
                            st.swapchain_work_encoded, has_swapchain_work_target,
                            sync_execute, (uint32_t)status, replay_ms, wait_ms);
+      LogM12CoreCommandStreamShadow(
+          (uint32_t)m_desc.Type, li, command_list_id, queue_serial,
+          stream_stats, st, has_swapchain_work_target, (uint32_t)status);
     }
     if (interesting_list && TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::info(str::format(

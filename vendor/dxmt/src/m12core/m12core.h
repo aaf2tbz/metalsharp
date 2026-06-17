@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x0000000fu /* Phase-9 replay/present planning foundation. */
+  0x00000010u /* Phase-9 command-stream shadow foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -43,6 +43,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_DRAW_PLANNING = 1u << 12,
   M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13,
   M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14,
+  M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS = 1u << 15,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -51,7 +52,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_ROOT_SIGNATURE_KEYS | M12CORE_FEATURE_ROOT_BINDING_PLAN |
       M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT | M12CORE_FEATURE_PREWARM_PACKS |
       M12CORE_FEATURE_DRAW_PLANNING | M12CORE_FEATURE_PRESENT_PLANNING |
-      M12CORE_FEATURE_REPLAY_PLANNING,
+      M12CORE_FEATURE_REPLAY_PLANNING |
+      M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS,
 };
 
 typedef struct M12CoreVersion {
@@ -662,6 +664,73 @@ typedef struct M12CoreReplayPlanSummary {
   uint64_t scheduled_work_count;
 } M12CoreReplayPlanSummary;
 
+typedef enum M12CoreCommandStreamStatus {
+  M12CORE_COMMAND_STREAM_STATUS_OK = 0,
+  M12CORE_COMMAND_STREAM_STATUS_INVALID = 1,
+} M12CoreCommandStreamStatus;
+
+typedef enum M12CoreCommandStreamFlags {
+  M12CORE_COMMAND_STREAM_HAS_COMMANDS = 1u << 0,
+  M12CORE_COMMAND_STREAM_HAS_GRAPHICS_WORK = 1u << 1,
+  M12CORE_COMMAND_STREAM_HAS_COMPUTE_WORK = 1u << 2,
+  M12CORE_COMMAND_STREAM_HAS_CLEAR_WORK = 1u << 3,
+  M12CORE_COMMAND_STREAM_HAS_GRAPHICS_SETUP = 1u << 4,
+  M12CORE_COMMAND_STREAM_HAS_COMPUTE_SETUP = 1u << 5,
+  M12CORE_COMMAND_STREAM_HAS_RENDER_TARGETS = 1u << 6,
+  M12CORE_COMMAND_STREAM_HAS_DSV = 1u << 7,
+  M12CORE_COMMAND_STREAM_HAS_DESCRIPTOR_HEAPS = 1u << 8,
+  M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TOUCH = 1u << 9,
+  M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TARGET = 1u << 10,
+  M12CORE_COMMAND_STREAM_CORRUPT = 1u << 11,
+} M12CoreCommandStreamFlags;
+
+typedef struct M12CoreCommandStreamDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t command_buffer_status;
+  uint32_t command_count;
+  uint32_t draw_count;
+  uint32_t indexed_draw_count;
+  uint32_t indirect_count;
+  uint32_t dispatch_count;
+  uint32_t clear_rtv_count;
+  uint32_t clear_dsv_count;
+  uint32_t clear_uav_count;
+  uint32_t set_pso_count;
+  uint32_t set_graphics_root_sig_count;
+  uint32_t set_graphics_root_binding_count;
+  uint32_t set_compute_root_sig_count;
+  uint32_t set_compute_root_binding_count;
+  uint32_t om_set_render_targets_count;
+  uint32_t ia_binding_count;
+  uint32_t viewport_scissor_count;
+  uint32_t final_render_target_count;
+  uint32_t final_has_dsv;
+  uint32_t final_descriptor_heap_count;
+  uint32_t swapchain_touched_count;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+} M12CoreCommandStreamDesc;
+
+typedef struct M12CoreCommandStreamSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t input_flags;
+  uint32_t expected_flags;
+  uint32_t drift_flags;
+  uint32_t work_classification;
+  uint32_t execution_path;
+  uint32_t descriptor_pressure_score;
+  uint32_t attachment_count;
+  uint32_t binding_change_count;
+  uint32_t reserved[2];
+  uint64_t command_stream_key;
+  uint64_t scheduled_work_count;
+} M12CoreCommandStreamSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -778,6 +847,8 @@ int m12core_build_present_plan(const M12CorePresentPlanDesc *desc,
                                M12CorePresentPlanSummary *out_summary);
 int m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
                               M12CoreReplayPlanSummary *out_summary);
+int m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
+                                    M12CoreCommandStreamSummary *out_summary);
 
 #ifdef __cplusplus
 }

@@ -36,6 +36,21 @@ Discrepancies ruled out:
 
 ## Slice 2 — Core-owned execution descriptors, shadow-only
 
+Status: complete.
+
+Implemented evidence:
+
+- Added `M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS` with `M12CORE_BUILD_ID_HIGH = 0x00000010`.
+- Added C/POD `M12CoreCommandStreamDesc` and `M12CoreCommandStreamSummary`.
+- Added `m12core_validate_command_stream`.
+- Added winemetal PE/unix bridge on append-only unixcall `155`.
+- Added bounded post-execution `M12_COMMAND_STREAM_SHADOW` diagnostics.
+- Runtime build passed: `./tools/d3d12-metal-sdk/scripts/m12-dev.sh build-runtime`.
+- Probe build passed: `./tools/d3d12-metal-sdk/scripts/build-probes.sh`.
+- Formatting passed: `clang-format --dry-run --Werror ...`.
+- Autoreview passed after aligning swapchain-touch semantics to `swapchain_touched_count`.
+- Runtime staged and AC6 dry-run passed: `tools/d3d12-metal-sdk/results/m12-phase9-slice2-dryrun-20260617-161032/dry-run-armored-core-vi-1888160.json`.
+
 Plan before implementation:
 
 - Add a stable C/POD command-stream execution descriptor in `m12core.h`.

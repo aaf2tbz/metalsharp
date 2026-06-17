@@ -605,6 +605,13 @@ struct unixcall_m12core_build_replay_plan {
   M12CoreReplayPlanSummary ret_summary;
 };
 
+struct unixcall_m12core_validate_command_stream {
+  M12CoreCommandStreamDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreCommandStreamSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

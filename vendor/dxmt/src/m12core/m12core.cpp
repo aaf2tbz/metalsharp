@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase9 replay-present-planning abi=1";
+  return "libm12core phase9 command-stream-shadow abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1272,6 +1272,122 @@ m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
   out_summary->execution_path = execution_path;
   out_summary->hazard_score = hazard_score;
   out_summary->replay_plan_key = key;
+  out_summary->scheduled_work_count = scheduled;
+  return 0;
+}
+
+extern "C" int
+m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
+                                M12CoreCommandStreamSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Slice 2 command-stream descriptor seam.  The PE replay path still owns
+   * command decoding, Metal encoder lifetime, resource barriers, commits, and
+   * synchronization.  libm12core owns the scalar execution descriptor
+   * classification and drift checks so later slices can make execution
+   * decisions from stable C/POD state instead of PE C++ objects.
+   */
+  const uint32_t draw_work =
+      desc->draw_count + desc->indexed_draw_count + desc->indirect_count;
+  const uint32_t clear_work =
+      desc->clear_rtv_count + desc->clear_dsv_count + desc->clear_uav_count;
+  const uint32_t graphics_bindings =
+      desc->set_graphics_root_sig_count +
+      desc->set_graphics_root_binding_count + desc->ia_binding_count +
+      desc->viewport_scissor_count + desc->om_set_render_targets_count +
+      desc->set_pso_count;
+  const uint32_t compute_bindings =
+      desc->set_compute_root_sig_count + desc->set_compute_root_binding_count;
+
+  uint32_t expected_flags = 0;
+  if (desc->command_count)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_COMMANDS;
+  if (draw_work)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_GRAPHICS_WORK;
+  if (desc->dispatch_count)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_COMPUTE_WORK;
+  if (clear_work)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_CLEAR_WORK;
+  if (graphics_bindings)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_GRAPHICS_SETUP;
+  if (compute_bindings)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_COMPUTE_SETUP;
+  if (desc->final_render_target_count)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_RENDER_TARGETS;
+  if (desc->final_has_dsv)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_DSV;
+  if (desc->final_descriptor_heap_count)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_DESCRIPTOR_HEAPS;
+  if (desc->swapchain_touched_count)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TOUCH;
+  if (desc->flags & M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TARGET)
+    expected_flags |= M12CORE_COMMAND_STREAM_HAS_SWAPCHAIN_TARGET;
+  if (desc->flags & M12CORE_COMMAND_STREAM_CORRUPT)
+    expected_flags |= M12CORE_COMMAND_STREAM_CORRUPT;
+
+  uint64_t key = 0x4d3132435354524dull; // "M12CSTRM" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, expected_flags);
+  pipelineHashCombine(key, desc->queue_type);
+  pipelineHashCombine(key, desc->command_list_index);
+  pipelineHashCombine(key, desc->command_buffer_status);
+  pipelineHashCombine(key, desc->command_count);
+  pipelineHashCombine(key, draw_work);
+  pipelineHashCombine(key, desc->dispatch_count);
+  pipelineHashCombine(key, clear_work);
+  pipelineHashCombine(key, graphics_bindings);
+  pipelineHashCombine(key, compute_bindings);
+  pipelineHashCombine(key, desc->final_render_target_count);
+  pipelineHashCombine(key, desc->final_has_dsv);
+  pipelineHashCombine(key, desc->final_descriptor_heap_count);
+  pipelineHashCombine(key, desc->swapchain_touched_count);
+  pipelineHashCombine(key, desc->command_list_id);
+  pipelineHashCombine(key, desc->queue_serial);
+
+  uint32_t classification = 0;
+  if (draw_work)
+    classification = 1;
+  else if (desc->dispatch_count)
+    classification = 2;
+  else if (clear_work)
+    classification = 3;
+  else if (graphics_bindings || compute_bindings)
+    classification = 4;
+
+  uint32_t execution_path = 0;
+  if (desc->flags & M12CORE_COMMAND_STREAM_CORRUPT)
+    execution_path = 5;
+  else if (draw_work || graphics_bindings)
+    execution_path = 1;
+  else if (desc->dispatch_count || compute_bindings)
+    execution_path = 2;
+  else if (clear_work)
+    execution_path = 3;
+  else if (desc->command_count)
+    execution_path = 4;
+
+  const uint32_t attachment_count =
+      desc->final_render_target_count + (desc->final_has_dsv ? 1u : 0u);
+  const uint32_t descriptor_pressure = desc->final_descriptor_heap_count +
+                                       desc->set_graphics_root_binding_count +
+                                       desc->set_compute_root_binding_count;
+  const uint32_t binding_changes = graphics_bindings + compute_bindings;
+  const uint64_t scheduled = (uint64_t)desc->command_count + draw_work +
+                             desc->dispatch_count + clear_work;
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_COMMAND_STREAM_STATUS_OK;
+  out_summary->input_flags = desc->flags;
+  out_summary->expected_flags = expected_flags;
+  out_summary->drift_flags = desc->flags ^ expected_flags;
+  out_summary->work_classification = classification;
+  out_summary->execution_path = execution_path;
+  out_summary->descriptor_pressure_score = descriptor_pressure;
+  out_summary->attachment_count = attachment_count;
+  out_summary->binding_change_count = binding_changes;
+  out_summary->command_stream_key = key;
   out_summary->scheduled_work_count = scheduled;
   return 0;
 }

@@ -121,6 +121,9 @@ typedef int (*PFN_m12core_build_present_plan)(
     const M12CorePresentPlanDesc *desc, M12CorePresentPlanSummary *out_summary
 );
 typedef int (*PFN_m12core_build_replay_plan)(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary);
+typedef int (*PFN_m12core_validate_command_stream)(
+    const M12CoreCommandStreamDesc *desc, M12CoreCommandStreamSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -147,6 +150,7 @@ static PFN_m12core_summarize_prewarm_pack p_m12core_summarize_prewarm_pack;
 static PFN_m12core_build_draw_plan p_m12core_build_draw_plan;
 static PFN_m12core_build_present_plan p_m12core_build_present_plan;
 static PFN_m12core_build_replay_plan p_m12core_build_replay_plan;
+static PFN_m12core_validate_command_stream p_m12core_validate_command_stream;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -241,6 +245,8 @@ m12core_try_load(void) {
   p_m12core_build_draw_plan = (PFN_m12core_build_draw_plan)dlsym(m12core_handle, "m12core_build_draw_plan");
   p_m12core_build_present_plan = (PFN_m12core_build_present_plan)dlsym(m12core_handle, "m12core_build_present_plan");
   p_m12core_build_replay_plan = (PFN_m12core_build_replay_plan)dlsym(m12core_handle, "m12core_build_replay_plan");
+  p_m12core_validate_command_stream =
+      (PFN_m12core_validate_command_stream)dlsym(m12core_handle, "m12core_validate_command_stream");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -699,6 +705,16 @@ _WMTM12CoreBuildReplayPlan(void *obj) {
     return STATUS_SUCCESS;
 
   params->ret_success = p_m12core_build_replay_plan(&params->desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreValidateCommandStream(void *obj) {
+  struct unixcall_m12core_validate_command_stream *params = obj;
+  if (!params || !p_m12core_validate_command_stream)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_validate_command_stream(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4380,6 +4396,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreBuildDrawPlan,
     &_WMTM12CoreBuildPresentPlan,
     &_WMTM12CoreBuildReplayPlan,
+    &_WMTM12CoreValidateCommandStream,
 };
 
 #ifndef DXMT_NATIVE
@@ -4539,5 +4556,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreBuildDrawPlan,
     &_WMTM12CoreBuildPresentPlan,
     &_WMTM12CoreBuildReplayPlan,
+    &_WMTM12CoreValidateCommandStream,
 };
 #endif

@@ -2074,14 +2074,16 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
   local.struct_size = sizeof(local);
   local.vendor_id = MetalSharpM12TranslationLayerVendorMetalSharp;
   local.layer_id = MetalSharpM12TranslationLayerIdDxmtM12;
-  local.feature_flags = MetalSharpM12TranslationLayerFeatureD3D12 |
-                        MetalSharpM12TranslationLayerFeatureDXMT |
-                        MetalSharpM12TranslationLayerFeatureLibM12Core |
-                        MetalSharpM12TranslationLayerFeatureRootBindingPlans |
-                        MetalSharpM12TranslationLayerFeaturePrewarmPacks |
-                        MetalSharpM12TranslationLayerFeatureDrawPlanning |
-                        MetalSharpM12TranslationLayerFeaturePresentPlanning |
-                        MetalSharpM12TranslationLayerFeatureReplayPlanning;
+  local.feature_flags =
+      MetalSharpM12TranslationLayerFeatureD3D12 |
+      MetalSharpM12TranslationLayerFeatureDXMT |
+      MetalSharpM12TranslationLayerFeatureLibM12Core |
+      MetalSharpM12TranslationLayerFeatureRootBindingPlans |
+      MetalSharpM12TranslationLayerFeaturePrewarmPacks |
+      MetalSharpM12TranslationLayerFeatureDrawPlanning |
+      MetalSharpM12TranslationLayerFeaturePresentPlanning |
+      MetalSharpM12TranslationLayerFeatureReplayPlanning |
+      MetalSharpM12TranslationLayerFeatureCommandStreamDescriptors;
   local.m12core_abi_version = M12CORE_ABI_VERSION;
   local.m12core_feature_flags = M12CORE_FEATURE_ALL;
   local.m12core_build_id_low = M12CORE_BUILD_ID_LOW;
@@ -2091,7 +2093,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
   m12_copy_fixed_string(local.backend_name, sizeof(local.backend_name),
                         "DXMT D3D12 over Metal");
   std::snprintf(local.build_string, sizeof(local.build_string),
-                "MetalSharp DXMT M12 phase9 replay planning abi=%u",
+                "MetalSharp DXMT M12 phase9 command stream abi=%u",
                 MetalSharpM12TranslationLayerInfoAbiVersion);
 
   *info = local;

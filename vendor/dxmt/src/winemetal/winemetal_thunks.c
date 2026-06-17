@@ -100,6 +100,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreBuildPresentPlan";
   case 154:
     return "WMTM12CoreBuildReplayPlan";
+  case 155:
+    return "WMTM12CoreValidateCommandStream";
   default:
     return "unknown";
   }
@@ -647,6 +649,24 @@ WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSu
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(154, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCommandStreamSummary *out_summary) {
+  struct unixcall_m12core_validate_command_stream params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Slice 2 command-stream descriptor bridge: scalar shadow validation only.
+   * The PE path continues to own command replay and all Metal execution.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(155, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;
