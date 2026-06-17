@@ -422,6 +422,81 @@ bool CreateM12CoreShaderFunction(obj_handle_t device, ShaderType type,
   return true;
 }
 
+void CopyM12CoreReflectionToSM50(const M12CoreSM50ShaderReflection &src,
+                                 MTL_SHADER_REFLECTION &dst) {
+  dst = {};
+  dst.ConstanttBufferTableBindIndex = src.constant_buffer_table_bind_index;
+  dst.ArgumentBufferBindIndex = src.argument_buffer_bind_index;
+  dst.NumConstantBuffers = src.num_constant_buffers;
+  dst.NumArguments = src.num_arguments;
+  dst.ThreadgroupSize[0] = src.stage_payload[0];
+  dst.ThreadgroupSize[1] = src.stage_payload[1];
+  dst.ThreadgroupSize[2] = src.stage_payload[2];
+  dst.ConstantBufferSlotMask = src.constant_buffer_slot_mask;
+  dst.SamplerSlotMask = src.sampler_slot_mask;
+  dst.UAVSlotMask = src.uav_slot_mask;
+  dst.SRVSlotMaskHi = src.srv_slot_mask_hi;
+  dst.SRVSlotMaskLo = src.srv_slot_mask_lo;
+  dst.NumOutputElement = src.num_output_element;
+  dst.ThreadsPerPatch = src.threads_per_patch;
+  dst.ArgumentTableQwords = src.argument_table_qwords;
+}
+
+void CopyM12CoreArgumentToSM50(const M12CoreSM50ShaderArgument &src,
+                               MTL_SM50_SHADER_ARGUMENT &dst) {
+  dst.Type = (SM50BindingType)src.type;
+  dst.SM50BindingSlot = src.binding_slot;
+  dst.SM50RegisterSpace = src.register_space;
+  dst.Flags = (MTL_SM50_SHADER_ARGUMENT_FLAG)src.flags;
+  dst.StructurePtrOffset = src.structure_ptr_offset;
+  dst.SizeInVec4 = src.size_in_vec4;
+}
+
+bool ReflectSM50WithM12Core(const void *bytecode, uint64_t bytecode_size,
+                            MTL_SHADER_REFLECTION &reflection,
+                            std::vector<MTL_SM50_SHADER_ARGUMENT> &constant_buffers,
+                            std::vector<MTL_SM50_SHADER_ARGUMENT> &arguments) {
+  if (ShaderBytecodeContainsDxil(bytecode, bytecode_size))
+    return false;
+
+  /* Phase 3 reflection seam: the native core owns SM50 reflection/argument
+   * extraction and returns POD copies.  D3D12 keeps the current binding structs
+   * until Phase 5 moves root/descriptor binding plan ownership.
+   */
+  M12CoreSM50ShaderReflection core_reflection = {};
+  M12CoreSM50ReflectionResult probe = {};
+  if (!WMTM12CoreReflectSM50Shader(bytecode, bytecode_size, 0,
+                                   &core_reflection, nullptr, 0, nullptr, 0,
+                                   &probe) ||
+      probe.abi_version != M12CORE_ABI_VERSION)
+    return false;
+  if (probe.status != M12CORE_SM50_REFLECTION_STATUS_OUTPUT_TOO_SMALL &&
+      probe.status != M12CORE_SM50_REFLECTION_STATUS_OK)
+    return false;
+
+  std::vector<M12CoreSM50ShaderArgument> core_cbs(probe.required_constant_buffers);
+  std::vector<M12CoreSM50ShaderArgument> core_args(probe.required_arguments);
+  M12CoreSM50ReflectionResult result = {};
+  if (!WMTM12CoreReflectSM50Shader(
+          bytecode, bytecode_size, 0, &core_reflection,
+          core_cbs.empty() ? nullptr : core_cbs.data(),
+          static_cast<uint32_t>(core_cbs.size()),
+          core_args.empty() ? nullptr : core_args.data(),
+          static_cast<uint32_t>(core_args.size()), &result) ||
+      result.abi_version != M12CORE_ABI_VERSION ||
+      result.status != M12CORE_SM50_REFLECTION_STATUS_OK)
+    return false;
+
+  CopyM12CoreReflectionToSM50(core_reflection, reflection);
+  constant_buffers.resize(core_cbs.size());
+  arguments.resize(core_args.size());
+  for (size_t i = 0; i < core_cbs.size(); i++)
+    CopyM12CoreArgumentToSM50(core_cbs[i], constant_buffers[i]);
+  for (size_t i = 0; i < core_args.size(); i++)
+    CopyM12CoreArgumentToSM50(core_args[i], arguments[i]);
+  return true;
+}
+
 bool LowerDXILToMSLWithM12Core(const void *dxil_container,
                                uint64_t dxil_container_size,
                                ShaderType type,
@@ -2153,14 +2228,17 @@ bool MTLD3D12PipelineState::Compile() {
                            m_threadgroup_size.height, m_threadgroup_size.depth,
                            (uintptr_t)cs_func.handle);
 
-    PTRACE("CS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
-      (unsigned long long)(uintptr_t)m_cs_shader,
+    bool cs_core_reflection = ReflectSM50WithM12Core(m_cs.data(), m_cs.size(),
+                                                     m_cs_reflection, m_cs_cb_args,
+                                                     m_cs_args);
+    PTRACE("CS_ARGS_DEBUG: shader=%llu core=%u NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
+      (unsigned long long)(uintptr_t)m_cs_shader, cs_core_reflection ? 1u : 0u,
       m_cs_reflection.NumConstantBuffers, m_cs_reflection.NumArguments,
       m_cs_reflection.ConstanttBufferTableBindIndex,
       m_cs_reflection.ArgumentBufferBindIndex,
       m_cs_reflection.ArgumentTableQwords);
-    if (m_cs_shader && (m_cs_reflection.NumArguments > 0 ||
-                        m_cs_reflection.NumConstantBuffers > 0)) {
+    if (!cs_core_reflection && m_cs_shader && (m_cs_reflection.NumArguments > 0 ||
+                                               m_cs_reflection.NumConstantBuffers > 0)) {
       if (m_cs_reflection.NumConstantBuffers > 0)
         m_cs_cb_args.resize(m_cs_reflection.NumConstantBuffers);
       if (m_cs_reflection.NumArguments > 0)
@@ -2168,16 +2246,16 @@ bool MTLD3D12PipelineState::Compile() {
       SM50GetArgumentsInfo(m_cs_shader,
                            m_cs_cb_args.empty() ? nullptr : m_cs_cb_args.data(),
                            m_cs_args.empty() ? nullptr : m_cs_args.data());
-      for (size_t i = 0; i < m_cs_cb_args.size(); i++) {
-        PTRACE("CS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
-          i, (int)m_cs_cb_args[i].Type, m_cs_cb_args[i].SM50BindingSlot,
-          m_cs_cb_args[i].Flags, m_cs_cb_args[i].StructurePtrOffset);
-      }
-      for (size_t i = 0; i < m_cs_args.size(); i++) {
-        PTRACE("CS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
-          i, (int)m_cs_args[i].Type, m_cs_args[i].SM50BindingSlot,
-          m_cs_args[i].Flags, m_cs_args[i].StructurePtrOffset);
-      }
+    }
+    for (size_t i = 0; i < m_cs_cb_args.size(); i++) {
+      PTRACE("CS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
+        i, (int)m_cs_cb_args[i].Type, m_cs_cb_args[i].SM50BindingSlot,
+        m_cs_cb_args[i].Flags, m_cs_cb_args[i].StructurePtrOffset);
+    }
+    for (size_t i = 0; i < m_cs_args.size(); i++) {
+      PTRACE("CS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
+        i, (int)m_cs_args[i].Type, m_cs_args[i].SM50BindingSlot,
+        m_cs_args[i].Flags, m_cs_args[i].StructurePtrOffset);
     }
     if (m_cs_shader) {
       SM50Destroy(m_cs_shader);
@@ -2657,14 +2735,17 @@ bool MTLD3D12PipelineState::Compile() {
   m_depth_stencil_state = wmt_device.newDepthStencilState(ds_info);
 
   {
-    PTRACE("VS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
-      (unsigned long long)(uintptr_t)m_vs_shader,
+    bool vs_core_reflection = ReflectSM50WithM12Core(m_vs.data(), m_vs.size(),
+                                                     m_vs_reflection, m_vs_cb_args,
+                                                     m_vs_args);
+    PTRACE("VS_ARGS_DEBUG: shader=%llu core=%u NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
+      (unsigned long long)(uintptr_t)m_vs_shader, vs_core_reflection ? 1u : 0u,
       m_vs_reflection.NumConstantBuffers, m_vs_reflection.NumArguments,
       m_vs_reflection.ConstanttBufferTableBindIndex,
       m_vs_reflection.ArgumentBufferBindIndex,
       m_vs_reflection.ArgumentTableQwords);
-    if (m_vs_shader && (m_vs_reflection.NumArguments > 0 ||
-                        m_vs_reflection.NumConstantBuffers > 0)) {
+    if (!vs_core_reflection && m_vs_shader && (m_vs_reflection.NumArguments > 0 ||
+                                               m_vs_reflection.NumConstantBuffers > 0)) {
       if (m_vs_reflection.NumConstantBuffers > 0)
         m_vs_cb_args.resize(m_vs_reflection.NumConstantBuffers);
       if (m_vs_reflection.NumArguments > 0)
@@ -2672,30 +2753,35 @@ bool MTLD3D12PipelineState::Compile() {
       SM50GetArgumentsInfo(m_vs_shader,
                            m_vs_cb_args.empty() ? nullptr : m_vs_cb_args.data(),
                            m_vs_args.empty() ? nullptr : m_vs_args.data());
-      for (size_t i = 0; i < m_vs_cb_args.size(); i++) {
-        PTRACE("VS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
-          i, (int)m_vs_cb_args[i].Type, m_vs_cb_args[i].SM50BindingSlot,
-          m_vs_cb_args[i].Flags, m_vs_cb_args[i].StructurePtrOffset);
-      }
-      for (size_t i = 0; i < m_vs_args.size(); i++) {
-        PTRACE("VS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
-          i, (int)m_vs_args[i].Type, m_vs_args[i].SM50BindingSlot,
-          m_vs_args[i].Flags, m_vs_args[i].StructurePtrOffset);
-      }
+    }
+    for (size_t i = 0; i < m_vs_cb_args.size(); i++) {
+      PTRACE("VS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
+        i, (int)m_vs_cb_args[i].Type, m_vs_cb_args[i].SM50BindingSlot,
+        m_vs_cb_args[i].Flags, m_vs_cb_args[i].StructurePtrOffset);
+    }
+    for (size_t i = 0; i < m_vs_args.size(); i++) {
+      PTRACE("VS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
+        i, (int)m_vs_args[i].Type, m_vs_args[i].SM50BindingSlot,
+        m_vs_args[i].Flags, m_vs_args[i].StructurePtrOffset);
+    }
+    if (m_vs_shader) {
       SM50Destroy(m_vs_shader);
       m_vs_shader = nullptr;
     }
   }
 
   {
-    PTRACE("PS_ARGS_DEBUG: shader=%llu NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
-      (unsigned long long)(uintptr_t)m_ps_shader,
+    bool ps_core_reflection = ReflectSM50WithM12Core(m_ps.data(), m_ps.size(),
+                                                     m_ps_reflection, m_ps_cb_args,
+                                                     m_ps_args);
+    PTRACE("PS_ARGS_DEBUG: shader=%llu core=%u NumCB=%u NumArgs=%u CBufBindIdx=%u ArgBufBindIdx=%u ArgTableQwords=%u",
+      (unsigned long long)(uintptr_t)m_ps_shader, ps_core_reflection ? 1u : 0u,
       m_ps_reflection.NumConstantBuffers, m_ps_reflection.NumArguments,
       m_ps_reflection.ConstanttBufferTableBindIndex,
       m_ps_reflection.ArgumentBufferBindIndex,
       m_ps_reflection.ArgumentTableQwords);
-    if (m_ps_shader && (m_ps_reflection.NumArguments > 0 ||
-                        m_ps_reflection.NumConstantBuffers > 0)) {
+    if (!ps_core_reflection && m_ps_shader && (m_ps_reflection.NumArguments > 0 ||
+                                               m_ps_reflection.NumConstantBuffers > 0)) {
       if (m_ps_reflection.NumConstantBuffers > 0)
         m_ps_cb_args.resize(m_ps_reflection.NumConstantBuffers);
       if (m_ps_reflection.NumArguments > 0)
@@ -2703,16 +2789,18 @@ bool MTLD3D12PipelineState::Compile() {
       SM50GetArgumentsInfo(m_ps_shader,
                            m_ps_cb_args.empty() ? nullptr : m_ps_cb_args.data(),
                            m_ps_args.empty() ? nullptr : m_ps_args.data());
-      for (size_t i = 0; i < m_ps_cb_args.size(); i++) {
-        PTRACE("PS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
-          i, (int)m_ps_cb_args[i].Type, m_ps_cb_args[i].SM50BindingSlot,
-          m_ps_cb_args[i].Flags, m_ps_cb_args[i].StructurePtrOffset);
-      }
-      for (size_t i = 0; i < m_ps_args.size(); i++) {
-        PTRACE("PS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
-          i, (int)m_ps_args[i].Type, m_ps_args[i].SM50BindingSlot,
-          m_ps_args[i].Flags, m_ps_args[i].StructurePtrOffset);
-      }
+    }
+    for (size_t i = 0; i < m_ps_cb_args.size(); i++) {
+      PTRACE("PS_ARGS_DEBUG: cb[%zu] type=%d slot=%u flags=0x%x offset=%u",
+        i, (int)m_ps_cb_args[i].Type, m_ps_cb_args[i].SM50BindingSlot,
+        m_ps_cb_args[i].Flags, m_ps_cb_args[i].StructurePtrOffset);
+    }
+    for (size_t i = 0; i < m_ps_args.size(); i++) {
+      PTRACE("PS_ARGS_DEBUG: arg[%zu] type=%d slot=%u flags=0x%x offset=%u",
+        i, (int)m_ps_args[i].Type, m_ps_args[i].SM50BindingSlot,
+        m_ps_args[i].Flags, m_ps_args[i].StructurePtrOffset);
+    }
+    if (m_ps_shader) {
       SM50Destroy(m_ps_shader);
       m_ps_shader = nullptr;
     }

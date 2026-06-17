@@ -458,6 +458,19 @@ struct unixcall_m12core_lower_dxil_to_msl {
   M12CoreDXILToMSLResult ret_result;
 };
 
+struct unixcall_m12core_reflect_sm50_shader {
+  struct WMTConstMemoryPointer bytecode;
+  uint64_t bytecode_size;
+  uint32_t options;
+  uint32_t constant_buffer_capacity;
+  uint32_t argument_capacity;
+  uint32_t ret_success;
+  struct WMTMemoryPointer out_reflection;
+  struct WMTMemoryPointer out_constant_buffers;
+  struct WMTMemoryPointer out_arguments;
+  M12CoreSM50ReflectionResult ret_result;
+};
+
 struct unixcall_m12core_create_shader_function {
   obj_handle_t device;
   uint32_t stage;

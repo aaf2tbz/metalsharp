@@ -51,6 +51,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 140: return "WMTM12CoreMakePipelineCacheKey";
   case 141: return "WMTM12CoreCreateShaderFunction";
   case 142: return "WMTM12CoreLowerDXILToMSL";
+  case 143: return "WMTM12CoreReflectSM50Shader";
   default: return "unknown";
   }
 }
@@ -305,6 +306,36 @@ WMTM12CoreLowerDXILToMSL(const M12CoreDXILToMSLDesc *desc,
   params.out_source_capacity = out_source_capacity;
 
   if (!winemetal_unix_call_ok(142, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreReflectSM50Shader(const void *bytecode, uint64_t bytecode_size,
+                            uint32_t options,
+                            M12CoreSM50ShaderReflection *out_reflection,
+                            M12CoreSM50ShaderArgument *out_constant_buffers,
+                            uint32_t constant_buffer_capacity,
+                            M12CoreSM50ShaderArgument *out_arguments,
+                            uint32_t argument_capacity,
+                            M12CoreSM50ReflectionResult *out_result) {
+  struct unixcall_m12core_reflect_sm50_shader params;
+  memset(&params, 0, sizeof(params));
+  if (!bytecode || !bytecode_size || !out_reflection || !out_result)
+    return false;
+
+  WMT_MEMPTR_SET(params.bytecode, bytecode);
+  params.bytecode_size = bytecode_size;
+  params.options = options;
+  params.constant_buffer_capacity = constant_buffer_capacity;
+  params.argument_capacity = argument_capacity;
+  WMT_MEMPTR_SET(params.out_reflection, out_reflection);
+  WMT_MEMPTR_SET(params.out_constant_buffers, out_constant_buffers);
+  WMT_MEMPTR_SET(params.out_arguments, out_arguments);
+
+  if (!winemetal_unix_call_ok(143, &params) || !params.ret_success)
     return false;
 
   *out_result = params.ret_result;

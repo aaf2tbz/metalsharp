@@ -30,6 +30,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_SHADER_INTROSPECTION = 1u << 2,
   M12CORE_FEATURE_SHADER_FUNCTIONS = 1u << 3,
   M12CORE_FEATURE_DXIL_TO_MSL = 1u << 4,
+  M12CORE_FEATURE_SM50_REFLECTION = 1u << 5,
 };
 
 typedef struct M12CoreVersion {
@@ -228,6 +229,46 @@ typedef struct M12CorePipelineCacheKey {
   uint64_t key;
 } M12CorePipelineCacheKey;
 
+typedef enum M12CoreSM50ReflectionStatus {
+  M12CORE_SM50_REFLECTION_STATUS_OK = 0,
+  M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
+  M12CORE_SM50_REFLECTION_STATUS_INIT_FAILED = 2,
+  M12CORE_SM50_REFLECTION_STATUS_OUTPUT_TOO_SMALL = 3,
+} M12CoreSM50ReflectionStatus;
+
+typedef struct M12CoreSM50ShaderArgument {
+  uint32_t type;
+  uint32_t binding_slot;
+  uint32_t register_space;
+  uint32_t flags;
+  uint32_t structure_ptr_offset;
+  uint32_t size_in_vec4;
+} M12CoreSM50ShaderArgument;
+
+typedef struct M12CoreSM50ShaderReflection {
+  uint32_t abi_version;
+  uint32_t constant_buffer_table_bind_index;
+  uint32_t argument_buffer_bind_index;
+  uint32_t num_constant_buffers;
+  uint32_t num_arguments;
+  uint32_t stage_payload[3];
+  uint16_t constant_buffer_slot_mask;
+  uint16_t sampler_slot_mask;
+  uint64_t uav_slot_mask;
+  uint64_t srv_slot_mask_hi;
+  uint64_t srv_slot_mask_lo;
+  uint32_t num_output_element;
+  uint32_t threads_per_patch;
+  uint32_t argument_table_qwords;
+} M12CoreSM50ShaderReflection;
+
+typedef struct M12CoreSM50ReflectionResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t required_constant_buffers;
+  uint32_t required_arguments;
+} M12CoreSM50ReflectionResult;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -270,6 +311,14 @@ int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
                               M12CoreDXILToMSLResult *out_result);
 int m12core_create_shader_function(const M12CoreShaderFunctionDesc *desc,
                                    M12CoreShaderFunctionResult *out_result);
+int m12core_reflect_sm50_shader(const void *bytecode, uint64_t bytecode_size,
+                                uint32_t options,
+                                M12CoreSM50ShaderReflection *out_reflection,
+                                M12CoreSM50ShaderArgument *out_constant_buffers,
+                                uint32_t constant_buffer_capacity,
+                                M12CoreSM50ShaderArgument *out_arguments,
+                                uint32_t argument_capacity,
+                                M12CoreSM50ReflectionResult *out_result);
 int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
                                     M12CorePipelineCacheKey *out_key);
 

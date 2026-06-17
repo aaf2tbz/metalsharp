@@ -83,6 +83,15 @@ typedef int (*PFN_m12core_lower_dxil_to_msl)(const M12CoreDXILToMSLDesc *desc,
                                              char *out_source,
                                              uint64_t out_source_capacity,
                                              M12CoreDXILToMSLResult *out_result);
+typedef int (*PFN_m12core_reflect_sm50_shader)(const void *bytecode,
+                                               uint64_t bytecode_size,
+                                               uint32_t options,
+                                               M12CoreSM50ShaderReflection *out_reflection,
+                                               M12CoreSM50ShaderArgument *out_constant_buffers,
+                                               uint32_t constant_buffer_capacity,
+                                               M12CoreSM50ShaderArgument *out_arguments,
+                                               uint32_t argument_capacity,
+                                               M12CoreSM50ReflectionResult *out_result);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -97,10 +106,12 @@ static PFN_m12core_parse_shader_reflection p_m12core_parse_shader_reflection;
 static PFN_m12core_make_pipeline_cache_key p_m12core_make_pipeline_cache_key;
 static PFN_m12core_create_shader_function p_m12core_create_shader_function;
 static PFN_m12core_lower_dxil_to_msl p_m12core_lower_dxil_to_msl;
+static PFN_m12core_reflect_sm50_shader p_m12core_reflect_sm50_shader;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
 static _Atomic uint64_t m12core_dxil_to_msl_calls;
+static _Atomic uint64_t m12core_sm50_reflection_calls;
 
 static bool
 m12core_env_enabled(const char *name) {
@@ -176,6 +187,8 @@ m12core_try_load(void) {
       (PFN_m12core_create_shader_function)dlsym(m12core_handle, "m12core_create_shader_function");
   p_m12core_lower_dxil_to_msl =
       (PFN_m12core_lower_dxil_to_msl)dlsym(m12core_handle, "m12core_lower_dxil_to_msl");
+  p_m12core_reflect_sm50_shader =
+      (PFN_m12core_reflect_sm50_shader)dlsym(m12core_handle, "m12core_reflect_sm50_shader");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -350,6 +363,39 @@ _WMTM12CoreLowerDXILToMSL(void *obj) {
               (unsigned long long)params->dxil_container_size,
               params->ret_result.status,
               (unsigned long long)params->ret_result.required_source_size,
+              params->ret_success);
+      fclose(log);
+    }
+  }
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreReflectSM50Shader(void *obj) {
+  struct unixcall_m12core_reflect_sm50_shader *params = obj;
+  if (!params || !p_m12core_reflect_sm50_shader)
+    return STATUS_SUCCESS;
+
+  /* Phase 3 reflection compatibility bridge.  libm12core owns SM50 reflection
+   * and argument extraction; D3D12 maps the POD result back to its current
+   * binding structs until the Phase 5 descriptor/root mapper migration.
+   */
+  params->ret_success = p_m12core_reflect_sm50_shader(
+      params->bytecode.ptr, params->bytecode_size, params->options,
+      params->out_reflection.ptr,
+      params->out_constant_buffers.ptr, params->constant_buffer_capacity,
+      params->out_arguments.ptr, params->argument_capacity,
+      &params->ret_result) == 0;
+  uint64_t calls = atomic_fetch_add(&m12core_sm50_reflection_calls, 1) + 1;
+  if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
+    FILE *log = winemetal_debug_log();
+    if (log) {
+      fprintf(log,
+              "[m12core] sm50_reflection first_call bytes=%llu status=%u cb=%u args=%u success=%u\n",
+              (unsigned long long)params->bytecode_size,
+              params->ret_result.status,
+              params->ret_result.required_constant_buffers,
+              params->ret_result.required_arguments,
               params->ret_success);
       fclose(log);
     }
@@ -4080,6 +4126,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreMakePipelineCacheKey,
     &_WMTM12CoreCreateShaderFunction,
     &_WMTM12CoreLowerDXILToMSL,
+    &_WMTM12CoreReflectSM50Shader,
 };
 
 #ifndef DXMT_NATIVE
@@ -4227,5 +4274,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreMakePipelineCacheKey,
     &_WMTM12CoreCreateShaderFunction,
     &_WMTM12CoreLowerDXILToMSL,
+    &_WMTM12CoreReflectSM50Shader,
 };
 #endif

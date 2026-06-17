@@ -1,5 +1,6 @@
 #include "m12core.h"
 
+#include "airconv_public.h"
 #include "dxil/dxil_container.hpp"
 #include "dxil/dxil_to_msl.hpp"
 #include "dxil/llvm_bitcode.hpp"
@@ -28,7 +29,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000005u; // Phase-3 native DXIL->MSL lowering foundation.
+constexpr uint32_t kBuildIdHigh = 0x00000006u; // Phase-3 native SM50 reflection foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -139,14 +140,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
   out_version->feature_flags = M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
                                M12CORE_FEATURE_SHADER_INTROSPECTION |
                                M12CORE_FEATURE_SHADER_FUNCTIONS |
-                               M12CORE_FEATURE_DXIL_TO_MSL;
+                               M12CORE_FEATURE_DXIL_TO_MSL |
+                               M12CORE_FEATURE_SM50_REFLECTION;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase3 dxil-to-msl abi=1";
+  return "libm12core phase3 sm50-reflection abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -218,6 +220,38 @@ dxmt::dxil::MSLShader toRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
   shader.diagnostics = std::move(typed.diagnostics);
   shader.diagnostics.push_back("MSLLowering runtime path active in libm12core");
   return shader;
+}
+
+void copySm50Reflection(const MTL_SHADER_REFLECTION &src,
+                        M12CoreSM50ShaderReflection *dst) {
+  if (!dst)
+    return;
+  dst->abi_version = M12CORE_ABI_VERSION;
+  dst->constant_buffer_table_bind_index = src.ConstanttBufferTableBindIndex;
+  dst->argument_buffer_bind_index = src.ArgumentBufferBindIndex;
+  dst->num_constant_buffers = src.NumConstantBuffers;
+  dst->num_arguments = src.NumArguments;
+  dst->stage_payload[0] = src.ThreadgroupSize[0];
+  dst->stage_payload[1] = src.ThreadgroupSize[1];
+  dst->stage_payload[2] = src.ThreadgroupSize[2];
+  dst->constant_buffer_slot_mask = src.ConstantBufferSlotMask;
+  dst->sampler_slot_mask = src.SamplerSlotMask;
+  dst->uav_slot_mask = src.UAVSlotMask;
+  dst->srv_slot_mask_hi = src.SRVSlotMaskHi;
+  dst->srv_slot_mask_lo = src.SRVSlotMaskLo;
+  dst->num_output_element = src.NumOutputElement;
+  dst->threads_per_patch = src.ThreadsPerPatch;
+  dst->argument_table_qwords = src.ArgumentTableQwords;
+}
+
+void copySm50Argument(const MTL_SM50_SHADER_ARGUMENT &src,
+                      M12CoreSM50ShaderArgument &dst) {
+  dst.type = (uint32_t)src.Type;
+  dst.binding_slot = src.SM50BindingSlot;
+  dst.register_space = src.SM50RegisterSpace;
+  dst.flags = (uint32_t)src.Flags;
+  dst.structure_ptr_offset = src.StructurePtrOffset;
+  dst.size_in_vec4 = src.SizeInVec4;
 }
 
 void copyMslVertexInputs(const M12CoreDXILToMSLDesc *desc,
@@ -438,6 +472,73 @@ extern "C" int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
   std::memcpy(out_source, msl_result->source.data(), msl_result->source.size());
   out_source[msl_result->source.size()] = 0;
   out_result->status = M12CORE_DXIL_TO_MSL_STATUS_OK;
+  return 0;
+}
+
+extern "C" int m12core_reflect_sm50_shader(const void *bytecode,
+                                           uint64_t bytecode_size,
+                                           uint32_t options,
+                                           M12CoreSM50ShaderReflection *out_reflection,
+                                           M12CoreSM50ShaderArgument *out_constant_buffers,
+                                           uint32_t constant_buffer_capacity,
+                                           M12CoreSM50ShaderArgument *out_arguments,
+                                           uint32_t argument_capacity,
+                                           M12CoreSM50ReflectionResult *out_result) {
+  if (!out_result)
+    return 1;
+
+  std::memset(out_result, 0, sizeof(*out_result));
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  if (out_reflection)
+    std::memset(out_reflection, 0, sizeof(*out_reflection));
+
+  if (!bytecode || bytecode_size == 0 || !out_reflection) {
+    out_result->status = M12CORE_SM50_REFLECTION_STATUS_INVALID;
+    return 0;
+  }
+
+  /* Phase 3 reflection compatibility seam.  The native core now owns SM50
+   * reflection and argument extraction, but returns POD copies that the PE side
+   * maps back to its existing D3D12 binding structs.  Actual root/descriptor
+   * binding plan ownership remains Phase 5.
+   */
+  sm50_error_t err = nullptr;
+  sm50_shader_t shader = nullptr;
+  MTL_SHADER_REFLECTION reflection = {};
+  if (SM50InitializeWithOptions(bytecode, (size_t)bytecode_size, options,
+                                &shader, &reflection, &err)) {
+    if (err)
+      SM50FreeError(err);
+    out_result->status = M12CORE_SM50_REFLECTION_STATUS_INIT_FAILED;
+    return 0;
+  }
+
+  copySm50Reflection(reflection, out_reflection);
+  out_result->required_constant_buffers = reflection.NumConstantBuffers;
+  out_result->required_arguments = reflection.NumArguments;
+
+  if ((reflection.NumConstantBuffers &&
+       (!out_constant_buffers || constant_buffer_capacity < reflection.NumConstantBuffers)) ||
+      (reflection.NumArguments &&
+       (!out_arguments || argument_capacity < reflection.NumArguments))) {
+    SM50Destroy(shader);
+    out_result->status = M12CORE_SM50_REFLECTION_STATUS_OUTPUT_TOO_SMALL;
+    return 0;
+  }
+
+  std::vector<MTL_SM50_SHADER_ARGUMENT> cbs(reflection.NumConstantBuffers);
+  std::vector<MTL_SM50_SHADER_ARGUMENT> args(reflection.NumArguments);
+  if (reflection.NumConstantBuffers || reflection.NumArguments)
+    SM50GetArgumentsInfo(shader,
+                         cbs.empty() ? nullptr : cbs.data(),
+                         args.empty() ? nullptr : args.data());
+  for (uint32_t i = 0; i < reflection.NumConstantBuffers; i++)
+    copySm50Argument(cbs[i], out_constant_buffers[i]);
+  for (uint32_t i = 0; i < reflection.NumArguments; i++)
+    copySm50Argument(args[i], out_arguments[i]);
+
+  SM50Destroy(shader);
+  out_result->status = M12CORE_SM50_REFLECTION_STATUS_OK;
   return 0;
 }
 
