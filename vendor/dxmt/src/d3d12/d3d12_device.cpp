@@ -231,6 +231,17 @@ static void MaybeSummarizeM12PrewarmCanaryPack() {
                            " shaders=", summary.unique_shader_count,
                            " ordered=", summary.ordered_pipeline_count,
                            " key=0x", std::hex, summary.prewarm_pack_key, std::dec));
+
+  if (summary.ordered_pipeline_count > 0 && desc.pipeline_count > 0) {
+    const M12CorePrewarmPipelineRecord &first = desc.pipelines[0];
+    const M12CorePrewarmPipelineRecord &last = desc.pipelines[desc.pipeline_count - 1];
+    Logger::info(str::format("M12_PREWARM_PACK_SCHEDULE profile=armored-core-vi-phase6-canary queue=metadata-only ",
+                             "action=defer-metal-create eligible=", summary.ordered_pipeline_count,
+                             " first_order=", first.prewarm_order,
+                             " first_pipeline=0x", std::hex, first.pipeline_key,
+                             " last_order=", std::dec, last.prewarm_order,
+                             " last_pipeline=0x", std::hex, last.pipeline_key, std::dec));
+  }
 }
 
 struct D3D12PsoPressureStats {
