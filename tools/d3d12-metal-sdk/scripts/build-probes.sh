@@ -89,6 +89,10 @@ build_probe \
   -o "$OUT_DIR/probe_device_caps.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_m12_detection/probe_m12_detection.cpp" \
+  -o "$OUT_DIR/probe_m12_detection.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_dxgi_factory/probe_dxgi_factory.cpp" \
   -o "$OUT_DIR/probe_dxgi_factory.exe"
 
@@ -195,6 +199,7 @@ build_mini_probe 14 compute_first_use_dispatch
 echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
 echo "$OUT_DIR/probe_device_caps.exe"
+echo "$OUT_DIR/probe_m12_detection.exe"
 echo "$OUT_DIR/probe_dxgi_factory.exe"
 echo "$OUT_DIR/probe_resources.exe"
 echo "$OUT_DIR/probe_queues.exe"
