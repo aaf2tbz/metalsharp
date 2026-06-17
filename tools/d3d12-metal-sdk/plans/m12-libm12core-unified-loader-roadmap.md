@@ -343,6 +343,7 @@ Status: completed through root-signature keys, root/pipeline key linkage, native
 - `5466330` (`feat: validate m12 root descriptor lookups`) added native root CBV/SRV/UAV lookup diagnostics.
 - `b0f994c` (`feat: summarize m12 argument layouts`) added native root-constant lookup diagnostics plus compact argument-layout metadata (`arg_resources`, `arg_samplers`, `arg_root_desc`, `arg_const_dwords`, visibility mask).
 - `5681903` (`feat: centralize m12 root parameter lookups`) moved the PE-local command binding root descriptor seam onto the root-signature object, preserving the 64-root-slot bound and avoiding new per-draw unixcalls.
+- `ed26fbc` (`feat: consume m12 root binding plans`) changed live descriptor-table/static-sampler/root-descriptor/root-constant lookups to prefer persisted M12Core binding-plan arrays with legacy PE-local fallback and construction-time plan-vs-PE diagnostics.
 
 Validation evidence:
 
@@ -352,6 +353,7 @@ Validation evidence:
 - Root descriptor lookup slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-110331/summary.md`: `22/22` drawn/present, failures `0`, lookup mismatches `0`.
 - Argument-layout/root-constants slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-112955/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `arg_resources`/`arg_samplers`/`arg_root_desc` layout lines emitted for 6 root signatures, lookup mismatches `0`, features `0x7ff`.
 - PE-local lookup seam slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-113823/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, lookup mismatches `0`, native render creation active (`metal_render_create_native=1298`).
+- Plan-consumption slice: `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-115924/summary.md`: `23/23` drawn/present, failures `0`, `unix_call_failed=0`, `M12_ROOT_BINDING_PLAN=6`, `lookup_mismatches=0`, exact plan-path mismatches `0`, native render creation active (`metal_render_create_native=1330`).
 
 The migration remains fallback-safe: live descriptor binding now consults the persisted M12Core binding plan first and falls back to the legacy PE-local scan when the plan is unavailable; root-signature creation constructs the native binding-plan model and verifies that descriptor-table, root descriptor, root constant, static sampler, and exact plan-first lookup paths agree with PE-local semantics. Phase 6 starts from this key/layout substrate to import oracle/prewarm data.
 
