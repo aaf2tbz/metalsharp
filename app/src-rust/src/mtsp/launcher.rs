@@ -1966,7 +1966,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         ];
     }
 
-    if appid == 1962700 && pipeline_id == PipelineId::M12 {
+    if matches!(appid, 1962700 | 1888160 | 1245620) && pipeline_id == PipelineId::M12 {
         let mut env = vec![
             ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
             ("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()),
@@ -1976,9 +1976,9 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
-            ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()),
-            ("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()),
-            ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()),
+            ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "0".to_string()),
+            ("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()),
+            ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "0".to_string()),
             ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
             ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
@@ -1986,16 +1986,34 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
             ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
-            ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
         ];
-        if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+        let diagnostic_capture = std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false);
+        if std::env::var("METALSHARP_M12_ENABLE_LIVE_PRESENT")
             .map(|value| !value.is_empty() && value != "0")
             .unwrap_or(false)
         {
+            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()));
+            env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()));
+        }
+        if diagnostic_capture
+            || std::env::var("METALSHARP_M12_DUMP_MSL")
+                .map(|value| !value.is_empty() && value != "0")
+                .unwrap_or(false)
+        {
+            env.push(("DXMT_DUMP_MSL".to_string(), "1".to_string()));
+        }
+        if diagnostic_capture {
             env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
             env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
             env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
-            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+            if matches!(appid, 1962700 | 1888160 | 1245620) {
+                env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+                env.push(("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "0".to_string()));
+                env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "0".to_string()));
+            }
             env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
         }
         if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
@@ -2009,6 +2027,24 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             .unwrap_or(false)
         {
             env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_AC6_PRIME_FINAL_MASK")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_AC6_PRIME_FINAL_MASK".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC".to_string(), "1".to_string()));
+        }
+        if std::env::var("METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE")
+            .map(|value| !value.is_empty() && value != "0")
+            .unwrap_or(false)
+        {
+            env.push(("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE".to_string(), "1".to_string()));
         }
         if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
             .map(|value| !value.is_empty() && value != "0")

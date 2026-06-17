@@ -1380,6 +1380,13 @@ Converter::operator()(const InstExtractBits &extract) {
   StoreOperand(extract.dst, Result);
 }
 void
+Converter::StoreFullyMappedFeedback(const std::optional<DstOperand> &Feedback) {
+  if (!Feedback)
+    return;
+  StoreOperand(*Feedback, air.getInt4(~0u, ~0u, ~0u, ~0u));
+}
+
+void
 Converter::operator()(const InstBitFiledInsert &bfi) {
   mask_t Mask = GetMask(bfi.dst);
   auto Src0 = LoadOperand(bfi.src0, Mask);
@@ -1467,6 +1474,7 @@ Converter::operator()(const InstLoad &load) {
       air.CreateRead(Tex->Texture, Tex->Handle, Address, ArrayIndex, SampleIndex, LOD, Tex->GlobalCoherent);
 
   StoreOperand(load.dst, MaskSwizzle(Value, GetMask(load.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(load.feedback);
 }
 void
 Converter::operator()(const InstLoadUAVTyped &load) {
@@ -1516,6 +1524,7 @@ Converter::operator()(const InstLoadUAVTyped &load) {
       air.CreateRead(Tex->Texture, Tex->Handle, Address, ArrayIndex, SampleIndex, air.getInt(0), Tex->GlobalCoherent);
 
   StoreOperand(load.dst, MaskSwizzle(Value, GetMask(load.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(load.feedback);
 }
 
 void
@@ -1640,6 +1649,7 @@ Converter::operator()(const InstSample &sample) {
   );
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -1705,6 +1715,7 @@ Converter::operator()(const InstSampleLOD &sample) {
       air.CreateSample(Tex->Texture, Tex->Handle, SamplerHandle, Coord, ArrayIndex, sample.offsets, sample_level{LOD});
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -1778,6 +1789,7 @@ Converter::operator()(const InstSampleBias &sample) {
   );
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -1868,6 +1880,7 @@ Converter::operator()(const InstSampleDerivative &sample) {
   );
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -1933,6 +1946,7 @@ Converter::operator()(const InstSampleCompare &sample) {
             );
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -1990,6 +2004,7 @@ Converter::operator()(const InstGather &sample) {
       air.CreateGather(Tex->Texture, Tex->Handle, SamplerHandle, Coord, ArrayIndex, Offset, Component);
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -2043,6 +2058,7 @@ Converter::operator()(const InstGatherCompare &sample) {
       air.CreateGatherCompare(Tex->Texture, Tex->Handle, SamplerHandle, Coord, ArrayIndex, Reference, Offset);
 
   StoreOperand(sample.dst, MaskSwizzle(Value, GetMask(sample.dst), Tex->Swizzle));
+  StoreFullyMappedFeedback(sample.feedback);
 }
 
 void
@@ -2294,7 +2310,9 @@ Converter::operator()(const InstLoadRaw &load) {
     auto Ptr = CreateGEPInt32WithBoundCheck(Buf.value(), ir.CreateAdd(Index, ir.getInt32(Comp)));
     auto ValueInt = Buf->GlobalCoherent ? (llvm::Value *)air.CreateDeviceCoherentLoad(ir.getInt32Ty(), Ptr)
                                         : (llvm::Value *)ir.CreateLoad(ir.getInt32Ty(), Ptr, Volatile);
-    return StoreOperand(load.dst, MaskSwizzle(ValueInt, Mask));
+    StoreOperand(load.dst, MaskSwizzle(ValueInt, Mask));
+    StoreFullyMappedFeedback(load.feedback);
+    return;
   }
 
   llvm::Value *ValueVec = llvm::PoisonValue::get(air.getIntTy(4));
@@ -2305,6 +2323,7 @@ Converter::operator()(const InstLoadRaw &load) {
     ValueVec = ir.CreateInsertElement(ValueVec, ValueInt, DstComp);
   }
   StoreOperand(load.dst, MaskSwizzle(ValueVec, Mask, Buf->Swizzle));
+  StoreFullyMappedFeedback(load.feedback);
 }
 
 void
@@ -2326,7 +2345,9 @@ Converter::operator()(const InstLoadStructured &load) {
     auto Ptr = CreateGEPInt32WithBoundCheck(Buf.value(), ir.CreateAdd(Index, ir.getInt32(Comp)));
     auto ValueInt = Buf->GlobalCoherent ? (llvm::Value *)air.CreateDeviceCoherentLoad(ir.getInt32Ty(), Ptr)
                                         : (llvm::Value *)ir.CreateLoad(ir.getInt32Ty(), Ptr, Volatile);
-    return StoreOperand(load.dst, MaskSwizzle(ValueInt, Mask));
+    StoreOperand(load.dst, MaskSwizzle(ValueInt, Mask));
+    StoreFullyMappedFeedback(load.feedback);
+    return;
   }
 
   llvm::Value *ValueVec = llvm::PoisonValue::get(air.getIntTy(4));
@@ -2337,6 +2358,7 @@ Converter::operator()(const InstLoadStructured &load) {
     ValueVec = ir.CreateInsertElement(ValueVec, ValueInt, DstComp);
   }
   StoreOperand(load.dst, MaskSwizzle(ValueVec, Mask, Buf->Swizzle));
+  StoreFullyMappedFeedback(load.feedback);
 }
 
 void

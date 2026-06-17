@@ -204,7 +204,7 @@ fn append_app_launch_args(appid: u32, pipeline: PipelineId, launch_args: &mut Ve
         append_unique_launch_arg(launch_args, "-secure");
     }
 
-    if appid == 1962700 && pipeline == PipelineId::M12 {
+    if matches!(appid, 1962700 | 1888160) && pipeline == PipelineId::M12 {
         launch_args.retain(|arg| !arg.eq_ignore_ascii_case("-steam"));
     }
 

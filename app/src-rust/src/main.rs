@@ -486,6 +486,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                     Ok(prepared) => prepared,
                                     Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                                 };
+                            let env_override_keys = apply_launch_env_overrides(&body, &mut env);
                             let offline_direct = bottles::steam_pipeline_defaults_offline(pipeline);
                             if offline_direct {
                                 let Some(game_dir) = launch_recipe.game_dir.as_ref() else {
@@ -534,6 +535,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "eac_toggle_deployed": offline_direct,
                                         "env_applied_to": "game_process",
                                         "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                                        "env_overrides": env_override_keys,
                                     })
                                 },
                             )
@@ -2108,6 +2110,120 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
 
 fn resp(code: u16, body: serde_json::Value) -> RouteResponse {
     RouteResponse::Json(code, body.to_string().into_bytes())
+}
+
+fn allowed_launch_env_override(key: &str) -> bool {
+    matches!(
+        key,
+        "METALSHARP_M12_PSO_WORKERS"
+            | "METALSHARP_M12_ASYNC_PIPELINE_COMPILE"
+            | "METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR"
+            | "METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE"
+            | "METALSHARP_M12_DIAGNOSTIC_CAPTURE"
+            | "METALSHARP_M12_DUMP_MSL"
+            | "METALSHARP_M12_ENABLE_LIVE_PRESENT"
+            | "METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC"
+            | "METALSHARP_M12_AC6_PRIME_FINAL_MASK"
+            | "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE"
+            | "METALSHARP_M12_FORCE_SWAPCHAIN_COLOR"
+            | "METALSHARP_M12_FORCE_COLOR_WRITE_STATE"
+            | "METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT"
+            | "METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN"
+    )
+}
+
+fn apply_launch_env_overrides(
+    body: &serde_json::Map<String, serde_json::Value>,
+    env: &mut Vec<(String, String)>,
+) -> Vec<String> {
+    let Some(overrides) = body.get("envOverrides").and_then(|v| v.as_object()) else {
+        return Vec::new();
+    };
+    let mut applied = Vec::new();
+    let mut diagnostic_capture_enabled = env.iter().any(|(key, value)| {
+        matches!(key.as_str(), "DXMT_D3D12_SWAPCHAIN_READBACK" | "DXMT_D3D12_FINAL_RENDER_SNAPSHOT")
+            && value != "0"
+    });
+    let mut upsert_env = |key: &str, value: &str| {
+        env.retain(|(existing, _)| existing != key);
+        env.push((key.to_string(), value.to_string()));
+    };
+    for (key, value) in overrides {
+        if !allowed_launch_env_override(key) {
+            continue;
+        }
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let bool_value = if value == "0" { "0" } else { "1" };
+        match key.as_str() {
+            "METALSHARP_M12_PSO_WORKERS" => upsert_env("DXMT_D3D12_PSO_WORKERS", value),
+            "METALSHARP_M12_ASYNC_PIPELINE_COMPILE" => upsert_env("DXMT_ASYNC_PIPELINE_COMPILE", value),
+            "METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR" => {
+                upsert_env("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR", value)
+            }
+            "METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE" => {
+                upsert_env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", value)
+            }
+            "METALSHARP_M12_DIAGNOSTIC_CAPTURE" => {
+                diagnostic_capture_enabled = value != "0";
+                upsert_env("DXMT_DUMP_MSL", bool_value);
+                upsert_env("DXMT_D3D12_SWAPCHAIN_READBACK", bool_value);
+                upsert_env(
+                    "DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL",
+                    if diagnostic_capture_enabled { "30" } else { "0" },
+                );
+                upsert_env("DXMT_D3D12_FINAL_RENDER_SNAPSHOT", bool_value);
+                upsert_env("DXMT_D3D12_LIVE_PRESENT", "0");
+                upsert_env("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN", "0");
+                upsert_env("DXMT_D3D12_REASSERT_WINDOW_HANDOFF", "0");
+                upsert_env(
+                    "DXMT_D3D12_PRESENT_LOG_INTERVAL",
+                    if diagnostic_capture_enabled { "30" } else { "0" },
+                );
+            }
+            "METALSHARP_M12_DUMP_MSL" => upsert_env("DXMT_DUMP_MSL", bool_value),
+            "METALSHARP_M12_ENABLE_LIVE_PRESENT" => {
+                upsert_env("DXMT_D3D12_LIVE_PRESENT", bool_value);
+                upsert_env("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN", bool_value);
+                upsert_env("DXMT_D3D12_REASSERT_WINDOW_HANDOFF", bool_value);
+            }
+            "METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC" => {
+                upsert_env("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC", bool_value)
+            }
+            "METALSHARP_M12_AC6_PRIME_FINAL_MASK" => {
+                upsert_env("DXMT_D3D12_AC6_PRIME_FINAL_MASK", bool_value)
+            }
+            "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE" => {
+                upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", bool_value)
+            }
+            "METALSHARP_M12_FORCE_SWAPCHAIN_COLOR" => {
+                upsert_env("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR", bool_value)
+            }
+            "METALSHARP_M12_FORCE_COLOR_WRITE_STATE" => {
+                upsert_env("DXMT_D3D12_FORCE_COLOR_WRITE_STATE", bool_value)
+            }
+            "METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT" => {
+                upsert_env("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT", bool_value)
+            }
+            "METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN" => {
+                upsert_env("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN", bool_value)
+            }
+            _ => {}
+        }
+        applied.push(key.clone());
+    }
+    if diagnostic_capture_enabled {
+        upsert_env("DXMT_D3D12_LIVE_PRESENT", "0");
+        upsert_env("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN", "0");
+        upsert_env("DXMT_D3D12_REASSERT_WINDOW_HANDOFF", "0");
+    }
+    applied.sort();
+    applied
 }
 
 /// Minimal percent-decoding for URL query values (e.g. gameDir paths with

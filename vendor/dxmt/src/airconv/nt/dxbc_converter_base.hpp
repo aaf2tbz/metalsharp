@@ -196,6 +196,8 @@ public:
     );
   }
 
+  void StoreFullyMappedFeedback(const std::optional<DstOperand> &Feedback);
+
   void
   StoreOperandVec4(const DstOperand &DstOp, llvm::Value *ValueVec4, bool Saturate = false) {
     std::visit(

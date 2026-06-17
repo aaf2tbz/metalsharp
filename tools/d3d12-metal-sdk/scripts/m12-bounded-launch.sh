@@ -165,18 +165,45 @@ if [[ -n "$WORKERS" ]]; then launch_env+=("METALSHARP_M12_PSO_WORKERS=$WORKERS")
 if [[ -n "$ASYNC_COMPILE" ]]; then launch_env+=("METALSHARP_M12_ASYNC_PIPELINE_COMPILE=$ASYNC_COMPILE"); fi
 if [[ -n "$TYPED_STAGE_IN" ]]; then launch_env+=("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=$TYPED_STAGE_IN"); fi
 if [[ -n "$FORCE_SOURCE_COMPILE" ]]; then launch_env+=("METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=$FORCE_SOURCE_COMPILE"); fi
-
-(
-  if [[ ${#launch_env[@]} -gt 0 ]]; then
-    env "${launch_env[@]}" curl -m 45 -sS -X POST "$BACKEND_URL/steam/launch-game" \
-      -H 'Content-Type: application/json' \
-      -d "{\"appid\":$APPID,\"launchMethod\":\"$LAUNCH_METHOD\"}"
-  else
-    curl -m 45 -sS -X POST "$BACKEND_URL/steam/launch-game" \
-      -H 'Content-Type: application/json' \
-      -d "{\"appid\":$APPID,\"launchMethod\":\"$LAUNCH_METHOD\"}"
+for diagnostic_var in \
+  METALSHARP_M12_DIAGNOSTIC_CAPTURE \
+  METALSHARP_M12_DUMP_MSL \
+  METALSHARP_M12_ENABLE_LIVE_PRESENT \
+  METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC \
+  METALSHARP_M12_AC6_PRIME_FINAL_MASK \
+  METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE \
+  METALSHARP_M12_FORCE_SWAPCHAIN_COLOR \
+  METALSHARP_M12_FORCE_COLOR_WRITE_STATE \
+  METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT \
+  METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN; do
+  if [[ -n "${!diagnostic_var:-}" ]]; then
+    launch_env+=("$diagnostic_var=${!diagnostic_var}")
   fi
-) > "$RUN_DIR/launch.json"
+done
+
+REQUEST_JSON=$(python3 - "$APPID" "$LAUNCH_METHOD" "${launch_env[@]}" <<'PY'
+import json
+import sys
+
+appid = int(sys.argv[1])
+launch_method = sys.argv[2]
+overrides = {}
+for item in sys.argv[3:]:
+    if "=" not in item:
+        continue
+    key, value = item.split("=", 1)
+    if value:
+        overrides[key] = value
+payload = {"appid": appid, "launchMethod": launch_method}
+if overrides:
+    payload["envOverrides"] = overrides
+print(json.dumps(payload, separators=(",", ":")))
+PY
+)
+
+curl -m 45 -sS -X POST "$BACKEND_URL/steam/launch-game" \
+  -H 'Content-Type: application/json' \
+  -d "$REQUEST_JSON" > "$RUN_DIR/launch.json"
 
 if [[ -n "$EXPECT_D3D12_SHA$EXPECT_DXGI_SHA$EXPECT_DXGI_DXMT_SHA$EXPECT_WINEMETAL_DLL_SHA" ]]; then
   LAUNCH_JSON="$RUN_DIR/launch.json" \

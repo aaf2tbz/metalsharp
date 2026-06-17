@@ -499,12 +499,50 @@ static void UavViewRange(const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
   slice_count = std::max<uint16_t>(1, slice_count);
 }
 
+static WMTTextureSwizzle SwizzleForD3D12ComponentMapping(
+    D3D12_SHADER_COMPONENT_MAPPING mapping) {
+  switch (mapping) {
+  case D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0:
+    return WMTTextureSwizzleRed;
+  case D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1:
+    return WMTTextureSwizzleGreen;
+  case D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2:
+    return WMTTextureSwizzleBlue;
+  case D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_3:
+    return WMTTextureSwizzleAlpha;
+  case D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_0:
+    return WMTTextureSwizzleZero;
+  case D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1:
+    return WMTTextureSwizzleOne;
+  default:
+    return WMTTextureSwizzleZero;
+  }
+}
+
+static WMTTextureSwizzleChannels SwizzleForD3D12Shader4ComponentMapping(
+    UINT mapping) {
+  if (!mapping)
+    mapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+  return {
+      SwizzleForD3D12ComponentMapping(
+          D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(0, mapping)),
+      SwizzleForD3D12ComponentMapping(
+          D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(1, mapping)),
+      SwizzleForD3D12ComponentMapping(
+          D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(2, mapping)),
+      SwizzleForD3D12ComponentMapping(
+          D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(3, mapping)),
+  };
+}
+
 static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
                                         MTLD3D12Resource *resource,
                                         DXGI_FORMAT format, WMTTextureType type,
                                         uint16_t mip_start, uint16_t mip_count,
                                         uint16_t slice_start,
-                                        uint16_t slice_count) {
+                                        uint16_t slice_count,
+                                        UINT shader4_component_mapping =
+                                            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING) {
   if (!descriptor || !resource || resource->IsBuffer())
     return;
   D3D12_RESOURCE_DESC resource_desc = {};
@@ -544,18 +582,20 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
           slice_count, total_mips, total_slices);
   }
   uint64_t gpu_id = 0;
+  auto swizzle = SwizzleForD3D12Shader4ComponentMapping(
+      shader4_component_mapping);
   descriptor->metal_texture_view = base.newTextureView(
       metal_format, type, mip_start, mip_count, slice_start, slice_count,
-      {WMTTextureSwizzleRed, WMTTextureSwizzleGreen, WMTTextureSwizzleBlue,
-       WMTTextureSwizzleAlpha},
-      gpu_id);
+      swizzle, gpu_id);
   descriptor->metal_texture_gpu_id = gpu_id;
   TRACE("CreateDescriptorTextureView desc=%p res=%p view=%llu gpu=0x%llx "
-        "fmt=%u type=%u mip=%u+%u slice=%u+%u",
+        "fmt=%u type=%u mip=%u+%u slice=%u+%u mapping=0x%x swizzle=%u,%u,%u,%u",
         (void *)descriptor, (void *)resource,
         (unsigned long long)descriptor->metal_texture_view.handle,
         (unsigned long long)gpu_id, (unsigned)format, (unsigned)type, mip_start,
-        mip_count, slice_start, slice_count);
+        mip_count, slice_start, slice_count,
+        (unsigned)shader4_component_mapping, (unsigned)swizzle.r,
+        (unsigned)swizzle.g, (unsigned)swizzle.b, (unsigned)swizzle.a);
 }
 
 } // namespace
@@ -2767,7 +2807,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateShaderResourceView(
         CreateDescriptorTextureView(d, dxmt_res, desc->Format,
                                     TextureTypeForSrvView(*desc, resource_desc),
                                     mip_start, mip_count, slice_start,
-                                    slice_count);
+                                    slice_count,
+                                    desc->Shader4ComponentMapping);
       }
     }
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -3157,6 +3198,20 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource(
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreateCommittedResource res_obj=%p out=%p hr=0x%lx", (void *)res,
         resource ? *resource : nullptr, hr);
+  if (dxmt_d3d12_env_enabled("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC") &&
+      SUCCEEDED(hr) && desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+      desc->Format == DXGI_FORMAT_R8G8B8A8_UNORM && desc->Width >= 1400 &&
+      desc->Width <= 1600 && desc->Height >= 900 && desc->Height <= 1000) {
+    Logger::info(str::format(
+        "M12 AC6 candidate CreateCommittedResource res=", (void *)res,
+        " out=", resource ? *resource : nullptr,
+        " fmt=", (unsigned)desc->Format, " size=", desc->Width, "x",
+        (unsigned)desc->Height,
+        " state=0x", std::hex, (unsigned)initial_state, std::dec,
+        " flags=0x", std::hex, (unsigned)desc->Flags, std::dec,
+        " heap_type=", heap_properties ? (unsigned)heap_properties->Type : 0u,
+        " clear=", optimized_clear_value ? "yes" : "no"));
+  }
   if (resource && *resource == (void *)this) {
     TRACE("!!! LEAK DETECTED: CreateCommittedResource returned device pointer "
           "%p as resource!",
@@ -3257,6 +3312,23 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreatePlacedResource out=%p hr=0x%lx", resource ? *resource : nullptr,
         hr);
+  if (dxmt_d3d12_env_enabled("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC") &&
+      SUCCEEDED(hr) && desc->Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D &&
+      desc->Format == DXGI_FORMAT_R8G8B8A8_UNORM && desc->Width >= 1400 &&
+      desc->Width <= 1600 && desc->Height >= 900 && desc->Height <= 1000) {
+    Logger::info(str::format(
+        "M12 AC6 candidate CreatePlacedResource res=", (void *)res,
+        " out=", resource ? *resource : nullptr, " heap=", (void *)heap,
+        " heap_offset=", heap_offset,
+        " fmt=", (unsigned)desc->Format, " size=", desc->Width, "x",
+        (unsigned)desc->Height,
+        " state=0x", std::hex, (unsigned)initial_state, std::dec,
+        " flags=0x", std::hex, (unsigned)desc->Flags, std::dec,
+        " heap_backing=", use_heap_backing ? 1 : 0,
+        " heap_gpu=0x", std::hex,
+        (unsigned long long)(mt_heap ? mt_heap->GetGPUAddress() : 0),
+        std::dec, " clear=", optimized_clear_value ? "yes" : "no"));
+  }
   if (FAILED(hr))
     res->Release();
   return hr;

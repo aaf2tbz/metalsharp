@@ -317,10 +317,12 @@ void handle_signature_ps(
       break;
     }
     case D3D11_SB_OPERAND_TYPE_INNER_COVERAGE:
-      assert(0);
+      llvm::errs() << "unsupported pixel shader input semantic SV_InnerCoverage\n";
+      std::abort();
       break;
     default:
-      assert(0 && "unimplemented vertex input");
+      llvm::errs() << "unsupported pixel shader input operand type " << RegType << "\n";
+      std::abort();
       break;
     }
     break;
@@ -517,7 +519,8 @@ void handle_signature_ps(
       break;
     }
     case D3D11_SB_OPERAND_TYPE_OUTPUT_STENCIL_REF: {
-      assert(0 && "todo");
+      llvm::errs() << "unsupported pixel shader output semantic SV_StencilRef\n";
+      std::abort();
       break;
     }
     case D3D10_SB_OPERAND_TYPE_OUTPUT_COVERAGE_MASK: {

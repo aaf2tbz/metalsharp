@@ -319,7 +319,25 @@ SrcOperand readSrcOperand(
         .regindex = readOperandIndex(O.m_Index[1], O.m_IndexType[1], phase),
       };
     }
-    assert(0 && "TODO: SM5.1");
+    if (O.m_IndexDimension == D3D10_SB_OPERAND_INDEX_3D) {
+      // SM5.1 cbuffer operands carry a descriptor-array index before the
+      // register row. The legacy backend currently binds by range id only, so
+      // accepting a nonzero/dynamic descriptor index would silently read the
+      // wrong CBV. Keep this path conservative until descriptor-array indexing
+      // is threaded through cb_range_map/LoadOperand.
+      if (O.m_IndexType[1] != D3D10_SB_OPERAND_INDEX_IMMEDIATE32 ||
+          O.m_Index[1].m_RegIndex != 0) {
+        llvm::errs() << "unsupported SM5.1 dynamic/nonzero cbuffer descriptor index\n";
+        std::abort();
+      }
+      return SrcOperandConstantBuffer{
+        ._ = readSrcOperandCommon(O, read_type),
+        .rangeid = O.m_Index[0].m_RegIndex,
+        .rangeindex = uint32_t(0),
+        .regindex = readOperandIndex(O.m_Index[2], O.m_IndexType[2], phase),
+      };
+    }
+    DXASSERT_DXBC(false);
   }
   case D3D10_SB_OPERAND_TYPE_IMMEDIATE_CONSTANT_BUFFER: {
     DXASSERT_DXBC(O.m_IndexDimension == D3D10_SB_OPERAND_INDEX_1D);
@@ -892,8 +910,10 @@ Instruction readInstruction(
     );
     return inst;
   };
-  case microsoft::D3D10_SB_OPCODE_LD: {
-    auto src_resource = readSrcOperandResource(Inst.m_Operands[2], phase);
+  case microsoft::D3D10_SB_OPCODE_LD:
+  case microsoft::D3DWDDM1_3_SB_OPCODE_LD_FEEDBACK: {
+    bool sparse = Inst.m_OpCode == microsoft::D3DWDDM1_3_SB_OPCODE_LD_FEEDBACK;
+    auto src_resource = readSrcOperandResource(Inst.m_Operands[2 + sparse], phase);
     auto sample_type = shader_info.srvMap[src_resource.range_id].scaler_type;
     auto inst = InstLoad{
       .dst = readDstOperand(
@@ -904,17 +924,21 @@ Instruction readInstruction(
           ? OperandDataType::Integer
           : OperandDataType::Float
       ),
-      .src_address = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
+      .src_address = readSrcOperand(Inst.m_Operands[1 + sparse], phase, OperandDataType::Integer),
       .src_resource = src_resource,
       .src_sample_index = {},
       .offsets =
         {Inst.m_TexelOffset[0], Inst.m_TexelOffset[1], Inst.m_TexelOffset[2]},
+      .feedback = sparse ? readDstOperand(Inst.m_Operands[1], phase, OperandDataType::Integer)
+                         : std::optional<DstOperand>(),
     };
     shader_info.srvMap[src_resource.range_id].read = true;
     return inst;
   };
-  case microsoft::D3D10_SB_OPCODE_LD_MS: {
-    auto src_resource = readSrcOperandResource(Inst.m_Operands[2], phase);
+  case microsoft::D3D10_SB_OPCODE_LD_MS:
+  case microsoft::D3DWDDM1_3_SB_OPCODE_LD_MS_FEEDBACK: {
+    bool sparse = Inst.m_OpCode == microsoft::D3DWDDM1_3_SB_OPCODE_LD_MS_FEEDBACK;
+    auto src_resource = readSrcOperandResource(Inst.m_Operands[2 + sparse], phase);
     auto sample_type = shader_info.srvMap[src_resource.range_id].scaler_type;
     auto inst = InstLoad{
       .dst = readDstOperand(
@@ -925,17 +949,21 @@ Instruction readInstruction(
           ? OperandDataType::Integer
           : OperandDataType::Float
       ),
-      .src_address = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
+      .src_address = readSrcOperand(Inst.m_Operands[1 + sparse], phase, OperandDataType::Integer),
       .src_resource = src_resource,
-      .src_sample_index = readSrcOperand(Inst.m_Operands[3], phase, OperandDataType::Integer),
+      .src_sample_index = readSrcOperand(Inst.m_Operands[3 + sparse], phase, OperandDataType::Integer),
       .offsets =
         {Inst.m_TexelOffset[0], Inst.m_TexelOffset[1], Inst.m_TexelOffset[2]},
+      .feedback = sparse ? readDstOperand(Inst.m_Operands[1], phase, OperandDataType::Integer)
+                         : std::optional<DstOperand>(),
     };
     shader_info.srvMap[src_resource.range_id].read = true;
     return inst;
   };
-  case microsoft::D3D11_SB_OPCODE_LD_UAV_TYPED: {
-    auto src_uav = readSrcOperandUAV(Inst.m_Operands[2], phase);
+  case microsoft::D3D11_SB_OPCODE_LD_UAV_TYPED:
+  case microsoft::D3DWDDM1_3_SB_OPCODE_LD_UAV_TYPED_FEEDBACK: {
+    bool sparse = Inst.m_OpCode == microsoft::D3DWDDM1_3_SB_OPCODE_LD_UAV_TYPED_FEEDBACK;
+    auto src_uav = readSrcOperandUAV(Inst.m_Operands[2 + sparse], phase);
     auto sample_type = shader_info.uavMap[src_uav.range_id].scaler_type;
     auto inst = InstLoadUAVTyped{
       .dst = readDstOperand(
@@ -946,8 +974,10 @@ Instruction readInstruction(
           ? OperandDataType::Integer
           : OperandDataType::Float
       ),
-      .src_address = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
+      .src_address = readSrcOperand(Inst.m_Operands[1 + sparse], phase, OperandDataType::Integer),
       .src_uav = src_uav,
+      .feedback = sparse ? readDstOperand(Inst.m_Operands[1], phase, OperandDataType::Integer)
+                         : std::optional<DstOperand>(),
     };
     shader_info.uavMap[src_uav.range_id].read = true;
     return inst;
@@ -970,12 +1000,16 @@ Instruction readInstruction(
     shader_info.uavMap[dst.range_id].written = true;
     return inst;
   };
-  case microsoft::D3D11_SB_OPCODE_LD_RAW: {
+  case microsoft::D3D11_SB_OPCODE_LD_RAW:
+  case microsoft::D3DWDDM1_3_SB_OPCODE_LD_RAW_FEEDBACK: {
+    bool sparse = Inst.m_OpCode == microsoft::D3DWDDM1_3_SB_OPCODE_LD_RAW_FEEDBACK;
     auto inst = InstLoadRaw{
       .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
-      .src_byte_offset = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
-      .src = readTypelessSrc(Inst.m_Operands[2], phase),
+      .src_byte_offset = readSrcOperand(Inst.m_Operands[1 + sparse], phase, OperandDataType::Integer),
+      .src = readTypelessSrc(Inst.m_Operands[2 + sparse], phase),
       .opt_flag_offset_is_vec4_aligned = false,
+      .feedback = sparse ? readDstOperand(Inst.m_Operands[1], phase, OperandDataType::Integer)
+                         : std::optional<DstOperand>(),
     };
     std::visit(
       patterns{
@@ -1017,13 +1051,17 @@ Instruction readInstruction(
     );
     return inst;
   };
-  case microsoft::D3D11_SB_OPCODE_LD_STRUCTURED: {
+  case microsoft::D3D11_SB_OPCODE_LD_STRUCTURED:
+  case microsoft::D3DWDDM1_3_SB_OPCODE_LD_STRUCTURED_FEEDBACK: {
+    bool sparse = Inst.m_OpCode == microsoft::D3DWDDM1_3_SB_OPCODE_LD_STRUCTURED_FEEDBACK;
     auto inst = InstLoadStructured{
       .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
-      .src_address = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
-      .src_byte_offset = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
-      .src = readTypelessSrc(Inst.m_Operands[3], phase),
+      .src_address = readSrcOperand(Inst.m_Operands[1 + sparse], phase, OperandDataType::Integer),
+      .src_byte_offset = readSrcOperand(Inst.m_Operands[2 + sparse], phase, OperandDataType::Integer),
+      .src = readTypelessSrc(Inst.m_Operands[3 + sparse], phase),
       .opt_flag_offset_is_vec4_aligned = false,
+      .feedback = sparse ? readDstOperand(Inst.m_Operands[1], phase, OperandDataType::Integer)
+                         : std::optional<DstOperand>(),
     };
     std::visit(
       patterns{
@@ -2061,6 +2099,17 @@ Instruction readInstruction(
     );
     return inst;
   };
+  case microsoft::D3DWDDM1_3_SB_OPCODE_CHECK_ACCESS_FULLY_MAPPED: {
+    return InstIntegerCompare{
+      .cmp = IntegerComparison::Equal,
+      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
+      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
+      .src1 = SrcOperandImmediate32{
+        ._ = {swizzle_identity, false, false, OperandDataType::Integer},
+        .uvalue = {~0u, ~0u, ~0u, ~0u},
+      },
+    };
+  }
   case microsoft::D3D11_SB_OPCODE_EVAL_CENTROID: {
     assert(Inst.m_Operands[1].m_Type == microsoft::D3D10_SB_OPERAND_TYPE_INPUT);
     assert(Inst.m_Operands[1].m_IndexType[0] == microsoft::D3D10_SB_OPERAND_INDEX_IMMEDIATE32);
@@ -2097,7 +2146,7 @@ Instruction readInstruction(
     };
   }
   default: {
-    llvm::outs() << "unhandled dxbc instruction " << Inst.OpCode() << "\n";
+    llvm::errs() << "unhandled dxbc instruction " << Inst.OpCode() << "\n";
     assert(0 && "unhandled dxbc instruction");
   }
   }

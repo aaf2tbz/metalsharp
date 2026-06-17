@@ -71,6 +71,19 @@ def inspect_dir(label: str, directory: Path, expected: dict[str, str] | None, re
     return {"label": label, "directory": str(directory), "required": required, "ok": ok, "files": files}
 
 
+def parse_expected_override(value: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("expected override must be DLL=SHA256")
+    dll, digest = value.split("=", 1)
+    dll = dll.strip()
+    digest = digest.strip().lower()
+    if dll not in DLLS:
+        raise argparse.ArgumentTypeError(f"unsupported DLL in expected override: {dll}")
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise argparse.ArgumentTypeError(f"invalid SHA-256 digest for {dll}: {digest}")
+    return dll, digest
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--runtime-dir", type=Path, default=Path.home() / ".metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows")
@@ -79,20 +92,33 @@ def main() -> int:
     ap.add_argument("--label", default="m12-runtime-hash-check")
     ap.add_argument("--json", type=Path, default=None)
     ap.add_argument("--markdown", type=Path, default=None)
-    ap.add_argument("--strict", action="store_true", help="Fail if any checked dir differs from known working hashes.")
+    ap.add_argument("--strict", action="store_true", help="Fail if any checked dir differs from expected hashes.")
+    ap.add_argument(
+        "--expected",
+        type=parse_expected_override,
+        action="append",
+        default=[],
+        metavar="DLL=SHA256",
+        help="Override an expected hash for this invocation. Repeat for multiple DLLs.",
+    )
     args = ap.parse_args()
 
-    checks = [inspect_dir("runtime", args.runtime_dir, KNOWN_WORKING, True)]
+    expected_hashes = dict(KNOWN_WORKING)
+    for dll, digest in args.expected:
+        expected_hashes[dll] = digest
+
+    checks = [inspect_dir("runtime", args.runtime_dir, expected_hashes, True)]
     for game in args.game:
-        checks.append(inspect_dir(game, GAME_DIRS[game], KNOWN_WORKING, args.strict))
+        checks.append(inspect_dir(game, GAME_DIRS[game], expected_hashes, args.strict))
     for idx, game_dir in enumerate(args.game_dir):
-        checks.append(inspect_dir(f"game-dir-{idx+1}", game_dir, KNOWN_WORKING, args.strict))
+        checks.append(inspect_dir(f"game-dir-{idx+1}", game_dir, expected_hashes, args.strict))
 
     report = {
         "schema": "metalsharp.m12.runtime-hashes.v1",
         "label": args.label,
         "strict": args.strict,
         "known_working_d3d12": KNOWN_WORKING["d3d12.dll"],
+        "expected_hashes": expected_hashes,
         "checks": checks,
         "ok": all(c["ok"] for c in checks),
     }

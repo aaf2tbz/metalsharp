@@ -1,0 +1,22 @@
+# Full-surface M12 hashes: AC6 root+ctz diagnostic
+
+OK: True
+
+- dxmt_m12_windows d3d12.dll: 9d303582ec525270dc927172138fc8cd1b64d8a2073b5c8d7d6c5c68f7816169 ok=True
+- dxmt_m12_windows dxgi.dll: dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24 ok=True
+- dxmt_m12_windows dxgi_dxmt.dll: 66b1265d52bc46541488ede3676075a5ed546d7886e51ed5e97dd43b0fc98241 ok=True
+- dxmt_m12_windows winemetal.dll: 7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85 ok=True
+- dxmt_m12_unix winemetal.so: 43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43 ok=True
+- wine_windows d3d12.dll: 9d303582ec525270dc927172138fc8cd1b64d8a2073b5c8d7d6c5c68f7816169 ok=True
+- wine_windows dxgi.dll: dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24 ok=True
+- wine_windows dxgi_dxmt.dll: 66b1265d52bc46541488ede3676075a5ed546d7886e51ed5e97dd43b0fc98241 ok=True
+- wine_windows winemetal.dll: 7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85 ok=True
+- wine_unix winemetal.so: 43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43 ok=True
+- prefix_system32 d3d12.dll: 9d303582ec525270dc927172138fc8cd1b64d8a2073b5c8d7d6c5c68f7816169 ok=True
+- prefix_system32 dxgi.dll: dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24 ok=True
+- prefix_system32 dxgi_dxmt.dll: 66b1265d52bc46541488ede3676075a5ed546d7886e51ed5e97dd43b0fc98241 ok=True
+- prefix_system32 winemetal.dll: 7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85 ok=True
+- game_local d3d12.dll: 9d303582ec525270dc927172138fc8cd1b64d8a2073b5c8d7d6c5c68f7816169 ok=True
+- game_local dxgi.dll: dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24 ok=True
+- game_local dxgi_dxmt.dll: 66b1265d52bc46541488ede3676075a5ed546d7886e51ed5e97dd43b0fc98241 ok=True
+- game_local winemetal.dll: 7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85 ok=True

@@ -243,6 +243,13 @@ static bool startsWith(const std::string &text, const char *prefix) {
   return text.rfind(prefix, 0) == 0;
 }
 
+static bool exprLooksSideEffectOnly(const std::string &value) {
+  return value.find(".write(") != std::string::npos ||
+         value.find("threadgroup_barrier(") != std::string::npos ||
+         startsWith(value, "out.") ||
+         startsWith(value, "result.");
+}
+
 static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
   std::vector<std::string> values;
   bool is_agg = startsWith(text, "agg(") && text.size() >= 5 && text.back() == ')';
@@ -782,7 +789,7 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     auto handle = handleArg(0, "buf", "buf0");
     ctx.last_buffer_handle = handle;
     auto reg_idx = ensureScalarIndex(valueArg(1, "0"));
-    return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg_idx + ")*64]))";
+    return "(reinterpret_cast<device float4&>(" + handle + "[(" + reg_idx + ")*16]))";
   }
 
   case DXOP_BufferLoad: {
@@ -1026,11 +1033,11 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
     case DXILOP_Round_ni: return "floor(" + x + ")";
     case DXILOP_Round_pi: return "ceil(" + x + ")";
     case DXILOP_Round_z: return "trunc(" + x + ")";
-    case DXILOP_Bfrev: return "reverse_bits(" + x + ")";
-    case DXILOP_Countbits: return "popcount(" + x + ")";
-    case DXILOP_FirstbitLo: return "ctz(" + x + ")";
-    case DXILOP_FirstbitHi: return "clz(" + x + ")";
-    case DXILOP_FirstbitSHi: return "((" + x + ") < 0 ? clz(~(" + x + ")) : clz(" + x + "))";
+    case DXILOP_Bfrev: return "reverse_bits(static_cast<uint>(" + x + "))";
+    case DXILOP_Countbits: return "popcount(static_cast<uint>(" + x + "))";
+    case DXILOP_FirstbitLo: return "((static_cast<uint>(" + x + ") == 0u) ? -1 : static_cast<int>(ctz(static_cast<uint>(" + x + "))))";
+    case DXILOP_FirstbitHi: return "((static_cast<uint>(" + x + ") == 0u) ? -1 : (31 - static_cast<int>(clz(static_cast<uint>(" + x + ")))))";
+    case DXILOP_FirstbitSHi: return "(((static_cast<int>(" + x + ") < 0 ? ~static_cast<uint>(" + x + ") : static_cast<uint>(" + x + ")) == 0u) ? -1 : (31 - static_cast<int>(clz((static_cast<int>(" + x + ") < 0 ? ~static_cast<uint>(" + x + ") : static_cast<uint>(" + x + "))))))";
     default:
       ctx.unsupported_intrinsics++;
       recordDiagnostic(ctx, "DXIL unknown unary opcode: %u", op);
@@ -1317,7 +1324,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
           ctx.value_table[value_counter] = translated;
         }
         ctx.value_type_ids[value_counter] = inst.type_id;
-      } else if (translated.find('=') == std::string::npos) {
+      } else if (!exprLooksSideEffectOnly(translated)) {
         ensureValueTable(value_counter);
         if (!translated.empty() && translated[0] != ' ') {
           os << "  auto " << result << " = " << translated << ";\n";

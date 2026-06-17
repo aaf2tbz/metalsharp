@@ -2550,7 +2550,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
             return "float4(0)";
         ctx.last_buffer_handle = handle;
         auto reg = ensureScalarIndex(numericArg(1, "0"));
-        return "(reinterpret_cast<device float4&>(" + handle + "[((int)(" + reg + "))*64]))";
+        return "(reinterpret_cast<device float4&>(" + handle + "[((int)(" + reg + "))*16]))";
     }
     case DXOP_BufferLoad: {
         if (args.size() < 3) return "float4(0)";
@@ -2737,11 +2737,11 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         case DXILOP_Round_ni: return "floor(" + fx + ")";
         case DXILOP_Round_pi: return "ceil(" + fx + ")";
         case DXILOP_Round_z: return "trunc(" + fx + ")";
-        case DXILOP_Bfrev: return "reverse_bits(" + x + ")";
+        case DXILOP_Bfrev: return "reverse_bits(static_cast<uint>(" + x + "))";
         case DXILOP_Countbits: return "popcount(static_cast<uint>(" + x + "))";
-        case DXILOP_FirstbitLo: return "ctz(" + x + ")";
-        case DXILOP_FirstbitHi: return "clz(" + x + ")";
-        case DXILOP_FirstbitSHi: return "((" + x + ") < 0 ? clz(~(" + x + ")) : clz(" + x + "))";
+        case DXILOP_FirstbitLo: return "((static_cast<uint>(" + x + ") == 0u) ? -1 : static_cast<int>(ctz(static_cast<uint>(" + x + "))))";
+        case DXILOP_FirstbitHi: return "((static_cast<uint>(" + x + ") == 0u) ? -1 : (31 - static_cast<int>(clz(static_cast<uint>(" + x + ")))))";
+        case DXILOP_FirstbitSHi: return "(((static_cast<int>(" + x + ") < 0 ? ~static_cast<uint>(" + x + ") : static_cast<uint>(" + x + ")) == 0u) ? -1 : (31 - static_cast<int>(clz((static_cast<int>(" + x + ") < 0 ? ~static_cast<uint>(" + x + ") : static_cast<uint>(" + x + "))))))";
         default: ctx.unsupported_intrinsics++; return x;
         }
     }
@@ -3398,7 +3398,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     ctx.value_types[value_counter] = fallback_type;
                 }
                 ctx.value_table[value_counter] = result;
-            } else if (translated.find('=') == std::string::npos) {
+            } else if (!exprLooksSideEffectOnly(translated)) {
                 if (!translated.empty() && translated[0] != ' ') {
                     bool is_resource_handle = startsWith(translated, "buf") ||
                                               startsWith(translated, "tex") ||

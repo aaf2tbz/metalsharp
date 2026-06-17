@@ -101,6 +101,30 @@ bool DXMTD3D12SkipUnsafeMSCOffscreenPass() {
   return enabled != 0;
 }
 
+bool DXMTD3D12AC6PrimeFinalMask() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_AC6_PRIME_FINAL_MASK");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12AC6ProducerDiagnostic() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12AC6ForceProducerWhite() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 bool DXMTD3D12DisableCBVStaging() {
   static int enabled = [] {
     const char *value = std::getenv("DXMT_D3D12_DISABLE_CBV_STAGING");
@@ -182,6 +206,7 @@ static uint32_t g_tessellation_fallback_draw_logs = 0;
 static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
+static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
 
 static uint32_t g_quarantine_zero_vb_offscreen = 0;
@@ -383,6 +408,17 @@ static bool ShaderVisibilityMatches(uint32_t param_visibility,
   return param_visibility == D3D12_SHADER_VISIBILITY_ALL;
 }
 
+static bool ShaderVisibilityCoversShader(uint32_t param_visibility,
+                                         D3D12_SHADER_VISIBILITY shader_visibility) {
+  return param_visibility == shader_visibility ||
+         param_visibility == D3D12_SHADER_VISIBILITY_ALL;
+}
+
+static bool ShaderVisibilityCoversPixel(uint32_t param_visibility) {
+  return ShaderVisibilityCoversShader(param_visibility,
+                                      D3D12_SHADER_VISIBILITY_PIXEL);
+}
+
 static bool FindRootDescriptorParameter(
     MTLD3D12RootSignature *root_signature, D3D12_ROOT_PARAMETER_TYPE type,
     const MTL_SM50_SHADER_ARGUMENT &arg,
@@ -459,6 +495,29 @@ static uint32_t FormatByteSize(DXGI_FORMAT format) {
     return 1;
   default:
     return 4;
+  }
+}
+
+static bool IsSupportedTextureReadback4ByteFormat(DXGI_FORMAT format) {
+  switch (format) {
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R8G8B8A8_UINT:
+  case DXGI_FORMAT_R8G8B8A8_SNORM:
+  case DXGI_FORMAT_R8G8B8A8_SINT:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_R16G16_FLOAT:
+  case DXGI_FORMAT_R16G16_UNORM:
+  case DXGI_FORMAT_R16G16_UINT:
+  case DXGI_FORMAT_R16G16_SNORM:
+  case DXGI_FORMAT_R16G16_SINT:
+  case DXGI_FORMAT_R32_FLOAT:
+  case DXGI_FORMAT_R32_UINT:
+  case DXGI_FORMAT_R32_SINT:
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -671,6 +730,24 @@ static const char *ShaderVisibilityName(uint32_t visibility) {
   default:
     return "UNKNOWN";
   }
+}
+
+static bool IsAC6FinalSizeRGBAOffscreen(MTLD3D12Resource *res) {
+  if (!res || res->IsSwapchainBackBuffer())
+    return false;
+  D3D12_RESOURCE_DESC desc = {};
+  res->GetDesc(&desc);
+  if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+      desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM || desc.MipLevels != 1 ||
+      desc.SampleDesc.Count != 1)
+    return false;
+  const bool observed_title_size =
+      desc.Width >= 1400 && desc.Width <= 1600 && desc.Height >= 900 &&
+      desc.Height <= 1000;
+  const bool observed_final_size =
+      desc.Width >= 1800 && desc.Width <= 2560 && desc.Height >= 1000 &&
+      desc.Height <= 1440;
+  return observed_title_size || observed_final_size;
 }
 
 static std::string ResourceSummary(MTLD3D12Resource *res) {
@@ -1404,6 +1481,184 @@ struct ReplayState {
     uint32_t capture = 0;
   } render_readback;
 
+  struct TextureReadbackProbe {
+    WMT::Reference<WMT::Buffer> buffer;
+    void *mapped = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t bytes_per_row = 0;
+    uint32_t slot = 0;
+    uint32_t reg = 0;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
+    uint64_t texture_id = 0;
+  } final_srv_readback[2];
+
+  TextureReadbackProbe ac6_producer_rtv_readback;
+  TextureReadbackProbe ac6_producer_srv_readback[2];
+  WMT::Reference<WMT::Buffer> ac6_producer_cbv_readback;
+  void *ac6_producer_cbv_mapped = nullptr;
+  uint32_t ac6_producer_cbv_size = 0;
+  bool ac6_producer_diagnostic_queued = false;
+  bool ac6_producer_forced_white = false;
+  uint32_t ac6_producer_candidate_logs = 0;
+
+  TextureReadbackProbe ac6_upstream_rtv_readback;
+  TextureReadbackProbe ac6_upstream_srv_readback[4];
+  WMT::Reference<WMT::Buffer> ac6_upstream_vs_cbv_readback;
+  void *ac6_upstream_vs_cbv_mapped = nullptr;
+  uint32_t ac6_upstream_vs_cbv_size = 0;
+  bool ac6_upstream_diagnostic_queued = false;
+
+  bool CaptureBufferReadback(MTLD3D12Device *device, WMT::CommandBuffer &cmdbuf,
+                             MTLD3D12Resource *resource, uint64_t src_offset,
+                             uint32_t byte_count,
+                             WMT::Reference<WMT::Buffer> &out_buffer,
+                             void *&out_mapped) {
+    if (!device || !resource || out_buffer.handle || !byte_count)
+      return false;
+    auto src = resource->GetMTLBuffer();
+    if (!src.handle)
+      return false;
+    WMTBufferInfo info = {};
+    info.length = byte_count;
+    info.options = WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
+    info.memory.set(nullptr);
+    auto dst = device->GetDXMTDevice().device().newBuffer(info);
+    void *mapped = info.memory.get();
+    if (!dst.handle || !mapped)
+      return false;
+    auto blit = cmdbuf.blitCommandEncoder();
+    ENC_CREATE("blit_buffer_readback", blit.handle);
+    ScopedMetalEncoderEnd blit_guard{blit, "blit_buffer_readback"};
+    if (!blit.handle)
+      return false;
+    struct wmtcmd_blit_copy_from_buffer_to_buffer copy = {};
+    copy.type = WMTBlitCommandCopyFromBufferToBuffer;
+    copy.next.set(nullptr);
+    copy.src = src.handle;
+    copy.src_offset = src_offset;
+    copy.dst = dst.handle;
+    copy.dst_offset = 0;
+    copy.copy_length = byte_count;
+    blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
+    EndMetalEncoder(blit, "blit_buffer_readback");
+    out_buffer = dst;
+    out_mapped = mapped;
+    return true;
+  }
+
+  bool CaptureTextureReadback(MTLD3D12Device *device, WMT::CommandBuffer &cmdbuf,
+                              MTLD3D12Resource *resource,
+                              TextureReadbackProbe &probe) {
+    if (!device || !resource || probe.buffer.handle)
+      return false;
+
+    auto tex = resource->GetMTLTexture();
+    if (!tex.handle)
+      return false;
+
+    D3D12_RESOURCE_DESC desc = {};
+    resource->GetDesc(&desc);
+    if (!IsSupportedTextureReadback4ByteFormat(desc.Format))
+      return false;
+    uint32_t bytes_per_pixel = 4u;
+    uint32_t width =
+        (uint32_t)std::min<UINT64>(std::max<UINT64>(desc.Width, 1), 1920);
+    uint32_t height =
+        (uint32_t)std::min<UINT>(std::max<UINT>(desc.Height, 1), 1080);
+    uint32_t bytes_per_row = AlignReadbackPitch(width * bytes_per_pixel, 256u);
+
+    WMTBufferInfo info = {};
+    info.length = uint64_t(bytes_per_row) * height;
+    info.options =
+        WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
+    info.memory.set(nullptr);
+    auto buffer = device->GetDXMTDevice().device().newBuffer(info);
+    void *mapped = info.memory.get();
+    if (!buffer.handle || !mapped)
+      return false;
+
+    auto blit = cmdbuf.blitCommandEncoder();
+    ENC_CREATE("blit_final_srv_readback", blit.handle);
+    ScopedMetalEncoderEnd blit_guard{blit, "blit_final_srv_readback"};
+    if (!blit.handle)
+      return false;
+
+    struct wmtcmd_blit_copy_from_texture_to_buffer copy = {};
+    copy.type = WMTBlitCommandCopyFromTextureToBuffer;
+    copy.next.set(nullptr);
+    copy.src = tex;
+    copy.slice = 0;
+    copy.level = 0;
+    copy.origin = {0, 0, 0};
+    copy.size = {width, height, 1};
+    copy.dst = buffer;
+    copy.offset = 0;
+    copy.bytes_per_row = bytes_per_row;
+    copy.bytes_per_image = bytes_per_row * height;
+    blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
+    EndMetalEncoder(blit, "blit_final_srv_readback");
+
+    probe.buffer = buffer;
+    probe.mapped = mapped;
+    probe.width = width;
+    probe.height = height;
+    probe.bytes_per_row = bytes_per_row;
+    probe.format = desc.Format;
+    probe.texture_id = (uint64_t)tex.handle;
+    return true;
+  }
+
+  void CaptureFinalCompositeSrvReadback(MTLD3D12Device *device,
+                                        WMT::CommandBuffer &cmdbuf) {
+    if (!DXMTD3D12FinalRenderSnapshot() || !swapchain_work_encoded || !pso)
+      return;
+
+    auto *sig = graphics_root_sig;
+    if (!sig && pso->GetRootSignature())
+      sig = static_cast<MTLD3D12RootSignature *>(pso->GetRootSignature());
+    if (!sig)
+      return;
+
+    const auto &params = sig->GetParameters();
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+      const auto &param = params[i];
+      if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
+          !root_table_set[i] ||
+          !ShaderVisibilityCoversPixel(param.shader_visibility))
+        continue;
+
+      for (uint32_t r = 0; r < param.ranges.size(); r++) {
+        const auto &range = param.ranges[r];
+        if (range.range_type != D3D12_DESCRIPTOR_RANGE_TYPE_SRV ||
+            range.base_register != 0)
+          continue;
+
+        for (uint32_t d = 0; d < 2; d++) {
+          D3D12Descriptor *desc = nullptr;
+          for (uint32_t h = 0; h < desc_heap_count && !desc; h++) {
+            auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+            if (heap) {
+              desc = heap->GetDescriptorFromGPUHandle(
+                  root_tables[i], range.offset_in_table + d);
+            }
+          }
+          auto *res = desc ? static_cast<MTLD3D12Resource *>(desc->resource)
+                           : nullptr;
+          final_srv_readback[d].slot = d;
+          final_srv_readback[d].reg = range.base_register + d;
+          if (CaptureTextureReadback(device, cmdbuf, res, final_srv_readback[d])) {
+            Logger::info(str::format(
+                "M12 final SRV readback queued slot=", d,
+                " reg=", range.base_register + d, " ",
+                ResourceSummary(res)));
+          }
+        }
+        return;
+      }
+    }
+  }
+
   void CaptureSwapchainRenderReadback(MTLD3D12Device *device,
                                       WMT::CommandBuffer &cmdbuf) {
     if (!DXMTD3D12SwapchainRenderReadback() || !swapchain_work_encoded ||
@@ -1475,43 +1730,686 @@ struct ReplayState {
     render_readback.capture = capture;
   }
 
-  void LogSwapchainRenderReadback() {
-    if (!render_readback.mapped || !render_readback.width ||
-        !render_readback.height)
-      return;
-
+  struct ReadbackStats {
     uint64_t nonzero_pixels = 0;
     uint64_t nonzero_bytes = 0;
+    uint64_t nonzero_channel_pixels[4] = {};
+    uint64_t nonzero_channel_bytes[4] = {};
     uint8_t max_byte = 0;
+    uint8_t max_channel_byte[4] = {};
     uint64_t checksum = 1469598103934665603ull;
-    const auto *rows = static_cast<const uint8_t *>(render_readback.mapped);
-    for (uint32_t y = 0; y < render_readback.height; y++) {
-      const auto *row = rows + uint64_t(y) * render_readback.bytes_per_row;
-      for (uint32_t x = 0; x < render_readback.width; x++) {
+  };
+
+  static ReadbackStats ComputeReadbackStats(const void *mapped, uint32_t width,
+                                            uint32_t height,
+                                            uint32_t bytes_per_row) {
+    ReadbackStats stats = {};
+    stats.checksum = 1469598103934665603ull;
+    const auto *rows = static_cast<const uint8_t *>(mapped);
+    for (uint32_t y = 0; y < height; y++) {
+      const auto *row = rows + uint64_t(y) * bytes_per_row;
+      for (uint32_t x = 0; x < width; x++) {
         const auto *px = row + x * 4u;
         bool pixel_nonzero = false;
         for (uint32_t i = 0; i < 4; i++) {
           uint8_t value = px[i];
           if (value) {
             pixel_nonzero = true;
-            nonzero_bytes++;
-            max_byte = std::max(max_byte, value);
+            stats.nonzero_bytes++;
+            stats.nonzero_channel_bytes[i]++;
+            stats.nonzero_channel_pixels[i]++;
+            stats.max_byte = std::max(stats.max_byte, value);
+            stats.max_channel_byte[i] = std::max(stats.max_channel_byte[i], value);
           }
-          checksum ^= value;
-          checksum *= 1099511628211ull;
+          stats.checksum ^= value;
+          stats.checksum *= 1099511628211ull;
         }
         if (pixel_nonzero)
-          nonzero_pixels++;
+          stats.nonzero_pixels++;
       }
     }
+    return stats;
+  }
+
+  void LogFinalCompositeSrvReadback() {
+    for (uint32_t i = 0; i < 2; i++) {
+      const auto &probe = final_srv_readback[i];
+      if (!probe.mapped || !probe.width || !probe.height)
+        continue;
+      auto stats = ComputeReadbackStats(probe.mapped, probe.width,
+                                        probe.height, probe.bytes_per_row);
+      Logger::info(str::format(
+          "M12 final SRV readback slot=", probe.slot, " reg=", probe.reg,
+          " tex=", (unsigned long long)probe.texture_id,
+          " fmt=", (unsigned)probe.format, " sample=", probe.width, "x",
+          probe.height, " nonzero_pixels=", stats.nonzero_pixels,
+          " nonzero_bytes=", stats.nonzero_bytes,
+          " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
+          stats.nonzero_channel_pixels[1], ",",
+          stats.nonzero_channel_pixels[2], ",",
+          stats.nonzero_channel_pixels[3],
+          " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
+          stats.nonzero_channel_bytes[1], ",",
+          stats.nonzero_channel_bytes[2], ",",
+          stats.nonzero_channel_bytes[3],
+          " max_byte=", (unsigned)stats.max_byte,
+          " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
+          (unsigned)stats.max_channel_byte[1], ",",
+          (unsigned)stats.max_channel_byte[2], ",",
+          (unsigned)stats.max_channel_byte[3],
+          " checksum=0x", std::hex, stats.checksum));
+    }
+  }
+
+  void LogSwapchainRenderReadback() {
+    if (!render_readback.mapped || !render_readback.width ||
+        !render_readback.height)
+      return;
+
+    auto stats = ComputeReadbackStats(
+        render_readback.mapped, render_readback.width, render_readback.height,
+        render_readback.bytes_per_row);
 
     Logger::info(str::format(
         "M12 swapchain render readback capture=", render_readback.capture,
         " backbuffer=", render_readback.backbuffer,
         " fmt=", (unsigned)render_readback.format,
         " sample=", render_readback.width, "x", render_readback.height,
-        " nonzero_pixels=", nonzero_pixels, " nonzero_bytes=", nonzero_bytes,
-        " max_byte=", (unsigned)max_byte, " checksum=0x", std::hex, checksum));
+        " nonzero_pixels=", stats.nonzero_pixels,
+        " nonzero_bytes=", stats.nonzero_bytes,
+        " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
+        stats.nonzero_channel_pixels[1], ",",
+        stats.nonzero_channel_pixels[2], ",",
+        stats.nonzero_channel_pixels[3],
+        " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
+        stats.nonzero_channel_bytes[1], ",",
+        stats.nonzero_channel_bytes[2], ",",
+        stats.nonzero_channel_bytes[3],
+        " max_byte=", (unsigned)stats.max_byte,
+        " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
+        (unsigned)stats.max_channel_byte[1], ",",
+        (unsigned)stats.max_channel_byte[2], ",",
+        (unsigned)stats.max_channel_byte[3],
+        " checksum=0x", std::hex, stats.checksum));
+  }
+
+  bool IsAC6FinalBlendUIPSO() {
+    return pso && pso->GetVSCacheHash() == "237a203b2ac9964b" &&
+           pso->GetPSCacheHash() == "8fc08bbc2900719b";
+  }
+
+  bool IsAC6FinalT1ProducerPSO() {
+    return pso && pso->GetVSCacheHash() == "ca33abe9a2d27ce9" &&
+           pso->GetPSCacheHash() == "58539be4844b1dd9";
+  }
+
+  bool IsAC6ProducerSrv0UpstreamPSO() {
+    return pso && pso->GetVSCacheHash() == "42dbf5610021bd23" &&
+           pso->GetPSCacheHash() == "6aaa91c23c794ed8";
+  }
+
+  MTLD3D12Resource *CurrentRTVResource(uint32_t slot) {
+    if (slot >= rt_count || slot >= 8)
+      return nullptr;
+    auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[slot].ptr);
+    return desc && desc->resource ? static_cast<MTLD3D12Resource *>(desc->resource)
+                                  : nullptr;
+  }
+
+  D3D12Descriptor *FindShaderDescriptorByOrdinal(
+      D3D12_DESCRIPTOR_RANGE_TYPE wanted_type, uint32_t ordinal,
+      D3D12_SHADER_VISIBILITY shader_visibility) {
+    if (!pso)
+      return nullptr;
+    auto *sig = graphics_root_sig;
+    if (!sig && pso->GetRootSignature())
+      sig = static_cast<MTLD3D12RootSignature *>(pso->GetRootSignature());
+    if (!sig)
+      return nullptr;
+
+    uint32_t seen = 0;
+    const auto &params = sig->GetParameters();
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+      const auto &param = params[i];
+      if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
+          !root_table_set[i] ||
+          !ShaderVisibilityCoversShader(param.shader_visibility, shader_visibility))
+        continue;
+      for (const auto &range : param.ranges) {
+        if (range.range_type != wanted_type)
+          continue;
+        uint32_t descriptor_count =
+            range.num_descriptors == UINT32_MAX ? 1u : range.num_descriptors;
+        for (uint32_t d = 0; d < descriptor_count && d < 16; d++, seen++) {
+          if (seen != ordinal)
+            continue;
+          for (uint32_t h = 0; h < desc_heap_count; h++) {
+            auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+            if (!heap)
+              continue;
+            auto *desc = heap->GetDescriptorFromGPUHandle(
+                root_tables[i], range.offset_in_table + d);
+            if (desc)
+              return desc;
+          }
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  D3D12Descriptor *FindPixelDescriptorByOrdinal(
+      D3D12_DESCRIPTOR_RANGE_TYPE wanted_type, uint32_t ordinal) {
+    return FindShaderDescriptorByOrdinal(wanted_type, ordinal,
+                                         D3D12_SHADER_VISIBILITY_PIXEL);
+  }
+
+  MTLD3D12Resource *FindPixelSrvByOrdinal(uint32_t ordinal) {
+    auto *desc = FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+                                              ordinal);
+    return desc && desc->resource ? static_cast<MTLD3D12Resource *>(desc->resource)
+                                  : nullptr;
+  }
+
+  void QueueAC6UpstreamDiagnostic(MTLD3D12Device *device,
+                                  WMT::CommandBuffer &cmdbuf,
+                                  const char *draw_kind,
+                                  uint32_t element_count) {
+    if (ac6_upstream_diagnostic_queued || !IsAC6ProducerSrv0UpstreamPSO())
+      return;
+
+    auto *rtv = CurrentRTVResource(0);
+    if (!IsAC6FinalSizeRGBAOffscreen(rtv))
+      return;
+
+    Logger::info(str::format(
+        "M12 AC6 upstream diagnostic draw=", draw_kind,
+        " elems=", element_count, " ", ResourceSummary(rtv),
+        " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+
+    const auto &vp = viewports[0];
+    const auto &sc = scissor_rects[0];
+    const auto &rast = pso->GetRasterizerDesc();
+    const auto &ds = pso->GetDepthStencilDesc();
+    const auto &blend = pso->GetBlendDesc();
+    Logger::info(str::format(
+        "M12 AC6 upstream state vp_count=", viewport_count,
+        " vp=", vp.TopLeftX, ",", vp.TopLeftY, " ", vp.Width, "x",
+        vp.Height, " depth=", vp.MinDepth, "-", vp.MaxDepth,
+        " sc_count=", scissor_count, " sc=", sc.left, ",", sc.top,
+        "-", sc.right, ",", sc.bottom, " topology=", (unsigned)topology,
+        " primitive=", (unsigned)GetMetalPrimitiveType(),
+        " cull=", (unsigned)rast.CullMode,
+        " front_ccw=", (unsigned)rast.FrontCounterClockwise,
+        " depth_enable=", (unsigned)ds.DepthEnable,
+        " depth_write=", (unsigned)ds.DepthWriteMask,
+        " depth_func=", (unsigned)ds.DepthFunc,
+        " stencil_enable=", (unsigned)ds.StencilEnable,
+        " stencil_read=0x", std::hex, (unsigned)ds.StencilReadMask,
+        " stencil_write=0x", (unsigned)ds.StencilWriteMask, std::dec,
+        " blend0=", (unsigned)blend.RenderTarget[0].BlendEnable,
+        " write_mask0=0x", std::hex,
+        (unsigned)blend.RenderTarget[0].RenderTargetWriteMask, std::dec,
+        " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
+        " dst0=", (unsigned)blend.RenderTarget[0].DestBlend,
+        " op0=", (unsigned)blend.RenderTarget[0].BlendOp));
+
+    CloseRenderEncoder();
+
+    auto *vs_cbv0 = FindShaderDescriptorByOrdinal(
+        D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 0, D3D12_SHADER_VISIBILITY_VERTEX);
+    Logger::info(str::format(
+        "M12 AC6 upstream vs_cbv0 ",
+        DescriptorSummary(vs_cbv0, D3D12_DESCRIPTOR_RANGE_TYPE_CBV)));
+    auto queue_upstream_cbv_readback = [&](const char *label,
+                                           D3D12_GPU_VIRTUAL_ADDRESS cb_gpu,
+                                           uint32_t cb_size) {
+      if (ac6_upstream_vs_cbv_readback.handle || !cb_gpu || !cb_size)
+        return;
+      auto *cb_res = device->LookupResourceByGPUAddress(cb_gpu);
+      if (!cb_res) {
+        Logger::info(str::format("M12 AC6 upstream ", label,
+                                 " readback no_resource gpu=0x", std::hex,
+                                 (unsigned long long)cb_gpu, std::dec,
+                                 " size=", cb_size));
+        return;
+      }
+      uint64_t cb_off = cb_gpu - cb_res->GetGPUVirtualAddress();
+      D3D12_RESOURCE_DESC cb_desc = {};
+      cb_res->GetDesc(&cb_desc);
+      uint64_t available = cb_off < cb_desc.Width ? cb_desc.Width - cb_off : 0;
+      ac6_upstream_vs_cbv_size = (uint32_t)std::min<uint64_t>(
+          std::min<uint32_t>(cb_size, 256u), available);
+      bool queued = ac6_upstream_vs_cbv_size &&
+                    CaptureBufferReadback(device, cmdbuf, cb_res, cb_off,
+                                          ac6_upstream_vs_cbv_size,
+                                          ac6_upstream_vs_cbv_readback,
+                                          ac6_upstream_vs_cbv_mapped);
+      Logger::info(str::format(
+          "M12 AC6 upstream ", label, " readback queued=", queued ? 1 : 0,
+          " gpu=0x", std::hex, (unsigned long long)cb_gpu, std::dec,
+          " off=", (unsigned long long)cb_off,
+          " bytes=", ac6_upstream_vs_cbv_size,
+          " available=", (unsigned long long)available,
+          " ", ResourceSummary(cb_res)));
+    };
+
+    if (vs_cbv0 && vs_cbv0->cbv.BufferLocation && vs_cbv0->cbv.SizeInBytes)
+      queue_upstream_cbv_readback("vs_cbv", vs_cbv0->cbv.BufferLocation,
+                                  vs_cbv0->cbv.SizeInBytes);
+
+    auto *sig = graphics_root_sig;
+    if (!sig && pso && pso->GetRootSignature())
+      sig = static_cast<MTLD3D12RootSignature *>(pso->GetRootSignature());
+    if (sig) {
+      const auto &params = sig->GetParameters();
+      Logger::info(str::format("M12 AC6 upstream root signature params=",
+                               (unsigned)params.size(),
+                               " heaps=", desc_heap_count));
+      for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+        const auto &param = params[i];
+        Logger::info(str::format(
+            "M12 AC6 upstream root[", i, "] type=", RootParameterTypeName(param.type),
+            " vis=", ShaderVisibilityName(param.shader_visibility),
+            " reg=", param.register_index, " space=", param.register_space,
+            " constants=", root_constant_set[i], " const_size=", root_constant_sizes[i],
+            " cbv=", root_cbv_set[i], " root_cbv=0x", std::hex,
+            (unsigned long long)root_cbvs[i], std::dec,
+            " srv=", root_srv_set[i], " uav=", root_uav_set[i],
+            " table=", root_table_set[i], " table_gpu=0x", std::hex,
+            (unsigned long long)root_tables[i].ptr, std::dec));
+        if (param.type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS &&
+            root_constant_set[i] && root_constant_sizes[i] &&
+            ShaderVisibilityCoversShader(param.shader_visibility,
+                                         D3D12_SHADER_VISIBILITY_VERTEX)) {
+          uint32_t off = i * kRootConstantBytes;
+          uint32_t bytes = std::min<uint32_t>(root_constant_sizes[i], 64u);
+          Logger::info(str::format(
+              "M12 AC6 upstream root[", i, "] constants bytes=[",
+              FormatDebugBytes(root_constants_buf + off, bytes), "]"));
+        }
+        if (param.type == D3D12_ROOT_PARAMETER_TYPE_CBV && root_cbv_set[i] &&
+            ShaderVisibilityCoversShader(param.shader_visibility,
+                                         D3D12_SHADER_VISIBILITY_VERTEX)) {
+          queue_upstream_cbv_readback("root_cbv", root_cbvs[i], 256u);
+        }
+      }
+    } else {
+      Logger::info("M12 AC6 upstream root signature null");
+    }
+
+    for (uint32_t i = 0; i < 4; i++) {
+      auto *srv = FindPixelSrvByOrdinal(i);
+      Logger::info(str::format("M12 AC6 upstream srv[", i, "] ",
+                               ResourceSummary(srv)));
+      ac6_upstream_srv_readback[i].slot = i;
+      ac6_upstream_srv_readback[i].reg = i;
+      CaptureTextureReadback(device, cmdbuf, srv, ac6_upstream_srv_readback[i]);
+    }
+
+    ac6_upstream_rtv_readback.slot = 0;
+    ac6_upstream_rtv_readback.reg = 0;
+    CaptureTextureReadback(device, cmdbuf, rtv, ac6_upstream_rtv_readback);
+    ac6_upstream_diagnostic_queued = true;
+    EnsureRenderEncoder();
+    ApplyRootBindings(device);
+  }
+
+  MTLD3D12Resource *FindFinalCompositeSrv(uint32_t srv_index) {
+    if (!pso)
+      return nullptr;
+    auto *sig = graphics_root_sig;
+    if (!sig && pso->GetRootSignature())
+      sig = static_cast<MTLD3D12RootSignature *>(pso->GetRootSignature());
+    if (!sig)
+      return nullptr;
+
+    const auto &params = sig->GetParameters();
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+      const auto &param = params[i];
+      if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
+          !root_table_set[i] ||
+          !ShaderVisibilityCoversPixel(param.shader_visibility))
+        continue;
+      for (const auto &range : param.ranges) {
+        if (range.range_type != D3D12_DESCRIPTOR_RANGE_TYPE_SRV ||
+            range.base_register != 0 || srv_index >= range.num_descriptors)
+          continue;
+        for (uint32_t h = 0; h < desc_heap_count; h++) {
+          auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+          if (!heap)
+            continue;
+          auto *desc = heap->GetDescriptorFromGPUHandle(
+              root_tables[i], range.offset_in_table + srv_index);
+          if (desc && desc->resource)
+            return static_cast<MTLD3D12Resource *>(desc->resource);
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  void QueueAC6ProducerDiagnostic(MTLD3D12Device *device,
+                                  WMT::CommandBuffer &cmdbuf,
+                                  const char *draw_kind,
+                                  uint32_t element_count) {
+    if (!DXMTD3D12AC6ProducerDiagnostic() || ac6_producer_diagnostic_queued)
+      return;
+
+    auto *rtv = CurrentRTVResource(0);
+    if (!IsAC6FinalSizeRGBAOffscreen(rtv))
+      return;
+
+    if (!IsAC6FinalT1ProducerPSO()) {
+      QueueAC6UpstreamDiagnostic(device, cmdbuf, draw_kind, element_count);
+      if (ac6_producer_candidate_logs < 64) {
+        ac6_producer_candidate_logs++;
+        Logger::info(str::format(
+            "M12 AC6 producer candidate draw=", draw_kind,
+            " elems=", element_count, " ", ResourceSummary(rtv),
+            " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+      }
+      return;
+    }
+
+    Logger::info(str::format(
+        "M12 AC6 producer diagnostic draw=", draw_kind,
+        " elems=", element_count, " ", ResourceSummary(rtv),
+        " force_white=", DXMTD3D12AC6ForceProducerWhite() ? 1 : 0,
+        " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+
+    const auto &vp = viewports[0];
+    const auto &sc = scissor_rects[0];
+    const auto &rast = pso->GetRasterizerDesc();
+    const auto &ds = pso->GetDepthStencilDesc();
+    const auto &blend = pso->GetBlendDesc();
+    Logger::info(str::format(
+        "M12 AC6 producer state vp_count=", viewport_count,
+        " vp=", vp.TopLeftX, ",", vp.TopLeftY, " ", vp.Width, "x",
+        vp.Height, " depth=", vp.MinDepth, "-", vp.MaxDepth,
+        " sc_count=", scissor_count, " sc=", sc.left, ",", sc.top,
+        "-", sc.right, ",", sc.bottom, " topology=", (unsigned)topology,
+        " primitive=", (unsigned)GetMetalPrimitiveType(),
+        " cull=", (unsigned)rast.CullMode,
+        " front_ccw=", (unsigned)rast.FrontCounterClockwise,
+        " depth_enable=", (unsigned)ds.DepthEnable,
+        " depth_write=", (unsigned)ds.DepthWriteMask,
+        " depth_func=", (unsigned)ds.DepthFunc,
+        " stencil_enable=", (unsigned)ds.StencilEnable,
+        " blend0=", (unsigned)blend.RenderTarget[0].BlendEnable,
+        " write_mask0=0x", std::hex,
+        (unsigned)blend.RenderTarget[0].RenderTargetWriteMask, std::dec,
+        " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
+        " dst0=", (unsigned)blend.RenderTarget[0].DestBlend,
+        " op0=", (unsigned)blend.RenderTarget[0].BlendOp));
+
+    CloseRenderEncoder();
+
+    auto *cbv0 = FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 0);
+    Logger::info(str::format("M12 AC6 producer cbv0 ",
+                             DescriptorSummary(cbv0, D3D12_DESCRIPTOR_RANGE_TYPE_CBV)));
+    if (cbv0 && cbv0->cbv.BufferLocation && cbv0->cbv.SizeInBytes) {
+      uint64_t cb_gpu = cbv0->cbv.BufferLocation;
+      auto *cb_res = device->LookupResourceByGPUAddress(cb_gpu);
+      if (cb_res) {
+        uint64_t cb_off = cb_gpu - cb_res->GetGPUVirtualAddress();
+        D3D12_RESOURCE_DESC cb_desc = {};
+        cb_res->GetDesc(&cb_desc);
+        uint64_t available = cb_off < cb_desc.Width ? cb_desc.Width - cb_off : 0;
+        ac6_producer_cbv_size =
+            (uint32_t)std::min<uint64_t>(std::min<uint32_t>(cbv0->cbv.SizeInBytes, 256u), available);
+        bool queued = ac6_producer_cbv_size &&
+                      CaptureBufferReadback(device, cmdbuf, cb_res, cb_off,
+                                            ac6_producer_cbv_size,
+                                            ac6_producer_cbv_readback,
+                                            ac6_producer_cbv_mapped);
+        Logger::info(str::format(
+            "M12 AC6 producer cbv readback queued=", queued ? 1 : 0,
+            " gpu=0x", std::hex, (unsigned long long)cb_gpu, std::dec,
+            " off=", (unsigned long long)cb_off,
+            " bytes=", ac6_producer_cbv_size,
+            " available=", (unsigned long long)available,
+            " ", ResourceSummary(cb_res)));
+      } else {
+        Logger::info(str::format(
+            "M12 AC6 producer cbv readback no_resource gpu=0x", std::hex,
+            (unsigned long long)cb_gpu, std::dec,
+            " size=", cbv0->cbv.SizeInBytes));
+      }
+    }
+
+    const auto &vb0 = vbs[0];
+    Logger::info(str::format("M12 AC6 producer vb0 gpu=0x", std::hex,
+                             (unsigned long long)vb0.BufferLocation, std::dec,
+                             " size=", vb0.SizeInBytes,
+                             " stride=", vb0.StrideInBytes));
+    if (vb0.BufferLocation && vb0.StrideInBytes) {
+      for (uint32_t vi = 0; vi < std::min<uint32_t>(element_count, 4u); vi++) {
+        uint64_t vertex_gpu = vb0.BufferLocation +
+                              uint64_t(vi) * uint64_t(vb0.StrideInBytes);
+        auto *vb_res = device->LookupResourceByGPUAddress(vertex_gpu);
+        if (!vb_res)
+          continue;
+        uint64_t vertex_offset = vertex_gpu - vb_res->GetGPUVirtualAddress();
+        const size_t sample_bytes = std::min<size_t>(vb0.StrideInBytes, 64);
+        D3D12_RESOURCE_DESC vb_desc = {};
+        vb_res->GetDesc(&vb_desc);
+        if (vertex_offset + sample_bytes > vb_desc.Width)
+          continue;
+        void *base = nullptr;
+        D3D12_RANGE read_range = {vertex_offset, vertex_offset + sample_bytes};
+        HRESULT hr = vb_res->Map(0, &read_range, &base);
+        if (FAILED(hr) || !base)
+          continue;
+        const auto *bytes = static_cast<const uint8_t *>(base) + vertex_offset;
+        float pos[3] = {};
+        float uv[4] = {};
+        uint8_t color[4] = {};
+        std::memcpy(pos, bytes, std::min<size_t>(sizeof(pos), sample_bytes));
+        if (sample_bytes >= 16)
+          std::memcpy(color, bytes + 12, sizeof(color));
+        if (sample_bytes >= 32)
+          std::memcpy(uv, bytes + 16, sizeof(uv));
+        Logger::info(str::format(
+            "M12 AC6 producer vertex[", vi, "] gpu=0x", std::hex,
+            (unsigned long long)vertex_gpu, std::dec,
+            " off=", (unsigned long long)vertex_offset,
+            " pos=", pos[0], ",", pos[1], ",", pos[2],
+            " color=", (unsigned)color[0], ",", (unsigned)color[1], ",",
+            (unsigned)color[2], ",", (unsigned)color[3],
+            " uv=", uv[0], ",", uv[1], ",", uv[2], ",", uv[3],
+            " bytes=[", FormatDebugBytes(bytes, sample_bytes), "]"));
+        vb_res->Unmap(0, nullptr);
+      }
+    }
+
+    for (uint32_t i = 0; i < 2; i++) {
+      auto *srv = FindPixelSrvByOrdinal(i);
+      Logger::info(str::format("M12 AC6 producer srv[", i, "] ",
+                               ResourceSummary(srv)));
+      ac6_producer_srv_readback[i].slot = i;
+      ac6_producer_srv_readback[i].reg = i;
+      CaptureTextureReadback(device, cmdbuf, srv, ac6_producer_srv_readback[i]);
+    }
+
+    if (DXMTD3D12AC6ForceProducerWhite() && !ac6_producer_forced_white) {
+      auto tex = rtv->GetMTLTexture();
+      if (tex.handle) {
+        WMTRenderPassInfo rp = {};
+        WMT::InitializeRenderPassInfo(rp);
+        for (uint32_t i = 0; i < 8; i++) {
+          rp.colors[i].texture = NULL_OBJECT_HANDLE;
+          rp.colors[i].load_action = WMTLoadActionDontCare;
+          rp.colors[i].store_action = WMTStoreActionDontCare;
+        }
+        rp.colors[0].texture = tex.handle;
+        rp.colors[0].load_action = WMTLoadActionClear;
+        rp.colors[0].store_action = WMTStoreActionStore;
+        rp.colors[0].clear_color = {1.0, 1.0, 1.0, 1.0};
+        rp.depth.texture = NULL_OBJECT_HANDLE;
+        rp.stencil.texture = NULL_OBJECT_HANDLE;
+        auto enc = cmdbuf.renderCommandEncoder(rp);
+        ENC_CREATE("render_ac6_force_producer_white", enc.handle);
+        ScopedMetalEncoderEnd enc_guard{enc, "render_ac6_force_producer_white"};
+        EndMetalEncoder(enc, "render_ac6_force_producer_white");
+        ac6_producer_forced_white = true;
+        Logger::info(str::format("M12 AC6 forced producer RTV white ",
+                                 ResourceSummary(rtv)));
+      }
+    }
+
+    ac6_producer_rtv_readback.slot = 0;
+    ac6_producer_rtv_readback.reg = 0;
+    CaptureTextureReadback(device, cmdbuf, rtv, ac6_producer_rtv_readback);
+    ac6_producer_diagnostic_queued = true;
+    EnsureRenderEncoder();
+    ApplyRootBindings(device);
+  }
+
+  void LogAC6ProducerDiagnosticReadback() {
+    if (!ac6_producer_diagnostic_queued && !ac6_upstream_diagnostic_queued)
+      return;
+    auto log_probe = [&](const char *prefix, const char *label,
+                         const TextureReadbackProbe &probe) {
+      if (!probe.mapped || !probe.width || !probe.height)
+        return;
+      auto stats = ComputeReadbackStats(probe.mapped, probe.width,
+                                        probe.height, probe.bytes_per_row);
+      Logger::info(str::format(
+          prefix, " readback ", label,
+          " slot=", probe.slot, " tex=", (unsigned long long)probe.texture_id,
+          " fmt=", (unsigned)probe.format, " sample=", probe.width, "x",
+          probe.height, " nonzero_pixels=", stats.nonzero_pixels,
+          " nonzero_bytes=", stats.nonzero_bytes,
+          " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
+          stats.nonzero_channel_pixels[1], ",",
+          stats.nonzero_channel_pixels[2], ",",
+          stats.nonzero_channel_pixels[3],
+          " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
+          stats.nonzero_channel_bytes[1], ",",
+          stats.nonzero_channel_bytes[2], ",",
+          stats.nonzero_channel_bytes[3],
+          " max_byte=", (unsigned)stats.max_byte,
+          " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
+          (unsigned)stats.max_channel_byte[1], ",",
+          (unsigned)stats.max_channel_byte[2], ",",
+          (unsigned)stats.max_channel_byte[3],
+          " checksum=0x", std::hex, stats.checksum));
+    };
+    auto log_legacy_probe = [&](const char *label, const TextureReadbackProbe &probe) {
+      if (!probe.mapped || !probe.width || !probe.height)
+        return;
+      auto stats = ComputeReadbackStats(probe.mapped, probe.width,
+                                        probe.height, probe.bytes_per_row);
+      Logger::info(str::format(
+          "M12 AC6 producer readback ", label,
+          " slot=", probe.slot, " tex=", (unsigned long long)probe.texture_id,
+          " fmt=", (unsigned)probe.format, " sample=", probe.width, "x",
+          probe.height, " nonzero_pixels=", stats.nonzero_pixels,
+          " nonzero_bytes=", stats.nonzero_bytes,
+          " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
+          stats.nonzero_channel_pixels[1], ",",
+          stats.nonzero_channel_pixels[2], ",",
+          stats.nonzero_channel_pixels[3],
+          " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
+          stats.nonzero_channel_bytes[1], ",",
+          stats.nonzero_channel_bytes[2], ",",
+          stats.nonzero_channel_bytes[3],
+          " max_byte=", (unsigned)stats.max_byte,
+          " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
+          (unsigned)stats.max_channel_byte[1], ",",
+          (unsigned)stats.max_channel_byte[2], ",",
+          (unsigned)stats.max_channel_byte[3],
+          " checksum=0x", std::hex, stats.checksum));
+    };
+    if (ac6_producer_cbv_mapped && ac6_producer_cbv_size) {
+      const auto *bytes = static_cast<const uint8_t *>(ac6_producer_cbv_mapped);
+      const uint32_t rows[] = {5, 9, 10, 11};
+      for (uint32_t row : rows) {
+        uint32_t off = row * 16u;
+        if (off + 16u > ac6_producer_cbv_size)
+          continue;
+        float f[4] = {};
+        std::memcpy(f, bytes + off, sizeof(f));
+        Logger::info(str::format(
+            "M12 AC6 producer cbv readback row=", row,
+            " off=", off, " f=", f[0], ",", f[1], ",", f[2], ",", f[3],
+            " bytes=[", FormatDebugBytes(bytes + off, 16), "]"));
+      }
+    }
+    log_legacy_probe("rtv", ac6_producer_rtv_readback);
+    log_legacy_probe("srv0", ac6_producer_srv_readback[0]);
+    log_legacy_probe("srv1", ac6_producer_srv_readback[1]);
+
+    if (ac6_upstream_vs_cbv_mapped && ac6_upstream_vs_cbv_size) {
+      const auto *bytes = static_cast<const uint8_t *>(ac6_upstream_vs_cbv_mapped);
+      const uint32_t rows[] = {0, 1, 2, 3, 4, 5};
+      for (uint32_t row : rows) {
+        uint32_t off = row * 16u;
+        if (off + 16u > ac6_upstream_vs_cbv_size)
+          continue;
+        float f[4] = {};
+        std::memcpy(f, bytes + off, sizeof(f));
+        Logger::info(str::format(
+            "M12 AC6 upstream vs_cbv readback row=", row,
+            " off=", off, " f=", f[0], ",", f[1], ",", f[2], ",", f[3],
+            " bytes=[", FormatDebugBytes(bytes + off, 16), "]"));
+      }
+    }
+    log_probe("M12 AC6 upstream", "rtv", ac6_upstream_rtv_readback);
+    log_probe("M12 AC6 upstream", "srv0", ac6_upstream_srv_readback[0]);
+    log_probe("M12 AC6 upstream", "srv1", ac6_upstream_srv_readback[1]);
+    log_probe("M12 AC6 upstream", "srv2", ac6_upstream_srv_readback[2]);
+    log_probe("M12 AC6 upstream", "srv3", ac6_upstream_srv_readback[3]);
+  }
+
+  bool PrimeAC6FinalCompositeMask(MTLD3D12Device *device,
+                                  WMT::CommandBuffer &cmdbuf) {
+    if (!DXMTD3D12AC6PrimeFinalMask() || !DXMTD3D12AC6ProducerDiagnostic() ||
+        !HasSwapchainRenderTarget() || !IsAC6FinalBlendUIPSO())
+      return false;
+
+    auto *mask = FindFinalCompositeSrv(1);
+    if (!mask)
+      return false;
+    auto tex = mask->GetMTLTexture();
+    if (!tex.handle)
+      return false;
+
+    CloseRenderEncoder();
+
+    WMTRenderPassInfo rp = {};
+    WMT::InitializeRenderPassInfo(rp);
+    for (uint32_t i = 0; i < 8; i++) {
+      rp.colors[i].texture = NULL_OBJECT_HANDLE;
+      rp.colors[i].load_action = WMTLoadActionDontCare;
+      rp.colors[i].store_action = WMTStoreActionDontCare;
+    }
+    rp.colors[0].texture = tex.handle;
+    rp.colors[0].load_action = WMTLoadActionClear;
+    rp.colors[0].store_action = WMTStoreActionStore;
+    rp.colors[0].clear_color = {1.0, 1.0, 1.0, 1.0};
+    rp.depth.texture = NULL_OBJECT_HANDLE;
+    rp.stencil.texture = NULL_OBJECT_HANDLE;
+
+    auto enc = cmdbuf.renderCommandEncoder(rp);
+    ENC_CREATE("render_ac6_prime_final_mask", enc.handle);
+    ScopedMetalEncoderEnd enc_guard{enc, "render_ac6_prime_final_mask"};
+    if (!enc.handle) {
+      EnsureRenderEncoder();
+      ApplyRootBindings(device);
+      return false;
+    }
+    EndMetalEncoder(enc, "render_ac6_prime_final_mask");
+
+    Logger::info(str::format(
+        "M12 AC6 primed final composite mask color=1,1,1,1 ",
+        ResourceSummary(mask), " pso=", (void *)pso, " ",
+        TracePsoShaderSummary(pso)));
+
+    EnsureRenderEncoder();
+    ApplyRootBindings(device);
+    return true;
   }
 
   void ForceSwapchainDiagnosticColor(WMT::CommandBuffer &cmdbuf) {
@@ -5779,6 +6677,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.EnsureSwapchainRenderPSOReady();
         st.EnsureRenderEncoder();
         st.ApplyRootBindings(m_device);
+        st.PrimeAC6FinalCompositeMask(m_device, cmdbuf);
         st.BuildVertexConstantBufferTable(m_device);
         st.BuildVertexArgumentBuffer(m_device);
         st.BuildGeometryConstantBufferTable(m_device);
@@ -5869,8 +6768,11 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           WMTPrimitiveType primitive_type = draw.primitive_type;
           if (st.EncodeRenderCommands(
                   reinterpret_cast<const wmtcmd_render_nop *>(&draw),
-                  "draw_instanced"))
+                  "draw_instanced")) {
             st.MarkSwapchainWorkEncoded();
+            st.QueueAC6ProducerDiagnostic(m_device, cmdbuf, "DrawInstanced",
+                                          cmd->vertex_count);
+          }
           if (st.HasSwapchainRenderTarget() &&
               TakeLogBudget(&g_swapchain_draw_logs, 48)) {
             Logger::info(str::format(
@@ -6132,6 +7034,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                   reinterpret_cast<const wmtcmd_render_nop *>(&draw),
                   "draw_indexed_instanced")) {
             st.MarkSwapchainWorkEncoded();
+            st.QueueAC6ProducerDiagnostic(m_device, cmdbuf,
+                                          "DrawIndexedInstanced",
+                                          cmd->index_count);
             if (!st.HasSwapchainRenderTarget() &&
                 TakeLogBudget(&g_offscreen_indexed_draw_logs, 128)) {
               auto fragment_summary = st.FragmentCompletenessSummary();
@@ -6301,6 +7206,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         auto replay_indirect_draw = [&](const D3D12_DRAW_ARGUMENTS &args) {
           st.EnsureRenderEncoder();
           st.ApplyRootBindings(m_device);
+          st.PrimeAC6FinalCompositeMask(m_device, cmdbuf);
           st.BuildVertexConstantBufferTable(m_device);
           st.BuildVertexArgumentBuffer(m_device);
           st.BuildConstantBufferTable(m_device);
@@ -7161,6 +8067,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 " handle=", (unsigned long long)st.rt_handles[i].ptr,
                 " tex=", (unsigned long long)res->GetMTLTexture().handle));
           }
+          if (DXMTD3D12AC6ProducerDiagnostic() &&
+              IsAC6FinalSizeRGBAOffscreen(res) &&
+              TakeLogBudget(&g_ac6_candidate_resource_logs, 512)) {
+            Logger::info(str::format(
+                "M12 AC6 candidate OMSetRenderTargets slot=", i,
+                " handle=0x", std::hex,
+                (unsigned long long)st.rt_handles[i].ptr, std::dec, " ",
+                ResourceSummary(res), " pso=", (void *)st.pso, " ",
+                TracePsoShaderSummary(st.pso)));
+          }
         }
         st.has_dsv = cmd->has_dsv;
         if (cmd->has_dsv) {
@@ -7218,6 +8134,15 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                     " tex=", (unsigned long long)res->GetMTLTexture().handle,
                     " color=", cmd->color[0], ",", cmd->color[1], ",",
                     cmd->color[2], ",", cmd->color[3]));
+              }
+              if (DXMTD3D12AC6ProducerDiagnostic() &&
+                  IsAC6FinalSizeRGBAOffscreen(res) &&
+                  TakeLogBudget(&g_ac6_candidate_resource_logs, 512)) {
+                Logger::info(str::format(
+                    "M12 AC6 candidate ClearRTV handle=0x", std::hex,
+                    (unsigned long long)cmd->rtv.ptr, std::dec, " ",
+                    ResourceSummary(res), " color=", cmd->color[0], ",",
+                    cmd->color[1], ",", cmd->color[2], ",", cmd->color[3]));
               }
             }
           }
@@ -7732,14 +8657,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         QTRACE("  type[%d]=%u", i, type_counts[i]);
 
     st.CloseRenderEncoder();
-    st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
+    st.CaptureFinalCompositeSrvReadback(m_device, cmdbuf);
     st.ForceSwapchainDiagnosticColor(cmdbuf);
+    st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
     cmdbuf.commit();
     const bool sync_execute =
         DXMTD3D12SyncExecuteCommandBuffers() ||
-        DXMTD3D12SwapchainRenderReadback() || DXMTD3D12AutopresentSwapchain();
+        DXMTD3D12SwapchainRenderReadback() || DXMTD3D12AutopresentSwapchain() ||
+        DXMTD3D12FinalRenderSnapshot() || DXMTD3D12AC6ProducerDiagnostic();
     int64_t wait_ms = 0;
     if (sync_execute) {
       auto wait_begin = std::chrono::steady_clock::now();
@@ -7824,6 +8751,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       Logger::err(str::format("ExecuteCommandLists fault breadcrumbs: ",
                               st.FormatFaultBreadcrumbs()));
     } else if (sync_execute) {
+      st.LogAC6ProducerDiagnosticReadback();
+      st.LogFinalCompositeSrvReadback();
       st.LogSwapchainRenderReadback();
     }
     if (sync_execute && status == WMTCommandBufferStatusCompleted &&
