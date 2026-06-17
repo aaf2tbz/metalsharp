@@ -208,6 +208,7 @@ static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
 static uint32_t g_draw_plan_logs = 0;
 static uint32_t g_replay_plan_logs = 0;
+static uint32_t g_replay_execute_plan_logs = 0;
 static uint32_t g_command_stream_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
@@ -5947,6 +5948,95 @@ struct ReplayState {
   }
 };
 
+static bool M12CoreReplayExecuteEnabled() {
+  static bool enabled = [] {
+    const char *raw = std::getenv("DXMT_M12CORE_REPLAY_EXECUTE");
+    return raw && raw[0] && raw[0] != '0';
+  }();
+  return enabled;
+}
+
+static void
+LogM12CoreReplayExecutePlan(uint32_t queue_type, uint32_t list_index,
+                            uint64_t command_list_id, uint64_t queue_serial,
+                            const D3D12CommandStreamStats &stats,
+                            const ReplayState &state, bool has_swapchain_target,
+                            uint32_t command_buffer_status) {
+  if (!TakeLogBudget(&g_replay_execute_plan_logs, 192))
+    return;
+
+  const uint32_t clear_count =
+      stats.clear_rtv_count + stats.clear_dsv_count + stats.clear_uav_count;
+  const uint32_t root_binding_count =
+      stats.set_graphics_root_constants_count +
+      stats.set_graphics_root_cbv_count + stats.set_graphics_root_srv_count +
+      stats.set_graphics_root_uav_count + stats.set_graphics_root_table_count +
+      stats.set_compute_root_constants_count +
+      stats.set_compute_root_cbv_count + stats.set_compute_root_srv_count +
+      stats.set_compute_root_uav_count + stats.set_compute_root_table_count;
+
+  M12CoreReplayExecuteDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  if (M12CoreReplayExecuteEnabled())
+    desc.flags |= M12CORE_REPLAY_EXECUTE_GATE_ENABLED;
+  if (stats.command_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_COMMAND_STREAM;
+  if (stats.draw_count || stats.indexed_draw_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_GRAPHICS_WORK;
+  if (stats.dispatch_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_COMPUTE_WORK;
+  if (clear_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_CLEAR_WORK;
+  if (stats.resource_barrier_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_BARRIERS;
+  if (root_binding_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_ROOT_BINDING;
+  if (state.desc_heap_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_DESCRIPTOR_HEAPS;
+  if (stats.indirect_count)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_INDIRECT;
+  if (stats.corrupt || stats.corrupt_size || stats.corrupt_type)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_CORRUPTION;
+  if (has_swapchain_target)
+    desc.flags |= M12CORE_REPLAY_EXECUTE_HAS_SWAPCHAIN_TARGET;
+  desc.queue_type = queue_type;
+  desc.command_list_index = list_index;
+  desc.command_count = stats.command_count;
+  desc.draw_count = stats.draw_count;
+  desc.indexed_draw_count = stats.indexed_draw_count;
+  desc.dispatch_count = stats.dispatch_count;
+  desc.clear_count = clear_count;
+  desc.indirect_count = stats.indirect_count;
+  desc.barrier_count = stats.resource_barrier_count;
+  desc.root_binding_count = root_binding_count;
+  desc.descriptor_heap_count = state.desc_heap_count;
+  desc.render_target_count = state.rt_count;
+  desc.command_buffer_status = command_buffer_status;
+  desc.command_list_id = command_list_id;
+  desc.queue_serial = queue_serial;
+
+  M12CoreReplayExecuteSummary summary = {};
+  if (!WMTM12CorePlanReplayExecute(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_REPLAY_EXECUTE_STATUS_OK)
+    return;
+
+  Logger::info(str::format(
+      "M12_REPLAY_EXECUTE_PLAN queue=", queue_type, " list=", list_index,
+      " cmdlist_id=", (unsigned long long)command_list_id,
+      " serial=", (unsigned long long)queue_serial, " key=0x", std::hex,
+      summary.replay_execute_key, " flags=0x", desc.flags, " validation=0x",
+      summary.validation_flags, " supported=0x", summary.supported_command_mask,
+      " unsupported=0x", summary.unsupported_command_mask, std::dec,
+      " eligible=",
+      (summary.flags & M12CORE_REPLAY_EXECUTE_SUMMARY_ELIGIBLE) ? 1 : 0,
+      " gate=",
+      (summary.flags & M12CORE_REPLAY_EXECUTE_SUMMARY_GATE_ENABLED) ? 1 : 0,
+      " fallback=", summary.fallback_reason, " packets=",
+      summary.planned_packet_count, " class=", summary.replay_classification,
+      " hazard=", summary.hazard_score));
+}
+
 static void LogM12CoreCommandStreamShadow(
     uint32_t queue_type, uint32_t list_index, uint64_t command_list_id,
     uint64_t queue_serial, const D3D12CommandStreamStats &stats,
@@ -9108,6 +9198,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                            clear_rtv_count, clear_dsv_count, clear_uav_count,
                            st.swapchain_work_encoded, has_swapchain_work_target,
                            sync_execute, (uint32_t)status, replay_ms, wait_ms);
+      LogM12CoreReplayExecutePlan((uint32_t)m_desc.Type, li, command_list_id,
+                                  queue_serial, stream_stats, st,
+                                  has_swapchain_work_target, (uint32_t)status);
       LogM12CoreCommandStreamShadow(
           (uint32_t)m_desc.Type, li, command_list_id, queue_serial,
           stream_stats, st, has_swapchain_work_target, (uint32_t)status);

@@ -108,6 +108,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CorePlanPresentExecute";
   case 158:
     return "WMTM12CoreExecutePresentBlit";
+  case 159:
+    return "WMTM12CorePlanReplayExecute";
   default:
     return "unknown";
   }
@@ -655,6 +657,21 @@ WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSu
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(154, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanReplayExecute(const M12CoreReplayExecuteDesc *desc, M12CoreReplayExecuteSummary *out_summary) {
+  struct unixcall_m12core_plan_replay_execute params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(159, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

@@ -612,6 +612,13 @@ struct unixcall_m12core_validate_command_stream {
   M12CoreCommandStreamSummary ret_summary;
 };
 
+struct unixcall_m12core_plan_replay_execute {
+  M12CoreReplayExecuteDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreReplayExecuteSummary ret_summary;
+};
+
 struct unixcall_m12core_plan_render_pass {
   M12CoreRenderPassPlanDesc desc;
   uint32_t ret_success;

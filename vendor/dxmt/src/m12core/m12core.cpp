@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase9 present-execute-shadow abi=1";
+  return "libm12core phase9 replay-execute-eligibility abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1370,6 +1370,95 @@ m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
   out_summary->hazard_score = hazard_score;
   out_summary->replay_plan_key = key;
   out_summary->scheduled_work_count = scheduled;
+  return 0;
+}
+
+extern "C" int
+m12core_plan_replay_execute(const M12CoreReplayExecuteDesc *desc,
+                            M12CoreReplayExecuteSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Slice 5 replay-execute ownership seam.  libm12core owns the scalar
+   * command support table and eligibility/fallback decision.  PE/DXMT still
+   * owns command decoding and execution until POD command packets plus
+   * native-owned resource/pipeline/root handles exist.
+   */
+  uint64_t key = 0x4d31325245584543ull; // "M12REXEC" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->queue_type);
+  pipelineHashCombine(key, desc->command_list_index);
+  pipelineHashCombine(key, desc->command_count);
+  pipelineHashCombine(key, desc->draw_count);
+  pipelineHashCombine(key, desc->indexed_draw_count);
+  pipelineHashCombine(key, desc->dispatch_count);
+  pipelineHashCombine(key, desc->clear_count);
+  pipelineHashCombine(key, desc->indirect_count);
+  pipelineHashCombine(key, desc->barrier_count);
+  pipelineHashCombine(key, desc->root_binding_count);
+  pipelineHashCombine(key, desc->descriptor_heap_count);
+  pipelineHashCombine(key, desc->render_target_count);
+  pipelineHashCombine(key, desc->command_buffer_status);
+  pipelineHashCombine(key, desc->command_list_id);
+  pipelineHashCombine(key, desc->queue_serial);
+
+  uint32_t supported_mask = 0;
+  if (desc->clear_count)
+    supported_mask |= 1u << 0;
+  if (desc->draw_count)
+    supported_mask |= 1u << 1;
+  if (desc->indexed_draw_count)
+    supported_mask |= 1u << 2;
+  if (desc->dispatch_count)
+    supported_mask |= 1u << 3;
+  if (desc->barrier_count)
+    supported_mask |= 1u << 4;
+  if (desc->root_binding_count)
+    supported_mask |= 1u << 5;
+  if (desc->descriptor_heap_count)
+    supported_mask |= 1u << 6;
+
+  uint32_t unsupported_mask = 0;
+  if (desc->indirect_count)
+    unsupported_mask |= 1u << 0;
+  if (desc->flags & M12CORE_REPLAY_EXECUTE_HAS_CORRUPTION)
+    unsupported_mask |= 1u << 1;
+
+  uint32_t fallback = M12CORE_REPLAY_EXECUTE_FALLBACK_NONE;
+  if (!(desc->flags & M12CORE_REPLAY_EXECUTE_GATE_ENABLED))
+    fallback = M12CORE_REPLAY_EXECUTE_FALLBACK_GATE_DISABLED;
+  else if (!desc->command_count)
+    fallback = M12CORE_REPLAY_EXECUTE_FALLBACK_EMPTY_STREAM;
+  else if (desc->indirect_count)
+    fallback = M12CORE_REPLAY_EXECUTE_FALLBACK_UNSUPPORTED_INDIRECT;
+  else if (desc->flags & M12CORE_REPLAY_EXECUTE_HAS_CORRUPTION)
+    fallback = M12CORE_REPLAY_EXECUTE_FALLBACK_CORRUPT_STREAM;
+  else if (!supported_mask)
+    fallback = M12CORE_REPLAY_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE;
+
+  const bool eligible = fallback == M12CORE_REPLAY_EXECUTE_FALLBACK_NONE;
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_REPLAY_EXECUTE_STATUS_OK;
+  if (eligible)
+    out_summary->flags |= M12CORE_REPLAY_EXECUTE_SUMMARY_ELIGIBLE;
+  if (desc->flags & M12CORE_REPLAY_EXECUTE_GATE_ENABLED)
+    out_summary->flags |= M12CORE_REPLAY_EXECUTE_SUMMARY_GATE_ENABLED;
+  out_summary->fallback_reason = fallback;
+  out_summary->validation_flags = unsupported_mask;
+  out_summary->supported_command_mask = supported_mask;
+  out_summary->unsupported_command_mask = unsupported_mask;
+  out_summary->planned_packet_count = eligible ? desc->command_count : 0;
+  out_summary->replay_classification =
+      desc->draw_count || desc->indexed_draw_count ? 1u
+      : desc->dispatch_count                       ? 2u
+      : desc->clear_count                          ? 3u
+                                                   : 0u;
+  out_summary->hazard_score =
+      desc->barrier_count + desc->render_target_count +
+      ((desc->flags & M12CORE_REPLAY_EXECUTE_HAS_SWAPCHAIN_TARGET) ? 2u : 0u);
+  out_summary->replay_execute_key = key;
+  out_summary->scheduled_work_count = eligible ? desc->command_count : 0;
   return 0;
 }
 

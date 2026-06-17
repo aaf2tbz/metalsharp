@@ -191,6 +191,35 @@ Exit criteria:
 
 ## Slice 5 — Core-owned command replay for mini/probe path
 
+Status: complete.
+
+Implemented evidence:
+
+- Added `M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING` with `M12CORE_BUILD_ID_HIGH = 0x00000013`.
+- Added scalar C/POD `M12CoreReplayExecuteDesc` and `M12CoreReplayExecuteSummary`; no PE command structs, COM/resource/root/pipeline pointers, Metal handles, STL, or Objective-C objects cross the `libm12core` ABI.
+- Added `m12core_plan_replay_execute` for native command support-table ownership and replay eligibility/fallback classification.
+- Added append-only winemetal unixcall `159` (`WMTM12CorePlanReplayExecute`).
+- Added default-off `DXMT_M12CORE_REPLAY_EXECUTE=1` gate; gate-off plans report fallback reason `GATE_DISABLED`, and PE replay always remains the executor in this slice.
+- Added bounded `M12_REPLAY_EXECUTE_PLAN` diagnostics beside replay/render-pass/command-stream shadow diagnostics.
+- Runtime build passed: `./tools/d3d12-metal-sdk/scripts/m12-dev.sh build-runtime`.
+- Probe build passed: `./tools/d3d12-metal-sdk/scripts/build-probes.sh`.
+- Formatting passed: `clang-format --dry-run --Werror ...` for touched Slice 5 files.
+- Autoreview returned no findings for ABI/table/fallback/execution-semantics safety.
+- Runtime staged to `~/.metalsharp/runtime/wine/lib/dxmt_m12`: `tools/d3d12-metal-sdk/results/stage-runtime-metalsharp.json`.
+- M12 detection passed with feature flags `0x0000000000000fff`, core feature flags `0x0007ffff`, and build high `0x00000013`: `tools/d3d12-metal-sdk/results/probe-m12-detection-slice5-metalsharp.log`.
+- Gate-off command replay probe passed and logged `M12_REPLAY_EXECUTE_PLAN ... fallback=1 eligible=0`: `tools/d3d12-metal-sdk/results/probe-command-replay-slice5-gate-off.log`.
+- Gate-on command replay probe passed and correctly rejected an indirect-only list with `fallback=3`: `tools/d3d12-metal-sdk/results/probe-command-replay-slice5-gate-on.log`.
+- Gate-on barriers/render-pass probe passed and logged eligible clear/dispatch lists with `gate=1 eligible=1 fallback=0`: `tools/d3d12-metal-sdk/results/probe-barriers-render-pass-slice5-gate-on.log`.
+- Backend dry-run matrix passed for all five games: `tools/d3d12-metal-sdk/results/m12-phase9-slice5-dryrun-20260617-170304/summary.json`.
+
+Pre-implementation discrepancy check:
+
+- Existing PE command streams include PE command structs plus COM/resource/root/pipeline pointers; handing the full stream to `libm12core` would violate the handle-free ABI.
+- Native-owned Metal handles are available in winemetal, but replaying D3D12 command lists natively requires a translated POD packet stream plus native-owned resource/pipeline/root handles, which is not yet available for arbitrary lists.
+- Slice 5 can honestly migrate ownership of the replay support/eligibility table into `libm12core` now, while preserving PE execution and all unsupported-list fallback.
+- The first constrained support table must be scalar and allowlist-based: clear, draw, indexed draw, dispatch, barriers, render-target setup, and descriptor/root setup counts decide whether a list is eligible.
+- `DXMT_M12CORE_REPLAY_EXECUTE=1` remains default off and, in this slice, proves gated native eligibility/readiness only; it must not skip PE replay until a POD command packet/native-handle executor exists.
+
 Plan before implementation:
 
 - Add explicit replay execution gate env var, default off.

@@ -109,6 +109,8 @@ WINEMETAL_API bool WMTM12CoreExecutePresentBlit(
 );
 WINEMETAL_API bool WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary);
 WINEMETAL_API bool
+WMTM12CorePlanReplayExecute(const M12CoreReplayExecuteDesc *desc, M12CoreReplayExecuteSummary *out_summary);
+WINEMETAL_API bool
 WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCommandStreamSummary *out_summary);
 WINEMETAL_API bool
 WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);

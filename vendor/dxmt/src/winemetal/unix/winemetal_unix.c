@@ -130,6 +130,9 @@ typedef int (*PFN_m12core_plan_render_pass)(
 typedef int (*PFN_m12core_plan_present_execute)(
     const M12CorePresentExecuteDesc *desc, M12CorePresentExecuteSummary *out_summary
 );
+typedef int (*PFN_m12core_plan_replay_execute)(
+    const M12CoreReplayExecuteDesc *desc, M12CoreReplayExecuteSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -159,6 +162,7 @@ static PFN_m12core_build_replay_plan p_m12core_build_replay_plan;
 static PFN_m12core_validate_command_stream p_m12core_validate_command_stream;
 static PFN_m12core_plan_render_pass p_m12core_plan_render_pass;
 static PFN_m12core_plan_present_execute p_m12core_plan_present_execute;
+static PFN_m12core_plan_replay_execute p_m12core_plan_replay_execute;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -258,6 +262,7 @@ m12core_try_load(void) {
   p_m12core_plan_render_pass = (PFN_m12core_plan_render_pass)dlsym(m12core_handle, "m12core_plan_render_pass");
   p_m12core_plan_present_execute =
       (PFN_m12core_plan_present_execute)dlsym(m12core_handle, "m12core_plan_present_execute");
+  p_m12core_plan_replay_execute = (PFN_m12core_plan_replay_execute)dlsym(m12core_handle, "m12core_plan_replay_execute");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -716,6 +721,16 @@ _WMTM12CoreBuildReplayPlan(void *obj) {
     return STATUS_SUCCESS;
 
   params->ret_success = p_m12core_build_replay_plan(&params->desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CorePlanReplayExecute(void *obj) {
+  struct unixcall_m12core_plan_replay_execute *params = obj;
+  if (!params || !p_m12core_plan_replay_execute)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_plan_replay_execute(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4476,6 +4491,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CorePlanRenderPass,
     &_WMTM12CorePlanPresentExecute,
     &_WMTM12CoreExecutePresentBlit,
+    &_WMTM12CorePlanReplayExecute,
 };
 
 #ifndef DXMT_NATIVE
@@ -4639,5 +4655,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CorePlanRenderPass,
     &_WMTM12CorePlanPresentExecute,
     &_WMTM12CoreExecutePresentBlit,
+    &_WMTM12CorePlanReplayExecute,
 };
 #endif

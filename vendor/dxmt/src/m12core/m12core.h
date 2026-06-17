@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000012u /* Phase-9 gated present execution foundation. */
+  0x00000013u /* Phase-9 replay execute eligibility foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -46,6 +46,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS = 1u << 15,
   M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING = 1u << 16,
   M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING = 1u << 17,
+  M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING = 1u << 18,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -57,7 +58,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_REPLAY_PLANNING |
       M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS |
       M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING |
-      M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING,
+      M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING |
+      M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING,
 };
 
 typedef struct M12CoreVersion {
@@ -739,6 +741,76 @@ typedef struct M12CoreReplayPlanSummary {
   uint64_t scheduled_work_count;
 } M12CoreReplayPlanSummary;
 
+typedef enum M12CoreReplayExecuteStatus {
+  M12CORE_REPLAY_EXECUTE_STATUS_OK = 0,
+  M12CORE_REPLAY_EXECUTE_STATUS_INVALID = 1,
+} M12CoreReplayExecuteStatus;
+
+typedef enum M12CoreReplayExecuteFlags {
+  M12CORE_REPLAY_EXECUTE_GATE_ENABLED = 1u << 0,
+  M12CORE_REPLAY_EXECUTE_HAS_COMMAND_STREAM = 1u << 1,
+  M12CORE_REPLAY_EXECUTE_HAS_GRAPHICS_WORK = 1u << 2,
+  M12CORE_REPLAY_EXECUTE_HAS_COMPUTE_WORK = 1u << 3,
+  M12CORE_REPLAY_EXECUTE_HAS_CLEAR_WORK = 1u << 4,
+  M12CORE_REPLAY_EXECUTE_HAS_BARRIERS = 1u << 5,
+  M12CORE_REPLAY_EXECUTE_HAS_ROOT_BINDING = 1u << 6,
+  M12CORE_REPLAY_EXECUTE_HAS_DESCRIPTOR_HEAPS = 1u << 7,
+  M12CORE_REPLAY_EXECUTE_HAS_INDIRECT = 1u << 8,
+  M12CORE_REPLAY_EXECUTE_HAS_CORRUPTION = 1u << 9,
+  M12CORE_REPLAY_EXECUTE_HAS_SWAPCHAIN_TARGET = 1u << 10,
+} M12CoreReplayExecuteFlags;
+
+typedef enum M12CoreReplayExecuteFallbackReason {
+  M12CORE_REPLAY_EXECUTE_FALLBACK_NONE = 0,
+  M12CORE_REPLAY_EXECUTE_FALLBACK_GATE_DISABLED = 1,
+  M12CORE_REPLAY_EXECUTE_FALLBACK_EMPTY_STREAM = 2,
+  M12CORE_REPLAY_EXECUTE_FALLBACK_UNSUPPORTED_INDIRECT = 3,
+  M12CORE_REPLAY_EXECUTE_FALLBACK_CORRUPT_STREAM = 4,
+  M12CORE_REPLAY_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE = 5,
+} M12CoreReplayExecuteFallbackReason;
+
+typedef enum M12CoreReplayExecuteSummaryFlags {
+  M12CORE_REPLAY_EXECUTE_SUMMARY_ELIGIBLE = 1u << 0,
+  M12CORE_REPLAY_EXECUTE_SUMMARY_GATE_ENABLED = 1u << 1,
+} M12CoreReplayExecuteSummaryFlags;
+
+typedef struct M12CoreReplayExecuteDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t command_count;
+  uint32_t draw_count;
+  uint32_t indexed_draw_count;
+  uint32_t dispatch_count;
+  uint32_t clear_count;
+  uint32_t indirect_count;
+  uint32_t barrier_count;
+  uint32_t root_binding_count;
+  uint32_t descriptor_heap_count;
+  uint32_t render_target_count;
+  uint32_t command_buffer_status;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+} M12CoreReplayExecuteDesc;
+
+typedef struct M12CoreReplayExecuteSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t fallback_reason;
+  uint32_t validation_flags;
+  uint32_t supported_command_mask;
+  uint32_t unsupported_command_mask;
+  uint32_t planned_packet_count;
+  uint32_t replay_classification;
+  uint32_t hazard_score;
+  uint32_t reserved[2];
+  uint64_t replay_execute_key;
+  uint64_t scheduled_work_count;
+} M12CoreReplayExecuteSummary;
+
 typedef enum M12CoreCommandStreamStatus {
   M12CORE_COMMAND_STREAM_STATUS_OK = 0,
   M12CORE_COMMAND_STREAM_STATUS_INVALID = 1,
@@ -977,6 +1049,8 @@ int m12core_plan_present_execute(const M12CorePresentExecuteDesc *desc,
                                  M12CorePresentExecuteSummary *out_summary);
 int m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
                               M12CoreReplayPlanSummary *out_summary);
+int m12core_plan_replay_execute(const M12CoreReplayExecuteDesc *desc,
+                                M12CoreReplayExecuteSummary *out_summary);
 int m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
                                     M12CoreCommandStreamSummary *out_summary);
 int m12core_plan_render_pass(const M12CoreRenderPassPlanDesc *desc,
