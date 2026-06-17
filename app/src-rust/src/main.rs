@@ -2141,8 +2141,7 @@ fn apply_launch_env_overrides(
     };
     let mut applied = Vec::new();
     let mut diagnostic_capture_enabled = env.iter().any(|(key, value)| {
-        matches!(key.as_str(), "DXMT_D3D12_SWAPCHAIN_READBACK" | "DXMT_D3D12_FINAL_RENDER_SNAPSHOT")
-            && value != "0"
+        matches!(key.as_str(), "DXMT_D3D12_SWAPCHAIN_READBACK" | "DXMT_D3D12_FINAL_RENDER_SNAPSHOT") && value != "0"
     });
     let mut upsert_env = |key: &str, value: &str| {
         env.retain(|(existing, _)| existing != key);
@@ -2165,10 +2164,8 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12_ASYNC_PIPELINE_COMPILE" => upsert_env("DXMT_ASYNC_PIPELINE_COMPILE", value),
             "METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR" => {
                 upsert_env("DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR", value)
-            }
-            "METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE" => {
-                upsert_env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", value)
-            }
+            },
+            "METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE" => upsert_env("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE", value),
             "METALSHARP_M12_DIAGNOSTIC_CAPTURE" => {
                 diagnostic_capture_enabled = value != "0";
                 upsert_env("DXMT_DUMP_MSL", bool_value);
@@ -2181,39 +2178,26 @@ fn apply_launch_env_overrides(
                 upsert_env("DXMT_D3D12_LIVE_PRESENT", "0");
                 upsert_env("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN", "0");
                 upsert_env("DXMT_D3D12_REASSERT_WINDOW_HANDOFF", "0");
-                upsert_env(
-                    "DXMT_D3D12_PRESENT_LOG_INTERVAL",
-                    if diagnostic_capture_enabled { "30" } else { "0" },
-                );
-            }
+                upsert_env("DXMT_D3D12_PRESENT_LOG_INTERVAL", if diagnostic_capture_enabled { "30" } else { "0" });
+            },
             "METALSHARP_M12_DUMP_MSL" => upsert_env("DXMT_DUMP_MSL", bool_value),
             "METALSHARP_M12_ENABLE_LIVE_PRESENT" => {
                 upsert_env("DXMT_D3D12_LIVE_PRESENT", bool_value);
                 upsert_env("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN", bool_value);
                 upsert_env("DXMT_D3D12_REASSERT_WINDOW_HANDOFF", bool_value);
-            }
-            "METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC" => {
-                upsert_env("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC", bool_value)
-            }
-            "METALSHARP_M12_AC6_PRIME_FINAL_MASK" => {
-                upsert_env("DXMT_D3D12_AC6_PRIME_FINAL_MASK", bool_value)
-            }
-            "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE" => {
-                upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", bool_value)
-            }
-            "METALSHARP_M12_FORCE_SWAPCHAIN_COLOR" => {
-                upsert_env("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR", bool_value)
-            }
-            "METALSHARP_M12_FORCE_COLOR_WRITE_STATE" => {
-                upsert_env("DXMT_D3D12_FORCE_COLOR_WRITE_STATE", bool_value)
-            }
+            },
+            "METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC" => upsert_env("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC", bool_value),
+            "METALSHARP_M12_AC6_PRIME_FINAL_MASK" => upsert_env("DXMT_D3D12_AC6_PRIME_FINAL_MASK", bool_value),
+            "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE" => upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", bool_value),
+            "METALSHARP_M12_FORCE_SWAPCHAIN_COLOR" => upsert_env("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR", bool_value),
+            "METALSHARP_M12_FORCE_COLOR_WRITE_STATE" => upsert_env("DXMT_D3D12_FORCE_COLOR_WRITE_STATE", bool_value),
             "METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT" => {
                 upsert_env("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT", bool_value)
-            }
+            },
             "METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN" => {
                 upsert_env("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN", bool_value)
-            }
-            _ => {}
+            },
+            _ => {},
         }
         applied.push(key.clone());
     }
