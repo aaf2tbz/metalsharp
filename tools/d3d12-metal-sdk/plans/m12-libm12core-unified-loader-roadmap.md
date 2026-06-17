@@ -334,6 +334,8 @@ vendor/dxmt/src/d3d12/d3d12_vertex_input.hpp
 
 ## Phase 5: Move root signature + descriptor binding mapper into `libm12core`
 
+Status: first slice implemented in commit `1c0b1a8` (`feat: key m12 root signatures in libm12core`). This adds a POD C ABI and PE/unix thunk for root-signature structural summaries/keys, keeps D3D12 binding behavior unchanged, and leaves the existing PE-local descriptor lookup path as the migration fallback. Validation used a required backend dry-run plus 150s AC6 run at `tools/d3d12-metal-sdk/results/bounded-launches/armored-core-vi-20260617-095952/summary.md`: `22/22` drawn/present, failures `0`, `unix_call_failed=0`; detailed D3D12 logs emitted `M12_ROOT_SIGNATURE_CORE` summaries for 6 root signatures and retained native Phase 4 render pipeline creation (`metal_render_create_native=1267`). Remaining work: move argument-buffer binding-plan construction and descriptor-table/root-descriptor/static-sampler lookup into `libm12core` behind the same fallback seam.
+
 ### Work
 
 Centralize translation from D3D12 root/descriptor model to Metal argument buffer model:
