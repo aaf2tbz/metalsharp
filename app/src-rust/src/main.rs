@@ -2684,10 +2684,9 @@ mod tests {
         assert!(env.contains(&("DXMT_M12CORE_REQUIRED".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_PATH".to_string(), "/tmp/libm12core.dylib".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_DUMP_COUNTERS".to_string(), "1".to_string())));
-        assert!(env.contains(&(
-            "METALSHARP_M12_PREWARM_PROFILE".to_string(),
-            "armored-core-vi-phase6-canary".to_string()
-        )));
+        assert!(
+            env.contains(&("METALSHARP_M12_PREWARM_PROFILE".to_string(), "armored-core-vi-phase6-canary".to_string()))
+        );
         assert!(!env.iter().any(|(key, _)| key == "UNRELATED_ENV"));
     }
 }

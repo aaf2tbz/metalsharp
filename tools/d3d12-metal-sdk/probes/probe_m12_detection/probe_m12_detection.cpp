@@ -15,16 +15,13 @@ __declspec(dllexport) char D3D12SDKPath[260] = ".\\D3D12\\";
 
 static const GUID IID_D3D12DeviceProbe = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
 static const GUID IID_IMetalSharpM12TranslationLayerInfo = {
-    0x4d315232,
-    0x4d53,
-    0x4458,
-    {0x8c, 0x3a, 0x31, 0x6f, 0xc7, 0x42, 0x7a, 0x11}};
+    0x4d315232, 0x4d53, 0x4458, {0x8c, 0x3a, 0x31, 0x6f, 0xc7, 0x42, 0x7a, 0x11}};
 
 static constexpr UINT MetalSharpM12TranslationLayerInfoAbiVersion = 1;
 static constexpr UINT MetalSharpM12TranslationLayerVendorMetalSharp = 0x4d533132u; // MS12
-static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;       // DX12
+static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;        // DX12
 static constexpr UINT M12CORE_ABI_VERSION = 1;
-static constexpr UINT M12CORE_BUILD_ID_LOW = 0x4d313243u;  // M12C
+static constexpr UINT M12CORE_BUILD_ID_LOW = 0x4d313243u; // M12C
 static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x0000000du;
 static constexpr uint64_t FeatureD3D12 = 1ull << 0;
 static constexpr uint64_t FeatureDXMT = 1ull << 1;
@@ -52,8 +49,7 @@ struct MetalSharpM12TranslationLayerInfo {
 };
 
 struct IMetalSharpM12TranslationLayerInfo : public IUnknown {
-    virtual HRESULT STDMETHODCALLTYPE GetMetalSharpM12TranslationLayerInfo(
-        MetalSharpM12TranslationLayerInfo* info) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetMetalSharpM12TranslationLayerInfo(MetalSharpM12TranslationLayerInfo* info) = 0;
 };
 
 static std::string json_escape(const char* input) {
@@ -62,11 +58,21 @@ static std::string json_escape(const char* input) {
         return out;
     for (const char* p = input; *p; ++p) {
         switch (*p) {
-        case '\\': out += "\\\\"; break;
-        case '"': out += "\\\""; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
         default:
             if (static_cast<unsigned char>(*p) < 0x20) {
                 char buf[8];
@@ -113,8 +119,8 @@ int main() {
 
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");
     using CreateDeviceFn = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
-    auto create_device = reinterpret_cast<CreateDeviceFn>(reinterpret_cast<void*>(
-        d3d12 ? GetProcAddress(d3d12, "D3D12CreateDevice") : nullptr));
+    auto create_device = reinterpret_cast<CreateDeviceFn>(
+        reinterpret_cast<void*>(d3d12 ? GetProcAddress(d3d12, "D3D12CreateDevice") : nullptr));
 
     ID3D12Device* device = nullptr;
     HRESULT create_hr = E_FAIL;
@@ -123,13 +129,12 @@ int main() {
     MetalSharpM12TranslationLayerInfo info = {};
 
     if (create_device)
-        create_hr = create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceProbe,
-                                  reinterpret_cast<void**>(&device));
+        create_hr =
+            create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceProbe, reinterpret_cast<void**>(&device));
 
     IMetalSharpM12TranslationLayerInfo* detection = nullptr;
     if (device) {
-        qi_hr = device->QueryInterface(IID_IMetalSharpM12TranslationLayerInfo,
-                                       reinterpret_cast<void**>(&detection));
+        qi_hr = device->QueryInterface(IID_IMetalSharpM12TranslationLayerInfo, reinterpret_cast<void**>(&detection));
         if (detection) {
             info_hr = detection->GetMetalSharpM12TranslationLayerInfo(&info);
             // This diagnostic exits immediately after printing JSON. Avoid
@@ -138,22 +143,18 @@ int main() {
         }
     }
 
-    bool has_required_layer_features = (info.feature_flags & FeatureD3D12) &&
-                                       (info.feature_flags & FeatureDXMT) &&
-                                       (info.feature_flags & FeatureLibM12Core) &&
-                                       (info.feature_flags & FeatureRootBindingPlans) &&
-                                       (info.feature_flags & FeaturePrewarmPacks) &&
-                                       (info.feature_flags & FeatureDrawPlanning);
+    bool has_required_layer_features =
+        (info.feature_flags & FeatureD3D12) && (info.feature_flags & FeatureDXMT) &&
+        (info.feature_flags & FeatureLibM12Core) && (info.feature_flags & FeatureRootBindingPlans) &&
+        (info.feature_flags & FeaturePrewarmPacks) && (info.feature_flags & FeatureDrawPlanning);
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(qi_hr) && SUCCEEDED(info_hr) &&
                 info.abi_version == MetalSharpM12TranslationLayerInfoAbiVersion &&
                 info.struct_size == sizeof(MetalSharpM12TranslationLayerInfo) &&
                 info.vendor_id == MetalSharpM12TranslationLayerVendorMetalSharp &&
                 info.layer_id == MetalSharpM12TranslationLayerIdDxmtM12 &&
-                info.m12core_abi_version == M12CORE_ABI_VERSION &&
-                info.m12core_build_id_low == M12CORE_BUILD_ID_LOW &&
+                info.m12core_abi_version == M12CORE_ABI_VERSION && info.m12core_build_id_low == M12CORE_BUILD_ID_LOW &&
                 info.m12core_build_id_high == M12CORE_BUILD_ID_HIGH &&
-                (info.m12core_feature_flags & M12CORE_FEATURE_DRAW_PLANNING) &&
-                has_required_layer_features;
+                (info.m12core_feature_flags & M12CORE_FEATURE_DRAW_PLANNING) && has_required_layer_features;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-m12-detection.v1\",\n");
