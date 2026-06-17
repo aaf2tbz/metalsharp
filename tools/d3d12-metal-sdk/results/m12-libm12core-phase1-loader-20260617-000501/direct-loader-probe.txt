@@ -1,0 +1,1 @@
+[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x1 build_id=00000001:4d313243 build=libm12core phase1 inert-loader abi=1

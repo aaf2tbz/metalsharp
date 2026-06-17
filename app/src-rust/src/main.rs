@@ -2129,6 +2129,9 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12_FORCE_COLOR_WRITE_STATE"
             | "METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT"
             | "METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN"
+            | "METALSHARP_M12CORE_ENABLE"
+            | "METALSHARP_M12CORE_REQUIRED"
+            | "METALSHARP_M12CORE_PATH"
     )
 }
 
@@ -2197,6 +2200,9 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN" => {
                 upsert_env("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN", bool_value)
             },
+            "METALSHARP_M12CORE_ENABLE" => upsert_env("DXMT_M12CORE_ENABLE", bool_value),
+            "METALSHARP_M12CORE_REQUIRED" => upsert_env("DXMT_M12CORE_REQUIRED", bool_value),
+            "METALSHARP_M12CORE_PATH" => upsert_env("DXMT_M12CORE_PATH", value),
             _ => {},
         }
         applied.push(key.clone());
@@ -2640,5 +2646,35 @@ mod tests {
         body.insert("appid".into(), json!(620));
 
         assert_eq!(parse_request_appid(&body), Ok(620));
+    }
+
+    #[test]
+    fn m12core_launch_overrides_map_to_dxmt_loader_env() {
+        let mut body = serde_json::Map::new();
+        body.insert(
+            "envOverrides".into(),
+            json!({
+                "METALSHARP_M12CORE_ENABLE": "1",
+                "METALSHARP_M12CORE_REQUIRED": "0",
+                "METALSHARP_M12CORE_PATH": "/tmp/libm12core.dylib",
+                "UNRELATED_ENV": "1"
+            }),
+        );
+        let mut env = Vec::new();
+
+        let applied = apply_launch_env_overrides(&body, &mut env);
+
+        assert_eq!(
+            applied,
+            vec![
+                "METALSHARP_M12CORE_ENABLE".to_string(),
+                "METALSHARP_M12CORE_PATH".to_string(),
+                "METALSHARP_M12CORE_REQUIRED".to_string(),
+            ]
+        );
+        assert!(env.contains(&("DXMT_M12CORE_ENABLE".to_string(), "1".to_string())));
+        assert!(env.contains(&("DXMT_M12CORE_REQUIRED".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_M12CORE_PATH".to_string(), "/tmp/libm12core.dylib".to_string())));
+        assert!(!env.iter().any(|(key, _)| key == "UNRELATED_ENV"));
     }
 }

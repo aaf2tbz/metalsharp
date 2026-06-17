@@ -15,6 +15,7 @@
 #define WINEMETAL_API
 #include "../winemetal_thunks.h"
 #include "../airconv_thunks.h"
+#include "../../m12core/m12core.h"
 
 typedef int NTSTATUS;
 #define STATUS_SUCCESS 0
@@ -48,6 +49,93 @@ winemetal_debug_log(void) {
 static FILE *
 winemetal_critical_log(void) {
   return winemetal_open_log("winemetal-unix-debug.log");
+}
+
+/*
+ * Phase-1 libm12core loader
+ *
+ * The unified M12 core roadmap starts with an inert native dylib that is loaded
+ * from the Unix side of winemetal.  Loading is env-gated so the current M12
+ * renderer remains recoverable while we prove staging, version checks, and
+ * fallback behavior.  Future phases should replace scattered local ownership
+ * with handle-based calls through m12core.h, but this loader intentionally does
+ * not move rendering work yet.
+ */
+typedef int (*PFN_m12core_get_version)(M12CoreVersion *out_version);
+typedef const char *(*PFN_m12core_build_string)(void);
+
+static void *m12core_handle;
+static M12CoreVersion m12core_version;
+static PFN_m12core_get_version p_m12core_get_version;
+static PFN_m12core_build_string p_m12core_build_string;
+
+static bool
+m12core_env_enabled(const char *name) {
+  const char *value = getenv(name);
+  return value && value[0] && strcmp(value, "0") != 0;
+}
+
+static void
+m12core_log_line(const char *message) {
+  FILE *log = winemetal_critical_log();
+  if (!log)
+    return;
+  fprintf(log, "[m12core] %s\n", message ? message : "(null)");
+  fclose(log);
+}
+
+static void
+m12core_log_version(const char *path, const char *build_string) {
+  FILE *log = winemetal_critical_log();
+  if (!log)
+    return;
+  fprintf(log,
+          "[m12core] loaded path=%s abi=%u features=0x%x build_id=%08x:%08x build=%s\n",
+          path ? path : "(null)", m12core_version.abi_version,
+          m12core_version.feature_flags, m12core_version.build_id_high,
+          m12core_version.build_id_low,
+          build_string ? build_string : "(null)");
+  fclose(log);
+}
+
+__attribute__((constructor)) static void
+m12core_try_load(void) {
+  if (!m12core_env_enabled("DXMT_M12CORE_ENABLE"))
+    return;
+
+  const char *path = getenv("DXMT_M12CORE_PATH");
+  if (!path || !path[0])
+    path = "@loader_path/libm12core.dylib";
+
+  m12core_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  if (!m12core_handle) {
+    const char *error = dlerror();
+    FILE *log = winemetal_critical_log();
+    if (log) {
+      fprintf(log, "[m12core] dlopen failed path=%s error=%s\n", path,
+              error ? error : "unknown");
+      fclose(log);
+    }
+    if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
+      abort();
+    return;
+  }
+
+  p_m12core_get_version =
+      (PFN_m12core_get_version)dlsym(m12core_handle, "m12core_get_version");
+  p_m12core_build_string =
+      (PFN_m12core_build_string)dlsym(m12core_handle, "m12core_build_string");
+  if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
+      m12core_version.abi_version != M12CORE_ABI_VERSION) {
+    m12core_log_line("version check failed; unloading inert core");
+    dlclose(m12core_handle);
+    m12core_handle = NULL;
+    if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
+      abort();
+    return;
+  }
+
+  m12core_log_version(path, p_m12core_build_string ? p_m12core_build_string() : NULL);
 }
 
 static bool

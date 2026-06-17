@@ -185,6 +185,8 @@ int m12core_prewarm_pipelines(...);
 
 ## Phase 1: Add `libm12core.dylib` as a loadable but inert native core
 
+Status: implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase1-loader-20260617-000501/summary.md`.
+
 ### Work
 
 - Add a new native target under `vendor/dxmt/src/m12core/`.
@@ -522,12 +524,12 @@ A unified core improves ownership and observability, but does not automatically 
 
 The first low-risk code slice should be:
 
-1. Add inert `libm12core.dylib` with version ABI.
-2. Stage it beside `winemetal.so`.
-3. Load it from `winemetal_unix.c` behind `DXMT_M12CORE_ENABLE=1`.
-4. Log loaded path/version.
-5. Add a compact bounded AC6 proof artifact.
-6. Commit as Phase 1.
+1. [done] Add inert `libm12core.dylib` with version ABI.
+2. [done] Stage it beside `winemetal.so`.
+3. [done] Load it from `winemetal_unix.c` behind `DXMT_M12CORE_ENABLE=1`.
+4. [done] Log loaded path/version.
+5. [done] Add a compact bounded AC6 proof artifact.
+6. [done] Commit as Phase 1.
 
 Do **not** move PSO/shader code until the loader is proven stable.
 

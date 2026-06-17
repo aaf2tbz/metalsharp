@@ -25,6 +25,7 @@ ARTIFACTS = [
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
     ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
+    ("src/m12core/libm12core.dylib", "x86_64-unix/libm12core.dylib"),
 ]
 
 UNIX_SIDECARS = [
@@ -95,6 +96,7 @@ def main() -> int:
         [
             ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
             ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
+            ("src/m12core/libm12core.dylib", str(wine_lib_dir / "x86_64-unix" / "libm12core.dylib")),
             ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
         ]
     )

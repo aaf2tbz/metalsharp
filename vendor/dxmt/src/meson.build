@@ -4,6 +4,7 @@ subdir('airconv')
 if not dxmt_crossbuild
 subdir('nativemetal')
 else
+subdir('m12core')
 subdir('winemetal')
 endif
 
