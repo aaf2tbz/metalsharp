@@ -195,6 +195,45 @@ def scan_stage_records(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def scan_pipeline_records(path: Path, by_key: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    data = path.read_bytes()
+    out = []
+    pos = 0
+    while pos + 40 <= len(data):
+        span = int.from_bytes(data[pos + 24:pos + 32], "little")
+        payload_size = int.from_bytes(data[pos + 32:pos + 40], "little")
+        if span < 64 or span > 1024 * 1024 or pos + span > len(data):
+            break
+        rec = data[pos:pos + span]
+        record_key = rec[40:56].hex() if len(rec) >= 56 else ""
+        source_keys = []
+        seen = set()
+        for idx in range(0, max(0, len(rec) - 15)):
+            key = rec[idx:idx + 16].hex()
+            if key in by_key and key not in seen:
+                seen.add(key)
+                src = by_key[key]
+                source_keys.append({
+                    "record_offset": idx,
+                    "record_key": key,
+                    "bytecode_ordinal": src["ordinal"],
+                    "bytecode_sha256": src["bytecode_sha256"],
+                    "shader_kind": src.get("shader_kind"),
+                })
+        out.append({
+            "ordinal": len(out),
+            "record_offset": pos,
+            "record_span": span,
+            "payload_size": payload_size,
+            "record_key": record_key,
+            "source_keys": source_keys,
+        })
+        pos += span
+    return out
+
+
 def m12_bytecode_index(path: Path) -> dict[str, dict[str, Any]]:
     out = {}
     if not path.is_dir():
@@ -213,20 +252,24 @@ def write_summary(result: dict[str, Any], path: Path) -> None:
     lines.append(f"- D3DMetal reference root: `{result['d3dmetal_reference_root']}`")
     lines.append(f"- M12 cache root: `{result['m12_cache_root']}`")
     lines.append("")
-    lines.append("| Game | Bytecode records | Stage metallibs | Linked stages | Linked source bytecodes | M12 raw bytecode overlap | Unlinked stages |")
-    lines.append("|---|---:|---:|---:|---:|---:|---:|")
+    lines.append("| Game | Bytecode records | Stage metallibs | Pipeline records | Linked stages | Linked source bytecodes | M12 raw bytecode overlap | Unlinked stages |")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
     for g in result["games"]:
         s = g["summary"]
-        lines.append(f"| {g['game']} | {s['bytecode_records']} | {s['stage_metallibs']} | {s['linked_stage_records']} | {s['linked_bytecode_records']} | {s['m12_raw_bytecode_overlap']} | {s['unlinked_stage_records']} |")
+        lines.append(f"| {g['game']} | {s['bytecode_records']} | {s['stage_metallibs']} | {s['pipeline_records']} | {s['linked_stage_records']} | {s['linked_bytecode_records']} | {s['m12_raw_bytecode_overlap']} | {s['unlinked_stage_records']} |")
     lines.append("")
     for g in result["games"]:
         s = g["summary"]
         lines.append(f"## {g['game']}")
         lines.append("")
-        for k in ["bytecode_records", "stage_metallibs", "linked_stage_records", "linked_bytecode_records", "m12_raw_bytecode_overlap", "unlinked_stage_records"]:
+        for k in ["bytecode_records", "stage_metallibs", "pipeline_records", "pipeline_records_with_bytecode_keys", "pipeline_bytecode_key_refs", "linked_stage_records", "linked_bytecode_records", "m12_raw_bytecode_overlap", "unlinked_stage_records"]:
             lines.append(f"- {k}: `{s[k]}`")
         lines.append(f"- shader_kind_counts: `{s['shader_kind_counts']}`")
         lines.append(f"- top_function_names: `{s['top_function_names']}`")
+        lines.append("- First pipeline records with bytecode keys:")
+        for rec in [p for p in g.get("pipeline_records_sample", []) if p.get("source_keys")][:10]:
+            refs = ", ".join(f"{s['shader_kind']}:{s['record_key']}" for s in rec["source_keys"])
+            lines.append(f"  - pipeline=`{rec['record_key']}` offset=`{rec['record_offset']}` refs=`{refs}`")
         lines.append("- First linked records:")
         for rec in g["linked_records"][:10]:
             lines.append(f"  - bytecode_key=`{rec['record_key']}` stage=`{rec['stage_metallib_sha256'][:16]}` funcs=`{','.join(rec['function_names']) or '<none>'}` dxil=`{rec['bytecode_sha256'][:16]}` kind=`{rec.get('shader_kind')}` m12=`{rec.get('m12_name','')}`")
@@ -243,6 +286,7 @@ def main() -> int:
         bytecode = scan_bytecode_records(cache / "bytecode_cache.bin")
         stages = scan_stage_records(cache / "stage_cache.bin")
         by_key = {r["record_key"]: r for r in bytecode if r["record_key"]}
+        pipelines = scan_pipeline_records(cache / "pipeline_cache.bin", by_key)
         m12 = m12_bytecode_index(args.m12_cache_root / appid)
         linked = []
         linked_bytecode_keys = set()
@@ -281,6 +325,9 @@ def main() -> int:
         summary = {
             "bytecode_records": len(bytecode),
             "stage_metallibs": len(stages),
+            "pipeline_records": len(pipelines),
+            "pipeline_records_with_bytecode_keys": sum(1 for p in pipelines if p["source_keys"]),
+            "pipeline_bytecode_key_refs": sum(len(p["source_keys"]) for p in pipelines),
             "linked_stage_records": len(linked),
             "linked_bytecode_records": len(linked_bytecode_keys),
             "m12_raw_bytecode_overlap": sum(1 for r in bytecode if r["bytecode_sha256"] in m12),
@@ -295,6 +342,8 @@ def main() -> int:
             "summary": summary,
             "bytecode_records": bytecode[:200],
             "stage_records": stages[:200],
+            "pipeline_records_sample": pipelines[:200],
+            "pipeline_records": pipelines,
             "linked_records": linked,
         })
     result = {
