@@ -1,0 +1,23 @@
+kind	url_or_path	notes
+apple-doc	https://developer.apple.com/documentation/metalfx	MetalFX overview: lower-resolution render + upscale; temporal/spatial modes; create at launch/resolution change and reuse.
+apple-doc	https://developer.apple.com/documentation/metalfx/mtlfxtemporalscaler	Temporal scaler usage flow; color/depth/motion inputs; encode to MTLCommandBuffer.
+apple-doc	https://developer.apple.com/documentation/metalfx/mtlfxspatialscaler	Spatial scaler usage flow; color-only input; encode to MTLCommandBuffer.
+apple-doc	https://developer.apple.com/documentation/metalfx/applying-temporal-antialiasing-and-upscaling-using-metalfx	Apple sample tied to WWDC22 MetalFX upscaling session.
+apple-doc	https://developer.apple.com/documentation/metal/resource-synchronization	Metal resource synchronization topic index: barriers, fences, CPU/GPU sync, events.
+apple-doc	https://developer.apple.com/documentation/metal/synchronizing-passes-with-a-fence	Fence synchronization between passes.
+apple-doc	https://developer.apple.com/documentation/metal/synchronizing-cpu-and-gpu-work	CPU/GPU synchronization sample/topic.
+apple-doc	https://developer.apple.com/documentation/metal/synchronizing-events-within-a-single-device	Event synchronization within one GPU device.
+apple-doc	https://developer.apple.com/documentation/metal/synchronizing-events-between-a-gpu-and-the-cpu	Shared-event CPU/GPU synchronization.
+apple-doc	https://developer.apple.com/documentation/metal/mtlfence	MTLFence API reference.
+apple-doc	https://developer.apple.com/documentation/metal/mtlevent	MTLEvent API reference.
+local-sdk	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/MetalFX.framework/Headers/MTLFXTemporalScaler.h	Precise descriptor/protocol properties: sync initialization, dynamic resolution, texture usage, motion vectors, jitter, reset, fence.
+local-sdk	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/MetalFX.framework/Headers/MTLFXSpatialScaler.h	Precise descriptor/protocol properties: color processing mode, texture usage, private output, optional fence.
+local-sdk	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLEvent.h	MTLSharedEvent listener, notification, waitUntilSignaledValue, shared handle.
+local-sdk	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLRenderCommandEncoder.h	Stage-scoped fence wait/update comments and overlap behavior.
+local-sdk	/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/System/Library/Frameworks/Metal.framework/Headers/MTLResource.h	Untracked hazard mode requires manual tracking with MTLFence; storage/coherency notes.
+project-source	app/src-rust/src/mtsp/launcher.rs	MetalSharp currently injects WINEMSYNC=1 in launch/env-preview paths and forwards M12 DXMT envs.
+project-source	vendor/dxmt/src/dxmt/dxmt_presenter.cpp	M12/DXMT presenter currently uses shader blit/scale render PSO, not MetalFX scaler, for present scaling.
+project-source	vendor/dxmt/src/winemetal/unix/winemetal_unix.c	DXMT/winemetal MetalFX bridge constructs/encodes MetalFX temporal and spatial scalers.
+project-source	vendor/dxmt/src/d3d11/d3d11_swapchain.cpp	D3D11 path has opt-in DXMT_METALFX_SPATIAL_SWAPCHAIN support with supportsFXSpatialScaler check.
+project-source	vendor/dxmt/src/d3d11/d3d11_context_impl.cpp	D3D11 extension path caches temporal scalers and checks supportsFXTemporalScaler.
+prior-artifact	tools/d3d12-metal-sdk/results/gptk-moltenvk-perf-env-inventory-20260616-222916/summary.md	D3DMetal/GPTK env inventory including D3DM_ENABLE_METALFX, D3DM_MAX_FPS, D3DM_MTL4, MTL_HUD_ENABLED.

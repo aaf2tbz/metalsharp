@@ -897,6 +897,7 @@ pub fn launch_custom_with_options(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    apply_backend_performance_env(&mut cmd, node);
 
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
@@ -912,6 +913,11 @@ pub fn launch_custom_with_options(
         writeln!(log, "cwd={}", exe_dir.display())?;
         writeln!(log, "exe={}", exe_name)?;
         writeln!(log, "args={:?}", recipe.launch_args)?;
+        writeln!(log, "graphics_backend={}", node.graphics_backend)?;
+        writeln!(log, "sync.WINEMSYNC=1")?;
+        for (key, value) in backend_performance_env_pairs(node) {
+            writeln!(log, "backend_env.{}={}", key, value)?;
+        }
         if let Some(cache) = cache_paths.as_ref() {
             writeln!(log, "shader_cache={}/", cache.shader)?;
             writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
@@ -1087,6 +1093,10 @@ fn launch_d3dmetal_gptk_with_context(
     }
 
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
+    for ev in &node.env_vars {
+        cmd.env(ev.key, ev.value);
+    }
+    apply_backend_performance_env(&mut cmd, node);
     apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
@@ -1204,6 +1214,7 @@ fn launch_dxmt_metal_with_context(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    apply_backend_performance_env(&mut cmd, node);
     apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
@@ -1294,6 +1305,7 @@ fn launch_wine_bare_with_context(
     for ev in &node.env_vars {
         cmd.env(ev.key, ev.value);
     }
+    apply_backend_performance_env(&mut cmd, node);
     apply_app_launch_env(&mut cmd, appid, node.id);
     for (key, value) in extra_env {
         cmd.env(key, value);
@@ -1338,6 +1350,10 @@ fn attach_launch_log(
     writeln!(log, "exe={}", context.exe_name)?;
     writeln!(log, "args={:?}", context.args)?;
     writeln!(log, "graphics_backend={}", context.node.graphics_backend)?;
+    writeln!(log, "sync.WINEMSYNC=1")?;
+    for (key, value) in backend_performance_env_pairs(context.node) {
+        writeln!(log, "backend_env.{}={}", key, value)?;
+    }
     if let Some(cache) = context.cache_paths {
         writeln!(log, "shader_cache={}/", cache.shader)?;
         writeln!(log, "pipeline_cache={}/", cache.pipeline)?;
@@ -1761,6 +1777,77 @@ fn apply_route_library_env(cmd: &mut Command, ms_root: &PathBuf, paths: &[&str])
     }
 }
 
+fn apply_backend_performance_env(cmd: &mut Command, node: &PipelineNode) {
+    for (key, value) in backend_performance_env_pairs(node) {
+        cmd.env(key, value);
+    }
+}
+
+fn backend_performance_env_pairs(node: &PipelineNode) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+
+    if matches!(node.backend, "gptk" | "d3dmetal") || matches!(node.graphics_backend, "gptk" | "d3dmetal") {
+        push_forwarded_env(&mut env, "METALSHARP_GPTK_D3DM_MTL4", "D3DM_MTL4");
+        push_forwarded_env(&mut env, "METALSHARP_GPTK_MAX_FPS", "D3DM_MAX_FPS");
+        push_forwarded_env(&mut env, "METALSHARP_GPTK_SHADER_VALIDATION", "MTL_SHADER_VALIDATION");
+        push_forwarded_env(&mut env, "METALSHARP_GPTK_EXE_OVERRIDE", "D3DM_EXE_OVERRIDE");
+        push_forwarded_env(&mut env, "METALSHARP_GPTK_METALFX", "D3DM_ENABLE_METALFX");
+        if let Some(hud) = host_env_value("METALSHARP_GPTK_HUD") {
+            env.push(("MTL_HUD_ENABLED".to_string(), hud.clone()));
+            env.push(("D3DM_SHOW_HUD_STATS".to_string(), hud));
+        }
+    }
+
+    if node.backend == "dxvk" || node.graphics_backend == "dxvk" {
+        push_forwarded_env(
+            &mut env,
+            "METALSHARP_MVK_MAXIMIZE_CONCURRENT_COMPILATION",
+            "MVK_CONFIG_SHOULD_MAXIMIZE_CONCURRENT_COMPILATION",
+        );
+        push_forwarded_env(
+            &mut env,
+            "METALSHARP_MVK_SYNCHRONOUS_QUEUE_SUBMITS",
+            "MVK_CONFIG_SYNCHRONOUS_QUEUE_SUBMITS",
+        );
+        push_forwarded_env(
+            &mut env,
+            "METALSHARP_MVK_PREFILL_COMMAND_BUFFERS",
+            "MVK_CONFIG_PREFILL_METAL_COMMAND_BUFFERS",
+        );
+        push_forwarded_env(
+            &mut env,
+            "METALSHARP_MVK_PRESENT_WITH_COMMAND_BUFFER",
+            "MVK_CONFIG_PRESENT_WITH_COMMAND_BUFFER",
+        );
+        push_forwarded_env(
+            &mut env,
+            "METALSHARP_MVK_MAX_ACTIVE_COMMAND_BUFFERS_PER_QUEUE",
+            "MVK_CONFIG_MAX_ACTIVE_METAL_COMMAND_BUFFERS_PER_QUEUE",
+        );
+        push_forwarded_env(&mut env, "METALSHARP_MVK_FAST_MATH", "MVK_CONFIG_FAST_MATH_ENABLED");
+        push_forwarded_env(&mut env, "METALSHARP_MVK_USE_MTLHEAP", "MVK_CONFIG_USE_MTLHEAP");
+        push_forwarded_env(&mut env, "METALSHARP_MVK_USE_COMMAND_POOLING", "MVK_CONFIG_USE_COMMAND_POOLING");
+        push_forwarded_env(&mut env, "METALSHARP_MVK_PERFORMANCE_TRACKING", "MVK_CONFIG_PERFORMANCE_TRACKING");
+        push_forwarded_env(
+            &mut env,
+            "METALSHARP_MVK_PERFORMANCE_LOGGING_FRAME_COUNT",
+            "MVK_CONFIG_PERFORMANCE_LOGGING_FRAME_COUNT",
+        );
+    }
+
+    env
+}
+
+fn push_forwarded_env(env: &mut Vec<(String, String)>, source_key: &str, target_key: &str) {
+    if let Some(value) = host_env_value(source_key) {
+        env.push((target_key.to_string(), value));
+    }
+}
+
+fn host_env_value(key: &str) -> Option<String> {
+    std::env::var(key).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+}
+
 fn cleanup_metalsharp_dlls_from_game_dir(game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let backup_dir = game_dir.join(".metalsharp").join("pipeline-backup");
     std::fs::create_dir_all(&backup_dir)?;
@@ -1946,6 +2033,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     env.push(("WINEMSYNC".to_string(), "1".to_string()));
     env.extend(cache_env_pairs(node, cache_paths.as_ref(), &ms_root));
     env.extend(node.env_vars.iter().map(|ev| (ev.key.to_string(), ev.value.to_string())));
+    env.extend(backend_performance_env_pairs(node));
     env.extend(app_compat_env_pairs(appid, node.id));
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
@@ -1999,9 +2087,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
             env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()));
         }
         if diagnostic_capture
-            || std::env::var("METALSHARP_M12_DUMP_MSL")
-                .map(|value| !value.is_empty() && value != "0")
-                .unwrap_or(false)
+            || std::env::var("METALSHARP_M12_DUMP_MSL").map(|value| !value.is_empty() && value != "0").unwrap_or(false)
         {
             env.push(("DXMT_DUMP_MSL".to_string(), "1".to_string()));
         }
@@ -4256,6 +4342,8 @@ mod tests {
     use super::*;
     use crate::mtsp::recipe;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn deploy_steam_appid_writes_visible_appid_file_for_each_known_subdir() {
         // Phase 2: routes that depend on Steam-visible identity must stage
@@ -4490,6 +4578,89 @@ mod tests {
             assert!(env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value.ends_with('/')));
             let _ = std::fs::remove_dir_all(home);
         }
+    }
+
+    #[test]
+    fn gptk_d3dmetal_overrides_are_forwarded_only_to_gptk_family() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = [
+            "METALSHARP_GPTK_D3DM_MTL4",
+            "METALSHARP_GPTK_MAX_FPS",
+            "METALSHARP_GPTK_HUD",
+            "METALSHARP_GPTK_SHADER_VALIDATION",
+            "METALSHARP_GPTK_EXE_OVERRIDE",
+            "METALSHARP_GPTK_METALFX",
+        ];
+        clear_env_keys(&keys);
+        // SAFETY: guarded test-only process environment mutation; values are cleared before releasing ENV_LOCK.
+        unsafe {
+            std::env::set_var("METALSHARP_GPTK_D3DM_MTL4", "1");
+            std::env::set_var("METALSHARP_GPTK_MAX_FPS", "60");
+            std::env::set_var("METALSHARP_GPTK_HUD", "1");
+            std::env::set_var("METALSHARP_GPTK_SHADER_VALIDATION", "0");
+            std::env::set_var("METALSHARP_GPTK_EXE_OVERRIDE", "armoredcore6.exe");
+            std::env::set_var("METALSHARP_GPTK_METALFX", "1");
+        }
+
+        let home = test_dir("gptk-d3dmetal-env");
+        let d3dmetal = steam_pipeline_env_pairs(&home, get_pipeline(PipelineId::D3DMetal), 1888160);
+        let m13 = steam_pipeline_env_pairs(&home, get_pipeline(PipelineId::M13), 1888160);
+        let m12 = steam_pipeline_env_pairs(&home, get_pipeline(PipelineId::M12), 1888160);
+
+        for env in [&d3dmetal, &m13] {
+            assert_eq!(last_env_value(env, "D3DM_MTL4"), Some("1"));
+            assert_eq!(last_env_value(env, "D3DM_MAX_FPS"), Some("60"));
+            assert_eq!(last_env_value(env, "MTL_HUD_ENABLED"), Some("1"));
+            assert_eq!(last_env_value(env, "D3DM_SHOW_HUD_STATS"), Some("1"));
+            assert_eq!(last_env_value(env, "MTL_SHADER_VALIDATION"), Some("0"));
+            assert_eq!(last_env_value(env, "D3DM_EXE_OVERRIDE"), Some("armoredcore6.exe"));
+            assert_eq!(last_env_value(env, "D3DM_ENABLE_METALFX"), Some("1"));
+        }
+
+        assert_eq!(last_env_value(&m12, "D3DM_MTL4"), None);
+        assert_eq!(last_env_value(&m12, "D3DM_ENABLE_METALFX"), None);
+        assert_eq!(last_env_value(&m12, "MTL_HUD_ENABLED"), None);
+        let _ = std::fs::remove_dir_all(home);
+        clear_env_keys(&keys);
+    }
+
+    #[test]
+    fn moltenvk_overrides_are_scoped_to_dxvk_backend() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["METALSHARP_MVK_FAST_MATH", "METALSHARP_MVK_PERFORMANCE_LOGGING_FRAME_COUNT"];
+        clear_env_keys(&keys);
+        // SAFETY: guarded test-only process environment mutation; values are cleared before releasing ENV_LOCK.
+        unsafe {
+            std::env::set_var("METALSHARP_MVK_FAST_MATH", "1");
+            std::env::set_var("METALSHARP_MVK_PERFORMANCE_LOGGING_FRAME_COUNT", "120");
+        }
+
+        let dxvk_node = PipelineNode {
+            id: PipelineId::WineBare,
+            name: "DXVK test",
+            description: "test-only DXVK node",
+            backend: "dxvk",
+            graphics_backend: "dxvk",
+            experimental: true,
+            requires_wine: true,
+            wine_overrides: None,
+            dyld_paths: vec![],
+            winedllpath_dirs: vec![],
+            deploy_dlls: vec![],
+            env_vars: vec![],
+            launch_args: vec![],
+            alternatives: vec![],
+            shader_cache_subdir: Some("dxvk-test"),
+        };
+
+        let dxvk_env = backend_performance_env_pairs(&dxvk_node);
+        assert_eq!(last_env_value(&dxvk_env, "MVK_CONFIG_FAST_MATH_ENABLED"), Some("1"));
+        assert_eq!(last_env_value(&dxvk_env, "MVK_CONFIG_PERFORMANCE_LOGGING_FRAME_COUNT"), Some("120"));
+
+        let m12_env = backend_performance_env_pairs(get_pipeline(PipelineId::M12));
+        assert_eq!(last_env_value(&m12_env, "MVK_CONFIG_FAST_MATH_ENABLED"), None);
+        assert_eq!(last_env_value(&m12_env, "MVK_CONFIG_PERFORMANCE_LOGGING_FRAME_COUNT"), None);
+        clear_env_keys(&keys);
     }
 
     #[test]
@@ -5366,6 +5537,15 @@ mod tests {
 
     fn last_env_value<'a>(env: &'a [(String, String)], key: &str) -> Option<&'a str> {
         env.iter().rev().find(|(env_key, _)| env_key == key).map(|(_, value)| value.as_str())
+    }
+
+    fn clear_env_keys(keys: &[&str]) {
+        // SAFETY: tests serialize these process-wide mutations through ENV_LOCK.
+        unsafe {
+            for key in keys {
+                std::env::remove_var(key);
+            }
+        }
     }
 
     fn unique_suffix() -> u128 {
