@@ -1,0 +1,4388 @@
+{
+  "manifest": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-functions-20260616-190458/manifest.json",
+  "extract_root": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted",
+  "sample_per_game": 50,
+  "games": {
+    "elden-ring": {
+      "sampled": 50,
+      "tool_valid": 50,
+      "with_function_names": 50,
+      "first_failure": "",
+      "samples": [
+        {
+          "sha256": "005804053375556159dd9df2bda1ded1645ddd2abaf558ff35bffd6b97668a13",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/005804053375556159dd9df2bda1ded1645ddd2abaf558ff35bffd6b97668a13.metallib",
+          "size": 10288,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 16980896,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2830",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2090",
+              "ReflectionListOffset": "0x21ea",
+              "ReflectionListSize": "0x646"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0065317a2c78c4425ab34a40960f6a780d4410d6ed8390d17ec2698f4408d3bf",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0065317a2c78c4425ab34a40960f6a780d4410d6ed8390d17ec2698f4408d3bf.metallib",
+          "size": 10144,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 19683528,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x27a0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1e80",
+              "ReflectionListOffset": "0x1fda",
+              "ReflectionListSize": "0x7c6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00758e9a9ca8db3f66096dc3126edeebe25647f641f338177164dcb2570b387c",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/00758e9a9ca8db3f66096dc3126edeebe25647f641f338177164dcb2570b387c.metallib",
+          "size": 3932,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 14193808,
+          "function_names": [
+            "irconverter_stage_in_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0xf5c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0xd50",
+              "ReflectionListOffset": "0xebc",
+              "ReflectionListSize": "0xa0"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "007df93c92ca7281a02b6ddffd64cbb7489c3e4283c5648d588e82012d24ccd8",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/007df93c92ca7281a02b6ddffd64cbb7489c3e4283c5648d588e82012d24ccd8.metallib",
+          "size": 17968,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 19230728,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x4630",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3bf0",
+              "ReflectionListOffset": "0x3d4a",
+              "ReflectionListSize": "0x8e6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00a5190946ac80f7d4a21f90e1ddb54da586cb9b7a14cf7ccd2376a54732c432",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/00a5190946ac80f7d4a21f90e1ddb54da586cb9b7a14cf7ccd2376a54732c432.metallib",
+          "size": 20748,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 6031664,
+          "function_names": [
+            "irconverter_dxil_domain_shader",
+            "irconverter_domain_shader_triangle_passthrough"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x510c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x158",
+              "ModuleListOffset": "0x216",
+              "ModuleListSize": "0x40d0",
+              "ReflectionListOffset": "0x4301",
+              "ReflectionListSize": "0xe0b"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00e20d9ee49a524c62e660ec27f7b93bbcbcf6313a1744625e277a209a20a393",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/00e20d9ee49a524c62e660ec27f7b93bbcbcf6313a1744625e277a209a20a393.metallib",
+          "size": 11524,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22617552,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2d04",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2390",
+              "ReflectionListOffset": "0x24ea",
+              "ReflectionListSize": "0x81a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00e655e29060066816a8b83fa9331c8ec722ff45ec8db24293dca8eac5048e2e",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/00e655e29060066816a8b83fa9331c8ec722ff45ec8db24293dca8eac5048e2e.metallib",
+          "size": 14236,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2693984,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x379c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2db0",
+              "ReflectionListOffset": "0x2f0a",
+              "ReflectionListSize": "0x892"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "011e30157c254b8c208396a1dfd12ad5e075fc04941bf166305a782fc38811ca",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/011e30157c254b8c208396a1dfd12ad5e075fc04941bf166305a782fc38811ca.metallib",
+          "size": 15780,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22717176,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x3da4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x35d0",
+              "ReflectionListOffset": "0x372a",
+              "ReflectionListSize": "0x67a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "018fcdb3fba64f154a9c078d3695bdd21b0b1593339c8f3f3bc4f66b85ae44b1",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/018fcdb3fba64f154a9c078d3695bdd21b0b1593339c8f3f3bc4f66b85ae44b1.metallib",
+          "size": 6768,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 580400,
+          "function_names": [
+            "MotionBlur_DownSampleVelocity_KeepMaxLengthPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x1a70",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xb5",
+              "ModuleListOffset": "0x163",
+              "ModuleListSize": "0x14a0",
+              "ReflectionListOffset": "0x161e",
+              "ReflectionListSize": "0x452"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "01d93452ef094c5d0f20513873b0e51728693b8422488c1f16084abb933320a3",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/01d93452ef094c5d0f20513873b0e51728693b8422488c1f16084abb933320a3.metallib",
+          "size": 11468,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1201536,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2ccc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x22d0",
+              "ReflectionListOffset": "0x242a",
+              "ReflectionListSize": "0x8a2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "02110a22c4b4144eb312f49c754a6c31eac426b97ae617c9de45f4285e76c6e8",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/02110a22c4b4144eb312f49c754a6c31eac426b97ae617c9de45f4285e76c6e8.metallib",
+          "size": 9680,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10241600,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x25d0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1e20",
+              "ReflectionListOffset": "0x1f7a",
+              "ReflectionListSize": "0x656"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "02a4681bb5baeb58b5cab0397f02e79593366446f5d6432463009cfd594cd2cb",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/02a4681bb5baeb58b5cab0397f02e79593366446f5d6432463009cfd594cd2cb.metallib",
+          "size": 17504,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 6554200,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x4460",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3990",
+              "ReflectionListOffset": "0x3aea",
+              "ReflectionListSize": "0x976"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "02e256cd8b00fe0bd2e446fc84127bb7865d06da74be8b6dae2e78c84bd05bc3",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/02e256cd8b00fe0bd2e446fc84127bb7865d06da74be8b6dae2e78c84bd05bc3.metallib",
+          "size": 16968,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 5166840,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x4248",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3a70",
+              "ReflectionListOffset": "0x3bca",
+              "ReflectionListSize": "0x67e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "02e3db7ae82409f77c3edd5fb4fb9a8c453b64bf765442d8254f20e63924c398",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/02e3db7ae82409f77c3edd5fb4fb9a8c453b64bf765442d8254f20e63924c398.metallib",
+          "size": 11884,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1823456,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2e6c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2480",
+              "ReflectionListOffset": "0x25da",
+              "ReflectionListSize": "0x892"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0333717dbb9b6747d5519d65f1d168c9f059424743b59fd69f9809e6f781c907",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0333717dbb9b6747d5519d65f1d168c9f059424743b59fd69f9809e6f781c907.metallib",
+          "size": 11092,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2281928,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2b54",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2330",
+              "ReflectionListOffset": "0x248a",
+              "ReflectionListSize": "0x6ca"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "035aaef9ba375494bf03a707be4d53d336fc8fc11e45651d6dc3c7d28fbe53e3",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/035aaef9ba375494bf03a707be4d53d336fc8fc11e45651d6dc3c7d28fbe53e3.metallib",
+          "size": 16724,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 7168712,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x4154",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3930",
+              "ReflectionListOffset": "0x3a8a",
+              "ReflectionListSize": "0x6ca"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "03842026ab118d8cd9adc730a52b580890292fc133e5d3652ba743716811e1aa",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/03842026ab118d8cd9adc730a52b580890292fc133e5d3652ba743716811e1aa.metallib",
+          "size": 15784,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 13222520,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x3da8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3530",
+              "ReflectionListOffset": "0x368a",
+              "ReflectionListSize": "0x71e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "03b2e7e476c6801c4a4145b1a02e65aec5b4c6f411b180e1cd40bea686393db4",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/03b2e7e476c6801c4a4145b1a02e65aec5b4c6f411b180e1cd40bea686393db4.metallib",
+          "size": 15200,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4917048,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x3b60",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3120",
+              "ReflectionListOffset": "0x327a",
+              "ReflectionListSize": "0x8e6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "03d51f758ec024c1ad097451869b73781d0dd566381b853c7dd863e79390cf22",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/03d51f758ec024c1ad097451869b73781d0dd566381b853c7dd863e79390cf22.metallib",
+          "size": 9452,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 9559704,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x24ec",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1ca0",
+              "ReflectionListOffset": "0x1dfa",
+              "ReflectionListSize": "0x6f2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "041cb61091670da7f3526831b97c98f4cc2bb9c06a3e81f6db55f6e8435c9438",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/041cb61091670da7f3526831b97c98f4cc2bb9c06a3e81f6db55f6e8435c9438.metallib",
+          "size": 14676,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 19492360,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x3954",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3130",
+              "ReflectionListOffset": "0x328a",
+              "ReflectionListSize": "0x6ca"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0420f3654b4dbf2bdc34d55ec8f493aa62110c3eb46b9159fc9c13ae48b22bce",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0420f3654b4dbf2bdc34d55ec8f493aa62110c3eb46b9159fc9c13ae48b22bce.metallib",
+          "size": 11444,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22749976,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2cb4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2430",
+              "ReflectionListOffset": "0x258a",
+              "ReflectionListSize": "0x72a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "043b42f2a837a4960ef442807432074a612b62c511baa23cc417405deb969fd7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/043b42f2a837a4960ef442807432074a612b62c511baa23cc417405deb969fd7.metallib",
+          "size": 45988,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10973616,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0xb3a4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0xac20",
+              "ReflectionListOffset": "0xad7a",
+              "ReflectionListSize": "0x62a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "045c53d553cd9ba17bf63c5254b646868f8fb6aa1afdf7699c3b0707cad9dea7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/045c53d553cd9ba17bf63c5254b646868f8fb6aa1afdf7699c3b0707cad9dea7.metallib",
+          "size": 16724,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 6079824,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x4154",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3980",
+              "ReflectionListOffset": "0x3ada",
+              "ReflectionListSize": "0x67a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "04e27bb90da808d8fc5d93d7a5cedc01928f99c5dce2f8fa0621e554383f00c2",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/04e27bb90da808d8fc5d93d7a5cedc01928f99c5dce2f8fa0621e554383f00c2.metallib",
+          "size": 9976,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 18427640,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x26f8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1ea0",
+              "ReflectionListOffset": "0x1ffa",
+              "ReflectionListSize": "0x6fe"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0511e2c2c518d200da69971e5776072fb3b1161c9fd8676e5184f53ff27b96cf",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0511e2c2c518d200da69971e5776072fb3b1161c9fd8676e5184f53ff27b96cf.metallib",
+          "size": 12732,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 5299384,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x31bc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2730",
+              "ReflectionListOffset": "0x288a",
+              "ReflectionListSize": "0x932"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "055ded31d6c3fc86a18851db0333be19a21776f4191d2778268f16cebd1a505b",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/055ded31d6c3fc86a18851db0333be19a21776f4191d2778268f16cebd1a505b.metallib",
+          "size": 38960,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22185744,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x9830",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x9150",
+              "ReflectionListOffset": "0x92aa",
+              "ReflectionListSize": "0x586"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "056dd21d7e0f9031f46ab4daf7c69e0f0da6bf265a13ee1afef4a75bf22c9c31",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/056dd21d7e0f9031f46ab4daf7c69e0f0da6bf265a13ee1afef4a75bf22c9c31.metallib",
+          "size": 3612,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 493312,
+          "function_names": [
+            "irconverter_stage_in_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0xe1c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0xc10",
+              "ReflectionListOffset": "0xd7c",
+              "ReflectionListSize": "0xa0"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0571f853d6a0da53cf466f9faba3196f01fd00b495e2a07e1b9da7ec9d2ba183",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0571f853d6a0da53cf466f9faba3196f01fd00b495e2a07e1b9da7ec9d2ba183.metallib",
+          "size": 10392,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 19659224,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2898",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1ef0",
+              "ReflectionListOffset": "0x204a",
+              "ReflectionListSize": "0x84e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "05b0c47517508e6f9a0de9294a6a467260e6f83b4fc2678e7817c7d5d1688006",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/05b0c47517508e6f9a0de9294a6a467260e6f83b4fc2678e7817c7d5d1688006.metallib",
+          "size": 12220,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 8346392,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2fbc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2640",
+              "ReflectionListOffset": "0x279a",
+              "ReflectionListSize": "0x822"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "05b897a469b9212cdbe2f8daad4d3123ab1420cdf91ee27fbbfce0b611a5cabd",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/05b897a469b9212cdbe2f8daad4d3123ab1420cdf91ee27fbbfce0b611a5cabd.metallib",
+          "size": 32908,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10460904,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x808c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x79a0",
+              "ReflectionListOffset": "0x7afa",
+              "ReflectionListSize": "0x592"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "05cf95ce74c95d2ea4a68fafb5bfe058a47591119cdb789dde94d944661f9cd7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/05cf95ce74c95d2ea4a68fafb5bfe058a47591119cdb789dde94d944661f9cd7.metallib",
+          "size": 14288,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22463648,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x37d0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3080",
+              "ReflectionListOffset": "0x31da",
+              "ReflectionListSize": "0x5f6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "05f92e20601b56cca7ff889dbad6570e15673d30716d58771c04cba8fbbd4fcd",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/05f92e20601b56cca7ff889dbad6570e15673d30716d58771c04cba8fbbd4fcd.metallib",
+          "size": 44672,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 3071472,
+          "function_names": [
+            "irconverter_dxil_domain_shader",
+            "irconverter_domain_shader_triangle_passthrough"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0xae80",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x158",
+              "ModuleListOffset": "0x216",
+              "ModuleListSize": "0x9bd0",
+              "ReflectionListOffset": "0x9e01",
+              "ReflectionListSize": "0x107f"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "06672bd760eeb6db89139ae944b28276be933d31cae7bd6710ac29628d435bb3",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/06672bd760eeb6db89139ae944b28276be933d31cae7bd6710ac29628d435bb3.metallib",
+          "size": 9796,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 16437104,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2644",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1dc0",
+              "ReflectionListOffset": "0x1f1a",
+              "ReflectionListSize": "0x72a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "06dcddedba5b036acd2aba5dab72280dfcee71514c64def2ac96a7a9286b66b8",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/06dcddedba5b036acd2aba5dab72280dfcee71514c64def2ac96a7a9286b66b8.metallib",
+          "size": 12548,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 6410760,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x3104",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x28b0",
+              "ReflectionListOffset": "0x2a0a",
+              "ReflectionListSize": "0x6fa"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "06fdd9da4406c80a334579ea0391d45ee240df9661ce2f5d86974bdcc8593ac4",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/06fdd9da4406c80a334579ea0391d45ee240df9661ce2f5d86974bdcc8593ac4.metallib",
+          "size": 7940,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10008984,
+          "function_names": [
+            "main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x1f04",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x1610",
+              "ReflectionListOffset": "0x1765",
+              "ReflectionListSize": "0x79f"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "070f373a8b0096a423b21941e36746c6bd20f1239b4fc3b94bd2b5da72c95d23",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/070f373a8b0096a423b21941e36746c6bd20f1239b4fc3b94bd2b5da72c95d23.metallib",
+          "size": 9440,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 5466160,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x24e0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1dd0",
+              "ReflectionListOffset": "0x1f2a",
+              "ReflectionListSize": "0x5b6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0717fb771d3b5dff885def279acfe852895b1d200a63185de58e031fcc0a1560",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0717fb771d3b5dff885def279acfe852895b1d200a63185de58e031fcc0a1560.metallib",
+          "size": 20252,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 13060376,
+          "function_names": [
+            "VertexMain",
+            "VertexMain.dxil_irconverter_object_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x4f1c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x13f",
+              "ModuleListOffset": "0x1fd",
+              "ModuleListSize": "0x37a0",
+              "ReflectionListOffset": "0x39b8",
+              "ReflectionListSize": "0x1564"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "071fd7689f677899b1312e5401bc4befc9237ef91db7bac2825097650dd73202",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/071fd7689f677899b1312e5401bc4befc9237ef91db7bac2825097650dd73202.metallib",
+          "size": 23724,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 18651752,
+          "function_names": [
+            "SATVSMain",
+            "SATVSMain.dxil_irconverter_object_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x5cac",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x13d",
+              "ModuleListOffset": "0x1fb",
+              "ModuleListSize": "0x4510",
+              "ReflectionListOffset": "0x4726",
+              "ReflectionListSize": "0x1586"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "077ca28f22fd5f1ce79a44aad600c303f37b91948d1cfdd3758c7be1cbc42dd7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/077ca28f22fd5f1ce79a44aad600c303f37b91948d1cfdd3758c7be1cbc42dd7.metallib",
+          "size": 14188,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 3458888,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x376c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2f80",
+              "ReflectionListOffset": "0x30da",
+              "ReflectionListSize": "0x692"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0797948d37ef23e824958c35fde4bdb7cfb77fc2cd437fb7d1c520e5e78fc0a9",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0797948d37ef23e824958c35fde4bdb7cfb77fc2cd437fb7d1c520e5e78fc0a9.metallib",
+          "size": 39224,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 13466016,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x9938",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x91b0",
+              "ReflectionListOffset": "0x930a",
+              "ReflectionListSize": "0x62e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "081a3b109a417a474228278c5d38adc73bf5fc410a066c04cf241a08bd6933aa",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/081a3b109a417a474228278c5d38adc73bf5fc410a066c04cf241a08bd6933aa.metallib",
+          "size": 10656,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2633600,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x29a0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2200",
+              "ReflectionListOffset": "0x235a",
+              "ReflectionListSize": "0x646"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "08800a5aaa3150aabb2a03d758472dcefe3b873306cc9c4a319ef376fcdbfc74",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/08800a5aaa3150aabb2a03d758472dcefe3b873306cc9c4a319ef376fcdbfc74.metallib",
+          "size": 9232,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 3765536,
+          "function_names": [
+            "PS_DeferredAO"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2410",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x95",
+              "ModuleListOffset": "0x143",
+              "ModuleListSize": "0x1e00",
+              "ReflectionListOffset": "0x1f5e",
+              "ReflectionListSize": "0x4b2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "090ea6aaf27ea1540026689d7fe44a2e3dceda5706507ccae9f5239e2f96c5d4",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/090ea6aaf27ea1540026689d7fe44a2e3dceda5706507ccae9f5239e2f96c5d4.metallib",
+          "size": 9980,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 21255528,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x26fc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1da0",
+              "ReflectionListOffset": "0x1efa",
+              "ReflectionListSize": "0x802"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0910d8e9f39a820d650a682f7dfb49b0ee98bf182f4aaf72a53964b20c20e937",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0910d8e9f39a820d650a682f7dfb49b0ee98bf182f4aaf72a53964b20c20e937.metallib",
+          "size": 6888,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 18453384,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x1ae8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1290",
+              "ReflectionListOffset": "0x13ea",
+              "ReflectionListSize": "0x6fe"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "092c0c4cd9b2608522b9cc3d41bef2fa65d77e4fa1544debde6e39124b3efa35",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/092c0c4cd9b2608522b9cc3d41bef2fa65d77e4fa1544debde6e39124b3efa35.metallib",
+          "size": 11900,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2110032,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2e7c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2680",
+              "ReflectionListOffset": "0x27da",
+              "ReflectionListSize": "0x6a2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "093cc7d37ac014e2781bb5863fa1132ff33c38972c01e53158448f3503afcc37",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/093cc7d37ac014e2781bb5863fa1132ff33c38972c01e53158448f3503afcc37.metallib",
+          "size": 11780,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 12949544,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2e04",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2670",
+              "ReflectionListOffset": "0x27ca",
+              "ReflectionListSize": "0x63a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "094e6f7353d7e68866b56087884e36d54a7bc0394b4ebe04600bffca03614854",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/094e6f7353d7e68866b56087884e36d54a7bc0394b4ebe04600bffca03614854.metallib",
+          "size": 12296,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1658816,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x3008",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2910",
+              "ReflectionListOffset": "0x2a6a",
+              "ReflectionListSize": "0x59e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0ab28a5c36f534a37ea96bdbe2eedbb77ab63d1c90fad5ccae2d060371b309a2",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0ab28a5c36f534a37ea96bdbe2eedbb77ab63d1c90fad5ccae2d060371b309a2.metallib",
+          "size": 7220,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1099504,
+          "function_names": [
+            "main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x1c34",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x13d0",
+              "ReflectionListOffset": "0x1525",
+              "ReflectionListSize": "0x70f"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0b463918d8728b8cb448e8c8bdac4014efd58dd5351b636679806f1f4c047db8",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0b463918d8728b8cb448e8c8bdac4014efd58dd5351b636679806f1f4c047db8.metallib",
+          "size": 8020,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1111184,
+          "function_names": [
+            "StencilMarkingPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x1f54",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x98",
+              "ModuleListOffset": "0x146",
+              "ModuleListSize": "0x19b0",
+              "ReflectionListOffset": "0x1b11",
+              "ReflectionListSize": "0x443"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0b5c634729353392f308c470a4256eed9c97c46882a1607cc1403cb5acc34333",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/elden-ring/0b5c634729353392f308c470a4256eed9c97c46882a1607cc1403cb5acc34333.metallib",
+          "size": 10024,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 828712,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "27",
+              "FileSize": "0x2728",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1d80",
+              "ReflectionListOffset": "0x1eda",
+              "ReflectionListSize": "0x84e"
+            },
+            "stderr": ""
+          }
+        }
+      ]
+    },
+    "armored-core-vi": {
+      "sampled": 50,
+      "tool_valid": 50,
+      "with_function_names": 50,
+      "first_failure": "",
+      "samples": [
+        {
+          "sha256": "002a9dafabe943be8f8fbd454eda2307c175db83ce0443e348ca2c8e97ec3e64",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/002a9dafabe943be8f8fbd454eda2307c175db83ce0443e348ca2c8e97ec3e64.metallib",
+          "size": 11636,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4689712,
+          "function_names": [
+            "PixelMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2d74",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2610",
+              "ReflectionListOffset": "0x276a",
+              "ReflectionListSize": "0x60a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "006aeacf75c8743d9a5772de0b72b908f80a4e622bdc860d38547702f43c169c",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/006aeacf75c8743d9a5772de0b72b908f80a4e622bdc860d38547702f43c169c.metallib",
+          "size": 16832,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22599832,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x41c0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x39e0",
+              "ReflectionListOffset": "0x3b3a",
+              "ReflectionListSize": "0x686"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00792f44475e09eb37cc3068befb13c9bf0e9da451ca0ba8e3fc74a26f5c2b62",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/00792f44475e09eb37cc3068befb13c9bf0e9da451ca0ba8e3fc74a26f5c2b62.metallib",
+          "size": 11388,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 19086888,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2c7c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x24a0",
+              "ReflectionListOffset": "0x25fa",
+              "ReflectionListSize": "0x682"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "009b912a4cad5f7b765bb0a582a45d46d1bb303857fcc3b560fd066bce17c66c",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/009b912a4cad5f7b765bb0a582a45d46d1bb303857fcc3b560fd066bce17c66c.metallib",
+          "size": 11972,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10385328,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2ec4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2510",
+              "ReflectionListOffset": "0x266a",
+              "ReflectionListSize": "0x85a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00ca3f1fcb19098fb6e24b724b41a5c8f13243f0f13575e26819eed8ebc97d13",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/00ca3f1fcb19098fb6e24b724b41a5c8f13243f0f13575e26819eed8ebc97d13.metallib",
+          "size": 3836,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4098912,
+          "function_names": [
+            "irconverter_stage_in_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xefc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0xcf0",
+              "ReflectionListOffset": "0xe5c",
+              "ReflectionListSize": "0xa0"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0135b25ee95437311e8ffb71d7fd00bd2808be1895ca328155c89ffa11c10934",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0135b25ee95437311e8ffb71d7fd00bd2808be1895ca328155c89ffa11c10934.metallib",
+          "size": 11852,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 13583224,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2e4c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2400",
+              "ReflectionListOffset": "0x255a",
+              "ReflectionListSize": "0x8f2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "013dfa0e1bce92de99fea69f8ca5f04dc9c8bb38cfdff7c0826ded794519b869",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/013dfa0e1bce92de99fea69f8ca5f04dc9c8bb38cfdff7c0826ded794519b869.metallib",
+          "size": 17720,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 11835824,
+          "function_names": [
+            "PS_SingleTexture"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4538",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x98",
+              "ModuleListOffset": "0x146",
+              "ModuleListSize": "0x3d70",
+              "ReflectionListOffset": "0x3ed1",
+              "ReflectionListSize": "0x667"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "016bcdba40f9e8fa803f18f71333b3b9ad955f8a20a198b7ddc3d049f39aeb26",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/016bcdba40f9e8fa803f18f71333b3b9ad955f8a20a198b7ddc3d049f39aeb26.metallib",
+          "size": 43152,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 23543040,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xa890",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0xa160",
+              "ReflectionListOffset": "0xa2ba",
+              "ReflectionListSize": "0x5d6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "017148784955509f124739aa0eb02840641ced37b0966e34cda101f041ea0a71",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/017148784955509f124739aa0eb02840641ced37b0966e34cda101f041ea0a71.metallib",
+          "size": 12360,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 21366368,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3048",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2630",
+              "ReflectionListOffset": "0x278a",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "01ae7a6c260494ecf984903ce6677b4985d2867255b1bf8bf798c30ff819c0a2",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/01ae7a6c260494ecf984903ce6677b4985d2867255b1bf8bf798c30ff819c0a2.metallib",
+          "size": 13800,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2672768,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x35e8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2bd0",
+              "ReflectionListOffset": "0x2d2a",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "01c670b6951b16bf56dbda9a99c07f94700c7b602061a8bf91acbc1cd2a16eb8",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/01c670b6951b16bf56dbda9a99c07f94700c7b602061a8bf91acbc1cd2a16eb8.metallib",
+          "size": 17464,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 8367336,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4438",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3a20",
+              "ReflectionListOffset": "0x3b7a",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "01ce8740bdf4a21f8f50fdb534a8802565d429ec8dda57613a1958ca9af441b8",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/01ce8740bdf4a21f8f50fdb534a8802565d429ec8dda57613a1958ca9af441b8.metallib",
+          "size": 43948,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 18779456,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xabac",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0xa240",
+              "ReflectionListOffset": "0xa39a",
+              "ReflectionListSize": "0x812"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0280e39d70cd255467b6262397acb78001fdee5d0127d23eed85db502b336c2b",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0280e39d70cd255467b6262397acb78001fdee5d0127d23eed85db502b336c2b.metallib",
+          "size": 11776,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 26962032,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2e00",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x23b0",
+              "ReflectionListOffset": "0x250a",
+              "ReflectionListSize": "0x8f6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "028d094b7335d5469e43969ff55c28f03c052432d38701d699beab2691f760e5",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/028d094b7335d5469e43969ff55c28f03c052432d38701d699beab2691f760e5.metallib",
+          "size": 9424,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 17042904,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x24d0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1d20",
+              "ReflectionListOffset": "0x1e7a",
+              "ReflectionListSize": "0x656"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "028e26cf28bfb49e5ffdaf1a897e926e6cb9f683e1a1e7ef29aee35730c79c86",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/028e26cf28bfb49e5ffdaf1a897e926e6cb9f683e1a1e7ef29aee35730c79c86.metallib",
+          "size": 10384,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 25012408,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2890",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x20e0",
+              "ReflectionListOffset": "0x223a",
+              "ReflectionListSize": "0x656"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "02a5ff27fc62ee44c4bd196262a4605595b64bf34044bb2aa9a41fbb42387db3",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/02a5ff27fc62ee44c4bd196262a4605595b64bf34044bb2aa9a41fbb42387db3.metallib",
+          "size": 12500,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4948416,
+          "function_names": [
+            "PixelMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x30d4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x28f0",
+              "ReflectionListOffset": "0x2a4a",
+              "ReflectionListSize": "0x68a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "03085b864e3c41fba5bf5dd9469475b4504bcf2f084bf4d30f9ae9d56e739bbf",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/03085b864e3c41fba5bf5dd9469475b4504bcf2f084bf4d30f9ae9d56e739bbf.metallib",
+          "size": 11400,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 16353648,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2c88",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2590",
+              "ReflectionListOffset": "0x26ea",
+              "ReflectionListSize": "0x59e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0318fa7ca6ee199f771a36a3eee30b9c63089e2c73562bb97dc21a7eb5127e76",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0318fa7ca6ee199f771a36a3eee30b9c63089e2c73562bb97dc21a7eb5127e76.metallib",
+          "size": 3868,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1860120,
+          "function_names": [
+            "irconverter_stage_in_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xf1c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0xd10",
+              "ReflectionListOffset": "0xe7c",
+              "ReflectionListSize": "0xa0"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "03bfe87f88701cdabeb3a7ad524a2232b0a5a936a56ca7181b57e11b330dcd13",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/03bfe87f88701cdabeb3a7ad524a2232b0a5a936a56ca7181b57e11b330dcd13.metallib",
+          "size": 10464,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1272784,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x28e0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1f90",
+              "ReflectionListOffset": "0x20ea",
+              "ReflectionListSize": "0x7f6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "03ce1144c3b160cb28deb0f2f3f517217f89350757a961ea10528eb3ff7b1126",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/03ce1144c3b160cb28deb0f2f3f517217f89350757a961ea10528eb3ff7b1126.metallib",
+          "size": 45436,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4557072,
+          "function_names": [
+            "irconverter_dxil_domain_shader",
+            "irconverter_domain_shader_triangle_passthrough"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xb17c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x158",
+              "ModuleListOffset": "0x216",
+              "ModuleListSize": "0x9f20",
+              "ReflectionListOffset": "0xa151",
+              "ReflectionListSize": "0x102b"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "04062b1010a4a73882f378c0ee45302e6d8ce2072e15a1dd9b6821f61180ca7d",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/04062b1010a4a73882f378c0ee45302e6d8ce2072e15a1dd9b6821f61180ca7d.metallib",
+          "size": 10324,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 11098384,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2854",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2060",
+              "ReflectionListOffset": "0x21ba",
+              "ReflectionListSize": "0x69a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "043e149bb0abebfa95915add8e0a26238a636e514c2167ac1f4e6e9355b33ffd",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/043e149bb0abebfa95915add8e0a26238a636e514c2167ac1f4e6e9355b33ffd.metallib",
+          "size": 14920,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 9008856,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3a48",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3030",
+              "ReflectionListOffset": "0x318a",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0482be1b7e3889358b245b7b8ae7615f6a95eee1bdb17c0474880890f8341fd7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0482be1b7e3889358b245b7b8ae7615f6a95eee1bdb17c0474880890f8341fd7.metallib",
+          "size": 7068,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 504944,
+          "function_names": [
+            "TempAAVS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1b9c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x90",
+              "ModuleListOffset": "0x13e",
+              "ModuleListSize": "0x1320",
+              "ReflectionListOffset": "0x1479",
+              "ReflectionListSize": "0x723"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0486ab48e2c4a5012aa1d4c7dd1358ee027d8992536619c8eed4ccebd38393b9",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0486ab48e2c4a5012aa1d4c7dd1358ee027d8992536619c8eed4ccebd38393b9.metallib",
+          "size": 11708,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 26988904,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2dbc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2450",
+              "ReflectionListOffset": "0x25aa",
+              "ReflectionListSize": "0x812"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "049241dd0e81225f48930b5be7255f8ad0c05410d407fef71e597323d29c9c76",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/049241dd0e81225f48930b5be7255f8ad0c05410d407fef71e597323d29c9c76.metallib",
+          "size": 18360,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 28733976,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x47b8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3da0",
+              "ReflectionListOffset": "0x3efa",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "04ae0ecc75765a89767101579e87a855e648e8baa12b49e0a0b5746ce07e5c17",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/04ae0ecc75765a89767101579e87a855e648e8baa12b49e0a0b5746ce07e5c17.metallib",
+          "size": 14184,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 18164664,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3768",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2d50",
+              "ReflectionListOffset": "0x2eaa",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "04b65683723599ae1d2f7851c0bc39dd060ecd58bcd754b673f59253cefcdf45",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/04b65683723599ae1d2f7851c0bc39dd060ecd58bcd754b673f59253cefcdf45.metallib",
+          "size": 41808,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22904080,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xa350",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x9c60",
+              "ReflectionListOffset": "0x9dba",
+              "ReflectionListSize": "0x596"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "04e201246f210993c1165cd18b7ac731171fd42bd2ec7cce3448cecfb2eafcea",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/04e201246f210993c1165cd18b7ac731171fd42bd2ec7cce3448cecfb2eafcea.metallib",
+          "size": 14600,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 7480976,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3908",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2ef0",
+              "ReflectionListOffset": "0x304a",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "04f05aeb5a8c6d2af9bf16c64fe51640f9ce4a7696de88f9c42b87322c6a7192",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/04f05aeb5a8c6d2af9bf16c64fe51640f9ce4a7696de88f9c42b87322c6a7192.metallib",
+          "size": 10616,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2878208,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2978",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x1f40",
+              "ReflectionListOffset": "0x209a",
+              "ReflectionListSize": "0x8de"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0511998c5a025954a265b62b9338c1e914b519425184ec51344f808fa71e0d8a",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0511998c5a025954a265b62b9338c1e914b519425184ec51344f808fa71e0d8a.metallib",
+          "size": 5920,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 29033504,
+          "function_names": [
+            "ToneMap_AdaptedLuminanceCopyPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1720",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa6",
+              "ModuleListOffset": "0x154",
+              "ModuleListSize": "0x1170",
+              "ReflectionListOffset": "0x12df",
+              "ReflectionListSize": "0x441"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "05428bff53856916a85d69078acf604723011276fd48aaac774d4b40e6c8bc7a",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/05428bff53856916a85d69078acf604723011276fd48aaac774d4b40e6c8bc7a.metallib",
+          "size": 7972,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 3202264,
+          "function_names": [
+            "main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1f24",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x1620",
+              "ReflectionListOffset": "0x1775",
+              "ReflectionListSize": "0x7af"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0588aefa3e8697b8153840e3cd3757021d7132a54540050206463e1294a31e60",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0588aefa3e8697b8153840e3cd3757021d7132a54540050206463e1294a31e60.metallib",
+          "size": 11364,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4431840,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2c64",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x24d0",
+              "ReflectionListOffset": "0x262a",
+              "ReflectionListSize": "0x63a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "05a5df70258dab98b10f3b7f1ed9ad877848801b471aaeabaf673c8adc26583b",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/05a5df70258dab98b10f3b7f1ed9ad877848801b471aaeabaf673c8adc26583b.metallib",
+          "size": 3692,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 3210800,
+          "function_names": [
+            "irconverter_stage_in_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xe6c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0xc60",
+              "ReflectionListOffset": "0xdcc",
+              "ReflectionListSize": "0xa0"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "06115ee26df2bdffcedf09caf6cc2f949d37a32693ac41128e1213c944c63443",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/06115ee26df2bdffcedf09caf6cc2f949d37a32693ac41128e1213c944c63443.metallib",
+          "size": 12260,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 26940240,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2fe4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2500",
+              "ReflectionListOffset": "0x265a",
+              "ReflectionListSize": "0x98a"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0621127897631bf1503bc629f12c2616464748666def28d06e7a26f4aad936fd",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/0621127897631bf1503bc629f12c2616464748666def28d06e7a26f4aad936fd.metallib",
+          "size": 11772,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22618168,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2dfc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x24a0",
+              "ReflectionListOffset": "0x25fa",
+              "ReflectionListSize": "0x802"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "062d4ef202eb0cf9fd03169aa2d9c71ced3b4a5311fd56ffdd426b1c2fca7de1",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/062d4ef202eb0cf9fd03169aa2d9c71ced3b4a5311fd56ffdd426b1c2fca7de1.metallib",
+          "size": 18456,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 7340296,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4818",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3ff0",
+              "ReflectionListOffset": "0x414a",
+              "ReflectionListSize": "0x6ce"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "065ee42597c8e3bc3116e93c4f927ebba5cc30afa1cc53a9d66f951ac6f6258a",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/065ee42597c8e3bc3116e93c4f927ebba5cc30afa1cc53a9d66f951ac6f6258a.metallib",
+          "size": 10796,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 6753208,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2a2c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2280",
+              "ReflectionListOffset": "0x23da",
+              "ReflectionListSize": "0x652"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "066785d16ba333e688890b15998ff58b4f982efa8fa538d9ba417ba4ea908b49",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/066785d16ba333e688890b15998ff58b4f982efa8fa538d9ba417ba4ea908b49.metallib",
+          "size": 33596,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 26452720,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x833c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x7b00",
+              "ReflectionListOffset": "0x7c5a",
+              "ReflectionListSize": "0x6e2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "067795859402e72d698bab335d863543d957126c8478cf61589c53bac5d622a2",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/067795859402e72d698bab335d863543d957126c8478cf61589c53bac5d622a2.metallib",
+          "size": 10176,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10676864,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x27c0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2020",
+              "ReflectionListOffset": "0x217a",
+              "ReflectionListSize": "0x646"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "06dbd87e042ac8bce679d1ef289b179d7dd5dd8d5b84a8b69305d1d236ccbc49",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/06dbd87e042ac8bce679d1ef289b179d7dd5dd8d5b84a8b69305d1d236ccbc49.metallib",
+          "size": 46964,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 17729056,
+          "function_names": [
+            "irconverter_dxil_domain_shader",
+            "irconverter_domain_shader_triangle_passthrough"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xb774",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x158",
+              "ModuleListOffset": "0x216",
+              "ModuleListSize": "0xa420",
+              "ReflectionListOffset": "0xa651",
+              "ReflectionListSize": "0x1123"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "07b79c8bd3598dbd12ed86ab45fc1abe6ca27fdc4e68d5ba9f3be3594670b820",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/07b79c8bd3598dbd12ed86ab45fc1abe6ca27fdc4e68d5ba9f3be3594670b820.metallib",
+          "size": 15228,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 27931448,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3b7c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3140",
+              "ReflectionListOffset": "0x329a",
+              "ReflectionListSize": "0x8e2"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "07d6aa0086038a49f486ebfeb1550bb1255637b75255796116283b058b732770",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/07d6aa0086038a49f486ebfeb1550bb1255637b75255796116283b058b732770.metallib",
+          "size": 14568,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 4541136,
+          "function_names": [
+            "PixelMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x38e8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3020",
+              "ReflectionListOffset": "0x317a",
+              "ReflectionListSize": "0x76e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "07dd3a8225a3cedc3661315698d27463de84cb56a4297b63f785676f5d05b299",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/07dd3a8225a3cedc3661315698d27463de84cb56a4297b63f785676f5d05b299.metallib",
+          "size": 11384,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 10688392,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2c78",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x24f0",
+              "ReflectionListOffset": "0x264a",
+              "ReflectionListSize": "0x62e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "07e195372a0764383a38f0c1c7639d5233f95b5dc186d32851c7bb9598bb8410",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/07e195372a0764383a38f0c1c7639d5233f95b5dc186d32851c7bb9598bb8410.metallib",
+          "size": 14448,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 18916552,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3870",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x3050",
+              "ReflectionListOffset": "0x31aa",
+              "ReflectionListSize": "0x6c6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "07fc240fa360bd35891df34b84df7fb90460d12a60ca4f701b0d90293c98ccfc",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/07fc240fa360bd35891df34b84df7fb90460d12a60ca4f701b0d90293c98ccfc.metallib",
+          "size": 31384,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 1873848,
+          "function_names": [
+            "irconverter_hull_shader",
+            "irconverter_tessellator"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x7a98",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x13a",
+              "ModuleListOffset": "0x240",
+              "ModuleListSize": "0x7630",
+              "ReflectionListOffset": "0x788b",
+              "ReflectionListSize": "0x20d"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "084b70f2be0cf654db19c7409b1d240afbd3dfefb1c561231c145140bf9c702b",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/084b70f2be0cf654db19c7409b1d240afbd3dfefb1c561231c145140bf9c702b.metallib",
+          "size": 10324,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 102720,
+          "function_names": [
+            "RayGen81705443990217597354891188294762696896105117046801738803661507569182515840883531160024"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2854",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xe4",
+              "ModuleListOffset": "0x192",
+              "ModuleListSize": "0x24d0",
+              "ReflectionListOffset": "0x267d",
+              "ReflectionListSize": "0x1d7"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "085f1db4db7819a7acfaa0718bb0da69bbf2f33a88b463d987a5a7b00fe73d4b",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/085f1db4db7819a7acfaa0718bb0da69bbf2f33a88b463d987a5a7b00fe73d4b.metallib",
+          "size": 11056,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 26144880,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2b30",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x20f0",
+              "ReflectionListOffset": "0x224a",
+              "ReflectionListSize": "0x8e6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "089e33d5c6fe9ad3a1a89b8da1788c6790b1732cb1e2b51ca911a06642252a42",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/089e33d5c6fe9ad3a1a89b8da1788c6790b1732cb1e2b51ca911a06642252a42.metallib",
+          "size": 13496,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 7881864,
+          "function_names": [
+            "SATVSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x34b8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2950",
+              "ReflectionListOffset": "0x2aaa",
+              "ReflectionListSize": "0xa0e"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "08d5d28f1e937a9a4e0615e92d920d5f2515c50a6f388a71ca77a9395c489466",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/08d5d28f1e937a9a4e0615e92d920d5f2515c50a6f388a71ca77a9395c489466.metallib",
+          "size": 14552,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 9939864,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x38d8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2ec0",
+              "ReflectionListOffset": "0x301a",
+              "ReflectionListSize": "0x8be"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "08e40ed280d102b6dbe32c157aedb0fc0c274f545bde78d265c80edde1492574",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/armored-core-vi/08e40ed280d102b6dbe32c157aedb0fc0c274f545bde78d265c80edde1492574.metallib",
+          "size": 10160,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 26016960,
+          "function_names": [
+            "SATPSMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x27b0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x91",
+              "ModuleListOffset": "0x13f",
+              "ModuleListSize": "0x2010",
+              "ReflectionListOffset": "0x216a",
+              "ReflectionListSize": "0x646"
+            },
+            "stderr": ""
+          }
+        }
+      ]
+    },
+    "subnautica-2": {
+      "sampled": 50,
+      "tool_valid": 50,
+      "with_function_names": 50,
+      "first_failure": "",
+      "samples": [
+        {
+          "sha256": "0004cda8d926ca21d61871f7cbea2e89742f1d0687f48ef70fdfb6b13dacfe36",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0004cda8d926ca21d61871f7cbea2e89742f1d0687f48ef70fdfb6b13dacfe36.metallib",
+          "size": 17556,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 81442656,
+          "function_names": [
+            "HWRasterizeMS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4494",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x95",
+              "ModuleListOffset": "0x143",
+              "ModuleListSize": "0x3e80",
+              "ReflectionListOffset": "0x3fde",
+              "ReflectionListSize": "0x4b6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00058b2846d0c57b90c1dbe73b3c050065f222bc0e3a99872a801332a2decb7d",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00058b2846d0c57b90c1dbe73b3c050065f222bc0e3a99872a801332a2decb7d.metallib",
+          "size": 26052,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 65861664,
+          "function_names": [
+            "VolumeGenerateLightSamplesCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x65c4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa4",
+              "ModuleListOffset": "0x152",
+              "ModuleListSize": "0x61b0",
+              "ReflectionListOffset": "0x631d",
+              "ReflectionListSize": "0x2a7"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "000d493e6dc8f5ebe963a0ece2aa1efb63202953d9789fb250bb0ef839480783",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/000d493e6dc8f5ebe963a0ece2aa1efb63202953d9789fb250bb0ef839480783.metallib",
+          "size": 6024,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 75206160,
+          "function_names": [
+            "ScreenProbeTemporalReprojectionCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1788",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa9",
+              "ModuleListOffset": "0x157",
+              "ModuleListSize": "0x1360",
+              "ReflectionListOffset": "0x14d2",
+              "ReflectionListSize": "0x2b6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "000ed0e12aa2bf3da2ca1de2c3b8b287c08718dd78e5b0aedc66a6968d3347aa",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/000ed0e12aa2bf3da2ca1de2c3b8b287c08718dd78e5b0aedc66a6968d3347aa.metallib",
+          "size": 12076,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 217938560,
+          "function_names": [
+            "MainPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2f2c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x29c0",
+              "ReflectionListOffset": "0x2b17",
+              "ReflectionListSize": "0x415"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "000f170e35b7143ebf9bf4a25537dd5be57aaa095987d88b2a9dffccb00c9df5",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/000f170e35b7143ebf9bf4a25537dd5be57aaa095987d88b2a9dffccb00c9df5.metallib",
+          "size": 13548,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 8935848,
+          "function_names": [
+            "MainVS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x34ec",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x2bd0",
+              "ReflectionListOffset": "0x2d27",
+              "ReflectionListSize": "0x7c5"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "001c4ff7299adb0012d4fdb8ad6c9a1981f5eb7a89dda6f8d8a34718af8a9ab5",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/001c4ff7299adb0012d4fdb8ad6c9a1981f5eb7a89dda6f8d8a34718af8a9ab5.metallib",
+          "size": 15492,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 226032896,
+          "function_names": [
+            "MainPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3c84",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x3670",
+              "ReflectionListOffset": "0x37c7",
+              "ReflectionListSize": "0x4bd"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "001fe52bdb66c0ddc52f70de0c835e10fa87acedaeaf8e15c271d9324b8f27f1",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/001fe52bdb66c0ddc52f70de0c835e10fa87acedaeaf8e15c271d9324b8f27f1.metallib",
+          "size": 18712,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2645912,
+          "function_names": [
+            "MainVS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4918",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x3fe0",
+              "ReflectionListOffset": "0x4137",
+              "ReflectionListSize": "0x7e1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "002be63cd9631bee4a7aa7dbc2dc55c5a30c683371c4e56d87bf08e6a21887ae",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/002be63cd9631bee4a7aa7dbc2dc55c5a30c683371c4e56d87bf08e6a21887ae.metallib",
+          "size": 48152,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 156893760,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xbc18",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0xb7f0",
+              "ReflectionListOffset": "0xb947",
+              "ReflectionListSize": "0x2d1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00323360dbcabc71c2f63fd9789dffd6460cc6548cda72f26f190f1ea87ce12d",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00323360dbcabc71c2f63fd9789dffd6460cc6548cda72f26f190f1ea87ce12d.metallib",
+          "size": 4688,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 35065784,
+          "function_names": [
+            "CombineShadingRateTextures"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1250",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa2",
+              "ModuleListOffset": "0x150",
+              "ModuleListSize": "0xe40",
+              "ReflectionListOffset": "0xfab",
+              "ReflectionListSize": "0x2a5"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "003568e57fdda4bbf5d95282c2d582f5f90809ada10e2e735b81e2aba33b7690",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/003568e57fdda4bbf5d95282c2d582f5f90809ada10e2e735b81e2aba33b7690.metallib",
+          "size": 57768,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 137947352,
+          "function_names": [
+            "DeferredLightPixelMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xe1a8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9e",
+              "ModuleListOffset": "0x14c",
+              "ModuleListSize": "0xdc10",
+              "ReflectionListOffset": "0xdd77",
+              "ReflectionListSize": "0x431"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00393ab81068a68f608ec1c1497da12dad3c68fbbf58ff6ce515af6da624e8d7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00393ab81068a68f608ec1c1497da12dad3c68fbbf58ff6ce515af6da624e8d7.metallib",
+          "size": 12788,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 223029512,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x31f4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x2a80",
+              "ReflectionListOffset": "0x2bd5",
+              "ReflectionListSize": "0x61f"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "003ea2d82c05615173f6a6213c11a2e28c98ec735c64912fa5190e68800f5562",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/003ea2d82c05615173f6a6213c11a2e28c98ec735c64912fa5190e68800f5562.metallib",
+          "size": 40024,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 122595536,
+          "function_names": [
+            "DeferredLightPixelMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x9c58",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9e",
+              "ModuleListOffset": "0x14c",
+              "ModuleListSize": "0x96c0",
+              "ReflectionListOffset": "0x9827",
+              "ReflectionListSize": "0x431"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "003f078fd7ceefdd5af2c0a5fe277ce4a1d5b44554ce76747654ddcebfd1adc2",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/003f078fd7ceefdd5af2c0a5fe277ce4a1d5b44554ce76747654ddcebfd1adc2.metallib",
+          "size": 4204,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 224794928,
+          "function_names": [
+            "irconverter_stage_in_shader"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x106c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0xe60",
+              "ReflectionListOffset": "0xfcc",
+              "ReflectionListSize": "0xa0"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "004639acf69a2bbdece2c5648b284327b0d5de9132284ad38615910831aaffdc",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/004639acf69a2bbdece2c5648b284327b0d5de9132284ad38615910831aaffdc.metallib",
+          "size": 19904,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 15019568,
+          "function_names": [
+            "HWRasterizeMS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4dc0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x95",
+              "ModuleListOffset": "0x143",
+              "ModuleListSize": "0x4750",
+              "ReflectionListOffset": "0x48ae",
+              "ReflectionListSize": "0x512"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "005412b77842de9fb5d3a8809d8f636888fed6ef60852425ae7c5b6855a2061b",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/005412b77842de9fb5d3a8809d8f636888fed6ef60852425ae7c5b6855a2061b.metallib",
+          "size": 13824,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 60435960,
+          "function_names": [
+            "InstanceCull"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3600",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x94",
+              "ModuleListOffset": "0x142",
+              "ModuleListSize": "0x31a0",
+              "ReflectionListOffset": "0x32fd",
+              "ReflectionListSize": "0x303"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "005bcac92c9907c8a414d6055f9c0b9451daf313dbcd6eec29835d09cd416c0f",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/005bcac92c9907c8a414d6055f9c0b9451daf313dbcd6eec29835d09cd416c0f.metallib",
+          "size": 8488,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 215348576,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2128",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x1a50",
+              "ReflectionListOffset": "0x1ba5",
+              "ReflectionListSize": "0x583"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "006191e98d7d26154ba3c3bc6ea4eec4e37a81ca06da3c39954ab40594d1fc54",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/006191e98d7d26154ba3c3bc6ea4eec4e37a81ca06da3c39954ab40594d1fc54.metallib",
+          "size": 19648,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 244923792,
+          "function_names": [
+            "InjectMainPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4cc0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x94",
+              "ModuleListOffset": "0x142",
+              "ModuleListSize": "0x46a0",
+              "ReflectionListOffset": "0x47fd",
+              "ReflectionListSize": "0x4c3"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0063c1fb32c99da2a771b1fbd11a415363c060f2c378f192a7e6e303039efcbf",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0063c1fb32c99da2a771b1fbd11a415363c060f2c378f192a7e6e303039efcbf.metallib",
+          "size": 10204,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 2148720,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x27dc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x1f00",
+              "ReflectionListOffset": "0x2055",
+              "ReflectionListSize": "0x787"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "006de0e3c9cfb2d72b0e6707781cb387bc27e3bb665637785c030a4145979d79",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/006de0e3c9cfb2d72b0e6707781cb387bc27e3bb665637785c030a4145979d79.metallib",
+          "size": 42328,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 167141536,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xa558",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0xa130",
+              "ReflectionListOffset": "0xa287",
+              "ReflectionListSize": "0x2d1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0070d6b6189366d53859f7f5d328156bde129968007bb657d13ac5f8234b0c16",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0070d6b6189366d53859f7f5d328156bde129968007bb657d13ac5f8234b0c16.metallib",
+          "size": 15844,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 78641176,
+          "function_names": [
+            "MainPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3de4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x34b0",
+              "ReflectionListOffset": "0x3607",
+              "ReflectionListSize": "0x7dd"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0075c7a2645ce459a0b1649f378aaa97d31ee2f0735bb5947f91bb7c5e6e823a",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0075c7a2645ce459a0b1649f378aaa97d31ee2f0735bb5947f91bb7c5e6e823a.metallib",
+          "size": 7224,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 201673696,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1c38",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x1560",
+              "ReflectionListOffset": "0x16b5",
+              "ReflectionListSize": "0x583"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "007e0f72eb187ea435f47132d003bd6cefda663a73733d29f398aaeb2dc115c4",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/007e0f72eb187ea435f47132d003bd6cefda663a73733d29f398aaeb2dc115c4.metallib",
+          "size": 7440,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 39332488,
+          "function_names": [
+            "FilterCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1d10",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x90",
+              "ModuleListOffset": "0x13e",
+              "ModuleListSize": "0x1920",
+              "ReflectionListOffset": "0x1a79",
+              "ReflectionListSize": "0x297"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "007e5ebc9a4f530b1568bb6a4e0fd80cdc75c3310ba7da30cca074d9fa6e3d4c",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/007e5ebc9a4f530b1568bb6a4e0fd80cdc75c3310ba7da30cca074d9fa6e3d4c.metallib",
+          "size": 17884,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 44556888,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x45dc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x41f0",
+              "ReflectionListOffset": "0x4347",
+              "ReflectionListSize": "0x295"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0081727784ab4227411dd35e90579bb50612479d1aa2c4d8407692eb8255482d",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0081727784ab4227411dd35e90579bb50612479d1aa2c4d8407692eb8255482d.metallib",
+          "size": 28728,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 180939256,
+          "function_names": [
+            "MicropolyRasterize"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x7038",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9a",
+              "ModuleListOffset": "0x148",
+              "ModuleListSize": "0x6bc0",
+              "ReflectionListOffset": "0x6d23",
+              "ReflectionListSize": "0x315"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0082f84426260d35d372e29785ca7e2fdc7a5646956a5a06b885a75cf69e2cf9",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0082f84426260d35d372e29785ca7e2fdc7a5646956a5a06b885a75cf69e2cf9.metallib",
+          "size": 7560,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 201423992,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1d88",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x16b0",
+              "ReflectionListOffset": "0x1805",
+              "ReflectionListSize": "0x583"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "008535191211248fb113cfae006842ad96fedc97c097d1180aaec0e409e2c6e6",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/008535191211248fb113cfae006842ad96fedc97c097d1180aaec0e409e2c6e6.metallib",
+          "size": 26344,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 93120936,
+          "function_names": [
+            "RasterMultiSampleCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x66e8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9b",
+              "ModuleListOffset": "0x149",
+              "ModuleListSize": "0x6210",
+              "ReflectionListOffset": "0x6374",
+              "ReflectionListSize": "0x374"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "008a5016c4516ab6ec248b9af7bf51e1b044fa9b56f5fb6e21ffb1f932e97b1d",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/008a5016c4516ab6ec248b9af7bf51e1b044fa9b56f5fb6e21ffb1f932e97b1d.metallib",
+          "size": 45672,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 107671688,
+          "function_names": [
+            "MicropolyRasterize"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xb268",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9a",
+              "ModuleListOffset": "0x148",
+              "ModuleListSize": "0xae00",
+              "ReflectionListOffset": "0xaf63",
+              "ReflectionListSize": "0x305"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "008dc4866e80d8e5743a9a2cf54c932799a5cb365d8d95973dbbc7c0a60c45fe",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/008dc4866e80d8e5743a9a2cf54c932799a5cb365d8d95973dbbc7c0a60c45fe.metallib",
+          "size": 44616,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 185379664,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xae48",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0xaa30",
+              "ReflectionListOffset": "0xab87",
+              "ReflectionListSize": "0x2c1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00920d27cddc15be6ea059d1a778b20adca88204f904e2a155ebe24502a9e287",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00920d27cddc15be6ea059d1a778b20adca88204f904e2a155ebe24502a9e287.metallib",
+          "size": 16244,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 243254312,
+          "function_names": [
+            "MainPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3f74",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x3780",
+              "ReflectionListOffset": "0x38d7",
+              "ReflectionListSize": "0x69d"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00987000f371d527202e6fa651247fd9293f35248b9a211775a15a42416b6d19",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00987000f371d527202e6fa651247fd9293f35248b9a211775a15a42416b6d19.metallib",
+          "size": 4484,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 55947576,
+          "function_names": [
+            "InitClusterBatches"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1184",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9a",
+              "ModuleListOffset": "0x148",
+              "ModuleListSize": "0xd40",
+              "ReflectionListOffset": "0xea3",
+              "ReflectionListSize": "0x2e1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "009c1855c52fe9777de80df56c92bbfef4a2ee969f667aed947e18e701503518",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/009c1855c52fe9777de80df56c92bbfef4a2ee969f667aed947e18e701503518.metallib",
+          "size": 14052,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 230179544,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x36e4",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x2f70",
+              "ReflectionListOffset": "0x30c5",
+              "ReflectionListSize": "0x61f"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00a9f615b77499eaec851a9dfaf8a6a1ed90d9b57d9b0a4c28ad9edbd3f00420",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00a9f615b77499eaec851a9dfaf8a6a1ed90d9b57d9b0a4c28ad9edbd3f00420.metallib",
+          "size": 20192,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 239697312,
+          "function_names": [
+            "MainVertexShader__OPTIMIZED"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4ee0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa3",
+              "ModuleListOffset": "0x151",
+              "ModuleListSize": "0x4640",
+              "ReflectionListOffset": "0x47ac",
+              "ReflectionListSize": "0x734"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00aa20e665f2840375c1fdb1d76e63c716867170740afee90ed96be1fc3f29a9",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00aa20e665f2840375c1fdb1d76e63c716867170740afee90ed96be1fc3f29a9.metallib",
+          "size": 9516,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 46403400,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x252c",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x2140",
+              "ReflectionListOffset": "0x2297",
+              "ReflectionListSize": "0x295"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00ae6c2c275d6542d5b52ba1f00996bbdfad06f5cd26bc5e9ca8bca51ecc894f",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00ae6c2c275d6542d5b52ba1f00996bbdfad06f5cd26bc5e9ca8bca51ecc894f.metallib",
+          "size": 17988,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 15088768,
+          "function_names": [
+            "HWRasterizeMS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4644",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x95",
+              "ModuleListOffset": "0x143",
+              "ModuleListSize": "0x4030",
+              "ReflectionListOffset": "0x418e",
+              "ReflectionListSize": "0x4b6"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00ba8b78a088c7ab050e6db253db1b24592301419dc82c8469ed7d225214b154",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00ba8b78a088c7ab050e6db253db1b24592301419dc82c8469ed7d225214b154.metallib",
+          "size": 4416,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 22845096,
+          "function_names": [
+            "MemsetBufferCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1140",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x96",
+              "ModuleListOffset": "0x144",
+              "ModuleListSize": "0xd10",
+              "ReflectionListOffset": "0xe6f",
+              "ReflectionListSize": "0x2d1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00cb7c995267c4ce7613649c76d52931e1d495f9f373ef86f620cbca827f4663",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00cb7c995267c4ce7613649c76d52931e1d495f9f373ef86f620cbca827f4663.metallib",
+          "size": 22448,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 58735424,
+          "function_names": [
+            "InstanceCull"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x57b0",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x94",
+              "ModuleListOffset": "0x142",
+              "ModuleListSize": "0x5350",
+              "ReflectionListOffset": "0x54ad",
+              "ReflectionListSize": "0x303"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00cc6b986dc054ed19e43bdd9611f13da5672549d3b14a1c715a2b3d4df72472",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00cc6b986dc054ed19e43bdd9611f13da5672549d3b14a1c715a2b3d4df72472.metallib",
+          "size": 72552,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 160135936,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x11b68",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x11740",
+              "ReflectionListOffset": "0x11897",
+              "ReflectionListSize": "0x2d1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00da855205cffe7b48904e8556a759bfd575be74c5280bfba3bd3bbcc697c83d",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00da855205cffe7b48904e8556a759bfd575be74c5280bfba3bd3bbcc697c83d.metallib",
+          "size": 12292,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 240691688,
+          "function_names": [
+            "Main__OPTIMIZED"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x3004",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x97",
+              "ModuleListOffset": "0x145",
+              "ModuleListSize": "0x27d0",
+              "ReflectionListOffset": "0x2930",
+              "ReflectionListSize": "0x6d4"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00dd8709516584029e78a0682376cb7bfc9a1a3ea4260d999436164e720fc5d7",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00dd8709516584029e78a0682376cb7bfc9a1a3ea4260d999436164e720fc5d7.metallib",
+          "size": 11624,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 231920656,
+          "function_names": [
+            "MainPS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2d68",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x2530",
+              "ReflectionListOffset": "0x2687",
+              "ReflectionListSize": "0x6e1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00e1d78ca20e6b3160fc87d405e636ebac768c3a098da3b1bee088fb727ee6d5",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00e1d78ca20e6b3160fc87d405e636ebac768c3a098da3b1bee088fb727ee6d5.metallib",
+          "size": 50280,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 185686152,
+          "function_names": [
+            "MicropolyRasterize"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0xc468",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9a",
+              "ModuleListOffset": "0x148",
+              "ModuleListSize": "0xc000",
+              "ReflectionListOffset": "0xc163",
+              "ReflectionListSize": "0x305"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00ecaf6785bdb9af980abf53efb97ab94755a27b86376836b1a15bed74ff2f9c",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00ecaf6785bdb9af980abf53efb97ab94755a27b86376836b1a15bed74ff2f9c.metallib",
+          "size": 12200,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 218521512,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2fa8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x2570",
+              "ReflectionListOffset": "0x26c5",
+              "ReflectionListSize": "0x8e3"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00f358a86c6ee0d1f38a48233d1e006cb00c1bf3602bdf7e37e32234c8548335",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00f358a86c6ee0d1f38a48233d1e006cb00c1bf3602bdf7e37e32234c8548335.metallib",
+          "size": 37116,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 123152472,
+          "function_names": [
+            "DeferredLightPixelMain"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x90fc",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9e",
+              "ModuleListOffset": "0x14c",
+              "ModuleListSize": "0x8b00",
+              "ReflectionListOffset": "0x8c67",
+              "ReflectionListSize": "0x495"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00f7399c1f2ba8f7e8fddf2e2787fa00101a8401fe8c330aa6c0d97fc1bfd3f5",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00f7399c1f2ba8f7e8fddf2e2787fa00101a8401fe8c330aa6c0d97fc1bfd3f5.metallib",
+          "size": 7336,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 215059064,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1ca8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x15d0",
+              "ReflectionListOffset": "0x1725",
+              "ReflectionListSize": "0x583"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00fc2d15249b1f9c1781b658a68cbe09d5ef56d1e8d053422b7401f234881343",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00fc2d15249b1f9c1781b658a68cbe09d5ef56d1e8d053422b7401f234881343.metallib",
+          "size": 8104,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 213539616,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1fa8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x18d0",
+              "ReflectionListOffset": "0x1a25",
+              "ReflectionListSize": "0x583"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "00fd220b22b8c89798aec859916c1e30f8d90a00a2ebf58b915cd6c1a4cab5c4",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/00fd220b22b8c89798aec859916c1e30f8d90a00a2ebf58b915cd6c1a4cab5c4.metallib",
+          "size": 17192,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 126648256,
+          "function_names": [
+            "SimulateMainComputeCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x4328",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9d",
+              "ModuleListOffset": "0x14b",
+              "ModuleListSize": "0x3ea0",
+              "ReflectionListOffset": "0x4006",
+              "ReflectionListSize": "0x322"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "01009fbd2674634f2ebd7db5fbf5b27e2e032c555086e8916c777ce7f10d0b16",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/01009fbd2674634f2ebd7db5fbf5b27e2e032c555086e8916c777ce7f10d0b16.metallib",
+          "size": 9064,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 92837288,
+          "function_names": [
+            "ScreenTileClassificationCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x2368",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0xa2",
+              "ModuleListOffset": "0x150",
+              "ModuleListSize": "0x1ee0",
+              "ReflectionListOffset": "0x204b",
+              "ReflectionListSize": "0x31d"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0102ac9f1801ab7035a896b6854c4750911e6fc3ff0c733ded0306a04c7a59ee",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0102ac9f1801ab7035a896b6854c4750911e6fc3ff0c733ded0306a04c7a59ee.metallib",
+          "size": 36440,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 103778872,
+          "function_names": [
+            "SimulateMainComputeCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x8e58",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x9d",
+              "ModuleListOffset": "0x14b",
+              "ModuleListSize": "0x89d0",
+              "ReflectionListOffset": "0x8b36",
+              "ReflectionListSize": "0x322"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "01073dc4bcde0c0c6a3410e71226feabdc8c305606557585d42a534f996601fb",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/01073dc4bcde0c0c6a3410e71226feabdc8c305606557585d42a534f996601fb.metallib",
+          "size": 73944,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 194429232,
+          "function_names": [
+            "MainCS"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x120d8",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8e",
+              "ModuleListOffset": "0x13c",
+              "ModuleListSize": "0x11cc0",
+              "ReflectionListOffset": "0x11e17",
+              "ReflectionListSize": "0x2c1"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0111df03f34cd96b6dc229a6d85f61fb0892e3c4c61c5458f208f907d88fa52e",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0111df03f34cd96b6dc229a6d85f61fb0892e3c4c61c5458f208f907d88fa52e.metallib",
+          "size": 7768,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 212691520,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x1e58",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x1780",
+              "ReflectionListOffset": "0x18d5",
+              "ReflectionListSize": "0x583"
+            },
+            "stderr": ""
+          }
+        },
+        {
+          "sha256": "0117391f8e8f8e3a4d3a0997dbab9fb1d8ee864cbbb4dcde94507af7e4a1ca20",
+          "path": "tools/d3d12-metal-sdk/results/d3dmetal-metallib-extract-20260616-190208/extracted/subnautica-2/0117391f8e8f8e3a4d3a0997dbab9fb1d8ee864cbbb4dcde94507af7e4a1ca20.metallib",
+          "size": 28588,
+          "first_source": "shaders.cache/MTLGPUFamilyApple9_0/stage_cache.bin",
+          "first_offset": 204633128,
+          "function_names": [
+            "Main"
+          ],
+          "exists": true,
+          "tool": {
+            "ok": true,
+            "returncode": 0,
+            "header": {
+              "MagicWord": "MTLB",
+              "FileType": "METALLIB_EXECUTE",
+              "Platform": "MACOS",
+              "PlatformMajor": "26",
+              "FileSize": "0x6fac",
+              "FunctionListOffset": "0x58",
+              "FunctionListSize": "0x8c",
+              "ModuleListOffset": "0x13a",
+              "ModuleListSize": "0x6540",
+              "ReflectionListOffset": "0x6695",
+              "ReflectionListSize": "0x917"
+            },
+            "stderr": ""
+          }
+        }
+      ]
+    }
+  }
+}

@@ -61,7 +61,55 @@ def read_u16_be_count(path: Path) -> int | None:
     return int.from_bytes(data[2:4], "little")
 
 
-def file_record(path: Path, root: Path | None = None) -> dict[str, Any]:
+def raw_marker_hits(path: Path, markers: tuple[bytes, ...], limit: int = 32) -> dict[str, Any]:
+    """Return raw byte-marker hits for a cache file.
+
+    These are deliberately raw substring hits, not proof of a decoded private
+    cache record. The extraction script performs bounded MTLB validation before
+    materializing blobs; this comparator only records cheap provenance hints.
+    The scan is chunked so large copied caches do not need to be loaded into
+    memory at once.
+    """
+    if not path.exists() or not path.is_file() or not markers:
+        return {}
+    counts = {marker: 0 for marker in markers}
+    offsets: dict[bytes, list[int]] = {marker: [] for marker in markers}
+    overlap = max(len(marker) for marker in markers) - 1
+    carry = b""
+    file_offset = 0
+    chunk_size = 8 * 1024 * 1024
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            scan = carry + chunk
+            scan_base = file_offset - len(carry)
+            carry_len = len(carry)
+            for marker in markers:
+                start = 0
+                while True:
+                    idx = scan.find(marker, start)
+                    if idx < 0:
+                        break
+                    # Skip hits fully contained in the overlap; they were counted
+                    # during the previous chunk scan. Hits that start in the
+                    # overlap but finish in the new chunk are boundary matches.
+                    if idx + len(marker) > carry_len:
+                        counts[marker] += 1
+                        if len(offsets[marker]) < limit:
+                            offsets[marker].append(scan_base + idx)
+                    start = idx + 1
+            file_offset += len(chunk)
+            carry = scan[-overlap:] if overlap else b""
+    out: dict[str, Any] = {}
+    for marker in markers:
+        if counts[marker]:
+            out[marker.decode("ascii")] = {"count": counts[marker], "first_offsets": offsets[marker], "semantic": "raw-byte-hit"}
+    return out
+
+
+def file_record(path: Path, root: Path | None = None, scan_markers: bool = False) -> dict[str, Any]:
     rec: dict[str, Any] = {
         "path": str(path if root is None else path.relative_to(root)),
         "exists": path.exists(),
@@ -73,14 +121,18 @@ def file_record(path: Path, root: Path | None = None) -> dict[str, Any]:
         })
         if path.name.endswith("_cache.bin"):
             rec["observed_record_count"] = read_u16_be_count(path)
+        if scan_markers:
+            markers = raw_marker_hits(path, (b"MTLB", b"AIR", b"HASH", b"NAME", b"TYPE", b"OFFT", b"BCGI", b"CPCH"))
+            if markers:
+                rec["raw_markers"] = markers
     return rec
 
 
 def inventory_d3dmetal_game(game_root: Path) -> dict[str, Any]:
     cache = game_root / "shaders.cache"
     files = [p for p in cache.rglob("*") if p.is_file()] if cache.exists() else []
-    records = [file_record(cache / rel, cache) for rel in D3DM_CACHE_FILES]
-    extra = [file_record(p, cache) for p in sorted(files) if str(p.relative_to(cache)) not in D3DM_CACHE_FILES]
+    records = [file_record(cache / rel, cache, scan_markers=True) for rel in D3DM_CACHE_FILES]
+    extra = [file_record(p, cache, scan_markers=False) for p in sorted(files) if str(p.relative_to(cache)) not in D3DM_CACHE_FILES]
     counts = {r["path"]: r.get("observed_record_count") for r in records if r.get("observed_record_count") is not None}
     return {
         "cache": str(cache),
@@ -178,6 +230,23 @@ def write_markdown(result: dict[str, Any], path: Path) -> None:
         lines.append("### D3DMetal observed counts")
         for k, v in game["d3dmetal"].get("observed_counts", {}).items():
             lines.append(f"- `{k}`: `{v}`")
+        lines.append("")
+        lines.append("### D3DMetal raw embedded marker hits")
+        lines.append("")
+        lines.append("These counts are raw byte hits used as provenance hints; only the metallib extractor performs bounded `MTLB` blob validation.")
+        interesting = [
+            "MTLGPUFamilyApple9_0/stage_cache.bin",
+            "MTLGPUFamilyApple9_0/bytecode_cache.bin",
+            "MTLGPUFamilyApple9_0/pipeline_cache.bin",
+            "32024/libraries.data",
+        ]
+        for rec in game["d3dmetal"].get("records", []):
+            if rec.get("path") not in interesting or not rec.get("raw_markers"):
+                continue
+            marker_text = ", ".join(
+                f"{name}={data['count']}" for name, data in sorted(rec["raw_markers"].items())
+            )
+            lines.append(f"- `{rec['path']}`: {marker_text}")
         lines.append("")
         lines.append("### M12 suffix counts")
         for k, v in game["m12"].get("suffix_counts", {}).items():
