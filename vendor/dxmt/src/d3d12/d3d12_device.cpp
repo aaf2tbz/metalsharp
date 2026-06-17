@@ -29,6 +29,7 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#include <cstring>
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
 #include <windows.h>
@@ -154,6 +155,82 @@ namespace {
 
 static UINT64 AlignTo(UINT64 value, UINT64 alignment) {
   return alignment ? ((value + alignment - 1) & ~(alignment - 1)) : value;
+}
+
+static uint64_t M12PrewarmCanaryProfileKey(const char *profile) {
+  /* Phase 6 canary seam: keep profile gating deterministic without adding JSON
+   * parsing or filesystem ownership to the PE runtime.  The key mirrors the
+   * metadata-only pack builder for armored-core-vi-phase6-canary.
+   */
+  if (profile && std::strcmp(profile, "armored-core-vi-phase6-canary") == 0)
+    return 6599216494351459673ull;
+  return 0;
+}
+
+static void MaybeSummarizeM12PrewarmCanaryPack() {
+  char appid[32] = {};
+  char profile[128] = {};
+  GetEnvironmentVariableA("SteamAppId", appid, sizeof(appid));
+  GetEnvironmentVariableA("METALSHARP_M12_PREWARM_PROFILE", profile, sizeof(profile));
+  if (std::strcmp(appid, "1888160") != 0 ||
+      std::strcmp(profile, "armored-core-vi-phase6-canary") != 0)
+    return;
+
+  static const M12CorePrewarmStageRecord kStages[] = {
+      {1u, 0u, 18359022602548718342ull, 4081995432925139117ull, 4372988585528895670ull},
+      {2u, 0u, 4574710677111033360ull, 13697048094567345931ull, 4372988585528895670ull},
+      {1u, 0u, 10693315295998777497ull, 16359143669093319293ull, 15008368596020638759ull},
+      {2u, 0u, 4106638516147011422ull, 10437899590742795286ull, 15008368596020638759ull},
+      {1u, 0u, 16035443732846808213ull, 1925484872259180288ull, 15008368596020638759ull},
+      {2u, 0u, 8055504006868440490ull, 7418535056421654247ull, 15008368596020638759ull},
+      {1u, 0u, 14480408534607764115ull, 11117029579973566787ull, 15008368596020638759ull},
+      {2u, 0u, 1983699331532216197ull, 4528279490836767311ull, 15008368596020638759ull},
+      {1u, 0u, 12033463525917343604ull, 1047757849779299882ull, 15008368596020638759ull},
+      {2u, 0u, 10876690996631456997ull, 14161370396060886791ull, 15008368596020638759ull},
+      {1u, 0u, 17990626671176797084ull, 17820575985505877801ull, 15008368596020638759ull},
+      {2u, 0u, 8826990230099469991ull, 14150798331993410021ull, 15008368596020638759ull},
+      {1u, 0u, 17990626671176797084ull, 17820575985505877801ull, 15008368596020638759ull},
+      {2u, 0u, 11199708295071531167ull, 8076157582476337448ull, 15008368596020638759ull},
+      {1u, 0u, 12033463525917343604ull, 1047757849779299882ull, 15008368596020638759ull},
+      {2u, 0u, 10450962076831753295ull, 10323223594149887174ull, 15008368596020638759ull},
+  };
+  static const M12CorePrewarmPipelineRecord kPipelines[] = {
+      {6492753959904709503ull, 11511886237073770283ull, 4372988585528895670ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 0u, 0u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {16545992644340971322ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 1u, 2u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {6759725360340476680ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 2u, 4u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {1279911470253221490ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 3u, 6u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {16793749183117915003ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 4u, 8u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {11030123218881463972ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 5u, 10u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {2402882166940403569ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 6u, 12u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {6319903337167919291ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 7u, 14u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+  };
+
+  M12CorePrewarmPackDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.flags = M12CORE_PREWARM_PACK_OFFLINE_PROFILE_GATED |
+               M12CORE_PREWARM_PACK_HAS_PREWARM_ORDER;
+  desc.appid = 1888160ull;
+  desc.profile_key = M12PrewarmCanaryProfileKey(profile);
+  desc.source_pack_key = 9055005761176797849ull;
+  desc.pipelines = kPipelines;
+  desc.pipeline_count = sizeof(kPipelines) / sizeof(kPipelines[0]);
+  desc.stages = kStages;
+  desc.stage_count = sizeof(kStages) / sizeof(kStages[0]);
+
+  M12CorePrewarmPackSummary summary = {};
+  if (!WMTM12CoreSummarizePrewarmPack(&desc, &summary) ||
+      summary.status != M12CORE_PREWARM_PACK_STATUS_OK) {
+    Logger::warn("M12_PREWARM_PACK_SUMMARY unavailable profile=armored-core-vi-phase6-canary");
+    return;
+  }
+  Logger::info(str::format("M12_PREWARM_PACK_SUMMARY profile=armored-core-vi-phase6-canary pipelines=",
+                           summary.pipeline_count, " stages=", summary.stage_link_count,
+                           " render=", summary.render_pipeline_count,
+                           " compute=", summary.compute_pipeline_count,
+                           " roots=", summary.unique_root_count,
+                           " shaders=", summary.unique_shader_count,
+                           " ordered=", summary.ordered_pipeline_count,
+                           " key=0x", std::hex, summary.prewarm_pack_key, std::dec));
 }
 
 struct D3D12PsoPressureStats {
@@ -1826,6 +1903,7 @@ MTLD3D12Device::MTLD3D12Device(std::unique_ptr<Device> &&device,
     std::thread watcher(device_vtable_watcher);
     watcher.detach();
   }
+  MaybeSummarizeM12PrewarmCanaryPack();
   Logger::info("D3D12 device created via DXMT Metal backend");
 }
 
