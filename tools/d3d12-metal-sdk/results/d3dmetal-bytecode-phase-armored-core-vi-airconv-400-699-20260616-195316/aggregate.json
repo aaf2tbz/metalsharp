@@ -1,0 +1,63 @@
+{
+  "schema": "metalsharp.d3dmetal-bytecode-phase-summary.v1",
+  "game": "armored-core-vi",
+  "mode": "d3dmetal-only",
+  "stage": "airconv",
+  "range": "400-699",
+  "selected": 300,
+  "ok": 300,
+  "airconv_failures": 0,
+  "metal_failures": 0,
+  "failure_count": 0,
+  "note": "Unsupported DXIL stages are excluded by the validator; see bytecode extraction summary for unique unsupported-stage counts.",
+  "batches": [
+    {
+      "dir": "batch-400-449",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-450-499",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-500-549",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-550-599",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-600-649",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-650-699",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    }
+  ]
+}
