@@ -3,6 +3,7 @@
 #define __WINEMETAL_THUNKS_H
 
 #include "winemetal.h"
+#include "../m12core/m12core.h"
 
 #pragma pack(push, 8)
 
@@ -395,6 +396,12 @@ struct unixcall_mtldevice_newlibrary_source {
   uint64_t source_length;
   obj_handle_t ret_error;
   obj_handle_t ret_library;
+};
+
+struct unixcall_m12core_record_counters {
+  uint32_t counter_count;
+  uint32_t reserved;
+  uint64_t deltas[M12CORE_COUNTER_COUNT];
 };
 
 #pragma pack(pop)

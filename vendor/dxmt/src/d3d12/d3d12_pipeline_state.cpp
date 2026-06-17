@@ -3,6 +3,7 @@
 #include "d3d12_root_signature.hpp"
 #include "d3d12_trace.hpp"
 #include "d3d12_vertex_input.hpp"
+#include "d3d12_m12core_counters.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
@@ -1071,12 +1072,14 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
       if (type == ShaderType::Vertex)
         m_vs_uses_stage_in = false;
       uint64_t hits = ++g_shader_memory_cache_hits;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_SHADER_MEMORY_CACHE_HITS);
       Logger::info(str::format("PSO_PRESSURE shader_memory_cache_hit stage=", func_name,
                                " hash=0x", std::hex, hash, std::dec, " hits=", hits));
       return true;
     }
     if (reflection_independent_cache) {
       uint64_t misses = ++g_shader_memory_cache_misses;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_SHADER_MEMORY_CACHE_MISSES);
       Logger::info(str::format("PSO_PRESSURE shader_memory_cache_miss stage=", func_name,
                                " hash=0x", std::hex, hash, std::dec, " misses=", misses));
     }
@@ -1151,6 +1154,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           }
           if (!mf) {
             uint64_t misses = ++g_shader_metallib_cache_misses;
+            dxmt::m12core::RecordCounter(M12CORE_COUNTER_SHADER_METALLIB_CACHE_MISSES);
             Logger::info(str::format("PSO_PRESSURE shader_metallib_cache_miss stage=", func_name,
                                      " hash=0x", std::hex, hash, std::dec, " metallib_misses=", misses));
 
@@ -1326,6 +1330,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
 
           {
             uint64_t hits = ++g_shader_metallib_cache_hits;
+            dxmt::m12core::RecordCounter(M12CORE_COUNTER_SHADER_METALLIB_CACHE_HITS);
             Logger::info(str::format("PSO_PRESSURE shader_metallib_cache_hit stage=", func_name,
                                      " hash=0x", std::hex, hash, std::dec, " metallib_hits=", hits,
                                      " path=", metallib_path));
@@ -1735,6 +1740,8 @@ bool MTLD3D12PipelineState::Compile() {
                        .count();
     uint64_t waits = ++g_compile_wait_count;
     uint64_t total_ns = g_compile_wait_ns.fetch_add(wait_ns) + wait_ns;
+    dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPILE_WAIT_COUNT);
+    dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPILE_WAIT_NS, wait_ns);
     Logger::info(str::format("PSO_PRESSURE compile_wait pso=0x", std::hex,
                              reinterpret_cast<uintptr_t>(this), std::dec,
                              " compute=", m_is_compute, " wait_ns=", wait_ns,
@@ -1773,11 +1780,13 @@ bool MTLD3D12PipelineState::Compile() {
       if (cached != g_compute_pipeline_cache.end()) {
         m_compute_pso = cached->second;
         uint64_t hits = ++g_compute_pipeline_cache_hits;
+        dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_HITS);
         Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_hit key=0x",
                                  std::hex, compute_pipeline_cache_key, std::dec,
                                  " hits=", hits));
       } else {
         uint64_t misses = ++g_compute_pipeline_cache_misses;
+        dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_MISSES);
         Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_miss key=0x",
                                  std::hex, compute_pipeline_cache_key, std::dec,
                                  " misses=", misses));
@@ -1789,6 +1798,7 @@ bool MTLD3D12PipelineState::Compile() {
       for (uint32_t attempt = 0; attempt < 4; attempt++) {
         err = nullptr;
         uint64_t total = ++g_metal_compute_pipeline_creates;
+        dxmt::m12core::RecordCounter(M12CORE_COUNTER_METAL_COMPUTE_PIPELINE_CREATES);
         Logger::info(str::format("PSO_PRESSURE metal_compute_create total=", total,
                                  " attempt=", attempt + 1,
                                  " cs=0x", std::hex, cs_hash, std::dec));
@@ -2180,12 +2190,14 @@ bool MTLD3D12PipelineState::Compile() {
     if (cached != g_render_pipeline_cache.end()) {
       m_render_pso = cached->second;
       uint64_t hits = ++g_render_pipeline_cache_hits;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_HITS);
       Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_hit key=0x",
                                std::hex, render_pipeline_cache_key,
                                " pso=0x", pso_manifest_hash, std::dec,
                                " hits=", hits));
     } else {
       uint64_t misses = ++g_render_pipeline_cache_misses;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_MISSES);
       Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_miss key=0x",
                                std::hex, render_pipeline_cache_key,
                                " pso=0x", pso_manifest_hash, std::dec,
@@ -2198,6 +2210,7 @@ bool MTLD3D12PipelineState::Compile() {
     for (uint32_t attempt = 0; attempt < 4; attempt++) {
       err = nullptr;
       uint64_t total = ++g_metal_render_pipeline_creates;
+      dxmt::m12core::RecordCounter(M12CORE_COUNTER_METAL_RENDER_PIPELINE_CREATES);
       Logger::info(str::format("PSO_PRESSURE metal_render_create total=", total,
                                " attempt=", attempt + 1,
                                " pso=0x", std::hex, pso_manifest_hash,

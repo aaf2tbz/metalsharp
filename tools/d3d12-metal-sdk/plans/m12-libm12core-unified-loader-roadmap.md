@@ -227,7 +227,7 @@ scripts/stage-dxmt-runtime.py
 
 ## Phase 2: Move runtime counters and diagnostics into `libm12core`
 
-Status: counter ABI/storage foundation implemented in `tools/d3d12-metal-sdk/results/m12-libm12core-phase2-counters-20260617-001327/summary.md`. Remaining work: bridge D3D12 PE hot-path `PSO_PRESSURE` increments through winemetal into the native core without adding per-event overhead that regresses AC6.
+Status: complete. Counter ABI/storage foundation is recorded in `tools/d3d12-metal-sdk/results/m12-libm12core-phase2-counters-20260617-001327/summary.md`; PE hot-path `PSO_PRESSURE` batching through winemetal is recorded in `tools/d3d12-metal-sdk/results/m12-libm12core-phase2-pe-counter-bridge-20260617-004528/summary.md`.
 
 ### Work
 

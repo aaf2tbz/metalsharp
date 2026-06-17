@@ -43,6 +43,12 @@ WINEMETAL_API uint64_t NSArray_count(obj_handle_t array);
 
 WINEMETAL_API obj_handle_t WMTCopyAllDevices();
 
+/* Batched diagnostics bridge into optional libm12core.  This function is a
+ * best-effort no-op when the native core is disabled; callers should keep any
+ * correctness-critical state on the existing path.
+ */
+WINEMETAL_API bool WMTM12CoreRecordCounters(const uint64_t *deltas, uint32_t count);
+
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,
   WMTNEXTSTEPStringEncoding = 2,

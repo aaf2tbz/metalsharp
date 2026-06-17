@@ -8,6 +8,7 @@
 #include "d3d12_fence.hpp"
 #include "d3d12_heap.hpp"
 #include "d3d12_pipeline_state.hpp"
+#include "d3d12_m12core_counters.hpp"
 #include "d3d12_query_heap.hpp"
 #include "d3d12_resource.hpp"
 
@@ -233,14 +234,20 @@ static void RecordGraphicsPsoPressure(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &
   uint64_t total = ++stats.graphics_requests;
   uint64_t repeated = stats.graphics_repeated.load();
   size_t unique = 0;
+  bool was_repeated = false;
   uint64_t hash = GraphicsPsoPressureHash(desc);
   {
     std::lock_guard<std::mutex> lock(stats.mutex);
     auto inserted = stats.graphics_hashes.insert(hash).second;
     unique = stats.graphics_hashes.size();
-    if (!inserted)
+    if (!inserted) {
+      was_repeated = true;
       repeated = ++stats.graphics_repeated;
+    }
   }
+  dxmt::m12core::RecordCounter(M12CORE_COUNTER_GRAPHICS_PSO_REQUESTS);
+  if (was_repeated)
+    dxmt::m12core::RecordCounter(M12CORE_COUNTER_GRAPHICS_PSO_REPEATED);
   Logger::info(str::format("PSO_PRESSURE graphics_request total=", total,
                            " unique=", unique, " repeated=", repeated,
                            " hash=0x", std::hex, hash, " vs=0x", ShaderBytecodeHash64(desc.VS),
@@ -253,14 +260,20 @@ static void RecordComputePsoPressure(const D3D12_COMPUTE_PIPELINE_STATE_DESC &de
   uint64_t total = ++stats.compute_requests;
   uint64_t repeated = stats.compute_repeated.load();
   size_t unique = 0;
+  bool was_repeated = false;
   uint64_t hash = ComputePsoPressureHash(desc);
   {
     std::lock_guard<std::mutex> lock(stats.mutex);
     auto inserted = stats.compute_hashes.insert(hash).second;
     unique = stats.compute_hashes.size();
-    if (!inserted)
+    if (!inserted) {
+      was_repeated = true;
       repeated = ++stats.compute_repeated;
+    }
   }
+  dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PSO_REQUESTS);
+  if (was_repeated)
+    dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PSO_REPEATED);
   Logger::info(str::format("PSO_PRESSURE compute_request total=", total,
                            " unique=", unique, " repeated=", repeated,
                            " hash=0x", std::hex, hash,

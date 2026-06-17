@@ -43,6 +43,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 78: return "SM50DestroyBitcode";
   case 79: return "SM50GetErrorMessage";
   case 80: return "SM50FreeError";
+  case 135: return "WMTM12CoreRecordCounters";
   default: return "unknown";
   }
 }
@@ -190,6 +191,20 @@ WMTCopyAllDevices() {
   params.ret = 0;
   UNIX_CALL(4, &params);
   return params.ret;
+}
+
+WINEMETAL_API bool
+WMTM12CoreRecordCounters(const uint64_t *deltas, uint32_t count) {
+  struct unixcall_m12core_record_counters params;
+  memset(&params, 0, sizeof(params));
+  if (!deltas)
+    return false;
+
+  params.counter_count = count < M12CORE_COUNTER_COUNT ? count : M12CORE_COUNTER_COUNT;
+  for (uint32_t i = 0; i < params.counter_count; i++)
+    params.deltas[i] = deltas[i];
+
+  return winemetal_unix_call_ok(135, &params);
 }
 
 WINEMETAL_API uint64_t

@@ -1,0 +1,3 @@
+env_overrides= ['METALSHARP_M12CORE_DUMP_COUNTERS', 'METALSHARP_M12CORE_ENABLE', 'METALSHARP_M12CORE_REQUIRED']
+env_handoff_m12core= ['DXMT_M12CORE_DUMP_COUNTERS', 'DXMT_M12CORE_ENABLE', 'DXMT_M12CORE_REQUIRED']
+launch_log= /Users/alexmondello/.metalsharp/compatdata/1888160/logs/launch-1781678742.log

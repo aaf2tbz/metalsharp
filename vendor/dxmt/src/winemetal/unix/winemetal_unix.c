@@ -64,12 +64,16 @@ winemetal_critical_log(void) {
 typedef int (*PFN_m12core_get_version)(M12CoreVersion *out_version);
 typedef const char *(*PFN_m12core_build_string)(void);
 typedef int (*PFN_m12core_record_counter)(uint32_t counter_id, uint64_t delta);
+typedef int (*PFN_m12core_get_counters)(M12CoreCounterSnapshot *out_snapshot);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
 static PFN_m12core_get_version p_m12core_get_version;
 static PFN_m12core_build_string p_m12core_build_string;
 static PFN_m12core_record_counter p_m12core_record_counter;
+static PFN_m12core_get_counters p_m12core_get_counters;
+static _Atomic uint64_t m12core_bridge_batches;
+static _Atomic uint64_t m12core_bridge_delta_total;
 
 static bool
 m12core_env_enabled(const char *name) {
@@ -129,6 +133,8 @@ m12core_try_load(void) {
       (PFN_m12core_build_string)dlsym(m12core_handle, "m12core_build_string");
   p_m12core_record_counter =
       (PFN_m12core_record_counter)dlsym(m12core_handle, "m12core_record_counter");
+  p_m12core_get_counters =
+      (PFN_m12core_get_counters)dlsym(m12core_handle, "m12core_get_counters");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -142,6 +148,70 @@ m12core_try_load(void) {
   if (p_m12core_record_counter)
     p_m12core_record_counter(M12CORE_COUNTER_LOADER_LOAD_SUCCESS, 1);
   m12core_log_version(path, p_m12core_build_string ? p_m12core_build_string() : NULL);
+}
+
+__attribute__((destructor)) static void
+m12core_dump_counters_at_exit(void) {
+  if (!m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS") || !p_m12core_get_counters)
+    return;
+
+  M12CoreCounterSnapshot snapshot;
+  memset(&snapshot, 0, sizeof(snapshot));
+  if (p_m12core_get_counters(&snapshot) != 0)
+    return;
+
+  FILE *log = winemetal_critical_log();
+  if (!log)
+    return;
+  fprintf(log, "[m12core] counter_snapshot abi=%u count=%u bridge_batches=%llu bridge_deltas=%llu",
+          snapshot.abi_version, snapshot.counter_count,
+          (unsigned long long)atomic_load(&m12core_bridge_batches),
+          (unsigned long long)atomic_load(&m12core_bridge_delta_total));
+  uint32_t count = snapshot.counter_count;
+  if (count > M12CORE_COUNTER_COUNT)
+    count = M12CORE_COUNTER_COUNT;
+  for (uint32_t i = 0; i < count; i++) {
+    if (snapshot.values[i])
+      fprintf(log, " c%u=%llu", i, (unsigned long long)snapshot.values[i]);
+  }
+  fprintf(log, "\n");
+  fclose(log);
+}
+
+static NTSTATUS
+_WMTM12CoreRecordCounters(void *obj) {
+  struct unixcall_m12core_record_counters *params = obj;
+  if (!params || !p_m12core_record_counter)
+    return STATUS_SUCCESS;
+
+  /* This is the PE->native diagnostics bridge for Phase 2.  It is explicitly
+   * best-effort: libm12core is optional, and counter sync failures must never
+   * affect rendering.  The PE side batches deltas before crossing this unixcall
+   * boundary so AC6's hot PSO paths do not pay a syscall-style cost per event.
+   */
+  uint32_t count = params->counter_count;
+  if (count > M12CORE_COUNTER_COUNT)
+    count = M12CORE_COUNTER_COUNT;
+
+  uint64_t delta_total = 0;
+  for (uint32_t i = 0; i < count; i++) {
+    if (params->deltas[i]) {
+      delta_total += params->deltas[i];
+      p_m12core_record_counter(i, params->deltas[i]);
+    }
+  }
+
+  uint64_t batch = atomic_fetch_add(&m12core_bridge_batches, 1) + 1;
+  atomic_fetch_add(&m12core_bridge_delta_total, delta_total);
+  if (batch == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
+    FILE *log = winemetal_critical_log();
+    if (log) {
+      fprintf(log, "[m12core] counter_bridge first_batch counters=%u delta_total=%llu\n",
+              count, (unsigned long long)delta_total);
+      fclose(log);
+    }
+  }
+  return STATUS_SUCCESS;
 }
 
 static bool
@@ -3805,6 +3875,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLDevice_newLibraryWithSource,
     &_MTLLibrary_newFunctionWithDescriptor,
     &_MTLFunction_copyVertexAttributes,
+    &_WMTM12CoreRecordCounters,
 };
 
 #ifndef DXMT_NATIVE
@@ -3944,5 +4015,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLDevice_newLibraryWithSource,
     &_MTLLibrary_newFunctionWithDescriptor,
     &_MTLFunction_copyVertexAttributes,
+    &_WMTM12CoreRecordCounters,
 };
 #endif

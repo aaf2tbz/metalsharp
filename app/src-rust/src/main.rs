@@ -2132,6 +2132,7 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12CORE_ENABLE"
             | "METALSHARP_M12CORE_REQUIRED"
             | "METALSHARP_M12CORE_PATH"
+            | "METALSHARP_M12CORE_DUMP_COUNTERS"
     )
 }
 
@@ -2203,6 +2204,7 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12CORE_ENABLE" => upsert_env("DXMT_M12CORE_ENABLE", bool_value),
             "METALSHARP_M12CORE_REQUIRED" => upsert_env("DXMT_M12CORE_REQUIRED", bool_value),
             "METALSHARP_M12CORE_PATH" => upsert_env("DXMT_M12CORE_PATH", value),
+            "METALSHARP_M12CORE_DUMP_COUNTERS" => upsert_env("DXMT_M12CORE_DUMP_COUNTERS", bool_value),
             _ => {},
         }
         applied.push(key.clone());
@@ -2657,6 +2659,7 @@ mod tests {
                 "METALSHARP_M12CORE_ENABLE": "1",
                 "METALSHARP_M12CORE_REQUIRED": "0",
                 "METALSHARP_M12CORE_PATH": "/tmp/libm12core.dylib",
+                "METALSHARP_M12CORE_DUMP_COUNTERS": "1",
                 "UNRELATED_ENV": "1"
             }),
         );
@@ -2667,6 +2670,7 @@ mod tests {
         assert_eq!(
             applied,
             vec![
+                "METALSHARP_M12CORE_DUMP_COUNTERS".to_string(),
                 "METALSHARP_M12CORE_ENABLE".to_string(),
                 "METALSHARP_M12CORE_PATH".to_string(),
                 "METALSHARP_M12CORE_REQUIRED".to_string(),
@@ -2675,6 +2679,7 @@ mod tests {
         assert!(env.contains(&("DXMT_M12CORE_ENABLE".to_string(), "1".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_REQUIRED".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_PATH".to_string(), "/tmp/libm12core.dylib".to_string())));
+        assert!(env.contains(&("DXMT_M12CORE_DUMP_COUNTERS".to_string(), "1".to_string())));
         assert!(!env.iter().any(|(key, _)| key == "UNRELATED_ENV"));
     }
 }
