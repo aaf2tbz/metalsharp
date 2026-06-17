@@ -825,6 +825,33 @@ extern "C" int m12core_lookup_root_binding(
     return 0;
   }
 
+  if (desc->lookup_kind == M12CORE_ROOT_BINDING_LOOKUP_ROOT_DESCRIPTOR) {
+    /* Phase 5 root-descriptor lookup seam.  The lookup descriptor reuses
+     * range_type to carry the D3D12 root parameter type (CBV/SRV/UAV) for this
+     * lookup kind, preserving the fixed PE/unix payload while expanding native
+     * coverage beyond descriptor tables and static samplers.
+     */
+    for (uint32_t visibility_pass = 0; visibility_pass < 2; visibility_pass++) {
+      for (uint32_t p = 0; p < desc->parameter_count; p++) {
+        const auto &param = desc->parameters[p];
+        if (param.type != desc->range_type || param.type < 2 || param.type > 4)
+          continue;
+        if (param.register_index != desc->shader_register ||
+            param.register_space != desc->register_space)
+          continue;
+        if (visibility_pass == 0 && param.shader_visibility != desc->shader_visibility)
+          continue;
+        if (visibility_pass == 1 && param.shader_visibility != 0)
+          continue;
+        out_result->found = 1;
+        out_result->root_parameter_index = p;
+        out_result->visibility_fallback = visibility_pass == 1 ? 1u : 0u;
+        return 0;
+      }
+    }
+    return 0;
+  }
+
   out_result->status = M12CORE_ROOT_SIGNATURE_STATUS_INVALID;
   return 1;
 }

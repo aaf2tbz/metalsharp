@@ -376,6 +376,7 @@ typedef struct M12CoreRootBindingPlanSummary {
 typedef enum M12CoreRootBindingLookupKind {
   M12CORE_ROOT_BINDING_LOOKUP_DESCRIPTOR_RANGE = 1,
   M12CORE_ROOT_BINDING_LOOKUP_STATIC_SAMPLER = 2,
+  M12CORE_ROOT_BINDING_LOOKUP_ROOT_DESCRIPTOR = 3,
 } M12CoreRootBindingLookupKind;
 
 typedef struct M12CoreRootBindingLookupDesc {
