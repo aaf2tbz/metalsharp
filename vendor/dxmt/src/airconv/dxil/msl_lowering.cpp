@@ -2393,7 +2393,12 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t idx = args[arg];
         if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
             const auto &v = ctx.value_table[idx];
-            if (v.find('.') != std::string::npos) return fallback;
+            // Member/swizzle expressions are not safe generic scalar arguments, but
+            // DXIL float constants are stored as decimal strings (for example
+            // `1.000000e+00`). Preserve those literals instead of falling back to
+            // zero; otherwise storeOutput(SV_Position.w, 1.0) becomes clip-W 0.
+            if (v.find('.') != std::string::npos && !exprLooksScalarLiteral(v))
+                return fallback;
             return v;
         }
         return fallback;

@@ -1,0 +1,102 @@
+{
+  "selected": 12,
+  "ok": true,
+  "results": [
+    {
+      "vs_hash": "159922bca5a911bd",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-001b813b931818b8.json",
+      "elements": 8,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "967d11c10e2250d3",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-003019f4ef181c66.json",
+      "elements": 6,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "afb44dd81d651e16",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-00336ff3676c4f7a.json",
+      "elements": 13,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "77bd500cbd58c09a",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-01410a517e837386.json",
+      "elements": 7,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "9ee8c6cc473ff9ed",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-0178878795734b7f.json",
+      "elements": 13,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "bc78391873944339",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-01a8d5b708fc449c.json",
+      "elements": 9,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "63d0e672f8ab1679",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-0222fca8e2bf83b7.json",
+      "elements": 7,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "ca33abe9a2d27ce9",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-02bf1ce2b02e94ca.json",
+      "elements": 3,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 1.0f;"
+    },
+    {
+      "vs_hash": "05c33d3d19fb65e2",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-02c8a0e25ade00f5.json",
+      "elements": 13,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "0a42e0976e07ab10",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-02d2ab0c9214aeac.json",
+      "elements": 6,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "4f5427c4d23e9c73",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-02d9d3a91e89811d.json",
+      "elements": 15,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    },
+    {
+      "vs_hash": "edac4643953d29d5",
+      "manifest": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/pso-render-0314e53aeb3bc034.json",
+      "elements": 8,
+      "airconv_rc": 0,
+      "metal_rc": 0,
+      "position_w": "out.position.w = 0;"
+    }
+  ]
+}

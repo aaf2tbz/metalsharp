@@ -59,6 +59,12 @@ static cl::opt<bool>
 static cl::opt<bool>
   EmitMSL("emit-msl", cl::init(false), cl::desc("Write DXIL input as generated MSL source"));
 
+static cl::list<std::string> MSLVertexInputs(
+  "msl-vertex-input",
+  cl::desc("Vertex input for --emit-msl as reg,table,slot,offset,dxgi,metal,per_instance,step,raw_slot,system_value"),
+  cl::ZeroOrMore
+);
+
 static cl::opt<bool> DisassembleDXBC(
   "disas-dxbc", cl::init(false), cl::desc("Disassemble dxbc shader")
 );
@@ -235,7 +241,34 @@ int main(int argc, char **argv) {
       errs() << "failed to parse DXIL bitcode\n";
       return 1;
     }
-    auto lowered = dxmt::dxil::MSLLowering::lower(*module, container->shader());
+    dxmt::dxil::MSLLoweringOptions lowering_options = {};
+    for (const auto &spec : MSLVertexInputs) {
+      unsigned reg = 0, table = 0, slot = 0, offset = 0, dxgi = 0, metal = 0;
+      unsigned per_instance = 0, step = 1, raw_slot = 0, system_value = 0;
+      int parsed = std::sscanf(
+        spec.c_str(), "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u",
+        &reg, &table, &slot, &offset, &dxgi, &metal, &per_instance, &step,
+        &raw_slot, &system_value);
+      if (parsed != 10) {
+        errs() << "invalid --msl-vertex-input: " << spec << '\n';
+        return 1;
+      }
+      dxmt::dxil::MSLVertexInputElement element = {};
+      element.shader_register = reg;
+      element.table_index = table;
+      element.input_slot = slot;
+      element.aligned_byte_offset = offset;
+      element.dxgi_format = dxgi;
+      element.metal_format = metal;
+      element.per_instance = per_instance != 0;
+      element.instance_step_rate = step;
+      element.table_indexing_mode = raw_slot
+        ? dxmt::dxil::MSLVertexTableIndexingMode::RawSlot
+        : dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
+      element.system_value = system_value != 0;
+      lowering_options.vertex_inputs.push_back(element);
+    }
+    auto lowered = dxmt::dxil::MSLLowering::lower(*module, container->shader(), lowering_options);
     if (!lowered) {
       errs() << "failed to lower DXIL to MSL\n";
       return 1;
