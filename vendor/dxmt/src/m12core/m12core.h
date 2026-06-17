@@ -34,6 +34,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_PIPELINE_CACHE = 1u << 6,
   M12CORE_FEATURE_PIPELINE_CREATION = 1u << 7,
   M12CORE_FEATURE_ROOT_SIGNATURE_KEYS = 1u << 8,
+  M12CORE_FEATURE_ROOT_BINDING_PLAN = 1u << 9,
 };
 
 typedef struct M12CoreVersion {
@@ -310,6 +311,102 @@ typedef struct M12CoreRootSignatureSummary {
   uint64_t root_signature_key;
 } M12CoreRootSignatureSummary;
 
+typedef struct M12CoreRootBindingParameter {
+  uint32_t type;
+  uint32_t shader_visibility;
+  uint32_t register_space;
+  uint32_t register_index;
+  uint32_t num_descriptors;
+  uint32_t num_32bit_values;
+  uint32_t descriptor_flags;
+  uint32_t range_start;
+  uint32_t range_count;
+  uint32_t reserved[3];
+} M12CoreRootBindingParameter;
+
+typedef struct M12CoreRootBindingRange {
+  uint32_t range_type;
+  uint32_t num_descriptors;
+  uint32_t base_register;
+  uint32_t register_space;
+  uint32_t offset_in_table;
+  uint32_t flags;
+} M12CoreRootBindingRange;
+
+typedef struct M12CoreStaticSamplerBinding {
+  uint32_t shader_register;
+  uint32_t register_space;
+  uint32_t shader_visibility;
+  uint32_t reserved;
+} M12CoreStaticSamplerBinding;
+
+typedef struct M12CoreRootBindingPlanDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint64_t root_signature_key;
+  const M12CoreRootBindingParameter *parameters;
+  uint32_t parameter_count;
+  uint32_t reserved0;
+  const M12CoreRootBindingRange *ranges;
+  uint32_t range_count;
+  uint32_t reserved1;
+  const M12CoreStaticSamplerBinding *static_samplers;
+  uint32_t static_sampler_count;
+  uint32_t reserved2;
+} M12CoreRootBindingPlanDesc;
+
+typedef struct M12CoreRootBindingPlanSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t parameter_count;
+  uint32_t descriptor_table_count;
+  uint32_t descriptor_range_count;
+  uint32_t root_descriptor_count;
+  uint32_t root_constant_count;
+  uint32_t static_sampler_count;
+  uint32_t resource_range_count;
+  uint32_t sampler_range_count;
+  uint32_t unbounded_range_count;
+  uint32_t visibility_specific_count;
+  uint32_t register_space_count;
+  uint32_t max_descriptor_table_span;
+  uint64_t binding_plan_key;
+} M12CoreRootBindingPlanSummary;
+
+typedef enum M12CoreRootBindingLookupKind {
+  M12CORE_ROOT_BINDING_LOOKUP_DESCRIPTOR_RANGE = 1,
+  M12CORE_ROOT_BINDING_LOOKUP_STATIC_SAMPLER = 2,
+} M12CoreRootBindingLookupKind;
+
+typedef struct M12CoreRootBindingLookupDesc {
+  uint32_t abi_version;
+  uint32_t lookup_kind;
+  uint32_t range_type;
+  uint32_t shader_register;
+  uint32_t register_space;
+  uint32_t shader_visibility;
+  const M12CoreRootBindingParameter *parameters;
+  uint32_t parameter_count;
+  uint32_t reserved0;
+  const M12CoreRootBindingRange *ranges;
+  uint32_t range_count;
+  uint32_t reserved1;
+  const M12CoreStaticSamplerBinding *static_samplers;
+  uint32_t static_sampler_count;
+  uint32_t reserved2;
+} M12CoreRootBindingLookupDesc;
+
+typedef struct M12CoreRootBindingLookupResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t found;
+  uint32_t root_parameter_index;
+  uint32_t range_index;
+  uint32_t descriptor_offset;
+  uint32_t visibility_fallback;
+  uint32_t reserved;
+} M12CoreRootBindingLookupResult;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -412,6 +509,10 @@ int m12core_create_pipeline_state(const M12CorePipelineCreateDesc *desc,
                                   M12CorePipelineCreateResult *out_result);
 int m12core_summarize_root_signature(const M12CoreRootSignatureDesc *desc,
                                      M12CoreRootSignatureSummary *out_summary);
+int m12core_build_root_binding_plan(const M12CoreRootBindingPlanDesc *desc,
+                                    M12CoreRootBindingPlanSummary *out_summary);
+int m12core_lookup_root_binding(const M12CoreRootBindingLookupDesc *desc,
+                                M12CoreRootBindingLookupResult *out_result);
 
 #ifdef __cplusplus
 }

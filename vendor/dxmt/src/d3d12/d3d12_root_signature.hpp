@@ -105,6 +105,8 @@ public:
   bool HasM12CoreSummary() const { return m_core_summary_valid; }
   uint64_t GetM12CoreRootSignatureKey() const { return m_core_root_signature_key; }
   const M12CoreRootSignatureSummary &GetM12CoreSummary() const { return m_core_summary; }
+  bool HasM12CoreBindingPlan() const { return m_core_binding_plan_valid; }
+  const M12CoreRootBindingPlanSummary &GetM12CoreBindingPlanSummary() const { return m_core_binding_plan_summary; }
 
 private:
   void Parse(const void *blob, SIZE_T blob_size);
@@ -119,6 +121,8 @@ private:
   bool m_core_summary_valid = false;
   uint64_t m_core_root_signature_key = 0;
   M12CoreRootSignatureSummary m_core_summary = {};
+  bool m_core_binding_plan_valid = false;
+  M12CoreRootBindingPlanSummary m_core_binding_plan_summary = {};
   std::atomic<uint32_t> m_refCount = {1ul};
 };
 

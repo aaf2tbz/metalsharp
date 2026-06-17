@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <utility>
+#include <vector>
 #include <sys/stat.h>
 
 /*
@@ -29,7 +30,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000009u; // Phase-5 root-signature key foundation.
+constexpr uint32_t kBuildIdHigh = 0x0000000au; // Phase-5 root binding plan foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -144,14 +145,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_SM50_REFLECTION |
                                M12CORE_FEATURE_PIPELINE_CACHE |
                                M12CORE_FEATURE_PIPELINE_CREATION |
-                               M12CORE_FEATURE_ROOT_SIGNATURE_KEYS;
+                               M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
+                               M12CORE_FEATURE_ROOT_BINDING_PLAN;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase5 root-signature-key abi=1";
+  return "libm12core phase5 root-binding-plan abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -636,4 +638,193 @@ extern "C" int m12core_summarize_root_signature(
   out_summary->static_sampler_count = desc->static_sampler_count;
   out_summary->root_signature_key = key;
   return 0;
+}
+
+extern "C" int m12core_build_root_binding_plan(
+    const M12CoreRootBindingPlanDesc *desc,
+    M12CoreRootBindingPlanSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  if ((desc->parameter_count && !desc->parameters) ||
+      (desc->range_count && !desc->ranges) ||
+      (desc->static_sampler_count && !desc->static_samplers))
+    return 1;
+
+  /* Phase 5 binding-plan seam.  The PE side still executes all live binding,
+   * but root-signature creation now sends a POD description to libm12core so
+   * native code can construct the descriptor/register-space view once instead
+   * of learning it from per-draw hot paths.  The summary/key are diagnostics
+   * for now and a fallback-safe migration point for future argument buffers.
+   */
+  uint64_t key = desc->root_signature_key ? desc->root_signature_key
+                                          : 0x4d313242504c414eull;
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->parameter_count);
+  pipelineHashCombine(key, desc->range_count);
+  pipelineHashCombine(key, desc->static_sampler_count);
+
+  uint32_t descriptor_tables = 0;
+  uint32_t root_descriptors = 0;
+  uint32_t root_constants = 0;
+  uint32_t resource_ranges = 0;
+  uint32_t sampler_ranges = 0;
+  uint32_t unbounded_ranges = 0;
+  uint32_t visibility_specific = 0;
+  uint32_t max_table_span = 0;
+  std::vector<uint32_t> register_spaces;
+
+  for (uint32_t i = 0; i < desc->parameter_count; i++) {
+    const auto &param = desc->parameters[i];
+    pipelineHashCombine(key, param.type);
+    pipelineHashCombine(key, param.shader_visibility);
+    pipelineHashCombine(key, param.register_space);
+    pipelineHashCombine(key, param.register_index);
+    pipelineHashCombine(key, param.num_descriptors);
+    pipelineHashCombine(key, param.num_32bit_values);
+    pipelineHashCombine(key, param.descriptor_flags);
+    pipelineHashCombine(key, param.range_start);
+    pipelineHashCombine(key, param.range_count);
+
+    if (param.shader_visibility != 0)
+      visibility_specific++;
+    if (std::find(register_spaces.begin(), register_spaces.end(),
+                  param.register_space) == register_spaces.end())
+      register_spaces.push_back(param.register_space);
+
+    if (param.type == 0)
+      descriptor_tables++;
+    else if (param.type == 1)
+      root_constants++;
+    else if (param.type >= 2 && param.type <= 4)
+      root_descriptors++;
+  }
+
+  for (uint32_t i = 0; i < desc->range_count; i++) {
+    const auto &range = desc->ranges[i];
+    pipelineHashCombine(key, range.range_type);
+    pipelineHashCombine(key, range.num_descriptors);
+    pipelineHashCombine(key, range.base_register);
+    pipelineHashCombine(key, range.register_space);
+    pipelineHashCombine(key, range.offset_in_table);
+    pipelineHashCombine(key, range.flags);
+
+    if (std::find(register_spaces.begin(), register_spaces.end(),
+                  range.register_space) == register_spaces.end())
+      register_spaces.push_back(range.register_space);
+    if (range.range_type == 3)
+      sampler_ranges++;
+    else
+      resource_ranges++;
+    if (range.num_descriptors == UINT32_MAX)
+      unbounded_ranges++;
+    else
+      max_table_span = std::max(max_table_span,
+                                range.offset_in_table + range.num_descriptors);
+  }
+
+  for (uint32_t i = 0; i < desc->static_sampler_count; i++) {
+    const auto &sampler = desc->static_samplers[i];
+    pipelineHashCombine(key, sampler.shader_register);
+    pipelineHashCombine(key, sampler.register_space);
+    pipelineHashCombine(key, sampler.shader_visibility);
+    if (sampler.shader_visibility != 0)
+      visibility_specific++;
+    if (std::find(register_spaces.begin(), register_spaces.end(),
+                  sampler.register_space) == register_spaces.end())
+      register_spaces.push_back(sampler.register_space);
+  }
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_ROOT_SIGNATURE_STATUS_OK;
+  out_summary->parameter_count = desc->parameter_count;
+  out_summary->descriptor_table_count = descriptor_tables;
+  out_summary->descriptor_range_count = desc->range_count;
+  out_summary->root_descriptor_count = root_descriptors;
+  out_summary->root_constant_count = root_constants;
+  out_summary->static_sampler_count = desc->static_sampler_count;
+  out_summary->resource_range_count = resource_ranges;
+  out_summary->sampler_range_count = sampler_ranges;
+  out_summary->unbounded_range_count = unbounded_ranges;
+  out_summary->visibility_specific_count = visibility_specific;
+  out_summary->register_space_count = static_cast<uint32_t>(register_spaces.size());
+  out_summary->max_descriptor_table_span = max_table_span;
+  out_summary->binding_plan_key = key;
+  return 0;
+}
+
+extern "C" int m12core_lookup_root_binding(
+    const M12CoreRootBindingLookupDesc *desc,
+    M12CoreRootBindingLookupResult *out_result) {
+  if (!desc || !out_result || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  if ((desc->parameter_count && !desc->parameters) ||
+      (desc->range_count && !desc->ranges) ||
+      (desc->static_sampler_count && !desc->static_samplers))
+    return 1;
+
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  out_result->status = M12CORE_ROOT_SIGNATURE_STATUS_OK;
+  out_result->found = 0;
+  out_result->root_parameter_index = UINT32_MAX;
+  out_result->range_index = UINT32_MAX;
+  out_result->descriptor_offset = 0;
+  out_result->visibility_fallback = 0;
+
+  if (desc->lookup_kind == M12CORE_ROOT_BINDING_LOOKUP_DESCRIPTOR_RANGE) {
+    for (uint32_t visibility_pass = 0; visibility_pass < 2; visibility_pass++) {
+      for (uint32_t p = 0; p < desc->parameter_count; p++) {
+        const auto &param = desc->parameters[p];
+        if (param.type != 0)
+          continue;
+        if (visibility_pass == 0 && param.shader_visibility != desc->shader_visibility)
+          continue;
+        if (visibility_pass == 1 && param.shader_visibility != 0)
+          continue;
+        const uint32_t range_end = param.range_start + param.range_count;
+        if (range_end < param.range_start || range_end > desc->range_count)
+          continue;
+        for (uint32_t r = param.range_start; r < range_end; r++) {
+          const auto &range = desc->ranges[r];
+          if (range.range_type != desc->range_type ||
+              range.register_space != desc->register_space ||
+              desc->shader_register < range.base_register)
+            continue;
+          const uint32_t relative = desc->shader_register - range.base_register;
+          if (range.num_descriptors != UINT32_MAX &&
+              relative >= range.num_descriptors)
+            continue;
+          out_result->found = 1;
+          out_result->root_parameter_index = p;
+          out_result->range_index = r;
+          out_result->descriptor_offset = range.offset_in_table + relative;
+          out_result->visibility_fallback = visibility_pass == 1 ? 1u : 0u;
+          return 0;
+        }
+      }
+    }
+    return 0;
+  }
+
+  if (desc->lookup_kind == M12CORE_ROOT_BINDING_LOOKUP_STATIC_SAMPLER) {
+    for (uint32_t visibility_pass = 0; visibility_pass < 2; visibility_pass++) {
+      for (uint32_t i = 0; i < desc->static_sampler_count; i++) {
+        const auto &sampler = desc->static_samplers[i];
+        if (sampler.shader_register != desc->shader_register ||
+            sampler.register_space != desc->register_space)
+          continue;
+        if (visibility_pass == 0 && sampler.shader_visibility != desc->shader_visibility)
+          continue;
+        if (visibility_pass == 1 && sampler.shader_visibility != 0)
+          continue;
+        out_result->found = 1;
+        out_result->range_index = i;
+        out_result->visibility_fallback = visibility_pass == 1 ? 1u : 0u;
+        return 0;
+      }
+    }
+    return 0;
+  }
+
+  out_result->status = M12CORE_ROOT_SIGNATURE_STATUS_INVALID;
+  return 1;
 }

@@ -57,6 +57,8 @@ winemetal_unix_call_name(unsigned int code) {
   case 146: return "WMTM12CoreMakePipelineCacheKeyFromFields";
   case 147: return "WMTM12CoreCreatePipelineState";
   case 148: return "WMTM12CoreSummarizeRootSignature";
+  case 149: return "WMTM12CoreBuildRootBindingPlan";
+  case 150: return "WMTM12CoreLookupRootBinding";
   default: return "unknown";
   }
 }
@@ -488,6 +490,61 @@ WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc,
     return false;
 
   *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDesc *desc,
+                               M12CoreRootBindingPlanSummary *out_summary) {
+  struct unixcall_m12core_build_root_binding_plan params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Phase 5 binding-plan bridge: pass only fixed-width arrays of public C ABI
+   * records.  Native construction is diagnostic for now; PE-local binding stays
+   * authoritative if the core or unixcall is unavailable.
+   */
+  params.abi_version = desc->abi_version;
+  params.flags = desc->flags;
+  params.root_signature_key = desc->root_signature_key;
+  params.parameter_count = desc->parameter_count;
+  WMT_MEMPTR_SET(params.parameters, desc->parameters);
+  params.range_count = desc->range_count;
+  WMT_MEMPTR_SET(params.ranges, desc->ranges);
+  params.static_sampler_count = desc->static_sampler_count;
+  WMT_MEMPTR_SET(params.static_samplers, desc->static_samplers);
+  if (!winemetal_unix_call_ok(149, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc,
+                            M12CoreRootBindingLookupResult *out_result) {
+  struct unixcall_m12core_lookup_root_binding params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_result)
+    return false;
+
+  params.abi_version = desc->abi_version;
+  params.lookup_kind = desc->lookup_kind;
+  params.range_type = desc->range_type;
+  params.shader_register = desc->shader_register;
+  params.register_space = desc->register_space;
+  params.shader_visibility = desc->shader_visibility;
+  params.parameter_count = desc->parameter_count;
+  WMT_MEMPTR_SET(params.parameters, desc->parameters);
+  params.range_count = desc->range_count;
+  WMT_MEMPTR_SET(params.ranges, desc->ranges);
+  params.static_sampler_count = desc->static_sampler_count;
+  WMT_MEMPTR_SET(params.static_samplers, desc->static_samplers);
+  if (!winemetal_unix_call_ok(150, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
   return true;
 }
 

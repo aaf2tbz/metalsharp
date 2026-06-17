@@ -534,6 +534,41 @@ struct unixcall_m12core_summarize_root_signature {
   M12CoreRootSignatureSummary ret_summary;
 };
 
+struct unixcall_m12core_build_root_binding_plan {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint64_t root_signature_key;
+  struct WMTConstMemoryPointer parameters;
+  uint32_t parameter_count;
+  uint32_t reserved0;
+  struct WMTConstMemoryPointer ranges;
+  uint32_t range_count;
+  uint32_t reserved1;
+  struct WMTConstMemoryPointer static_samplers;
+  uint32_t static_sampler_count;
+  uint32_t ret_success;
+  M12CoreRootBindingPlanSummary ret_summary;
+};
+
+struct unixcall_m12core_lookup_root_binding {
+  uint32_t abi_version;
+  uint32_t lookup_kind;
+  uint32_t range_type;
+  uint32_t shader_register;
+  uint32_t register_space;
+  uint32_t shader_visibility;
+  struct WMTConstMemoryPointer parameters;
+  uint32_t parameter_count;
+  uint32_t reserved0;
+  struct WMTConstMemoryPointer ranges;
+  uint32_t range_count;
+  uint32_t reserved1;
+  struct WMTConstMemoryPointer static_samplers;
+  uint32_t static_sampler_count;
+  uint32_t ret_success;
+  M12CoreRootBindingLookupResult ret_result;
+};
+
 #pragma pack(pop)
 
 #endif

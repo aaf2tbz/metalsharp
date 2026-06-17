@@ -102,6 +102,10 @@ typedef int (*PFN_m12core_create_pipeline_state)(const M12CorePipelineCreateDesc
                                                  M12CorePipelineCreateResult *out_result);
 typedef int (*PFN_m12core_summarize_root_signature)(const M12CoreRootSignatureDesc *desc,
                                                     M12CoreRootSignatureSummary *out_summary);
+typedef int (*PFN_m12core_build_root_binding_plan)(const M12CoreRootBindingPlanDesc *desc,
+                                                   M12CoreRootBindingPlanSummary *out_summary);
+typedef int (*PFN_m12core_lookup_root_binding)(const M12CoreRootBindingLookupDesc *desc,
+                                               M12CoreRootBindingLookupResult *out_result);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -122,6 +126,8 @@ static PFN_m12core_store_pipeline_cache p_m12core_store_pipeline_cache;
 static PFN_m12core_make_pipeline_cache_key_from_fields p_m12core_make_pipeline_cache_key_from_fields;
 static PFN_m12core_create_pipeline_state p_m12core_create_pipeline_state;
 static PFN_m12core_summarize_root_signature p_m12core_summarize_root_signature;
+static PFN_m12core_build_root_binding_plan p_m12core_build_root_binding_plan;
+static PFN_m12core_lookup_root_binding p_m12core_lookup_root_binding;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -216,6 +222,10 @@ m12core_try_load(void) {
       (PFN_m12core_create_pipeline_state)dlsym(m12core_handle, "m12core_create_pipeline_state");
   p_m12core_summarize_root_signature =
       (PFN_m12core_summarize_root_signature)dlsym(m12core_handle, "m12core_summarize_root_signature");
+  p_m12core_build_root_binding_plan =
+      (PFN_m12core_build_root_binding_plan)dlsym(m12core_handle, "m12core_build_root_binding_plan");
+  p_m12core_lookup_root_binding =
+      (PFN_m12core_lookup_root_binding)dlsym(m12core_handle, "m12core_lookup_root_binding");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -590,6 +600,54 @@ _WMTM12CoreSummarizeRootSignature(void *obj) {
   desc.field_count = params->field_count;
   params->ret_success =
       p_m12core_summarize_root_signature(&desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreBuildRootBindingPlan(void *obj) {
+  struct unixcall_m12core_build_root_binding_plan *params = obj;
+  if (!params || !p_m12core_build_root_binding_plan)
+    return STATUS_SUCCESS;
+
+  /* Phase 5 binding-plan bridge.  Rehydrate the public POD array pointers on
+   * the unix side, but leave live D3D12 binding on the existing PE fallback.
+   */
+  M12CoreRootBindingPlanDesc desc = {0};
+  desc.abi_version = params->abi_version;
+  desc.flags = params->flags;
+  desc.root_signature_key = params->root_signature_key;
+  desc.parameters = params->parameters.ptr;
+  desc.parameter_count = params->parameter_count;
+  desc.ranges = params->ranges.ptr;
+  desc.range_count = params->range_count;
+  desc.static_samplers = params->static_samplers.ptr;
+  desc.static_sampler_count = params->static_sampler_count;
+  params->ret_success =
+      p_m12core_build_root_binding_plan(&desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreLookupRootBinding(void *obj) {
+  struct unixcall_m12core_lookup_root_binding *params = obj;
+  if (!params || !p_m12core_lookup_root_binding)
+    return STATUS_SUCCESS;
+
+  M12CoreRootBindingLookupDesc desc = {0};
+  desc.abi_version = params->abi_version;
+  desc.lookup_kind = params->lookup_kind;
+  desc.range_type = params->range_type;
+  desc.shader_register = params->shader_register;
+  desc.register_space = params->register_space;
+  desc.shader_visibility = params->shader_visibility;
+  desc.parameters = params->parameters.ptr;
+  desc.parameter_count = params->parameter_count;
+  desc.ranges = params->ranges.ptr;
+  desc.range_count = params->range_count;
+  desc.static_samplers = params->static_samplers.ptr;
+  desc.static_sampler_count = params->static_sampler_count;
+  params->ret_success =
+      p_m12core_lookup_root_binding(&desc, &params->ret_result) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4268,6 +4326,8 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreMakePipelineCacheKeyFromFields,
     &_WMTM12CoreCreatePipelineState,
     &_WMTM12CoreSummarizeRootSignature,
+    &_WMTM12CoreBuildRootBindingPlan,
+    &_WMTM12CoreLookupRootBinding,
 };
 
 #ifndef DXMT_NATIVE
@@ -4421,5 +4481,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreMakePipelineCacheKeyFromFields,
     &_WMTM12CoreCreatePipelineState,
     &_WMTM12CoreSummarizeRootSignature,
+    &_WMTM12CoreBuildRootBindingPlan,
+    &_WMTM12CoreLookupRootBinding,
 };
 #endif
