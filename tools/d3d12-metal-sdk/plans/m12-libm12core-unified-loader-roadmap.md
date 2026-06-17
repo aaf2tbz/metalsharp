@@ -490,6 +490,81 @@ winemetal.so   native loader + Wine unixlib integration
 libm12core     actual renderer/runtime core
 ```
 
+## Phase 10: Cache-first warm start and reusable runtime cache index
+
+### Why
+
+After the core mechanics are observable, M12 should stop treating every launch as if it starts from zero.  The model is the same as a browser DNS/cache lookup:
+
+```text
+Game asks for a shader/PSO/root/binding artifact
+  -> ask the per-game M12 cache index first
+    -> if a compatible entry exists, reuse it immediately
+    -> otherwise create/compile/validate normally, then record it for next time
+```
+
+The goal is immediate runtime improvement for cache-warm launches: skip avoidable shader translation, Metal function creation, PSO key normalization work, and prewarm scheduling when the game/device/runtime state already has a proven-compatible artifact.
+
+### Work
+
+Build a cache-first warm-start layer owned by `libm12core`:
+
+- per-game persistent cache index keyed by appid/profile/device/runtime ABI
+- shader-function cache manifest with bytecode hash, source format, compiler options, MSL/lowering version, reflection summary, and Metal function availability
+- render/compute PSO cache manifest with normalized PSO key, root structural key, shader hashes, render/depth/sample state, vertex-layout summary, and Metal pipeline compatibility metadata
+- root/binding-plan cache manifest with root structural key, binding-plan hash, argument-layout summary, and lookup-version stamp
+- prewarm-pack queue cache with profile key, source pack key, ordered pipeline keys, and completion/validation status
+- cache-first lookup API that can answer:
+  - known-good hit: reuse and skip creation/prewarm
+  - known-stale hit: invalidate and rebuild
+  - miss: proceed through normal runtime creation path
+- negative-cache entries for known unsupported/failed translation shapes, with versioned invalidation so fixed translators retry later
+- cache health diagnostics and per-launch counters:
+  - cache index loaded/missing/stale/corrupt
+  - shader/PSO/root/prewarm hits and misses
+  - skipped shader compiles
+  - skipped Metal pipeline creates
+  - invalidation reasons
+  - fallback rebuild counts
+
+### Safety / invalidation rules
+
+Cache hits are only valid when all compatibility dimensions match:
+
+- appid/profile
+- GPU/device identity and feature set
+- `libm12core` ABI/build id and relevant feature flags
+- shader translator/lowering/reflection version
+- root structural key and binding-plan version
+- normalized PSO key including render/depth/sample/vertex state
+- Metal OS/toolchain compatibility where applicable
+- cache schema version and integrity hash
+
+If any required dimension is missing or mismatched, the runtime must treat the entry as stale and rebuild through the existing fallback path.  Stale cache reuse must never be allowed to bypass root/resource-layout validation.
+
+### Current source to build from
+
+```text
+vendor/dxmt/src/m12core/m12core.cpp/.h
+vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp/.hpp
+vendor/dxmt/src/d3d12/d3d12_root_signature.cpp/.hpp
+vendor/dxmt/src/d3d12/d3d12_device.cpp
+tools/d3d12-metal-sdk/scripts/build-m12-prewarm-pack.py
+tools/d3d12-metal-sdk/scripts/verify-m12-cache-freshness.py
+```
+
+### Done when
+
+- A cache-warm AC6 launch proves that compatible shader/PSO/root/prewarm artifacts are found before creation work.
+- Per-launch metrics show real skipped work, not just cache files existing on disk:
+  - shader compile/translation skips
+  - Metal function reuse
+  - Metal render/compute pipeline reuse
+  - prewarm queue skipped because it is already satisfied
+- Cache-cold behavior remains unchanged and fallback-safe.
+- Cache invalidation can be demonstrated by changing a runtime ABI/build id or translator version and observing stale entries rebuild rather than reuse.
+- No raw D3DMetal metallibs/cache payloads are committed or trusted as compatible runtime artifacts.
+
 ## Validation matrix
 
 Each phase should pass:
