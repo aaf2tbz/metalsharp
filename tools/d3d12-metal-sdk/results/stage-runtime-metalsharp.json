@@ -13,19 +13,19 @@
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/d3d12/d3d12.dll",
         "exists": true,
         "size": 54553806,
-        "sha256": "f0f971a3cb2dc76803c3e9d537929bf99aa62cf97c32ce4b7ff3bcc03463665d"
+        "sha256": "f1626f1186d95904ac3c7c6ee71379499fc2342db64afc4b7e4d1ce529fcf3c0"
       },
       "destination_before": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
         "exists": true,
         "size": 54553806,
-        "sha256": "0714fb0b3ab40dcc64a5270a451b729b1f80cd39793dece06f196b786c4798ec"
+        "sha256": "f0f971a3cb2dc76803c3e9d537929bf99aa62cf97c32ce4b7ff3bcc03463665d"
       },
       "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
         "exists": true,
         "size": 54553806,
-        "sha256": "f0f971a3cb2dc76803c3e9d537929bf99aa62cf97c32ce4b7ff3bcc03463665d"
+        "sha256": "f1626f1186d95904ac3c7c6ee71379499fc2342db64afc4b7e4d1ce529fcf3c0"
       },
       "copied": true,
       "match": true
@@ -57,19 +57,19 @@
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/dxgi/dxgi_dxmt.dll",
         "exists": true,
         "size": 20376965,
-        "sha256": "e92a9c02e50224cc36eef763cf5cf99220022bad289511aff5e5e1cacd2e5d67"
+        "sha256": "74dffe32c3eb53457b38922cf7c1266df7ed568bbb8e60d4a4b3e5b3955029f9"
       },
       "destination_before": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
         "exists": true,
         "size": 20376965,
-        "sha256": "869b8fe1a7860c3c615735f36d48b7a6591df030042b0824b09136bd41cbc537"
+        "sha256": "e92a9c02e50224cc36eef763cf5cf99220022bad289511aff5e5e1cacd2e5d67"
       },
       "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
         "exists": true,
         "size": 20376965,
-        "sha256": "e92a9c02e50224cc36eef763cf5cf99220022bad289511aff5e5e1cacd2e5d67"
+        "sha256": "74dffe32c3eb53457b38922cf7c1266df7ed568bbb8e60d4a4b3e5b3955029f9"
       },
       "copied": true,
       "match": true
@@ -100,20 +100,20 @@
       "source": {
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/winemetal/unix/winemetal.so",
         "exists": true,
-        "size": 46859240,
-        "sha256": "5252e100552851437deb4fbe34085d72b63b0b2080dacc1824288f7ba6c24a44"
+        "size": 46859304,
+        "sha256": "22c2060dec0247846df42773a3aa4c0e9938c27e82fd8bc7e59478dafb0cc616"
       },
       "destination_before": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/winemetal.so",
         "exists": true,
-        "size": 46858488,
-        "sha256": "cad141357fecf172c9c3966daeb8c5d0972d4e06d383e30cf495593dbc9dab7d"
+        "size": 46859240,
+        "sha256": "5252e100552851437deb4fbe34085d72b63b0b2080dacc1824288f7ba6c24a44"
       },
       "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/winemetal.so",
         "exists": true,
-        "size": 46859240,
-        "sha256": "5252e100552851437deb4fbe34085d72b63b0b2080dacc1824288f7ba6c24a44"
+        "size": 46859304,
+        "sha256": "22c2060dec0247846df42773a3aa4c0e9938c27e82fd8bc7e59478dafb0cc616"
       },
       "copied": true,
       "match": true
@@ -122,20 +122,20 @@
       "source": {
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/m12core/libm12core.dylib",
         "exists": true,
-        "size": 4712,
-        "sha256": "98a776f4ec5956b1193157c9b55dd8648d60b93c87ba4ef5469dc6985efc1e5a"
+        "size": 10424,
+        "sha256": "5b0bdc00925c67c8495c768fa46de97820231403a39aa46c714e7c95bf348b09"
       },
       "destination_before": {
-        "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
-        "exists": false,
-        "size": 0,
-        "sha256": null
-      },
-      "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
         "exists": true,
         "size": 4712,
         "sha256": "98a776f4ec5956b1193157c9b55dd8648d60b93c87ba4ef5469dc6985efc1e5a"
+      },
+      "destination_after": {
+        "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
+        "exists": true,
+        "size": 10424,
+        "sha256": "5b0bdc00925c67c8495c768fa46de97820231403a39aa46c714e7c95bf348b09"
       },
       "copied": true,
       "match": true
@@ -166,20 +166,20 @@
       "source": {
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/winemetal/unix/winemetal.so",
         "exists": true,
-        "size": 46859240,
-        "sha256": "5252e100552851437deb4fbe34085d72b63b0b2080dacc1824288f7ba6c24a44"
+        "size": 46859304,
+        "sha256": "22c2060dec0247846df42773a3aa4c0e9938c27e82fd8bc7e59478dafb0cc616"
       },
       "destination_before": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix/winemetal.so",
         "exists": true,
-        "size": 46858488,
-        "sha256": "cad141357fecf172c9c3966daeb8c5d0972d4e06d383e30cf495593dbc9dab7d"
+        "size": 46859240,
+        "sha256": "5252e100552851437deb4fbe34085d72b63b0b2080dacc1824288f7ba6c24a44"
       },
       "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix/winemetal.so",
         "exists": true,
-        "size": 46859240,
-        "sha256": "5252e100552851437deb4fbe34085d72b63b0b2080dacc1824288f7ba6c24a44"
+        "size": 46859304,
+        "sha256": "22c2060dec0247846df42773a3aa4c0e9938c27e82fd8bc7e59478dafb0cc616"
       },
       "copied": true,
       "match": true
@@ -188,20 +188,20 @@
       "source": {
         "path": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/build-metalsharp-x64/src/m12core/libm12core.dylib",
         "exists": true,
-        "size": 4712,
-        "sha256": "98a776f4ec5956b1193157c9b55dd8648d60b93c87ba4ef5469dc6985efc1e5a"
+        "size": 10424,
+        "sha256": "5b0bdc00925c67c8495c768fa46de97820231403a39aa46c714e7c95bf348b09"
       },
       "destination_before": {
-        "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix/libm12core.dylib",
-        "exists": false,
-        "size": 0,
-        "sha256": null
-      },
-      "destination_after": {
         "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix/libm12core.dylib",
         "exists": true,
         "size": 4712,
         "sha256": "98a776f4ec5956b1193157c9b55dd8648d60b93c87ba4ef5469dc6985efc1e5a"
+      },
+      "destination_after": {
+        "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix/libm12core.dylib",
+        "exists": true,
+        "size": 10424,
+        "sha256": "5b0bdc00925c67c8495c768fa46de97820231403a39aa46c714e7c95bf348b09"
       },
       "copied": true,
       "match": true

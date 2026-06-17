@@ -1,0 +1,1 @@
+abi=1 features=0x3 build=libm12core phase2 counters abi=1 counter1=7 counter16=1000 count=17

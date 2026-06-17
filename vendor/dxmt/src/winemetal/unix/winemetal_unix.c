@@ -63,11 +63,13 @@ winemetal_critical_log(void) {
  */
 typedef int (*PFN_m12core_get_version)(M12CoreVersion *out_version);
 typedef const char *(*PFN_m12core_build_string)(void);
+typedef int (*PFN_m12core_record_counter)(uint32_t counter_id, uint64_t delta);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
 static PFN_m12core_get_version p_m12core_get_version;
 static PFN_m12core_build_string p_m12core_build_string;
+static PFN_m12core_record_counter p_m12core_record_counter;
 
 static bool
 m12core_env_enabled(const char *name) {
@@ -125,6 +127,8 @@ m12core_try_load(void) {
       (PFN_m12core_get_version)dlsym(m12core_handle, "m12core_get_version");
   p_m12core_build_string =
       (PFN_m12core_build_string)dlsym(m12core_handle, "m12core_build_string");
+  p_m12core_record_counter =
+      (PFN_m12core_record_counter)dlsym(m12core_handle, "m12core_record_counter");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -135,6 +139,8 @@ m12core_try_load(void) {
     return;
   }
 
+  if (p_m12core_record_counter)
+    p_m12core_record_counter(M12CORE_COUNTER_LOADER_LOAD_SUCCESS, 1);
   m12core_log_version(path, p_m12core_build_string ? p_m12core_build_string() : NULL);
 }
 

@@ -26,6 +26,7 @@ extern "C" {
  */
 enum M12CoreFeatureFlags {
   M12CORE_FEATURE_INERT_LOADER = 1u << 0,
+  M12CORE_FEATURE_COUNTERS = 1u << 1,
 };
 
 typedef struct M12CoreVersion {
@@ -34,6 +35,39 @@ typedef struct M12CoreVersion {
   uint32_t build_id_low;
   uint32_t build_id_high;
 } M12CoreVersion;
+
+/* Counter IDs are stable ABI values.  Keep these append-only: old PE shims may
+ * send counters to a newer core, and newer shims must tolerate older cores that
+ * only know the first subset.  These IDs intentionally mirror the current
+ * PSO_PRESSURE vocabulary so Phase 2 can move diagnostics ownership without
+ * changing perf-analysis log semantics.
+ */
+typedef enum M12CoreCounterId {
+  M12CORE_COUNTER_LOADER_LOAD_SUCCESS = 0,
+  M12CORE_COUNTER_GRAPHICS_PSO_REQUESTS = 1,
+  M12CORE_COUNTER_COMPUTE_PSO_REQUESTS = 2,
+  M12CORE_COUNTER_GRAPHICS_PSO_REPEATED = 3,
+  M12CORE_COUNTER_COMPUTE_PSO_REPEATED = 4,
+  M12CORE_COUNTER_SHADER_MEMORY_CACHE_HITS = 5,
+  M12CORE_COUNTER_SHADER_MEMORY_CACHE_MISSES = 6,
+  M12CORE_COUNTER_SHADER_METALLIB_CACHE_HITS = 7,
+  M12CORE_COUNTER_SHADER_METALLIB_CACHE_MISSES = 8,
+  M12CORE_COUNTER_METAL_RENDER_PIPELINE_CREATES = 9,
+  M12CORE_COUNTER_METAL_COMPUTE_PIPELINE_CREATES = 10,
+  M12CORE_COUNTER_RENDER_PIPELINE_CACHE_HITS = 11,
+  M12CORE_COUNTER_RENDER_PIPELINE_CACHE_MISSES = 12,
+  M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_HITS = 13,
+  M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_MISSES = 14,
+  M12CORE_COUNTER_COMPILE_WAIT_COUNT = 15,
+  M12CORE_COUNTER_COMPILE_WAIT_NS = 16,
+  M12CORE_COUNTER_COUNT = 17,
+} M12CoreCounterId;
+
+typedef struct M12CoreCounterSnapshot {
+  uint32_t abi_version;
+  uint32_t counter_count;
+  uint64_t values[M12CORE_COUNTER_COUNT];
+} M12CoreCounterSnapshot;
 
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
@@ -44,6 +78,16 @@ int m12core_get_version(M12CoreVersion *out_version);
  * process-lifetime static storage owned by libm12core.
  */
 const char *m12core_build_string(void);
+
+/* Phase-2 diagnostic counter API.  The native core owns the storage; PE-side
+ * shims should eventually send increments through winemetal thunks instead of
+ * owning independent process-local atomics.  These functions are intentionally
+ * tiny and C-only so they can be used from direct loader probes, winemetal.so,
+ * and future PE thunk calls.
+ */
+int m12core_record_counter(uint32_t counter_id, uint64_t delta);
+int m12core_get_counters(M12CoreCounterSnapshot *out_snapshot);
+void m12core_reset_counters(void);
 
 #ifdef __cplusplus
 }
