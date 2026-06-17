@@ -30,7 +30,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x0000000au; // Phase-5 root binding plan foundation.
+constexpr uint32_t kBuildIdHigh = 0x0000000bu; // Phase-5 root argument layout foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -146,14 +146,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
                                M12CORE_FEATURE_PIPELINE_CACHE |
                                M12CORE_FEATURE_PIPELINE_CREATION |
                                M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
-                               M12CORE_FEATURE_ROOT_BINDING_PLAN;
+                               M12CORE_FEATURE_ROOT_BINDING_PLAN |
+                               M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase5 root-binding-plan abi=1";
+  return "libm12core phase5 root-argument-layout abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -671,7 +672,17 @@ extern "C" int m12core_build_root_binding_plan(
   uint32_t unbounded_ranges = 0;
   uint32_t visibility_specific = 0;
   uint32_t max_table_span = 0;
+  uint32_t argument_resource_slots = 0;
+  uint32_t argument_sampler_slots = 0;
+  uint32_t argument_root_descriptor_slots = 0;
+  uint32_t argument_root_constant_dwords = 0;
+  uint32_t argument_visibility_mask = 0;
   std::vector<uint32_t> register_spaces;
+
+  auto noteVisibility = [&](uint32_t visibility) {
+    if (visibility < 32)
+      argument_visibility_mask |= 1u << visibility;
+  };
 
   for (uint32_t i = 0; i < desc->parameter_count; i++) {
     const auto &param = desc->parameters[i];
@@ -687,16 +698,20 @@ extern "C" int m12core_build_root_binding_plan(
 
     if (param.shader_visibility != 0)
       visibility_specific++;
+    noteVisibility(param.shader_visibility);
     if (std::find(register_spaces.begin(), register_spaces.end(),
                   param.register_space) == register_spaces.end())
       register_spaces.push_back(param.register_space);
 
     if (param.type == 0)
       descriptor_tables++;
-    else if (param.type == 1)
+    else if (param.type == 1) {
       root_constants++;
-    else if (param.type >= 2 && param.type <= 4)
+      argument_root_constant_dwords += param.num_32bit_values;
+    } else if (param.type >= 2 && param.type <= 4) {
       root_descriptors++;
+      argument_root_descriptor_slots++;
+    }
   }
 
   for (uint32_t i = 0; i < desc->range_count; i++) {
@@ -711,10 +726,15 @@ extern "C" int m12core_build_root_binding_plan(
     if (std::find(register_spaces.begin(), register_spaces.end(),
                   range.register_space) == register_spaces.end())
       register_spaces.push_back(range.register_space);
-    if (range.range_type == 3)
+    if (range.range_type == 3) {
       sampler_ranges++;
-    else
+      if (range.num_descriptors != UINT32_MAX)
+        argument_sampler_slots += range.num_descriptors;
+    } else {
       resource_ranges++;
+      if (range.num_descriptors != UINT32_MAX)
+        argument_resource_slots += range.num_descriptors;
+    }
     if (range.num_descriptors == UINT32_MAX)
       unbounded_ranges++;
     else
@@ -729,6 +749,8 @@ extern "C" int m12core_build_root_binding_plan(
     pipelineHashCombine(key, sampler.shader_visibility);
     if (sampler.shader_visibility != 0)
       visibility_specific++;
+    noteVisibility(sampler.shader_visibility);
+    argument_sampler_slots++;
     if (std::find(register_spaces.begin(), register_spaces.end(),
                   sampler.register_space) == register_spaces.end())
       register_spaces.push_back(sampler.register_space);
@@ -748,6 +770,12 @@ extern "C" int m12core_build_root_binding_plan(
   out_summary->visibility_specific_count = visibility_specific;
   out_summary->register_space_count = static_cast<uint32_t>(register_spaces.size());
   out_summary->max_descriptor_table_span = max_table_span;
+  out_summary->argument_resource_slot_count = argument_resource_slots;
+  out_summary->argument_sampler_slot_count = argument_sampler_slots;
+  out_summary->argument_root_descriptor_slot_count = argument_root_descriptor_slots;
+  out_summary->argument_root_constant_dword_count = argument_root_constant_dwords;
+  out_summary->argument_visibility_mask = argument_visibility_mask;
+  out_summary->argument_layout_reserved = 0;
   out_summary->binding_plan_key = key;
   return 0;
 }
@@ -845,6 +873,34 @@ extern "C" int m12core_lookup_root_binding(
           continue;
         out_result->found = 1;
         out_result->root_parameter_index = p;
+        out_result->visibility_fallback = visibility_pass == 1 ? 1u : 0u;
+        return 0;
+      }
+    }
+    return 0;
+  }
+
+  if (desc->lookup_kind == M12CORE_ROOT_BINDING_LOOKUP_ROOT_CONSTANTS) {
+    /* Phase 5 root-constants lookup seam.  Root constants are type==1 in the
+     * public root binding parameter stream; for this lookup kind the fixed
+     * result payload reuses descriptor_offset to return Num32BitValues so no
+     * new PE/unix thunk structure is needed before live binding migration.
+     */
+    for (uint32_t visibility_pass = 0; visibility_pass < 2; visibility_pass++) {
+      for (uint32_t p = 0; p < desc->parameter_count; p++) {
+        const auto &param = desc->parameters[p];
+        if (param.type != 1)
+          continue;
+        if (param.register_index != desc->shader_register ||
+            param.register_space != desc->register_space)
+          continue;
+        if (visibility_pass == 0 && param.shader_visibility != desc->shader_visibility)
+          continue;
+        if (visibility_pass == 1 && param.shader_visibility != 0)
+          continue;
+        out_result->found = 1;
+        out_result->root_parameter_index = p;
+        out_result->descriptor_offset = param.num_32bit_values;
         out_result->visibility_fallback = visibility_pass == 1 ? 1u : 0u;
         return 0;
       }

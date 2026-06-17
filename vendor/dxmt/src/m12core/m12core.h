@@ -35,6 +35,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_PIPELINE_CREATION = 1u << 7,
   M12CORE_FEATURE_ROOT_SIGNATURE_KEYS = 1u << 8,
   M12CORE_FEATURE_ROOT_BINDING_PLAN = 1u << 9,
+  M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT = 1u << 10,
 };
 
 typedef struct M12CoreVersion {
@@ -370,6 +371,12 @@ typedef struct M12CoreRootBindingPlanSummary {
   uint32_t visibility_specific_count;
   uint32_t register_space_count;
   uint32_t max_descriptor_table_span;
+  uint32_t argument_resource_slot_count;
+  uint32_t argument_sampler_slot_count;
+  uint32_t argument_root_descriptor_slot_count;
+  uint32_t argument_root_constant_dword_count;
+  uint32_t argument_visibility_mask;
+  uint32_t argument_layout_reserved;
   uint64_t binding_plan_key;
 } M12CoreRootBindingPlanSummary;
 
@@ -377,6 +384,7 @@ typedef enum M12CoreRootBindingLookupKind {
   M12CORE_ROOT_BINDING_LOOKUP_DESCRIPTOR_RANGE = 1,
   M12CORE_ROOT_BINDING_LOOKUP_STATIC_SAMPLER = 2,
   M12CORE_ROOT_BINDING_LOOKUP_ROOT_DESCRIPTOR = 3,
+  M12CORE_ROOT_BINDING_LOOKUP_ROOT_CONSTANTS = 4,
 } M12CoreRootBindingLookupKind;
 
 typedef struct M12CoreRootBindingLookupDesc {

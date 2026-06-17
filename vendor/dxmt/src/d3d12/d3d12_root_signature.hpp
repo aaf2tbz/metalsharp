@@ -126,6 +126,10 @@ private:
                                    uint32_t register_space,
                                    D3D12_SHADER_VISIBILITY shader_visibility,
                                    M12CoreRootBindingLookupResult *out_result) const;
+  bool LookupM12CoreRootConstants(uint32_t shader_register,
+                                  uint32_t register_space,
+                                  D3D12_SHADER_VISIBILITY shader_visibility,
+                                  M12CoreRootBindingLookupResult *out_result) const;
   void ValidateM12CoreBindingPlanLookups(uint32_t *out_lookup_checks,
                                          uint32_t *out_lookup_mismatches) const;
 

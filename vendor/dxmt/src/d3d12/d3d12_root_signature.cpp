@@ -463,6 +463,31 @@ bool MTLD3D12RootSignature::LookupM12CoreRootDescriptor(
          out_result->status == M12CORE_ROOT_SIGNATURE_STATUS_OK;
 }
 
+bool MTLD3D12RootSignature::LookupM12CoreRootConstants(
+    uint32_t shader_register, uint32_t register_space,
+    D3D12_SHADER_VISIBILITY shader_visibility,
+    M12CoreRootBindingLookupResult *out_result) const {
+  if (!m_core_binding_plan_valid || !out_result)
+    return false;
+
+  const auto plan_desc = MakeM12CoreBindingPlanDesc();
+  M12CoreRootBindingLookupDesc lookup = {};
+  lookup.abi_version = M12CORE_ABI_VERSION;
+  lookup.lookup_kind = M12CORE_ROOT_BINDING_LOOKUP_ROOT_CONSTANTS;
+  lookup.shader_register = shader_register;
+  lookup.register_space = register_space;
+  lookup.shader_visibility = static_cast<uint32_t>(shader_visibility);
+  lookup.parameters = plan_desc.parameters;
+  lookup.parameter_count = plan_desc.parameter_count;
+  lookup.ranges = plan_desc.ranges;
+  lookup.range_count = plan_desc.range_count;
+  lookup.static_samplers = plan_desc.static_samplers;
+  lookup.static_sampler_count = plan_desc.static_sampler_count;
+  return WMTM12CoreLookupRootBinding(&lookup, out_result) &&
+         out_result->abi_version == M12CORE_ABI_VERSION &&
+         out_result->status == M12CORE_ROOT_SIGNATURE_STATUS_OK;
+}
+
 void MTLD3D12RootSignature::ValidateM12CoreBindingPlanLookups(
     uint32_t *out_lookup_checks, uint32_t *out_lookup_mismatches) const {
   uint32_t lookup_checks = 0;
@@ -548,6 +573,56 @@ void MTLD3D12RootSignature::ValidateM12CoreBindingPlanLookups(
                                " native_root=", native_lookup.root_parameter_index,
                                " pe_found=", pe_found ? 1 : 0,
                                " pe_root=", pe_root));
+    }
+  }
+
+  for (uint32_t p = 0; p < m_parameters.size(); p++) {
+    const auto &param = m_parameters[p];
+    if (param.type != D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+      continue;
+
+    M12CoreRootBindingLookupResult native_lookup = {};
+    uint32_t pe_root = UINT32_MAX;
+    uint32_t pe_dwords = 0;
+    bool pe_found = false;
+    for (uint32_t visibility_pass = 0; visibility_pass < 2 && !pe_found; visibility_pass++) {
+      for (uint32_t candidate = 0; candidate < m_parameters.size(); candidate++) {
+        const auto &pe_param = m_parameters[candidate];
+        if (pe_param.type != D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS ||
+            pe_param.register_index != param.register_index ||
+            pe_param.register_space != param.register_space)
+          continue;
+        if (visibility_pass == 0 && pe_param.shader_visibility != param.shader_visibility)
+          continue;
+        if (visibility_pass == 1 && pe_param.shader_visibility != D3D12_SHADER_VISIBILITY_ALL)
+          continue;
+        pe_root = candidate;
+        pe_dwords = pe_param.num_32bit_values;
+        pe_found = true;
+        break;
+      }
+    }
+
+    const bool native_ok = LookupM12CoreRootConstants(
+        param.register_index, param.register_space,
+        static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility),
+        &native_lookup);
+    lookup_checks++;
+    if (!native_ok || (native_lookup.found != (pe_found ? 1u : 0u)) ||
+        (pe_found && (native_lookup.root_parameter_index != pe_root ||
+                      native_lookup.descriptor_offset != pe_dwords))) {
+      lookup_mismatches++;
+      Logger::warn(str::format("M12_ROOT_BINDING_LOOKUP_MISMATCH key=0x",
+                               std::hex, m_core_root_signature_key, std::dec,
+                               " type=root_constants reg=", param.register_index,
+                               " space=", param.register_space,
+                               " native_ok=", native_ok ? 1 : 0,
+                               " native_found=", native_lookup.found,
+                               " native_root=", native_lookup.root_parameter_index,
+                               " native_dwords=", native_lookup.descriptor_offset,
+                               " pe_found=", pe_found ? 1 : 0,
+                               " pe_root=", pe_root,
+                               " pe_dwords=", pe_dwords));
     }
   }
 
@@ -695,6 +770,12 @@ void MTLD3D12RootSignature::SummarizeWithM12Core() {
                            " static_samplers=", plan_summary.static_sampler_count,
                            " spaces=", plan_summary.register_space_count,
                            " max_span=", plan_summary.max_descriptor_table_span,
+                           " arg_resources=", plan_summary.argument_resource_slot_count,
+                           " arg_samplers=", plan_summary.argument_sampler_slot_count,
+                           " arg_root_desc=", plan_summary.argument_root_descriptor_slot_count,
+                           " arg_const_dwords=", plan_summary.argument_root_constant_dword_count,
+                           " arg_visibility=0x", std::hex, plan_summary.argument_visibility_mask,
+                           std::dec,
                            " lookup_checks=", lookup_checks,
                            " lookup_mismatches=", lookup_mismatches));
 }
