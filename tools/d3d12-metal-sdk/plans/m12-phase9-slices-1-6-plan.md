@@ -246,6 +246,29 @@ Exit criteria:
 
 ## Slice 6 — Game shadow + opt-in native execution readiness for one bounded title
 
+Status: complete for readiness/shadow scope; no game launch performed.
+
+Implemented evidence:
+
+- Slices 1-5 are committed and staged through Slice 5:
+  - `0fec647 feat: plan m12 presents in native core`
+  - `b4754d4 feat: plan m12 command replays in native core`
+  - `0460f1e feat: shadow m12 command stream descriptors`
+  - `2bff5c4 feat: shadow m12 render pass hazard plans`
+  - `e8bbb2f feat: gate m12 native present blits`
+  - `0b62cb2 feat: plan m12 replay execute eligibility`
+- Runtime is staged to `~/.metalsharp/runtime/wine/lib/dxmt_m12`: `tools/d3d12-metal-sdk/results/stage-runtime-metalsharp.json`.
+- Current native core detection is green at build high `0x00000013`: `tools/d3d12-metal-sdk/results/probe-m12-detection-slice5-metalsharp.log`.
+- Slice 4 opt-in native present/blit is probe-proven only, not enabled by default:
+  - gate off: `tools/d3d12-metal-sdk/results/probe-present-windowed-slice4-gate-off.log`
+  - gate on: `tools/d3d12-metal-sdk/results/probe-present-windowed-slice4-gate-on.log`
+- Slice 5 replay execute eligibility is probe-proven only, not an executor yet:
+  - gate off command replay: `tools/d3d12-metal-sdk/results/probe-command-replay-slice5-gate-off.log`
+  - gate on indirect fallback: `tools/d3d12-metal-sdk/results/probe-command-replay-slice5-gate-on.log`
+  - gate on eligible clear/dispatch lists: `tools/d3d12-metal-sdk/results/probe-barriers-render-pass-slice5-gate-on.log`
+- Backend dry-run matrix is green for all five games: `tools/d3d12-metal-sdk/results/m12-phase9-slice5-dryrun-20260617-170304/summary.json`.
+- No bounded game launch was run because Slice 7/visual confirmation and any game launch require explicit user approval.
+
 Plan before implementation:
 
 - Do not perform visual Slice 7 confirmation.
