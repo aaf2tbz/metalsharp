@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000011u /* Phase-9 render-pass hazard planning foundation. */
+  0x00000012u /* Phase-9 gated present execution foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -45,6 +45,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14,
   M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS = 1u << 15,
   M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING = 1u << 16,
+  M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING = 1u << 17,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -55,7 +56,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_DRAW_PLANNING | M12CORE_FEATURE_PRESENT_PLANNING |
       M12CORE_FEATURE_REPLAY_PLANNING |
       M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS |
-      M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING,
+      M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING |
+      M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING,
 };
 
 typedef struct M12CoreVersion {
@@ -616,6 +618,77 @@ typedef struct M12CorePresentPlanSummary {
   uint64_t scheduled_work_count;
 } M12CorePresentPlanSummary;
 
+typedef enum M12CorePresentExecuteStatus {
+  M12CORE_PRESENT_EXECUTE_STATUS_OK = 0,
+  M12CORE_PRESENT_EXECUTE_STATUS_INVALID = 1,
+} M12CorePresentExecuteStatus;
+
+typedef enum M12CorePresentExecuteFlags {
+  M12CORE_PRESENT_EXECUTE_HAS_SOURCE_TEXTURE = 1u << 0,
+  M12CORE_PRESENT_EXECUTE_HAS_DRAWABLE = 1u << 1,
+  M12CORE_PRESENT_EXECUTE_USES_RAW_BLIT = 1u << 2,
+  M12CORE_PRESENT_EXECUTE_USES_PRESENTER = 1u << 3,
+  M12CORE_PRESENT_EXECUTE_LIVE_PRESENT = 1u << 4,
+  M12CORE_PRESENT_EXECUTE_READBACK_REQUESTED = 1u << 5,
+  M12CORE_PRESENT_EXECUTE_GATE_ENABLED = 1u << 6,
+  M12CORE_PRESENT_EXECUTE_WAITED_FOR_RENDER = 1u << 7,
+  M12CORE_PRESENT_EXECUTE_FORMAT_SUPPORTED = 1u << 8,
+} M12CorePresentExecuteFlags;
+
+typedef enum M12CorePresentExecuteFallbackReason {
+  M12CORE_PRESENT_EXECUTE_FALLBACK_NONE = 0,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_GATE_DISABLED = 1,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_MISSING_SOURCE = 2,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_MISSING_DRAWABLE = 3,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_NON_RAW_PATH = 4,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_DIAGNOSTIC_ACTIVE = 5,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_ZERO_EXTENT = 6,
+  M12CORE_PRESENT_EXECUTE_FALLBACK_UNSUPPORTED_FORMAT = 7,
+} M12CorePresentExecuteFallbackReason;
+
+typedef enum M12CorePresentExecuteSummaryFlags {
+  M12CORE_PRESENT_EXECUTE_SUMMARY_SUPPORTED = 1u << 0,
+  M12CORE_PRESENT_EXECUTE_SUMMARY_GATE_ENABLED = 1u << 1,
+  M12CORE_PRESENT_EXECUTE_SUMMARY_EXECUTED = 1u << 2,
+} M12CorePresentExecuteSummaryFlags;
+
+typedef struct M12CorePresentExecuteDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t width;
+  uint32_t height;
+  uint32_t format;
+  uint32_t buffer_index;
+  uint32_t buffer_count;
+  uint32_t sync_interval;
+  uint32_t present_flags;
+  uint32_t work_classification;
+  uint32_t command_buffer_status;
+  uint32_t reserved0;
+  uint64_t present_count;
+  uint64_t source_texture_key;
+  uint64_t drawable_texture_key;
+  uint64_t queue_serial;
+  uint64_t command_count;
+  uint64_t draw_count;
+  uint64_t dispatch_count;
+  uint64_t clear_count;
+  uint64_t wait_seq;
+} M12CorePresentExecuteDesc;
+
+typedef struct M12CorePresentExecuteSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t fallback_reason;
+  uint32_t validation_flags;
+  uint32_t planned_operation_count;
+  uint32_t hazard_score;
+  uint32_t reserved;
+  uint64_t present_execute_key;
+  uint64_t scheduled_work_count;
+} M12CorePresentExecuteSummary;
+
 typedef enum M12CoreReplayPlanStatus {
   M12CORE_REPLAY_PLAN_STATUS_OK = 0,
   M12CORE_REPLAY_PLAN_STATUS_INVALID = 1,
@@ -900,6 +973,8 @@ int m12core_build_draw_plan(const M12CoreDrawPlanDesc *desc,
                             M12CoreDrawPlanSummary *out_summary);
 int m12core_build_present_plan(const M12CorePresentPlanDesc *desc,
                                M12CorePresentPlanSummary *out_summary);
+int m12core_plan_present_execute(const M12CorePresentExecuteDesc *desc,
+                                 M12CorePresentExecuteSummary *out_summary);
 int m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
                               M12CoreReplayPlanSummary *out_summary);
 int m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,

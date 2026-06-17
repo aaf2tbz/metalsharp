@@ -134,7 +134,35 @@ Exit criteria:
 - `libm12core` is authoritative for shadow render-pass/hazard classification.
 - No PE execution behavior changes.
 
-## Slice 4 — Core-owned presenter planning + gated present command plan
+## Slice 4 — Core-owned presenter planning + gated native present/blit
+
+Status: complete.
+
+Implemented evidence:
+
+- Added `M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING` with `M12CORE_BUILD_ID_HIGH = 0x00000012`.
+- Added scalar C/POD `M12CorePresentExecuteDesc` and `M12CorePresentExecuteSummary`; these carry only counts, flags, dimensions, DXGI format integers, synthetic keys, and queue/work counters.
+- Added `m12core_plan_present_execute` for native support/fallback classification of the narrow raw layer/drawable blit path.
+- Added append-only winemetal unixcalls `157` (`WMTM12CorePlanPresentExecute`) and `158` (`WMTM12CoreExecutePresentBlit`).
+- Added default-off `DXMT_M12CORE_PRESENT_EXECUTE=1` gate; gate-off plans report fallback reason `GATE_DISABLED` and PE path executes unchanged.
+- Added gated native raw blit/present execution in winemetal native side only after libm12core scalar plan reports supported; unsupported/native-failure paths fallback whole-present to the existing PE blit+present path.
+- Runtime build passed after implementation and log-rate-limit fix: `./tools/d3d12-metal-sdk/scripts/m12-dev.sh build-runtime`.
+- Probe build passed: `./tools/d3d12-metal-sdk/scripts/build-probes.sh`.
+- Formatting passed: `clang-format --dry-run --Werror ...` for touched Slice 4 files.
+- Autoreview found one info-level hot-path log issue; fixed by rate-limiting `M12_PRESENT_EXECUTE_NATIVE`, and re-review returned no findings.
+- Runtime staged to `~/.metalsharp/runtime/wine/lib/dxmt_m12`: `tools/d3d12-metal-sdk/results/stage-runtime-metalsharp.json`.
+- M12 detection passed with feature flags `0x00000000000007ff`, core feature flags `0x0003ffff`, and build high `0x00000012`: `tools/d3d12-metal-sdk/results/probe-m12-detection-slice4-metalsharp.log`.
+- Gate-off forced-raw-blit present probe passed and logged `M12_PRESENT_EXECUTE_PLAN` with `fallback=1` and no `M12_PRESENT_EXECUTE_NATIVE`: `tools/d3d12-metal-sdk/results/probe-present-windowed-slice4-gate-off.log`.
+- Gate-on forced-raw-blit present probe passed and logged `M12_PRESENT_EXECUTE_PLAN supported=1 fallback=0` plus `M12_PRESENT_EXECUTE_NATIVE`: `tools/d3d12-metal-sdk/results/probe-present-windowed-slice4-gate-on.log`.
+- Backend dry-run matrix passed for all five games: `tools/d3d12-metal-sdk/results/m12-phase9-slice4-dryrun-20260617-164836/summary.json`.
+
+Pre-implementation discrepancy check:
+
+- Existing Slice 1 present planning is scalar-only and logs `M12_PRESENT_PLAN`; it does not make an execution/fallback decision.
+- Current `Present1` has two presenter paths: presenter encode path and raw layer/drawable blit path. Only the raw layer/drawable blit path has a small enough surface for a first gated native execution seam.
+- True `libm12core` ABI still cannot receive `WMT::`, COM, Objective-C, Metal, drawable, command-buffer, or texture handles.
+- The executable native seam therefore must split responsibilities: `libm12core` owns a scalar present-execution decision descriptor; winemetal native unixcall may receive existing `obj_handle_t` Metal handles and perform the raw blit/present only when the scalar native decision says supported and the env gate is enabled.
+- Unsupported paths must fallback whole-present to the current PE code path: presenter path, live-present, readback, missing source/drawable, unsupported format, zero dimensions, disabled gate, or native unixcall failure.
 
 Plan before implementation:
 

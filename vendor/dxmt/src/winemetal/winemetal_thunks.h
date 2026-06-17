@@ -619,6 +619,24 @@ struct unixcall_m12core_plan_render_pass {
   M12CoreRenderPassPlanSummary ret_summary;
 };
 
+struct unixcall_m12core_plan_present_execute {
+  M12CorePresentExecuteDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CorePresentExecuteSummary ret_summary;
+};
+
+struct unixcall_m12core_execute_present_blit {
+  M12CorePresentExecuteDesc desc;
+  obj_handle_t command_buffer;
+  obj_handle_t source_texture;
+  obj_handle_t destination_texture;
+  obj_handle_t drawable;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CorePresentExecuteSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

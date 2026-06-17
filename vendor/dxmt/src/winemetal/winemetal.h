@@ -101,6 +101,12 @@ WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc, M12CorePrewar
 WINEMETAL_API bool WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc, M12CoreDrawPlanSummary *out_summary);
 WINEMETAL_API bool
 WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc, M12CorePresentPlanSummary *out_summary);
+WINEMETAL_API bool
+WMTM12CorePlanPresentExecute(const M12CorePresentExecuteDesc *desc, M12CorePresentExecuteSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreExecutePresentBlit(
+    const M12CorePresentExecuteDesc *desc, obj_handle_t command_buffer, obj_handle_t source_texture,
+    obj_handle_t destination_texture, obj_handle_t drawable, M12CorePresentExecuteSummary *out_summary
+);
 WINEMETAL_API bool WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary);
 WINEMETAL_API bool
 WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCommandStreamSummary *out_summary);

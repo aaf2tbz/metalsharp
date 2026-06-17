@@ -76,6 +76,7 @@ enum MetalSharpM12TranslationLayerFeatureFlags : UINT64 {
   MetalSharpM12TranslationLayerFeatureReplayPlanning = 1ull << 7,
   MetalSharpM12TranslationLayerFeatureCommandStreamDescriptors = 1ull << 8,
   MetalSharpM12TranslationLayerFeatureRenderPassHazardPlanning = 1ull << 9,
+  MetalSharpM12TranslationLayerFeaturePresentExecutePlanning = 1ull << 10,
 };
 
 struct MetalSharpM12TranslationLayerInfo {

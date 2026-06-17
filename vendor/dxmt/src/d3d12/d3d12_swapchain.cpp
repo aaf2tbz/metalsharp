@@ -14,6 +14,7 @@
 
 static uint64_t g_sc_enc_id = 0;
 static uint32_t g_present_plan_logs = 0;
+static uint32_t g_present_execute_plan_logs = 0;
 
 namespace dxmt {
 
@@ -43,6 +44,14 @@ static bool LivePresentEnabled() {
 static bool WindowHandoffEnabled() {
   static bool enabled = [] {
     const char *raw = std::getenv("DXMT_D3D12_REASSERT_WINDOW_HANDOFF");
+    return raw && raw[0] && raw[0] != '0';
+  }();
+  return enabled;
+}
+
+static bool M12CorePresentExecuteEnabled() {
+  static bool enabled = [] {
+    const char *raw = std::getenv("DXMT_M12CORE_PRESENT_EXECUTE");
     return raw && raw[0] && raw[0] != '0';
   }();
   return enabled;
@@ -190,10 +199,100 @@ static uint64_t SyntheticPresentTextureKey(uint32_t width, uint32_t height,
   key ^= uint64_t(width) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
   key ^= uint64_t(height) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
   key ^= uint64_t(format) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
-  key ^= uint64_t(buffer_index) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  key ^=
+      uint64_t(buffer_index) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
   key ^= present_count + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
   key ^= uint64_t(salt) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
   return key;
+}
+
+static M12CorePresentExecuteDesc MakeM12CorePresentExecuteDesc(
+    uint64_t present_count, uint32_t sync_interval, uint32_t present_flags,
+    uint32_t buffer_index, uint32_t buffer_count, uint32_t width,
+    uint32_t height, DXGI_FORMAT format, bool has_source_texture,
+    bool has_drawable, bool uses_presenter, bool uses_raw_blit,
+    bool waited_for_render, bool live_present, bool readback_requested,
+    bool format_supported, bool gate_enabled, uint64_t wait_seq,
+    const D3D12SwapchainBackbufferWork &work) {
+  M12CorePresentExecuteDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  if (has_source_texture)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_HAS_SOURCE_TEXTURE;
+  if (has_drawable)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_HAS_DRAWABLE;
+  if (uses_raw_blit)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_USES_RAW_BLIT;
+  if (uses_presenter)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_USES_PRESENTER;
+  if (live_present)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_LIVE_PRESENT;
+  if (readback_requested)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_READBACK_REQUESTED;
+  if (gate_enabled)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_GATE_ENABLED;
+  if (waited_for_render)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_WAITED_FOR_RENDER;
+  if (format_supported)
+    desc.flags |= M12CORE_PRESENT_EXECUTE_FORMAT_SUPPORTED;
+  desc.width = width;
+  desc.height = height;
+  desc.format = (uint32_t)format;
+  desc.buffer_index = buffer_index;
+  desc.buffer_count = buffer_count;
+  desc.sync_interval = sync_interval;
+  desc.present_flags = present_flags;
+  desc.work_classification = SwapchainWorkClassificationId(work);
+  desc.command_buffer_status = work.command_buffer_status;
+  desc.present_count = present_count;
+  desc.source_texture_key =
+      has_source_texture
+          ? SyntheticPresentTextureKey(width, height, format, buffer_index,
+                                       present_count, 3)
+          : 0;
+  desc.drawable_texture_key =
+      has_drawable ? SyntheticPresentTextureKey(width, height, format,
+                                                buffer_index, present_count, 4)
+                   : 0;
+  desc.queue_serial = work.serial;
+  desc.command_count = work.command_count;
+  desc.draw_count =
+      work.draw_count + work.indexed_draw_count + work.indirect_count;
+  desc.dispatch_count = work.dispatch_count;
+  desc.clear_count =
+      work.clear_rtv_count + work.clear_dsv_count + work.clear_uav_count;
+  desc.wait_seq = wait_seq;
+  return desc;
+}
+
+static bool
+LogM12CorePresentExecutePlan(const M12CorePresentExecuteDesc &desc,
+                             M12CorePresentExecuteSummary *out_summary) {
+  if (!out_summary)
+    return false;
+
+  M12CorePresentExecuteSummary summary = {};
+  if (!WMTM12CorePlanPresentExecute(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_PRESENT_EXECUTE_STATUS_OK)
+    return false;
+
+  if (__atomic_add_fetch(&g_present_execute_plan_logs, 1, __ATOMIC_RELAXED) <=
+      128) {
+    Logger::info(str::format(
+        "M12_PRESENT_EXECUTE_PLAN count=",
+        (unsigned long long)desc.present_count, " key=0x", std::hex,
+        summary.present_execute_key, " flags=0x", desc.flags, " validation=0x",
+        summary.validation_flags, std::dec, " supported=",
+        (summary.flags & M12CORE_PRESENT_EXECUTE_SUMMARY_SUPPORTED) ? 1 : 0,
+        " gate=",
+        (summary.flags & M12CORE_PRESENT_EXECUTE_SUMMARY_GATE_ENABLED) ? 1 : 0,
+        " fallback=", summary.fallback_reason, " ops=",
+        summary.planned_operation_count, " hazard=", summary.hazard_score,
+        " scheduled=", (unsigned long long)summary.scheduled_work_count));
+  }
+
+  *out_summary = summary;
+  return true;
 }
 
 static void LogM12CorePresentPlan(
@@ -235,21 +334,22 @@ static void LogM12CorePresentPlan(
   desc.work_classification = SwapchainWorkClassificationId(work);
   desc.command_buffer_status = work.command_buffer_status;
   desc.present_count = present_count;
-  desc.source_texture_key = has_source_texture
-                                ? SyntheticPresentTextureKey(width, height,
-                                                             format, buffer_index,
-                                                             present_count, 1)
-                                : 0;
-  desc.drawable_texture_key = has_drawable
-                                  ? SyntheticPresentTextureKey(width, height,
-                                                               format, buffer_index,
-                                                               present_count, 2)
-                                  : 0;
+  desc.source_texture_key =
+      has_source_texture
+          ? SyntheticPresentTextureKey(width, height, format, buffer_index,
+                                       present_count, 1)
+          : 0;
+  desc.drawable_texture_key =
+      has_drawable ? SyntheticPresentTextureKey(width, height, format,
+                                                buffer_index, present_count, 2)
+                   : 0;
   desc.queue_serial = work.serial;
   desc.command_count = work.command_count;
-  desc.draw_count = work.draw_count + work.indexed_draw_count + work.indirect_count;
+  desc.draw_count =
+      work.draw_count + work.indexed_draw_count + work.indirect_count;
   desc.dispatch_count = work.dispatch_count;
-  desc.clear_count = work.clear_rtv_count + work.clear_dsv_count + work.clear_uav_count;
+  desc.clear_count =
+      work.clear_rtv_count + work.clear_dsv_count + work.clear_uav_count;
   desc.wait_seq = wait_seq;
 
   M12CorePresentPlanSummary summary = {};
@@ -259,18 +359,13 @@ static void LogM12CorePresentPlan(
     return;
 
   Logger::info(str::format(
-      "M12_PRESENT_PLAN count=", present_count,
-      " key=0x", std::hex, summary.present_plan_key,
-      " flags=0x", desc.flags,
-      " validation=0x", summary.validation_flags,
-      std::dec,
-      " path=", summary.present_path,
+      "M12_PRESENT_PLAN count=", present_count, " key=0x", std::hex,
+      summary.present_plan_key, " flags=0x", desc.flags, " validation=0x",
+      summary.validation_flags, std::dec, " path=", summary.present_path,
       " work=", summary.work_classification,
       " scheduled=", summary.scheduled_work_count,
-      " hazard=", summary.hazard_score,
-      " size=", width, "x", height,
-      " fmt=", (uint32_t)format,
-      " idx=", buffer_index));
+      " hazard=", summary.hazard_score, " size=", width, "x", height,
+      " fmt=", (uint32_t)format, " idx=", buffer_index));
 }
 
 static uint32_t AlignTo(uint32_t value, uint32_t alignment) {
@@ -931,11 +1026,11 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
             sync_interval, flags, m_current_buffer);
     if (m_present_count <= 20 ||
         (m_present_count % PresentLogInterval()) == 0) {
-      Logger::info(str::format(
-          "M12 present entry count=", m_present_count, " sync=",
-          sync_interval, " flags=0x", std::hex, flags, std::dec, " idx=",
-          m_current_buffer, " backbuffer=0 fmt=", (unsigned)m_desc.Format,
-          " size=", m_desc.Width, "x", m_desc.Height));
+      Logger::info(str::format("M12 present entry count=", m_present_count,
+                               " sync=", sync_interval, " flags=0x", std::hex,
+                               flags, std::dec, " idx=", m_current_buffer,
+                               " backbuffer=0 fmt=", (unsigned)m_desc.Format,
+                               " size=", m_desc.Width, "x", m_desc.Height));
     }
     return S_OK;
   }
@@ -951,29 +1046,27 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
       static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
   auto src_texture = res->GetMTLTexture();
   auto work = res->GetSwapchainQueueWork();
-  if (m_present_count <= 20 ||
-      (m_present_count % PresentLogInterval()) == 0) {
+  if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
+    Logger::info(str::format("M12 present entry count=", m_present_count,
+                             " sync=", sync_interval, " flags=0x", std::hex,
+                             flags, std::dec, " idx=", m_current_buffer,
+                             " backbuffer=", (void *)res,
+                             " src=", (unsigned long long)src_texture.handle,
+                             " fmt=", (unsigned)m_desc.Format,
+                             " size=", m_desc.Width, "x", m_desc.Height));
     Logger::info(str::format(
-        "M12 present entry count=", m_present_count, " sync=", sync_interval,
-        " flags=0x", std::hex, flags, std::dec, " idx=", m_current_buffer,
-        " backbuffer=", (void *)res, " src=",
-        (unsigned long long)src_texture.handle, " fmt=",
-        (unsigned)m_desc.Format, " size=", m_desc.Width, "x", m_desc.Height));
-    Logger::info(str::format(
-        "M12 present backbuffer work count=", m_present_count, " idx=",
-        m_current_buffer, " serial=", (unsigned long long)work.serial,
+        "M12 present backbuffer work count=", m_present_count,
+        " idx=", m_current_buffer, " serial=", (unsigned long long)work.serial,
         " cmds=", work.command_count, " draws=", work.draw_count,
-        " indexed=", work.indexed_draw_count,
-        " indirect=", work.indirect_count, " dispatch=",
-        work.dispatch_count, " clear_rtv=", work.clear_rtv_count,
+        " indexed=", work.indexed_draw_count, " indirect=", work.indirect_count,
+        " dispatch=", work.dispatch_count, " clear_rtv=", work.clear_rtv_count,
         " clear_dsv=", work.clear_dsv_count, " clear_uav=",
         work.clear_uav_count, " graphics_setup=", work.graphics_setup,
-        " swapchain_work=", work.swapchain_work,
-        " has_swapchain_rt=", work.has_swapchain_rt,
-        " status=", work.command_buffer_status,
-        " replay_ms=", (long long)work.replay_ms, " wait_ms=",
-        (long long)work.wait_ms, " classification=",
-        SwapchainWorkClassification(work)));
+        " swapchain_work=", work.swapchain_work, " has_swapchain_rt=",
+        work.has_swapchain_rt, " status=", work.command_buffer_status,
+        " replay_ms=", (long long)work.replay_ms,
+        " wait_ms=", (long long)work.wait_ms,
+        " classification=", SwapchainWorkClassification(work)));
   }
   if (!EnsureMetalView()) {
     Logger::err("D3D12SwapChain::Present: failed to create Metal view/layer");
@@ -1107,7 +1200,43 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     auto readback_probe = EncodeSwapchainReadback(
         m_dxgi_device->GetMTLDevice(), cmdbuf, src_texture, m_desc.Width,
         m_desc.Height, m_desc.Format, m_present_count);
-    if (src_texture.handle && dst_texture.handle) {
+
+    const bool m12_present_execute_gate = M12CorePresentExecuteEnabled();
+    const bool raw_layer_blit_path = true;
+    M12CorePresentExecuteDesc execute_desc = MakeM12CorePresentExecuteDesc(
+        m_present_count, sync_interval, flags, m_current_buffer,
+        m_desc.BufferCount, m_desc.Width, m_desc.Height, m_desc.Format,
+        src_texture.handle != 0, drawable.handle != 0, false,
+        raw_layer_blit_path, present_waited_for_render, LivePresentEnabled(),
+        ShouldReadbackPresent(m_present_count),
+        CanUseRawSwapchainBlit(m_desc.Format), m12_present_execute_gate,
+        present_wait_seq, work);
+    M12CorePresentExecuteSummary execute_summary = {};
+    const bool have_execute_plan =
+        LogM12CorePresentExecutePlan(execute_desc, &execute_summary);
+    bool native_present_executed = false;
+
+    if (src_texture.handle && dst_texture.handle && have_execute_plan &&
+        m12_present_execute_gate &&
+        (execute_summary.flags & M12CORE_PRESENT_EXECUTE_SUMMARY_SUPPORTED)) {
+      M12CorePresentExecuteSummary native_summary = {};
+      if (WMTM12CoreExecutePresentBlit(&execute_desc, cmdbuf.handle,
+                                       src_texture.handle, dst_texture.handle,
+                                       drawable.handle, &native_summary) &&
+          (native_summary.flags & M12CORE_PRESENT_EXECUTE_SUMMARY_EXECUTED)) {
+        native_present_executed = true;
+        if (m_present_count <= 20 ||
+            (m_present_count % PresentLogInterval()) == 0) {
+          Logger::info(str::format(
+              "M12_PRESENT_EXECUTE_NATIVE count=", m_present_count, " key=0x",
+              std::hex, native_summary.present_execute_key, std::dec,
+              " ops=", native_summary.planned_operation_count,
+              " fallback=", native_summary.fallback_reason));
+        }
+      }
+    }
+
+    if (!native_present_executed && src_texture.handle && dst_texture.handle) {
       auto blit = cmdbuf.blitCommandEncoder();
       uint64_t _sc_eid = __atomic_add_fetch(&g_sc_enc_id, 1, __ATOMIC_SEQ_CST);
       SCTRACE("[SC_ENC+%llu] CREATE blit handle=%llu",
@@ -1133,7 +1262,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
       }
     }
 
-    cmdbuf.presentDrawable(drawable);
+    if (!native_present_executed)
+      cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
     cmdbuf.commit();
     if (readback_probe.mapped) {

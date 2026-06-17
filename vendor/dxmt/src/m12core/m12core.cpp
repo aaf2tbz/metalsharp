@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase9 render-pass-hazard-shadow abi=1";
+  return "libm12core phase9 present-execute-shadow abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1182,6 +1182,103 @@ m12core_build_present_plan(const M12CorePresentPlanDesc *desc,
   out_summary->hazard_score = hazard_score;
   out_summary->present_plan_key = key;
   out_summary->scheduled_work_count = scheduled;
+  return 0;
+}
+
+extern "C" int
+m12core_plan_present_execute(const M12CorePresentExecuteDesc *desc,
+                             M12CorePresentExecuteSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Slice 4 present-execution seam.  libm12core owns only scalar
+   * support/fallback classification; Metal command-buffer, texture, drawable,
+   * encoder, present, and commit handles remain outside this ABI.
+   */
+  uint64_t key = 0x4d31325058454355ull; // "M12PXECU" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->width);
+  pipelineHashCombine(key, desc->height);
+  pipelineHashCombine(key, desc->format);
+  pipelineHashCombine(key, desc->buffer_index);
+  pipelineHashCombine(key, desc->buffer_count);
+  pipelineHashCombine(key, desc->sync_interval);
+  pipelineHashCombine(key, desc->present_flags);
+  pipelineHashCombine(key, desc->work_classification);
+  pipelineHashCombine(key, desc->command_buffer_status);
+  pipelineHashCombine(key, desc->present_count);
+  pipelineHashCombine(key, desc->source_texture_key);
+  pipelineHashCombine(key, desc->drawable_texture_key);
+  pipelineHashCombine(key, desc->queue_serial);
+  pipelineHashCombine(key, desc->command_count);
+  pipelineHashCombine(key, desc->draw_count);
+  pipelineHashCombine(key, desc->dispatch_count);
+  pipelineHashCombine(key, desc->clear_count);
+  pipelineHashCombine(key, desc->wait_seq);
+
+  uint32_t validation = 0;
+  uint32_t fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_NONE;
+  if (!(desc->flags & M12CORE_PRESENT_EXECUTE_GATE_ENABLED))
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_GATE_DISABLED;
+  else if (!(desc->flags & M12CORE_PRESENT_EXECUTE_HAS_SOURCE_TEXTURE))
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_MISSING_SOURCE;
+  else if (!(desc->flags & M12CORE_PRESENT_EXECUTE_HAS_DRAWABLE))
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_MISSING_DRAWABLE;
+  else if (!(desc->flags & M12CORE_PRESENT_EXECUTE_USES_RAW_BLIT) ||
+           (desc->flags & M12CORE_PRESENT_EXECUTE_USES_PRESENTER))
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_NON_RAW_PATH;
+  else if ((desc->flags & M12CORE_PRESENT_EXECUTE_LIVE_PRESENT) ||
+           (desc->flags & M12CORE_PRESENT_EXECUTE_READBACK_REQUESTED))
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_DIAGNOSTIC_ACTIVE;
+  else if (!desc->width || !desc->height)
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_ZERO_EXTENT;
+  else if (!(desc->flags & M12CORE_PRESENT_EXECUTE_FORMAT_SUPPORTED))
+    fallback = M12CORE_PRESENT_EXECUTE_FALLBACK_UNSUPPORTED_FORMAT;
+
+  if (!(desc->flags & M12CORE_PRESENT_EXECUTE_HAS_SOURCE_TEXTURE))
+    validation |= 1u << 0;
+  if (!(desc->flags & M12CORE_PRESENT_EXECUTE_HAS_DRAWABLE))
+    validation |= 1u << 1;
+  if (!(desc->flags & M12CORE_PRESENT_EXECUTE_USES_RAW_BLIT))
+    validation |= 1u << 2;
+  if (desc->flags & M12CORE_PRESENT_EXECUTE_USES_PRESENTER)
+    validation |= 1u << 3;
+  if (desc->flags & M12CORE_PRESENT_EXECUTE_LIVE_PRESENT)
+    validation |= 1u << 4;
+  if (desc->flags & M12CORE_PRESENT_EXECUTE_READBACK_REQUESTED)
+    validation |= 1u << 5;
+  if (!(desc->flags & M12CORE_PRESENT_EXECUTE_GATE_ENABLED))
+    validation |= 1u << 6;
+  if (!desc->width || !desc->height)
+    validation |= 1u << 7;
+  if (!(desc->flags & M12CORE_PRESENT_EXECUTE_FORMAT_SUPPORTED))
+    validation |= 1u << 8;
+
+  const bool supported = fallback == M12CORE_PRESENT_EXECUTE_FALLBACK_NONE;
+  uint32_t hazard_score = 0;
+  if (desc->sync_interval)
+    hazard_score += 1;
+  if (desc->present_flags)
+    hazard_score += 1;
+  if (desc->command_buffer_status != 2)
+    hazard_score += 1;
+  if (desc->wait_seq)
+    hazard_score += 1;
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_PRESENT_EXECUTE_STATUS_OK;
+  out_summary->flags = 0;
+  if (supported)
+    out_summary->flags |= M12CORE_PRESENT_EXECUTE_SUMMARY_SUPPORTED;
+  if (desc->flags & M12CORE_PRESENT_EXECUTE_GATE_ENABLED)
+    out_summary->flags |= M12CORE_PRESENT_EXECUTE_SUMMARY_GATE_ENABLED;
+  out_summary->fallback_reason = fallback;
+  out_summary->validation_flags = validation;
+  out_summary->planned_operation_count = supported ? 3u : 0u;
+  out_summary->hazard_score = hazard_score;
+  out_summary->present_execute_key = key;
+  out_summary->scheduled_work_count = supported ? desc->command_count + 3u : 0u;
   return 0;
 }
 

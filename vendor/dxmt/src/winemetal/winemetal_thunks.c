@@ -104,6 +104,10 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreValidateCommandStream";
   case 156:
     return "WMTM12CorePlanRenderPass";
+  case 157:
+    return "WMTM12CorePlanPresentExecute";
+  case 158:
+    return "WMTM12CoreExecutePresentBlit";
   default:
     return "unknown";
   }
@@ -687,6 +691,43 @@ WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPas
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(156, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanPresentExecute(const M12CorePresentExecuteDesc *desc, M12CorePresentExecuteSummary *out_summary) {
+  struct unixcall_m12core_plan_present_execute params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(157, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreExecutePresentBlit(
+    const M12CorePresentExecuteDesc *desc, obj_handle_t command_buffer, obj_handle_t source_texture,
+    obj_handle_t destination_texture, obj_handle_t drawable, M12CorePresentExecuteSummary *out_summary
+) {
+  struct unixcall_m12core_execute_present_blit params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  params.desc = *desc;
+  params.command_buffer = command_buffer;
+  params.source_texture = source_texture;
+  params.destination_texture = destination_texture;
+  params.drawable = drawable;
+  if (!winemetal_unix_call_ok(158, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;
