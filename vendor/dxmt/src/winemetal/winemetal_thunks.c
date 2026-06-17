@@ -49,6 +49,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 138: return "WMTM12CoreProbeShaderCache";
   case 139: return "WMTM12CoreParseShaderReflection";
   case 140: return "WMTM12CoreMakePipelineCacheKey";
+  case 141: return "WMTM12CoreCreateShaderFunction";
   default: return "unknown";
   }
 }
@@ -280,6 +281,33 @@ WMTM12CoreParseShaderReflection(const char *reflection_text, uint64_t reflection
     return false;
 
   *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreCreateShaderFunction(obj_handle_t device, uint32_t stage,
+                               uint32_t input_kind, uint64_t shader_hash,
+                               const void *input_data, uint64_t input_size,
+                               const char *entry_point,
+                               M12CoreShaderFunctionResult *out_result) {
+  struct unixcall_m12core_create_shader_function params;
+  memset(&params, 0, sizeof(params));
+  if (!device || !input_data || !input_size || !out_result)
+    return false;
+
+  params.device = device;
+  params.stage = stage;
+  params.input_kind = input_kind;
+  params.shader_hash = shader_hash;
+  WMT_MEMPTR_SET(params.input_data, input_data);
+  params.input_size = input_size;
+  if (entry_point)
+    snprintf(params.entry_point, sizeof(params.entry_point), "%s", entry_point);
+
+  if (!winemetal_unix_call_ok(141, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
   return true;
 }
 

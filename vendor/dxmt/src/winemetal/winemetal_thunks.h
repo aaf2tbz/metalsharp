@@ -443,6 +443,19 @@ struct unixcall_m12core_make_pipeline_cache_key {
   M12CorePipelineCacheKey ret_key;
 };
 
+struct unixcall_m12core_create_shader_function {
+  obj_handle_t device;
+  uint32_t stage;
+  uint32_t input_kind;
+  uint64_t shader_hash;
+  struct WMTConstMemoryPointer input_data;
+  uint64_t input_size;
+  char entry_point[M12CORE_SHADER_ENTRY_POINT_CAPACITY];
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreShaderFunctionResult ret_result;
+};
+
 #pragma pack(pop)
 
 #endif

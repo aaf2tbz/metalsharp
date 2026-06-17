@@ -1,5 +1,6 @@
 m12core_src = [
   'm12core.cpp',
+  'm12core_metal.c',
 ]
 
 # Native macOS shared library used by the future unified M12 runtime.  This is
@@ -10,6 +11,8 @@ m12core_dylib = shared_library('m12core', m12core_src,
   include_directories : dxmt_include_path,
   native           : true,
   build_by_default : true,
+  c_args           : ['-ObjC'],
+  link_args        : ['-weak_framework', 'Foundation', '-weak_framework', 'Metal'],
   install_rpath    : '',
   build_rpath      : '@loader_path/',
 )

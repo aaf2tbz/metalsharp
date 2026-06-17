@@ -77,6 +77,8 @@ typedef int (*PFN_m12core_parse_shader_reflection)(const char *reflection_text,
                                                    M12CoreShaderReflectionSummary *out_summary);
 typedef int (*PFN_m12core_make_pipeline_cache_key)(const M12CorePipelineCacheKeyInput *input,
                                                    M12CorePipelineCacheKey *out_key);
+typedef int (*PFN_m12core_create_shader_function)(const M12CoreShaderFunctionDesc *desc,
+                                                  M12CoreShaderFunctionResult *out_result);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -89,8 +91,10 @@ static PFN_m12core_format_shader_cache_paths p_m12core_format_shader_cache_paths
 static PFN_m12core_probe_shader_cache p_m12core_probe_shader_cache;
 static PFN_m12core_parse_shader_reflection p_m12core_parse_shader_reflection;
 static PFN_m12core_make_pipeline_cache_key p_m12core_make_pipeline_cache_key;
+static PFN_m12core_create_shader_function p_m12core_create_shader_function;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
+static _Atomic uint64_t m12core_shader_function_calls;
 
 static bool
 m12core_env_enabled(const char *name) {
@@ -162,6 +166,8 @@ m12core_try_load(void) {
       (PFN_m12core_parse_shader_reflection)dlsym(m12core_handle, "m12core_parse_shader_reflection");
   p_m12core_make_pipeline_cache_key =
       (PFN_m12core_make_pipeline_cache_key)dlsym(m12core_handle, "m12core_make_pipeline_cache_key");
+  p_m12core_create_shader_function =
+      (PFN_m12core_create_shader_function)dlsym(m12core_handle, "m12core_create_shader_function");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -302,6 +308,45 @@ _WMTM12CoreParseShaderReflection(void *obj) {
       p_m12core_parse_shader_reflection(params->reflection_text.ptr,
                                         params->reflection_text_size,
                                         &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreCreateShaderFunction(void *obj) {
+  struct unixcall_m12core_create_shader_function *params = obj;
+  if (!params || !p_m12core_create_shader_function)
+    return STATUS_SUCCESS;
+
+  /* Phase 3 high-risk shader-function bridge.  libm12core now owns Metal
+   * library creation, function fallback lookup, and native function caching for
+   * DXIL cached metallibs/generated MSL.  The PE side still owns DXIL->MSL
+   * lowering and D3D12 reflection compatibility until later slices.
+   */
+  M12CoreShaderFunctionDesc desc = {0};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.stage = params->stage;
+  desc.input_kind = params->input_kind;
+  desc.shader_hash = params->shader_hash;
+  desc.device_handle = params->device;
+  desc.input_data = params->input_data.ptr;
+  desc.input_size = params->input_size;
+  snprintf(desc.entry_point, sizeof(desc.entry_point), "%s", params->entry_point);
+
+  params->ret_success =
+      p_m12core_create_shader_function(&desc, &params->ret_result) == 0;
+  uint64_t calls = atomic_fetch_add(&m12core_shader_function_calls, 1) + 1;
+  if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
+    FILE *log = winemetal_debug_log();
+    if (log) {
+      fprintf(log,
+              "[m12core] shader_function first_call stage=%u kind=%u hash=0x%llx status=%u cache_hit=%u success=%u\n",
+              params->stage, params->input_kind,
+              (unsigned long long)params->shader_hash,
+              params->ret_result.status, params->ret_result.cache_hit,
+              params->ret_success);
+      fclose(log);
+    }
+  }
   return STATUS_SUCCESS;
 }
 
@@ -3987,6 +4032,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreProbeShaderCache,
     &_WMTM12CoreParseShaderReflection,
     &_WMTM12CoreMakePipelineCacheKey,
+    &_WMTM12CoreCreateShaderFunction,
 };
 
 #ifndef DXMT_NATIVE
@@ -4132,5 +4178,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreProbeShaderCache,
     &_WMTM12CoreParseShaderReflection,
     &_WMTM12CoreMakePipelineCacheKey,
+    &_WMTM12CoreCreateShaderFunction,
 };
 #endif

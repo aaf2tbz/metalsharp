@@ -382,6 +382,46 @@ void PsoCacheHashCombine(size_t &hash, size_t value) {
   hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
 }
 
+uint32_t ToM12CoreShaderStage(ShaderType type) {
+  switch (type) {
+  case ShaderType::Vertex: return M12CORE_SHADER_STAGE_VERTEX;
+  case ShaderType::Pixel: return M12CORE_SHADER_STAGE_PIXEL;
+  case ShaderType::Compute: return M12CORE_SHADER_STAGE_COMPUTE;
+  case ShaderType::Hull: return M12CORE_SHADER_STAGE_HULL;
+  case ShaderType::Domain: return M12CORE_SHADER_STAGE_DOMAIN;
+  case ShaderType::Geometry: return M12CORE_SHADER_STAGE_GEOMETRY;
+  default: return M12CORE_SHADER_STAGE_UNKNOWN;
+  }
+}
+
+bool CreateM12CoreShaderFunction(obj_handle_t device, ShaderType type,
+                                 uint32_t input_kind, size_t shader_hash,
+                                 const void *input_data, uint64_t input_size,
+                                 const char *entry_name,
+                                 WMT::Reference<WMT::Function> &out_func,
+                                 WMT::Reference<WMT::Error> *out_error,
+                                 M12CoreShaderFunctionResult *out_result) {
+  /* Phase 3 shader-function seam: libm12core owns Metal library creation,
+   * function fallback lookup, and a native in-process function cache when this
+   * bridge is available.  PE-side code still keeps the legacy WMT path below as
+   * fallback while DXIL->MSL lowering/reflection compatibility remain in D3D12.
+   */
+  M12CoreShaderFunctionResult result = {};
+  if (!WMTM12CoreCreateShaderFunction(device, ToM12CoreShaderStage(type), input_kind,
+                                      (uint64_t)shader_hash, input_data, input_size,
+                                      entry_name, &result) ||
+      result.abi_version != M12CORE_ABI_VERSION)
+    return false;
+  if (out_result)
+    *out_result = result;
+  if (result.error_handle && out_error)
+    *out_error = WMT::Reference<WMT::Error>(result.error_handle);
+  if (result.status != M12CORE_SHADER_FUNCTION_STATUS_OK || !result.function_handle)
+    return true;
+  out_func = WMT::Reference<WMT::Function>(result.function_handle);
+  return true;
+}
+
 bool FinalizeM12CorePipelineCacheKey(size_t base_hash, uint64_t device_id,
                                      uint32_t kind, uint64_t flags,
                                      size_t &out_key) {
@@ -1327,27 +1367,6 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                                   static_cast<MTLD3D12RootSignature *>(m_root_sig));
             PSTRACE("  DXIL compile report written to %s", dxil_report_path);
 
-            WMT::Reference<WMT::Error> compile_err;
-            auto library = wmt_device.newLibraryWithSource(
-                msl_result->source.c_str(), msl_result->source.size(), compile_err);
-
-            if (compile_err.handle) {
-              auto err_desc = DescribeNSObject(compile_err.handle);
-              DumpShaderText(msl_error_path, err_desc.c_str());
-              PSTRACE("  newLibraryWithSource FAILED: %s", err_desc.c_str());
-              Logger::err(str::format("DXIL MSL compilation failed for ", func_name, ": ",
-                                       err_desc));
-              DumpShaderBlob(dxbc_path, bytecode, size);
-              return RecordCompileFailure("shader/metal_library_source",
-                                          str::format(func_name, " MSL compile failed: ",
-                                                      err_desc,
-                                                      "; msl ", msl_path,
-                                                      "; error ", msl_error_path,
-                                                      "; dxbc ", dxbc_path));
-            }
-
-            PSTRACE("  Metal library compiled OK from source lib_handle=%llu", (unsigned long long)library.handle);
-
             const char *dump_msl = std::getenv("DXMT_DUMP_MSL");
             if (dump_msl && dump_msl[0] && strcmp(dump_msl, "0") != 0) {
               char dump_path[1024];
@@ -1369,10 +1388,77 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               }
             }
 
+            M12CoreShaderFunctionResult core_function = {};
+            WMT::Reference<WMT::Error> core_error;
+            bool core_function_attempted = CreateM12CoreShaderFunction(
+                wmt_device.handle, type, M12CORE_SHADER_FUNCTION_INPUT_MSL_SOURCE,
+                hash, msl_result->source.c_str(), msl_result->source.size(),
+                entry_name, out_func, &core_error, &core_function);
+            if (core_function_attempted) {
+              if (core_function.status == M12CORE_SHADER_FUNCTION_STATUS_OK && out_func.handle) {
+                PSTRACE("  DXIL shader compiled by libm12core OK! entry=%s cache_hit=%u func=%llu",
+                        core_function.selected_entry[0] ? core_function.selected_entry : entry_name,
+                        core_function.cache_hit,
+                        (unsigned long long)out_func.handle);
+                {
+                  std::lock_guard<std::mutex> lock(s_shader_mutex);
+                  s_shader_cache[hash] = out_func;
+                }
+                if (type == ShaderType::Vertex)
+                  m_vs_uses_stage_in = false;
+                if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
+                  m_threadgroup_size.width = msl_result->tg_size[0];
+                  m_threadgroup_size.height = msl_result->tg_size[1];
+                  m_threadgroup_size.depth = msl_result->tg_size[2];
+                }
+                return true;
+              }
+              if (core_function.status == M12CORE_SHADER_FUNCTION_STATUS_LIBRARY_FAILED) {
+                auto err_desc = core_error.handle ? DescribeNSObject(core_error.handle) : "unknown";
+                DumpShaderText(msl_error_path, err_desc.c_str());
+                PSTRACE("  libm12core newLibraryWithSource FAILED: %s", err_desc.c_str());
+                Logger::err(str::format("DXIL MSL compilation failed in libm12core for ", func_name, ": ",
+                                         err_desc));
+                DumpShaderBlob(dxbc_path, bytecode, size);
+                return RecordCompileFailure("shader/m12core_metal_library_source",
+                                            str::format(func_name, " libm12core MSL compile failed: ",
+                                                        err_desc,
+                                                        "; msl ", msl_path,
+                                                        "; error ", msl_error_path,
+                                                        "; dxbc ", dxbc_path));
+              }
+              PSTRACE("  libm12core function lookup failed status=%u", core_function.status);
+              Logger::err(str::format("DXIL: libm12core failed to get function from compiled library for ", func_name));
+              return RecordCompileFailure("shader/m12core_metal_function_lookup",
+                                          str::format(func_name, " libm12core function lookup failed after MSL compile; msl ",
+                                                      msl_path));
+            }
+
+            WMT::Reference<WMT::Error> compile_err;
+            auto library = wmt_device.newLibraryWithSource(
+                msl_result->source.c_str(), msl_result->source.size(), compile_err);
+
+            if (compile_err.handle) {
+              auto err_desc = DescribeNSObject(compile_err.handle);
+              DumpShaderText(msl_error_path, err_desc.c_str());
+              PSTRACE("  fallback newLibraryWithSource FAILED: %s", err_desc.c_str());
+              Logger::err(str::format("DXIL MSL compilation failed for ", func_name, ": ",
+                                       err_desc));
+              DumpShaderBlob(dxbc_path, bytecode, size);
+              return RecordCompileFailure("shader/metal_library_source",
+                                          str::format(func_name, " MSL compile failed: ",
+                                                      err_desc,
+                                                      "; msl ", msl_path,
+                                                      "; error ", msl_error_path,
+                                                      "; dxbc ", dxbc_path));
+            }
+
+            PSTRACE("  fallback Metal library compiled OK from source lib_handle=%llu", (unsigned long long)library.handle);
+
             out_func = library.newFunction(entry_name);
-            PSTRACE("  newFunction(%s) on lib=%llu -> func_handle=%llu", entry_name, (unsigned long long)library.handle, (unsigned long long)out_func.handle);
+            PSTRACE("  fallback newFunction(%s) on lib=%llu -> func_handle=%llu", entry_name, (unsigned long long)library.handle, (unsigned long long)out_func.handle);
             if (!out_func.handle) {
-              PSTRACE("  newFunction(%s) returned null, trying alternatives", entry_name);
+              PSTRACE("  fallback newFunction(%s) returned null, trying alternatives", entry_name);
               out_func = library.newFunction("main");
               if (!out_func.handle)
                 out_func = library.newFunction("cs_main");
@@ -1383,7 +1469,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             }
 
             if (out_func.handle) {
-              PSTRACE("  DXIL shader compiled OK! entry=%s", entry_name);
+              PSTRACE("  DXIL shader compiled OK via fallback! entry=%s", entry_name);
               {
                 std::lock_guard<std::mutex> lock(s_shader_mutex);
                 s_shader_cache[hash] = out_func;
@@ -1399,7 +1485,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               }
               return true;
             } else {
-              PSTRACE("  newFunction returned null for all entry points");
+              PSTRACE("  fallback newFunction returned null for all entry points");
               Logger::err(str::format("DXIL: failed to get function from compiled library for ", func_name));
               return RecordCompileFailure("shader/metal_function_lookup",
                                           str::format(func_name, " function lookup failed after MSL compile; msl ",
@@ -1422,42 +1508,110 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             std::vector<uint8_t> lib_data(lib_size);
             fread(lib_data.data(), 1, lib_size, mf);
             fclose(mf);
-            auto dispatch_data = WMT::MakeDispatchData(lib_data.data(), lib_size);
-            WMT::Reference<WMT::Error> err;
-            auto library = wmt_device.newLibrary(dispatch_data, err);
-            if (!err.handle) {
-              char actual_entry[256] = {};
-              char rbuf[4096] = {};
-              size_t rbuf_len = 0;
-              M12CoreShaderReflectionSummary core_reflection = {};
-              bool core_reflection_valid = false;
-              FILE *rf = fopen(reflection_path, "r");
-              if (rf) {
-                rbuf_len = fread(rbuf, 1, sizeof(rbuf)-1, rf);
-                fclose(rf);
-                rbuf[rbuf_len] = 0;
-                core_reflection_valid = WMTM12CoreParseShaderReflection(
-                    rbuf, rbuf_len, &core_reflection) &&
-                    core_reflection.abi_version == M12CORE_ABI_VERSION;
-                if (core_reflection_valid && core_reflection.has_entry_point) {
-                  snprintf(actual_entry, sizeof(actual_entry), "%s", core_reflection.entry_point);
-                } else {
-                  char *ep = strstr(rbuf, "\"EntryPoint\"");
-                  if (ep) {
-                    char *q1 = strchr(ep + 13, '"');
-                    char *q2 = q1 ? strchr(q1+1, '"') : nullptr;
-                    if (q1 && q2) {
-                      size_t len = q2 - q1 - 1;
-                      if (len < sizeof(actual_entry)) {
-                        memcpy(actual_entry, q1+1, len);
-                        actual_entry[len] = 0;
-                      }
+            char actual_entry[256] = {};
+            char rbuf[4096] = {};
+            size_t rbuf_len = 0;
+            M12CoreShaderReflectionSummary core_reflection = {};
+            bool core_reflection_valid = false;
+            FILE *rf = fopen(reflection_path, "r");
+            if (rf) {
+              rbuf_len = fread(rbuf, 1, sizeof(rbuf)-1, rf);
+              fclose(rf);
+              rbuf[rbuf_len] = 0;
+              core_reflection_valid = WMTM12CoreParseShaderReflection(
+                  rbuf, rbuf_len, &core_reflection) &&
+                  core_reflection.abi_version == M12CORE_ABI_VERSION;
+              if (core_reflection_valid && core_reflection.has_entry_point) {
+                snprintf(actual_entry, sizeof(actual_entry), "%s", core_reflection.entry_point);
+              } else {
+                char *ep = strstr(rbuf, "\"EntryPoint\"");
+                if (ep) {
+                  char *q1 = strchr(ep + 13, '"');
+                  char *q2 = q1 ? strchr(q1+1, '"') : nullptr;
+                  if (q1 && q2) {
+                    size_t len = q2 - q1 - 1;
+                    if (len < sizeof(actual_entry)) {
+                      memcpy(actual_entry, q1+1, len);
+                      actual_entry[len] = 0;
                     }
                   }
                 }
               }
-              const char *fn_name = actual_entry[0] ? actual_entry : func_name;
-              PSTRACE("  trying newFunction(%s)", fn_name);
+            }
+            const char *fn_name = actual_entry[0] ? actual_entry : func_name;
+
+            auto apply_cached_reflection = [&]() {
+              if (core_reflection_valid && core_reflection.has_threadgroup_size) {
+                m_threadgroup_size.width = core_reflection.threadgroup_size[0];
+                m_threadgroup_size.height = core_reflection.threadgroup_size[1];
+                m_threadgroup_size.depth = core_reflection.threadgroup_size[2];
+                PSTRACE("  threadgroup_size from libm12core reflection: %ux%ux%u",
+                        core_reflection.threadgroup_size[0], core_reflection.threadgroup_size[1],
+                        core_reflection.threadgroup_size[2]);
+              } else {
+                char *tg = strstr(rbuf, "\"tg_size\"");
+                if (tg) {
+                  int tw=1,th=1,td=1;
+                  if (sscanf(tg, "\"tg_size\": [%d, %d, %d]", &tw, &th, &td) == 3 ||
+                      sscanf(tg, "\"tg_size\":[%d,%d,%d]", &tw, &th, &td) == 3) {
+                    m_threadgroup_size.width = tw;
+                    m_threadgroup_size.height = th;
+                    m_threadgroup_size.depth = td;
+                    PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw, th, td);
+                  }
+                }
+              }
+            };
+
+            M12CoreShaderFunctionResult core_function = {};
+            WMT::Reference<WMT::Error> core_error;
+            bool core_function_attempted = CreateM12CoreShaderFunction(
+                wmt_device.handle, type, M12CORE_SHADER_FUNCTION_INPUT_METALLIB,
+                hash, lib_data.data(), lib_data.size(), fn_name, out_func,
+                &core_error, &core_function);
+            if (core_function_attempted) {
+              if (core_function.status == M12CORE_SHADER_FUNCTION_STATUS_OK && out_func.handle) {
+                PSTRACE("  DXIL loaded from cache by libm12core OK! entry=%s cache_hit=%u func=%llu",
+                        core_function.selected_entry[0] ? core_function.selected_entry : fn_name,
+                        core_function.cache_hit,
+                        (unsigned long long)out_func.handle);
+                {
+                  std::lock_guard<std::mutex> lock(s_shader_mutex);
+                  s_shader_cache[hash] = out_func;
+                }
+                if (type == ShaderType::Vertex)
+                  m_vs_uses_stage_in = false;
+                apply_cached_reflection();
+                return true;
+              }
+              if (core_function.status == M12CORE_SHADER_FUNCTION_STATUS_LIBRARY_FAILED) {
+                auto err_desc = core_error.handle ? DescribeNSObject(core_error.handle) : "unknown";
+                DumpShaderText(metallib_error_path, err_desc.c_str());
+                DumpShaderBlob(dxbc_path, bytecode, size);
+                PSTRACE("  libm12core cached metallib load FAILED: %s", err_desc.c_str());
+                return RecordCompileFailure(
+                    "shader/m12core_dxil_cached_metallib_load",
+                    str::format(func_name,
+                                " libm12core cached metallib load failed: ",
+                                err_desc,
+                                "; metallib ", metallib_path, "; error ",
+                                metallib_error_path, "; dxbc ", dxbc_path));
+              }
+              PSTRACE("  libm12core cached metallib function lookup failed status=%u", core_function.status);
+              DumpShaderBlob(dxbc_path, bytecode, size);
+              return RecordCompileFailure(
+                  "shader/m12core_dxil_cached_function_lookup",
+                  str::format(func_name,
+                              " libm12core cached metallib function lookup failed; metallib ",
+                              metallib_path, "; reflection ", reflection_path,
+                              "; dxbc ", dxbc_path));
+            }
+
+            auto dispatch_data = WMT::MakeDispatchData(lib_data.data(), lib_size);
+            WMT::Reference<WMT::Error> err;
+            auto library = wmt_device.newLibrary(dispatch_data, err);
+            if (!err.handle) {
+              PSTRACE("  fallback trying newFunction(%s)", fn_name);
               out_func = library.newFunction(fn_name);
               if (!out_func.handle && actual_entry[0]) {
                 out_func = library.newFunction(func_name);
@@ -1471,36 +1625,17 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               if (!out_func.handle)
                 out_func = library.newFunction("ps_main");
               if (out_func.handle) {
-                PSTRACE("  DXIL loaded from cache OK! entry=%s", fn_name);
+                PSTRACE("  DXIL loaded from cache OK via fallback! entry=%s", fn_name);
                 {
                   std::lock_guard<std::mutex> lock(s_shader_mutex);
                   s_shader_cache[hash] = out_func;
                 }
                 if (type == ShaderType::Vertex)
                   m_vs_uses_stage_in = false;
-                if (core_reflection_valid && core_reflection.has_threadgroup_size) {
-                  m_threadgroup_size.width = core_reflection.threadgroup_size[0];
-                  m_threadgroup_size.height = core_reflection.threadgroup_size[1];
-                  m_threadgroup_size.depth = core_reflection.threadgroup_size[2];
-                  PSTRACE("  threadgroup_size from libm12core reflection: %ux%ux%u",
-                          core_reflection.threadgroup_size[0], core_reflection.threadgroup_size[1],
-                          core_reflection.threadgroup_size[2]);
-                } else {
-                  char *tg = strstr(rbuf, "\"tg_size\"");
-                  if (tg) {
-                    int tw=1,th=1,td=1;
-                    if (sscanf(tg, "\"tg_size\": [%d, %d, %d]", &tw, &th, &td) == 3 ||
-                        sscanf(tg, "\"tg_size\":[%d,%d,%d]", &tw, &th, &td) == 3) {
-                      m_threadgroup_size.width = tw;
-                      m_threadgroup_size.height = th;
-                      m_threadgroup_size.depth = td;
-                      PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw, th, td);
-                    }
-                  }
-                }
+                apply_cached_reflection();
                 return true;
               } else {
-                PSTRACE("  WMT newFunction returned null");
+                PSTRACE("  fallback WMT newFunction returned null");
                 DumpShaderBlob(dxbc_path, bytecode, size);
                 return RecordCompileFailure(
                     "shader/dxil_cached_function_lookup",
@@ -1513,7 +1648,7 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               auto err_desc = DescribeNSObject(err.handle);
               DumpShaderText(metallib_error_path, err_desc.c_str());
               DumpShaderBlob(dxbc_path, bytecode, size);
-              PSTRACE("  WMT newLibrary FAILED: %s", err_desc.c_str());
+              PSTRACE("  fallback WMT newLibrary FAILED: %s", err_desc.c_str());
               return RecordCompileFailure(
                   "shader/dxil_cached_metallib_load",
                   str::format(func_name,

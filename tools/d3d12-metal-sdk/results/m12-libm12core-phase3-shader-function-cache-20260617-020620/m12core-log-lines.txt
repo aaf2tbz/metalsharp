@@ -1,0 +1,22 @@
+3012619:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x3 build_id=00000002:4d313243 build=libm12core phase2 counters abi=1
+3616114:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x3 build_id=00000002:4d313243 build=libm12core phase2 counters abi=1
+3618002:[m12core] counter_bridge first_batch counters=17 delta_total=64
+3711227:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+3713115:[m12core] counter_bridge first_batch counters=17 delta_total=64
+3802446:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+3804334:[m12core] counter_bridge first_batch counters=17 delta_total=64
+3894921:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+3896809:[m12core] counter_bridge first_batch counters=17 delta_total=64
+3991495:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+3993383:[m12core] counter_bridge first_batch counters=17 delta_total=64
+4507637:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+4509525:[m12core] counter_bridge first_batch counters=17 delta_total=64
+4602840:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+4604728:[m12core] counter_bridge first_batch counters=17 delta_total=64
+4698294:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0x7 build_id=00000003:4d313243 build=libm12core phase3 shader-introspection abi=1
+4700182:[m12core] counter_bridge first_batch counters=17 delta_total=64
+4794515:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0xf build_id=00000004:4d313243 build=libm12core phase3 shader-functions abi=1
+4796391:[m12core] counter_bridge first_batch counters=17 delta_total=64
+5127144:[m12core] loaded path=@loader_path/libm12core.dylib abi=1 features=0xf build_id=00000004:4d313243 build=libm12core phase3 shader-functions abi=1
+5127184:[m12core] shader_function first_call stage=1 kind=2 hash=0xca33abe9a2d27ce9 status=0 cache_hit=0 success=1
+5129021:[m12core] counter_bridge first_batch counters=17 delta_total=64

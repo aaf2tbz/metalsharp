@@ -21,7 +21,7 @@
 namespace {
 
 constexpr uint32_t kBuildIdLow = 0x4d313243u;  // "M12C" marker.
-constexpr uint32_t kBuildIdHigh = 0x00000003u; // Phase-3 shader introspection foundation.
+constexpr uint32_t kBuildIdHigh = 0x00000004u; // Phase-3 native shader function cache foundation.
 
 std::atomic<uint64_t> g_counters[M12CORE_COUNTER_COUNT] = {};
 
@@ -130,14 +130,15 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 
   out_version->abi_version = M12CORE_ABI_VERSION;
   out_version->feature_flags = M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
-                               M12CORE_FEATURE_SHADER_INTROSPECTION;
+                               M12CORE_FEATURE_SHADER_INTROSPECTION |
+                               M12CORE_FEATURE_SHADER_FUNCTIONS;
   out_version->build_id_low = kBuildIdLow;
   out_version->build_id_high = kBuildIdHigh;
   return 0;
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase3 shader-introspection abi=1";
+  return "libm12core phase3 shader-functions abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {

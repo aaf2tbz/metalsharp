@@ -28,6 +28,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_INERT_LOADER = 1u << 0,
   M12CORE_FEATURE_COUNTERS = 1u << 1,
   M12CORE_FEATURE_SHADER_INTROSPECTION = 1u << 2,
+  M12CORE_FEATURE_SHADER_FUNCTIONS = 1u << 3,
 };
 
 typedef struct M12CoreVersion {
@@ -126,6 +127,41 @@ typedef struct M12CoreShaderReflectionSummary {
   uint32_t threadgroup_size[3];
 } M12CoreShaderReflectionSummary;
 
+typedef enum M12CoreShaderFunctionInputKind {
+  M12CORE_SHADER_FUNCTION_INPUT_UNKNOWN = 0,
+  M12CORE_SHADER_FUNCTION_INPUT_METALLIB = 1,
+  M12CORE_SHADER_FUNCTION_INPUT_MSL_SOURCE = 2,
+} M12CoreShaderFunctionInputKind;
+
+typedef enum M12CoreShaderFunctionStatus {
+  M12CORE_SHADER_FUNCTION_STATUS_OK = 0,
+  M12CORE_SHADER_FUNCTION_STATUS_INVALID = 1,
+  M12CORE_SHADER_FUNCTION_STATUS_LIBRARY_FAILED = 2,
+  M12CORE_SHADER_FUNCTION_STATUS_FUNCTION_FAILED = 3,
+} M12CoreShaderFunctionStatus;
+
+typedef struct M12CoreShaderFunctionDesc {
+  uint32_t abi_version;
+  uint32_t stage;
+  uint32_t input_kind;
+  uint32_t reserved;
+  uint64_t shader_hash;
+  uint64_t device_handle;
+  const void *input_data;
+  uint64_t input_size;
+  char entry_point[M12CORE_SHADER_ENTRY_POINT_CAPACITY];
+} M12CoreShaderFunctionDesc;
+
+typedef struct M12CoreShaderFunctionResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t cache_hit;
+  uint32_t reserved;
+  uint64_t function_handle;
+  uint64_t error_handle;
+  char selected_entry[M12CORE_SHADER_ENTRY_POINT_CAPACITY];
+} M12CoreShaderFunctionResult;
+
 typedef enum M12CorePipelineKind {
   M12CORE_PIPELINE_KIND_UNKNOWN = 0,
   M12CORE_PIPELINE_KIND_RENDER = 1,
@@ -182,6 +218,8 @@ int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
                                M12CoreShaderCacheLookup *out_lookup);
 int m12core_parse_shader_reflection(const char *reflection_text, uint64_t reflection_text_size,
                                     M12CoreShaderReflectionSummary *out_summary);
+int m12core_create_shader_function(const M12CoreShaderFunctionDesc *desc,
+                                   M12CoreShaderFunctionResult *out_result);
 int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
                                     M12CorePipelineCacheKey *out_key);
 

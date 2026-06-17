@@ -66,6 +66,14 @@ WINEMETAL_API bool WMTM12CoreProbeShaderCache(const char *cache_root, uint64_t s
 WINEMETAL_API bool WMTM12CoreParseShaderReflection(const char *reflection_text,
                                                     uint64_t reflection_text_size,
                                                     M12CoreShaderReflectionSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreCreateShaderFunction(obj_handle_t device,
+                                                   uint32_t stage,
+                                                   uint32_t input_kind,
+                                                   uint64_t shader_hash,
+                                                   const void *input_data,
+                                                   uint64_t input_size,
+                                                   const char *entry_point,
+                                                   M12CoreShaderFunctionResult *out_result);
 WINEMETAL_API bool WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input,
                                                    M12CorePipelineCacheKey *out_key);
 
