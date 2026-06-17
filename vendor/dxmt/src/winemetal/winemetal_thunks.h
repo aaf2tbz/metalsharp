@@ -436,6 +436,13 @@ struct unixcall_m12core_parse_shader_reflection {
   M12CoreShaderReflectionSummary ret_summary;
 };
 
+struct unixcall_m12core_make_pipeline_cache_key {
+  M12CorePipelineCacheKeyInput input;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CorePipelineCacheKey ret_key;
+};
+
 #pragma pack(pop)
 
 #endif

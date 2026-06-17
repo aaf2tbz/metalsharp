@@ -382,6 +382,27 @@ void PsoCacheHashCombine(size_t &hash, size_t value) {
   hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
 }
 
+bool FinalizeM12CorePipelineCacheKey(size_t base_hash, uint64_t device_id,
+                                     uint32_t kind, uint64_t flags,
+                                     size_t &out_key) {
+  /* Phase 4 foundation seam: libm12core owns the final device-scoped pipeline
+   * cache key namespace when available.  Descriptor normalization and Metal PSO
+   * object lifetime stay in the existing D3D12 path until later Phase 4 slices.
+   */
+  M12CorePipelineCacheKeyInput input = {};
+  input.abi_version = M12CORE_ABI_VERSION;
+  input.kind = kind;
+  input.base_hash = (uint64_t)base_hash;
+  input.device_id = device_id;
+  input.flags = flags;
+  M12CorePipelineCacheKey key = {};
+  if (!WMTM12CoreMakePipelineCacheKey(&input, &key) ||
+      key.abi_version != M12CORE_ABI_VERSION || key.kind != kind)
+    return false;
+  out_key = (size_t)key.key;
+  return true;
+}
+
 void PsoCacheHashFloat(size_t &hash, float value) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(value));
@@ -1851,7 +1872,10 @@ bool MTLD3D12PipelineState::Compile() {
     info.compute_function = cs_func.handle;
 
     size_t compute_pipeline_cache_key = cs_hash;
-    PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
+    if (!FinalizeM12CorePipelineCacheKey(cs_hash, (uint64_t)wmt_device.handle,
+                                         M12CORE_PIPELINE_KIND_COMPUTE, 0,
+                                         compute_pipeline_cache_key))
+      PsoCacheHashCombine(compute_pipeline_cache_key, (size_t)wmt_device.handle);
     {
       std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
       auto cached = g_compute_pipeline_cache.find(compute_pipeline_cache_key);
@@ -2261,7 +2285,10 @@ bool MTLD3D12PipelineState::Compile() {
       pso_manifest_hash, m_topology, m_blend_desc, m_rasterizer_desc,
       m_depth_stencil_desc, info.vertex_descriptor, reflected_descriptor_enabled,
       reflected_unspecified_topology);
-  PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
+  if (!FinalizeM12CorePipelineCacheKey(render_pipeline_cache_key, (uint64_t)wmt_device.handle,
+                                       M12CORE_PIPELINE_KIND_RENDER, 0,
+                                       render_pipeline_cache_key))
+    PsoCacheHashCombine(render_pipeline_cache_key, (size_t)wmt_device.handle);
   {
     std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
     auto cached = g_render_pipeline_cache.find(render_pipeline_cache_key);

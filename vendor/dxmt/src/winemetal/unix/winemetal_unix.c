@@ -75,6 +75,8 @@ typedef int (*PFN_m12core_probe_shader_cache)(const char *cache_root, uint64_t s
 typedef int (*PFN_m12core_parse_shader_reflection)(const char *reflection_text,
                                                    uint64_t reflection_text_size,
                                                    M12CoreShaderReflectionSummary *out_summary);
+typedef int (*PFN_m12core_make_pipeline_cache_key)(const M12CorePipelineCacheKeyInput *input,
+                                                   M12CorePipelineCacheKey *out_key);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -86,6 +88,7 @@ static PFN_m12core_hash_shader_bytecode p_m12core_hash_shader_bytecode;
 static PFN_m12core_format_shader_cache_paths p_m12core_format_shader_cache_paths;
 static PFN_m12core_probe_shader_cache p_m12core_probe_shader_cache;
 static PFN_m12core_parse_shader_reflection p_m12core_parse_shader_reflection;
+static PFN_m12core_make_pipeline_cache_key p_m12core_make_pipeline_cache_key;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 
@@ -157,6 +160,8 @@ m12core_try_load(void) {
       (PFN_m12core_probe_shader_cache)dlsym(m12core_handle, "m12core_probe_shader_cache");
   p_m12core_parse_shader_reflection =
       (PFN_m12core_parse_shader_reflection)dlsym(m12core_handle, "m12core_parse_shader_reflection");
+  p_m12core_make_pipeline_cache_key =
+      (PFN_m12core_make_pipeline_cache_key)dlsym(m12core_handle, "m12core_make_pipeline_cache_key");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -297,6 +302,21 @@ _WMTM12CoreParseShaderReflection(void *obj) {
       p_m12core_parse_shader_reflection(params->reflection_text.ptr,
                                         params->reflection_text_size,
                                         &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreMakePipelineCacheKey(void *obj) {
+  struct unixcall_m12core_make_pipeline_cache_key *params = obj;
+  if (!params || !p_m12core_make_pipeline_cache_key)
+    return STATUS_SUCCESS;
+
+  /* Phase 4 foundation bridge.  This finalizes device-scoped pipeline cache
+   * keys in libm12core while D3D12 still owns descriptor normalization and Metal
+   * PSO object lifetime.
+   */
+  params->ret_success =
+      p_m12core_make_pipeline_cache_key(&params->input, &params->ret_key) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -3966,6 +3986,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreFormatShaderCachePaths,
     &_WMTM12CoreProbeShaderCache,
     &_WMTM12CoreParseShaderReflection,
+    &_WMTM12CoreMakePipelineCacheKey,
 };
 
 #ifndef DXMT_NATIVE
@@ -4110,5 +4131,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreFormatShaderCachePaths,
     &_WMTM12CoreProbeShaderCache,
     &_WMTM12CoreParseShaderReflection,
+    &_WMTM12CoreMakePipelineCacheKey,
 };
 #endif

@@ -193,6 +193,10 @@ bool regularFileExists(const char *path) {
   return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
 }
 
+void pipelineHashCombine(uint64_t &hash, uint64_t value) {
+  hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+}
+
 extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
                                                  uint64_t shader_hash,
                                                  M12CoreShaderCachePaths *out_paths) {
@@ -312,5 +316,26 @@ extern "C" int m12core_parse_shader_reflection(const char *reflection_text,
   std::memcpy(local, reflection_text, (size_t)copy_size);
   local[copy_size] = 0;
   parseReflectionText(local, out_summary);
+  return 0;
+}
+
+extern "C" int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
+                                               M12CorePipelineCacheKey *out_key) {
+  if (!input || !out_key || input->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+
+  /* Phase 4 foundation: libm12core owns the device-scoped final pipeline cache
+   * key namespace.  Full render/compute descriptor normalization and Metal PSO
+   * object ownership remain in D3D12 for now, but future Phase 4 slices can
+   * move fields into this ABI without changing the cache namespace boundary.
+   */
+  uint64_t key = input->base_hash;
+  pipelineHashCombine(key, input->device_id);
+  pipelineHashCombine(key, input->kind);
+  pipelineHashCombine(key, input->flags);
+
+  out_key->abi_version = M12CORE_ABI_VERSION;
+  out_key->kind = input->kind;
+  out_key->key = key;
   return 0;
 }

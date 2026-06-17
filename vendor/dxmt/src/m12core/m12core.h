@@ -126,6 +126,26 @@ typedef struct M12CoreShaderReflectionSummary {
   uint32_t threadgroup_size[3];
 } M12CoreShaderReflectionSummary;
 
+typedef enum M12CorePipelineKind {
+  M12CORE_PIPELINE_KIND_UNKNOWN = 0,
+  M12CORE_PIPELINE_KIND_RENDER = 1,
+  M12CORE_PIPELINE_KIND_COMPUTE = 2,
+} M12CorePipelineKind;
+
+typedef struct M12CorePipelineCacheKeyInput {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint64_t base_hash;
+  uint64_t device_id;
+  uint64_t flags;
+} M12CorePipelineCacheKeyInput;
+
+typedef struct M12CorePipelineCacheKey {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint64_t key;
+} M12CorePipelineCacheKey;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -162,6 +182,8 @@ int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
                                M12CoreShaderCacheLookup *out_lookup);
 int m12core_parse_shader_reflection(const char *reflection_text, uint64_t reflection_text_size,
                                     M12CoreShaderReflectionSummary *out_summary);
+int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
+                                    M12CorePipelineCacheKey *out_key);
 
 #ifdef __cplusplus
 }
