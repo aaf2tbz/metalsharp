@@ -19,9 +19,13 @@
 #include "util_string.hpp"
 #include "d3d12_resource.hpp"
 #include <algorithm>
+#include <atomic>
 #include <bit>
+#include <iomanip>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <string>
 #include <d3d12.h>
@@ -149,6 +153,118 @@ namespace {
 
 static UINT64 AlignTo(UINT64 value, UINT64 alignment) {
   return alignment ? ((value + alignment - 1) & ~(alignment - 1)) : value;
+}
+
+struct D3D12PsoPressureStats {
+  std::atomic<uint64_t> graphics_requests{0};
+  std::atomic<uint64_t> compute_requests{0};
+  std::atomic<uint64_t> graphics_repeated{0};
+  std::atomic<uint64_t> compute_repeated{0};
+  std::mutex mutex;
+  std::unordered_set<uint64_t> graphics_hashes;
+  std::unordered_set<uint64_t> compute_hashes;
+};
+
+static D3D12PsoPressureStats &PsoPressureStats() {
+  static D3D12PsoPressureStats stats;
+  return stats;
+}
+
+static void PsoHashCombine(uint64_t &hash, uint64_t value) {
+  hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+}
+
+static uint64_t ShaderBytecodeHash64(const D3D12_SHADER_BYTECODE &bytecode) {
+  if (!bytecode.pShaderBytecode || !bytecode.BytecodeLength)
+    return 0;
+  return DXMTD3D12Hash64(bytecode.pShaderBytecode, bytecode.BytecodeLength);
+}
+
+static uint64_t SemanticHash64(const char *semantic) {
+  uint64_t hash = 1469598103934665603ull;
+  if (!semantic)
+    return hash;
+  for (const unsigned char *p = reinterpret_cast<const unsigned char *>(semantic); *p; ++p) {
+    hash ^= *p;
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+static uint64_t GraphicsPsoPressureHash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
+  uint64_t hash = 0x47313250534full;
+  PsoHashCombine(hash, ShaderBytecodeHash64(desc.VS));
+  PsoHashCombine(hash, ShaderBytecodeHash64(desc.PS));
+  PsoHashCombine(hash, ShaderBytecodeHash64(desc.GS));
+  PsoHashCombine(hash, ShaderBytecodeHash64(desc.HS));
+  PsoHashCombine(hash, ShaderBytecodeHash64(desc.DS));
+  PsoHashCombine(hash, reinterpret_cast<uintptr_t>(desc.pRootSignature));
+  PsoHashCombine(hash, desc.NumRenderTargets);
+  PsoHashCombine(hash, desc.DSVFormat);
+  PsoHashCombine(hash, desc.PrimitiveTopologyType);
+  PsoHashCombine(hash, desc.SampleMask);
+  PsoHashCombine(hash, desc.SampleDesc.Count);
+  PsoHashCombine(hash, desc.SampleDesc.Quality);
+  PsoHashCombine(hash, desc.InputLayout.NumElements);
+  for (UINT i = 0; i < desc.NumRenderTargets && i < 8; i++)
+    PsoHashCombine(hash, desc.RTVFormats[i]);
+  for (UINT i = 0; i < desc.InputLayout.NumElements && desc.InputLayout.pInputElementDescs; i++) {
+    const auto &el = desc.InputLayout.pInputElementDescs[i];
+    PsoHashCombine(hash, SemanticHash64(el.SemanticName));
+    PsoHashCombine(hash, el.SemanticIndex);
+    PsoHashCombine(hash, el.Format);
+    PsoHashCombine(hash, el.InputSlot);
+    PsoHashCombine(hash, el.AlignedByteOffset);
+    PsoHashCombine(hash, el.InputSlotClass);
+    PsoHashCombine(hash, el.InstanceDataStepRate);
+  }
+  return hash;
+}
+
+static uint64_t ComputePsoPressureHash(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc) {
+  uint64_t hash = 0x43313250534full;
+  PsoHashCombine(hash, ShaderBytecodeHash64(desc.CS));
+  PsoHashCombine(hash, reinterpret_cast<uintptr_t>(desc.pRootSignature));
+  return hash;
+}
+
+static void RecordGraphicsPsoPressure(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
+  auto &stats = PsoPressureStats();
+  uint64_t total = ++stats.graphics_requests;
+  uint64_t repeated = stats.graphics_repeated.load();
+  size_t unique = 0;
+  uint64_t hash = GraphicsPsoPressureHash(desc);
+  {
+    std::lock_guard<std::mutex> lock(stats.mutex);
+    auto inserted = stats.graphics_hashes.insert(hash).second;
+    unique = stats.graphics_hashes.size();
+    if (!inserted)
+      repeated = ++stats.graphics_repeated;
+  }
+  Logger::info(str::format("PSO_PRESSURE graphics_request total=", total,
+                           " unique=", unique, " repeated=", repeated,
+                           " hash=0x", std::hex, hash, " vs=0x", ShaderBytecodeHash64(desc.VS),
+                           " ps=0x", ShaderBytecodeHash64(desc.PS), std::dec,
+                           " rt=", desc.NumRenderTargets, " il=", desc.InputLayout.NumElements));
+}
+
+static void RecordComputePsoPressure(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc) {
+  auto &stats = PsoPressureStats();
+  uint64_t total = ++stats.compute_requests;
+  uint64_t repeated = stats.compute_repeated.load();
+  size_t unique = 0;
+  uint64_t hash = ComputePsoPressureHash(desc);
+  {
+    std::lock_guard<std::mutex> lock(stats.mutex);
+    auto inserted = stats.compute_hashes.insert(hash).second;
+    unique = stats.compute_hashes.size();
+    if (!inserted)
+      repeated = ++stats.compute_repeated;
+  }
+  Logger::info(str::format("PSO_PRESSURE compute_request total=", total,
+                           " unique=", unique, " repeated=", repeated,
+                           " hash=0x", std::hex, hash,
+                           " cs=0x", ShaderBytecodeHash64(desc.CS), std::dec));
 }
 
 static UINT FormatBlockSize(DXGI_FORMAT format) {
@@ -1860,6 +1976,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
     return E_POINTER;
   InitReturnPtr(pipeline_state);
 
+  RecordGraphicsPsoPressure(*desc);
   TRACE(
       "CreateGraphicsPSO ENTER: VS=%p(%zu) PS=%p(%zu) NumRT=%u DSV=%u Topo=%u",
       desc->VS.pShaderBytecode, desc->VS.BytecodeLength,
@@ -1940,6 +2057,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
     return E_POINTER;
   InitReturnPtr(pipeline_state);
 
+  RecordComputePsoPressure(*desc);
   auto pso = new MTLD3D12PipelineState(this, true);
   pso->SetComputeDesc(*desc);
   DXMTD3D12ScopedTimer create_timer("Device", "CreateComputePSO");

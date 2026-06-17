@@ -17,7 +17,9 @@
 #include "../../libs/DXBCParser/BlobContainer.h"
 #include "../../libs/DXBCParser/DXBCUtils.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
+#include <iomanip>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -36,6 +38,15 @@ namespace dxmt {
 
 namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
+
+std::atomic<uint64_t> g_shader_memory_cache_hits{0};
+std::atomic<uint64_t> g_shader_memory_cache_misses{0};
+std::atomic<uint64_t> g_shader_metallib_cache_hits{0};
+std::atomic<uint64_t> g_shader_metallib_cache_misses{0};
+std::atomic<uint64_t> g_metal_compute_pipeline_creates{0};
+std::atomic<uint64_t> g_metal_render_pipeline_creates{0};
+std::atomic<uint64_t> g_compile_wait_count{0};
+std::atomic<uint64_t> g_compile_wait_ns{0};
 
 std::string ShaderCacheDir() {
   const char *env_path = std::getenv("DXMT_SHADER_CACHE_PATH");
@@ -934,8 +945,15 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
     auto it = s_shader_cache.find(hash);
     if (it != s_shader_cache.end() && !out_shader_handle && !out_reflection) {
       out_func = it->second;
-      PSTRACE("CompileShader: %s CACHE HIT hash=0x%zx", func_name, hash);
+      uint64_t hits = ++g_shader_memory_cache_hits;
+      Logger::info(str::format("PSO_PRESSURE shader_memory_cache_hit stage=", func_name,
+                               " hash=0x", std::hex, hash, std::dec, " hits=", hits));
       return true;
+    }
+    if (!out_shader_handle && !out_reflection) {
+      uint64_t misses = ++g_shader_memory_cache_misses;
+      Logger::info(str::format("PSO_PRESSURE shader_memory_cache_miss stage=", func_name,
+                               " hash=0x", std::hex, hash, std::dec, " misses=", misses));
     }
   }
 
@@ -1014,7 +1032,9 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             PSTRACE("  cached metallib ignored by DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
           }
           if (!mf) {
-            PSTRACE("  metallib not cached, attempting DXIL->MSL compilation");
+            uint64_t misses = ++g_shader_metallib_cache_misses;
+            Logger::info(str::format("PSO_PRESSURE shader_metallib_cache_miss stage=", func_name,
+                                     " hash=0x", std::hex, hash, std::dec, " metallib_misses=", misses));
 
             auto container = dxmt::dxil::DXILContainer::parse(blob, blob_size);
             if (!container) {
@@ -1186,7 +1206,12 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             }
           }
 
-          PSTRACE("  loading cached metallib from %s", metallib_path);
+          {
+            uint64_t hits = ++g_shader_metallib_cache_hits;
+            Logger::info(str::format("PSO_PRESSURE shader_metallib_cache_hit stage=", func_name,
+                                     " hash=0x", std::hex, hash, std::dec, " metallib_hits=", hits,
+                                     " path=", metallib_path));
+          }
           fseek(mf, 0, SEEK_END);
           long lib_size = ftell(mf);
           fseek(mf, 0, SEEK_SET);
@@ -1582,10 +1607,20 @@ bool MTLD3D12PipelineState::Compile() {
   if (m_compile_state.load() == CompileState::Compiled)
     return true;
   if (m_compile_state.load() == CompileState::Compiling) {
+    auto wait_start = std::chrono::steady_clock::now();
     m_compile_cv.wait(lock, [this]() {
       CompileState state = m_compile_state.load();
       return state != CompileState::Compiling && state != CompileState::Pending;
     });
+    auto wait_ns = (uint64_t)std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now() - wait_start)
+                       .count();
+    uint64_t waits = ++g_compile_wait_count;
+    uint64_t total_ns = g_compile_wait_ns.fetch_add(wait_ns) + wait_ns;
+    Logger::info(str::format("PSO_PRESSURE compile_wait pso=0x", std::hex,
+                             reinterpret_cast<uintptr_t>(this), std::dec,
+                             " compute=", m_is_compute, " wait_ns=", wait_ns,
+                             " waits=", waits, " total_wait_ns=", total_ns));
     return m_compile_state.load() == CompileState::Compiled;
   }
   m_compile_state.store(CompileState::Compiling);
@@ -1615,6 +1650,10 @@ bool MTLD3D12PipelineState::Compile() {
     std::string err_desc = "unknown";
     for (uint32_t attempt = 0; attempt < 4; attempt++) {
       err = nullptr;
+      uint64_t total = ++g_metal_compute_pipeline_creates;
+      Logger::info(str::format("PSO_PRESSURE metal_compute_create total=", total,
+                               " attempt=", attempt + 1,
+                               " cs=0x", std::hex, cs_hash, std::dec));
       m_compute_pso = wmt_device.newComputePipelineState(info, err);
       if (m_compute_pso.handle)
         break;
@@ -1987,6 +2026,11 @@ bool MTLD3D12PipelineState::Compile() {
   std::string render_err_desc = "unknown";
   for (uint32_t attempt = 0; attempt < 4; attempt++) {
     err = nullptr;
+    uint64_t total = ++g_metal_render_pipeline_creates;
+    Logger::info(str::format("PSO_PRESSURE metal_render_create total=", total,
+                             " attempt=", attempt + 1,
+                             " pso=0x", std::hex, pso_manifest_hash,
+                             " vs=0x", vs_hash, " ps=0x", ps_hash, std::dec));
     m_render_pso = wmt_device.newRenderPipelineState(info, err);
     if (m_render_pso.handle)
       break;

@@ -12,8 +12,8 @@ Source-backed from `tools/d3d12-metal-sdk/results/apple-performance-docs-researc
 ## Implementation order
 
 1. [done] Add allowlisted GPTK/D3DMetal and MoltenVK env override plumbing.
-2. Add M12 PSO cache/reuse/churn counters.
-3. Extend bounded-run summaries with PSO/cache/replay/bind counters.
+2. [done] Add M12 PSO cache/reuse/churn counters.
+3. [done] Extend bounded-run summaries with PSO/cache/replay/bind counters.
 4. Build M12-native prewarm manifests from D3DMetal oracle linkage.
 5. Add redundant resource binding, broad texture usage, and load/store diagnostics.
 6. Patch only the hot paths proven by counters/traces.
@@ -35,3 +35,9 @@ Source-backed artifact: `tools/d3d12-metal-sdk/results/apple-msync-metalfx-resea
 Artifact: `tools/d3d12-metal-sdk/results/perf-env-overrides-phase-a-20260616-230637/summary.md`.
 
 Implemented backend-scoped, opt-in env forwarding for GPTK/D3DMetal `D3DM_*`/`MTL_*` knobs and DXVK/MoltenVK `MVK_CONFIG_*` knobs. Launch logs record `sync.WINEMSYNC=1` and active backend override envs.
+
+## Phase B completion note
+
+Artifact: `tools/d3d12-metal-sdk/results/m12-pso-pressure-instrumentation-20260616-231318/summary.md`.
+
+Implemented M12 `PSO_PRESSURE` runtime counters for PSO requests, unique/repeated descriptor hashes, shader/metallib cache hits/misses, Metal pipeline creation calls, and compile wait time. `analyze-m12-perf-run.py` now folds those counters into `perf-analysis.json` and `perf-analysis.md`.
