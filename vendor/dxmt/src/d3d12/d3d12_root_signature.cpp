@@ -316,6 +316,192 @@ MTLD3D12RootSignature::MTLD3D12RootSignature(MTLD3D12Device *device,
 
 MTLD3D12RootSignature::~MTLD3D12RootSignature() { m_device->Release(); }
 
+void MTLD3D12RootSignature::BuildM12CoreBindingPlanArrays() {
+  /* Phase 5 binding-plan persistence seam: retain a flattened POD copy of the
+   * parsed root signature on the PE object so future binding paths can reuse
+   * the same native-facing description without rebuilding it per draw.  The
+   * authoritative live binding model remains m_parameters/m_static_samplers.
+   */
+  m_core_binding_parameters.clear();
+  m_core_binding_ranges.clear();
+  m_core_static_samplers.clear();
+  m_core_binding_parameters.reserve(m_parameters.size());
+  m_core_static_samplers.reserve(m_static_samplers.size());
+  size_t total_ranges = 0;
+  for (const auto &param : m_parameters)
+    total_ranges += param.ranges.size();
+  m_core_binding_ranges.reserve(total_ranges);
+
+  for (const auto &param : m_parameters) {
+    M12CoreRootBindingParameter core_param = {};
+    core_param.type = static_cast<uint32_t>(param.type);
+    core_param.shader_visibility = param.shader_visibility;
+    core_param.register_space = param.register_space;
+    core_param.register_index = param.register_index;
+    core_param.num_descriptors = param.num_descriptors;
+    core_param.num_32bit_values = param.num_32bit_values;
+    core_param.descriptor_flags = param.descriptor_flags;
+    core_param.range_start = static_cast<uint32_t>(m_core_binding_ranges.size());
+    core_param.range_count = static_cast<uint32_t>(param.ranges.size());
+    for (const auto &range : param.ranges) {
+      M12CoreRootBindingRange core_range = {};
+      core_range.range_type = static_cast<uint32_t>(range.range_type);
+      core_range.num_descriptors = range.num_descriptors;
+      core_range.base_register = range.base_register;
+      core_range.register_space = range.register_space;
+      core_range.offset_in_table = range.offset_in_table;
+      core_range.flags = range.flags;
+      m_core_binding_ranges.push_back(core_range);
+    }
+    m_core_binding_parameters.push_back(core_param);
+  }
+
+  for (const auto &sampler : m_static_samplers) {
+    M12CoreStaticSamplerBinding core_sampler = {};
+    core_sampler.shader_register = sampler.shader_register;
+    core_sampler.register_space = sampler.register_space;
+    core_sampler.shader_visibility = sampler.shader_visibility;
+    m_core_static_samplers.push_back(core_sampler);
+  }
+}
+
+M12CoreRootBindingPlanDesc MTLD3D12RootSignature::MakeM12CoreBindingPlanDesc() const {
+  M12CoreRootBindingPlanDesc plan_desc = {};
+  plan_desc.abi_version = M12CORE_ABI_VERSION;
+  plan_desc.flags = static_cast<uint32_t>(m_flags);
+  plan_desc.root_signature_key = m_core_root_signature_key;
+  plan_desc.parameters = m_core_binding_parameters.empty() ? nullptr : m_core_binding_parameters.data();
+  plan_desc.parameter_count = static_cast<uint32_t>(m_core_binding_parameters.size());
+  plan_desc.ranges = m_core_binding_ranges.empty() ? nullptr : m_core_binding_ranges.data();
+  plan_desc.range_count = static_cast<uint32_t>(m_core_binding_ranges.size());
+  plan_desc.static_samplers = m_core_static_samplers.empty() ? nullptr : m_core_static_samplers.data();
+  plan_desc.static_sampler_count = static_cast<uint32_t>(m_core_static_samplers.size());
+  return plan_desc;
+}
+
+bool MTLD3D12RootSignature::LookupM12CoreDescriptorRangeForVisibility(
+    D3D12_DESCRIPTOR_RANGE_TYPE range_type, uint32_t shader_register,
+    uint32_t register_space, D3D12_SHADER_VISIBILITY shader_visibility,
+    M12CoreRootBindingLookupResult *out_result) const {
+  if (!m_core_binding_plan_valid || !out_result)
+    return false;
+
+  /* Phase 5 lookup seam: this native lookup mirrors the PE helper but is not
+   * used for live binding yet.  It provides the exact future call boundary while
+   * preserving the PE helper as fallback/authority during migration.
+   */
+  const auto plan_desc = MakeM12CoreBindingPlanDesc();
+  M12CoreRootBindingLookupDesc lookup = {};
+  lookup.abi_version = M12CORE_ABI_VERSION;
+  lookup.lookup_kind = M12CORE_ROOT_BINDING_LOOKUP_DESCRIPTOR_RANGE;
+  lookup.range_type = static_cast<uint32_t>(range_type);
+  lookup.shader_register = shader_register;
+  lookup.register_space = register_space;
+  lookup.shader_visibility = static_cast<uint32_t>(shader_visibility);
+  lookup.parameters = plan_desc.parameters;
+  lookup.parameter_count = plan_desc.parameter_count;
+  lookup.ranges = plan_desc.ranges;
+  lookup.range_count = plan_desc.range_count;
+  lookup.static_samplers = plan_desc.static_samplers;
+  lookup.static_sampler_count = plan_desc.static_sampler_count;
+  return WMTM12CoreLookupRootBinding(&lookup, out_result) &&
+         out_result->abi_version == M12CORE_ABI_VERSION &&
+         out_result->status == M12CORE_ROOT_SIGNATURE_STATUS_OK;
+}
+
+bool MTLD3D12RootSignature::LookupM12CoreStaticSampler(
+    uint32_t shader_register, uint32_t register_space,
+    D3D12_SHADER_VISIBILITY shader_visibility,
+    M12CoreRootBindingLookupResult *out_result) const {
+  if (!m_core_binding_plan_valid || !out_result)
+    return false;
+
+  const auto plan_desc = MakeM12CoreBindingPlanDesc();
+  M12CoreRootBindingLookupDesc lookup = {};
+  lookup.abi_version = M12CORE_ABI_VERSION;
+  lookup.lookup_kind = M12CORE_ROOT_BINDING_LOOKUP_STATIC_SAMPLER;
+  lookup.shader_register = shader_register;
+  lookup.register_space = register_space;
+  lookup.shader_visibility = static_cast<uint32_t>(shader_visibility);
+  lookup.parameters = plan_desc.parameters;
+  lookup.parameter_count = plan_desc.parameter_count;
+  lookup.ranges = plan_desc.ranges;
+  lookup.range_count = plan_desc.range_count;
+  lookup.static_samplers = plan_desc.static_samplers;
+  lookup.static_sampler_count = plan_desc.static_sampler_count;
+  return WMTM12CoreLookupRootBinding(&lookup, out_result) &&
+         out_result->abi_version == M12CORE_ABI_VERSION &&
+         out_result->status == M12CORE_ROOT_SIGNATURE_STATUS_OK;
+}
+
+void MTLD3D12RootSignature::ValidateM12CoreBindingPlanLookups(
+    uint32_t *out_lookup_checks, uint32_t *out_lookup_mismatches) const {
+  uint32_t lookup_checks = 0;
+  uint32_t lookup_mismatches = 0;
+
+  for (uint32_t p = 0; p < m_parameters.size(); p++) {
+    const auto &param = m_parameters[p];
+    for (const auto &range : param.ranges) {
+      M12CoreRootBindingLookupResult native_lookup = {};
+      uint32_t pe_root = UINT32_MAX;
+      uint32_t pe_offset = UINT32_MAX;
+      const bool pe_found = FindDescriptorTableRangeForVisibility(
+          range.range_type, range.base_register, range.register_space,
+          static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility),
+          &pe_root, &pe_offset);
+      const bool native_ok = LookupM12CoreDescriptorRangeForVisibility(
+          range.range_type, range.base_register, range.register_space,
+          static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility),
+          &native_lookup);
+      lookup_checks++;
+      if (!native_ok || (native_lookup.found != (pe_found ? 1u : 0u)) ||
+          (pe_found && (native_lookup.root_parameter_index != pe_root ||
+                        native_lookup.descriptor_offset != pe_offset))) {
+        lookup_mismatches++;
+        Logger::warn(str::format("M12_ROOT_BINDING_LOOKUP_MISMATCH key=0x",
+                                 std::hex, m_core_root_signature_key, std::dec,
+                                 " type=range range_type=", (uint32_t)range.range_type,
+                                 " reg=", range.base_register,
+                                 " space=", range.register_space,
+                                 " native_ok=", native_ok ? 1 : 0,
+                                 " native_found=", native_lookup.found,
+                                 " native_root=", native_lookup.root_parameter_index,
+                                 " native_offset=", native_lookup.descriptor_offset,
+                                 " pe_found=", pe_found ? 1 : 0,
+                                 " pe_root=", pe_root,
+                                 " pe_offset=", pe_offset));
+      }
+    }
+  }
+
+  for (const auto &sampler : m_static_samplers) {
+    M12CoreRootBindingLookupResult native_lookup = {};
+    const bool pe_found = FindStaticSampler(
+        sampler.shader_register, sampler.register_space,
+        static_cast<D3D12_SHADER_VISIBILITY>(sampler.shader_visibility)) != nullptr;
+    const bool native_ok = LookupM12CoreStaticSampler(
+        sampler.shader_register, sampler.register_space,
+        static_cast<D3D12_SHADER_VISIBILITY>(sampler.shader_visibility),
+        &native_lookup);
+    lookup_checks++;
+    if (!native_ok || (native_lookup.found != (pe_found ? 1u : 0u))) {
+      lookup_mismatches++;
+      Logger::warn(str::format("M12_ROOT_BINDING_LOOKUP_MISMATCH key=0x",
+                               std::hex, m_core_root_signature_key, std::dec,
+                               " type=static_sampler reg=", sampler.shader_register,
+                               " space=", sampler.register_space,
+                               " native_ok=", native_ok ? 1 : 0,
+                               " native_found=", native_lookup.found,
+                               " pe_found=", pe_found ? 1 : 0));
+    }
+  }
+
+  if (out_lookup_checks)
+    *out_lookup_checks = lookup_checks;
+  if (out_lookup_mismatches)
+    *out_lookup_mismatches = lookup_mismatches;
+}
+
 void MTLD3D12RootSignature::SummarizeWithM12Core() {
   /* Phase 5 migration seam: D3D12 still owns Windows blob parsing and all live
    * descriptor binding behavior, while libm12core owns the stable structural
@@ -403,61 +589,8 @@ void MTLD3D12RootSignature::SummarizeWithM12Core() {
                            " root_constants=", summary.root_constant_count,
                            " static_samplers=", summary.static_sampler_count));
 
-  /* Phase 5 binding-plan seam: build the native descriptor/register-space view
-   * once at root-signature creation time.  This is diagnostic only for this
-   * slice; all live descriptor table, root descriptor, static sampler, and
-   * argument-buffer binding remains on the existing PE-local fallback path.
-   */
-  std::vector<M12CoreRootBindingParameter> core_params;
-  std::vector<M12CoreRootBindingRange> core_ranges;
-  std::vector<M12CoreStaticSamplerBinding> core_samplers;
-  core_params.reserve(m_parameters.size());
-  core_ranges.reserve(summary.descriptor_range_count);
-  core_samplers.reserve(m_static_samplers.size());
-
-  for (const auto &param : m_parameters) {
-    M12CoreRootBindingParameter core_param = {};
-    core_param.type = static_cast<uint32_t>(param.type);
-    core_param.shader_visibility = param.shader_visibility;
-    core_param.register_space = param.register_space;
-    core_param.register_index = param.register_index;
-    core_param.num_descriptors = param.num_descriptors;
-    core_param.num_32bit_values = param.num_32bit_values;
-    core_param.descriptor_flags = param.descriptor_flags;
-    core_param.range_start = static_cast<uint32_t>(core_ranges.size());
-    core_param.range_count = static_cast<uint32_t>(param.ranges.size());
-    for (const auto &range : param.ranges) {
-      M12CoreRootBindingRange core_range = {};
-      core_range.range_type = static_cast<uint32_t>(range.range_type);
-      core_range.num_descriptors = range.num_descriptors;
-      core_range.base_register = range.base_register;
-      core_range.register_space = range.register_space;
-      core_range.offset_in_table = range.offset_in_table;
-      core_range.flags = range.flags;
-      core_ranges.push_back(core_range);
-    }
-    core_params.push_back(core_param);
-  }
-
-  for (const auto &sampler : m_static_samplers) {
-    M12CoreStaticSamplerBinding core_sampler = {};
-    core_sampler.shader_register = sampler.shader_register;
-    core_sampler.register_space = sampler.register_space;
-    core_sampler.shader_visibility = sampler.shader_visibility;
-    core_samplers.push_back(core_sampler);
-  }
-
-  M12CoreRootBindingPlanDesc plan_desc = {};
-  plan_desc.abi_version = M12CORE_ABI_VERSION;
-  plan_desc.flags = static_cast<uint32_t>(m_flags);
-  plan_desc.root_signature_key = m_core_root_signature_key;
-  plan_desc.parameters = core_params.empty() ? nullptr : core_params.data();
-  plan_desc.parameter_count = static_cast<uint32_t>(core_params.size());
-  plan_desc.ranges = core_ranges.empty() ? nullptr : core_ranges.data();
-  plan_desc.range_count = static_cast<uint32_t>(core_ranges.size());
-  plan_desc.static_samplers = core_samplers.empty() ? nullptr : core_samplers.data();
-  plan_desc.static_sampler_count = static_cast<uint32_t>(core_samplers.size());
-
+  BuildM12CoreBindingPlanArrays();
+  const auto plan_desc = MakeM12CoreBindingPlanDesc();
   M12CoreRootBindingPlanSummary plan_summary = {};
   if (!WMTM12CoreBuildRootBindingPlan(&plan_desc, &plan_summary) ||
       plan_summary.abi_version != M12CORE_ABI_VERSION ||
@@ -469,85 +602,7 @@ void MTLD3D12RootSignature::SummarizeWithM12Core() {
 
   uint32_t lookup_checks = 0;
   uint32_t lookup_mismatches = 0;
-  for (uint32_t p = 0; p < core_params.size(); p++) {
-    const auto &param = m_parameters[p];
-    for (const auto &range : param.ranges) {
-      M12CoreRootBindingLookupDesc lookup = {};
-      lookup.abi_version = M12CORE_ABI_VERSION;
-      lookup.lookup_kind = M12CORE_ROOT_BINDING_LOOKUP_DESCRIPTOR_RANGE;
-      lookup.range_type = static_cast<uint32_t>(range.range_type);
-      lookup.shader_register = range.base_register;
-      lookup.register_space = range.register_space;
-      lookup.shader_visibility = param.shader_visibility;
-      lookup.parameters = plan_desc.parameters;
-      lookup.parameter_count = plan_desc.parameter_count;
-      lookup.ranges = plan_desc.ranges;
-      lookup.range_count = plan_desc.range_count;
-      lookup.static_samplers = plan_desc.static_samplers;
-      lookup.static_sampler_count = plan_desc.static_sampler_count;
-      M12CoreRootBindingLookupResult native_lookup = {};
-      uint32_t pe_root = UINT32_MAX;
-      uint32_t pe_offset = UINT32_MAX;
-      const bool pe_found = FindDescriptorTableRangeForVisibility(
-          range.range_type, range.base_register, range.register_space,
-          static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility),
-          &pe_root, &pe_offset);
-      const bool native_ok = WMTM12CoreLookupRootBinding(&lookup, &native_lookup) &&
-                             native_lookup.abi_version == M12CORE_ABI_VERSION &&
-                             native_lookup.status == M12CORE_ROOT_SIGNATURE_STATUS_OK;
-      lookup_checks++;
-      if (!native_ok || (native_lookup.found != (pe_found ? 1u : 0u)) ||
-          (pe_found && (native_lookup.root_parameter_index != pe_root ||
-                        native_lookup.descriptor_offset != pe_offset))) {
-        lookup_mismatches++;
-        Logger::warn(str::format("M12_ROOT_BINDING_LOOKUP_MISMATCH key=0x",
-                                 std::hex, m_core_root_signature_key, std::dec,
-                                 " type=range range_type=", (uint32_t)range.range_type,
-                                 " reg=", range.base_register,
-                                 " space=", range.register_space,
-                                 " native_ok=", native_ok ? 1 : 0,
-                                 " native_found=", native_lookup.found,
-                                 " native_root=", native_lookup.root_parameter_index,
-                                 " native_offset=", native_lookup.descriptor_offset,
-                                 " pe_found=", pe_found ? 1 : 0,
-                                 " pe_root=", pe_root,
-                                 " pe_offset=", pe_offset));
-      }
-    }
-  }
-
-  for (const auto &sampler : m_static_samplers) {
-    M12CoreRootBindingLookupDesc lookup = {};
-    lookup.abi_version = M12CORE_ABI_VERSION;
-    lookup.lookup_kind = M12CORE_ROOT_BINDING_LOOKUP_STATIC_SAMPLER;
-    lookup.shader_register = sampler.shader_register;
-    lookup.register_space = sampler.register_space;
-    lookup.shader_visibility = sampler.shader_visibility;
-    lookup.parameters = plan_desc.parameters;
-    lookup.parameter_count = plan_desc.parameter_count;
-    lookup.ranges = plan_desc.ranges;
-    lookup.range_count = plan_desc.range_count;
-    lookup.static_samplers = plan_desc.static_samplers;
-    lookup.static_sampler_count = plan_desc.static_sampler_count;
-    M12CoreRootBindingLookupResult native_lookup = {};
-    const bool pe_found = FindStaticSampler(
-        sampler.shader_register, sampler.register_space,
-        static_cast<D3D12_SHADER_VISIBILITY>(sampler.shader_visibility)) != nullptr;
-    const bool native_ok = WMTM12CoreLookupRootBinding(&lookup, &native_lookup) &&
-                           native_lookup.abi_version == M12CORE_ABI_VERSION &&
-                           native_lookup.status == M12CORE_ROOT_SIGNATURE_STATUS_OK;
-    lookup_checks++;
-    if (!native_ok || (native_lookup.found != (pe_found ? 1u : 0u))) {
-      lookup_mismatches++;
-      Logger::warn(str::format("M12_ROOT_BINDING_LOOKUP_MISMATCH key=0x",
-                               std::hex, m_core_root_signature_key, std::dec,
-                               " type=static_sampler reg=", sampler.shader_register,
-                               " space=", sampler.register_space,
-                               " native_ok=", native_ok ? 1 : 0,
-                               " native_found=", native_lookup.found,
-                               " pe_found=", pe_found ? 1 : 0));
-    }
-  }
+  ValidateM12CoreBindingPlanLookups(&lookup_checks, &lookup_mismatches);
 
   Logger::info(str::format("M12_ROOT_BINDING_PLAN key=0x", std::hex,
                            plan_summary.binding_plan_key, std::dec,

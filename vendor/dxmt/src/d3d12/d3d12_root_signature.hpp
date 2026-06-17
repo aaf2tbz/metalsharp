@@ -111,6 +111,18 @@ public:
 private:
   void Parse(const void *blob, SIZE_T blob_size);
   void SummarizeWithM12Core();
+  void BuildM12CoreBindingPlanArrays();
+  M12CoreRootBindingPlanDesc MakeM12CoreBindingPlanDesc() const;
+  bool LookupM12CoreDescriptorRangeForVisibility(
+      D3D12_DESCRIPTOR_RANGE_TYPE range_type, uint32_t shader_register,
+      uint32_t register_space, D3D12_SHADER_VISIBILITY shader_visibility,
+      M12CoreRootBindingLookupResult *out_result) const;
+  bool LookupM12CoreStaticSampler(uint32_t shader_register,
+                                  uint32_t register_space,
+                                  D3D12_SHADER_VISIBILITY shader_visibility,
+                                  M12CoreRootBindingLookupResult *out_result) const;
+  void ValidateM12CoreBindingPlanLookups(uint32_t *out_lookup_checks,
+                                         uint32_t *out_lookup_mismatches) const;
 
   MTLD3D12Device *m_device;
   std::vector<RootParameter> m_parameters;
@@ -123,6 +135,9 @@ private:
   M12CoreRootSignatureSummary m_core_summary = {};
   bool m_core_binding_plan_valid = false;
   M12CoreRootBindingPlanSummary m_core_binding_plan_summary = {};
+  std::vector<M12CoreRootBindingParameter> m_core_binding_parameters;
+  std::vector<M12CoreRootBindingRange> m_core_binding_ranges;
+  std::vector<M12CoreStaticSamplerBinding> m_core_static_samplers;
   std::atomic<uint32_t> m_refCount = {1ul};
 };
 
