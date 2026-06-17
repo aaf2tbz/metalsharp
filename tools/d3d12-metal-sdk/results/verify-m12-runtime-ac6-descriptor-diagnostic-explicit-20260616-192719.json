@@ -1,0 +1,179 @@
+{
+  "schema": "metalsharp.m12.runtime-hashes.v1",
+  "label": "ac6-descriptor-diagnostic-20260616-192719",
+  "strict": true,
+  "known_working_d3d12": "8cdcec40588018dafaa3cdd1cfb140c1fd7edba6f1160cd7559d61be8b946500",
+  "expected_hashes": {
+    "d3d12.dll": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+    "d3d11.dll": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+    "dxgi.dll": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+    "dxgi_dxmt.dll": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+    "d3d10core.dll": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+    "winemetal.dll": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+    "nvapi64.dll": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+    "nvngx.dll": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82"
+  },
+  "checks": [
+    {
+      "label": "runtime",
+      "directory": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows",
+      "required": true,
+      "ok": true,
+      "files": [
+        {
+          "dll": "d3d12.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
+          "exists": true,
+          "sha256": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "expected": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "d3d11.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d11.dll",
+          "exists": true,
+          "sha256": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "expected": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "dxgi.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi.dll",
+          "exists": true,
+          "sha256": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "expected": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "dxgi_dxmt.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
+          "exists": true,
+          "sha256": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "expected": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "d3d10core.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d10core.dll",
+          "exists": true,
+          "sha256": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "expected": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "winemetal.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/winemetal.dll",
+          "exists": true,
+          "sha256": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "expected": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "nvapi64.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/nvapi64.dll",
+          "exists": true,
+          "sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "expected": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "nvngx.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/nvngx.dll",
+          "exists": true,
+          "sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "expected": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "matches_expected": true,
+          "ok": true
+        }
+      ]
+    },
+    {
+      "label": "game-dir-1",
+      "directory": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game",
+      "required": true,
+      "ok": true,
+      "files": [
+        {
+          "dll": "d3d12.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/d3d12.dll",
+          "exists": true,
+          "sha256": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "expected": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "d3d11.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/d3d11.dll",
+          "exists": true,
+          "sha256": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "expected": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "dxgi.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/dxgi.dll",
+          "exists": true,
+          "sha256": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "expected": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "dxgi_dxmt.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/dxgi_dxmt.dll",
+          "exists": true,
+          "sha256": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "expected": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "d3d10core.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/d3d10core.dll",
+          "exists": true,
+          "sha256": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "expected": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "winemetal.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/winemetal.dll",
+          "exists": true,
+          "sha256": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "expected": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "nvapi64.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/nvapi64.dll",
+          "exists": true,
+          "sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "expected": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "matches_expected": true,
+          "ok": true
+        },
+        {
+          "dll": "nvngx.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/nvngx.dll",
+          "exists": true,
+          "sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "expected": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "matches_expected": true,
+          "ok": true
+        }
+      ]
+    }
+  ],
+  "ok": true
+}

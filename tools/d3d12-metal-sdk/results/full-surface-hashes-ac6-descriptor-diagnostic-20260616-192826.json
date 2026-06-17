@@ -1,0 +1,276 @@
+{
+  "schema": "metalsharp.m12.full-surface-hashes.v1",
+  "label": "ac6-descriptor-diagnostic",
+  "expected": {
+    "d3d12.dll": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+    "d3d11.dll": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+    "dxgi.dll": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+    "dxgi_dxmt.dll": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+    "d3d10core.dll": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+    "winemetal.dll": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+    "winemetal.so": "43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43",
+    "nvapi64.dll": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+    "nvngx.dll": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82"
+  },
+  "checks": [
+    {
+      "label": "dxmt_m12-windows",
+      "directory": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows",
+      "ok": true,
+      "files": [
+        {
+          "name": "d3d12.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
+          "exists": true,
+          "sha256": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "expected": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "matches_expected": true
+        },
+        {
+          "name": "d3d11.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d11.dll",
+          "exists": true,
+          "sha256": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "expected": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "matches_expected": true
+        },
+        {
+          "name": "dxgi.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi.dll",
+          "exists": true,
+          "sha256": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "expected": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "matches_expected": true
+        },
+        {
+          "name": "dxgi_dxmt.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
+          "exists": true,
+          "sha256": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "expected": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "matches_expected": true
+        },
+        {
+          "name": "d3d10core.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d10core.dll",
+          "exists": true,
+          "sha256": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "expected": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "matches_expected": true
+        },
+        {
+          "name": "winemetal.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/winemetal.dll",
+          "exists": true,
+          "sha256": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "expected": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "matches_expected": true
+        },
+        {
+          "name": "nvapi64.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/nvapi64.dll",
+          "exists": true,
+          "sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "expected": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "matches_expected": true
+        },
+        {
+          "name": "nvngx.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/nvngx.dll",
+          "exists": true,
+          "sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "expected": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "matches_expected": true
+        }
+      ]
+    },
+    {
+      "label": "dxmt_m12-unix",
+      "directory": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix",
+      "ok": true,
+      "files": [
+        {
+          "name": "winemetal.so",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/winemetal.so",
+          "exists": true,
+          "sha256": "43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43",
+          "expected": "43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43",
+          "matches_expected": true
+        }
+      ]
+    },
+    {
+      "label": "canonical-wine-windows",
+      "directory": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-windows",
+      "ok": true,
+      "files": [
+        {
+          "name": "winemetal.dll",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-windows/winemetal.dll",
+          "exists": true,
+          "sha256": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "expected": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "matches_expected": true
+        }
+      ]
+    },
+    {
+      "label": "canonical-wine-unix",
+      "directory": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix",
+      "ok": true,
+      "files": [
+        {
+          "name": "winemetal.so",
+          "path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix/winemetal.so",
+          "exists": true,
+          "sha256": "43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43",
+          "expected": "43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43",
+          "matches_expected": true
+        }
+      ]
+    },
+    {
+      "label": "prefix-system32",
+      "directory": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32",
+      "ok": true,
+      "files": [
+        {
+          "name": "d3d12.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/d3d12.dll",
+          "exists": true,
+          "sha256": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "expected": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "matches_expected": true
+        },
+        {
+          "name": "d3d11.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/d3d11.dll",
+          "exists": true,
+          "sha256": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "expected": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "matches_expected": true
+        },
+        {
+          "name": "dxgi.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/dxgi.dll",
+          "exists": true,
+          "sha256": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "expected": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "matches_expected": true
+        },
+        {
+          "name": "dxgi_dxmt.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/dxgi_dxmt.dll",
+          "exists": true,
+          "sha256": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "expected": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "matches_expected": true
+        },
+        {
+          "name": "d3d10core.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/d3d10core.dll",
+          "exists": true,
+          "sha256": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "expected": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "matches_expected": true
+        },
+        {
+          "name": "winemetal.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/winemetal.dll",
+          "exists": true,
+          "sha256": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "expected": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "matches_expected": true
+        },
+        {
+          "name": "nvapi64.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/nvapi64.dll",
+          "exists": true,
+          "sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "expected": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "matches_expected": true
+        },
+        {
+          "name": "nvngx.dll",
+          "path": "/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32/nvngx.dll",
+          "exists": true,
+          "sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "expected": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "matches_expected": true
+        }
+      ]
+    },
+    {
+      "label": "ac6-game",
+      "directory": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game",
+      "ok": true,
+      "files": [
+        {
+          "name": "d3d12.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/d3d12.dll",
+          "exists": true,
+          "sha256": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "expected": "ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a",
+          "matches_expected": true
+        },
+        {
+          "name": "d3d11.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/d3d11.dll",
+          "exists": true,
+          "sha256": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "expected": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc",
+          "matches_expected": true
+        },
+        {
+          "name": "dxgi.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/dxgi.dll",
+          "exists": true,
+          "sha256": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "expected": "dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24",
+          "matches_expected": true
+        },
+        {
+          "name": "dxgi_dxmt.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/dxgi_dxmt.dll",
+          "exists": true,
+          "sha256": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "expected": "79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296",
+          "matches_expected": true
+        },
+        {
+          "name": "d3d10core.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/d3d10core.dll",
+          "exists": true,
+          "sha256": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "expected": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8",
+          "matches_expected": true
+        },
+        {
+          "name": "winemetal.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/winemetal.dll",
+          "exists": true,
+          "sha256": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "expected": "7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85",
+          "matches_expected": true
+        },
+        {
+          "name": "nvapi64.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/nvapi64.dll",
+          "exists": true,
+          "sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "expected": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+          "matches_expected": true
+        },
+        {
+          "name": "nvngx.dll",
+          "path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/nvngx.dll",
+          "exists": true,
+          "sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "expected": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+          "matches_expected": true
+        }
+      ]
+    }
+  ],
+  "ok": true
+}

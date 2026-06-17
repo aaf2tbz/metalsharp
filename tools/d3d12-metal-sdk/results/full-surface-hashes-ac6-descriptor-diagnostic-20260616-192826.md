@@ -1,0 +1,79 @@
+# Full-surface M12 hashes: AC6 descriptor diagnostic
+
+- ok: `True`
+
+## dxmt_m12-windows
+
+- directory: `/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows`
+- ok: `True`
+
+| file | exists | matches | sha256 |
+|---|---:|---:|---|
+| `d3d12.dll` | `True` | `True` | `ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a` |
+| `d3d11.dll` | `True` | `True` | `15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc` |
+| `dxgi.dll` | `True` | `True` | `dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24` |
+| `dxgi_dxmt.dll` | `True` | `True` | `79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296` |
+| `d3d10core.dll` | `True` | `True` | `630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8` |
+| `winemetal.dll` | `True` | `True` | `7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85` |
+| `nvapi64.dll` | `True` | `True` | `0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841` |
+| `nvngx.dll` | `True` | `True` | `3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82` |
+
+## dxmt_m12-unix
+
+- directory: `/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix`
+- ok: `True`
+
+| file | exists | matches | sha256 |
+|---|---:|---:|---|
+| `winemetal.so` | `True` | `True` | `43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43` |
+
+## canonical-wine-windows
+
+- directory: `/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-windows`
+- ok: `True`
+
+| file | exists | matches | sha256 |
+|---|---:|---:|---|
+| `winemetal.dll` | `True` | `True` | `7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85` |
+
+## canonical-wine-unix
+
+- directory: `/Users/alexmondello/.metalsharp/runtime/wine/lib/wine/x86_64-unix`
+- ok: `True`
+
+| file | exists | matches | sha256 |
+|---|---:|---:|---|
+| `winemetal.so` | `True` | `True` | `43155b9a9e337868d906a2d2377beae5223e8eb1b131e9717b06c4c3ae7e5a43` |
+
+## prefix-system32
+
+- directory: `/Users/alexmondello/.metalsharp/prefix-steam/drive_c/windows/system32`
+- ok: `True`
+
+| file | exists | matches | sha256 |
+|---|---:|---:|---|
+| `d3d12.dll` | `True` | `True` | `ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a` |
+| `d3d11.dll` | `True` | `True` | `15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc` |
+| `dxgi.dll` | `True` | `True` | `dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24` |
+| `dxgi_dxmt.dll` | `True` | `True` | `79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296` |
+| `d3d10core.dll` | `True` | `True` | `630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8` |
+| `winemetal.dll` | `True` | `True` | `7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85` |
+| `nvapi64.dll` | `True` | `True` | `0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841` |
+| `nvngx.dll` | `True` | `True` | `3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82` |
+
+## ac6-game
+
+- directory: `/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game`
+- ok: `True`
+
+| file | exists | matches | sha256 |
+|---|---:|---:|---|
+| `d3d12.dll` | `True` | `True` | `ee9519bf852a4608e68e0ccae9641519257b51659c55c61b617752aa0f4dda9a` |
+| `d3d11.dll` | `True` | `True` | `15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc` |
+| `dxgi.dll` | `True` | `True` | `dc800838673b2e2236f775889a7c464ba72403a92a926b8073d742b28563ef24` |
+| `dxgi_dxmt.dll` | `True` | `True` | `79a13642f9d58ff004f6a3e614ef48daeff6259246e89b054340fbded1cce296` |
+| `d3d10core.dll` | `True` | `True` | `630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8` |
+| `winemetal.dll` | `True` | `True` | `7f8cc745406440b3b262588d4fb397c0f028593916b613c638226d460327fa85` |
+| `nvapi64.dll` | `True` | `True` | `0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841` |
+| `nvngx.dll` | `True` | `True` | `3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82` |
+
