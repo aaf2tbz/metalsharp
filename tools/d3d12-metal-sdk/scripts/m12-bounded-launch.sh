@@ -181,7 +181,7 @@ for diagnostic_var in \
   fi
 done
 
-REQUEST_JSON=$(python3 - "$APPID" "$LAUNCH_METHOD" "${launch_env[@]}" <<'PY'
+REQUEST_JSON=$(python3 - "$APPID" "$LAUNCH_METHOD" ${launch_env[@]+"${launch_env[@]}"} <<'PY'
 import json
 import sys
 
