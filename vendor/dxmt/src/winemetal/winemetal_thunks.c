@@ -21,7 +21,10 @@ winemetal_open_log(const char *fallback_name) {
   if (!root || !root[0])
     return fopen(file, "a");
 
-  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", file);
+  snprintf(
+      path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/",
+      file
+  );
   path[sizeof(path) - 1] = '\0';
   return fopen(path, "a");
 }
@@ -29,40 +32,76 @@ winemetal_open_log(const char *fallback_name) {
 static const char *
 winemetal_unix_call_name(unsigned int code) {
   switch (code) {
-  case 25: return "MTLDevice_newLibrary";
-  case 29: return "MTLDevice_newComputePipelineState";
-  case 34: return "MTLDevice_newRenderPipelineState";
-  case 35: return "MTLDevice_newMeshRenderPipelineState";
-  case 36: return "MTLBlitCommandEncoder_encodeCommands";
-  case 37: return "MTLComputeCommandEncoder_encodeCommands";
-  case 38: return "MTLRenderCommandEncoder_encodeCommands";
-  case 74: return "SM50Initialize";
-  case 75: return "SM50Destroy";
-  case 76: return "SM50Compile";
-  case 77: return "SM50GetCompiledBitcode";
-  case 78: return "SM50DestroyBitcode";
-  case 79: return "SM50GetErrorMessage";
-  case 80: return "SM50FreeError";
-  case 135: return "WMTM12CoreRecordCounters";
-  case 136: return "WMTM12CoreHashShaderBytecode";
-  case 137: return "WMTM12CoreFormatShaderCachePaths";
-  case 138: return "WMTM12CoreProbeShaderCache";
-  case 139: return "WMTM12CoreParseShaderReflection";
-  case 140: return "WMTM12CoreMakePipelineCacheKey";
-  case 141: return "WMTM12CoreCreateShaderFunction";
-  case 142: return "WMTM12CoreLowerDXILToMSL";
-  case 143: return "WMTM12CoreReflectSM50Shader";
-  case 144: return "WMTM12CoreLookupPipelineCache";
-  case 145: return "WMTM12CoreStorePipelineCache";
-  case 146: return "WMTM12CoreMakePipelineCacheKeyFromFields";
-  case 147: return "WMTM12CoreCreatePipelineState";
-  case 148: return "WMTM12CoreSummarizeRootSignature";
-  case 149: return "WMTM12CoreBuildRootBindingPlan";
-  case 150: return "WMTM12CoreLookupRootBinding";
-  case 151: return "WMTM12CoreSummarizePrewarmPack";
-  case 152: return "WMTM12CoreBuildDrawPlan";
-  case 153: return "WMTM12CoreBuildPresentPlan";
-  default: return "unknown";
+  case 25:
+    return "MTLDevice_newLibrary";
+  case 29:
+    return "MTLDevice_newComputePipelineState";
+  case 34:
+    return "MTLDevice_newRenderPipelineState";
+  case 35:
+    return "MTLDevice_newMeshRenderPipelineState";
+  case 36:
+    return "MTLBlitCommandEncoder_encodeCommands";
+  case 37:
+    return "MTLComputeCommandEncoder_encodeCommands";
+  case 38:
+    return "MTLRenderCommandEncoder_encodeCommands";
+  case 74:
+    return "SM50Initialize";
+  case 75:
+    return "SM50Destroy";
+  case 76:
+    return "SM50Compile";
+  case 77:
+    return "SM50GetCompiledBitcode";
+  case 78:
+    return "SM50DestroyBitcode";
+  case 79:
+    return "SM50GetErrorMessage";
+  case 80:
+    return "SM50FreeError";
+  case 135:
+    return "WMTM12CoreRecordCounters";
+  case 136:
+    return "WMTM12CoreHashShaderBytecode";
+  case 137:
+    return "WMTM12CoreFormatShaderCachePaths";
+  case 138:
+    return "WMTM12CoreProbeShaderCache";
+  case 139:
+    return "WMTM12CoreParseShaderReflection";
+  case 140:
+    return "WMTM12CoreMakePipelineCacheKey";
+  case 141:
+    return "WMTM12CoreCreateShaderFunction";
+  case 142:
+    return "WMTM12CoreLowerDXILToMSL";
+  case 143:
+    return "WMTM12CoreReflectSM50Shader";
+  case 144:
+    return "WMTM12CoreLookupPipelineCache";
+  case 145:
+    return "WMTM12CoreStorePipelineCache";
+  case 146:
+    return "WMTM12CoreMakePipelineCacheKeyFromFields";
+  case 147:
+    return "WMTM12CoreCreatePipelineState";
+  case 148:
+    return "WMTM12CoreSummarizeRootSignature";
+  case 149:
+    return "WMTM12CoreBuildRootBindingPlan";
+  case 150:
+    return "WMTM12CoreLookupRootBinding";
+  case 151:
+    return "WMTM12CoreSummarizePrewarmPack";
+  case 152:
+    return "WMTM12CoreBuildDrawPlan";
+  case 153:
+    return "WMTM12CoreBuildPresentPlan";
+  case 154:
+    return "WMTM12CoreBuildReplayPlan";
+  default:
+    return "unknown";
   }
 }
 
@@ -70,8 +109,10 @@ static void
 winemetal_log_unix_status(unsigned int code, NTSTATUS status) {
   FILE *f = winemetal_open_log("winemetal-pe.log");
   if (f) {
-    fprintf(f, "unix_call_failed code=%u name=%s status=0x%08lx\n",
-            code, winemetal_unix_call_name(code), (unsigned long)status);
+    fprintf(
+        f, "unix_call_failed code=%u name=%s status=0x%08lx\n", code, winemetal_unix_call_name(code),
+        (unsigned long)status
+    );
     fclose(f);
   }
 }
@@ -99,28 +140,24 @@ winemetal_log_render_encode_failure(obj_handle_t encoder, const struct wmtcmd_ba
   FILE *f = winemetal_open_log("winemetal-pe.log");
   if (!f)
     return;
-  fprintf(f, "render_encode_failed encoder=%llu cmd=%p",
-          (unsigned long long)encoder, (const void *)cmd_head);
+  fprintf(f, "render_encode_failed encoder=%llu cmd=%p", (unsigned long long)encoder, (const void *)cmd_head);
   if (cmd_head) {
-    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type,
-            (void *)cmd_head->next.ptr);
+    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type, (void *)cmd_head->next.ptr);
     if (cmd_head->type == WMTRenderCommandDraw) {
-      const struct wmtcmd_render_draw *body =
-          (const struct wmtcmd_render_draw *)cmd_head;
-      fprintf(f, " draw prim=%u start=%llu count=%llu inst=%u base_inst=%u",
-              (unsigned)body->primitive_type,
-              (unsigned long long)body->vertex_start,
-              (unsigned long long)body->vertex_count,
-              body->instance_count, body->base_instance);
+      const struct wmtcmd_render_draw *body = (const struct wmtcmd_render_draw *)cmd_head;
+      fprintf(
+          f, " draw prim=%u start=%llu count=%llu inst=%u base_inst=%u", (unsigned)body->primitive_type,
+          (unsigned long long)body->vertex_start, (unsigned long long)body->vertex_count, body->instance_count,
+          body->base_instance
+      );
     } else if (cmd_head->type == WMTRenderCommandDrawIndexed) {
-      const struct wmtcmd_render_draw_indexed *body =
-          (const struct wmtcmd_render_draw_indexed *)cmd_head;
-      fprintf(f, " draw_indexed prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
-              (unsigned)body->primitive_type, (unsigned)body->index_type,
-              (unsigned long long)body->index_count,
-              (unsigned long long)body->index_buffer,
-              (unsigned long long)body->index_buffer_offset,
-              body->instance_count, body->base_vertex, body->base_instance);
+      const struct wmtcmd_render_draw_indexed *body = (const struct wmtcmd_render_draw_indexed *)cmd_head;
+      fprintf(
+          f, " draw_indexed prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
+          (unsigned)body->primitive_type, (unsigned)body->index_type, (unsigned long long)body->index_count,
+          (unsigned long long)body->index_buffer, (unsigned long long)body->index_buffer_offset, body->instance_count,
+          body->base_vertex, body->base_instance
+      );
     }
   }
   fprintf(f, "\n");
@@ -144,30 +181,24 @@ winemetal_log_render_encode_call(obj_handle_t encoder, const struct wmtcmd_base 
   if (!f)
     return;
 
-  fprintf(f, "PE render_encode_call encoder=%llu cmd=%p",
-          (unsigned long long)encoder, (const void *)cmd_head);
+  fprintf(f, "PE render_encode_call encoder=%llu cmd=%p", (unsigned long long)encoder, (const void *)cmd_head);
   if (cmd_head) {
-    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type,
-            (void *)cmd_head->next.ptr);
+    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type, (void *)cmd_head->next.ptr);
     if (cmd_head->type == WMTRenderCommandDraw) {
-      const struct wmtcmd_render_draw *body =
-          (const struct wmtcmd_render_draw *)cmd_head;
-      fprintf(f,
-              " prim=%u start=%llu count=%llu inst=%u base_inst=%u",
-              (unsigned)body->primitive_type,
-              (unsigned long long)body->vertex_start,
-              (unsigned long long)body->vertex_count,
-              body->instance_count, body->base_instance);
+      const struct wmtcmd_render_draw *body = (const struct wmtcmd_render_draw *)cmd_head;
+      fprintf(
+          f, " prim=%u start=%llu count=%llu inst=%u base_inst=%u", (unsigned)body->primitive_type,
+          (unsigned long long)body->vertex_start, (unsigned long long)body->vertex_count, body->instance_count,
+          body->base_instance
+      );
     } else if (cmd_head->type == WMTRenderCommandDrawIndexed) {
-      const struct wmtcmd_render_draw_indexed *body =
-          (const struct wmtcmd_render_draw_indexed *)cmd_head;
-      fprintf(f,
-              " prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
-              (unsigned)body->primitive_type, (unsigned)body->index_type,
-              (unsigned long long)body->index_count,
-              (unsigned long long)body->index_buffer,
-              (unsigned long long)body->index_buffer_offset,
-              body->instance_count, body->base_vertex, body->base_instance);
+      const struct wmtcmd_render_draw_indexed *body = (const struct wmtcmd_render_draw_indexed *)cmd_head;
+      fprintf(
+          f, " prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
+          (unsigned)body->primitive_type, (unsigned)body->index_type, (unsigned long long)body->index_count,
+          (unsigned long long)body->index_buffer, (unsigned long long)body->index_buffer_offset, body->instance_count,
+          body->base_vertex, body->base_instance
+      );
     }
   }
   fprintf(f, "\n");
@@ -226,8 +257,9 @@ WMTM12CoreRecordCounters(const uint64_t *deltas, uint32_t count) {
 }
 
 WINEMETAL_API bool
-WMTM12CoreHashShaderBytecode(const void *bytecode, uint64_t bytecode_size, uint32_t stage,
-                             M12CoreShaderBytecodeInfo *out_info) {
+WMTM12CoreHashShaderBytecode(
+    const void *bytecode, uint64_t bytecode_size, uint32_t stage, M12CoreShaderBytecodeInfo *out_info
+) {
   struct unixcall_m12core_hash_shader_bytecode params;
   memset(&params, 0, sizeof(params));
   if (!out_info)
@@ -244,8 +276,7 @@ WMTM12CoreHashShaderBytecode(const void *bytecode, uint64_t bytecode_size, uint3
 }
 
 WINEMETAL_API bool
-WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash,
-                                 M12CoreShaderCachePaths *out_paths) {
+WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash, M12CoreShaderCachePaths *out_paths) {
   struct unixcall_m12core_format_shader_cache_paths params;
   memset(&params, 0, sizeof(params));
   if (!out_paths)
@@ -261,9 +292,9 @@ WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash,
 }
 
 WINEMETAL_API bool
-WMTM12CoreProbeShaderCache(const char *cache_root, uint64_t shader_hash,
-                           uint32_t force_source_compile,
-                           M12CoreShaderCacheLookup *out_lookup) {
+WMTM12CoreProbeShaderCache(
+    const char *cache_root, uint64_t shader_hash, uint32_t force_source_compile, M12CoreShaderCacheLookup *out_lookup
+) {
   struct unixcall_m12core_probe_shader_cache params;
   memset(&params, 0, sizeof(params));
   if (!out_lookup)
@@ -280,8 +311,9 @@ WMTM12CoreProbeShaderCache(const char *cache_root, uint64_t shader_hash,
 }
 
 WINEMETAL_API bool
-WMTM12CoreParseShaderReflection(const char *reflection_text, uint64_t reflection_text_size,
-                                M12CoreShaderReflectionSummary *out_summary) {
+WMTM12CoreParseShaderReflection(
+    const char *reflection_text, uint64_t reflection_text_size, M12CoreShaderReflectionSummary *out_summary
+) {
   struct unixcall_m12core_parse_shader_reflection params;
   memset(&params, 0, sizeof(params));
   if (!out_summary)
@@ -297,10 +329,9 @@ WMTM12CoreParseShaderReflection(const char *reflection_text, uint64_t reflection
 }
 
 WINEMETAL_API bool
-WMTM12CoreLowerDXILToMSL(const M12CoreDXILToMSLDesc *desc,
-                         char *out_source,
-                         uint64_t out_source_capacity,
-                         M12CoreDXILToMSLResult *out_result) {
+WMTM12CoreLowerDXILToMSL(
+    const M12CoreDXILToMSLDesc *desc, char *out_source, uint64_t out_source_capacity, M12CoreDXILToMSLResult *out_result
+) {
   struct unixcall_m12core_lower_dxil_to_msl params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_result)
@@ -323,8 +354,7 @@ WMTM12CoreLowerDXILToMSL(const M12CoreDXILToMSLDesc *desc,
 }
 
 WINEMETAL_API bool
-WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query,
-                              M12CorePipelineCacheResult *out_result) {
+WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query, M12CorePipelineCacheResult *out_result) {
   struct unixcall_m12core_lookup_pipeline_cache params;
   memset(&params, 0, sizeof(params));
   if (!query || !out_result)
@@ -337,8 +367,7 @@ WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query,
 }
 
 WINEMETAL_API bool
-WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query,
-                             obj_handle_t pipeline_handle) {
+WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query, obj_handle_t pipeline_handle) {
   struct unixcall_m12core_store_pipeline_cache params;
   memset(&params, 0, sizeof(params));
   if (!query || !pipeline_handle)
@@ -349,14 +378,11 @@ WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query,
 }
 
 WINEMETAL_API bool
-WMTM12CoreReflectSM50Shader(const void *bytecode, uint64_t bytecode_size,
-                            uint32_t options,
-                            M12CoreSM50ShaderReflection *out_reflection,
-                            M12CoreSM50ShaderArgument *out_constant_buffers,
-                            uint32_t constant_buffer_capacity,
-                            M12CoreSM50ShaderArgument *out_arguments,
-                            uint32_t argument_capacity,
-                            M12CoreSM50ReflectionResult *out_result) {
+WMTM12CoreReflectSM50Shader(
+    const void *bytecode, uint64_t bytecode_size, uint32_t options, M12CoreSM50ShaderReflection *out_reflection,
+    M12CoreSM50ShaderArgument *out_constant_buffers, uint32_t constant_buffer_capacity,
+    M12CoreSM50ShaderArgument *out_arguments, uint32_t argument_capacity, M12CoreSM50ReflectionResult *out_result
+) {
   struct unixcall_m12core_reflect_sm50_shader params;
   memset(&params, 0, sizeof(params));
   if (!bytecode || !bytecode_size || !out_reflection || !out_result)
@@ -379,11 +405,10 @@ WMTM12CoreReflectSM50Shader(const void *bytecode, uint64_t bytecode_size,
 }
 
 WINEMETAL_API bool
-WMTM12CoreCreateShaderFunction(obj_handle_t device, uint32_t stage,
-                               uint32_t input_kind, uint64_t shader_hash,
-                               const void *input_data, uint64_t input_size,
-                               const char *entry_point,
-                               M12CoreShaderFunctionResult *out_result) {
+WMTM12CoreCreateShaderFunction(
+    obj_handle_t device, uint32_t stage, uint32_t input_kind, uint64_t shader_hash, const void *input_data,
+    uint64_t input_size, const char *entry_point, M12CoreShaderFunctionResult *out_result
+) {
   struct unixcall_m12core_create_shader_function params;
   memset(&params, 0, sizeof(params));
   if (!device || !input_data || !input_size || !out_result)
@@ -406,8 +431,7 @@ WMTM12CoreCreateShaderFunction(obj_handle_t device, uint32_t stage,
 }
 
 WINEMETAL_API bool
-WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input,
-                               M12CorePipelineCacheKey *out_key) {
+WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input, M12CorePipelineCacheKey *out_key) {
   struct unixcall_m12core_make_pipeline_cache_key params;
   memset(&params, 0, sizeof(params));
   if (!input || !out_key)
@@ -422,8 +446,7 @@ WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input,
 }
 
 WINEMETAL_API bool
-WMTM12CoreMakePipelineCacheKeyFromFields(const M12CorePipelineKeyFields *input,
-                                         M12CorePipelineCacheKey *out_key) {
+WMTM12CoreMakePipelineCacheKeyFromFields(const M12CorePipelineKeyFields *input, M12CorePipelineCacheKey *out_key) {
   struct unixcall_m12core_make_pipeline_cache_key_from_fields params;
   memset(&params, 0, sizeof(params));
   if (!input || !out_key)
@@ -448,11 +471,10 @@ WMTM12CoreMakePipelineCacheKeyFromFields(const M12CorePipelineKeyFields *input,
 }
 
 WINEMETAL_API bool
-WMTM12CoreCreatePipelineState(obj_handle_t device, uint32_t kind,
-                              uint64_t cache_key,
-                              const void *pipeline_info,
-                              uint64_t pipeline_info_size,
-                              M12CorePipelineCreateResult *out_result) {
+WMTM12CoreCreatePipelineState(
+    obj_handle_t device, uint32_t kind, uint64_t cache_key, const void *pipeline_info, uint64_t pipeline_info_size,
+    M12CorePipelineCreateResult *out_result
+) {
   struct unixcall_m12core_create_pipeline_state params;
   memset(&params, 0, sizeof(params));
   if (!device || !pipeline_info || !pipeline_info_size || !out_result)
@@ -471,8 +493,7 @@ WMTM12CoreCreatePipelineState(obj_handle_t device, uint32_t kind,
 }
 
 WINEMETAL_API bool
-WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc,
-                                 M12CoreRootSignatureSummary *out_summary) {
+WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc, M12CoreRootSignatureSummary *out_summary) {
   struct unixcall_m12core_summarize_root_signature params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_summary)
@@ -497,8 +518,7 @@ WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc,
 }
 
 WINEMETAL_API bool
-WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDesc *desc,
-                               M12CoreRootBindingPlanSummary *out_summary) {
+WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDesc *desc, M12CoreRootBindingPlanSummary *out_summary) {
   struct unixcall_m12core_build_root_binding_plan params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_summary)
@@ -525,8 +545,7 @@ WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDesc *desc,
 }
 
 WINEMETAL_API bool
-WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc,
-                            M12CoreRootBindingLookupResult *out_result) {
+WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc, M12CoreRootBindingLookupResult *out_result) {
   struct unixcall_m12core_lookup_root_binding params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_result)
@@ -552,8 +571,7 @@ WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc,
 }
 
 WINEMETAL_API bool
-WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc,
-                               M12CorePrewarmPackSummary *out_summary) {
+WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc, M12CorePrewarmPackSummary *out_summary) {
   struct unixcall_m12core_summarize_prewarm_pack params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_summary)
@@ -579,8 +597,7 @@ WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc,
 }
 
 WINEMETAL_API bool
-WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc,
-                        M12CoreDrawPlanSummary *out_summary) {
+WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc, M12CoreDrawPlanSummary *out_summary) {
   struct unixcall_m12core_build_draw_plan params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_summary)
@@ -599,8 +616,7 @@ WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc,
 }
 
 WINEMETAL_API bool
-WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc,
-                           M12CorePresentPlanSummary *out_summary) {
+WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc, M12CorePresentPlanSummary *out_summary) {
   struct unixcall_m12core_build_present_plan params;
   memset(&params, 0, sizeof(params));
   if (!desc || !out_summary)
@@ -612,6 +628,25 @@ WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc,
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(153, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary) {
+  struct unixcall_m12core_build_replay_plan params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Phase 9 replay-planning bridge: pass compact scalar command-stream
+   * metadata only. Encoder lifetime, command-buffer commits, resource hazards,
+   * and execution remain in the existing PE/DXMT replay path.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(154, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;
@@ -871,8 +906,7 @@ MTLLibrary_newFunction(obj_handle_t library, const char *name) {
 
 WINEMETAL_API uint32_t
 MTLFunction_copyVertexAttributes(
-    obj_handle_t function, struct WMTFunctionVertexAttribute *attributes,
-    uint32_t max_attributes
+    obj_handle_t function, struct WMTFunctionVertexAttribute *attributes, uint32_t max_attributes
 ) {
   struct unixcall_mtlfunction_vertex_attributes params;
   params.function = function;
@@ -1456,9 +1490,8 @@ MTLLibrary_newFunctionWithConstants(
 
 WINEMETAL_API obj_handle_t
 MTLLibrary_newFunctionWithDescriptor(
-    obj_handle_t library, const char *name, const char *specialized_name,
-    const struct WMTFunctionConstant *constants, uint32_t num_constants,
-    enum WMTFunctionOptions options, obj_handle_t *err_out
+    obj_handle_t library, const char *name, const char *specialized_name, const struct WMTFunctionConstant *constants,
+    uint32_t num_constants, enum WMTFunctionOptions options, obj_handle_t *err_out
 ) {
   struct unixcall_mtllibrary_newfunction_with_descriptor params;
   params.library = library;

@@ -22,7 +22,7 @@ static constexpr UINT MetalSharpM12TranslationLayerVendorMetalSharp = 0x4d533132
 static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;        // DX12
 static constexpr UINT M12CORE_ABI_VERSION = 1;
 static constexpr UINT M12CORE_BUILD_ID_LOW = 0x4d313243u; // M12C
-static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x0000000eu;
+static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x0000000fu;
 static constexpr uint64_t FeatureD3D12 = 1ull << 0;
 static constexpr uint64_t FeatureDXMT = 1ull << 1;
 static constexpr uint64_t FeatureLibM12Core = 1ull << 2;
@@ -30,8 +30,10 @@ static constexpr uint64_t FeatureRootBindingPlans = 1ull << 3;
 static constexpr uint64_t FeaturePrewarmPacks = 1ull << 4;
 static constexpr uint64_t FeatureDrawPlanning = 1ull << 5;
 static constexpr uint64_t FeaturePresentPlanning = 1ull << 6;
+static constexpr uint64_t FeatureReplayPlanning = 1ull << 7;
 static constexpr UINT M12CORE_FEATURE_DRAW_PLANNING = 1u << 12;
 static constexpr UINT M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13;
+static constexpr UINT M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14;
 
 struct MetalSharpM12TranslationLayerInfo {
     UINT abi_version;
@@ -149,7 +151,7 @@ int main() {
         (info.feature_flags & FeatureD3D12) && (info.feature_flags & FeatureDXMT) &&
         (info.feature_flags & FeatureLibM12Core) && (info.feature_flags & FeatureRootBindingPlans) &&
         (info.feature_flags & FeaturePrewarmPacks) && (info.feature_flags & FeatureDrawPlanning) &&
-        (info.feature_flags & FeaturePresentPlanning);
+        (info.feature_flags & FeaturePresentPlanning) && (info.feature_flags & FeatureReplayPlanning);
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(qi_hr) && SUCCEEDED(info_hr) &&
                 info.abi_version == MetalSharpM12TranslationLayerInfoAbiVersion &&
                 info.struct_size == sizeof(MetalSharpM12TranslationLayerInfo) &&
@@ -158,7 +160,8 @@ int main() {
                 info.m12core_abi_version == M12CORE_ABI_VERSION && info.m12core_build_id_low == M12CORE_BUILD_ID_LOW &&
                 info.m12core_build_id_high == M12CORE_BUILD_ID_HIGH &&
                 (info.m12core_feature_flags & M12CORE_FEATURE_DRAW_PLANNING) &&
-                (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_PLANNING) && has_required_layer_features;
+                (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_PLANNING) && has_required_layer_features;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-m12-detection.v1\",\n");

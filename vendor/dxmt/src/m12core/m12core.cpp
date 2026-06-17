@@ -74,8 +74,8 @@ bool shaderContainsDxil(const void *bytecode, uint64_t bytecode_size) {
 uint32_t legacyShaderTypeValue(uint32_t stage) {
   /* Match the existing PE-side `ShaderType` enum values so enabling the native
    * helper does not invalidate live shader/metallib cache filenames.  The ABI
-   * still exposes stable M12CORE_SHADER_STAGE_* values; this mapping is only for
-   * preserving the current hash namespace during the migration.
+   * still exposes stable M12CORE_SHADER_STAGE_* values; this mapping is only
+   * for preserving the current hash namespace during the migration.
    */
   switch (stage) {
   case M12CORE_SHADER_STAGE_VERTEX:
@@ -96,7 +96,8 @@ uint32_t legacyShaderTypeValue(uint32_t stage) {
 }
 
 void copyRoot(char *out, size_t out_size, const char *cache_root) {
-  const char *root = (cache_root && cache_root[0]) ? cache_root : "/tmp/dxmt_shader_cache";
+  const char *root =
+      (cache_root && cache_root[0]) ? cache_root : "/tmp/dxmt_shader_cache";
   std::snprintf(out, out_size, "%s", root);
   out[out_size - 1] = '\0';
   while (std::strlen(out) > 1) {
@@ -145,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase9 present-planning abi=1";
+  return "libm12core phase9 replay-present-planning abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -171,10 +172,10 @@ extern "C" void m12core_reset_counters(void) {
     counter.store(0, std::memory_order_relaxed);
 }
 
-extern "C" int m12core_hash_shader_bytecode(const void *bytecode,
-                                             uint64_t bytecode_size,
-                                             uint32_t stage,
-                                             M12CoreShaderBytecodeInfo *out_info) {
+extern "C" int
+m12core_hash_shader_bytecode(const void *bytecode, uint64_t bytecode_size,
+                             uint32_t stage,
+                             M12CoreShaderBytecodeInfo *out_info) {
   if (!out_info)
     return 1;
 
@@ -182,7 +183,8 @@ extern "C" int m12core_hash_shader_bytecode(const void *bytecode,
   out_info->stage = stage;
   out_info->bytecode_hash = hashShaderBytecode(bytecode, bytecode_size, stage);
   out_info->bytecode_size = bytecode_size;
-  out_info->contains_dxil = shaderContainsDxil(bytecode, bytecode_size) ? 1u : 0u;
+  out_info->contains_dxil =
+      shaderContainsDxil(bytecode, bytecode_size) ? 1u : 0u;
   out_info->reserved = 0;
   return 0;
 }
@@ -198,7 +200,8 @@ extern "C" int m12core_shader_contains_dxil(const void *bytecode,
 
 bool regularFileExists(const char *path) {
   struct stat st;
-  return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+  return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode) &&
+         st.st_size > 0;
 }
 
 void pipelineHashCombine(uint64_t &hash, uint64_t value) {
@@ -267,18 +270,20 @@ void copyMslVertexInputs(const M12CoreDXILToMSLDesc *desc,
     dst.dxgi_format = src.dxgi_format;
     dst.metal_format = src.metal_format;
     dst.per_instance = src.per_instance != 0;
-    dst.instance_step_rate = src.instance_step_rate ? src.instance_step_rate : 1;
-    dst.table_indexing_mode = src.table_indexing_mode == 1
-      ? dxmt::dxil::MSLVertexTableIndexingMode::RawSlot
-      : dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
+    dst.instance_step_rate =
+        src.instance_step_rate ? src.instance_step_rate : 1;
+    dst.table_indexing_mode =
+        src.table_indexing_mode == 1
+            ? dxmt::dxil::MSLVertexTableIndexingMode::RawSlot
+            : dxmt::dxil::MSLVertexTableIndexingMode::CompactBySlotMask;
     dst.system_value = src.system_value != 0;
     options.vertex_inputs.push_back(dst);
   }
 }
 
-extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
-                                                 uint64_t shader_hash,
-                                                 M12CoreShaderCachePaths *out_paths) {
+extern "C" int
+m12core_format_shader_cache_paths(const char *cache_root, uint64_t shader_hash,
+                                  M12CoreShaderCachePaths *out_paths) {
   if (!out_paths)
     return 1;
 
@@ -294,25 +299,40 @@ extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
   out_paths->abi_version = M12CORE_ABI_VERSION;
   out_paths->path_capacity = M12CORE_SHADER_CACHE_PATH_CAPACITY;
   out_paths->shader_hash = shader_hash;
-  std::snprintf(suffix, sizeof(suffix), "%016llx", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->cache_path, sizeof(out_paths->cache_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->cache_path, sizeof(out_paths->cache_path), root,
+                  suffix);
 
-  std::snprintf(suffix, sizeof(suffix), "%016llx.dxbc", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->dxbc_path, sizeof(out_paths->dxbc_path), root, suffix);
-  std::snprintf(suffix, sizeof(suffix), "%016llx.metallib", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->metallib_path, sizeof(out_paths->metallib_path), root, suffix);
-  std::snprintf(suffix, sizeof(suffix), "%016llx.json", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->reflection_path, sizeof(out_paths->reflection_path), root, suffix);
-  std::snprintf(suffix, sizeof(suffix), "%016llx.module.txt", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->module_summary_path, sizeof(out_paths->module_summary_path), root, suffix);
-  std::snprintf(suffix, sizeof(suffix), "%016llx.dxil_report.txt", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->dxil_report_path, sizeof(out_paths->dxil_report_path), root, suffix);
-  std::snprintf(suffix, sizeof(suffix), "%016llx.metallib.err.txt", (unsigned long long)shader_hash);
-  formatCachePath(out_paths->metallib_error_path, sizeof(out_paths->metallib_error_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.dxbc",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->dxbc_path, sizeof(out_paths->dxbc_path), root,
+                  suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.metallib",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->metallib_path, sizeof(out_paths->metallib_path),
+                  root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.json",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->reflection_path,
+                  sizeof(out_paths->reflection_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.module.txt",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->module_summary_path,
+                  sizeof(out_paths->module_summary_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.dxil_report.txt",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->dxil_report_path,
+                  sizeof(out_paths->dxil_report_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.metallib.err.txt",
+                (unsigned long long)shader_hash);
+  formatCachePath(out_paths->metallib_error_path,
+                  sizeof(out_paths->metallib_error_path), root, suffix);
   return 0;
 }
 
-void parseReflectionText(const char *text, M12CoreShaderReflectionSummary *out_summary) {
+void parseReflectionText(const char *text,
+                         M12CoreShaderReflectionSummary *out_summary) {
   if (!text || !out_summary)
     return;
 
@@ -343,10 +363,10 @@ void parseReflectionText(const char *text, M12CoreShaderReflectionSummary *out_s
   }
 }
 
-extern "C" int m12core_probe_shader_cache(const char *cache_root,
-                                          uint64_t shader_hash,
-                                          uint32_t force_source_compile,
-                                          M12CoreShaderCacheLookup *out_lookup) {
+extern "C" int
+m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
+                           uint32_t force_source_compile,
+                           M12CoreShaderCacheLookup *out_lookup) {
   if (!out_lookup)
     return 1;
 
@@ -357,17 +377,20 @@ extern "C" int m12core_probe_shader_cache(const char *cache_root,
    */
   out_lookup->abi_version = M12CORE_ABI_VERSION;
   out_lookup->force_source_compile = force_source_compile ? 1u : 0u;
-  if (m12core_format_shader_cache_paths(cache_root, shader_hash, &out_lookup->paths) != 0)
+  if (m12core_format_shader_cache_paths(cache_root, shader_hash,
+                                        &out_lookup->paths) != 0)
     return 1;
-  out_lookup->metallib_exists = regularFileExists(out_lookup->paths.metallib_path) ? 1u : 0u;
+  out_lookup->metallib_exists =
+      regularFileExists(out_lookup->paths.metallib_path) ? 1u : 0u;
   out_lookup->metallib_available =
       (!force_source_compile && out_lookup->metallib_exists) ? 1u : 0u;
   return 0;
 }
 
-extern "C" int m12core_parse_shader_reflection(const char *reflection_text,
-                                               uint64_t reflection_text_size,
-                                               M12CoreShaderReflectionSummary *out_summary) {
+extern "C" int
+m12core_parse_shader_reflection(const char *reflection_text,
+                                uint64_t reflection_text_size,
+                                M12CoreShaderReflectionSummary *out_summary) {
   if (!out_summary)
     return 1;
 
@@ -411,8 +434,8 @@ extern "C" int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
   out_result->threadgroup_size[1] = 1;
   out_result->threadgroup_size[2] = 1;
 
-  if (!desc || desc->abi_version != M12CORE_ABI_VERSION || !desc->dxil_container ||
-      desc->dxil_container_size == 0) {
+  if (!desc || desc->abi_version != M12CORE_ABI_VERSION ||
+      !desc->dxil_container || desc->dxil_container_size == 0) {
     out_result->status = M12CORE_DXIL_TO_MSL_STATUS_INVALID;
     return 0;
   }
@@ -420,11 +443,11 @@ extern "C" int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
   /* Phase 3 DXIL->MSL ownership seam.  libm12core now parses the DXIL
    * container, LLVM bitcode, and vertex-input lowering metadata to generate MSL
    * source.  The PE side still writes diagnostics/cache files and asks the
-   * shader-function ABI to create Metal objects so each ownership transfer stays
-   * independently reviewable.
+   * shader-function ABI to create Metal objects so each ownership transfer
+   * stays independently reviewable.
    */
-  auto container = dxmt::dxil::DXILContainer::parse(desc->dxil_container,
-                                                   (size_t)desc->dxil_container_size);
+  auto container = dxmt::dxil::DXILContainer::parse(
+      desc->dxil_container, (size_t)desc->dxil_container_size);
   if (!container) {
     out_result->status = M12CORE_DXIL_TO_MSL_STATUS_CONTAINER_PARSE_FAILED;
     return 0;
@@ -440,10 +463,12 @@ extern "C" int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
 
   dxmt::dxil::MSLLoweringOptions lowering_options = {};
   copyMslVertexInputs(desc, lowering_options);
-  auto typed_msl = dxmt::dxil::MSLLowering::lower(*module, shader_info, lowering_options);
-  auto msl_result = typed_msl
-      ? std::optional<dxmt::dxil::MSLShader>(std::in_place, toRuntimeMSLShader(std::move(*typed_msl)))
-      : dxmt::dxil::DXILToMSL::convert(*module, shader_info);
+  auto typed_msl =
+      dxmt::dxil::MSLLowering::lower(*module, shader_info, lowering_options);
+  auto msl_result =
+      typed_msl ? std::optional<dxmt::dxil::MSLShader>(
+                      std::in_place, toRuntimeMSLShader(std::move(*typed_msl)))
+                : dxmt::dxil::DXILToMSL::convert(*module, shader_info);
   if (!msl_result) {
     out_result->status = M12CORE_DXIL_TO_MSL_STATUS_LOWERING_FAILED;
     return 0;
@@ -472,15 +497,12 @@ extern "C" int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
   return 0;
 }
 
-extern "C" int m12core_reflect_sm50_shader(const void *bytecode,
-                                           uint64_t bytecode_size,
-                                           uint32_t options,
-                                           M12CoreSM50ShaderReflection *out_reflection,
-                                           M12CoreSM50ShaderArgument *out_constant_buffers,
-                                           uint32_t constant_buffer_capacity,
-                                           M12CoreSM50ShaderArgument *out_arguments,
-                                           uint32_t argument_capacity,
-                                           M12CoreSM50ReflectionResult *out_result) {
+extern "C" int m12core_reflect_sm50_shader(
+    const void *bytecode, uint64_t bytecode_size, uint32_t options,
+    M12CoreSM50ShaderReflection *out_reflection,
+    M12CoreSM50ShaderArgument *out_constant_buffers,
+    uint32_t constant_buffer_capacity, M12CoreSM50ShaderArgument *out_arguments,
+    uint32_t argument_capacity, M12CoreSM50ReflectionResult *out_result) {
   if (!out_result)
     return 1;
 
@@ -515,7 +537,8 @@ extern "C" int m12core_reflect_sm50_shader(const void *bytecode,
   out_result->required_arguments = reflection.NumArguments;
 
   if ((reflection.NumConstantBuffers &&
-       (!out_constant_buffers || constant_buffer_capacity < reflection.NumConstantBuffers)) ||
+       (!out_constant_buffers ||
+        constant_buffer_capacity < reflection.NumConstantBuffers)) ||
       (reflection.NumArguments &&
        (!out_arguments || argument_capacity < reflection.NumArguments))) {
     SM50Destroy(shader);
@@ -526,8 +549,7 @@ extern "C" int m12core_reflect_sm50_shader(const void *bytecode,
   std::vector<MTL_SM50_SHADER_ARGUMENT> cbs(reflection.NumConstantBuffers);
   std::vector<MTL_SM50_SHADER_ARGUMENT> args(reflection.NumArguments);
   if (reflection.NumConstantBuffers || reflection.NumArguments)
-    SM50GetArgumentsInfo(shader,
-                         cbs.empty() ? nullptr : cbs.data(),
+    SM50GetArgumentsInfo(shader, cbs.empty() ? nullptr : cbs.data(),
                          args.empty() ? nullptr : args.data());
   for (uint32_t i = 0; i < reflection.NumConstantBuffers; i++)
     copySm50Argument(cbs[i], out_constant_buffers[i]);
@@ -539,8 +561,9 @@ extern "C" int m12core_reflect_sm50_shader(const void *bytecode,
   return 0;
 }
 
-extern "C" int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
-                                               M12CorePipelineCacheKey *out_key) {
+extern "C" int
+m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
+                                M12CorePipelineCacheKey *out_key) {
   if (!input || !out_key || input->abi_version != M12CORE_ABI_VERSION)
     return 1;
 
@@ -558,8 +581,7 @@ extern "C" int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInpu
 }
 
 extern "C" int m12core_make_pipeline_cache_key_from_fields(
-    const M12CorePipelineKeyFields *input,
-    M12CorePipelineCacheKey *out_key) {
+    const M12CorePipelineKeyFields *input, M12CorePipelineCacheKey *out_key) {
   if (!input || !out_key || input->abi_version != M12CORE_ABI_VERSION)
     return 1;
   if (input->field_count && !input->fields)
@@ -583,9 +605,9 @@ extern "C" int m12core_make_pipeline_cache_key_from_fields(
   return 0;
 }
 
-extern "C" int m12core_summarize_root_signature(
-    const M12CoreRootSignatureDesc *desc,
-    M12CoreRootSignatureSummary *out_summary) {
+extern "C" int
+m12core_summarize_root_signature(const M12CoreRootSignatureDesc *desc,
+                                 M12CoreRootSignatureSummary *out_summary) {
   if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
     return 1;
   if (desc->field_count && !desc->fields)
@@ -632,9 +654,9 @@ extern "C" int m12core_summarize_root_signature(
   return 0;
 }
 
-extern "C" int m12core_build_root_binding_plan(
-    const M12CoreRootBindingPlanDesc *desc,
-    M12CoreRootBindingPlanSummary *out_summary) {
+extern "C" int
+m12core_build_root_binding_plan(const M12CoreRootBindingPlanDesc *desc,
+                                M12CoreRootBindingPlanSummary *out_summary) {
   if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
     return 1;
   if ((desc->parameter_count && !desc->parameters) ||
@@ -759,21 +781,24 @@ extern "C" int m12core_build_root_binding_plan(
   out_summary->sampler_range_count = sampler_ranges;
   out_summary->unbounded_range_count = unbounded_ranges;
   out_summary->visibility_specific_count = visibility_specific;
-  out_summary->register_space_count = static_cast<uint32_t>(register_spaces.size());
+  out_summary->register_space_count =
+      static_cast<uint32_t>(register_spaces.size());
   out_summary->max_descriptor_table_span = max_table_span;
   out_summary->argument_resource_slot_count = argument_resource_slots;
   out_summary->argument_sampler_slot_count = argument_sampler_slots;
-  out_summary->argument_root_descriptor_slot_count = argument_root_descriptor_slots;
-  out_summary->argument_root_constant_dword_count = argument_root_constant_dwords;
+  out_summary->argument_root_descriptor_slot_count =
+      argument_root_descriptor_slots;
+  out_summary->argument_root_constant_dword_count =
+      argument_root_constant_dwords;
   out_summary->argument_visibility_mask = argument_visibility_mask;
   out_summary->argument_layout_reserved = 0;
   out_summary->binding_plan_key = key;
   return 0;
 }
 
-extern "C" int m12core_lookup_root_binding(
-    const M12CoreRootBindingLookupDesc *desc,
-    M12CoreRootBindingLookupResult *out_result) {
+extern "C" int
+m12core_lookup_root_binding(const M12CoreRootBindingLookupDesc *desc,
+                            M12CoreRootBindingLookupResult *out_result) {
   if (!desc || !out_result || desc->abi_version != M12CORE_ABI_VERSION)
     return 1;
   if ((desc->parameter_count && !desc->parameters) ||
@@ -795,7 +820,8 @@ extern "C" int m12core_lookup_root_binding(
         const auto &param = desc->parameters[p];
         if (param.type != 0)
           continue;
-        if (visibility_pass == 0 && param.shader_visibility != desc->shader_visibility)
+        if (visibility_pass == 0 &&
+            param.shader_visibility != desc->shader_visibility)
           continue;
         if (visibility_pass == 1 && param.shader_visibility != 0)
           continue;
@@ -831,7 +857,8 @@ extern "C" int m12core_lookup_root_binding(
         if (sampler.shader_register != desc->shader_register ||
             sampler.register_space != desc->register_space)
           continue;
-        if (visibility_pass == 0 && sampler.shader_visibility != desc->shader_visibility)
+        if (visibility_pass == 0 &&
+            sampler.shader_visibility != desc->shader_visibility)
           continue;
         if (visibility_pass == 1 && sampler.shader_visibility != 0)
           continue;
@@ -858,7 +885,8 @@ extern "C" int m12core_lookup_root_binding(
         if (param.register_index != desc->shader_register ||
             param.register_space != desc->register_space)
           continue;
-        if (visibility_pass == 0 && param.shader_visibility != desc->shader_visibility)
+        if (visibility_pass == 0 &&
+            param.shader_visibility != desc->shader_visibility)
           continue;
         if (visibility_pass == 1 && param.shader_visibility != 0)
           continue;
@@ -885,7 +913,8 @@ extern "C" int m12core_lookup_root_binding(
         if (param.register_index != desc->shader_register ||
             param.register_space != desc->register_space)
           continue;
-        if (visibility_pass == 0 && param.shader_visibility != desc->shader_visibility)
+        if (visibility_pass == 0 &&
+            param.shader_visibility != desc->shader_visibility)
           continue;
         if (visibility_pass == 1 && param.shader_visibility != 0)
           continue;
@@ -903,9 +932,9 @@ extern "C" int m12core_lookup_root_binding(
   return 1;
 }
 
-extern "C" int m12core_summarize_prewarm_pack(
-    const M12CorePrewarmPackDesc *desc,
-    M12CorePrewarmPackSummary *out_summary) {
+extern "C" int
+m12core_summarize_prewarm_pack(const M12CorePrewarmPackDesc *desc,
+                               M12CorePrewarmPackSummary *out_summary) {
   if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
     return 1;
   std::memset(out_summary, 0, sizeof(*out_summary));
@@ -920,8 +949,8 @@ extern "C" int m12core_summarize_prewarm_pack(
    * Later slices can use this validated POD model to schedule actual profile
    * prewarm work without proving binary compatibility in the same change.
    */
-  uint64_t key = desc->source_pack_key ? desc->source_pack_key
-                                       : 0x4d3132505245574dull;
+  uint64_t key =
+      desc->source_pack_key ? desc->source_pack_key : 0x4d3132505245574dull;
   pipelineHashCombine(key, desc->flags);
   pipelineHashCombine(key, desc->appid);
   pipelineHashCombine(key, desc->profile_key);
@@ -970,10 +999,13 @@ extern "C" int m12core_summarize_prewarm_pack(
     max_stage_links = std::max(max_stage_links, pipeline.stage_count);
     expected_resource_slots += pipeline.argument_resource_slot_count;
     expected_sampler_slots += pipeline.argument_sampler_slot_count;
-    expected_root_descriptor_slots += pipeline.argument_root_descriptor_slot_count;
-    expected_root_constant_dwords += pipeline.argument_root_constant_dword_count;
+    expected_root_descriptor_slots +=
+        pipeline.argument_root_descriptor_slot_count;
+    expected_root_constant_dwords +=
+        pipeline.argument_root_constant_dword_count;
     if (pipeline.root_signature_key &&
-        std::find(unique_roots.begin(), unique_roots.end(), pipeline.root_signature_key) == unique_roots.end())
+        std::find(unique_roots.begin(), unique_roots.end(),
+                  pipeline.root_signature_key) == unique_roots.end())
       unique_roots.push_back(pipeline.root_signature_key);
   }
 
@@ -984,7 +1016,8 @@ extern "C" int m12core_summarize_prewarm_pack(
     pipelineHashCombine(key, stage.shader_bytecode_hash);
     pipelineHashCombine(key, stage.root_structural_hash);
     if (stage.shader_key &&
-        std::find(unique_shaders.begin(), unique_shaders.end(), stage.shader_key) == unique_shaders.end())
+        std::find(unique_shaders.begin(), unique_shaders.end(),
+                  stage.shader_key) == unique_shaders.end())
       unique_shaders.push_back(stage.shader_key);
   }
 
@@ -995,7 +1028,8 @@ extern "C" int m12core_summarize_prewarm_pack(
   out_summary->render_pipeline_count = render_pipelines;
   out_summary->compute_pipeline_count = compute_pipelines;
   out_summary->unique_root_count = static_cast<uint32_t>(unique_roots.size());
-  out_summary->unique_shader_count = static_cast<uint32_t>(unique_shaders.size());
+  out_summary->unique_shader_count =
+      static_cast<uint32_t>(unique_shaders.size());
   out_summary->ordered_pipeline_count = ordered_pipelines;
   out_summary->max_stage_links_per_pipeline = max_stage_links;
   out_summary->expected_resource_slots = expected_resource_slots;
@@ -1006,9 +1040,8 @@ extern "C" int m12core_summarize_prewarm_pack(
   return 0;
 }
 
-extern "C" int m12core_build_draw_plan(
-    const M12CoreDrawPlanDesc *desc,
-    M12CoreDrawPlanSummary *out_summary) {
+extern "C" int m12core_build_draw_plan(const M12CoreDrawPlanDesc *desc,
+                                       M12CoreDrawPlanSummary *out_summary) {
   if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
     return 1;
   std::memset(out_summary, 0, sizeof(*out_summary));
@@ -1047,23 +1080,22 @@ extern "C" int m12core_build_draw_plan(
   if (desc->descriptor_table_count > desc->root_parameter_count)
     validation_flags |= 1u << 3;
 
-  uint32_t resource_usage = desc->argument_resource_slot_count +
-                            desc->argument_root_descriptor_slot_count +
-                            desc->render_target_count +
-                            ((desc->flags & M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL) ? 1u : 0u);
+  uint32_t resource_usage =
+      desc->argument_resource_slot_count +
+      desc->argument_root_descriptor_slot_count + desc->render_target_count +
+      ((desc->flags & M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL) ? 1u : 0u);
   uint32_t binding_validations = desc->descriptor_table_count +
                                  desc->root_descriptor_count +
                                  desc->root_constant_count;
-  uint32_t redundant_candidates = desc->descriptor_heap_count > 1
-                                      ? desc->descriptor_heap_count - 1
-                                      : 0;
-  uint32_t attachments = desc->render_target_count +
-                         ((desc->flags & M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL) ? 1u : 0u);
-  uint32_t descriptor_pressure = desc->argument_resource_slot_count +
-                                 desc->argument_sampler_slot_count +
-                                 desc->argument_root_descriptor_slot_count +
-                                 desc->argument_root_constant_dword_count +
-                                 desc->descriptor_table_count;
+  uint32_t redundant_candidates =
+      desc->descriptor_heap_count > 1 ? desc->descriptor_heap_count - 1 : 0;
+  uint32_t attachments =
+      desc->render_target_count +
+      ((desc->flags & M12CORE_DRAW_PLAN_HAS_DEPTH_STENCIL) ? 1u : 0u);
+  uint32_t descriptor_pressure =
+      desc->argument_resource_slot_count + desc->argument_sampler_slot_count +
+      desc->argument_root_descriptor_slot_count +
+      desc->argument_root_constant_dword_count + desc->descriptor_table_count;
 
   out_summary->abi_version = M12CORE_ABI_VERSION;
   out_summary->status = M12CORE_DRAW_PLAN_STATUS_OK;
@@ -1078,9 +1110,9 @@ extern "C" int m12core_build_draw_plan(
   return 0;
 }
 
-extern "C" int m12core_build_present_plan(
-    const M12CorePresentPlanDesc *desc,
-    M12CorePresentPlanSummary *out_summary) {
+extern "C" int
+m12core_build_present_plan(const M12CorePresentPlanDesc *desc,
+                           M12CorePresentPlanSummary *out_summary) {
   if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
     return 1;
   std::memset(out_summary, 0, sizeof(*out_summary));
@@ -1149,6 +1181,97 @@ extern "C" int m12core_build_present_plan(
   out_summary->work_classification = desc->work_classification;
   out_summary->hazard_score = hazard_score;
   out_summary->present_plan_key = key;
+  out_summary->scheduled_work_count = scheduled;
+  return 0;
+}
+
+extern "C" int
+m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
+                          M12CoreReplayPlanSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Phase 9 replay-planning seam.  Native code now owns deterministic replay
+   * stream classification/keying, while command decoding, encoder lifetime,
+   * command-buffer commits, synchronization, and hazard enforcement remain in
+   * the existing PE/DXMT replay path.  Only scalar counters and status values
+   * cross the ABI.
+   */
+  uint64_t key = 0x4d31325245504c59ull; // "M12REPLY" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->queue_type);
+  pipelineHashCombine(key, desc->command_list_index);
+  pipelineHashCombine(key, desc->command_buffer_status);
+  pipelineHashCombine(key, desc->command_list_id);
+  pipelineHashCombine(key, desc->queue_serial);
+  pipelineHashCombine(key, desc->command_count);
+  pipelineHashCombine(key, desc->draw_count);
+  pipelineHashCombine(key, desc->indexed_draw_count);
+  pipelineHashCombine(key, desc->indirect_count);
+  pipelineHashCombine(key, desc->dispatch_count);
+  pipelineHashCombine(key, desc->clear_rtv_count);
+  pipelineHashCombine(key, desc->clear_dsv_count);
+  pipelineHashCombine(key, desc->clear_uav_count);
+  pipelineHashCombine(key, (uint64_t)desc->replay_ms);
+  pipelineHashCombine(key, (uint64_t)desc->wait_ms);
+
+  const uint64_t draw_work =
+      desc->draw_count + desc->indexed_draw_count + desc->indirect_count;
+  const uint64_t clear_work =
+      desc->clear_rtv_count + desc->clear_dsv_count + desc->clear_uav_count;
+  const uint64_t scheduled =
+      desc->command_count + draw_work + desc->dispatch_count + clear_work;
+
+  uint32_t validation_flags = 0;
+  if (!(desc->flags & M12CORE_REPLAY_PLAN_HAS_COMMAND_STREAM) ||
+      !desc->command_count)
+    validation_flags |= 1u << 0;
+  if ((desc->flags & M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_WORK) &&
+      !desc->queue_serial)
+    validation_flags |= 1u << 1;
+  if ((desc->flags & M12CORE_REPLAY_PLAN_COMMAND_BUFFER_COMPLETED) &&
+      !(desc->flags & M12CORE_REPLAY_PLAN_SYNC_EXECUTE))
+    validation_flags |= 1u << 2;
+
+  uint32_t classification = 0;
+  if (draw_work)
+    classification = 1;
+  else if (desc->dispatch_count)
+    classification = 2;
+  else if (clear_work)
+    classification = 3;
+  else if (desc->command_count)
+    classification = 4;
+
+  uint32_t hazard_score = 0;
+  if (desc->flags & M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_TARGET)
+    hazard_score += 2;
+  if (desc->flags & M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_WORK)
+    hazard_score += 1;
+  if (desc->flags & M12CORE_REPLAY_PLAN_SYNC_EXECUTE)
+    hazard_score += 1;
+  if (draw_work && desc->dispatch_count)
+    hazard_score += 1;
+  if (desc->wait_ms > 0)
+    hazard_score += 1;
+
+  uint32_t execution_path = 0;
+  if (desc->flags & M12CORE_REPLAY_PLAN_HAS_GRAPHICS_WORK)
+    execution_path = 1;
+  else if (desc->flags & M12CORE_REPLAY_PLAN_HAS_COMPUTE_WORK)
+    execution_path = 2;
+  else if (desc->flags & M12CORE_REPLAY_PLAN_HAS_CLEAR_WORK)
+    execution_path = 3;
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_REPLAY_PLAN_STATUS_OK;
+  out_summary->flags = desc->flags;
+  out_summary->validation_flags = validation_flags;
+  out_summary->work_classification = classification;
+  out_summary->execution_path = execution_path;
+  out_summary->hazard_score = hazard_score;
+  out_summary->replay_plan_key = key;
   out_summary->scheduled_work_count = scheduled;
   return 0;
 }

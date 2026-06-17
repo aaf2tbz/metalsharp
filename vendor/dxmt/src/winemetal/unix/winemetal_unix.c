@@ -36,7 +36,10 @@ winemetal_open_log(const char *fallback_name) {
   if (!root || !root[0])
     return fopen(file, "a");
 
-  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", file);
+  snprintf(
+      path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/",
+      file
+  );
   path[sizeof(path) - 1] = '\0';
   return fopen(path, "a");
 }
@@ -65,53 +68,59 @@ typedef int (*PFN_m12core_get_version)(M12CoreVersion *out_version);
 typedef const char *(*PFN_m12core_build_string)(void);
 typedef int (*PFN_m12core_record_counter)(uint32_t counter_id, uint64_t delta);
 typedef int (*PFN_m12core_get_counters)(M12CoreCounterSnapshot *out_snapshot);
-typedef int (*PFN_m12core_hash_shader_bytecode)(const void *bytecode, uint64_t bytecode_size,
-                                                uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
-typedef int (*PFN_m12core_format_shader_cache_paths)(const char *cache_root, uint64_t shader_hash,
-                                                     M12CoreShaderCachePaths *out_paths);
-typedef int (*PFN_m12core_probe_shader_cache)(const char *cache_root, uint64_t shader_hash,
-                                              uint32_t force_source_compile,
-                                              M12CoreShaderCacheLookup *out_lookup);
-typedef int (*PFN_m12core_parse_shader_reflection)(const char *reflection_text,
-                                                   uint64_t reflection_text_size,
-                                                   M12CoreShaderReflectionSummary *out_summary);
-typedef int (*PFN_m12core_make_pipeline_cache_key)(const M12CorePipelineCacheKeyInput *input,
-                                                   M12CorePipelineCacheKey *out_key);
-typedef int (*PFN_m12core_create_shader_function)(const M12CoreShaderFunctionDesc *desc,
-                                                  M12CoreShaderFunctionResult *out_result);
-typedef int (*PFN_m12core_lower_dxil_to_msl)(const M12CoreDXILToMSLDesc *desc,
-                                             char *out_source,
-                                             uint64_t out_source_capacity,
-                                             M12CoreDXILToMSLResult *out_result);
-typedef int (*PFN_m12core_reflect_sm50_shader)(const void *bytecode,
-                                               uint64_t bytecode_size,
-                                               uint32_t options,
-                                               M12CoreSM50ShaderReflection *out_reflection,
-                                               M12CoreSM50ShaderArgument *out_constant_buffers,
-                                               uint32_t constant_buffer_capacity,
-                                               M12CoreSM50ShaderArgument *out_arguments,
-                                               uint32_t argument_capacity,
-                                               M12CoreSM50ReflectionResult *out_result);
-typedef int (*PFN_m12core_lookup_pipeline_cache)(const M12CorePipelineCacheQuery *query,
-                                                 M12CorePipelineCacheResult *out_result);
-typedef int (*PFN_m12core_store_pipeline_cache)(const M12CorePipelineCacheQuery *query,
-                                                uint64_t pipeline_handle);
-typedef int (*PFN_m12core_make_pipeline_cache_key_from_fields)(const M12CorePipelineKeyFields *input,
-                                                               M12CorePipelineCacheKey *out_key);
-typedef int (*PFN_m12core_create_pipeline_state)(const M12CorePipelineCreateDesc *desc,
-                                                 M12CorePipelineCreateResult *out_result);
-typedef int (*PFN_m12core_summarize_root_signature)(const M12CoreRootSignatureDesc *desc,
-                                                    M12CoreRootSignatureSummary *out_summary);
-typedef int (*PFN_m12core_build_root_binding_plan)(const M12CoreRootBindingPlanDesc *desc,
-                                                   M12CoreRootBindingPlanSummary *out_summary);
-typedef int (*PFN_m12core_lookup_root_binding)(const M12CoreRootBindingLookupDesc *desc,
-                                               M12CoreRootBindingLookupResult *out_result);
-typedef int (*PFN_m12core_summarize_prewarm_pack)(const M12CorePrewarmPackDesc *desc,
-                                                  M12CorePrewarmPackSummary *out_summary);
-typedef int (*PFN_m12core_build_draw_plan)(const M12CoreDrawPlanDesc *desc,
-                                           M12CoreDrawPlanSummary *out_summary);
-typedef int (*PFN_m12core_build_present_plan)(const M12CorePresentPlanDesc *desc,
-                                              M12CorePresentPlanSummary *out_summary);
+typedef int (*PFN_m12core_hash_shader_bytecode)(
+    const void *bytecode, uint64_t bytecode_size, uint32_t stage, M12CoreShaderBytecodeInfo *out_info
+);
+typedef int (*PFN_m12core_format_shader_cache_paths)(
+    const char *cache_root, uint64_t shader_hash, M12CoreShaderCachePaths *out_paths
+);
+typedef int (*PFN_m12core_probe_shader_cache)(
+    const char *cache_root, uint64_t shader_hash, uint32_t force_source_compile, M12CoreShaderCacheLookup *out_lookup
+);
+typedef int (*PFN_m12core_parse_shader_reflection)(
+    const char *reflection_text, uint64_t reflection_text_size, M12CoreShaderReflectionSummary *out_summary
+);
+typedef int (*PFN_m12core_make_pipeline_cache_key)(
+    const M12CorePipelineCacheKeyInput *input, M12CorePipelineCacheKey *out_key
+);
+typedef int (*PFN_m12core_create_shader_function)(
+    const M12CoreShaderFunctionDesc *desc, M12CoreShaderFunctionResult *out_result
+);
+typedef int (*PFN_m12core_lower_dxil_to_msl)(
+    const M12CoreDXILToMSLDesc *desc, char *out_source, uint64_t out_source_capacity, M12CoreDXILToMSLResult *out_result
+);
+typedef int (*PFN_m12core_reflect_sm50_shader)(
+    const void *bytecode, uint64_t bytecode_size, uint32_t options, M12CoreSM50ShaderReflection *out_reflection,
+    M12CoreSM50ShaderArgument *out_constant_buffers, uint32_t constant_buffer_capacity,
+    M12CoreSM50ShaderArgument *out_arguments, uint32_t argument_capacity, M12CoreSM50ReflectionResult *out_result
+);
+typedef int (*PFN_m12core_lookup_pipeline_cache)(
+    const M12CorePipelineCacheQuery *query, M12CorePipelineCacheResult *out_result
+);
+typedef int (*PFN_m12core_store_pipeline_cache)(const M12CorePipelineCacheQuery *query, uint64_t pipeline_handle);
+typedef int (*PFN_m12core_make_pipeline_cache_key_from_fields)(
+    const M12CorePipelineKeyFields *input, M12CorePipelineCacheKey *out_key
+);
+typedef int (*PFN_m12core_create_pipeline_state)(
+    const M12CorePipelineCreateDesc *desc, M12CorePipelineCreateResult *out_result
+);
+typedef int (*PFN_m12core_summarize_root_signature)(
+    const M12CoreRootSignatureDesc *desc, M12CoreRootSignatureSummary *out_summary
+);
+typedef int (*PFN_m12core_build_root_binding_plan)(
+    const M12CoreRootBindingPlanDesc *desc, M12CoreRootBindingPlanSummary *out_summary
+);
+typedef int (*PFN_m12core_lookup_root_binding)(
+    const M12CoreRootBindingLookupDesc *desc, M12CoreRootBindingLookupResult *out_result
+);
+typedef int (*PFN_m12core_summarize_prewarm_pack)(
+    const M12CorePrewarmPackDesc *desc, M12CorePrewarmPackSummary *out_summary
+);
+typedef int (*PFN_m12core_build_draw_plan)(const M12CoreDrawPlanDesc *desc, M12CoreDrawPlanSummary *out_summary);
+typedef int (*PFN_m12core_build_present_plan)(
+    const M12CorePresentPlanDesc *desc, M12CorePresentPlanSummary *out_summary
+);
+typedef int (*PFN_m12core_build_replay_plan)(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -137,6 +146,7 @@ static PFN_m12core_lookup_root_binding p_m12core_lookup_root_binding;
 static PFN_m12core_summarize_prewarm_pack p_m12core_summarize_prewarm_pack;
 static PFN_m12core_build_draw_plan p_m12core_build_draw_plan;
 static PFN_m12core_build_present_plan p_m12core_build_present_plan;
+static PFN_m12core_build_replay_plan p_m12core_build_replay_plan;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -165,12 +175,11 @@ m12core_log_version(const char *path, const char *build_string) {
   FILE *log = winemetal_critical_log();
   if (!log)
     return;
-  fprintf(log,
-          "[m12core] loaded path=%s abi=%u features=0x%x build_id=%08x:%08x build=%s\n",
-          path ? path : "(null)", m12core_version.abi_version,
-          m12core_version.feature_flags, m12core_version.build_id_high,
-          m12core_version.build_id_low,
-          build_string ? build_string : "(null)");
+  fprintf(
+      log, "[m12core] loaded path=%s abi=%u features=0x%x build_id=%08x:%08x build=%s\n", path ? path : "(null)",
+      m12core_version.abi_version, m12core_version.feature_flags, m12core_version.build_id_high,
+      m12core_version.build_id_low, build_string ? build_string : "(null)"
+  );
   fclose(log);
 }
 
@@ -188,8 +197,7 @@ m12core_try_load(void) {
     const char *error = dlerror();
     FILE *log = winemetal_critical_log();
     if (log) {
-      fprintf(log, "[m12core] dlopen failed path=%s error=%s\n", path,
-              error ? error : "unknown");
+      fprintf(log, "[m12core] dlopen failed path=%s error=%s\n", path, error ? error : "unknown");
       fclose(log);
     }
     if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
@@ -197,50 +205,42 @@ m12core_try_load(void) {
     return;
   }
 
-  p_m12core_get_version =
-      (PFN_m12core_get_version)dlsym(m12core_handle, "m12core_get_version");
-  p_m12core_build_string =
-      (PFN_m12core_build_string)dlsym(m12core_handle, "m12core_build_string");
-  p_m12core_record_counter =
-      (PFN_m12core_record_counter)dlsym(m12core_handle, "m12core_record_counter");
-  p_m12core_get_counters =
-      (PFN_m12core_get_counters)dlsym(m12core_handle, "m12core_get_counters");
+  p_m12core_get_version = (PFN_m12core_get_version)dlsym(m12core_handle, "m12core_get_version");
+  p_m12core_build_string = (PFN_m12core_build_string)dlsym(m12core_handle, "m12core_build_string");
+  p_m12core_record_counter = (PFN_m12core_record_counter)dlsym(m12core_handle, "m12core_record_counter");
+  p_m12core_get_counters = (PFN_m12core_get_counters)dlsym(m12core_handle, "m12core_get_counters");
   p_m12core_hash_shader_bytecode =
       (PFN_m12core_hash_shader_bytecode)dlsym(m12core_handle, "m12core_hash_shader_bytecode");
   p_m12core_format_shader_cache_paths =
       (PFN_m12core_format_shader_cache_paths)dlsym(m12core_handle, "m12core_format_shader_cache_paths");
-  p_m12core_probe_shader_cache =
-      (PFN_m12core_probe_shader_cache)dlsym(m12core_handle, "m12core_probe_shader_cache");
+  p_m12core_probe_shader_cache = (PFN_m12core_probe_shader_cache)dlsym(m12core_handle, "m12core_probe_shader_cache");
   p_m12core_parse_shader_reflection =
       (PFN_m12core_parse_shader_reflection)dlsym(m12core_handle, "m12core_parse_shader_reflection");
   p_m12core_make_pipeline_cache_key =
       (PFN_m12core_make_pipeline_cache_key)dlsym(m12core_handle, "m12core_make_pipeline_cache_key");
   p_m12core_create_shader_function =
       (PFN_m12core_create_shader_function)dlsym(m12core_handle, "m12core_create_shader_function");
-  p_m12core_lower_dxil_to_msl =
-      (PFN_m12core_lower_dxil_to_msl)dlsym(m12core_handle, "m12core_lower_dxil_to_msl");
-  p_m12core_reflect_sm50_shader =
-      (PFN_m12core_reflect_sm50_shader)dlsym(m12core_handle, "m12core_reflect_sm50_shader");
+  p_m12core_lower_dxil_to_msl = (PFN_m12core_lower_dxil_to_msl)dlsym(m12core_handle, "m12core_lower_dxil_to_msl");
+  p_m12core_reflect_sm50_shader = (PFN_m12core_reflect_sm50_shader)dlsym(m12core_handle, "m12core_reflect_sm50_shader");
   p_m12core_lookup_pipeline_cache =
       (PFN_m12core_lookup_pipeline_cache)dlsym(m12core_handle, "m12core_lookup_pipeline_cache");
   p_m12core_store_pipeline_cache =
       (PFN_m12core_store_pipeline_cache)dlsym(m12core_handle, "m12core_store_pipeline_cache");
-  p_m12core_make_pipeline_cache_key_from_fields =
-      (PFN_m12core_make_pipeline_cache_key_from_fields)dlsym(m12core_handle, "m12core_make_pipeline_cache_key_from_fields");
+  p_m12core_make_pipeline_cache_key_from_fields = (PFN_m12core_make_pipeline_cache_key_from_fields)dlsym(
+      m12core_handle, "m12core_make_pipeline_cache_key_from_fields"
+  );
   p_m12core_create_pipeline_state =
       (PFN_m12core_create_pipeline_state)dlsym(m12core_handle, "m12core_create_pipeline_state");
   p_m12core_summarize_root_signature =
       (PFN_m12core_summarize_root_signature)dlsym(m12core_handle, "m12core_summarize_root_signature");
   p_m12core_build_root_binding_plan =
       (PFN_m12core_build_root_binding_plan)dlsym(m12core_handle, "m12core_build_root_binding_plan");
-  p_m12core_lookup_root_binding =
-      (PFN_m12core_lookup_root_binding)dlsym(m12core_handle, "m12core_lookup_root_binding");
+  p_m12core_lookup_root_binding = (PFN_m12core_lookup_root_binding)dlsym(m12core_handle, "m12core_lookup_root_binding");
   p_m12core_summarize_prewarm_pack =
       (PFN_m12core_summarize_prewarm_pack)dlsym(m12core_handle, "m12core_summarize_prewarm_pack");
-  p_m12core_build_draw_plan =
-      (PFN_m12core_build_draw_plan)dlsym(m12core_handle, "m12core_build_draw_plan");
-  p_m12core_build_present_plan =
-      (PFN_m12core_build_present_plan)dlsym(m12core_handle, "m12core_build_present_plan");
+  p_m12core_build_draw_plan = (PFN_m12core_build_draw_plan)dlsym(m12core_handle, "m12core_build_draw_plan");
+  p_m12core_build_present_plan = (PFN_m12core_build_present_plan)dlsym(m12core_handle, "m12core_build_present_plan");
+  p_m12core_build_replay_plan = (PFN_m12core_build_replay_plan)dlsym(m12core_handle, "m12core_build_replay_plan");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -269,10 +269,11 @@ m12core_dump_counters_at_exit(void) {
   FILE *log = winemetal_critical_log();
   if (!log)
     return;
-  fprintf(log, "[m12core] counter_snapshot abi=%u count=%u bridge_batches=%llu bridge_deltas=%llu",
-          snapshot.abi_version, snapshot.counter_count,
-          (unsigned long long)atomic_load(&m12core_bridge_batches),
-          (unsigned long long)atomic_load(&m12core_bridge_delta_total));
+  fprintf(
+      log, "[m12core] counter_snapshot abi=%u count=%u bridge_batches=%llu bridge_deltas=%llu", snapshot.abi_version,
+      snapshot.counter_count, (unsigned long long)atomic_load(&m12core_bridge_batches),
+      (unsigned long long)atomic_load(&m12core_bridge_delta_total)
+  );
   uint32_t count = snapshot.counter_count;
   if (count > M12CORE_COUNTER_COUNT)
     count = M12CORE_COUNTER_COUNT;
@@ -312,8 +313,10 @@ _WMTM12CoreRecordCounters(void *obj) {
   if (batch == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
     FILE *log = winemetal_critical_log();
     if (log) {
-      fprintf(log, "[m12core] counter_bridge first_batch counters=%u delta_total=%llu\n",
-              count, (unsigned long long)delta_total);
+      fprintf(
+          log, "[m12core] counter_bridge first_batch counters=%u delta_total=%llu\n", count,
+          (unsigned long long)delta_total
+      );
       fclose(log);
     }
   }
@@ -331,8 +334,8 @@ _WMTM12CoreHashShaderBytecode(void *obj) {
    * later cache/compile ownership slice is validated.
    */
   params->ret_success =
-      p_m12core_hash_shader_bytecode(params->bytecode.ptr, params->bytecode_size,
-                                     params->stage, &params->ret_info) == 0;
+      p_m12core_hash_shader_bytecode(params->bytecode.ptr, params->bytecode_size, params->stage, &params->ret_info) ==
+      0;
   return STATUS_SUCCESS;
 }
 
@@ -347,8 +350,7 @@ _WMTM12CoreFormatShaderCachePaths(void *obj) {
    * unchanged so this can be validated independently.
    */
   params->ret_success =
-      p_m12core_format_shader_cache_paths(params->cache_root.ptr, params->shader_hash,
-                                          &params->ret_paths) == 0;
+      p_m12core_format_shader_cache_paths(params->cache_root.ptr, params->shader_hash, &params->ret_paths) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -363,8 +365,9 @@ _WMTM12CoreProbeShaderCache(void *obj) {
    * file read and Metal library creation for compatibility.
    */
   params->ret_success =
-      p_m12core_probe_shader_cache(params->cache_root.ptr, params->shader_hash,
-                                   params->force_source_compile, &params->ret_lookup) == 0;
+      p_m12core_probe_shader_cache(
+          params->cache_root.ptr, params->shader_hash, params->force_source_compile, &params->ret_lookup
+      ) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -377,10 +380,9 @@ _WMTM12CoreParseShaderReflection(void *obj) {
   /* Phase 3.3 reflection bridge.  Only the compact cache-side reflection JSON
    * summary crosses here; full SM50 reflection handles stay PE-owned.
    */
-  params->ret_success =
-      p_m12core_parse_shader_reflection(params->reflection_text.ptr,
-                                        params->reflection_text_size,
-                                        &params->ret_summary) == 0;
+  params->ret_success = p_m12core_parse_shader_reflection(
+                            params->reflection_text.ptr, params->reflection_text_size, &params->ret_summary
+                        ) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -402,20 +404,17 @@ _WMTM12CoreLowerDXILToMSL(void *obj) {
   desc.vertex_inputs = params->vertex_inputs.ptr;
   desc.vertex_input_count = params->vertex_input_count;
 
-  params->ret_success = p_m12core_lower_dxil_to_msl(
-      &desc, params->out_source.ptr, params->out_source_capacity,
-      &params->ret_result) == 0;
+  params->ret_success =
+      p_m12core_lower_dxil_to_msl(&desc, params->out_source.ptr, params->out_source_capacity, &params->ret_result) == 0;
   uint64_t calls = atomic_fetch_add(&m12core_dxil_to_msl_calls, 1) + 1;
   if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
     FILE *log = winemetal_debug_log();
     if (log) {
-      fprintf(log,
-              "[m12core] dxil_to_msl first_call stage=%u bytes=%llu status=%u required=%llu success=%u\n",
-              params->stage,
-              (unsigned long long)params->dxil_container_size,
-              params->ret_result.status,
-              (unsigned long long)params->ret_result.required_source_size,
-              params->ret_success);
+      fprintf(
+          log, "[m12core] dxil_to_msl first_call stage=%u bytes=%llu status=%u required=%llu success=%u\n",
+          params->stage, (unsigned long long)params->dxil_container_size, params->ret_result.status,
+          (unsigned long long)params->ret_result.required_source_size, params->ret_success
+      );
       fclose(log);
     }
   }
@@ -428,16 +427,15 @@ _WMTM12CoreLookupPipelineCache(void *obj) {
   if (!params || !p_m12core_lookup_pipeline_cache)
     return STATUS_SUCCESS;
 
-  params->ret_success =
-      p_m12core_lookup_pipeline_cache(&params->query, &params->ret_result) == 0;
+  params->ret_success = p_m12core_lookup_pipeline_cache(&params->query, &params->ret_result) == 0;
   uint64_t calls = atomic_fetch_add(&m12core_pipeline_cache_calls, 1) + 1;
   if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
     FILE *log = winemetal_debug_log();
     if (log) {
-      fprintf(log,
-              "[m12core] pipeline_cache first_lookup kind=%u key=0x%llx hit=%u success=%u\n",
-              params->query.kind, (unsigned long long)params->query.key,
-              params->ret_result.hit, params->ret_success);
+      fprintf(
+          log, "[m12core] pipeline_cache first_lookup kind=%u key=0x%llx hit=%u success=%u\n", params->query.kind,
+          (unsigned long long)params->query.key, params->ret_result.hit, params->ret_success
+      );
       fclose(log);
     }
   }
@@ -449,8 +447,7 @@ _WMTM12CoreStorePipelineCache(void *obj) {
   struct unixcall_m12core_store_pipeline_cache *params = obj;
   if (!params || !p_m12core_store_pipeline_cache)
     return STATUS_SUCCESS;
-  params->ret_success =
-      p_m12core_store_pipeline_cache(&params->query, params->pipeline_handle) == 0;
+  params->ret_success = p_m12core_store_pipeline_cache(&params->query, params->pipeline_handle) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -465,22 +462,19 @@ _WMTM12CoreReflectSM50Shader(void *obj) {
    * binding structs until the Phase 5 descriptor/root mapper migration.
    */
   params->ret_success = p_m12core_reflect_sm50_shader(
-      params->bytecode.ptr, params->bytecode_size, params->options,
-      params->out_reflection.ptr,
-      params->out_constant_buffers.ptr, params->constant_buffer_capacity,
-      params->out_arguments.ptr, params->argument_capacity,
-      &params->ret_result) == 0;
+                            params->bytecode.ptr, params->bytecode_size, params->options, params->out_reflection.ptr,
+                            params->out_constant_buffers.ptr, params->constant_buffer_capacity,
+                            params->out_arguments.ptr, params->argument_capacity, &params->ret_result
+                        ) == 0;
   uint64_t calls = atomic_fetch_add(&m12core_sm50_reflection_calls, 1) + 1;
   if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
     FILE *log = winemetal_debug_log();
     if (log) {
-      fprintf(log,
-              "[m12core] sm50_reflection first_call bytes=%llu status=%u cb=%u args=%u success=%u\n",
-              (unsigned long long)params->bytecode_size,
-              params->ret_result.status,
-              params->ret_result.required_constant_buffers,
-              params->ret_result.required_arguments,
-              params->ret_success);
+      fprintf(
+          log, "[m12core] sm50_reflection first_call bytes=%llu status=%u cb=%u args=%u success=%u\n",
+          (unsigned long long)params->bytecode_size, params->ret_result.status,
+          params->ret_result.required_constant_buffers, params->ret_result.required_arguments, params->ret_success
+      );
       fclose(log);
     }
   }
@@ -508,18 +502,16 @@ _WMTM12CoreCreateShaderFunction(void *obj) {
   desc.input_size = params->input_size;
   snprintf(desc.entry_point, sizeof(desc.entry_point), "%s", params->entry_point);
 
-  params->ret_success =
-      p_m12core_create_shader_function(&desc, &params->ret_result) == 0;
+  params->ret_success = p_m12core_create_shader_function(&desc, &params->ret_result) == 0;
   uint64_t calls = atomic_fetch_add(&m12core_shader_function_calls, 1) + 1;
   if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
     FILE *log = winemetal_debug_log();
     if (log) {
-      fprintf(log,
-              "[m12core] shader_function first_call stage=%u kind=%u hash=0x%llx status=%u cache_hit=%u success=%u\n",
-              params->stage, params->input_kind,
-              (unsigned long long)params->shader_hash,
-              params->ret_result.status, params->ret_result.cache_hit,
-              params->ret_success);
+      fprintf(
+          log, "[m12core] shader_function first_call stage=%u kind=%u hash=0x%llx status=%u cache_hit=%u success=%u\n",
+          params->stage, params->input_kind, (unsigned long long)params->shader_hash, params->ret_result.status,
+          params->ret_result.cache_hit, params->ret_success
+      );
       fclose(log);
     }
   }
@@ -533,8 +525,7 @@ _WMTM12CoreMakePipelineCacheKey(void *obj) {
     return STATUS_SUCCESS;
 
   /* Phase 4 compatibility bridge retained for earlier cache-key callers. */
-  params->ret_success =
-      p_m12core_make_pipeline_cache_key(&params->input, &params->ret_key) == 0;
+  params->ret_success = p_m12core_make_pipeline_cache_key(&params->input, &params->ret_key) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -556,8 +547,7 @@ _WMTM12CoreMakePipelineCacheKeyFromFields(void *obj) {
   input.flags = params->flags;
   input.fields = params->fields.ptr;
   input.field_count = params->field_count;
-  params->ret_success =
-      p_m12core_make_pipeline_cache_key_from_fields(&input, &params->ret_key) == 0;
+  params->ret_success = p_m12core_make_pipeline_cache_key_from_fields(&input, &params->ret_key) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -583,12 +573,11 @@ _WMTM12CoreCreatePipelineState(void *obj) {
   if (calls == 1 && m12core_env_enabled("DXMT_M12CORE_DUMP_COUNTERS")) {
     FILE *log = winemetal_debug_log();
     if (log) {
-      fprintf(log,
-              "[m12core] pipeline_create first_call kind=%u key=0x%llx status=%u cache_hit=%u pso=%p success=%u\n",
-              params->kind, (unsigned long long)params->cache_key,
-              params->ret_result.status, params->ret_result.cache_hit,
-              (void *)(uintptr_t)params->ret_result.pipeline_handle,
-              params->ret_success);
+      fprintf(
+          log, "[m12core] pipeline_create first_call kind=%u key=0x%llx status=%u cache_hit=%u pso=%p success=%u\n",
+          params->kind, (unsigned long long)params->cache_key, params->ret_result.status, params->ret_result.cache_hit,
+          (void *)(uintptr_t)params->ret_result.pipeline_handle, params->ret_success
+      );
       fclose(log);
     }
   }
@@ -613,8 +602,7 @@ _WMTM12CoreSummarizeRootSignature(void *obj) {
   desc.blob_hash = params->blob_hash;
   desc.fields = params->fields.ptr;
   desc.field_count = params->field_count;
-  params->ret_success =
-      p_m12core_summarize_root_signature(&desc, &params->ret_summary) == 0;
+  params->ret_success = p_m12core_summarize_root_signature(&desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -637,8 +625,7 @@ _WMTM12CoreBuildRootBindingPlan(void *obj) {
   desc.range_count = params->range_count;
   desc.static_samplers = params->static_samplers.ptr;
   desc.static_sampler_count = params->static_sampler_count;
-  params->ret_success =
-      p_m12core_build_root_binding_plan(&desc, &params->ret_summary) == 0;
+  params->ret_success = p_m12core_build_root_binding_plan(&desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -661,8 +648,7 @@ _WMTM12CoreLookupRootBinding(void *obj) {
   desc.range_count = params->range_count;
   desc.static_samplers = params->static_samplers.ptr;
   desc.static_sampler_count = params->static_sampler_count;
-  params->ret_success =
-      p_m12core_lookup_root_binding(&desc, &params->ret_result) == 0;
+  params->ret_success = p_m12core_lookup_root_binding(&desc, &params->ret_result) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -682,8 +668,7 @@ _WMTM12CoreSummarizePrewarmPack(void *obj) {
   desc.pipeline_count = params->pipeline_count;
   desc.stages = params->stages.ptr;
   desc.stage_count = params->stage_count;
-  params->ret_success =
-      p_m12core_summarize_prewarm_pack(&desc, &params->ret_summary) == 0;
+  params->ret_success = p_m12core_summarize_prewarm_pack(&desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -693,8 +678,7 @@ _WMTM12CoreBuildDrawPlan(void *obj) {
   if (!params || !p_m12core_build_draw_plan)
     return STATUS_SUCCESS;
 
-  params->ret_success =
-      p_m12core_build_draw_plan(&params->desc, &params->ret_summary) == 0;
+  params->ret_success = p_m12core_build_draw_plan(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -704,8 +688,17 @@ _WMTM12CoreBuildPresentPlan(void *obj) {
   if (!params || !p_m12core_build_present_plan)
     return STATUS_SUCCESS;
 
-  params->ret_success =
-      p_m12core_build_present_plan(&params->desc, &params->ret_summary) == 0;
+  params->ret_success = p_m12core_build_present_plan(&params->desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreBuildReplayPlan(void *obj) {
+  struct unixcall_m12core_build_replay_plan *params = obj;
+  if (!params || !p_m12core_build_replay_plan)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_build_replay_plan(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -722,10 +715,10 @@ winemetal_end_encoder_safely(id<MTLCommandEncoder> encoder, const char *label) {
     if (el) {
       const char *name = [[exception name] UTF8String];
       const char *reason = [[exception reason] UTF8String];
-      fprintf(el,
-              "encoder_end_exception label=%s encoder=%p exception=%s reason=%s\n",
-              label ? label : "(null)", encoder, name ? name : "(null)",
-              reason ? reason : "(null)");
+      fprintf(
+          el, "encoder_end_exception label=%s encoder=%p exception=%s reason=%s\n", label ? label : "(null)", encoder,
+          name ? name : "(null)", reason ? reason : "(null)"
+      );
       fclose(el);
     }
     return false;
@@ -752,8 +745,10 @@ winemetal_array_from_handles(const obj_handle_t *handles, uint32_t count, const 
       skipped++;
       FILE *dl = winemetal_critical_log();
       if (dl) {
-        fprintf(dl, "[winemetal] filtered nil NSArray object label=%s index=%u count=%u\n",
-                label ? label : "<unknown>", i, count);
+        fprintf(
+            dl, "[winemetal] filtered nil NSArray object label=%s index=%u count=%u\n", label ? label : "<unknown>", i,
+            count
+        );
         fclose(dl);
       }
     }
@@ -763,8 +758,10 @@ winemetal_array_from_handles(const obj_handle_t *handles, uint32_t count, const 
     if (skipped) {
       FILE *dl = winemetal_critical_log();
       if (dl) {
-        fprintf(dl, "[winemetal] NSArray construction skipped all nil objects label=%s count=%u\n",
-                label ? label : "<unknown>", count);
+        fprintf(
+            dl, "[winemetal] NSArray construction skipped all nil objects label=%s count=%u\n",
+            label ? label : "<unknown>", count
+        );
         fclose(dl);
       }
     }
@@ -1415,21 +1412,22 @@ _MTLDevice_newComputePipelineState(void *obj) {
   }
   if (info->num_binary_archives_for_lookup && info->binary_archives_for_lookup.ptr)
     descriptor.binaryArchives = winemetal_array_from_handles(
-        (const obj_handle_t *)info->binary_archives_for_lookup.ptr,
-        info->num_binary_archives_for_lookup,
-        "compute.binaryArchives");
+        (const obj_handle_t *)info->binary_archives_for_lookup.ptr, info->num_binary_archives_for_lookup,
+        "compute.binaryArchives"
+    );
   MTLPipelineOption options =
       info->fail_on_binary_archive_miss ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
   @try {
-    params->ret_pso =
-        (obj_handle_t)[device newComputePipelineStateWithDescriptor:descriptor options:options reflection:nil error:&err];
-  } @catch (NSException *exception) {
+    params->ret_pso = (obj_handle_t)
+        [device newComputePipelineStateWithDescriptor:descriptor options:options reflection:nil error:&err];
+  } @catch(NSException * exception) {
     params->ret_pso = 0;
     FILE *dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl, "[winemetal] compute PSO ObjC exception: %s reason=%s\n",
-              winemetal_nsstring_utf8([exception name]),
-              winemetal_nsstring_utf8([exception reason]));
+      fprintf(
+          dl, "[winemetal] compute PSO ObjC exception: %s reason=%s\n", winemetal_nsstring_utf8([exception name]),
+          winemetal_nsstring_utf8([exception reason])
+      );
       fclose(dl);
     }
   }
@@ -1519,10 +1517,8 @@ _MTLCommandBuffer_renderCommandEncoder(void *obj) {
 static NTSTATUS
 _MTLCommandEncoder_endEncoding(void *obj) {
   struct unixcall_generic_obj_noret *params = obj;
-  return winemetal_end_encoder_safely((id<MTLCommandEncoder>)params->handle,
-                                      "explicit")
-             ? STATUS_SUCCESS
-             : STATUS_UNSUCCESSFUL;
+  return winemetal_end_encoder_safely((id<MTLCommandEncoder>)params->handle, "explicit") ? STATUS_SUCCESS
+                                                                                         : STATUS_UNSUCCESSFUL;
 }
 
 #ifndef DXMT_NO_PRIVATE_API
@@ -1612,18 +1608,18 @@ _MTLDevice_newRenderPipelineState(void *obj) {
     if (info->num_vertex_linked_functions && info->vertex_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
       linked.functions = winemetal_array_from_handles(
-          (const obj_handle_t *)info->vertex_linked_functions.ptr,
-          info->num_vertex_linked_functions,
-          "render.vertexLinkedFunctions");
+          (const obj_handle_t *)info->vertex_linked_functions.ptr, info->num_vertex_linked_functions,
+          "render.vertexLinkedFunctions"
+      );
       descriptor.vertexLinkedFunctions = linked;
       [linked release];
     }
     if (info->num_fragment_linked_functions && info->fragment_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
       linked.functions = winemetal_array_from_handles(
-          (const obj_handle_t *)info->fragment_linked_functions.ptr,
-          info->num_fragment_linked_functions,
-          "render.fragmentLinkedFunctions");
+          (const obj_handle_t *)info->fragment_linked_functions.ptr, info->num_fragment_linked_functions,
+          "render.fragmentLinkedFunctions"
+      );
       descriptor.fragmentLinkedFunctions = linked;
       [linked release];
     }
@@ -1655,9 +1651,9 @@ _MTLDevice_newRenderPipelineState(void *obj) {
 
   if (info->num_binary_archives_for_lookup && info->binary_archives_for_lookup.ptr)
     descriptor.binaryArchives = winemetal_array_from_handles(
-        (const obj_handle_t *)info->binary_archives_for_lookup.ptr,
-        info->num_binary_archives_for_lookup,
-        "render.binaryArchives");
+        (const obj_handle_t *)info->binary_archives_for_lookup.ptr, info->num_binary_archives_for_lookup,
+        "render.binaryArchives"
+    );
   NSError *err = NULL;
   MTLPipelineOption options =
       info->fail_on_binary_archive_miss ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
@@ -1666,19 +1662,17 @@ _MTLDevice_newRenderPipelineState(void *obj) {
                                                                                                 options:options
                                                                                              reflection:nil
                                                                                                   error:&err];
-  } @catch (NSException *exception) {
+  } @catch(NSException * exception) {
     params->ret_pso = 0;
     FILE *dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl, "[winemetal] render PSO ObjC exception: %s reason=%s vertex=%p fragment=%p rt0=%u depth=%u stencil=%u samples=%u\n",
-              winemetal_nsstring_utf8([exception name]),
-              winemetal_nsstring_utf8([exception reason]),
-              (void *)info->vertex_function,
-              (void *)info->fragment_function,
-              info->colors[0].pixel_format,
-              info->depth_pixel_format,
-              info->stencil_pixel_format,
-              info->raster_sample_count);
+      fprintf(
+          dl,
+          "[winemetal] render PSO ObjC exception: %s reason=%s vertex=%p fragment=%p rt0=%u depth=%u stencil=%u samples=%u\n",
+          winemetal_nsstring_utf8([exception name]), winemetal_nsstring_utf8([exception reason]),
+          (void *)info->vertex_function, (void *)info->fragment_function, info->colors[0].pixel_format,
+          info->depth_pixel_format, info->stencil_pixel_format, info->raster_sample_count
+      );
       fclose(dl);
     }
   }
@@ -1740,27 +1734,27 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
     if (info->num_object_linked_functions && info->object_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
       linked.functions = winemetal_array_from_handles(
-          (const obj_handle_t *)info->object_linked_functions.ptr,
-          info->num_object_linked_functions,
-          "mesh.objectLinkedFunctions");
+          (const obj_handle_t *)info->object_linked_functions.ptr, info->num_object_linked_functions,
+          "mesh.objectLinkedFunctions"
+      );
       descriptor.objectLinkedFunctions = linked;
       [linked release];
     }
     if (info->num_mesh_linked_functions && info->mesh_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
       linked.functions = winemetal_array_from_handles(
-          (const obj_handle_t *)info->mesh_linked_functions.ptr,
-          info->num_mesh_linked_functions,
-          "mesh.meshLinkedFunctions");
+          (const obj_handle_t *)info->mesh_linked_functions.ptr, info->num_mesh_linked_functions,
+          "mesh.meshLinkedFunctions"
+      );
       descriptor.meshLinkedFunctions = linked;
       [linked release];
     }
     if (info->num_fragment_linked_functions && info->fragment_linked_functions.ptr) {
       MTLLinkedFunctions *linked = [[MTLLinkedFunctions alloc] init];
       linked.functions = winemetal_array_from_handles(
-          (const obj_handle_t *)info->fragment_linked_functions.ptr,
-          info->num_fragment_linked_functions,
-          "mesh.fragmentLinkedFunctions");
+          (const obj_handle_t *)info->fragment_linked_functions.ptr, info->num_fragment_linked_functions,
+          "mesh.fragmentLinkedFunctions"
+      );
       descriptor.fragmentLinkedFunctions = linked;
       [linked release];
     }
@@ -1775,26 +1769,26 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   if (@available(macOS 15, *)) {
     if (info->num_binary_archives_for_lookup && info->binary_archives_for_lookup.ptr)
       descriptor.binaryArchives = winemetal_array_from_handles(
-          (const obj_handle_t *)info->binary_archives_for_lookup.ptr,
-          info->num_binary_archives_for_lookup,
-          "mesh.binaryArchives");
+          (const obj_handle_t *)info->binary_archives_for_lookup.ptr, info->num_binary_archives_for_lookup,
+          "mesh.binaryArchives"
+      );
     options = info->fail_on_binary_archive_miss ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
   }
 #endif
   NSError *err = NULL;
   @try {
-    params->ret_pso = (obj_handle_t)[(id<MTLDevice>)params->device
-        newRenderPipelineStateWithMeshDescriptor:descriptor
-                                         options:options
-                                      reflection:nil
-                                           error:&err];
-  } @catch (NSException *exception) {
+    params->ret_pso = (obj_handle_t)[(id<MTLDevice>)params->device newRenderPipelineStateWithMeshDescriptor:descriptor
+                                                                                                    options:options
+                                                                                                 reflection:nil
+                                                                                                      error:&err];
+  } @catch(NSException * exception) {
     params->ret_pso = 0;
     FILE *dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl, "[winemetal] mesh PSO ObjC exception: %s reason=%s\n",
-              winemetal_nsstring_utf8([exception name]),
-              winemetal_nsstring_utf8([exception reason]));
+      fprintf(
+          dl, "[winemetal] mesh PSO ObjC exception: %s reason=%s\n", winemetal_nsstring_utf8([exception name]),
+          winemetal_nsstring_utf8([exception reason])
+      );
       fclose(dl);
     }
   }
@@ -1802,30 +1796,23 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   if (!params->ret_pso) {
     FILE *dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl,
-              "[winemetal] mesh PSO failed: err=%s object=%s mesh=%s fragment=%s "
-              "payload=%u rt0=%u depth=%u stencil=%u samples=%u raster=%d "
-              "obj_linked=%u mesh_linked=%u frag_linked=%u "
-              "obj_mut=0x%08x mesh_mut=0x%08x frag_mut=0x%08x\n",
-              err ? winemetal_nsstring_utf8([err localizedDescription]) : "<nil>",
-              winemetal_nsstring_utf8([descriptor.objectFunction name]),
-              winemetal_nsstring_utf8([descriptor.meshFunction name]),
-              winemetal_nsstring_utf8([descriptor.fragmentFunction name]),
-              info->payload_memory_length,
-              info->colors[0].pixel_format,
-              info->depth_pixel_format,
-              info->stencil_pixel_format,
-              info->raster_sample_count,
-              info->rasterization_enabled ? 1 : 0,
-              info->num_object_linked_functions,
-              info->num_mesh_linked_functions,
-              info->num_fragment_linked_functions,
-              info->immutable_object_buffers,
-              info->immutable_mesh_buffers,
-              info->immutable_fragment_buffers);
+      fprintf(
+          dl,
+          "[winemetal] mesh PSO failed: err=%s object=%s mesh=%s fragment=%s "
+          "payload=%u rt0=%u depth=%u stencil=%u samples=%u raster=%d "
+          "obj_linked=%u mesh_linked=%u frag_linked=%u "
+          "obj_mut=0x%08x mesh_mut=0x%08x frag_mut=0x%08x\n",
+          err ? winemetal_nsstring_utf8([err localizedDescription]) : "<nil>",
+          winemetal_nsstring_utf8([descriptor.objectFunction name]),
+          winemetal_nsstring_utf8([descriptor.meshFunction name]),
+          winemetal_nsstring_utf8([descriptor.fragmentFunction name]), info->payload_memory_length,
+          info->colors[0].pixel_format, info->depth_pixel_format, info->stencil_pixel_format, info->raster_sample_count,
+          info->rasterization_enabled ? 1 : 0, info->num_object_linked_functions, info->num_mesh_linked_functions,
+          info->num_fragment_linked_functions, info->immutable_object_buffers, info->immutable_mesh_buffers,
+          info->immutable_fragment_buffers
+      );
       if (err)
-        fprintf(dl, "[winemetal] mesh PSO userInfo: %s\n",
-                winemetal_nsstring_utf8([[err userInfo] description]));
+        fprintf(dl, "[winemetal] mesh PSO userInfo: %s\n", winemetal_nsstring_utf8([[err userInfo] description]));
       fclose(dl);
     }
   }
@@ -2069,8 +2056,7 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
         if (dl) {
           fclose(dl);
         }
-        winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder,
-                                     "render_unknown_command");
+        winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder, "render_unknown_command");
         return STATUS_UNSUCCESSFUL;
       }
       case WMTRenderCommandNop:
@@ -2396,8 +2382,7 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
       if (dl) {
         fclose(dl);
       }
-      winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder,
-                                   "render_encode_exception");
+      winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder, "render_encode_exception");
       return STATUS_UNSUCCESSFUL;
     }
     next = next->next.ptr;
@@ -2888,8 +2873,9 @@ _CreateMetalViewFromHWND(void *obj) {
   if (!win_data && pfn_macdrv_get_cocoa_window) {
     fallback_cocoa_window = pfn_macdrv_get_cocoa_window((HWND)params->hwnd, TRUE);
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data NULL, direct cocoa_window=%p\n",
-              fallback_cocoa_window);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND get_win_data NULL, direct cocoa_window=%p\n", fallback_cocoa_window
+      );
     }
   }
   if (!win_data && !fallback_cocoa_window) {
@@ -2963,16 +2949,20 @@ _CreateMetalViewFromHWND(void *obj) {
       if (!dl)
         dl = winemetal_critical_log();
       if (dl) {
-        fprintf(dl, "[winemetal] CreateMetalViewFromHWND create_metal_view failed for target_view=%p cocoa_window=%p\n",
-                target_view, cocoa_window_handle);
+        fprintf(
+            dl, "[winemetal] CreateMetalViewFromHWND create_metal_view failed for target_view=%p cocoa_window=%p\n",
+            target_view, cocoa_window_handle
+        );
       }
     }
   } else {
     if (!dl)
       dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND client_view/contentView unavailable cocoa_window=%p\n",
-              cocoa_window_handle);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND client_view/contentView unavailable cocoa_window=%p\n",
+          cocoa_window_handle
+      );
     }
   }
 
@@ -3697,8 +3687,8 @@ _MTLLibrary_newFunctionWithDescriptor(void *obj) {
   NSString *name = [[NSString alloc] initWithCString:(char *)params->name.ptr encoding:NSUTF8StringEncoding];
   NSString *specialized_name = nil;
   if (params->specialized_name.ptr) {
-    specialized_name = [[NSString alloc] initWithCString:(char *)params->specialized_name.ptr
-                                                encoding:NSUTF8StringEncoding];
+    specialized_name =
+        [[NSString alloc] initWithCString:(char *)params->specialized_name.ptr encoding:NSUTF8StringEncoding];
   }
 
   MTLFunctionDescriptor *descriptor = [MTLFunctionDescriptor functionDescriptor];
@@ -4199,9 +4189,9 @@ _MTLDevice_newTileRenderPipelineState(void *obj) {
   if (@available(macOS 15, *)) {
     if (info->num_binary_archives_for_lookup && info->binary_archives_for_lookup.ptr)
       descriptor.binaryArchives = winemetal_array_from_handles(
-          (const obj_handle_t *)info->binary_archives_for_lookup.ptr,
-          info->num_binary_archives_for_lookup,
-          "tile.binaryArchives");
+          (const obj_handle_t *)info->binary_archives_for_lookup.ptr, info->num_binary_archives_for_lookup,
+          "tile.binaryArchives"
+      );
     options = info->fail_on_binary_archive_miss ? MTLPipelineOptionFailOnBinaryArchiveMiss : MTLPipelineOptionNone;
   }
 #endif
@@ -4389,6 +4379,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreSummarizePrewarmPack,
     &_WMTM12CoreBuildDrawPlan,
     &_WMTM12CoreBuildPresentPlan,
+    &_WMTM12CoreBuildReplayPlan,
 };
 
 #ifndef DXMT_NATIVE
@@ -4547,5 +4538,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreSummarizePrewarmPack,
     &_WMTM12CoreBuildDrawPlan,
     &_WMTM12CoreBuildPresentPlan,
+    &_WMTM12CoreBuildReplayPlan,
 };
 #endif

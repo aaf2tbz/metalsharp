@@ -181,38 +181,71 @@ static void MaybeSummarizeM12PrewarmCanaryPack() {
   char appid[32] = {};
   char profile[128] = {};
   GetEnvironmentVariableA("SteamAppId", appid, sizeof(appid));
-  GetEnvironmentVariableA("METALSHARP_M12_PREWARM_PROFILE", profile, sizeof(profile));
+  GetEnvironmentVariableA("METALSHARP_M12_PREWARM_PROFILE", profile,
+                          sizeof(profile));
   if (std::strcmp(appid, "1888160") != 0 ||
       std::strcmp(profile, "armored-core-vi-phase6-canary") != 0)
     return;
 
   static const M12CorePrewarmStageRecord kStages[] = {
-      {1u, 0u, 18359022602548718342ull, 4081995432925139117ull, 4372988585528895670ull},
-      {2u, 0u, 4574710677111033360ull, 13697048094567345931ull, 4372988585528895670ull},
-      {1u, 0u, 10693315295998777497ull, 16359143669093319293ull, 15008368596020638759ull},
-      {2u, 0u, 4106638516147011422ull, 10437899590742795286ull, 15008368596020638759ull},
-      {1u, 0u, 16035443732846808213ull, 1925484872259180288ull, 15008368596020638759ull},
-      {2u, 0u, 8055504006868440490ull, 7418535056421654247ull, 15008368596020638759ull},
-      {1u, 0u, 14480408534607764115ull, 11117029579973566787ull, 15008368596020638759ull},
-      {2u, 0u, 1983699331532216197ull, 4528279490836767311ull, 15008368596020638759ull},
-      {1u, 0u, 12033463525917343604ull, 1047757849779299882ull, 15008368596020638759ull},
-      {2u, 0u, 10876690996631456997ull, 14161370396060886791ull, 15008368596020638759ull},
-      {1u, 0u, 17990626671176797084ull, 17820575985505877801ull, 15008368596020638759ull},
-      {2u, 0u, 8826990230099469991ull, 14150798331993410021ull, 15008368596020638759ull},
-      {1u, 0u, 17990626671176797084ull, 17820575985505877801ull, 15008368596020638759ull},
-      {2u, 0u, 11199708295071531167ull, 8076157582476337448ull, 15008368596020638759ull},
-      {1u, 0u, 12033463525917343604ull, 1047757849779299882ull, 15008368596020638759ull},
-      {2u, 0u, 10450962076831753295ull, 10323223594149887174ull, 15008368596020638759ull},
+      {1u, 0u, 18359022602548718342ull, 4081995432925139117ull,
+       4372988585528895670ull},
+      {2u, 0u, 4574710677111033360ull, 13697048094567345931ull,
+       4372988585528895670ull},
+      {1u, 0u, 10693315295998777497ull, 16359143669093319293ull,
+       15008368596020638759ull},
+      {2u, 0u, 4106638516147011422ull, 10437899590742795286ull,
+       15008368596020638759ull},
+      {1u, 0u, 16035443732846808213ull, 1925484872259180288ull,
+       15008368596020638759ull},
+      {2u, 0u, 8055504006868440490ull, 7418535056421654247ull,
+       15008368596020638759ull},
+      {1u, 0u, 14480408534607764115ull, 11117029579973566787ull,
+       15008368596020638759ull},
+      {2u, 0u, 1983699331532216197ull, 4528279490836767311ull,
+       15008368596020638759ull},
+      {1u, 0u, 12033463525917343604ull, 1047757849779299882ull,
+       15008368596020638759ull},
+      {2u, 0u, 10876690996631456997ull, 14161370396060886791ull,
+       15008368596020638759ull},
+      {1u, 0u, 17990626671176797084ull, 17820575985505877801ull,
+       15008368596020638759ull},
+      {2u, 0u, 8826990230099469991ull, 14150798331993410021ull,
+       15008368596020638759ull},
+      {1u, 0u, 17990626671176797084ull, 17820575985505877801ull,
+       15008368596020638759ull},
+      {2u, 0u, 11199708295071531167ull, 8076157582476337448ull,
+       15008368596020638759ull},
+      {1u, 0u, 12033463525917343604ull, 1047757849779299882ull,
+       15008368596020638759ull},
+      {2u, 0u, 10450962076831753295ull, 10323223594149887174ull,
+       15008368596020638759ull},
   };
   static const M12CorePrewarmPipelineRecord kPipelines[] = {
-      {6492753959904709503ull, 11511886237073770283ull, 4372988585528895670ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 0u, 0u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {16545992644340971322ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 1u, 2u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {6759725360340476680ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 2u, 4u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {1279911470253221490ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 3u, 6u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {16793749183117915003ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 4u, 8u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {11030123218881463972ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 5u, 10u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {2402882166940403569ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 6u, 12u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
-      {6319903337167919291ull, 9822919385502010461ull, 15008368596020638759ull, M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 7u, 14u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {6492753959904709503ull, 11511886237073770283ull, 4372988585528895670ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 0u,
+       0u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {16545992644340971322ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 1u,
+       2u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {6759725360340476680ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 2u,
+       4u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {1279911470253221490ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 3u,
+       6u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {16793749183117915003ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 4u,
+       8u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {11030123218881463972ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 5u,
+       10u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {2402882166940403569ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 6u,
+       12u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
+      {6319903337167919291ull, 9822919385502010461ull, 15008368596020638759ull,
+       M12CORE_PREWARM_STAGE_MASK_VERTEX | M12CORE_PREWARM_STAGE_MASK_PIXEL, 7u,
+       14u, 2u, 0u, 0u, 0u, 0u, 0u, 0u},
   };
 
   M12CorePrewarmPackDesc desc = {};
@@ -230,27 +263,32 @@ static void MaybeSummarizeM12PrewarmCanaryPack() {
   M12CorePrewarmPackSummary summary = {};
   if (!WMTM12CoreSummarizePrewarmPack(&desc, &summary) ||
       summary.status != M12CORE_PREWARM_PACK_STATUS_OK) {
-    Logger::warn("M12_PREWARM_PACK_SUMMARY unavailable profile=armored-core-vi-phase6-canary");
+    Logger::warn("M12_PREWARM_PACK_SUMMARY unavailable "
+                 "profile=armored-core-vi-phase6-canary");
     return;
   }
-  Logger::info(str::format("M12_PREWARM_PACK_SUMMARY profile=armored-core-vi-phase6-canary pipelines=",
-                           summary.pipeline_count, " stages=", summary.stage_link_count,
-                           " render=", summary.render_pipeline_count,
-                           " compute=", summary.compute_pipeline_count,
-                           " roots=", summary.unique_root_count,
-                           " shaders=", summary.unique_shader_count,
-                           " ordered=", summary.ordered_pipeline_count,
-                           " key=0x", std::hex, summary.prewarm_pack_key, std::dec));
+  Logger::info(
+      str::format("M12_PREWARM_PACK_SUMMARY "
+                  "profile=armored-core-vi-phase6-canary pipelines=",
+                  summary.pipeline_count, " stages=", summary.stage_link_count,
+                  " render=", summary.render_pipeline_count,
+                  " compute=", summary.compute_pipeline_count,
+                  " roots=", summary.unique_root_count,
+                  " shaders=", summary.unique_shader_count,
+                  " ordered=", summary.ordered_pipeline_count, " key=0x",
+                  std::hex, summary.prewarm_pack_key, std::dec));
 
   if (summary.ordered_pipeline_count > 0 && desc.pipeline_count > 0) {
     const M12CorePrewarmPipelineRecord &first = desc.pipelines[0];
-    const M12CorePrewarmPipelineRecord &last = desc.pipelines[desc.pipeline_count - 1];
-    Logger::info(str::format("M12_PREWARM_PACK_SCHEDULE profile=armored-core-vi-phase6-canary queue=metadata-only ",
-                             "action=defer-metal-create eligible=", summary.ordered_pipeline_count,
-                             " first_order=", first.prewarm_order,
-                             " first_pipeline=0x", std::hex, first.pipeline_key,
-                             " last_order=", std::dec, last.prewarm_order,
-                             " last_pipeline=0x", std::hex, last.pipeline_key, std::dec));
+    const M12CorePrewarmPipelineRecord &last =
+        desc.pipelines[desc.pipeline_count - 1];
+    Logger::info(str::format(
+        "M12_PREWARM_PACK_SCHEDULE profile=armored-core-vi-phase6-canary "
+        "queue=metadata-only ",
+        "action=defer-metal-create eligible=", summary.ordered_pipeline_count,
+        " first_order=", first.prewarm_order, " first_pipeline=0x", std::hex,
+        first.pipeline_key, " last_order=", std::dec, last.prewarm_order,
+        " last_pipeline=0x", std::hex, last.pipeline_key, std::dec));
   }
 }
 
@@ -283,14 +321,17 @@ static uint64_t SemanticHash64(const char *semantic) {
   uint64_t hash = 1469598103934665603ull;
   if (!semantic)
     return hash;
-  for (const unsigned char *p = reinterpret_cast<const unsigned char *>(semantic); *p; ++p) {
+  for (const unsigned char *p =
+           reinterpret_cast<const unsigned char *>(semantic);
+       *p; ++p) {
     hash ^= *p;
     hash *= 1099511628211ull;
   }
   return hash;
 }
 
-static uint64_t GraphicsPsoPressureHash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
+static uint64_t
+GraphicsPsoPressureHash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
   uint64_t hash = 0x47313250534full;
   PsoHashCombine(hash, ShaderBytecodeHash64(desc.VS));
   PsoHashCombine(hash, ShaderBytecodeHash64(desc.PS));
@@ -307,7 +348,9 @@ static uint64_t GraphicsPsoPressureHash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC
   PsoHashCombine(hash, desc.InputLayout.NumElements);
   for (UINT i = 0; i < desc.NumRenderTargets && i < 8; i++)
     PsoHashCombine(hash, desc.RTVFormats[i]);
-  for (UINT i = 0; i < desc.InputLayout.NumElements && desc.InputLayout.pInputElementDescs; i++) {
+  for (UINT i = 0;
+       i < desc.InputLayout.NumElements && desc.InputLayout.pInputElementDescs;
+       i++) {
     const auto &el = desc.InputLayout.pInputElementDescs[i];
     PsoHashCombine(hash, SemanticHash64(el.SemanticName));
     PsoHashCombine(hash, el.SemanticIndex);
@@ -320,14 +363,16 @@ static uint64_t GraphicsPsoPressureHash(const D3D12_GRAPHICS_PIPELINE_STATE_DESC
   return hash;
 }
 
-static uint64_t ComputePsoPressureHash(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc) {
+static uint64_t
+ComputePsoPressureHash(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc) {
   uint64_t hash = 0x43313250534full;
   PsoHashCombine(hash, ShaderBytecodeHash64(desc.CS));
   PsoHashCombine(hash, reinterpret_cast<uintptr_t>(desc.pRootSignature));
   return hash;
 }
 
-static void RecordGraphicsPsoPressure(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
+static void
+RecordGraphicsPsoPressure(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &desc) {
   auto &stats = PsoPressureStats();
   uint64_t total = ++stats.graphics_requests;
   uint64_t repeated = stats.graphics_repeated.load();
@@ -346,14 +391,16 @@ static void RecordGraphicsPsoPressure(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &
   dxmt::m12core::RecordCounter(M12CORE_COUNTER_GRAPHICS_PSO_REQUESTS);
   if (was_repeated)
     dxmt::m12core::RecordCounter(M12CORE_COUNTER_GRAPHICS_PSO_REPEATED);
-  Logger::info(str::format("PSO_PRESSURE graphics_request total=", total,
-                           " unique=", unique, " repeated=", repeated,
-                           " hash=0x", std::hex, hash, " vs=0x", ShaderBytecodeHash64(desc.VS),
-                           " ps=0x", ShaderBytecodeHash64(desc.PS), std::dec,
-                           " rt=", desc.NumRenderTargets, " il=", desc.InputLayout.NumElements));
+  Logger::info(str::format(
+      "PSO_PRESSURE graphics_request total=", total, " unique=", unique,
+      " repeated=", repeated, " hash=0x", std::hex, hash, " vs=0x",
+      ShaderBytecodeHash64(desc.VS), " ps=0x", ShaderBytecodeHash64(desc.PS),
+      std::dec, " rt=", desc.NumRenderTargets,
+      " il=", desc.InputLayout.NumElements));
 }
 
-static void RecordComputePsoPressure(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc) {
+static void
+RecordComputePsoPressure(const D3D12_COMPUTE_PIPELINE_STATE_DESC &desc) {
   auto &stats = PsoPressureStats();
   uint64_t total = ++stats.compute_requests;
   uint64_t repeated = stats.compute_repeated.load();
@@ -374,8 +421,8 @@ static void RecordComputePsoPressure(const D3D12_COMPUTE_PIPELINE_STATE_DESC &de
     dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PSO_REPEATED);
   Logger::info(str::format("PSO_PRESSURE compute_request total=", total,
                            " unique=", unique, " repeated=", repeated,
-                           " hash=0x", std::hex, hash,
-                           " cs=0x", ShaderBytecodeHash64(desc.CS), std::dec));
+                           " hash=0x", std::hex, hash, " cs=0x",
+                           ShaderBytecodeHash64(desc.CS), std::dec));
 }
 
 static UINT FormatBlockSize(DXGI_FORMAT format) {
@@ -726,8 +773,8 @@ static void UavViewRange(const D3D12_UNORDERED_ACCESS_VIEW_DESC &desc,
   slice_count = std::max<uint16_t>(1, slice_count);
 }
 
-static WMTTextureSwizzle SwizzleForD3D12ComponentMapping(
-    D3D12_SHADER_COMPONENT_MAPPING mapping) {
+static WMTTextureSwizzle
+SwizzleForD3D12ComponentMapping(D3D12_SHADER_COMPONENT_MAPPING mapping) {
   switch (mapping) {
   case D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0:
     return WMTTextureSwizzleRed;
@@ -746,8 +793,8 @@ static WMTTextureSwizzle SwizzleForD3D12ComponentMapping(
   }
 }
 
-static WMTTextureSwizzleChannels SwizzleForD3D12Shader4ComponentMapping(
-    UINT mapping) {
+static WMTTextureSwizzleChannels
+SwizzleForD3D12Shader4ComponentMapping(UINT mapping) {
   if (!mapping)
     mapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
   return {
@@ -762,14 +809,11 @@ static WMTTextureSwizzleChannels SwizzleForD3D12Shader4ComponentMapping(
   };
 }
 
-static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
-                                        MTLD3D12Resource *resource,
-                                        DXGI_FORMAT format, WMTTextureType type,
-                                        uint16_t mip_start, uint16_t mip_count,
-                                        uint16_t slice_start,
-                                        uint16_t slice_count,
-                                        UINT shader4_component_mapping =
-                                            D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING) {
+static void CreateDescriptorTextureView(
+    D3D12Descriptor *descriptor, MTLD3D12Resource *resource, DXGI_FORMAT format,
+    WMTTextureType type, uint16_t mip_start, uint16_t mip_count,
+    uint16_t slice_start, uint16_t slice_count,
+    UINT shader4_component_mapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING) {
   if (!descriptor || !resource || resource->IsBuffer())
     return;
   D3D12_RESOURCE_DESC resource_desc = {};
@@ -787,18 +831,17 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
   uint16_t requested_mip_count = mip_count;
   uint16_t requested_slice_start = slice_start;
   uint16_t requested_slice_count = slice_count;
-  uint32_t total_mips = std::max<uint32_t>(
-      1, static_cast<uint32_t>(base.mipmapLevelCount()));
-  uint32_t total_slices = std::max<uint32_t>(
-      1, static_cast<uint32_t>(base.arrayLength()));
+  uint32_t total_mips =
+      std::max<uint32_t>(1, static_cast<uint32_t>(base.mipmapLevelCount()));
+  uint32_t total_slices =
+      std::max<uint32_t>(1, static_cast<uint32_t>(base.arrayLength()));
   mip_start = std::min<uint16_t>(mip_start, total_mips - 1);
   mip_count = std::min<uint16_t>(std::max<uint16_t>(1, mip_count),
                                  total_mips - mip_start);
   slice_start = std::min<uint16_t>(slice_start, total_slices - 1);
   slice_count = std::min<uint16_t>(std::max<uint16_t>(1, slice_count),
                                    total_slices - slice_start);
-  if (mip_start != requested_mip_start ||
-      mip_count != requested_mip_count ||
+  if (mip_start != requested_mip_start || mip_count != requested_mip_count ||
       slice_start != requested_slice_start ||
       slice_count != requested_slice_count) {
     TRACE("CreateDescriptorTextureView clamp res=%p fmt=%u type=%u "
@@ -809,11 +852,11 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
           slice_count, total_mips, total_slices);
   }
   uint64_t gpu_id = 0;
-  auto swizzle = SwizzleForD3D12Shader4ComponentMapping(
-      shader4_component_mapping);
-  descriptor->metal_texture_view = base.newTextureView(
-      metal_format, type, mip_start, mip_count, slice_start, slice_count,
-      swizzle, gpu_id);
+  auto swizzle =
+      SwizzleForD3D12Shader4ComponentMapping(shader4_component_mapping);
+  descriptor->metal_texture_view =
+      base.newTextureView(metal_format, type, mip_start, mip_count, slice_start,
+                          slice_count, swizzle, gpu_id);
   descriptor->metal_texture_gpu_id = gpu_id;
   TRACE("CreateDescriptorTextureView desc=%p res=%p view=%llu gpu=0x%llx "
         "fmt=%u type=%u mip=%u+%u slice=%u+%u mapping=0x%x swizzle=%u,%u,%u,%u",
@@ -1846,11 +1889,12 @@ static void device_vtable_watcher() {
       void *current = *(void **)g_device_this;
       uint64_t current_m_device = 0;
       if (g_device_m_device_offset)
-        current_m_device = *((uint64_t *)((char *)g_device_this + g_device_m_device_offset));
+        current_m_device =
+            *((uint64_t *)((char *)g_device_this + g_device_m_device_offset));
       bool vtable_bad = (current != g_device_expected_vtable);
-      bool m_device_bad = (g_device_expected_m_device != 0 &&
-                           g_device_m_device_offset != 0 &&
-                           current_m_device != g_device_expected_m_device);
+      bool m_device_bad =
+          (g_device_expected_m_device != 0 && g_device_m_device_offset != 0 &&
+           current_m_device != g_device_expected_m_device);
       if (vtable_bad || m_device_bad) {
         g_watcher_restore_count++;
         FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
@@ -2036,7 +2080,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
                         MetalSharpM12TranslationLayerFeatureRootBindingPlans |
                         MetalSharpM12TranslationLayerFeaturePrewarmPacks |
                         MetalSharpM12TranslationLayerFeatureDrawPlanning |
-                        MetalSharpM12TranslationLayerFeaturePresentPlanning;
+                        MetalSharpM12TranslationLayerFeaturePresentPlanning |
+                        MetalSharpM12TranslationLayerFeatureReplayPlanning;
   local.m12core_abi_version = M12CORE_ABI_VERSION;
   local.m12core_feature_flags = M12CORE_FEATURE_ALL;
   local.m12core_build_id_low = M12CORE_BUILD_ID_LOW;
@@ -2046,7 +2091,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
   m12_copy_fixed_string(local.backend_name, sizeof(local.backend_name),
                         "DXMT D3D12 over Metal");
   std::snprintf(local.build_string, sizeof(local.build_string),
-                "MetalSharp DXMT M12 phase9 detection abi=%u",
+                "MetalSharp DXMT M12 phase9 replay planning abi=%u",
                 MetalSharpM12TranslationLayerInfoAbiVersion);
 
   *info = local;
@@ -2186,8 +2231,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
     const bool unsupported_pso_state =
         failure_stage.rfind("pso/unsupported_", 0) == 0 ||
         failure_stage.rfind("pso/metal_", 0) == 0;
-    const bool shader_compile_failure =
-        failure_stage.rfind("shader/", 0) == 0;
+    const bool shader_compile_failure = failure_stage.rfind("shader/", 0) == 0;
     char strict_fail[8] = {};
     const bool strict_deferred =
         GetEnvironmentVariableA("DXMT_D3D12_FAIL_DEFERRED_PSO", strict_fail,
@@ -3020,8 +3064,8 @@ MTLD3D12Device::CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *desc,
 
 UINT STDMETHODCALLTYPE MTLD3D12Device::GetDescriptorHandleIncrementSize(
     D3D12_DESCRIPTOR_HEAP_TYPE descriptor_heap_type) {
-  TRACE("GetDescriptorHandleIncrementSize type=%u -> %zu",
-        descriptor_heap_type, sizeof(D3D12Descriptor));
+  TRACE("GetDescriptorHandleIncrementSize type=%u -> %zu", descriptor_heap_type,
+        sizeof(D3D12Descriptor));
   return sizeof(D3D12Descriptor);
 }
 
@@ -3083,8 +3127,7 @@ void STDMETHODCALLTYPE MTLD3D12Device::CreateShaderResourceView(
         CreateDescriptorTextureView(d, dxmt_res, desc->Format,
                                     TextureTypeForSrvView(*desc, resource_desc),
                                     mip_start, mip_count, slice_start,
-                                    slice_count,
-                                    desc->Shader4ComponentMapping);
+                                    slice_count, desc->Shader4ComponentMapping);
       }
     }
     d->type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -3482,9 +3525,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource(
         "M12 AC6 candidate CreateCommittedResource res=", (void *)res,
         " out=", resource ? *resource : nullptr,
         " fmt=", (unsigned)desc->Format, " size=", desc->Width, "x",
-        (unsigned)desc->Height,
-        " state=0x", std::hex, (unsigned)initial_state, std::dec,
-        " flags=0x", std::hex, (unsigned)desc->Flags, std::dec,
+        (unsigned)desc->Height, " state=0x", std::hex, (unsigned)initial_state,
+        std::dec, " flags=0x", std::hex, (unsigned)desc->Flags, std::dec,
         " heap_type=", heap_properties ? (unsigned)heap_properties->Type : 0u,
         " clear=", optimized_clear_value ? "yes" : "no"));
   }
@@ -3595,15 +3637,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
     Logger::info(str::format(
         "M12 AC6 candidate CreatePlacedResource res=", (void *)res,
         " out=", resource ? *resource : nullptr, " heap=", (void *)heap,
-        " heap_offset=", heap_offset,
-        " fmt=", (unsigned)desc->Format, " size=", desc->Width, "x",
-        (unsigned)desc->Height,
-        " state=0x", std::hex, (unsigned)initial_state, std::dec,
-        " flags=0x", std::hex, (unsigned)desc->Flags, std::dec,
-        " heap_backing=", use_heap_backing ? 1 : 0,
-        " heap_gpu=0x", std::hex,
-        (unsigned long long)(mt_heap ? mt_heap->GetGPUAddress() : 0),
-        std::dec, " clear=", optimized_clear_value ? "yes" : "no"));
+        " heap_offset=", heap_offset, " fmt=", (unsigned)desc->Format,
+        " size=", desc->Width, "x", (unsigned)desc->Height, " state=0x",
+        std::hex, (unsigned)initial_state, std::dec, " flags=0x", std::hex,
+        (unsigned)desc->Flags, std::dec,
+        " heap_backing=", use_heap_backing ? 1 : 0, " heap_gpu=0x", std::hex,
+        (unsigned long long)(mt_heap ? mt_heap->GetGPUAddress() : 0), std::dec,
+        " clear=", optimized_clear_value ? "yes" : "no"));
   }
   if (FAILED(hr))
     res->Release();
@@ -3616,8 +3656,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
     void **resource) {
   TRACE("CreateReservedResource dim=%u fmt=%u w=%llu",
         desc ? static_cast<unsigned>(desc->Dimension) : 0,
-        desc ? static_cast<unsigned>(desc->Format) : 0,
-        desc ? desc->Width : 0);
+        desc ? static_cast<unsigned>(desc->Format) : 0, desc ? desc->Width : 0);
   CheckVtable("CreateReservedResource");
   if (!resource)
     return E_POINTER;
@@ -3637,9 +3676,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreateReservedResource sparse-compat out=%p hr=0x%lx",
         resource ? *resource : nullptr, hr);
-  Logger::info(str::format("M12 sparse reserved resource compat dim=",
-                           desc->Dimension, " width=", desc->Width,
-                           " flags=0x", (unsigned)desc->Flags));
+  Logger::info(
+      str::format("M12 sparse reserved resource compat dim=", desc->Dimension,
+                  " width=", desc->Width, " flags=0x", (unsigned)desc->Flags));
   if (FAILED(hr))
     res->Release();
   return hr;
@@ -3788,8 +3827,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateQueryHeap(
     const D3D12_QUERY_HEAP_DESC *desc, REFIID riid, void **heap) {
   TRACE("CreateQueryHeap desc=%p type=%u count=%u node=0x%x heap_out=%p",
-        (void *)desc, desc ? desc->Type : 0xFFFFFFFFu,
-        desc ? desc->Count : 0, desc ? desc->NodeMask : 0, (void *)heap);
+        (void *)desc, desc ? desc->Type : 0xFFFFFFFFu, desc ? desc->Count : 0,
+        desc ? desc->NodeMask : 0, (void *)heap);
   if (!desc || !heap)
     return E_POINTER;
   InitReturnPtr(heap);
@@ -3975,8 +4014,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
       fences[i]->AddRef();
       ctx->waits.push_back({fences[i], values[i]});
     }
-    HANDLE thread = CreateThread(nullptr, 0, MultiFenceWaitThread, ctx, 0,
-                                 nullptr);
+    HANDLE thread =
+        CreateThread(nullptr, 0, MultiFenceWaitThread, ctx, 0, nullptr);
     if (!thread) {
       for (auto &wait : ctx->waits)
         wait.fence->Release();
@@ -3997,8 +4036,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetResidencyPriority(
     UINT object_count, ID3D12Pageable *const *objects,
     const D3D12_RESIDENCY_PRIORITY *priorities) {
-  TRACE("SetResidencyPriority count=%u objects=%p priorities=%p",
-        object_count, (void *)objects, (void *)priorities);
+  TRACE("SetResidencyPriority count=%u objects=%p priorities=%p", object_count,
+        (void *)objects, (void *)priorities);
   return S_OK;
 }
 

@@ -56,63 +56,52 @@ WINEMETAL_API bool WMTM12CoreRecordCounters(const uint64_t *deltas, uint32_t cou
  * enabled.  It lets us migrate deterministic cache-key ownership before moving
  * Metal function/reflection ownership.
  */
-WINEMETAL_API bool WMTM12CoreHashShaderBytecode(const void *bytecode, uint64_t bytecode_size,
-                                                 uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
-WINEMETAL_API bool WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash,
-                                                     M12CoreShaderCachePaths *out_paths);
-WINEMETAL_API bool WMTM12CoreProbeShaderCache(const char *cache_root, uint64_t shader_hash,
-                                               uint32_t force_source_compile,
-                                               M12CoreShaderCacheLookup *out_lookup);
-WINEMETAL_API bool WMTM12CoreParseShaderReflection(const char *reflection_text,
-                                                    uint64_t reflection_text_size,
-                                                    M12CoreShaderReflectionSummary *out_summary);
-WINEMETAL_API bool WMTM12CoreLowerDXILToMSL(const M12CoreDXILToMSLDesc *desc,
-                                             char *out_source,
-                                             uint64_t out_source_capacity,
-                                             M12CoreDXILToMSLResult *out_result);
-WINEMETAL_API bool WMTM12CoreReflectSM50Shader(const void *bytecode,
-                                                uint64_t bytecode_size,
-                                                uint32_t options,
-                                                M12CoreSM50ShaderReflection *out_reflection,
-                                                M12CoreSM50ShaderArgument *out_constant_buffers,
-                                                uint32_t constant_buffer_capacity,
-                                                M12CoreSM50ShaderArgument *out_arguments,
-                                                uint32_t argument_capacity,
-                                                M12CoreSM50ReflectionResult *out_result);
-WINEMETAL_API bool WMTM12CoreCreateShaderFunction(obj_handle_t device,
-                                                   uint32_t stage,
-                                                   uint32_t input_kind,
-                                                   uint64_t shader_hash,
-                                                   const void *input_data,
-                                                   uint64_t input_size,
-                                                   const char *entry_point,
-                                                   M12CoreShaderFunctionResult *out_result);
-WINEMETAL_API bool WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input,
-                                                   M12CorePipelineCacheKey *out_key);
-WINEMETAL_API bool WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query,
-                                                  M12CorePipelineCacheResult *out_result);
-WINEMETAL_API bool WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query,
-                                                 obj_handle_t pipeline_handle);
-WINEMETAL_API bool WMTM12CoreMakePipelineCacheKeyFromFields(const M12CorePipelineKeyFields *input,
-                                                             M12CorePipelineCacheKey *out_key);
-WINEMETAL_API bool WMTM12CoreCreatePipelineState(obj_handle_t device,
-                                                  uint32_t kind,
-                                                  uint64_t cache_key,
-                                                  const void *pipeline_info,
-                                                  uint64_t pipeline_info_size,
-                                                  M12CorePipelineCreateResult *out_result);
-WINEMETAL_API bool WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc,
-                                                     M12CoreRootSignatureSummary *out_summary);
-WINEMETAL_API bool WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDesc *desc,
-                                                   M12CoreRootBindingPlanSummary *out_summary);
-WINEMETAL_API bool WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc,
-                                                M12CoreRootBindingLookupResult *out_result);
-WINEMETAL_API bool WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc,
-                                                   M12CorePrewarmPackSummary *out_summary);
-WINEMETAL_API bool WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc,
-                                            M12CoreDrawPlanSummary *out_summary);
-WINEMETAL_API bool WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc,
-                                               M12CorePresentPlanSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreHashShaderBytecode(
+    const void *bytecode, uint64_t bytecode_size, uint32_t stage, M12CoreShaderBytecodeInfo *out_info
+);
+WINEMETAL_API bool
+WMTM12CoreFormatShaderCachePaths(const char *cache_root, uint64_t shader_hash, M12CoreShaderCachePaths *out_paths);
+WINEMETAL_API bool WMTM12CoreProbeShaderCache(
+    const char *cache_root, uint64_t shader_hash, uint32_t force_source_compile, M12CoreShaderCacheLookup *out_lookup
+);
+WINEMETAL_API bool WMTM12CoreParseShaderReflection(
+    const char *reflection_text, uint64_t reflection_text_size, M12CoreShaderReflectionSummary *out_summary
+);
+WINEMETAL_API bool WMTM12CoreLowerDXILToMSL(
+    const M12CoreDXILToMSLDesc *desc, char *out_source, uint64_t out_source_capacity, M12CoreDXILToMSLResult *out_result
+);
+WINEMETAL_API bool WMTM12CoreReflectSM50Shader(
+    const void *bytecode, uint64_t bytecode_size, uint32_t options, M12CoreSM50ShaderReflection *out_reflection,
+    M12CoreSM50ShaderArgument *out_constant_buffers, uint32_t constant_buffer_capacity,
+    M12CoreSM50ShaderArgument *out_arguments, uint32_t argument_capacity, M12CoreSM50ReflectionResult *out_result
+);
+WINEMETAL_API bool WMTM12CoreCreateShaderFunction(
+    obj_handle_t device, uint32_t stage, uint32_t input_kind, uint64_t shader_hash, const void *input_data,
+    uint64_t input_size, const char *entry_point, M12CoreShaderFunctionResult *out_result
+);
+WINEMETAL_API bool
+WMTM12CoreMakePipelineCacheKey(const M12CorePipelineCacheKeyInput *input, M12CorePipelineCacheKey *out_key);
+WINEMETAL_API bool
+WMTM12CoreLookupPipelineCache(const M12CorePipelineCacheQuery *query, M12CorePipelineCacheResult *out_result);
+WINEMETAL_API bool WMTM12CoreStorePipelineCache(const M12CorePipelineCacheQuery *query, obj_handle_t pipeline_handle);
+WINEMETAL_API bool
+WMTM12CoreMakePipelineCacheKeyFromFields(const M12CorePipelineKeyFields *input, M12CorePipelineCacheKey *out_key);
+WINEMETAL_API bool WMTM12CoreCreatePipelineState(
+    obj_handle_t device, uint32_t kind, uint64_t cache_key, const void *pipeline_info, uint64_t pipeline_info_size,
+    M12CorePipelineCreateResult *out_result
+);
+WINEMETAL_API bool
+WMTM12CoreSummarizeRootSignature(const M12CoreRootSignatureDesc *desc, M12CoreRootSignatureSummary *out_summary);
+WINEMETAL_API bool
+WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDesc *desc, M12CoreRootBindingPlanSummary *out_summary);
+WINEMETAL_API bool
+WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc, M12CoreRootBindingLookupResult *out_result);
+WINEMETAL_API bool
+WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc, M12CorePrewarmPackSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc, M12CoreDrawPlanSummary *out_summary);
+WINEMETAL_API bool
+WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc, M12CorePresentPlanSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreBuildReplayPlan(const M12CoreReplayPlanDesc *desc, M12CoreReplayPlanSummary *out_summary);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,
@@ -521,7 +510,8 @@ enum WMTPixelFormat : uint32_t {
 
   WMTPixelFormatBGRA4Unorm = WMTPixelFormatGBARSwizzle | WMTPixelFormatABGR4Unorm,
 
-  WMTPixelFormatCustomSwizzle = WMTPixelFormatRGB1Swizzle | WMTPixelFormatR001Swizzle | WMTPixelFormat0R01Swizzle | WMTPixelFormatGBARSwizzle,
+  WMTPixelFormatCustomSwizzle =
+      WMTPixelFormatRGB1Swizzle | WMTPixelFormatR001Swizzle | WMTPixelFormat0R01Swizzle | WMTPixelFormatGBARSwizzle,
 };
 
 #define ORIGINAL_FORMAT(format) (format & ~WMTPixelFormatCustomSwizzle)
@@ -576,7 +566,7 @@ struct WMTTextureInfo {
   enum WMTTextureUsage usage  : 8;
   enum WMTResourceOptions options;
   uint32_t reserved;
-  mach_port_t mach_port; // in/out
+  mach_port_t mach_port;    // in/out
   uint64_t gpu_resource_id; // out
 };
 
@@ -655,7 +645,8 @@ WINEMETAL_API obj_handle_t MTLDevice_newLibrary(obj_handle_t device, obj_handle_
 
 WINEMETAL_API obj_handle_t MTLDevice_newLibraryWithData(obj_handle_t device, obj_handle_t data, obj_handle_t *err_out);
 
-WINEMETAL_API obj_handle_t MTLDevice_newLibraryWithSource(obj_handle_t device, const char *source, uint64_t source_length, obj_handle_t *err_out);
+WINEMETAL_API obj_handle_t
+MTLDevice_newLibraryWithSource(obj_handle_t device, const char *source, uint64_t source_length, obj_handle_t *err_out);
 
 WINEMETAL_API obj_handle_t MTLLibrary_newFunction(obj_handle_t library, const char *name);
 
@@ -669,8 +660,7 @@ struct WMTFunctionVertexAttribute {
 };
 
 WINEMETAL_API uint32_t MTLFunction_copyVertexAttributes(
-    obj_handle_t function, struct WMTFunctionVertexAttribute *attributes,
-    uint32_t max_attributes
+    obj_handle_t function, struct WMTFunctionVertexAttribute *attributes, uint32_t max_attributes
 );
 
 WINEMETAL_API uint64_t NSString_lengthOfBytesUsingEncoding(obj_handle_t str, enum WMTStringEncoding encoding);
@@ -1242,7 +1232,7 @@ enum WMTBarrierScope : uint8_t {
 };
 
 struct wmtcmd_compute_memory_barrier {
-enum WMTComputeCommandType type;
+  enum WMTComputeCommandType type;
   uint16_t reserved[3];
   struct WMTMemoryPointer next;
   enum WMTBarrierScope scope;
@@ -1979,9 +1969,8 @@ enum WMTFunctionOptions : uint32_t {
 };
 
 WINEMETAL_API obj_handle_t MTLLibrary_newFunctionWithDescriptor(
-    obj_handle_t library, const char *name, const char *specialized_name,
-    const struct WMTFunctionConstant *constants, uint32_t num_constants,
-    enum WMTFunctionOptions options, obj_handle_t *err_out
+    obj_handle_t library, const char *name, const char *specialized_name, const struct WMTFunctionConstant *constants,
+    uint32_t num_constants, enum WMTFunctionOptions options, obj_handle_t *err_out
 );
 
 struct WMTHDRMetadata {

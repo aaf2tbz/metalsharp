@@ -598,6 +598,13 @@ struct unixcall_m12core_build_present_plan {
   M12CorePresentPlanSummary ret_summary;
 };
 
+struct unixcall_m12core_build_replay_plan {
+  M12CoreReplayPlanDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreReplayPlanSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

@@ -207,6 +207,7 @@ static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
 static uint32_t g_draw_plan_logs = 0;
+static uint32_t g_replay_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
 
@@ -221,6 +222,74 @@ static uint32_t g_stage_in_snapshot_count = 0;
 
 static bool TakeLogBudget(uint32_t *counter, uint32_t limit) {
   return __atomic_add_fetch(counter, 1, __ATOMIC_RELAXED) <= limit;
+}
+
+static void LogM12CoreReplayPlan(
+    uint32_t queue_type, uint32_t list_index, uint64_t command_list_id,
+    uint64_t queue_serial, uint64_t command_count, uint64_t draw_count,
+    uint64_t indexed_draw_count, uint64_t indirect_count,
+    uint64_t dispatch_count, uint64_t clear_rtv_count, uint64_t clear_dsv_count,
+    uint64_t clear_uav_count, bool has_swapchain_work,
+    bool has_swapchain_target, bool sync_execute,
+    uint32_t command_buffer_status, int64_t replay_ms, int64_t wait_ms) {
+  if (!TakeLogBudget(&g_replay_plan_logs, 192))
+    return;
+
+  M12CoreReplayPlanDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.flags =
+      command_count ? (uint32_t)M12CORE_REPLAY_PLAN_HAS_COMMAND_STREAM : 0u;
+  if (draw_count || indexed_draw_count || indirect_count)
+    desc.flags |= M12CORE_REPLAY_PLAN_HAS_GRAPHICS_WORK;
+  if (dispatch_count)
+    desc.flags |= M12CORE_REPLAY_PLAN_HAS_COMPUTE_WORK;
+  if (clear_rtv_count || clear_dsv_count || clear_uav_count)
+    desc.flags |= M12CORE_REPLAY_PLAN_HAS_CLEAR_WORK;
+  if (has_swapchain_work)
+    desc.flags |= M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_WORK;
+  if (has_swapchain_target)
+    desc.flags |= M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_TARGET;
+  if (sync_execute)
+    desc.flags |= M12CORE_REPLAY_PLAN_SYNC_EXECUTE;
+  if (command_buffer_status == WMTCommandBufferStatusCompleted)
+    desc.flags |= M12CORE_REPLAY_PLAN_COMMAND_BUFFER_COMPLETED;
+  desc.queue_type = queue_type;
+  desc.command_list_index = list_index;
+  desc.command_buffer_status = command_buffer_status;
+  desc.command_list_id = command_list_id;
+  desc.queue_serial = queue_serial;
+  desc.command_count = command_count;
+  desc.draw_count = draw_count;
+  desc.indexed_draw_count = indexed_draw_count;
+  desc.indirect_count = indirect_count;
+  desc.dispatch_count = dispatch_count;
+  desc.clear_rtv_count = clear_rtv_count;
+  desc.clear_dsv_count = clear_dsv_count;
+  desc.clear_uav_count = clear_uav_count;
+  desc.replay_ms = replay_ms;
+  desc.wait_ms = wait_ms;
+
+  M12CoreReplayPlanSummary summary = {};
+  if (!WMTM12CoreBuildReplayPlan(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_REPLAY_PLAN_STATUS_OK)
+    return;
+
+  Logger::info(str::format(
+      "M12_REPLAY_PLAN queue=", queue_type, " list=", list_index,
+      " cmdlist_id=", (unsigned long long)command_list_id,
+      " serial=", (unsigned long long)queue_serial, " key=0x", std::hex,
+      summary.replay_plan_key, std::dec,
+      " cmds=", (unsigned long long)command_count, " draws=",
+      (unsigned long long)(draw_count + indexed_draw_count + indirect_count),
+      " dispatch=", (unsigned long long)dispatch_count, " clears=",
+      (unsigned long long)(clear_rtv_count + clear_dsv_count + clear_uav_count),
+      " path=", summary.execution_path, " class=", summary.work_classification,
+      " validation=0x", std::hex, summary.validation_flags, std::dec,
+      " hazard=", summary.hazard_score,
+      " scheduled=", (unsigned long long)summary.scheduled_work_count,
+      " status=", command_buffer_status, " replay_ms=", (long long)replay_ms,
+      " wait_ms=", (long long)wait_ms));
 }
 
 static std::string FormatDebugBytes(const uint8_t *bytes, size_t count) {
@@ -409,8 +478,9 @@ static bool ShaderVisibilityMatches(uint32_t param_visibility,
   return param_visibility == D3D12_SHADER_VISIBILITY_ALL;
 }
 
-static bool ShaderVisibilityCoversShader(uint32_t param_visibility,
-                                         D3D12_SHADER_VISIBILITY shader_visibility) {
+static bool
+ShaderVisibilityCoversShader(uint32_t param_visibility,
+                             D3D12_SHADER_VISIBILITY shader_visibility) {
   return param_visibility == shader_visibility ||
          param_visibility == D3D12_SHADER_VISIBILITY_ALL;
 }
@@ -730,12 +800,10 @@ static bool IsAC6FinalSizeRGBAOffscreen(MTLD3D12Resource *res) {
       desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM || desc.MipLevels != 1 ||
       desc.SampleDesc.Count != 1)
     return false;
-  const bool observed_title_size =
-      desc.Width >= 1400 && desc.Width <= 1600 && desc.Height >= 900 &&
-      desc.Height <= 1000;
-  const bool observed_final_size =
-      desc.Width >= 1800 && desc.Width <= 2560 && desc.Height >= 1000 &&
-      desc.Height <= 1440;
+  const bool observed_title_size = desc.Width >= 1400 && desc.Width <= 1600 &&
+                                   desc.Height >= 900 && desc.Height <= 1000;
+  const bool observed_final_size = desc.Width >= 1800 && desc.Width <= 2560 &&
+                                   desc.Height >= 1000 && desc.Height <= 1440;
   return observed_title_size || observed_final_size;
 }
 
@@ -1065,24 +1133,22 @@ struct ReplayState {
     std::string out;
     for (uint32_t i = 0; i < rt_count && i < 8; i++) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
-      auto *res =
-          desc && desc->resource
-              ? static_cast<MTLD3D12Resource *>(desc->resource)
-              : nullptr;
+      auto *res = desc && desc->resource
+                      ? static_cast<MTLD3D12Resource *>(desc->resource)
+                      : nullptr;
       if (!out.empty())
         out += " ";
       out += str::format("rt", i, "={", ResourceSummary(res), "}");
     }
     if (has_dsv) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(dsv_handle.ptr);
-      auto *res =
-          desc && desc->resource
-              ? static_cast<MTLD3D12Resource *>(desc->resource)
-              : nullptr;
+      auto *res = desc && desc->resource
+                      ? static_cast<MTLD3D12Resource *>(desc->resource)
+                      : nullptr;
       if (!out.empty())
         out += " ";
-      out += str::format("dsv={", ResourceSummary(res), " stencil=",
-                         desc ? DSVHasStencil(desc) : false, "}");
+      out += str::format("dsv={", ResourceSummary(res),
+                         " stencil=", desc ? DSVHasStencil(desc) : false, "}");
     }
     return out.empty() ? "rt=none" : out;
   }
@@ -1510,7 +1576,8 @@ struct ReplayState {
       return false;
     WMTBufferInfo info = {};
     info.length = byte_count;
-    info.options = WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
+    info.options =
+        WMTResourceStorageModeShared | WMTResourceHazardTrackingModeTracked;
     info.memory.set(nullptr);
     auto dst = device->GetDXMTDevice().device().newBuffer(info);
     void *mapped = info.memory.get();
@@ -1536,7 +1603,8 @@ struct ReplayState {
     return true;
   }
 
-  bool CaptureTextureReadback(MTLD3D12Device *device, WMT::CommandBuffer &cmdbuf,
+  bool CaptureTextureReadback(MTLD3D12Device *device,
+                              WMT::CommandBuffer &cmdbuf,
                               MTLD3D12Resource *resource,
                               TextureReadbackProbe &probe) {
     if (!device || !resource || probe.buffer.handle)
@@ -1610,7 +1678,8 @@ struct ReplayState {
       return;
 
     const auto &params = sig->GetParameters();
-    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+         i++) {
       const auto &param = params[i];
       if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
           !root_table_set[i] ||
@@ -1632,15 +1701,15 @@ struct ReplayState {
                   root_tables[i], range.offset_in_table + d);
             }
           }
-          auto *res = desc ? static_cast<MTLD3D12Resource *>(desc->resource)
-                           : nullptr;
+          auto *res =
+              desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
           final_srv_readback[d].slot = d;
           final_srv_readback[d].reg = range.base_register + d;
-          if (CaptureTextureReadback(device, cmdbuf, res, final_srv_readback[d])) {
-            Logger::info(str::format(
-                "M12 final SRV readback queued slot=", d,
-                " reg=", range.base_register + d, " ",
-                ResourceSummary(res)));
+          if (CaptureTextureReadback(device, cmdbuf, res,
+                                     final_srv_readback[d])) {
+            Logger::info(str::format("M12 final SRV readback queued slot=", d,
+                                     " reg=", range.base_register + d, " ",
+                                     ResourceSummary(res)));
           }
         }
         return;
@@ -1748,7 +1817,8 @@ struct ReplayState {
             stats.nonzero_channel_bytes[i]++;
             stats.nonzero_channel_pixels[i]++;
             stats.max_byte = std::max(stats.max_byte, value);
-            stats.max_channel_byte[i] = std::max(stats.max_channel_byte[i], value);
+            stats.max_channel_byte[i] =
+                std::max(stats.max_channel_byte[i], value);
           }
           stats.checksum ^= value;
           stats.checksum *= 1099511628211ull;
@@ -1765,8 +1835,8 @@ struct ReplayState {
       const auto &probe = final_srv_readback[i];
       if (!probe.mapped || !probe.width || !probe.height)
         continue;
-      auto stats = ComputeReadbackStats(probe.mapped, probe.width,
-                                        probe.height, probe.bytes_per_row);
+      auto stats = ComputeReadbackStats(probe.mapped, probe.width, probe.height,
+                                        probe.bytes_per_row);
       Logger::info(str::format(
           "M12 final SRV readback slot=", probe.slot, " reg=", probe.reg,
           " tex=", (unsigned long long)probe.texture_id,
@@ -1774,19 +1844,17 @@ struct ReplayState {
           probe.height, " nonzero_pixels=", stats.nonzero_pixels,
           " nonzero_bytes=", stats.nonzero_bytes,
           " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
-          stats.nonzero_channel_pixels[1], ",",
-          stats.nonzero_channel_pixels[2], ",",
-          stats.nonzero_channel_pixels[3],
+          stats.nonzero_channel_pixels[1], ",", stats.nonzero_channel_pixels[2],
+          ",", stats.nonzero_channel_pixels[3],
           " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
-          stats.nonzero_channel_bytes[1], ",",
-          stats.nonzero_channel_bytes[2], ",",
-          stats.nonzero_channel_bytes[3],
+          stats.nonzero_channel_bytes[1], ",", stats.nonzero_channel_bytes[2],
+          ",", stats.nonzero_channel_bytes[3],
           " max_byte=", (unsigned)stats.max_byte,
           " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
           (unsigned)stats.max_channel_byte[1], ",",
           (unsigned)stats.max_channel_byte[2], ",",
-          (unsigned)stats.max_channel_byte[3],
-          " checksum=0x", std::hex, stats.checksum));
+          (unsigned)stats.max_channel_byte[3], " checksum=0x", std::hex,
+          stats.checksum));
     }
   }
 
@@ -1801,25 +1869,21 @@ struct ReplayState {
 
     Logger::info(str::format(
         "M12 swapchain render readback capture=", render_readback.capture,
-        " backbuffer=", render_readback.backbuffer,
-        " fmt=", (unsigned)render_readback.format,
-        " sample=", render_readback.width, "x", render_readback.height,
-        " nonzero_pixels=", stats.nonzero_pixels,
+        " backbuffer=", render_readback.backbuffer, " fmt=",
+        (unsigned)render_readback.format, " sample=", render_readback.width,
+        "x", render_readback.height, " nonzero_pixels=", stats.nonzero_pixels,
         " nonzero_bytes=", stats.nonzero_bytes,
         " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
-        stats.nonzero_channel_pixels[1], ",",
-        stats.nonzero_channel_pixels[2], ",",
-        stats.nonzero_channel_pixels[3],
-        " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
-        stats.nonzero_channel_bytes[1], ",",
-        stats.nonzero_channel_bytes[2], ",",
-        stats.nonzero_channel_bytes[3],
-        " max_byte=", (unsigned)stats.max_byte,
+        stats.nonzero_channel_pixels[1], ",", stats.nonzero_channel_pixels[2],
+        ",", stats.nonzero_channel_pixels[3], " ch_bytes=",
+        stats.nonzero_channel_bytes[0], ",", stats.nonzero_channel_bytes[1],
+        ",", stats.nonzero_channel_bytes[2], ",",
+        stats.nonzero_channel_bytes[3], " max_byte=", (unsigned)stats.max_byte,
         " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
         (unsigned)stats.max_channel_byte[1], ",",
         (unsigned)stats.max_channel_byte[2], ",",
-        (unsigned)stats.max_channel_byte[3],
-        " checksum=0x", std::hex, stats.checksum));
+        (unsigned)stats.max_channel_byte[3], " checksum=0x", std::hex,
+        stats.checksum));
   }
 
   bool IsAC6FinalBlendUIPSO() {
@@ -1840,14 +1904,17 @@ struct ReplayState {
   MTLD3D12Resource *CurrentRTVResource(uint32_t slot) {
     if (slot >= rt_count || slot >= 8)
       return nullptr;
-    auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[slot].ptr);
-    return desc && desc->resource ? static_cast<MTLD3D12Resource *>(desc->resource)
-                                  : nullptr;
+    auto *desc =
+        reinterpret_cast<const D3D12Descriptor *>(rt_handles[slot].ptr);
+    return desc && desc->resource
+               ? static_cast<MTLD3D12Resource *>(desc->resource)
+               : nullptr;
   }
 
-  D3D12Descriptor *FindShaderDescriptorByOrdinal(
-      D3D12_DESCRIPTOR_RANGE_TYPE wanted_type, uint32_t ordinal,
-      D3D12_SHADER_VISIBILITY shader_visibility) {
+  D3D12Descriptor *
+  FindShaderDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE wanted_type,
+                                uint32_t ordinal,
+                                D3D12_SHADER_VISIBILITY shader_visibility) {
     if (!pso)
       return nullptr;
     auto *sig = graphics_root_sig;
@@ -1858,11 +1925,13 @@ struct ReplayState {
 
     uint32_t seen = 0;
     const auto &params = sig->GetParameters();
-    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+         i++) {
       const auto &param = params[i];
       if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
           !root_table_set[i] ||
-          !ShaderVisibilityCoversShader(param.shader_visibility, shader_visibility))
+          !ShaderVisibilityCoversShader(param.shader_visibility,
+                                        shader_visibility))
         continue;
       for (const auto &range : param.ranges) {
         if (range.range_type != wanted_type)
@@ -1887,17 +1956,19 @@ struct ReplayState {
     return nullptr;
   }
 
-  D3D12Descriptor *FindPixelDescriptorByOrdinal(
-      D3D12_DESCRIPTOR_RANGE_TYPE wanted_type, uint32_t ordinal) {
+  D3D12Descriptor *
+  FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE wanted_type,
+                               uint32_t ordinal) {
     return FindShaderDescriptorByOrdinal(wanted_type, ordinal,
                                          D3D12_SHADER_VISIBILITY_PIXEL);
   }
 
   MTLD3D12Resource *FindPixelSrvByOrdinal(uint32_t ordinal) {
-    auto *desc = FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-                                              ordinal);
-    return desc && desc->resource ? static_cast<MTLD3D12Resource *>(desc->resource)
-                                  : nullptr;
+    auto *desc =
+        FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, ordinal);
+    return desc && desc->resource
+               ? static_cast<MTLD3D12Resource *>(desc->resource)
+               : nullptr;
   }
 
   void QueueAC6UpstreamDiagnostic(MTLD3D12Device *device,
@@ -1911,10 +1982,10 @@ struct ReplayState {
     if (!IsAC6FinalSizeRGBAOffscreen(rtv))
       return;
 
-    Logger::info(str::format(
-        "M12 AC6 upstream diagnostic draw=", draw_kind,
-        " elems=", element_count, " ", ResourceSummary(rtv),
-        " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+    Logger::info(str::format("M12 AC6 upstream diagnostic draw=", draw_kind,
+                             " elems=", element_count, " ",
+                             ResourceSummary(rtv), " pso=", (void *)pso, " ",
+                             TracePsoShaderSummary(pso)));
 
     const auto &vp = viewports[0];
     const auto &sc = scissor_rects[0];
@@ -1922,24 +1993,21 @@ struct ReplayState {
     const auto &ds = pso->GetDepthStencilDesc();
     const auto &blend = pso->GetBlendDesc();
     Logger::info(str::format(
-        "M12 AC6 upstream state vp_count=", viewport_count,
-        " vp=", vp.TopLeftX, ",", vp.TopLeftY, " ", vp.Width, "x",
-        vp.Height, " depth=", vp.MinDepth, "-", vp.MaxDepth,
-        " sc_count=", scissor_count, " sc=", sc.left, ",", sc.top,
-        "-", sc.right, ",", sc.bottom, " topology=", (unsigned)topology,
+        "M12 AC6 upstream state vp_count=", viewport_count, " vp=", vp.TopLeftX,
+        ",", vp.TopLeftY, " ", vp.Width, "x", vp.Height, " depth=", vp.MinDepth,
+        "-", vp.MaxDepth, " sc_count=", scissor_count, " sc=", sc.left, ",",
+        sc.top, "-", sc.right, ",", sc.bottom, " topology=", (unsigned)topology,
         " primitive=", (unsigned)GetMetalPrimitiveType(),
         " cull=", (unsigned)rast.CullMode,
-        " front_ccw=", (unsigned)rast.FrontCounterClockwise,
-        " depth_enable=", (unsigned)ds.DepthEnable,
-        " depth_write=", (unsigned)ds.DepthWriteMask,
+        " front_ccw=", (unsigned)rast.FrontCounterClockwise, " depth_enable=",
+        (unsigned)ds.DepthEnable, " depth_write=", (unsigned)ds.DepthWriteMask,
         " depth_func=", (unsigned)ds.DepthFunc,
-        " stencil_enable=", (unsigned)ds.StencilEnable,
-        " stencil_read=0x", std::hex, (unsigned)ds.StencilReadMask,
-        " stencil_write=0x", (unsigned)ds.StencilWriteMask, std::dec,
-        " blend0=", (unsigned)blend.RenderTarget[0].BlendEnable,
-        " write_mask0=0x", std::hex,
-        (unsigned)blend.RenderTarget[0].RenderTargetWriteMask, std::dec,
-        " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
+        " stencil_enable=", (unsigned)ds.StencilEnable, " stencil_read=0x",
+        std::hex, (unsigned)ds.StencilReadMask, " stencil_write=0x",
+        (unsigned)ds.StencilWriteMask, std::dec, " blend0=",
+        (unsigned)blend.RenderTarget[0].BlendEnable, " write_mask0=0x",
+        std::hex, (unsigned)blend.RenderTarget[0].RenderTargetWriteMask,
+        std::dec, " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
         " dst0=", (unsigned)blend.RenderTarget[0].DestBlend,
         " op0=", (unsigned)blend.RenderTarget[0].BlendOp));
 
@@ -1957,10 +2025,9 @@ struct ReplayState {
         return;
       auto *cb_res = device->LookupResourceByGPUAddress(cb_gpu);
       if (!cb_res) {
-        Logger::info(str::format("M12 AC6 upstream ", label,
-                                 " readback no_resource gpu=0x", std::hex,
-                                 (unsigned long long)cb_gpu, std::dec,
-                                 " size=", cb_size));
+        Logger::info(str::format(
+            "M12 AC6 upstream ", label, " readback no_resource gpu=0x",
+            std::hex, (unsigned long long)cb_gpu, std::dec, " size=", cb_size));
         return;
       }
       uint64_t cb_off = cb_gpu - cb_res->GetGPUVirtualAddress();
@@ -1974,13 +2041,13 @@ struct ReplayState {
                                           ac6_upstream_vs_cbv_size,
                                           ac6_upstream_vs_cbv_readback,
                                           ac6_upstream_vs_cbv_mapped);
-      Logger::info(str::format(
-          "M12 AC6 upstream ", label, " readback queued=", queued ? 1 : 0,
-          " gpu=0x", std::hex, (unsigned long long)cb_gpu, std::dec,
-          " off=", (unsigned long long)cb_off,
-          " bytes=", ac6_upstream_vs_cbv_size,
-          " available=", (unsigned long long)available,
-          " ", ResourceSummary(cb_res)));
+      Logger::info(str::format("M12 AC6 upstream ", label,
+                               " readback queued=", queued ? 1 : 0, " gpu=0x",
+                               std::hex, (unsigned long long)cb_gpu, std::dec,
+                               " off=", (unsigned long long)cb_off,
+                               " bytes=", ac6_upstream_vs_cbv_size,
+                               " available=", (unsigned long long)available,
+                               " ", ResourceSummary(cb_res)));
     };
 
     if (vs_cbv0 && vs_cbv0->cbv.BufferLocation && vs_cbv0->cbv.SizeInBytes)
@@ -1992,19 +2059,21 @@ struct ReplayState {
       sig = static_cast<MTLD3D12RootSignature *>(pso->GetRootSignature());
     if (sig) {
       const auto &params = sig->GetParameters();
-      Logger::info(str::format("M12 AC6 upstream root signature params=",
-                               (unsigned)params.size(),
-                               " heaps=", desc_heap_count));
-      for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+      Logger::info(str::format(
+          "M12 AC6 upstream root signature params=", (unsigned)params.size(),
+          " heaps=", desc_heap_count));
+      for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+           i++) {
         const auto &param = params[i];
         Logger::info(str::format(
-            "M12 AC6 upstream root[", i, "] type=", RootParameterTypeName(param.type),
+            "M12 AC6 upstream root[", i,
+            "] type=", RootParameterTypeName(param.type),
             " vis=", ShaderVisibilityName(param.shader_visibility),
             " reg=", param.register_index, " space=", param.register_space,
-            " constants=", root_constant_set[i], " const_size=", root_constant_sizes[i],
-            " cbv=", root_cbv_set[i], " root_cbv=0x", std::hex,
-            (unsigned long long)root_cbvs[i], std::dec,
-            " srv=", root_srv_set[i], " uav=", root_uav_set[i],
+            " constants=", root_constant_set[i],
+            " const_size=", root_constant_sizes[i], " cbv=", root_cbv_set[i],
+            " root_cbv=0x", std::hex, (unsigned long long)root_cbvs[i],
+            std::dec, " srv=", root_srv_set[i], " uav=", root_uav_set[i],
             " table=", root_table_set[i], " table_gpu=0x", std::hex,
             (unsigned long long)root_tables[i].ptr, std::dec));
         if (param.type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS &&
@@ -2030,7 +2099,8 @@ struct ReplayState {
     uint32_t upstream_probe = 0;
     if (sig) {
       const auto &params = sig->GetParameters();
-      for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+      for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+           i++) {
         const auto &param = params[i];
         if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
             !ShaderVisibilityCoversShader(param.shader_visibility,
@@ -2049,8 +2119,7 @@ struct ReplayState {
           Logger::info(str::format(
               "M12 AC6 upstream ps table root[", i, "] range[", r,
               "] type=", DescriptorRangeTypeName(range.range_type),
-              " base=", range.base_register,
-              " space=", range.register_space,
+              " base=", range.base_register, " space=", range.register_space,
               " count=", range.num_descriptors,
               " offset=", range.offset_in_table));
           if (range.range_type != D3D12_DESCRIPTOR_RANGE_TYPE_SRV)
@@ -2069,9 +2138,8 @@ struct ReplayState {
                             ? static_cast<MTLD3D12Resource *>(desc->resource)
                             : nullptr;
             Logger::info(str::format(
-                "M12 AC6 upstream ps srv ordinal=", upstream_probe,
-                " root=", i, " range=", r, " desc=", d,
-                " reg=", range.base_register + d,
+                "M12 AC6 upstream ps srv ordinal=", upstream_probe, " root=", i,
+                " range=", r, " desc=", d, " reg=", range.base_register + d,
                 " ", DescriptorSummary(desc, D3D12_DESCRIPTOR_RANGE_TYPE_SRV),
                 " ", ResourceSummary(srv)));
             if (upstream_probe < std::size(ac6_upstream_srv_readback)) {
@@ -2088,14 +2156,16 @@ struct ReplayState {
     }
 
     if (!upstream_probe) {
-      Logger::info("M12 AC6 upstream no pixel SRV descriptor-table entries; falling back to ordinal probe");
+      Logger::info("M12 AC6 upstream no pixel SRV descriptor-table entries; "
+                   "falling back to ordinal probe");
       for (uint32_t i = 0; i < std::size(ac6_upstream_srv_readback); i++) {
         auto *srv = FindPixelSrvByOrdinal(i);
         Logger::info(str::format("M12 AC6 upstream srv[", i, "] ",
                                  ResourceSummary(srv)));
         ac6_upstream_srv_readback[i].slot = i;
         ac6_upstream_srv_readback[i].reg = i;
-        CaptureTextureReadback(device, cmdbuf, srv, ac6_upstream_srv_readback[i]);
+        CaptureTextureReadback(device, cmdbuf, srv,
+                               ac6_upstream_srv_readback[i]);
       }
     }
 
@@ -2117,7 +2187,8 @@ struct ReplayState {
       return nullptr;
 
     const auto &params = sig->GetParameters();
-    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount; i++) {
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+         i++) {
       const auto &param = params[i];
       if (param.type != D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE ||
           !root_table_set[i] ||
@@ -2156,19 +2227,19 @@ struct ReplayState {
       QueueAC6UpstreamDiagnostic(device, cmdbuf, draw_kind, element_count);
       if (ac6_producer_candidate_logs < 64) {
         ac6_producer_candidate_logs++;
-        Logger::info(str::format(
-            "M12 AC6 producer candidate draw=", draw_kind,
-            " elems=", element_count, " ", ResourceSummary(rtv),
-            " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+        Logger::info(str::format("M12 AC6 producer candidate draw=", draw_kind,
+                                 " elems=", element_count, " ",
+                                 ResourceSummary(rtv), " pso=", (void *)pso,
+                                 " ", TracePsoShaderSummary(pso)));
       }
       return;
     }
 
-    Logger::info(str::format(
-        "M12 AC6 producer diagnostic draw=", draw_kind,
-        " elems=", element_count, " ", ResourceSummary(rtv),
-        " force_white=", DXMTD3D12AC6ForceProducerWhite() ? 1 : 0,
-        " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+    Logger::info(
+        str::format("M12 AC6 producer diagnostic draw=", draw_kind,
+                    " elems=", element_count, " ", ResourceSummary(rtv),
+                    " force_white=", DXMTD3D12AC6ForceProducerWhite() ? 1 : 0,
+                    " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
 
     const auto &vp = viewports[0];
     const auto &sc = scissor_rects[0];
@@ -2176,30 +2247,29 @@ struct ReplayState {
     const auto &ds = pso->GetDepthStencilDesc();
     const auto &blend = pso->GetBlendDesc();
     Logger::info(str::format(
-        "M12 AC6 producer state vp_count=", viewport_count,
-        " vp=", vp.TopLeftX, ",", vp.TopLeftY, " ", vp.Width, "x",
-        vp.Height, " depth=", vp.MinDepth, "-", vp.MaxDepth,
-        " sc_count=", scissor_count, " sc=", sc.left, ",", sc.top,
-        "-", sc.right, ",", sc.bottom, " topology=", (unsigned)topology,
+        "M12 AC6 producer state vp_count=", viewport_count, " vp=", vp.TopLeftX,
+        ",", vp.TopLeftY, " ", vp.Width, "x", vp.Height, " depth=", vp.MinDepth,
+        "-", vp.MaxDepth, " sc_count=", scissor_count, " sc=", sc.left, ",",
+        sc.top, "-", sc.right, ",", sc.bottom, " topology=", (unsigned)topology,
         " primitive=", (unsigned)GetMetalPrimitiveType(),
         " cull=", (unsigned)rast.CullMode,
-        " front_ccw=", (unsigned)rast.FrontCounterClockwise,
-        " depth_enable=", (unsigned)ds.DepthEnable,
-        " depth_write=", (unsigned)ds.DepthWriteMask,
+        " front_ccw=", (unsigned)rast.FrontCounterClockwise, " depth_enable=",
+        (unsigned)ds.DepthEnable, " depth_write=", (unsigned)ds.DepthWriteMask,
         " depth_func=", (unsigned)ds.DepthFunc,
-        " stencil_enable=", (unsigned)ds.StencilEnable,
-        " blend0=", (unsigned)blend.RenderTarget[0].BlendEnable,
-        " write_mask0=0x", std::hex,
-        (unsigned)blend.RenderTarget[0].RenderTargetWriteMask, std::dec,
-        " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
+        " stencil_enable=", (unsigned)ds.StencilEnable, " blend0=",
+        (unsigned)blend.RenderTarget[0].BlendEnable, " write_mask0=0x",
+        std::hex, (unsigned)blend.RenderTarget[0].RenderTargetWriteMask,
+        std::dec, " src0=", (unsigned)blend.RenderTarget[0].SrcBlend,
         " dst0=", (unsigned)blend.RenderTarget[0].DestBlend,
         " op0=", (unsigned)blend.RenderTarget[0].BlendOp));
 
     CloseRenderEncoder();
 
-    auto *cbv0 = FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 0);
-    Logger::info(str::format("M12 AC6 producer cbv0 ",
-                             DescriptorSummary(cbv0, D3D12_DESCRIPTOR_RANGE_TYPE_CBV)));
+    auto *cbv0 =
+        FindPixelDescriptorByOrdinal(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 0);
+    Logger::info(
+        str::format("M12 AC6 producer cbv0 ",
+                    DescriptorSummary(cbv0, D3D12_DESCRIPTOR_RANGE_TYPE_CBV)));
     if (cbv0 && cbv0->cbv.BufferLocation && cbv0->cbv.SizeInBytes) {
       uint64_t cb_gpu = cbv0->cbv.BufferLocation;
       auto *cb_res = device->LookupResourceByGPUAddress(cb_gpu);
@@ -2207,26 +2277,26 @@ struct ReplayState {
         uint64_t cb_off = cb_gpu - cb_res->GetGPUVirtualAddress();
         D3D12_RESOURCE_DESC cb_desc = {};
         cb_res->GetDesc(&cb_desc);
-        uint64_t available = cb_off < cb_desc.Width ? cb_desc.Width - cb_off : 0;
-        ac6_producer_cbv_size =
-            (uint32_t)std::min<uint64_t>(std::min<uint32_t>(cbv0->cbv.SizeInBytes, 256u), available);
+        uint64_t available =
+            cb_off < cb_desc.Width ? cb_desc.Width - cb_off : 0;
+        ac6_producer_cbv_size = (uint32_t)std::min<uint64_t>(
+            std::min<uint32_t>(cbv0->cbv.SizeInBytes, 256u), available);
         bool queued = ac6_producer_cbv_size &&
-                      CaptureBufferReadback(device, cmdbuf, cb_res, cb_off,
-                                            ac6_producer_cbv_size,
-                                            ac6_producer_cbv_readback,
-                                            ac6_producer_cbv_mapped);
-        Logger::info(str::format(
-            "M12 AC6 producer cbv readback queued=", queued ? 1 : 0,
-            " gpu=0x", std::hex, (unsigned long long)cb_gpu, std::dec,
-            " off=", (unsigned long long)cb_off,
-            " bytes=", ac6_producer_cbv_size,
-            " available=", (unsigned long long)available,
-            " ", ResourceSummary(cb_res)));
+                      CaptureBufferReadback(
+                          device, cmdbuf, cb_res, cb_off, ac6_producer_cbv_size,
+                          ac6_producer_cbv_readback, ac6_producer_cbv_mapped);
+        Logger::info(
+            str::format("M12 AC6 producer cbv readback queued=", queued ? 1 : 0,
+                        " gpu=0x", std::hex, (unsigned long long)cb_gpu,
+                        std::dec, " off=", (unsigned long long)cb_off,
+                        " bytes=", ac6_producer_cbv_size,
+                        " available=", (unsigned long long)available, " ",
+                        ResourceSummary(cb_res)));
       } else {
-        Logger::info(str::format(
-            "M12 AC6 producer cbv readback no_resource gpu=0x", std::hex,
-            (unsigned long long)cb_gpu, std::dec,
-            " size=", cbv0->cbv.SizeInBytes));
+        Logger::info(
+            str::format("M12 AC6 producer cbv readback no_resource gpu=0x",
+                        std::hex, (unsigned long long)cb_gpu, std::dec,
+                        " size=", cbv0->cbv.SizeInBytes));
       }
     }
 
@@ -2237,8 +2307,8 @@ struct ReplayState {
                              " stride=", vb0.StrideInBytes));
     if (vb0.BufferLocation && vb0.StrideInBytes) {
       for (uint32_t vi = 0; vi < std::min<uint32_t>(element_count, 4u); vi++) {
-        uint64_t vertex_gpu = vb0.BufferLocation +
-                              uint64_t(vi) * uint64_t(vb0.StrideInBytes);
+        uint64_t vertex_gpu =
+            vb0.BufferLocation + uint64_t(vi) * uint64_t(vb0.StrideInBytes);
         auto *vb_res = device->LookupResourceByGPUAddress(vertex_gpu);
         if (!vb_res)
           continue;
@@ -2265,20 +2335,19 @@ struct ReplayState {
         Logger::info(str::format(
             "M12 AC6 producer vertex[", vi, "] gpu=0x", std::hex,
             (unsigned long long)vertex_gpu, std::dec,
-            " off=", (unsigned long long)vertex_offset,
-            " pos=", pos[0], ",", pos[1], ",", pos[2],
-            " color=", (unsigned)color[0], ",", (unsigned)color[1], ",",
-            (unsigned)color[2], ",", (unsigned)color[3],
-            " uv=", uv[0], ",", uv[1], ",", uv[2], ",", uv[3],
-            " bytes=[", FormatDebugBytes(bytes, sample_bytes), "]"));
+            " off=", (unsigned long long)vertex_offset, " pos=", pos[0], ",",
+            pos[1], ",", pos[2], " color=", (unsigned)color[0], ",",
+            (unsigned)color[1], ",", (unsigned)color[2], ",",
+            (unsigned)color[3], " uv=", uv[0], ",", uv[1], ",", uv[2], ",",
+            uv[3], " bytes=[", FormatDebugBytes(bytes, sample_bytes), "]"));
         vb_res->Unmap(0, nullptr);
       }
     }
 
     for (uint32_t i = 0; i < 2; i++) {
       auto *srv = FindPixelSrvByOrdinal(i);
-      Logger::info(str::format("M12 AC6 producer srv[", i, "] ",
-                               ResourceSummary(srv)));
+      Logger::info(
+          str::format("M12 AC6 producer srv[", i, "] ", ResourceSummary(srv)));
       ac6_producer_srv_readback[i].slot = i;
       ac6_producer_srv_readback[i].reg = i;
       CaptureTextureReadback(device, cmdbuf, srv, ac6_producer_srv_readback[i]);
@@ -2325,54 +2394,51 @@ struct ReplayState {
                          const TextureReadbackProbe &probe) {
       if (!probe.mapped || !probe.width || !probe.height)
         return;
-      auto stats = ComputeReadbackStats(probe.mapped, probe.width,
-                                        probe.height, probe.bytes_per_row);
+      auto stats = ComputeReadbackStats(probe.mapped, probe.width, probe.height,
+                                        probe.bytes_per_row);
       Logger::info(str::format(
-          prefix, " readback ", label,
-          " slot=", probe.slot, " tex=", (unsigned long long)probe.texture_id,
+          prefix, " readback ", label, " slot=", probe.slot,
+          " tex=", (unsigned long long)probe.texture_id,
           " fmt=", (unsigned)probe.format, " sample=", probe.width, "x",
           probe.height, " nonzero_pixels=", stats.nonzero_pixels,
           " nonzero_bytes=", stats.nonzero_bytes,
           " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
-          stats.nonzero_channel_pixels[1], ",",
-          stats.nonzero_channel_pixels[2], ",",
-          stats.nonzero_channel_pixels[3],
+          stats.nonzero_channel_pixels[1], ",", stats.nonzero_channel_pixels[2],
+          ",", stats.nonzero_channel_pixels[3],
           " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
-          stats.nonzero_channel_bytes[1], ",",
-          stats.nonzero_channel_bytes[2], ",",
-          stats.nonzero_channel_bytes[3],
+          stats.nonzero_channel_bytes[1], ",", stats.nonzero_channel_bytes[2],
+          ",", stats.nonzero_channel_bytes[3],
           " max_byte=", (unsigned)stats.max_byte,
           " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
           (unsigned)stats.max_channel_byte[1], ",",
           (unsigned)stats.max_channel_byte[2], ",",
-          (unsigned)stats.max_channel_byte[3],
-          " checksum=0x", std::hex, stats.checksum));
+          (unsigned)stats.max_channel_byte[3], " checksum=0x", std::hex,
+          stats.checksum));
     };
-    auto log_legacy_probe = [&](const char *label, const TextureReadbackProbe &probe) {
+    auto log_legacy_probe = [&](const char *label,
+                                const TextureReadbackProbe &probe) {
       if (!probe.mapped || !probe.width || !probe.height)
         return;
-      auto stats = ComputeReadbackStats(probe.mapped, probe.width,
-                                        probe.height, probe.bytes_per_row);
+      auto stats = ComputeReadbackStats(probe.mapped, probe.width, probe.height,
+                                        probe.bytes_per_row);
       Logger::info(str::format(
-          "M12 AC6 producer readback ", label,
-          " slot=", probe.slot, " tex=", (unsigned long long)probe.texture_id,
+          "M12 AC6 producer readback ", label, " slot=", probe.slot,
+          " tex=", (unsigned long long)probe.texture_id,
           " fmt=", (unsigned)probe.format, " sample=", probe.width, "x",
           probe.height, " nonzero_pixels=", stats.nonzero_pixels,
           " nonzero_bytes=", stats.nonzero_bytes,
           " ch_pixels=", stats.nonzero_channel_pixels[0], ",",
-          stats.nonzero_channel_pixels[1], ",",
-          stats.nonzero_channel_pixels[2], ",",
-          stats.nonzero_channel_pixels[3],
+          stats.nonzero_channel_pixels[1], ",", stats.nonzero_channel_pixels[2],
+          ",", stats.nonzero_channel_pixels[3],
           " ch_bytes=", stats.nonzero_channel_bytes[0], ",",
-          stats.nonzero_channel_bytes[1], ",",
-          stats.nonzero_channel_bytes[2], ",",
-          stats.nonzero_channel_bytes[3],
+          stats.nonzero_channel_bytes[1], ",", stats.nonzero_channel_bytes[2],
+          ",", stats.nonzero_channel_bytes[3],
           " max_byte=", (unsigned)stats.max_byte,
           " ch_max=", (unsigned)stats.max_channel_byte[0], ",",
           (unsigned)stats.max_channel_byte[1], ",",
           (unsigned)stats.max_channel_byte[2], ",",
-          (unsigned)stats.max_channel_byte[3],
-          " checksum=0x", std::hex, stats.checksum));
+          (unsigned)stats.max_channel_byte[3], " checksum=0x", std::hex,
+          stats.checksum));
     };
     if (ac6_producer_cbv_mapped && ac6_producer_cbv_size) {
       const auto *bytes = static_cast<const uint8_t *>(ac6_producer_cbv_mapped);
@@ -2383,10 +2449,10 @@ struct ReplayState {
           continue;
         float f[4] = {};
         std::memcpy(f, bytes + off, sizeof(f));
-        Logger::info(str::format(
-            "M12 AC6 producer cbv readback row=", row,
-            " off=", off, " f=", f[0], ",", f[1], ",", f[2], ",", f[3],
-            " bytes=[", FormatDebugBytes(bytes + off, 16), "]"));
+        Logger::info(str::format("M12 AC6 producer cbv readback row=", row,
+                                 " off=", off, " f=", f[0], ",", f[1], ",",
+                                 f[2], ",", f[3], " bytes=[",
+                                 FormatDebugBytes(bytes + off, 16), "]"));
       }
     }
     log_legacy_probe("rtv", ac6_producer_rtv_readback);
@@ -2394,7 +2460,8 @@ struct ReplayState {
     log_legacy_probe("srv1", ac6_producer_srv_readback[1]);
 
     if (ac6_upstream_vs_cbv_mapped && ac6_upstream_vs_cbv_size) {
-      const auto *bytes = static_cast<const uint8_t *>(ac6_upstream_vs_cbv_mapped);
+      const auto *bytes =
+          static_cast<const uint8_t *>(ac6_upstream_vs_cbv_mapped);
       const uint32_t rows[] = {0, 1, 2, 3, 4, 5};
       for (uint32_t row : rows) {
         uint32_t off = row * 16u;
@@ -2402,10 +2469,10 @@ struct ReplayState {
           continue;
         float f[4] = {};
         std::memcpy(f, bytes + off, sizeof(f));
-        Logger::info(str::format(
-            "M12 AC6 upstream vs_cbv readback row=", row,
-            " off=", off, " f=", f[0], ",", f[1], ",", f[2], ",", f[3],
-            " bytes=[", FormatDebugBytes(bytes + off, 16), "]"));
+        Logger::info(str::format("M12 AC6 upstream vs_cbv readback row=", row,
+                                 " off=", off, " f=", f[0], ",", f[1], ",",
+                                 f[2], ",", f[3], " bytes=[",
+                                 FormatDebugBytes(bytes + off, 16), "]"));
       }
     }
     log_probe("M12 AC6 upstream", "rtv", ac6_upstream_rtv_readback);
@@ -2455,10 +2522,10 @@ struct ReplayState {
     }
     EndMetalEncoder(enc, "render_ac6_prime_final_mask");
 
-    Logger::info(str::format(
-        "M12 AC6 primed final composite mask color=1,1,1,1 ",
-        ResourceSummary(mask), " pso=", (void *)pso, " ",
-        TracePsoShaderSummary(pso)));
+    Logger::info(
+        str::format("M12 AC6 primed final composite mask color=1,1,1,1 ",
+                    ResourceSummary(mask), " pso=", (void *)pso, " ",
+                    TracePsoShaderSummary(pso)));
 
     EnsureRenderEncoder();
     ApplyRootBindings(device);
@@ -2580,8 +2647,8 @@ struct ReplayState {
     Logger::info(
         str::format("M12 final root signature params=", (unsigned)params.size(),
                     " heaps=", desc_heap_count));
-    for (uint32_t i = 0;
-         i < params.size() && i < kRootParameterSlotCount; i++) {
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+         i++) {
       const auto &param = params[i];
       Logger::info(str::format(
           "M12 final root[", i, "] type=", RootParameterTypeName(param.type),
@@ -2672,8 +2739,7 @@ struct ReplayState {
   }
 
   void LogNonStageInVertexSnapshot(MTLD3D12Device *device,
-                                   const char *draw_kind,
-                                   uint32_t vertex_count,
+                                   const char *draw_kind, uint32_t vertex_count,
                                    uint32_t instance_count,
                                    uint32_t start_vertex,
                                    uint32_t start_instance) {
@@ -2689,26 +2755,24 @@ struct ReplayState {
         " i=", instance_count, " start_vertex=", start_vertex,
         " start_instance=", start_instance, " slot_mask=0x", std::hex,
         pso->GetIAInputSlotMask(), std::dec, " inputs=", inputs.size(),
-        " bound_vbs=", last_bound_vertex_buffers, " table=",
-        last_vertex_table_summary, " pso=", (void *)pso, " ",
+        " bound_vbs=", last_bound_vertex_buffers,
+        " table=", last_vertex_table_summary, " pso=", (void *)pso, " ",
         TracePsoShaderSummary(pso)));
 
     for (const auto &input : inputs) {
-      if (input.system_value ||
-          input.input_slot >= kVertexBufferSlotCount)
+      if (input.system_value || input.input_slot >= kVertexBufferSlotCount)
         continue;
 
       const auto &vb = vbs[input.input_slot];
       Logger::info(str::format(
           "M12 vertex-pull input semantic=", input.semantic_name,
           input.semantic_index, " reg=", input.shader_register,
-          " slot=", input.input_slot, " table=", input.table_index,
-          " offset=", input.aligned_byte_offset, " fmt=",
-          (unsigned)input.dxgi_format, " metal_fmt=",
-          (unsigned)input.metal_format, " per_instance=", input.per_instance,
-          " step=", input.instance_step_rate, " vb_gpu=0x", std::hex,
-          (unsigned long long)vb.BufferLocation, std::dec, " vb_size=",
-          vb.SizeInBytes, " vb_stride=", vb.StrideInBytes));
+          " slot=", input.input_slot, " table=", input.table_index, " offset=",
+          input.aligned_byte_offset, " fmt=", (unsigned)input.dxgi_format,
+          " metal_fmt=", (unsigned)input.metal_format, " per_instance=",
+          input.per_instance, " step=", input.instance_step_rate, " vb_gpu=0x",
+          std::hex, (unsigned long long)vb.BufferLocation, std::dec,
+          " vb_size=", vb.SizeInBytes, " vb_stride=", vb.StrideInBytes));
     }
 
     const uint32_t sample_vertices = std::min<uint32_t>(vertex_count, 4);
@@ -2784,12 +2848,12 @@ struct ReplayState {
         Logger::info(str::format(
             "M12 vertex-pull sample slot=", slot, " n=", n,
             " vertex_id=", (unsigned long long)vertex_id, " vb_gpu=0x",
-            std::hex, (unsigned long long)vb.BufferLocation, std::dec,
-            " res=", (void *)vb_res, " base_off=",
-            (unsigned long long)vb_base_offset, " vertex_off=",
-            (unsigned long long)vertex_offset, " stride=", vb.StrideInBytes,
-            " sampled=", sampled, " hr=0x", std::hex, (unsigned)map_hr,
-            std::dec, " attrs=[", attrs, "] bytes=[", bytes_text, "]"));
+            std::hex, (unsigned long long)vb.BufferLocation, std::dec, " res=",
+            (void *)vb_res, " base_off=", (unsigned long long)vb_base_offset,
+            " vertex_off=", (unsigned long long)vertex_offset,
+            " stride=", vb.StrideInBytes, " sampled=", sampled, " hr=0x",
+            std::hex, (unsigned)map_hr, std::dec, " attrs=[", attrs,
+            "] bytes=[", bytes_text, "]"));
       }
     }
   }
@@ -2851,9 +2915,9 @@ struct ReplayState {
   std::vector<void *> transient_table_slab_hosts;
   std::vector<WMT::Reference<WMT::Buffer>> transient_buffers;
 
-  WMT::Reference<WMT::Buffer> MakeTransientBuffer(MTLD3D12Device *device,
-                                                  uint64_t length,
-                                                  uint64_t *out_gpu_address = nullptr) {
+  WMT::Reference<WMT::Buffer>
+  MakeTransientBuffer(MTLD3D12Device *device, uint64_t length,
+                      uint64_t *out_gpu_address = nullptr) {
     WMTBufferInfo buf_info = {};
     buf_info.length = length;
     buf_info.options =
@@ -2867,14 +2931,14 @@ struct ReplayState {
     return buffer;
   }
 
-  WMT::Reference<WMT::Buffer> MakeHostBackedTransientBuffer(
-      MTLD3D12Device *device, const void *data, uint64_t length,
-      uint64_t *out_gpu_address) {
+  WMT::Reference<WMT::Buffer>
+  MakeHostBackedTransientBuffer(MTLD3D12Device *device, const void *data,
+                                uint64_t length, uint64_t *out_gpu_address) {
     WMTBufferInfo buf_info = {};
     buf_info.length = std::max<uint64_t>(length, 256);
-    buf_info.options =
-        WMTResourceHazardTrackingModeUntracked |
-        WMTResourceCPUCacheModeWriteCombined | WMTResourceStorageModeShared;
+    buf_info.options = WMTResourceHazardTrackingModeUntracked |
+                       WMTResourceCPUCacheModeWriteCombined |
+                       WMTResourceStorageModeShared;
     void *host = std::malloc(buf_info.length);
     if (!host)
       return {};
@@ -2898,9 +2962,10 @@ struct ReplayState {
     return (value + alignment - 1) & ~(alignment - 1);
   }
 
-  WMT::Reference<WMT::Buffer> MakeTransientTableSlice(
-      MTLD3D12Device *device, const void *data, uint64_t length,
-      uint64_t *out_offset) {
+  WMT::Reference<WMT::Buffer> MakeTransientTableSlice(MTLD3D12Device *device,
+                                                      const void *data,
+                                                      uint64_t length,
+                                                      uint64_t *out_offset) {
     constexpr uint64_t kTableSliceAlignment = 256;
     constexpr uint64_t kTableSlabSize = 64 * 1024;
     uint64_t aligned_offset =
@@ -2956,9 +3021,8 @@ struct ReplayState {
     if (FAILED(res->Map(0, nullptr, &mapped)) || !mapped)
       return gpu_address;
 
-    const float *mapped_floats =
-        reinterpret_cast<const float *>(static_cast<const char *>(mapped) +
-                                        offset);
+    const float *mapped_floats = reinterpret_cast<const float *>(
+        static_cast<const char *>(mapped) + offset);
     float cbv_probe[20] = {};
     if (length >= sizeof(cbv_probe))
       std::memcpy(cbv_probe, mapped_floats, sizeof(cbv_probe));
@@ -2975,18 +3039,19 @@ struct ReplayState {
     if (render_enc_open) {
       render_enc.useResource(staged, WMTResourceUsageRead, stages);
     }
-    if (HasSwapchainRenderTarget() && TakeLogBudget(&g_swapchain_vs_cbv_logs, 32)) {
+    if (HasSwapchainRenderTarget() &&
+        TakeLogBudget(&g_swapchain_vs_cbv_logs, 32)) {
       Logger::info(str::format(
           "M12 swapchain staged CBV ", label, " original=0x", std::hex,
           (unsigned long long)gpu_address, " staged=0x",
-          (unsigned long long)staged_gpu_address, std::dec, " bytes=",
-          (unsigned long long)length, " f0=", cbv_probe[0],
-          " f5=", cbv_probe[5], " f15=", cbv_probe[15],
-          " time=", cbv_probe[16], " frame=", cbv_probe[17],
-          " width=", cbv_probe[18], " height=", cbv_probe[19]));
+          (unsigned long long)staged_gpu_address, std::dec,
+          " bytes=", (unsigned long long)length, " f0=", cbv_probe[0],
+          " f5=", cbv_probe[5], " f15=", cbv_probe[15], " time=", cbv_probe[16],
+          " frame=", cbv_probe[17], " width=", cbv_probe[18],
+          " height=", cbv_probe[19]));
     }
-    QTRACE("%s: staged CBV original=0x%llx staged=0x%llx bytes=%llu",
-           label, (unsigned long long)gpu_address,
+    QTRACE("%s: staged CBV original=0x%llx staged=0x%llx bytes=%llu", label,
+           (unsigned long long)gpu_address,
            (unsigned long long)staged_gpu_address, (unsigned long long)length);
     return staged_gpu_address;
   }
@@ -3010,8 +3075,8 @@ struct ReplayState {
     void *mapped = nullptr;
     if (FAILED(res->Map(0, nullptr, &mapped)) || !mapped)
       return false;
-    std::memcpy(dst + dst_offset, static_cast<const char *>(mapped) + src_offset,
-                byte_count);
+    std::memcpy(dst + dst_offset,
+                static_cast<const char *>(mapped) + src_offset, byte_count);
     res->Unmap(0, nullptr);
     return true;
   }
@@ -3105,8 +3170,9 @@ struct ReplayState {
 
   /* Phase 5 migration seam: libm12core now supplies root binding lookup/layout
    * plans, but null/default Metal resource materialization stays PE-local here.
-   * Keep this compatibility policy separate until a future native command-binding
-   * replay migration can validate fallback resource ownership and lifetime.
+   * Keep this compatibility policy separate until a future native
+   * command-binding replay migration can validate fallback resource ownership
+   * and lifetime.
    */
   bool EnsureNullDirectTexture(MTLD3D12Device *device) {
     if (null_direct_texture.handle)
@@ -3160,49 +3226,48 @@ struct ReplayState {
     if (!null_vertex_arg_buf.handle)
       return;
 
-	uint32_t filled = 0;
-	for (uint32_t slot = 0; slot < kM12VertexBufferSignatureSlotCount; slot++) {
-	  if (slot == kVertexBufferTableSlot || slot == kConstantBufferTableSlot ||
-	      slot == kArgBufSlot)
-	    continue;
-	  if (bound_vertex_buffer_slots & (1ull << slot))
-	    continue;
-	  if (SetVertexBufferTracked(null_vertex_arg_buf, 0, slot))
-	    filled++;
-	}
+    uint32_t filled = 0;
+    for (uint32_t slot = 0; slot < kM12VertexBufferSignatureSlotCount; slot++) {
+      if (slot == kVertexBufferTableSlot || slot == kConstantBufferTableSlot ||
+          slot == kArgBufSlot)
+        continue;
+      if (bound_vertex_buffer_slots & (1ull << slot))
+        continue;
+      if (SetVertexBufferTracked(null_vertex_arg_buf, 0, slot))
+        filled++;
+    }
 
-	if (filled) {
-	  render_enc.useResource(null_vertex_arg_buf, WMTResourceUsageRead,
-	                         WMTRenderStageVertex);
-	  if (HasSwapchainRenderTarget() &&
-	      TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+    if (filled) {
+      render_enc.useResource(null_vertex_arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+      if (HasSwapchainRenderTarget() &&
+          TakeLogBudget(&g_swapchain_draw_logs, 96)) {
         Logger::info(str::format(
             "M12 non-stage-in filled missing vertex buffers count=", filled,
-            " mask=0x", std::hex, bound_vertex_buffer_slots, std::dec, " pso=",
-	          (void *)pso, " ", TracePsoShaderSummary(pso)));
-	  }
-	}
+            " mask=0x", std::hex, bound_vertex_buffer_slots, std::dec,
+            " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+      }
+    }
 
-	if (vs_cbv_table_buf.handle) {
-	  uint32_t bind_index = BindIndexOrFallback(
-	      pso->GetVSReflection().ConstanttBufferTableBindIndex,
-	      kConstantBufferTableSlot);
-	  SetVertexBufferTracked(vs_cbv_table_buf, vs_cbv_table_buf_offset,
-	                         bind_index);
-	  render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
-	                         WMTRenderStageVertex);
-	}
-	if (vs_arg_buf.handle) {
-	  uint32_t bind_index = BindIndexOrFallback(
-	      pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
-	  SetVertexBufferTracked(vs_arg_buf, vs_arg_buf_offset, bind_index);
-	  render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
-	                         WMTRenderStageVertex);
-	}
+    if (vs_cbv_table_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetVSReflection().ConstanttBufferTableBindIndex,
+          kConstantBufferTableSlot);
+      SetVertexBufferTracked(vs_cbv_table_buf, vs_cbv_table_buf_offset,
+                             bind_index);
+      render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+    }
+    if (vs_arg_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+      SetVertexBufferTracked(vs_arg_buf, vs_arg_buf_offset, bind_index);
+      render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+    }
   }
 
-  D3D12ShaderBindingCompletenessSummary
-  FragmentCompletenessSummary() const {
+  D3D12ShaderBindingCompletenessSummary FragmentCompletenessSummary() const {
     D3D12ShaderBindingCompletenessDesc desc = {};
     desc.buffer_count = kD3D12M12DirectBufferSlots;
     desc.texture_count = kD3D12M12DirectFragmentTextureSlots;
@@ -3243,9 +3308,8 @@ struct ReplayState {
           " bound_tex=0x", bound_fragment_texture_slots, " bound_samp=0x",
           bound_fragment_sampler_slots, " root_tables=0x", root_table_mask,
           " root_cbv=0x", root_cbv_mask, " root_srv=0x", root_srv_mask,
-          " root_uav=0x", root_uav_mask, std::dec, " heaps=",
-          desc_heap_count, " pso=", (void *)pso, " ",
-          TracePsoShaderSummary(pso)));
+          " root_uav=0x", root_uav_mask, std::dec, " heaps=", desc_heap_count,
+          " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
     }
 
     if (!null_vertex_arg_buf.handle) {
@@ -3256,9 +3320,8 @@ struct ReplayState {
     }
 
     if (null_vertex_arg_buf.handle) {
-      uint64_t missing =
-          D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
-          ~bound_fragment_buffer_slots;
+      uint64_t missing = D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
+                         ~bound_fragment_buffer_slots;
       for (uint32_t slot = 0; slot < kD3D12M12DirectBufferSlots; slot++) {
         if (!(missing & (1ull << slot)))
           continue;
@@ -3280,10 +3343,10 @@ struct ReplayState {
         SetFragmentTextureTracked(null_direct_texture, slot, true);
       }
       if (fallback_fragment_texture_slots) {
-        render_enc.useResource(null_direct_texture,
-                               (WMTResourceUsage)(WMTResourceUsageRead |
-                                                  WMTResourceUsageSample),
-                               WMTRenderStageFragment);
+        render_enc.useResource(
+            null_direct_texture,
+            (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageSample),
+            WMTRenderStageFragment);
       }
     }
 
@@ -3303,17 +3366,16 @@ struct ReplayState {
         TakeLogBudget(&g_swapchain_fragment_completeness_logs, 128)) {
       auto summary = FragmentCompletenessSummary();
       Logger::info(str::format(
-          "M12 fragment completeness label=",
-          draw_label ? draw_label : "draw", " pso=", (void *)pso, " buffers ",
-          summary.bound_buffer_count, "+", summary.fallback_buffer_count, "/",
-          summary.required_buffer_count, " missing=0x", std::hex,
-          summary.missing_buffers, " textures ", std::dec,
-          summary.bound_texture_count, "+", summary.fallback_texture_count,
-          "/", summary.required_texture_count, " missing=0x", std::hex,
-          summary.missing_textures, " samplers ", std::dec,
-          summary.bound_sampler_count, "+", summary.fallback_sampler_count,
-          "/", summary.required_sampler_count, " missing=0x", std::hex,
-          summary.missing_samplers, std::dec, " ",
+          "M12 fragment completeness label=", draw_label ? draw_label : "draw",
+          " pso=", (void *)pso, " buffers ", summary.bound_buffer_count, "+",
+          summary.fallback_buffer_count, "/", summary.required_buffer_count,
+          " missing=0x", std::hex, summary.missing_buffers, " textures ",
+          std::dec, summary.bound_texture_count, "+",
+          summary.fallback_texture_count, "/", summary.required_texture_count,
+          " missing=0x", std::hex, summary.missing_textures, " samplers ",
+          std::dec, summary.bound_sampler_count, "+",
+          summary.fallback_sampler_count, "/", summary.required_sampler_count,
+          " missing=0x", std::hex, summary.missing_samplers, std::dec, " ",
           TracePsoShaderSummary(pso)));
     }
   }
@@ -3535,9 +3597,9 @@ struct ReplayState {
                 Logger::info(str::format(
                     "M12 swapchain PS SRV binding slot=", arg.SM50BindingSlot,
                     " space=", arg.SM50RegisterSpace, " root=", root_idx,
-                    " desc_off=", descriptor_offset, " qword_off=",
-                    arg.StructurePtrOffset, " gpu_id=0x", std::hex,
-                    (unsigned long long)gpu_id, std::dec, " ",
+                    " desc_off=", descriptor_offset,
+                    " qword_off=", arg.StructurePtrOffset, " gpu_id=0x",
+                    std::hex, (unsigned long long)gpu_id, std::dec, " ",
                     DescriptorSummary(desc, D3D12_DESCRIPTOR_RANGE_TYPE_SRV),
                     " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
               }
@@ -3701,8 +3763,8 @@ struct ReplayState {
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
         for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
-          for (uint32_t p = 0;
-               p < params.size() && p < kRootParameterSlotCount; p++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
             if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
                 params[p].register_index == arg.SM50BindingSlot &&
                 params[p].register_space == arg.SM50RegisterSpace &&
@@ -3750,14 +3812,15 @@ struct ReplayState {
             TakeLogBudget(&g_swapchain_ps_cbv_logs, 96)) {
           Logger::info(str::format(
               "M12 swapchain PS cbv resolve inline slot=", arg.SM50BindingSlot,
-              " space=", arg.SM50RegisterSpace, " field=",
-              arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-              std::hex, (unsigned long long)gpu_address, std::dec,
+              " space=", arg.SM50RegisterSpace,
+              " field=", arg.StructurePtrOffset, " root_idx=", root_idx,
+              " gpu=0x", std::hex, (unsigned long long)gpu_address, std::dec,
               " vec4=", arg.SizeInVec4, " ", TracePsoShaderSummary(pso)));
         }
-        QTRACE("BuildConstantBufferTable: inline cb slot=%u field=%u gpu=0x%llx",
-               arg.SM50BindingSlot, arg.StructurePtrOffset,
-               (unsigned long long)gpu_address);
+        QTRACE(
+            "BuildConstantBufferTable: inline cb slot=%u field=%u gpu=0x%llx",
+            arg.SM50BindingSlot, arg.StructurePtrOffset,
+            (unsigned long long)gpu_address);
         continue;
       }
 
@@ -3768,11 +3831,11 @@ struct ReplayState {
           TakeLogBudget(&g_swapchain_ps_cbv_logs, 96)) {
         Logger::info(str::format(
             "M12 swapchain PS cbv resolve slot=", arg.SM50BindingSlot,
-            " space=", arg.SM50RegisterSpace, " qword_off=",
-            arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-            std::hex, (unsigned long long)gpu_address, " original=0x",
-            (unsigned long long)original_gpu_address, std::dec, " ",
-            TracePsoShaderSummary(pso)));
+            " space=", arg.SM50RegisterSpace,
+            " qword_off=", arg.StructurePtrOffset, " root_idx=", root_idx,
+            " gpu=0x", std::hex, (unsigned long long)gpu_address,
+            " original=0x", (unsigned long long)original_gpu_address, std::dec,
+            " ", TracePsoShaderSummary(pso)));
       }
       QTRACE("BuildConstantBufferTable: cb slot=%u offset=%u gpu=0x%llx",
              arg.SM50BindingSlot, arg.StructurePtrOffset,
@@ -3792,11 +3855,11 @@ struct ReplayState {
 
     uint64_t inline_table_bytes = 0;
     if (has_inline_cbuffers) {
-      std::sort(resolved_cbuffers.begin(), resolved_cbuffers.end(),
-                [](const ResolvedConstantBuffer &a,
-                   const ResolvedConstantBuffer &b) {
-                  return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
-                });
+      std::sort(
+          resolved_cbuffers.begin(), resolved_cbuffers.end(),
+          [](const ResolvedConstantBuffer &a, const ResolvedConstantBuffer &b) {
+            return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
+          });
       std::vector<uint8_t> inline_table_data;
       for (const auto &entry : resolved_cbuffers) {
         const auto &arg = *entry.arg;
@@ -3847,11 +3910,10 @@ struct ReplayState {
           Logger::info(str::format(
               "M12 swapchain PS cbv table bind slot=", bind_index,
               " qwords=", qword_count, " inline_bytes=", inline_table_bytes,
-              " data0=0x", std::hex,
-              (unsigned long long)cbv_table_data[0], " data1=0x",
-              (unsigned long long)cbv_table_data[1], std::dec, " handle=",
-              (unsigned long long)cbv_table_buf.handle, " offset=",
-              (unsigned long long)cbv_table_buf_offset, " ",
+              " data0=0x", std::hex, (unsigned long long)cbv_table_data[0],
+              " data1=0x", (unsigned long long)cbv_table_data[1], std::dec,
+              " handle=", (unsigned long long)cbv_table_buf.handle,
+              " offset=", (unsigned long long)cbv_table_buf_offset, " ",
               TracePsoShaderSummary(pso)));
         }
         QTRACE("BuildConstantBufferTable: bound slot=%u qwords=%u", bind_index,
@@ -3900,8 +3962,8 @@ struct ReplayState {
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
         for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
-          for (uint32_t p = 0;
-               p < params.size() && p < kRootParameterSlotCount; p++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
             if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
                 params[p].register_index == arg.SM50BindingSlot &&
                 params[p].register_space == arg.SM50RegisterSpace &&
@@ -3949,15 +4011,15 @@ struct ReplayState {
             TakeLogBudget(&g_swapchain_vs_cbv_logs, 96)) {
           Logger::info(str::format(
               "M12 swapchain VS cbv resolve inline slot=", arg.SM50BindingSlot,
-              " space=", arg.SM50RegisterSpace, " field=",
-              arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-              std::hex, (unsigned long long)gpu_address, std::dec,
+              " space=", arg.SM50RegisterSpace,
+              " field=", arg.StructurePtrOffset, " root_idx=", root_idx,
+              " gpu=0x", std::hex, (unsigned long long)gpu_address, std::dec,
               " vec4=", arg.SizeInVec4, " ", TracePsoShaderSummary(pso)));
         }
-        QTRACE(
-            "BuildVertexConstantBufferTable: inline cb slot=%u field=%u gpu=0x%llx",
-            arg.SM50BindingSlot, arg.StructurePtrOffset,
-            (unsigned long long)gpu_address);
+        QTRACE("BuildVertexConstantBufferTable: inline cb slot=%u field=%u "
+               "gpu=0x%llx",
+               arg.SM50BindingSlot, arg.StructurePtrOffset,
+               (unsigned long long)gpu_address);
         continue;
       }
 
@@ -3968,11 +4030,11 @@ struct ReplayState {
           TakeLogBudget(&g_swapchain_vs_cbv_logs, 96)) {
         Logger::info(str::format(
             "M12 swapchain VS cbv resolve slot=", arg.SM50BindingSlot,
-            " space=", arg.SM50RegisterSpace, " qword_off=",
-            arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-            std::hex, (unsigned long long)gpu_address, " original=0x",
-            (unsigned long long)original_gpu_address, std::dec, " ",
-            TracePsoShaderSummary(pso)));
+            " space=", arg.SM50RegisterSpace,
+            " qword_off=", arg.StructurePtrOffset, " root_idx=", root_idx,
+            " gpu=0x", std::hex, (unsigned long long)gpu_address,
+            " original=0x", (unsigned long long)original_gpu_address, std::dec,
+            " ", TracePsoShaderSummary(pso)));
       }
       QTRACE("BuildVertexConstantBufferTable: cb slot=%u offset=%u gpu=0x%llx",
              arg.SM50BindingSlot, arg.StructurePtrOffset,
@@ -3992,11 +4054,11 @@ struct ReplayState {
 
     uint64_t inline_table_bytes = 0;
     if (has_inline_cbuffers) {
-      std::sort(resolved_cbuffers.begin(), resolved_cbuffers.end(),
-                [](const ResolvedConstantBuffer &a,
-                   const ResolvedConstantBuffer &b) {
-                  return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
-                });
+      std::sort(
+          resolved_cbuffers.begin(), resolved_cbuffers.end(),
+          [](const ResolvedConstantBuffer &a, const ResolvedConstantBuffer &b) {
+            return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
+          });
       std::vector<uint8_t> inline_table_data;
       for (const auto &entry : resolved_cbuffers) {
         const auto &arg = *entry.arg;
@@ -4047,11 +4109,10 @@ struct ReplayState {
           Logger::info(str::format(
               "M12 swapchain VS cbv table bind slot=", bind_index,
               " qwords=", qword_count, " inline_bytes=", inline_table_bytes,
-              " data0=0x", std::hex,
-              (unsigned long long)vs_cbv_table_data[0], " data1=0x",
-              (unsigned long long)vs_cbv_table_data[1], std::dec, " handle=",
-              (unsigned long long)vs_cbv_table_buf.handle, " offset=",
-              (unsigned long long)vs_cbv_table_buf_offset, " ",
+              " data0=0x", std::hex, (unsigned long long)vs_cbv_table_data[0],
+              " data1=0x", (unsigned long long)vs_cbv_table_data[1], std::dec,
+              " handle=", (unsigned long long)vs_cbv_table_buf.handle,
+              " offset=", (unsigned long long)vs_cbv_table_buf_offset, " ",
               TracePsoShaderSummary(pso)));
         }
         QTRACE("BuildVertexConstantBufferTable: bound slot=%u qwords=%u",
@@ -4320,7 +4381,7 @@ struct ReplayState {
           pso->GetVSReflection().ConstanttBufferTableBindIndex,
           kConstantBufferTableSlot);
       render_enc.setObjectBuffer(vs_cbv_table_buf, vs_cbv_table_buf_offset,
-                                  bind_index);
+                                 bind_index);
       render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
                              WMTRenderStageObject);
     }
@@ -4350,8 +4411,7 @@ struct ReplayState {
       uint32_t bind_index = BindIndexOrFallback(
           pso->GetPSReflection().ConstanttBufferTableBindIndex,
           kConstantBufferTableSlot);
-      SetFragmentBufferTracked(cbv_table_buf, cbv_table_buf_offset,
-                               bind_index);
+      SetFragmentBufferTracked(cbv_table_buf, cbv_table_buf_offset, bind_index);
       render_enc.useResource(cbv_table_buf, WMTResourceUsageRead,
                              WMTRenderStageFragment);
     }
@@ -4395,8 +4455,8 @@ struct ReplayState {
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
         for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
-          for (uint32_t p = 0;
-               p < params.size() && p < kRootParameterSlotCount; p++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
             if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
                 params[p].register_index == arg.SM50BindingSlot &&
                 params[p].register_space == arg.SM50RegisterSpace &&
@@ -4757,8 +4817,8 @@ struct ReplayState {
       uint32_t root_idx = ~0u;
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
-        for (uint32_t p = 0;
-             p < params.size() && p < kRootParameterSlotCount; p++) {
+        for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+             p++) {
           if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
               params[p].register_index == arg.SM50BindingSlot &&
               params[p].register_space == arg.SM50RegisterSpace) {
@@ -5078,11 +5138,11 @@ struct ReplayState {
     if (TakeLogBudget(&g_tessellation_fallback_draw_logs, 64)) {
       Logger::warn(str::format(
           "M12 tessellation fallback draw label=", label ? label : "draw",
-          " indexed=", indexed, " patch_control_points=",
-          D3D12PatchControlPointCount(topology), " elements=", element_count,
-          " instances=", instance_count, " primitive_type=",
-          (unsigned)GetMetalPrimitiveType(), " pso=", (void *)pso, " ",
-          TracePsoShaderSummary(pso)));
+          " indexed=", indexed,
+          " patch_control_points=", D3D12PatchControlPointCount(topology),
+          " elements=", element_count, " instances=", instance_count,
+          " primitive_type=", (unsigned)GetMetalPrimitiveType(),
+          " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
     }
   }
 
@@ -5291,8 +5351,10 @@ struct ReplayState {
       desc.root_constant_count = plan.root_constant_count;
       desc.argument_resource_slot_count = plan.argument_resource_slot_count;
       desc.argument_sampler_slot_count = plan.argument_sampler_slot_count;
-      desc.argument_root_descriptor_slot_count = plan.argument_root_descriptor_slot_count;
-      desc.argument_root_constant_dword_count = plan.argument_root_constant_dword_count;
+      desc.argument_root_descriptor_slot_count =
+          plan.argument_root_descriptor_slot_count;
+      desc.argument_root_constant_dword_count =
+          plan.argument_root_constant_dword_count;
     } else {
       for (const auto &param : graphics_root_sig->GetParameters()) {
         if (param.type == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
@@ -5314,12 +5376,9 @@ struct ReplayState {
 
     Logger::info(str::format(
         "M12_DRAW_PLAN label=", label ? label : "draw",
-        " indexed=", indexed ? 1u : 0u,
-        " key=0x", std::hex, summary.draw_plan_key,
-        " pso=0x", desc.pso_key,
-        " root=0x", desc.root_signature_key,
-        " binding=0x", desc.binding_plan_key,
-        std::dec,
+        " indexed=", indexed ? 1u : 0u, " key=0x", std::hex,
+        summary.draw_plan_key, " pso=0x", desc.pso_key, " root=0x",
+        desc.root_signature_key, " binding=0x", desc.binding_plan_key, std::dec,
         " validation=0x", std::hex, summary.validation_flags, std::dec,
         " resources=", summary.resource_usage_count,
         " binding_checks=", summary.binding_validation_count,
@@ -5352,8 +5411,8 @@ struct ReplayState {
       if (root_constant_set[i] && root_constant_sizes[i] > 0 &&
           root_constants_mtl_buf.handle) {
         if (!stage_in_vertex_inputs) {
-          SetVertexBufferTracked(root_constants_mtl_buf, root_constant_offsets[i],
-                                 i);
+          SetVertexBufferTracked(root_constants_mtl_buf,
+                                 root_constant_offsets[i], i);
         }
         SetFragmentBufferTracked(root_constants_mtl_buf,
                                  root_constant_offsets[i], i);
@@ -5451,12 +5510,12 @@ struct ReplayState {
           uint32_t buf_slot = shader_register;
           if (buf_slot >= kD3D12M12DirectBufferSlots)
             return;
-          auto *res = device->LookupResourceByGPUAddress(desc->cbv.BufferLocation);
+          auto *res =
+              device->LookupResourceByGPUAddress(desc->cbv.BufferLocation);
           if (!res || !res->GetMTLBuffer().handle)
             return;
 
-          uint64_t off =
-              desc->cbv.BufferLocation - res->GetGPUVirtualAddress();
+          uint64_t off = desc->cbv.BufferLocation - res->GetGPUVirtualAddress();
           if (vis == D3D12_SHADER_VISIBILITY_ALL ||
               vis == D3D12_SHADER_VISIBILITY_VERTEX)
             SetVertexBufferTracked(res->GetMTLBuffer(), off, buf_slot);
@@ -5474,11 +5533,10 @@ struct ReplayState {
                vis == D3D12_SHADER_VISIBILITY_PIXEL) &&
               TakeLogBudget(&g_swapchain_texture_binding_logs, 128)) {
             Logger::info(str::format(
-                "M12 swapchain direct CBV binding root_table=", i,
-                " reg=", shader_register, " vis=", ShaderVisibilityName(vis),
-                " gpu=0x", std::hex,
-                (unsigned long long)desc->cbv.BufferLocation, std::dec,
-                " size=", desc->cbv.SizeInBytes, " off=", off, " ",
+                "M12 swapchain direct CBV binding root_table=", i, " reg=",
+                shader_register, " vis=", ShaderVisibilityName(vis), " gpu=0x",
+                std::hex, (unsigned long long)desc->cbv.BufferLocation,
+                std::dec, " size=", desc->cbv.SizeInBytes, " off=", off, " ",
                 ResourceSummary(res), " pso=", (void *)pso, " ",
                 TracePsoShaderSummary(pso)));
           }
@@ -5532,8 +5590,8 @@ struct ReplayState {
             Logger::info(str::format(
                 "M12 swapchain direct texture binding root_table=", i,
                 " reg=", shader_register, " vis=", ShaderVisibilityName(vis),
-                " range=", DescriptorRangeTypeName(range_type), " tex=",
-                (unsigned long long)tex.handle, " ",
+                " range=", DescriptorRangeTypeName(range_type),
+                " tex=", (unsigned long long)tex.handle, " ",
                 DescriptorSummary(desc, range_type), " pso=", (void *)pso, " ",
                 TracePsoShaderSummary(pso)));
           }
@@ -6338,8 +6396,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         if (writable) {
           append_compute_useresource(
               res->GetMTLBuffer().handle,
-              (WMTResourceUsage)(WMTResourceUsageRead |
-                                 WMTResourceUsageWrite));
+              (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite));
         }
         QTRACE("%s: root %s param=%u -> slot=%u gpu=0x%llx", trace_prefix,
                label, i, slot, (unsigned long long)address);
@@ -6481,11 +6538,12 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
          st.pso->GetThreadgroupSize().height,
          st.pso->GetThreadgroupSize().depth);
 
-  QTRACE("%s: compute fallback begin bound_buffers=0x%llx bound_textures=0x%llx "
-         "bound_samplers=0x%llx",
-         trace_prefix, (unsigned long long)bound_compute_buffer_slots,
-         (unsigned long long)bound_compute_texture_slots,
-         (unsigned long long)bound_compute_sampler_slots);
+  QTRACE(
+      "%s: compute fallback begin bound_buffers=0x%llx bound_textures=0x%llx "
+      "bound_samplers=0x%llx",
+      trace_prefix, (unsigned long long)bound_compute_buffer_slots,
+      (unsigned long long)bound_compute_texture_slots,
+      (unsigned long long)bound_compute_sampler_slots);
   if (!st.null_vertex_arg_buf.handle) {
     uint64_t zero_data[4] = {};
     QTRACE("%s: creating null compute buffer fallback", trace_prefix);
@@ -6496,9 +6554,8 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
            (unsigned long long)st.null_vertex_arg_buf.handle);
   }
   if (st.null_vertex_arg_buf.handle) {
-    uint64_t missing =
-        D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
-        ~bound_compute_buffer_slots;
+    uint64_t missing = D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
+                       ~bound_compute_buffer_slots;
     QTRACE("%s: compute buffer fallback missing=0x%llx", trace_prefix,
            (unsigned long long)missing);
     for (uint32_t slot = 0; slot < kD3D12M12DirectBufferSlots; slot++) {
@@ -6570,17 +6627,17 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
            (unsigned long long)summary.missing_textures,
            (unsigned long long)summary.missing_samplers);
     Logger::info(str::format(
-        "M12 compute completeness label=", trace_prefix, " pso=", (void *)st.pso,
-        " dispatch=", x, "x", y, "x", z, " buffers=",
-        summary.bound_buffer_count, "+", summary.fallback_buffer_count, "/",
-        summary.required_buffer_count, " textures=",
-        summary.bound_texture_count, "+", summary.fallback_texture_count, "/",
-        summary.required_texture_count, " samplers=",
-        summary.bound_sampler_count, "+", summary.fallback_sampler_count, "/",
-        summary.required_sampler_count, " cs_args=",
-        st.pso->GetCSArguments().size(), " cs_cb=",
-        st.pso->GetCSConstantBuffers().size(), " cs_qwords=",
-        st.pso->GetCSReflection().ArgumentTableQwords));
+        "M12 compute completeness label=", trace_prefix,
+        " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z,
+        " buffers=", summary.bound_buffer_count, "+",
+        summary.fallback_buffer_count, "/", summary.required_buffer_count,
+        " textures=", summary.bound_texture_count, "+",
+        summary.fallback_texture_count, "/", summary.required_texture_count,
+        " samplers=", summary.bound_sampler_count, "+",
+        summary.fallback_sampler_count, "/", summary.required_sampler_count,
+        " cs_args=", st.pso->GetCSArguments().size(),
+        " cs_cb=", st.pso->GetCSConstantBuffers().size(),
+        " cs_qwords=", st.pso->GetCSReflection().ArgumentTableQwords));
   }
 
   struct wmtcmd_compute_dispatch disp = {};
@@ -6590,9 +6647,9 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
 
   if (compute_cmd_overflow) {
     Logger::err(str::format(
-        "M12 compute command chain overflow label=", trace_prefix, " pso=",
-        (void *)st.pso, " used=", (uint64_t)(cmd_ptr - cmd_buf), " cap=",
-        (uint64_t)sizeof(cmd_buf), " dispatch=", x, "x", y, "x", z));
+        "M12 compute command chain overflow label=", trace_prefix,
+        " pso=", (void *)st.pso, " used=", (uint64_t)(cmd_ptr - cmd_buf),
+        " cap=", (uint64_t)sizeof(cmd_buf), " dispatch=", x, "x", y, "x", z));
     return;
   }
 
@@ -6606,9 +6663,9 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
   }
 
   if (chain_head && !comp.encodeCommands(chain_head)) {
-    Logger::info(str::format("M12 compute encoder encode failed label=",
-                             trace_prefix, " pso=", (void *)st.pso,
-                             " dispatch=", x, "x", y, "x", z));
+    Logger::info(
+        str::format("M12 compute encoder encode failed label=", trace_prefix,
+                    " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z));
   }
   EndMetalEncoder(comp, "compute_dispatch");
 }
@@ -6884,11 +6941,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                     cmd->instance_count, cmd->start_vertex);
           st.LogStageInVertexSnapshot("DrawInstanced", cmd->vertex_count,
                                       cmd->instance_count);
-          st.LogNonStageInVertexSnapshot(m_device, "DrawInstanced",
-                                         cmd->vertex_count,
-                                         cmd->instance_count,
-                                         cmd->start_vertex,
-                                         cmd->start_instance);
+          st.LogNonStageInVertexSnapshot(
+              m_device, "DrawInstanced", cmd->vertex_count, cmd->instance_count,
+              cmd->start_vertex, cmd->start_instance);
           st.BindMissingNonStageInVertexBuffers(m_device);
           st.BindDirectFragmentCompleteness(m_device, "draw_instanced");
           WMTPrimitiveType primitive_type = draw.primitive_type;
@@ -6904,9 +6959,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             Logger::info(str::format(
                 "M12 swapchain DrawInstanced encoded v=", cmd->vertex_count,
                 " i=", cmd->instance_count, " start=", cmd->start_vertex,
-                " topology=", (unsigned)st.topology,
-                " primitive=", (unsigned)primitive_type,
-                " pso=", (void *)st.pso,
+                " topology=", (unsigned)st.topology, " primitive=",
+                (unsigned)primitive_type, " pso=", (void *)st.pso,
                 " enc=", (unsigned long long)st.render_enc.handle, " ",
                 TracePsoShaderSummary(st.pso)));
           }
@@ -7155,15 +7209,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           st.LogStageInVertexSnapshot("DrawIndexedInstanced", cmd->index_count,
                                       cmd->instance_count);
           st.BindMissingNonStageInVertexBuffers(m_device);
-          st.BindDirectFragmentCompleteness(m_device,
-                                            "draw_indexed_instanced");
+          st.BindDirectFragmentCompleteness(m_device, "draw_indexed_instanced");
           if (st.EncodeRenderCommands(
                   reinterpret_cast<const wmtcmd_render_nop *>(&draw),
                   "draw_indexed_instanced")) {
             st.MarkSwapchainWorkEncoded();
-            st.QueueAC6ProducerDiagnostic(m_device, cmdbuf,
-                                          "DrawIndexedInstanced",
-                                          cmd->index_count);
+            st.QueueAC6ProducerDiagnostic(
+                m_device, cmdbuf, "DrawIndexedInstanced", cmd->index_count);
             if (!st.HasSwapchainRenderTarget() &&
                 TakeLogBudget(&g_offscreen_indexed_draw_logs, 128)) {
               auto fragment_summary = st.FragmentCompletenessSummary();
@@ -7171,26 +7223,26 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                   "M12 offscreen DrawIndexedInstanced encoded idx=",
                   cmd->index_count, " inst=", cmd->instance_count,
                   " start=", cmd->start_index, " base=", cmd->base_vertex,
-                  " start_inst=", cmd->start_instance, " primitive=",
-                  (unsigned)draw.primitive_type, " ib_fmt=",
-                  (unsigned)st.ib.Format, " ib_gpu=0x", std::hex,
+                  " start_inst=", cmd->start_instance,
+                  " primitive=", (unsigned)draw.primitive_type,
+                  " ib_fmt=", (unsigned)st.ib.Format, " ib_gpu=0x", std::hex,
                   (unsigned long long)st.ib.BufferLocation, std::dec,
-                  " ib_res=", (void *)ib_res, " ib_handle=",
-                  (unsigned long long)draw.index_buffer, " ib_off=",
-                  (unsigned long long)index_buffer_offset, " vb_summary=",
-                  st.last_vertex_table_summary, " vb_bound=",
-                  st.last_bound_vertex_buffers, " frag buffers=",
-                  fragment_summary.bound_buffer_count, "+",
+                  " ib_res=", (void *)ib_res,
+                  " ib_handle=", (unsigned long long)draw.index_buffer,
+                  " ib_off=", (unsigned long long)index_buffer_offset,
+                  " vb_summary=", st.last_vertex_table_summary,
+                  " vb_bound=", st.last_bound_vertex_buffers,
+                  " frag buffers=", fragment_summary.bound_buffer_count, "+",
                   fragment_summary.fallback_buffer_count, "/",
-                  fragment_summary.required_buffer_count, " textures=",
-                  fragment_summary.bound_texture_count, "+",
+                  fragment_summary.required_buffer_count,
+                  " textures=", fragment_summary.bound_texture_count, "+",
                   fragment_summary.fallback_texture_count, "/",
-                  fragment_summary.required_texture_count, " samplers=",
-                  fragment_summary.bound_sampler_count, "+",
+                  fragment_summary.required_texture_count,
+                  " samplers=", fragment_summary.bound_sampler_count, "+",
                   fragment_summary.fallback_sampler_count, "/",
-                  fragment_summary.required_sampler_count, " pso=", (void *)st.pso,
-                  " ", TracePsoShaderSummary(st.pso), " ",
-                  st.RenderTargetResourceSummary()));
+                  fragment_summary.required_sampler_count,
+                  " pso=", (void *)st.pso, " ", TracePsoShaderSummary(st.pso),
+                  " ", st.RenderTargetResourceSummary()));
             }
           }
           if (st.HasSwapchainRenderTarget() &&
@@ -8112,8 +8164,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           QTRACE("SetPipelineState closing render encoder for dsv transition "
                  "current_has=%u current_fmt=%u next_fmt=%u",
                  st.render_enc_has_dsv ? 1u : 0u,
-                 (unsigned)st.render_enc_dsv_format,
-                 (unsigned)next_dsv_format);
+                 (unsigned)st.render_enc_dsv_format, (unsigned)next_dsv_format);
           st.CloseRenderEncoder();
         }
         st.pso = next_pso;
@@ -8198,10 +8249,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               IsAC6FinalSizeRGBAOffscreen(res) &&
               TakeLogBudget(&g_ac6_candidate_resource_logs, 512)) {
             Logger::info(str::format(
-                "M12 AC6 candidate OMSetRenderTargets slot=", i,
-                " handle=0x", std::hex,
-                (unsigned long long)st.rt_handles[i].ptr, std::dec, " ",
-                ResourceSummary(res), " pso=", (void *)st.pso, " ",
+                "M12 AC6 candidate OMSetRenderTargets slot=", i, " handle=0x",
+                std::hex, (unsigned long long)st.rt_handles[i].ptr, std::dec,
+                " ", ResourceSummary(res), " pso=", (void *)st.pso, " ",
                 TracePsoShaderSummary(st.pso)));
           }
         }
@@ -8807,8 +8857,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         li, m_desc.Type, cmd_count, (long long)replay_ms, (long long)wait_ms,
         sync_execute ? 1u : 0u);
 
-    auto status = sync_execute ? cmdbuf.status() : WMTCommandBufferStatusCommitted;
-    QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld sync=%u queue_type=%u",
+    auto status =
+        sync_execute ? cmdbuf.status() : WMTCommandBufferStatusCommitted;
+    QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld sync=%u "
+           "queue_type=%u",
            (int)status, (long long)wait_ms, sync_execute ? 1u : 0u,
            m_desc.Type);
     const uint32_t draw_count = stream_stats.draw_count;
@@ -8852,20 +8904,27 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       for (uint32_t i = 0; i < st.swapchain_touched_count; i++)
         st.swapchain_touched_resources[i]->RecordSwapchainQueueWork(work);
     }
+    if (interesting_list) {
+      LogM12CoreReplayPlan((uint32_t)m_desc.Type, li, command_list_id,
+                           queue_serial, stream_stats.command_count, draw_count,
+                           indexed_draw_count, indirect_count, dispatch_count,
+                           clear_rtv_count, clear_dsv_count, clear_uav_count,
+                           st.swapchain_work_encoded, has_swapchain_work_target,
+                           sync_execute, (uint32_t)status, replay_ms, wait_ms);
+    }
     if (interesting_list && TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::info(str::format(
           "M12 command list summary queue=", (unsigned)m_desc.Type,
-          " list=", li, " cmdlist_id=",
-          (unsigned long long)command_list_id,
+          " list=", li, " cmdlist_id=", (unsigned long long)command_list_id,
           " serial=", (unsigned long long)queue_serial,
           " cmds=", stream_stats.command_count, " draws=", draw_count,
           " indexed=", indexed_draw_count, " indirect=", indirect_count,
-          " dispatch=", dispatch_count, " clears=",
-          clear_rtv_count + clear_dsv_count + clear_uav_count,
+          " dispatch=", dispatch_count,
+          " clears=", clear_rtv_count + clear_dsv_count + clear_uav_count,
           " swapchain_work=", st.swapchain_work_encoded,
-          " has_swapchain_rt=", has_swapchain_work_target, " status=",
-          (int)status, " replay_ms=", (long long)replay_ms, " wait_ms=",
-          (long long)wait_ms));
+          " has_swapchain_rt=", has_swapchain_work_target,
+          " status=", (int)status, " replay_ms=", (long long)replay_ms,
+          " wait_ms=", (long long)wait_ms));
     }
     if (sync_execute && status != WMTCommandBufferStatusCompleted) {
       auto err = cmdbuf.error();

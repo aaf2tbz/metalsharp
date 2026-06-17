@@ -19,8 +19,9 @@ extern "C" {
 #endif
 
 #define M12CORE_ABI_VERSION 1u
-#define M12CORE_BUILD_ID_LOW 0x4d313243u  /* "M12C" marker. */
-#define M12CORE_BUILD_ID_HIGH 0x0000000eu /* Phase-9 present planning foundation. */
+#define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
+#define M12CORE_BUILD_ID_HIGH                                                  \
+  0x0000000fu /* Phase-9 replay/present planning foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -41,20 +42,16 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_PREWARM_PACKS = 1u << 11,
   M12CORE_FEATURE_DRAW_PLANNING = 1u << 12,
   M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13,
-  M12CORE_FEATURE_ALL = M12CORE_FEATURE_INERT_LOADER |
-                        M12CORE_FEATURE_COUNTERS |
-                        M12CORE_FEATURE_SHADER_INTROSPECTION |
-                        M12CORE_FEATURE_SHADER_FUNCTIONS |
-                        M12CORE_FEATURE_DXIL_TO_MSL |
-                        M12CORE_FEATURE_SM50_REFLECTION |
-                        M12CORE_FEATURE_PIPELINE_CACHE |
-                        M12CORE_FEATURE_PIPELINE_CREATION |
-                        M12CORE_FEATURE_ROOT_SIGNATURE_KEYS |
-                        M12CORE_FEATURE_ROOT_BINDING_PLAN |
-                        M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT |
-                        M12CORE_FEATURE_PREWARM_PACKS |
-                        M12CORE_FEATURE_DRAW_PLANNING |
-                        M12CORE_FEATURE_PRESENT_PLANNING,
+  M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14,
+  M12CORE_FEATURE_ALL =
+      M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
+      M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
+      M12CORE_FEATURE_DXIL_TO_MSL | M12CORE_FEATURE_SM50_REFLECTION |
+      M12CORE_FEATURE_PIPELINE_CACHE | M12CORE_FEATURE_PIPELINE_CREATION |
+      M12CORE_FEATURE_ROOT_SIGNATURE_KEYS | M12CORE_FEATURE_ROOT_BINDING_PLAN |
+      M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT | M12CORE_FEATURE_PREWARM_PACKS |
+      M12CORE_FEATURE_DRAW_PLANNING | M12CORE_FEATURE_PRESENT_PLANNING |
+      M12CORE_FEATURE_REPLAY_PLANNING,
 };
 
 typedef struct M12CoreVersion {
@@ -615,6 +612,56 @@ typedef struct M12CorePresentPlanSummary {
   uint64_t scheduled_work_count;
 } M12CorePresentPlanSummary;
 
+typedef enum M12CoreReplayPlanStatus {
+  M12CORE_REPLAY_PLAN_STATUS_OK = 0,
+  M12CORE_REPLAY_PLAN_STATUS_INVALID = 1,
+} M12CoreReplayPlanStatus;
+
+typedef enum M12CoreReplayPlanFlags {
+  M12CORE_REPLAY_PLAN_HAS_COMMAND_STREAM = 1u << 0,
+  M12CORE_REPLAY_PLAN_HAS_GRAPHICS_WORK = 1u << 1,
+  M12CORE_REPLAY_PLAN_HAS_COMPUTE_WORK = 1u << 2,
+  M12CORE_REPLAY_PLAN_HAS_CLEAR_WORK = 1u << 3,
+  M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_WORK = 1u << 4,
+  M12CORE_REPLAY_PLAN_HAS_SWAPCHAIN_TARGET = 1u << 5,
+  M12CORE_REPLAY_PLAN_SYNC_EXECUTE = 1u << 6,
+  M12CORE_REPLAY_PLAN_COMMAND_BUFFER_COMPLETED = 1u << 7,
+} M12CoreReplayPlanFlags;
+
+typedef struct M12CoreReplayPlanDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t command_buffer_status;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  uint64_t command_count;
+  uint64_t draw_count;
+  uint64_t indexed_draw_count;
+  uint64_t indirect_count;
+  uint64_t dispatch_count;
+  uint64_t clear_rtv_count;
+  uint64_t clear_dsv_count;
+  uint64_t clear_uav_count;
+  int64_t replay_ms;
+  int64_t wait_ms;
+} M12CoreReplayPlanDesc;
+
+typedef struct M12CoreReplayPlanSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t validation_flags;
+  uint32_t work_classification;
+  uint32_t execution_path;
+  uint32_t hazard_score;
+  uint32_t reserved;
+  uint64_t replay_plan_key;
+  uint64_t scheduled_work_count;
+} M12CoreReplayPlanSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -681,19 +728,21 @@ void m12core_reset_counters(void);
  * reflection without changing key semantics at the same time.
  */
 int m12core_hash_shader_bytecode(const void *bytecode, uint64_t bytecode_size,
-                                 uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
+                                 uint32_t stage,
+                                 M12CoreShaderBytecodeInfo *out_info);
 int m12core_shader_contains_dxil(const void *bytecode, uint64_t bytecode_size,
                                  uint32_t *out_contains_dxil);
-int m12core_format_shader_cache_paths(const char *cache_root, uint64_t shader_hash,
+int m12core_format_shader_cache_paths(const char *cache_root,
+                                      uint64_t shader_hash,
                                       M12CoreShaderCachePaths *out_paths);
 int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
                                uint32_t force_source_compile,
                                M12CoreShaderCacheLookup *out_lookup);
-int m12core_parse_shader_reflection(const char *reflection_text, uint64_t reflection_text_size,
-                                    M12CoreShaderReflectionSummary *out_summary);
+int m12core_parse_shader_reflection(
+    const char *reflection_text, uint64_t reflection_text_size,
+    M12CoreShaderReflectionSummary *out_summary);
 int m12core_lower_dxil_to_msl(const M12CoreDXILToMSLDesc *desc,
-                              char *out_source,
-                              uint64_t out_source_capacity,
+                              char *out_source, uint64_t out_source_capacity,
                               M12CoreDXILToMSLResult *out_result);
 int m12core_create_shader_function(const M12CoreShaderFunctionDesc *desc,
                                    M12CoreShaderFunctionResult *out_result);
@@ -707,8 +756,8 @@ int m12core_reflect_sm50_shader(const void *bytecode, uint64_t bytecode_size,
                                 M12CoreSM50ReflectionResult *out_result);
 int m12core_make_pipeline_cache_key(const M12CorePipelineCacheKeyInput *input,
                                     M12CorePipelineCacheKey *out_key);
-int m12core_make_pipeline_cache_key_from_fields(const M12CorePipelineKeyFields *input,
-                                                M12CorePipelineCacheKey *out_key);
+int m12core_make_pipeline_cache_key_from_fields(
+    const M12CorePipelineKeyFields *input, M12CorePipelineCacheKey *out_key);
 int m12core_lookup_pipeline_cache(const M12CorePipelineCacheQuery *query,
                                   M12CorePipelineCacheResult *out_result);
 int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
@@ -727,6 +776,8 @@ int m12core_build_draw_plan(const M12CoreDrawPlanDesc *desc,
                             M12CoreDrawPlanSummary *out_summary);
 int m12core_build_present_plan(const M12CorePresentPlanDesc *desc,
                                M12CorePresentPlanSummary *out_summary);
+int m12core_build_replay_plan(const M12CoreReplayPlanDesc *desc,
+                              M12CoreReplayPlanSummary *out_summary);
 
 #ifdef __cplusplus
 }
