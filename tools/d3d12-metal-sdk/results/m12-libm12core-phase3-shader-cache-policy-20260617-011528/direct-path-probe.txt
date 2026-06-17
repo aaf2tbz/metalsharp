@@ -1,0 +1,1 @@
+abi=1 cap=1024 base=/tmp/m12-cache/000000001234abcd dxbc=/tmp/m12-cache/000000001234abcd.dxbc metallib=/tmp/m12-cache/000000001234abcd.metallib report=/tmp/m12-cache/000000001234abcd.dxil_report.txt

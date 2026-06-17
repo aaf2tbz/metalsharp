@@ -412,6 +412,14 @@ struct unixcall_m12core_hash_shader_bytecode {
   M12CoreShaderBytecodeInfo ret_info;
 };
 
+struct unixcall_m12core_format_shader_cache_paths {
+  struct WMTConstMemoryPointer cache_root;
+  uint64_t shader_hash;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreShaderCachePaths ret_paths;
+};
+
 #pragma pack(pop)
 
 #endif

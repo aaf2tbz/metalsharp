@@ -92,6 +92,21 @@ typedef struct M12CoreShaderBytecodeInfo {
   uint32_t reserved;
 } M12CoreShaderBytecodeInfo;
 
+#define M12CORE_SHADER_CACHE_PATH_CAPACITY 1024u
+
+typedef struct M12CoreShaderCachePaths {
+  uint32_t abi_version;
+  uint32_t path_capacity;
+  uint64_t shader_hash;
+  char cache_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char dxbc_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char metallib_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char reflection_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char module_summary_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char dxil_report_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char metallib_error_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+} M12CoreShaderCachePaths;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -121,6 +136,8 @@ int m12core_hash_shader_bytecode(const void *bytecode, uint64_t bytecode_size,
                                  uint32_t stage, M12CoreShaderBytecodeInfo *out_info);
 int m12core_shader_contains_dxil(const void *bytecode, uint64_t bytecode_size,
                                  uint32_t *out_contains_dxil);
+int m12core_format_shader_cache_paths(const char *cache_root, uint64_t shader_hash,
+                                      M12CoreShaderCachePaths *out_paths);
 
 #ifdef __cplusplus
 }

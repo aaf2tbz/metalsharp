@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 /*
@@ -82,6 +83,24 @@ uint32_t legacyShaderTypeValue(uint32_t stage) {
   default:
     return 0;
   }
+}
+
+void copyRoot(char *out, size_t out_size, const char *cache_root) {
+  const char *root = (cache_root && cache_root[0]) ? cache_root : "/tmp/dxmt_shader_cache";
+  std::snprintf(out, out_size, "%s", root);
+  out[out_size - 1] = '\0';
+  while (std::strlen(out) > 1) {
+    size_t len = std::strlen(out);
+    if (out[len - 1] != '/' && out[len - 1] != '\\')
+      break;
+    out[len - 1] = '\0';
+  }
+}
+
+void formatCachePath(char *out, size_t out_size, const char *root,
+                     const char *suffix) {
+  std::snprintf(out, out_size, "%s/%s", root, suffix);
+  out[out_size - 1] = '\0';
 }
 
 uint64_t hashShaderBytecode(const void *bytecode, uint64_t bytecode_size,
@@ -165,5 +184,41 @@ extern "C" int m12core_shader_contains_dxil(const void *bytecode,
   if (!out_contains_dxil)
     return 1;
   *out_contains_dxil = shaderContainsDxil(bytecode, bytecode_size) ? 1u : 0u;
+  return 0;
+}
+
+extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
+                                                 uint64_t shader_hash,
+                                                 M12CoreShaderCachePaths *out_paths) {
+  if (!out_paths)
+    return 1;
+
+  /* Phase 3.1: native ownership of shader cache lookup policy.
+   * This is intentionally limited to deterministic path/key formatting.  The
+   * PE side still performs file IO and Metal function creation, so a bad policy
+   * change remains easy to revert without touching compiler ownership.
+   */
+  char root[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char suffix[128];
+  copyRoot(root, sizeof(root), cache_root);
+
+  out_paths->abi_version = M12CORE_ABI_VERSION;
+  out_paths->path_capacity = M12CORE_SHADER_CACHE_PATH_CAPACITY;
+  out_paths->shader_hash = shader_hash;
+  std::snprintf(suffix, sizeof(suffix), "%016llx", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->cache_path, sizeof(out_paths->cache_path), root, suffix);
+
+  std::snprintf(suffix, sizeof(suffix), "%016llx.dxbc", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->dxbc_path, sizeof(out_paths->dxbc_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.metallib", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->metallib_path, sizeof(out_paths->metallib_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.json", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->reflection_path, sizeof(out_paths->reflection_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.module.txt", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->module_summary_path, sizeof(out_paths->module_summary_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.dxil_report.txt", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->dxil_report_path, sizeof(out_paths->dxil_report_path), root, suffix);
+  std::snprintf(suffix, sizeof(suffix), "%016llx.metallib.err.txt", (unsigned long long)shader_hash);
+  formatCachePath(out_paths->metallib_error_path, sizeof(out_paths->metallib_error_path), root, suffix);
   return 0;
 }
