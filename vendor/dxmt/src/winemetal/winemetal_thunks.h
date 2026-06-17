@@ -569,6 +569,21 @@ struct unixcall_m12core_lookup_root_binding {
   M12CoreRootBindingLookupResult ret_result;
 };
 
+struct unixcall_m12core_summarize_prewarm_pack {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint64_t appid;
+  uint64_t profile_key;
+  uint64_t source_pack_key;
+  struct WMTConstMemoryPointer pipelines;
+  uint32_t pipeline_count;
+  uint32_t reserved0;
+  struct WMTConstMemoryPointer stages;
+  uint32_t stage_count;
+  uint32_t ret_success;
+  M12CorePrewarmPackSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

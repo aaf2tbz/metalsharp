@@ -107,6 +107,8 @@ WINEMETAL_API bool WMTM12CoreBuildRootBindingPlan(const M12CoreRootBindingPlanDe
                                                    M12CoreRootBindingPlanSummary *out_summary);
 WINEMETAL_API bool WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc,
                                                 M12CoreRootBindingLookupResult *out_result);
+WINEMETAL_API bool WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc,
+                                                   M12CorePrewarmPackSummary *out_summary);
 
 enum WMTStringEncoding : uint64_t {
   WMTASCIIStringEncoding = 1,

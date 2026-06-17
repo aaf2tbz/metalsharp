@@ -59,6 +59,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 148: return "WMTM12CoreSummarizeRootSignature";
   case 149: return "WMTM12CoreBuildRootBindingPlan";
   case 150: return "WMTM12CoreLookupRootBinding";
+  case 151: return "WMTM12CoreSummarizePrewarmPack";
   default: return "unknown";
   }
 }
@@ -545,6 +546,33 @@ WMTM12CoreLookupRootBinding(const M12CoreRootBindingLookupDesc *desc,
     return false;
 
   *out_result = params.ret_result;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreSummarizePrewarmPack(const M12CorePrewarmPackDesc *desc,
+                               M12CorePrewarmPackSummary *out_summary) {
+  struct unixcall_m12core_summarize_prewarm_pack params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Phase 6 prewarm-pack bridge: pass compact, profile-gated metadata only.
+   * Raw D3DMetal caches, metallibs, and DXBC blobs must not cross this seam.
+   */
+  params.abi_version = desc->abi_version;
+  params.flags = desc->flags;
+  params.appid = desc->appid;
+  params.profile_key = desc->profile_key;
+  params.source_pack_key = desc->source_pack_key;
+  params.pipeline_count = desc->pipeline_count;
+  WMT_MEMPTR_SET(params.pipelines, desc->pipelines);
+  params.stage_count = desc->stage_count;
+  WMT_MEMPTR_SET(params.stages, desc->stages);
+  if (!winemetal_unix_call_ok(151, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
   return true;
 }
 
