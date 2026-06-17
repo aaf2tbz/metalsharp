@@ -229,6 +229,37 @@ extern "C" int m12core_format_shader_cache_paths(const char *cache_root,
   return 0;
 }
 
+void parseReflectionText(const char *text, M12CoreShaderReflectionSummary *out_summary) {
+  if (!text || !out_summary)
+    return;
+
+  const char *entry = std::strstr(text, "\"EntryPoint\"");
+  if (entry) {
+    const char *q1 = std::strchr(entry + 13, '"');
+    const char *q2 = q1 ? std::strchr(q1 + 1, '"') : nullptr;
+    if (q1 && q2 && q2 > q1 + 1) {
+      size_t len = (size_t)(q2 - q1 - 1);
+      if (len >= M12CORE_SHADER_ENTRY_POINT_CAPACITY)
+        len = M12CORE_SHADER_ENTRY_POINT_CAPACITY - 1;
+      std::memcpy(out_summary->entry_point, q1 + 1, len);
+      out_summary->entry_point[len] = 0;
+      out_summary->has_entry_point = 1;
+    }
+  }
+
+  const char *tg = std::strstr(text, "\"tg_size\"");
+  if (tg) {
+    unsigned x = 1, y = 1, z = 1;
+    if (std::sscanf(tg, "\"tg_size\": [%u, %u, %u]", &x, &y, &z) == 3 ||
+        std::sscanf(tg, "\"tg_size\":[%u,%u,%u]", &x, &y, &z) == 3) {
+      out_summary->threadgroup_size[0] = x;
+      out_summary->threadgroup_size[1] = y;
+      out_summary->threadgroup_size[2] = z;
+      out_summary->has_threadgroup_size = 1;
+    }
+  }
+}
+
 extern "C" int m12core_probe_shader_cache(const char *cache_root,
                                           uint64_t shader_hash,
                                           uint32_t force_source_compile,
@@ -248,5 +279,38 @@ extern "C" int m12core_probe_shader_cache(const char *cache_root,
   out_lookup->metallib_exists = regularFileExists(out_lookup->paths.metallib_path) ? 1u : 0u;
   out_lookup->metallib_available =
       (!force_source_compile && out_lookup->metallib_exists) ? 1u : 0u;
+  return 0;
+}
+
+extern "C" int m12core_parse_shader_reflection(const char *reflection_text,
+                                               uint64_t reflection_text_size,
+                                               M12CoreShaderReflectionSummary *out_summary) {
+  if (!out_summary)
+    return 1;
+
+  /* Phase 3.3: native reflection summary parsing.  This intentionally parses
+   * the small cache-side JSON summary only; SM50/airconv reflection objects and
+   * argument binding arrays stay on the compatibility path until their lifetime
+   * model is migrated explicitly.
+   */
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->has_entry_point = 0;
+  out_summary->has_threadgroup_size = 0;
+  out_summary->reserved = 0;
+  out_summary->entry_point[0] = 0;
+  out_summary->threadgroup_size[0] = 1;
+  out_summary->threadgroup_size[1] = 1;
+  out_summary->threadgroup_size[2] = 1;
+
+  if (!reflection_text || reflection_text_size == 0)
+    return 0;
+
+  char local[4096];
+  uint64_t copy_size = reflection_text_size;
+  if (copy_size >= sizeof(local))
+    copy_size = sizeof(local) - 1;
+  std::memcpy(local, reflection_text, (size_t)copy_size);
+  local[copy_size] = 0;
+  parseReflectionText(local, out_summary);
   return 0;
 }

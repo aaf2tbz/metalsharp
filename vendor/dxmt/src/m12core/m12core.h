@@ -115,6 +115,17 @@ typedef struct M12CoreShaderCacheLookup {
   M12CoreShaderCachePaths paths;
 } M12CoreShaderCacheLookup;
 
+#define M12CORE_SHADER_ENTRY_POINT_CAPACITY 256u
+
+typedef struct M12CoreShaderReflectionSummary {
+  uint32_t abi_version;
+  uint32_t has_entry_point;
+  uint32_t has_threadgroup_size;
+  uint32_t reserved;
+  char entry_point[M12CORE_SHADER_ENTRY_POINT_CAPACITY];
+  uint32_t threadgroup_size[3];
+} M12CoreShaderReflectionSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -149,6 +160,8 @@ int m12core_format_shader_cache_paths(const char *cache_root, uint64_t shader_ha
 int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
                                uint32_t force_source_compile,
                                M12CoreShaderCacheLookup *out_lookup);
+int m12core_parse_shader_reflection(const char *reflection_text, uint64_t reflection_text_size,
+                                    M12CoreShaderReflectionSummary *out_summary);
 
 #ifdef __cplusplus
 }

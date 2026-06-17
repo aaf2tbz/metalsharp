@@ -1407,19 +1407,30 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
             if (!err.handle) {
               char actual_entry[256] = {};
               char rbuf[4096] = {};
+              size_t rbuf_len = 0;
+              M12CoreShaderReflectionSummary core_reflection = {};
+              bool core_reflection_valid = false;
               FILE *rf = fopen(reflection_path, "r");
               if (rf) {
-                fread(rbuf, 1, sizeof(rbuf)-1, rf);
+                rbuf_len = fread(rbuf, 1, sizeof(rbuf)-1, rf);
                 fclose(rf);
-                char *ep = strstr(rbuf, "\"EntryPoint\"");
-                if (ep) {
-                  char *q1 = strchr(ep + 13, '"');
-                  char *q2 = q1 ? strchr(q1+1, '"') : nullptr;
-                  if (q1 && q2) {
-                    size_t len = q2 - q1 - 1;
-                    if (len < sizeof(actual_entry)) {
-                      memcpy(actual_entry, q1+1, len);
-                      actual_entry[len] = 0;
+                rbuf[rbuf_len] = 0;
+                core_reflection_valid = WMTM12CoreParseShaderReflection(
+                    rbuf, rbuf_len, &core_reflection) &&
+                    core_reflection.abi_version == M12CORE_ABI_VERSION;
+                if (core_reflection_valid && core_reflection.has_entry_point) {
+                  snprintf(actual_entry, sizeof(actual_entry), "%s", core_reflection.entry_point);
+                } else {
+                  char *ep = strstr(rbuf, "\"EntryPoint\"");
+                  if (ep) {
+                    char *q1 = strchr(ep + 13, '"');
+                    char *q2 = q1 ? strchr(q1+1, '"') : nullptr;
+                    if (q1 && q2) {
+                      size_t len = q2 - q1 - 1;
+                      if (len < sizeof(actual_entry)) {
+                        memcpy(actual_entry, q1+1, len);
+                        actual_entry[len] = 0;
+                      }
                     }
                   }
                 }
@@ -1446,15 +1457,24 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                 }
                 if (type == ShaderType::Vertex)
                   m_vs_uses_stage_in = false;
-                char *tg = strstr(rbuf, "\"tg_size\"");
-                if (tg) {
-                  int tw=1,th=1,td=1;
-                  if (sscanf(tg, "\"tg_size\": [%d, %d, %d]", &tw, &th, &td) == 3 ||
-                      sscanf(tg, "\"tg_size\":[%d,%d,%d]", &tw, &th, &td) == 3) {
-                    m_threadgroup_size.width = tw;
-                    m_threadgroup_size.height = th;
-                    m_threadgroup_size.depth = td;
-                    PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw, th, td);
+                if (core_reflection_valid && core_reflection.has_threadgroup_size) {
+                  m_threadgroup_size.width = core_reflection.threadgroup_size[0];
+                  m_threadgroup_size.height = core_reflection.threadgroup_size[1];
+                  m_threadgroup_size.depth = core_reflection.threadgroup_size[2];
+                  PSTRACE("  threadgroup_size from libm12core reflection: %ux%ux%u",
+                          core_reflection.threadgroup_size[0], core_reflection.threadgroup_size[1],
+                          core_reflection.threadgroup_size[2]);
+                } else {
+                  char *tg = strstr(rbuf, "\"tg_size\"");
+                  if (tg) {
+                    int tw=1,th=1,td=1;
+                    if (sscanf(tg, "\"tg_size\": [%d, %d, %d]", &tw, &th, &td) == 3 ||
+                        sscanf(tg, "\"tg_size\":[%d,%d,%d]", &tw, &th, &td) == 3) {
+                      m_threadgroup_size.width = tw;
+                      m_threadgroup_size.height = th;
+                      m_threadgroup_size.depth = td;
+                      PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw, th, td);
+                    }
                   }
                 }
                 return true;

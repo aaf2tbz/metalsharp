@@ -428,6 +428,14 @@ struct unixcall_m12core_probe_shader_cache {
   M12CoreShaderCacheLookup ret_lookup;
 };
 
+struct unixcall_m12core_parse_shader_reflection {
+  struct WMTConstMemoryPointer reflection_text;
+  uint64_t reflection_text_size;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreShaderReflectionSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif
