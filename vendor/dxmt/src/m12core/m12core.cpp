@@ -145,7 +145,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase7 draw-planning abi=1";
+  return "libm12core phase9 present-planning abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1075,5 +1075,80 @@ extern "C" int m12core_build_draw_plan(
   out_summary->render_pass_attachment_count = attachments;
   out_summary->descriptor_pressure_score = descriptor_pressure;
   out_summary->draw_plan_key = key;
+  return 0;
+}
+
+extern "C" int m12core_build_present_plan(
+    const M12CorePresentPlanDesc *desc,
+    M12CorePresentPlanSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  /* Phase 9 present-planning seam.  This keeps actual drawable acquisition,
+   * blit/render encoder work, synchronization, and command-buffer commits in
+   * the existing PE/DXMT path while libm12core owns compact present-path
+   * classification/keying.  Only scalar identifiers and counts cross the ABI.
+   */
+  uint64_t key = 0x4d31325052455350ull; // "M12PRESP" marker.
+  pipelineHashCombine(key, desc->flags);
+  pipelineHashCombine(key, desc->width);
+  pipelineHashCombine(key, desc->height);
+  pipelineHashCombine(key, desc->format);
+  pipelineHashCombine(key, desc->buffer_index);
+  pipelineHashCombine(key, desc->buffer_count);
+  pipelineHashCombine(key, desc->sync_interval);
+  pipelineHashCombine(key, desc->present_flags);
+  pipelineHashCombine(key, desc->work_classification);
+  pipelineHashCombine(key, desc->command_buffer_status);
+  pipelineHashCombine(key, desc->present_count);
+  pipelineHashCombine(key, desc->source_texture_key);
+  pipelineHashCombine(key, desc->drawable_texture_key);
+  pipelineHashCombine(key, desc->queue_serial);
+  pipelineHashCombine(key, desc->command_count);
+  pipelineHashCombine(key, desc->draw_count);
+  pipelineHashCombine(key, desc->dispatch_count);
+  pipelineHashCombine(key, desc->clear_count);
+  pipelineHashCombine(key, desc->wait_seq);
+
+  uint32_t validation_flags = 0;
+  if (!(desc->flags & M12CORE_PRESENT_PLAN_HAS_BACKBUFFER))
+    validation_flags |= 1u << 0;
+  if (!(desc->flags & M12CORE_PRESENT_PLAN_HAS_SOURCE_TEXTURE) ||
+      !desc->source_texture_key)
+    validation_flags |= 1u << 1;
+  if (!desc->width || !desc->height)
+    validation_flags |= 1u << 2;
+  if ((desc->flags & M12CORE_PRESENT_PLAN_USES_RAW_BLIT) &&
+      !(desc->flags & M12CORE_PRESENT_PLAN_HAS_DRAWABLE))
+    validation_flags |= 1u << 3;
+
+  uint32_t path = 0;
+  if (desc->flags & M12CORE_PRESENT_PLAN_USES_PRESENTER)
+    path = 1;
+  else if (desc->flags & M12CORE_PRESENT_PLAN_USES_RAW_BLIT)
+    path = 2;
+
+  uint64_t scheduled = desc->command_count + desc->draw_count +
+                       desc->dispatch_count + desc->clear_count;
+  uint32_t hazard_score = 0;
+  if (desc->flags & M12CORE_PRESENT_PLAN_WAITED_FOR_RENDER)
+    hazard_score++;
+  if (desc->draw_count || desc->dispatch_count)
+    hazard_score++;
+  if (desc->clear_count && !desc->draw_count)
+    hazard_score++;
+  if (desc->flags & M12CORE_PRESENT_PLAN_LIVE_PRESENT)
+    hazard_score += 2;
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_PRESENT_PLAN_STATUS_OK;
+  out_summary->flags = desc->flags;
+  out_summary->validation_flags = validation_flags;
+  out_summary->present_path = path;
+  out_summary->work_classification = desc->work_classification;
+  out_summary->hazard_score = hazard_score;
+  out_summary->present_plan_key = key;
+  out_summary->scheduled_work_count = scheduled;
   return 0;
 }

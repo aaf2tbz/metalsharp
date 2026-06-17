@@ -70,6 +70,7 @@ enum MetalSharpM12TranslationLayerFeatureFlags : UINT64 {
   MetalSharpM12TranslationLayerFeatureRootBindingPlans = 1ull << 3,
   MetalSharpM12TranslationLayerFeaturePrewarmPacks = 1ull << 4,
   MetalSharpM12TranslationLayerFeatureDrawPlanning = 1ull << 5,
+  MetalSharpM12TranslationLayerFeaturePresentPlanning = 1ull << 6,
 };
 
 struct MetalSharpM12TranslationLayerInfo {

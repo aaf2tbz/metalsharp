@@ -20,7 +20,7 @@ extern "C" {
 
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u  /* "M12C" marker. */
-#define M12CORE_BUILD_ID_HIGH 0x0000000du /* Phase-7 draw planning foundation. */
+#define M12CORE_BUILD_ID_HIGH 0x0000000eu /* Phase-9 present planning foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -40,6 +40,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT = 1u << 10,
   M12CORE_FEATURE_PREWARM_PACKS = 1u << 11,
   M12CORE_FEATURE_DRAW_PLANNING = 1u << 12,
+  M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13,
   M12CORE_FEATURE_ALL = M12CORE_FEATURE_INERT_LOADER |
                         M12CORE_FEATURE_COUNTERS |
                         M12CORE_FEATURE_SHADER_INTROSPECTION |
@@ -52,7 +53,8 @@ enum M12CoreFeatureFlags {
                         M12CORE_FEATURE_ROOT_BINDING_PLAN |
                         M12CORE_FEATURE_ROOT_ARGUMENT_LAYOUT |
                         M12CORE_FEATURE_PREWARM_PACKS |
-                        M12CORE_FEATURE_DRAW_PLANNING,
+                        M12CORE_FEATURE_DRAW_PLANNING |
+                        M12CORE_FEATURE_PRESENT_PLANNING,
 };
 
 typedef struct M12CoreVersion {
@@ -560,6 +562,59 @@ typedef struct M12CoreDrawPlanSummary {
   uint64_t draw_plan_key;
 } M12CoreDrawPlanSummary;
 
+typedef enum M12CorePresentPlanStatus {
+  M12CORE_PRESENT_PLAN_STATUS_OK = 0,
+  M12CORE_PRESENT_PLAN_STATUS_INVALID = 1,
+} M12CorePresentPlanStatus;
+
+typedef enum M12CorePresentPlanFlags {
+  M12CORE_PRESENT_PLAN_HAS_BACKBUFFER = 1u << 0,
+  M12CORE_PRESENT_PLAN_HAS_SOURCE_TEXTURE = 1u << 1,
+  M12CORE_PRESENT_PLAN_HAS_DRAWABLE = 1u << 2,
+  M12CORE_PRESENT_PLAN_USES_PRESENTER = 1u << 3,
+  M12CORE_PRESENT_PLAN_USES_RAW_BLIT = 1u << 4,
+  M12CORE_PRESENT_PLAN_WAITED_FOR_RENDER = 1u << 5,
+  M12CORE_PRESENT_PLAN_LIVE_PRESENT = 1u << 6,
+  M12CORE_PRESENT_PLAN_READBACK_REQUESTED = 1u << 7,
+} M12CorePresentPlanFlags;
+
+typedef struct M12CorePresentPlanDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t width;
+  uint32_t height;
+  uint32_t format;
+  uint32_t buffer_index;
+  uint32_t buffer_count;
+  uint32_t sync_interval;
+  uint32_t present_flags;
+  uint32_t work_classification;
+  uint32_t command_buffer_status;
+  uint32_t reserved0;
+  uint64_t present_count;
+  uint64_t source_texture_key;
+  uint64_t drawable_texture_key;
+  uint64_t queue_serial;
+  uint64_t command_count;
+  uint64_t draw_count;
+  uint64_t dispatch_count;
+  uint64_t clear_count;
+  uint64_t wait_seq;
+} M12CorePresentPlanDesc;
+
+typedef struct M12CorePresentPlanSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t validation_flags;
+  uint32_t present_path;
+  uint32_t work_classification;
+  uint32_t hazard_score;
+  uint32_t reserved;
+  uint64_t present_plan_key;
+  uint64_t scheduled_work_count;
+} M12CorePresentPlanSummary;
+
 typedef enum M12CoreSM50ReflectionStatus {
   M12CORE_SM50_REFLECTION_STATUS_OK = 0,
   M12CORE_SM50_REFLECTION_STATUS_INVALID = 1,
@@ -670,6 +725,8 @@ int m12core_summarize_prewarm_pack(const M12CorePrewarmPackDesc *desc,
                                    M12CorePrewarmPackSummary *out_summary);
 int m12core_build_draw_plan(const M12CoreDrawPlanDesc *desc,
                             M12CoreDrawPlanSummary *out_summary);
+int m12core_build_present_plan(const M12CorePresentPlanDesc *desc,
+                               M12CorePresentPlanSummary *out_summary);
 
 #ifdef __cplusplus
 }

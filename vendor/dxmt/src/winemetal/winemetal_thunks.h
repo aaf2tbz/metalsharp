@@ -591,6 +591,13 @@ struct unixcall_m12core_build_draw_plan {
   M12CoreDrawPlanSummary ret_summary;
 };
 
+struct unixcall_m12core_build_present_plan {
+  M12CorePresentPlanDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CorePresentPlanSummary ret_summary;
+};
+
 #pragma pack(pop)
 
 #endif

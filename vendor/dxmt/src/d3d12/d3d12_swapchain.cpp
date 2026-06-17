@@ -13,6 +13,7 @@
 #define SCTRACE(fmt, ...) DXMTD3D12Trace("SwapChain", fmt, ##__VA_ARGS__)
 
 static uint64_t g_sc_enc_id = 0;
+static uint32_t g_present_plan_logs = 0;
 
 namespace dxmt {
 
@@ -157,6 +158,119 @@ SwapchainWorkClassification(const D3D12SwapchainBackbufferWork &work) {
   if (work.graphics_setup)
     return "graphics_setup_no_draw";
   return "no_draw";
+}
+
+static uint32_t
+SwapchainWorkClassificationId(const D3D12SwapchainBackbufferWork &work) {
+  if (!work.serial)
+    return 0;
+  if (work.draw_count || work.indexed_draw_count || work.indirect_count)
+    return 1;
+  if (work.clear_rtv_count && work.dispatch_count)
+    return 2;
+  if (work.clear_rtv_count)
+    return 3;
+  if (work.dispatch_count)
+    return 4;
+  if (work.graphics_setup)
+    return 5;
+  return 6;
+}
+
+static bool TakePresentLogBudget(uint32_t limit) {
+  return __atomic_add_fetch(&g_present_plan_logs, 1, __ATOMIC_RELAXED) <= limit;
+}
+
+static uint64_t SyntheticPresentTextureKey(uint32_t width, uint32_t height,
+                                           DXGI_FORMAT format,
+                                           uint32_t buffer_index,
+                                           uint64_t present_count,
+                                           uint32_t salt) {
+  uint64_t key = 0x4d31325052544558ull; // "M12PRTEX" marker.
+  key ^= uint64_t(width) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  key ^= uint64_t(height) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  key ^= uint64_t(format) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  key ^= uint64_t(buffer_index) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  key ^= present_count + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  key ^= uint64_t(salt) + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+  return key;
+}
+
+static void LogM12CorePresentPlan(
+    uint64_t present_count, uint32_t sync_interval, uint32_t present_flags,
+    uint32_t buffer_index, uint32_t buffer_count, uint32_t width,
+    uint32_t height, DXGI_FORMAT format, bool has_backbuffer,
+    bool has_source_texture, bool has_drawable, bool uses_presenter,
+    bool uses_raw_blit, bool waited_for_render, bool live_present,
+    bool readback_requested, uint64_t wait_seq,
+    const D3D12SwapchainBackbufferWork &work) {
+  if (!TakePresentLogBudget(128))
+    return;
+
+  M12CorePresentPlanDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  if (has_backbuffer)
+    desc.flags |= M12CORE_PRESENT_PLAN_HAS_BACKBUFFER;
+  if (has_source_texture)
+    desc.flags |= M12CORE_PRESENT_PLAN_HAS_SOURCE_TEXTURE;
+  if (has_drawable)
+    desc.flags |= M12CORE_PRESENT_PLAN_HAS_DRAWABLE;
+  if (uses_presenter)
+    desc.flags |= M12CORE_PRESENT_PLAN_USES_PRESENTER;
+  if (uses_raw_blit)
+    desc.flags |= M12CORE_PRESENT_PLAN_USES_RAW_BLIT;
+  if (waited_for_render)
+    desc.flags |= M12CORE_PRESENT_PLAN_WAITED_FOR_RENDER;
+  if (live_present)
+    desc.flags |= M12CORE_PRESENT_PLAN_LIVE_PRESENT;
+  if (readback_requested)
+    desc.flags |= M12CORE_PRESENT_PLAN_READBACK_REQUESTED;
+  desc.width = width;
+  desc.height = height;
+  desc.format = (uint32_t)format;
+  desc.buffer_index = buffer_index;
+  desc.buffer_count = buffer_count;
+  desc.sync_interval = sync_interval;
+  desc.present_flags = present_flags;
+  desc.work_classification = SwapchainWorkClassificationId(work);
+  desc.command_buffer_status = work.command_buffer_status;
+  desc.present_count = present_count;
+  desc.source_texture_key = has_source_texture
+                                ? SyntheticPresentTextureKey(width, height,
+                                                             format, buffer_index,
+                                                             present_count, 1)
+                                : 0;
+  desc.drawable_texture_key = has_drawable
+                                  ? SyntheticPresentTextureKey(width, height,
+                                                               format, buffer_index,
+                                                               present_count, 2)
+                                  : 0;
+  desc.queue_serial = work.serial;
+  desc.command_count = work.command_count;
+  desc.draw_count = work.draw_count + work.indexed_draw_count + work.indirect_count;
+  desc.dispatch_count = work.dispatch_count;
+  desc.clear_count = work.clear_rtv_count + work.clear_dsv_count + work.clear_uav_count;
+  desc.wait_seq = wait_seq;
+
+  M12CorePresentPlanSummary summary = {};
+  if (!WMTM12CoreBuildPresentPlan(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_PRESENT_PLAN_STATUS_OK)
+    return;
+
+  Logger::info(str::format(
+      "M12_PRESENT_PLAN count=", present_count,
+      " key=0x", std::hex, summary.present_plan_key,
+      " flags=0x", desc.flags,
+      " validation=0x", summary.validation_flags,
+      std::dec,
+      " path=", summary.present_path,
+      " work=", summary.work_classification,
+      " scheduled=", summary.scheduled_work_count,
+      " hazard=", summary.hazard_score,
+      " size=", width, "x", height,
+      " fmt=", (uint32_t)format,
+      " idx=", buffer_index));
 }
 
 static uint32_t AlignTo(uint32_t value, uint32_t alignment) {
@@ -836,9 +950,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
   auto *res =
       static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
   auto src_texture = res->GetMTLTexture();
+  auto work = res->GetSwapchainQueueWork();
   if (m_present_count <= 20 ||
       (m_present_count % PresentLogInterval()) == 0) {
-    auto work = res->GetSwapchainQueueWork();
     Logger::info(str::format(
         "M12 present entry count=", m_present_count, " sync=", sync_interval,
         " flags=0x", std::hex, flags, std::dec, " idx=", m_current_buffer,
@@ -869,6 +983,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
   }
 
   auto &dxmt_queue = m_device->GetDXMTDevice().queue();
+  bool present_waited_for_render = false;
   uint64_t present_wait_seq = dxmt_queue.CurrentSeqId();
   if (present_wait_seq > 0)
     present_wait_seq -= 1;
@@ -887,6 +1002,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
       auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                          std::chrono::steady_clock::now() - wait_begin)
                          .count();
+      present_waited_for_render = true;
       if (wait_ms >= DXMTD3D12TimingMinMs()) {
         SCTRACE("Present wait_cpu_fence_ms=%lld seq=%llu buffer=%u",
                 (long long)wait_ms, (unsigned long long)present_wait_seq,
@@ -927,6 +1043,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
       return DXGI_STATUS_OCCLUDED;
     }
 
+    LogM12CorePresentPlan(
+        m_present_count, sync_interval, flags, m_current_buffer,
+        m_desc.BufferCount, m_desc.Width, m_desc.Height, m_desc.Format, true,
+        src_texture.handle != 0, drawable.handle != 0, true, false,
+        present_waited_for_render, LivePresentEnabled(),
+        ShouldReadbackPresent(m_present_count), present_wait_seq, work);
+
     SCTRACE("Present presenter: idx=%u res=%p src=%llu drawable=%llu w=%u h=%u",
             m_current_buffer, (void *)res,
             (unsigned long long)src_texture.handle,
@@ -960,6 +1083,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     }
 
     auto dst_texture = drawable.texture();
+
+    LogM12CorePresentPlan(
+        m_present_count, sync_interval, flags, m_current_buffer,
+        m_desc.BufferCount, m_desc.Width, m_desc.Height, m_desc.Format, true,
+        src_texture.handle != 0, drawable.handle != 0, false, force_raw_blit,
+        present_waited_for_render, LivePresentEnabled(),
+        ShouldReadbackPresent(m_present_count), present_wait_seq, work);
 
     SCTRACE(
         "Present blit: idx=%u res=%p src=%llu dst=%llu w=%u h=%u",

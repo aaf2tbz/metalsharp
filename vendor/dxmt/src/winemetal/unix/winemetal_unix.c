@@ -110,6 +110,8 @@ typedef int (*PFN_m12core_summarize_prewarm_pack)(const M12CorePrewarmPackDesc *
                                                   M12CorePrewarmPackSummary *out_summary);
 typedef int (*PFN_m12core_build_draw_plan)(const M12CoreDrawPlanDesc *desc,
                                            M12CoreDrawPlanSummary *out_summary);
+typedef int (*PFN_m12core_build_present_plan)(const M12CorePresentPlanDesc *desc,
+                                              M12CorePresentPlanSummary *out_summary);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -134,6 +136,7 @@ static PFN_m12core_build_root_binding_plan p_m12core_build_root_binding_plan;
 static PFN_m12core_lookup_root_binding p_m12core_lookup_root_binding;
 static PFN_m12core_summarize_prewarm_pack p_m12core_summarize_prewarm_pack;
 static PFN_m12core_build_draw_plan p_m12core_build_draw_plan;
+static PFN_m12core_build_present_plan p_m12core_build_present_plan;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -236,6 +239,8 @@ m12core_try_load(void) {
       (PFN_m12core_summarize_prewarm_pack)dlsym(m12core_handle, "m12core_summarize_prewarm_pack");
   p_m12core_build_draw_plan =
       (PFN_m12core_build_draw_plan)dlsym(m12core_handle, "m12core_build_draw_plan");
+  p_m12core_build_present_plan =
+      (PFN_m12core_build_present_plan)dlsym(m12core_handle, "m12core_build_present_plan");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -690,6 +695,17 @@ _WMTM12CoreBuildDrawPlan(void *obj) {
 
   params->ret_success =
       p_m12core_build_draw_plan(&params->desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreBuildPresentPlan(void *obj) {
+  struct unixcall_m12core_build_present_plan *params = obj;
+  if (!params || !p_m12core_build_present_plan)
+    return STATUS_SUCCESS;
+
+  params->ret_success =
+      p_m12core_build_present_plan(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4372,6 +4388,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreLookupRootBinding,
     &_WMTM12CoreSummarizePrewarmPack,
     &_WMTM12CoreBuildDrawPlan,
+    &_WMTM12CoreBuildPresentPlan,
 };
 
 #ifndef DXMT_NATIVE
@@ -4529,5 +4546,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreLookupRootBinding,
     &_WMTM12CoreSummarizePrewarmPack,
     &_WMTM12CoreBuildDrawPlan,
+    &_WMTM12CoreBuildPresentPlan,
 };
 #endif

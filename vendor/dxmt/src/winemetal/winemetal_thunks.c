@@ -61,6 +61,7 @@ winemetal_unix_call_name(unsigned int code) {
   case 150: return "WMTM12CoreLookupRootBinding";
   case 151: return "WMTM12CoreSummarizePrewarmPack";
   case 152: return "WMTM12CoreBuildDrawPlan";
+  case 153: return "WMTM12CoreBuildPresentPlan";
   default: return "unknown";
   }
 }
@@ -591,6 +592,26 @@ WMTM12CoreBuildDrawPlan(const M12CoreDrawPlanDesc *desc,
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(152, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreBuildPresentPlan(const M12CorePresentPlanDesc *desc,
+                           M12CorePresentPlanSummary *out_summary) {
+  struct unixcall_m12core_build_present_plan params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* Phase 9 present-planning bridge: pass only scalar present-path metadata.
+   * Drawable acquisition, command-buffer commits, and encoder execution remain
+   * in the existing PE/DXMT path until full replay/presenter ownership moves.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(153, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;
