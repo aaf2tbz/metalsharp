@@ -1,0 +1,103 @@
+{
+  "schema": "metalsharp.d3dmetal-bytecode-phase-summary.v1",
+  "game": "elden-ring",
+  "mode": "d3dmetal-only",
+  "stage": "airconv",
+  "range": "150-end",
+  "selected": 503,
+  "ok": 503,
+  "airconv_failures": 0,
+  "metal_failures": 0,
+  "failure_count": 0,
+  "note": "Unsupported DXIL stages are excluded by the validator; see d3dmetal-bytecode-extract summary for unique unsupported-stage counts.",
+  "batches": [
+    {
+      "dir": "batch-150-199",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-200-249",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-250-299",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-300-349",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-350-399",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-400-449",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-450-499",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-500-549",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-550-599",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-600-649",
+      "selected": 50,
+      "ok": 50,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    },
+    {
+      "dir": "batch-650-699",
+      "selected": 3,
+      "ok": 3,
+      "airconv_failures": 0,
+      "metal_failures": 0,
+      "failure_count": 0
+    }
+  ]
+}
