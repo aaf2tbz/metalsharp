@@ -446,6 +446,15 @@ PSO handle + root state + descriptor state + draw call
 
 - Existing D3D12 command queue still performs actual replay until fully migrated.
 
+Status: complete for planning/diagnostics. Native `m12core_build_draw_plan` and
+scalar POD draw-plan ABI landed in `db7aab7`; the PE/unix bridge and bounded
+`M12_DRAW_PLAN` replay diagnostics landed in `15382e2`. Final validation is
+recorded in `tools/d3d12-metal-sdk/plans/m12-phase7-8-completion-audit.md` and
+`tools/d3d12-metal-sdk/results/m12-phase7-8-final-validation-20260617-145725/`:
+`23/23` drawn/present, failures `0`, `unix_call_failed=0`, and `192` bounded
+`M12_DRAW_PLAN` diagnostics. Actual command execution remains in the existing
+D3D12 command queue by design.
+
 ## Phase 8: Public translation-layer detection interface
 
 ### Why
@@ -489,6 +498,15 @@ Avoid returning STL/C++ objects, process-local pointers, Objective-C objects, or
 - D3D12 apps that do not query the GUID observe no behavior change.
 - The interface reports enough version/feature information for external tools to group M12 reports separately from native Windows, `vkd3d`, and `vkd3d-proton`.
 - Bounded AC6 validation still passes with no new rendering behavior changes.
+
+Status: complete for the public device-level detection surface. Runtime support
+landed in `ef7970c` with `IID_IMetalSharpM12TranslationLayerInfo` queried through
+`ID3D12Device::QueryInterface`; probe support landed in `4b96f0a` at
+`tools/d3d12-metal-sdk/probes/probe_m12_detection/`. Probe evidence is recorded
+in `tools/d3d12-metal-sdk/results/m12-phase8-detection-probe-20260617-145445/probe-m12-detection-metalsharp.json`
+with `pass=true`, `layer_name=MetalSharp DXMT M12`, and canonical m12core build
+id `0x4d313243:0x0000000d`. Final AC6 validation remained green with `23/23`
+drawn/present and failures `0`.
 
 ## Phase 9: Optional full command replay/presenter migration
 
