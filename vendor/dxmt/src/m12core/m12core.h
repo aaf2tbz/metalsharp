@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000017u /* Core convergence C4/C5 probe replay and encoder plans. */
+  0x00000018u /* Core convergence C6 native present ownership planning. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -56,6 +56,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR = 1u << 25,
   M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING = 1u << 26,
   M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1u << 27,
+  M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1u << 28,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -77,7 +78,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER |
       M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR |
       M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING |
-      M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA,
+      M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA |
+      M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP,
 };
 
 typedef struct M12CoreVersion {
@@ -1381,6 +1383,90 @@ typedef struct M12CoreEncoderOwnershipSummary {
   uint64_t binding_layout_key;
 } M12CoreEncoderOwnershipSummary;
 
+/* Core Convergence C6 native present ownership planning.  This ABI records
+ * scalar sequencing decisions only: no drawable, command-buffer, texture, COM,
+ * Objective-C, or Metal ownership crosses into libm12core.
+ */
+typedef enum M12CoreNativePresentOwnershipStatus {
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_STATUS_OK = 0,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_STATUS_INVALID = 1,
+} M12CoreNativePresentOwnershipStatus;
+
+typedef enum M12CoreNativePresentOwnershipFlags {
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_GATE_ENABLED = 1u << 0,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_SOURCE_TEXTURE = 1u << 1,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_DRAWABLE = 1u << 2,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_RAW_BLIT = 1u << 3,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_PRESENTER = 1u << 4,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTE_SUPPORTED = 1u << 5,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTED = 1u << 6,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_PE_PRESENT_ALREADY_SCHEDULED = 1u << 7,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FORMAT_SUPPORTED = 1u << 8,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_DIAGNOSTIC_ACTIVE = 1u << 9,
+} M12CoreNativePresentOwnershipFlags;
+
+typedef enum M12CoreNativePresentOwnershipSummaryFlags {
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_GATE_ENABLED = 1u << 0,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_NATIVE_OWNED = 1u << 1,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_TRANSPORT_THIN = 1u << 2,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_WHOLE_PRESENT_FALLBACK = 1u << 3,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_PRESENT_PREVENTED = 1u << 4,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_BLIT_PREVENTED = 1u << 5,
+} M12CoreNativePresentOwnershipSummaryFlags;
+
+typedef enum M12CoreNativePresentOwnershipFallbackReason {
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NONE = 0,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_GATE_DISABLED = 1,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_MISSING_SOURCE = 2,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_MISSING_DRAWABLE = 3,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NON_RAW_PATH = 4,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_PRESENT_UNSUPPORTED = 5,
+  M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_DIAGNOSTIC_ACTIVE = 6,
+} M12CoreNativePresentOwnershipFallbackReason;
+
+typedef struct M12CoreNativePresentOwnershipDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t width;
+  uint32_t height;
+  uint32_t format;
+  uint32_t buffer_index;
+  uint32_t buffer_count;
+  uint32_t sync_interval;
+  uint32_t present_flags;
+  uint32_t work_classification;
+  uint32_t command_buffer_status;
+  uint32_t reserved0;
+  uint64_t present_count;
+  uint64_t present_execute_key;
+  uint64_t source_texture_key;
+  uint64_t drawable_texture_key;
+  uint64_t queue_serial;
+  uint64_t command_count;
+  uint64_t draw_count;
+  uint64_t dispatch_count;
+  uint64_t clear_count;
+  uint64_t wait_seq;
+} M12CoreNativePresentOwnershipDesc;
+
+typedef struct M12CoreNativePresentOwnershipSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t fallback_reason;
+  uint32_t validation_flags;
+  uint32_t planned_blit_count;
+  uint32_t planned_present_count;
+  uint32_t pe_present_required;
+  uint32_t native_present_owned;
+  uint32_t transport_thin;
+  uint32_t double_present_prevented;
+  uint32_t double_blit_prevented;
+  uint64_t ownership_key;
+  uint64_t sequencing_key;
+  uint64_t transport_key;
+} M12CoreNativePresentOwnershipSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1482,6 +1568,9 @@ int m12core_execute_replay_packet_stream(
     M12CoreReplayPacketExecuteSummary *out_summary);
 int m12core_plan_encoder_ownership(const M12CoreEncoderOwnershipDesc *desc,
                                    M12CoreEncoderOwnershipSummary *out_summary);
+int m12core_plan_native_present_ownership(
+    const M12CoreNativePresentOwnershipDesc *desc,
+    M12CoreNativePresentOwnershipSummary *out_summary);
 
 #ifdef __cplusplus
 }

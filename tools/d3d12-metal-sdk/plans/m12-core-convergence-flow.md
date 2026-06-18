@@ -224,7 +224,11 @@ Tasks:
 
 ## Slice C6 — Native presenter ownership + thin transport boundary
 
+Status: **Complete** — see `m12-core-convergence-c6-audit.md`.
+
 Touches: **P9.S5 / P10.S3**
+
+Plan: `m12-core-convergence-c6-plan.md`.
 
 Tasks:
 
@@ -294,4 +298,4 @@ Final proof requires measured native execution coverage, PE fallback parity, rea
 
 ## Current next slice
 
-C0 through C5 are complete. The next active work is **C6 — Native presenter ownership + thin transport boundary**.
+C0 through C6 are complete. The next active work is **C7 — Cache-first warm start for shaders/PSOs**.

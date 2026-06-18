@@ -128,6 +128,9 @@ WINEMETAL_API bool WMTM12CoreExecuteReplayPacketStream(
 );
 WINEMETAL_API bool
 WMTM12CorePlanEncoderOwnership(const M12CoreEncoderOwnershipDesc *desc, M12CoreEncoderOwnershipSummary *out_summary);
+WINEMETAL_API bool WMTM12CorePlanNativePresentOwnership(
+    const M12CoreNativePresentOwnershipDesc *desc, M12CoreNativePresentOwnershipSummary *out_summary
+);
 WINEMETAL_API bool
 WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);
 

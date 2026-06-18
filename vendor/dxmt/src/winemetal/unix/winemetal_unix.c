@@ -154,6 +154,9 @@ typedef int (*PFN_m12core_execute_replay_packet_stream)(
 typedef int (*PFN_m12core_plan_encoder_ownership)(
     const M12CoreEncoderOwnershipDesc *desc, M12CoreEncoderOwnershipSummary *out_summary
 );
+typedef int (*PFN_m12core_plan_native_present_ownership)(
+    const M12CoreNativePresentOwnershipDesc *desc, M12CoreNativePresentOwnershipSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -191,6 +194,7 @@ static PFN_m12core_validate_handle p_m12core_validate_handle;
 static PFN_m12core_classify_packet_support p_m12core_classify_packet_support;
 static PFN_m12core_execute_replay_packet_stream p_m12core_execute_replay_packet_stream;
 static PFN_m12core_plan_encoder_ownership p_m12core_plan_encoder_ownership;
+static PFN_m12core_plan_native_present_ownership p_m12core_plan_native_present_ownership;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -303,6 +307,8 @@ m12core_try_load(void) {
       (PFN_m12core_execute_replay_packet_stream)dlsym(m12core_handle, "m12core_execute_replay_packet_stream");
   p_m12core_plan_encoder_ownership =
       (PFN_m12core_plan_encoder_ownership)dlsym(m12core_handle, "m12core_plan_encoder_ownership");
+  p_m12core_plan_native_present_ownership =
+      (PFN_m12core_plan_native_present_ownership)dlsym(m12core_handle, "m12core_plan_native_present_ownership");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -897,6 +903,16 @@ _WMTM12CorePlanEncoderOwnership(void *obj) {
   desc.resource_layout_key = params->resource_layout_key;
   desc.packets = (const M12CoreCommandPacket *)params->packets.ptr;
   params->ret_success = p_m12core_plan_encoder_ownership(&desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CorePlanNativePresentOwnership(void *obj) {
+  struct unixcall_m12core_plan_native_present_ownership *params = obj;
+  if (!params || !p_m12core_plan_native_present_ownership)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_plan_native_present_ownership(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4655,6 +4671,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreClassifyPacketSupport,
     &_WMTM12CoreExecuteReplayPacketStream,
     &_WMTM12CorePlanEncoderOwnership,
+    &_WMTM12CorePlanNativePresentOwnership,
 };
 
 #ifndef DXMT_NATIVE
@@ -4826,5 +4843,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreClassifyPacketSupport,
     &_WMTM12CoreExecuteReplayPacketStream,
     &_WMTM12CorePlanEncoderOwnership,
+    &_WMTM12CorePlanNativePresentOwnership,
 };
 #endif

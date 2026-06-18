@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core convergence-c4-c5 replay-encoder abi=1";
+  return "libm12core convergence-c6 native-present abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -2262,6 +2262,112 @@ m12core_plan_encoder_ownership(const M12CoreEncoderOwnershipDesc *desc,
   if (binding_entries) {
     out_summary->flags |=
         M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN;
+  }
+  return 0;
+}
+
+extern "C" int m12core_plan_native_present_ownership(
+    const M12CoreNativePresentOwnershipDesc *desc,
+    M12CoreNativePresentOwnershipSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_NATIVE_PRESENT_OWNERSHIP_STATUS_OK;
+
+  uint64_t ownership_key = 0x4d313250524f574eull; // "M12PROWN" marker.
+  pipelineHashCombine(ownership_key, desc->flags);
+  pipelineHashCombine(ownership_key, desc->width);
+  pipelineHashCombine(ownership_key, desc->height);
+  pipelineHashCombine(ownership_key, desc->format);
+  pipelineHashCombine(ownership_key, desc->buffer_index);
+  pipelineHashCombine(ownership_key, desc->buffer_count);
+  pipelineHashCombine(ownership_key, desc->sync_interval);
+  pipelineHashCombine(ownership_key, desc->present_flags);
+  pipelineHashCombine(ownership_key, desc->work_classification);
+  pipelineHashCombine(ownership_key, desc->command_buffer_status);
+  pipelineHashCombine(ownership_key, desc->present_count);
+  pipelineHashCombine(ownership_key, desc->present_execute_key);
+  pipelineHashCombine(ownership_key, desc->source_texture_key);
+  pipelineHashCombine(ownership_key, desc->drawable_texture_key);
+  pipelineHashCombine(ownership_key, desc->queue_serial);
+  pipelineHashCombine(ownership_key, desc->command_count);
+  pipelineHashCombine(ownership_key, desc->draw_count);
+  pipelineHashCombine(ownership_key, desc->dispatch_count);
+  pipelineHashCombine(ownership_key, desc->clear_count);
+  pipelineHashCombine(ownership_key, desc->wait_seq);
+  out_summary->ownership_key = ownership_key;
+
+  uint64_t sequencing_key = 0x4d31325052534551ull; // "M12PRSEQ" marker.
+  pipelineHashCombine(sequencing_key, ownership_key);
+  pipelineHashCombine(sequencing_key, desc->present_execute_key);
+  pipelineHashCombine(sequencing_key, desc->present_count);
+  out_summary->sequencing_key = sequencing_key;
+
+  uint64_t transport_key = 0x4d3132505254524eull; // "M12PRTRN" marker.
+  pipelineHashCombine(transport_key, desc->flags);
+  pipelineHashCombine(transport_key, desc->source_texture_key ? 1u : 0u);
+  pipelineHashCombine(transport_key, desc->drawable_texture_key ? 1u : 0u);
+  out_summary->transport_key = transport_key;
+
+  if (desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_GATE_ENABLED)
+    out_summary->flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_GATE_ENABLED;
+
+  uint32_t fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NONE;
+  if (!(desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_GATE_ENABLED)) {
+    fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_GATE_DISABLED;
+  } else if (!(desc->flags &
+               M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_SOURCE_TEXTURE)) {
+    fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_MISSING_SOURCE;
+    out_summary->validation_flags |= 1u << 0;
+  } else if (!(desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_DRAWABLE)) {
+    fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_MISSING_DRAWABLE;
+    out_summary->validation_flags |= 1u << 1;
+  } else if (!(desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_RAW_BLIT) ||
+             (desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_PRESENTER)) {
+    fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NON_RAW_PATH;
+  } else if (!(desc->flags &
+               M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTE_SUPPORTED) ||
+             !(desc->flags &
+               M12CORE_NATIVE_PRESENT_OWNERSHIP_FORMAT_SUPPORTED)) {
+    fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_PRESENT_UNSUPPORTED;
+    out_summary->validation_flags |= 1u << 2;
+  } else if (desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_DIAGNOSTIC_ACTIVE) {
+    fallback = M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_DIAGNOSTIC_ACTIVE;
+  }
+
+  const bool already_presented =
+      (desc->flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTED) != 0;
+  const bool pe_present_scheduled =
+      (desc->flags &
+       M12CORE_NATIVE_PRESENT_OWNERSHIP_PE_PRESENT_ALREADY_SCHEDULED) != 0;
+
+  if (already_presented || pe_present_scheduled) {
+    out_summary->double_present_prevented = 1;
+    out_summary->flags |=
+        M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_PRESENT_PREVENTED;
+  }
+  if (already_presented) {
+    out_summary->double_blit_prevented = 1;
+    out_summary->flags |=
+        M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_BLIT_PREVENTED;
+  }
+
+  if (fallback == M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NONE) {
+    out_summary->flags |=
+        M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_NATIVE_OWNED |
+        M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_TRANSPORT_THIN;
+    out_summary->native_present_owned = 1;
+    out_summary->transport_thin = 1;
+    out_summary->planned_blit_count = already_presented ? 0u : 1u;
+    out_summary->planned_present_count = already_presented ? 0u : 1u;
+    out_summary->pe_present_required = 0u;
+  } else {
+    out_summary->flags |=
+        M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_WHOLE_PRESENT_FALLBACK;
+    out_summary->fallback_reason = fallback;
+    out_summary->pe_present_required = 1;
   }
   return 0;
 }

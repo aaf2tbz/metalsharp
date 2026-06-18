@@ -124,6 +124,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreExecuteReplayPacketStream";
   case 166:
     return "WMTM12CorePlanEncoderOwnership";
+  case 167:
+    return "WMTM12CorePlanNativePresentOwnership";
   default:
     return "unknown";
   }
@@ -867,6 +869,26 @@ WMTM12CorePlanEncoderOwnership(const M12CoreEncoderOwnershipDesc *desc, M12CoreE
   params.resource_layout_key = desc->resource_layout_key;
   WMT_MEMPTR_SET(params.packets, desc->packets);
   if (!winemetal_unix_call_ok(166, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanNativePresentOwnership(
+    const M12CoreNativePresentOwnershipDesc *desc, M12CoreNativePresentOwnershipSummary *out_summary
+) {
+  struct unixcall_m12core_plan_native_present_ownership params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C6 native-present ownership bridge: scalar sequencing metadata only.
+   * winemetal.dll remains a transport shim; native objects stay in winemetal.so.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(167, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

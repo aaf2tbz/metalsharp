@@ -15,6 +15,7 @@
 static uint64_t g_sc_enc_id = 0;
 static uint32_t g_present_plan_logs = 0;
 static uint32_t g_present_execute_plan_logs = 0;
+static uint32_t g_native_present_ownership_logs = 0;
 
 namespace dxmt {
 
@@ -262,6 +263,79 @@ static M12CorePresentExecuteDesc MakeM12CorePresentExecuteDesc(
       work.clear_rtv_count + work.clear_dsv_count + work.clear_uav_count;
   desc.wait_seq = wait_seq;
   return desc;
+}
+
+static void LogM12CoreNativePresentOwnership(
+    const char *phase, const M12CorePresentExecuteDesc &execute_desc,
+    const M12CorePresentExecuteSummary &execute_summary, bool have_execute_plan,
+    bool native_present_executed, bool pe_present_already_scheduled) {
+  M12CoreNativePresentOwnershipDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  if (execute_desc.flags & M12CORE_PRESENT_EXECUTE_GATE_ENABLED)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_GATE_ENABLED;
+  if (execute_desc.flags & M12CORE_PRESENT_EXECUTE_HAS_SOURCE_TEXTURE)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_SOURCE_TEXTURE;
+  if (execute_desc.flags & M12CORE_PRESENT_EXECUTE_HAS_DRAWABLE)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_DRAWABLE;
+  if (execute_desc.flags & M12CORE_PRESENT_EXECUTE_USES_RAW_BLIT)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_RAW_BLIT;
+  if (execute_desc.flags & M12CORE_PRESENT_EXECUTE_USES_PRESENTER)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_PRESENTER;
+  if (have_execute_plan &&
+      (execute_summary.flags & M12CORE_PRESENT_EXECUTE_SUMMARY_SUPPORTED))
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTE_SUPPORTED;
+  if (native_present_executed)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTED;
+  if (pe_present_already_scheduled)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_PE_PRESENT_ALREADY_SCHEDULED;
+  if (execute_desc.flags & M12CORE_PRESENT_EXECUTE_FORMAT_SUPPORTED)
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_FORMAT_SUPPORTED;
+  if (execute_desc.flags & (M12CORE_PRESENT_EXECUTE_LIVE_PRESENT |
+                            M12CORE_PRESENT_EXECUTE_READBACK_REQUESTED))
+    desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_DIAGNOSTIC_ACTIVE;
+  desc.width = execute_desc.width;
+  desc.height = execute_desc.height;
+  desc.format = execute_desc.format;
+  desc.buffer_index = execute_desc.buffer_index;
+  desc.buffer_count = execute_desc.buffer_count;
+  desc.sync_interval = execute_desc.sync_interval;
+  desc.present_flags = execute_desc.present_flags;
+  desc.work_classification = execute_desc.work_classification;
+  desc.command_buffer_status = execute_desc.command_buffer_status;
+  desc.present_count = execute_desc.present_count;
+  desc.present_execute_key = execute_summary.present_execute_key;
+  desc.source_texture_key = execute_desc.source_texture_key;
+  desc.drawable_texture_key = execute_desc.drawable_texture_key;
+  desc.queue_serial = execute_desc.queue_serial;
+  desc.command_count = execute_desc.command_count;
+  desc.draw_count = execute_desc.draw_count;
+  desc.dispatch_count = execute_desc.dispatch_count;
+  desc.clear_count = execute_desc.clear_count;
+  desc.wait_seq = execute_desc.wait_seq;
+
+  M12CoreNativePresentOwnershipSummary summary = {};
+  if (!WMTM12CorePlanNativePresentOwnership(&desc, &summary) ||
+      summary.abi_version != M12CORE_ABI_VERSION ||
+      summary.status != M12CORE_NATIVE_PRESENT_OWNERSHIP_STATUS_OK)
+    return;
+
+  if (__atomic_add_fetch(&g_native_present_ownership_logs, 1,
+                         __ATOMIC_RELAXED) <= 192) {
+    Logger::info(str::format(
+        "M12_NATIVE_PRESENT_OWNERSHIP phase=", phase,
+        " native_present_owned=", summary.native_present_owned,
+        " transport_thin=", summary.transport_thin,
+        " pe_present_required=", summary.pe_present_required,
+        " planned_blits=", summary.planned_blit_count,
+        " planned_presents=", summary.planned_present_count,
+        " double_present_prevented=", summary.double_present_prevented,
+        " double_blit_prevented=", summary.double_blit_prevented,
+        " fallback=", summary.fallback_reason, " flags=0x", std::hex,
+        summary.flags, " validation=0x", summary.validation_flags,
+        " ownership=0x", summary.ownership_key, " sequence=0x",
+        summary.sequencing_key, " transport=0x", summary.transport_key,
+        std::dec, " count=", (unsigned long long)execute_desc.present_count));
+  }
 }
 
 static bool
@@ -1142,6 +1216,19 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
         src_texture.handle != 0, drawable.handle != 0, true, false,
         present_waited_for_render, LivePresentEnabled(),
         ShouldReadbackPresent(m_present_count), present_wait_seq, work);
+    M12CorePresentExecuteDesc presenter_ownership_desc =
+        MakeM12CorePresentExecuteDesc(
+            m_present_count, sync_interval, flags, m_current_buffer,
+            m_desc.BufferCount, m_desc.Width, m_desc.Height, m_desc.Format,
+            src_texture.handle != 0, drawable.handle != 0, true, false,
+            present_waited_for_render, LivePresentEnabled(),
+            ShouldReadbackPresent(m_present_count),
+            CanUseRawSwapchainBlit(m_desc.Format),
+            M12CorePresentExecuteEnabled(), present_wait_seq, work);
+    M12CorePresentExecuteSummary presenter_ownership_summary = {};
+    LogM12CoreNativePresentOwnership(
+        "presenter-fallback", presenter_ownership_desc,
+        presenter_ownership_summary, false, false, true);
 
     SCTRACE("Present presenter: idx=%u res=%p src=%llu drawable=%llu w=%u h=%u",
             m_current_buffer, (void *)res,
@@ -1214,6 +1301,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     M12CorePresentExecuteSummary execute_summary = {};
     const bool have_execute_plan =
         LogM12CorePresentExecutePlan(execute_desc, &execute_summary);
+    LogM12CoreNativePresentOwnership("raw-pre-execute", execute_desc,
+                                     execute_summary, have_execute_plan, false,
+                                     false);
     bool native_present_executed = false;
 
     if (src_texture.handle && dst_texture.handle && have_execute_plan &&
@@ -1234,6 +1324,11 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
               " fallback=", native_summary.fallback_reason));
         }
       }
+    }
+    if (native_present_executed) {
+      LogM12CoreNativePresentOwnership("raw-post-native", execute_desc,
+                                       execute_summary, have_execute_plan, true,
+                                       false);
     }
 
     if (!native_present_executed && src_texture.handle && dst_texture.handle) {

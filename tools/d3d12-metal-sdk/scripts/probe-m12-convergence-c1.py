@@ -20,7 +20,7 @@ from typing import Any
 
 M12CORE_ABI_VERSION = 1
 M12CORE_BUILD_ID_LOW = 0x4D313243
-M12CORE_BUILD_ID_HIGH = 0x00000017
+M12CORE_BUILD_ID_HIGH = 0x00000018
 M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1 << 19
 M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1 << 20
 M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1 << 21
@@ -30,6 +30,7 @@ M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER = 1 << 24
 M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR = 1 << 25
 M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING = 1 << 26
 M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1 << 27
+M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1 << 28
 
 M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0
 M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE = 1
@@ -94,6 +95,23 @@ M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED = 1 << 0
 M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN = 1 << 1
 M12CORE_ENCODER_OWNERSHIP_SUMMARY_LAYOUT_VALIDATION_REQUIRED = 1 << 2
 M12CORE_ENCODER_OWNERSHIP_SUMMARY_CACHE_PAYLOAD_REUSE_DISABLED = 1 << 3
+
+M12CORE_NATIVE_PRESENT_OWNERSHIP_GATE_ENABLED = 1 << 0
+M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_SOURCE_TEXTURE = 1 << 1
+M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_DRAWABLE = 1 << 2
+M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_RAW_BLIT = 1 << 3
+M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_PRESENTER = 1 << 4
+M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTE_SUPPORTED = 1 << 5
+M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTED = 1 << 6
+M12CORE_NATIVE_PRESENT_OWNERSHIP_PE_PRESENT_ALREADY_SCHEDULED = 1 << 7
+M12CORE_NATIVE_PRESENT_OWNERSHIP_FORMAT_SUPPORTED = 1 << 8
+M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_NATIVE_OWNED = 1 << 1
+M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_TRANSPORT_THIN = 1 << 2
+M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_WHOLE_PRESENT_FALLBACK = 1 << 3
+M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_PRESENT_PREVENTED = 1 << 4
+M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_BLIT_PREVENTED = 1 << 5
+M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_GATE_DISABLED = 1
+M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NON_RAW_PATH = 4
 
 
 class M12CoreVersion(ctypes.Structure):
@@ -343,6 +361,53 @@ class M12CoreEncoderOwnershipSummary(ctypes.Structure):
     ]
 
 
+class M12CoreNativePresentOwnershipDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("width", ctypes.c_uint32),
+        ("height", ctypes.c_uint32),
+        ("format", ctypes.c_uint32),
+        ("buffer_index", ctypes.c_uint32),
+        ("buffer_count", ctypes.c_uint32),
+        ("sync_interval", ctypes.c_uint32),
+        ("present_flags", ctypes.c_uint32),
+        ("work_classification", ctypes.c_uint32),
+        ("command_buffer_status", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("present_count", ctypes.c_uint64),
+        ("present_execute_key", ctypes.c_uint64),
+        ("source_texture_key", ctypes.c_uint64),
+        ("drawable_texture_key", ctypes.c_uint64),
+        ("queue_serial", ctypes.c_uint64),
+        ("command_count", ctypes.c_uint64),
+        ("draw_count", ctypes.c_uint64),
+        ("dispatch_count", ctypes.c_uint64),
+        ("clear_count", ctypes.c_uint64),
+        ("wait_seq", ctypes.c_uint64),
+    ]
+
+
+class M12CoreNativePresentOwnershipSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("fallback_reason", ctypes.c_uint32),
+        ("validation_flags", ctypes.c_uint32),
+        ("planned_blit_count", ctypes.c_uint32),
+        ("planned_present_count", ctypes.c_uint32),
+        ("pe_present_required", ctypes.c_uint32),
+        ("native_present_owned", ctypes.c_uint32),
+        ("transport_thin", ctypes.c_uint32),
+        ("double_present_prevented", ctypes.c_uint32),
+        ("double_blit_prevented", ctypes.c_uint32),
+        ("ownership_key", ctypes.c_uint64),
+        ("sequencing_key", ctypes.c_uint64),
+        ("transport_key", ctypes.c_uint64),
+    ]
+
+
 def default_lib_candidates(repo: pathlib.Path) -> list[pathlib.Path]:
     return [
         pathlib.Path.home() / ".metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
@@ -470,6 +535,26 @@ def encoder_to_dict(s: M12CoreEncoderOwnershipSummary) -> dict[str, Any]:
     }
 
 
+def present_ownership_to_dict(s: M12CoreNativePresentOwnershipSummary) -> dict[str, Any]:
+    return {
+        "abi_version": s.abi_version,
+        "status": s.status,
+        "flags": s.flags,
+        "fallback_reason": s.fallback_reason,
+        "validation_flags": s.validation_flags,
+        "planned_blit_count": s.planned_blit_count,
+        "planned_present_count": s.planned_present_count,
+        "pe_present_required": s.pe_present_required,
+        "native_present_owned": s.native_present_owned,
+        "transport_thin": s.transport_thin,
+        "double_present_prevented": s.double_present_prevented,
+        "double_blit_prevented": s.double_blit_prevented,
+        "ownership_key": f"0x{s.ownership_key:016x}",
+        "sequencing_key": f"0x{s.sequencing_key:016x}",
+        "transport_key": f"0x{s.transport_key:016x}",
+    }
+
+
 def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     lib = ctypes.CDLL(str(lib_path))
     lib.m12core_get_version.argtypes = [ctypes.POINTER(M12CoreVersion)]
@@ -509,6 +594,11 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         ctypes.POINTER(M12CoreEncoderOwnershipSummary),
     ]
     lib.m12core_plan_encoder_ownership.restype = ctypes.c_int
+    lib.m12core_plan_native_present_ownership.argtypes = [
+        ctypes.POINTER(M12CoreNativePresentOwnershipDesc),
+        ctypes.POINTER(M12CoreNativePresentOwnershipSummary),
+    ]
+    lib.m12core_plan_native_present_ownership.restype = ctypes.c_int
 
     checks: dict[str, bool] = {}
     version = M12CoreVersion()
@@ -525,6 +615,9 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     checks["encoder_ownership_feature"] = bool(version.feature_flags & M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING)
     checks["root_binding_cache_metadata_feature"] = bool(
         version.feature_flags & M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA
+    )
+    checks["native_present_ownership_feature"] = bool(
+        version.feature_flags & M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP
     )
 
     packets = (M12CoreCommandPacket * 5)(
@@ -865,6 +958,96 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         and bool(encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_CACHE_PAYLOAD_REUSE_DISABLED)
     )
 
+    present_base = M12CoreNativePresentOwnershipDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        flags=(
+            M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_SOURCE_TEXTURE
+            | M12CORE_NATIVE_PRESENT_OWNERSHIP_HAS_DRAWABLE
+            | M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_RAW_BLIT
+            | M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTE_SUPPORTED
+            | M12CORE_NATIVE_PRESENT_OWNERSHIP_FORMAT_SUPPORTED
+        ),
+        width=1280,
+        height=720,
+        format=87,
+        buffer_index=0,
+        buffer_count=2,
+        sync_interval=0,
+        present_flags=0,
+        work_classification=1,
+        command_buffer_status=1,
+        reserved0=0,
+        present_count=7,
+        present_execute_key=0x123456789ABC,
+        source_texture_key=0x2222,
+        drawable_texture_key=0x3333,
+        queue_serial=0x4444,
+        command_count=3,
+        draw_count=1,
+        dispatch_count=0,
+        clear_count=1,
+        wait_seq=0x5555,
+    )
+    present_off = M12CoreNativePresentOwnershipSummary()
+    present_off_rc = lib.m12core_plan_native_present_ownership(
+        ctypes.byref(present_base), ctypes.byref(present_off)
+    )
+    checks["native_present_gate_off_fallback"] = (
+        present_off_rc == 0
+        and present_off.fallback_reason == M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_GATE_DISABLED
+        and present_off.pe_present_required == 1
+        and bool(present_off.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_WHOLE_PRESENT_FALLBACK)
+    )
+
+    present_on_desc = M12CoreNativePresentOwnershipDesc.from_buffer_copy(present_base)
+    present_on_desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_GATE_ENABLED
+    present_on = M12CoreNativePresentOwnershipSummary()
+    present_on_rc = lib.m12core_plan_native_present_ownership(
+        ctypes.byref(present_on_desc), ctypes.byref(present_on)
+    )
+    checks["native_present_raw_owned"] = (
+        present_on_rc == 0
+        and present_on.fallback_reason == 0
+        and present_on.native_present_owned == 1
+        and present_on.transport_thin == 1
+        and present_on.planned_blit_count == 1
+        and present_on.planned_present_count == 1
+        and present_on.pe_present_required == 0
+        and bool(present_on.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_NATIVE_OWNED)
+        and bool(present_on.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_TRANSPORT_THIN)
+    )
+
+    present_presenter_desc = M12CoreNativePresentOwnershipDesc.from_buffer_copy(present_on_desc)
+    present_presenter_desc.flags &= ~M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_RAW_BLIT
+    present_presenter_desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_USES_PRESENTER
+    present_presenter = M12CoreNativePresentOwnershipSummary()
+    present_presenter_rc = lib.m12core_plan_native_present_ownership(
+        ctypes.byref(present_presenter_desc), ctypes.byref(present_presenter)
+    )
+    checks["native_present_presenter_fallback"] = (
+        present_presenter_rc == 0
+        and present_presenter.fallback_reason == M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NON_RAW_PATH
+        and present_presenter.pe_present_required == 1
+        and bool(present_presenter.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_WHOLE_PRESENT_FALLBACK)
+    )
+
+    present_executed_desc = M12CoreNativePresentOwnershipDesc.from_buffer_copy(present_on_desc)
+    present_executed_desc.flags |= M12CORE_NATIVE_PRESENT_OWNERSHIP_PRESENT_EXECUTED
+    present_executed = M12CoreNativePresentOwnershipSummary()
+    present_executed_rc = lib.m12core_plan_native_present_ownership(
+        ctypes.byref(present_executed_desc), ctypes.byref(present_executed)
+    )
+    checks["native_present_double_prevented"] = (
+        present_executed_rc == 0
+        and present_executed.native_present_owned == 1
+        and present_executed.planned_blit_count == 0
+        and present_executed.planned_present_count == 0
+        and present_executed.double_present_prevented == 1
+        and present_executed.double_blit_prevented == 1
+        and bool(present_executed.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_PRESENT_PREVENTED)
+        and bool(present_executed.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_BLIT_PREVENTED)
+    )
+
     result: dict[str, Any] = {
         "schema": "metalsharp.m12.convergence-c1-probe.v1",
         "lib": str(lib_path),
@@ -893,6 +1076,10 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         "probe_replay_gate_on": replay_execute_to_dict(replay_on),
         "probe_replay_unsupported": replay_execute_to_dict(replay_copy),
         "encoder_ownership": encoder_to_dict(encoder),
+        "native_present_gate_off": present_ownership_to_dict(present_off),
+        "native_present_raw_owned": present_ownership_to_dict(present_on),
+        "native_present_presenter_fallback": present_ownership_to_dict(present_presenter),
+        "native_present_double_prevented": present_ownership_to_dict(present_executed),
     }
     return bool(result["ok"]), result
 
