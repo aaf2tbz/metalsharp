@@ -1153,7 +1153,14 @@ fn launch_dxmt_metal_with_context(
     repair_metalsharp_wine_wrapper_env_order()?;
 
     prepare_start_protected_game_for_pipeline(appid, node.id);
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let mut recipe = super::recipe::build_launch_recipe(appid, node)?;
+    if let Some((_, override_args)) = extra_env.iter().find(|(key, _)| key == "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE") {
+        recipe.launch_args = if override_args == "__empty__" {
+            Vec::new()
+        } else {
+            override_args.split_whitespace().map(str::to_string).collect()
+        };
+    }
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
