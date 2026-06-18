@@ -1,8 +1,12 @@
-# M12/libm12core Phase 9 Slices 1-6 Plan
+# M12/libm12core Phase 9 Slices 1-7 Plan and Evidence
 
 ## Objective
 
-Complete Phase 9 slices 1-6 before slice 7. Slice 7 is intentionally held for user-guided visual confirmation. Each slice must be planned before implementation, must identify discrepancies to rule out, and must leave evidence that maps requirements to artifacts.
+Historical objective: complete Phase 9 slices 1-6 before Slice 7, hold Slice 7 for user-guided visual confirmation, plan each slice before implementation, identify discrepancies to rule out, and leave evidence that maps requirements to artifacts.
+
+Final update: Slices 1-7 are complete. Slice 7 was performed after explicit user approval. Elden Ring and Armored Core VI visual output were confirmed by the user after 150 second bounded launches, with no regression found on the already-running runtime. Phase 9 is KEEP.
+
+Note: this file keeps its original `m12-phase9-slices-1-6-plan.md` name because it began as the Slice 1-6 gate plan and now also records the subsequent Slice 7 completion evidence.
 
 ## Global rules
 
@@ -293,5 +297,55 @@ Validation gates:
 Exit criteria:
 
 - Slices 1-5 are implemented and staged.
-- Slice 6 readiness/shadow evidence exists for game matrix dry-runs and, if approved, one bounded non-visual AC6 run.
-- Slice 7 remains blocked awaiting user visual confirmation.
+- Slice 6 readiness/shadow evidence exists for game matrix dry-runs and explicit user approval was required before any visual Slice 7 launch.
+- Slice 7 was initially blocked here, then completed after user-approved visual confirmation as recorded below.
+
+## Slice 7 — User-approved visual rollout
+
+Status: complete.
+
+Implemented evidence:
+
+- User approved the visual rollout order after Slice 6 readiness: AC6 first, Elden Ring second, Subnautica 2 last; PEAK and Schedule I were excluded because they currently prefer DX11 runtime paths.
+- Initial bounded launch pass:
+  - AC6 dry-run passed: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-ac6-20260617-173746/dry-run-armored-core-vi-1888160.json`.
+  - AC6 60s launch passed with 21/21 drawn presents and zero PSO/compile/unixcall failures: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-ac6-20260617-173746/bounded-launches/armored-core-vi-20260617-173756/summary.md`.
+  - Elden Ring dry-run passed: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-elden-ring-20260617-173949/dry-run-elden-ring-1245620.json`.
+  - Elden Ring 60s launch passed with 20/20 drawn presents and zero PSO/compile/unixcall failures: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-elden-ring-20260617-173949/bounded-launches/elden-ring-20260617-173958/summary.md`.
+  - Subnautica 2 dry-run passed: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-subnautica2-20260617-174135/dry-run-subnautica-2-1962700.json`.
+  - Subnautica 2 60s launch completed but remains separate follow-up due to one Metal/XPC compute PSO failure and two zero-stride unsafe draw skips: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-subnautica2-20260617-174135/bounded-launches/subnautica2-20260617-174142/summary.md`.
+- User requested longer visual confirmation runs for Elden Ring and AC6.
+- Final visual confirmation evidence:
+  - Elden Ring dry-run passed: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-visual-elden-ring-20260617-174531/dry-run-elden-ring-1245620.json`.
+  - Elden Ring 150s launch passed with 22/22 drawn presents and zero render/compute PSO, DXIL/MSL, unixcall, or unsafe-draw failures: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-visual-elden-ring-20260617-174531/bounded-launches/elden-ring-20260617-174536/summary.md`.
+  - AC6 dry-run passed: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-visual-ac6-20260617-174835/dry-run-armored-core-vi-1888160.json`.
+  - AC6 150s launch passed with 22/22 drawn presents and zero render/compute PSO, DXIL/MSL, unixcall, or unsafe-draw failures: `tools/d3d12-metal-sdk/results/m12-phase9-slice7-visual-ac6-20260617-174835/bounded-launches/armored-core-vi-20260617-174847/summary.md`.
+  - User confirmed visual output for both Elden Ring and AC6 and explicitly accepted: "Phase 9 is KEEP".
+
+Plan before implementation:
+
+- Run backend dry-run before each launch.
+- Use the staged `~/.metalsharp/runtime/wine/lib/dxmt_m12` runtime.
+- Keep `libm12core` diagnostics enabled for evidence.
+- Keep native execution gates off for game launches unless explicitly requested.
+- Launch one game at a time with bounded runtime and stop after evidence collection.
+
+Discrepancies ruled out:
+
+- Visual confirmation cannot be inferred from counters alone; user confirmation was required and obtained.
+- Subnautica 2 failure modes are separate from Phase 9 acceptance because they involve compute PSO/XPC instability and zero-stride unsafe draw skips, not native-core unixcall/planning regressions.
+- PEAK and Schedule I are not Phase 9 blockers because their current preferred runtime path is DX11.
+
+Validation gates:
+
+- Dry-run before each approved launch.
+- Bounded launch summary must show `launch_ok=true`.
+- Elden Ring and AC6 must show drawn presents and no PSO/compile/unixcall/unsafe-draw failures.
+- User must visually confirm output.
+
+Exit criteria:
+
+- Elden Ring visual output confirmed with no regression.
+- AC6 visual output confirmed with no regression.
+- Phase 9 final audit records residual Subnautica 2 follow-up separately.
+- Phase 9 is accepted as KEEP.
