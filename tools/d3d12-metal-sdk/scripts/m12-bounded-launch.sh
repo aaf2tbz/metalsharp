@@ -28,6 +28,7 @@ KILL_AFTER=1
 HIDE_METALSHARP="${M12_HIDE_METALSHARP_AFTER_LAUNCH:-1}"
 SHOW_METALSHARP_AFTER="${M12_SHOW_METALSHARP_AFTER:-0}"
 SAMPLE_PROCESS=1
+SAMPLE_DELAY_SECONDS="${M12_SAMPLE_DELAY_SECONDS:-3}"
 SAMPLE_DURATION=5
 SAMPLE_INTERVAL_MS=10
 PROCESS_SAMPLE_CSV="${M12_PROCESS_SAMPLE_CSV:-}"
@@ -64,6 +65,7 @@ Options:
   --no-hide-metalsharp    Keep the MetalSharp GUI visible after launch.
   --show-metalsharp-after Show the MetalSharp GUI again after the bounded run.
   --no-sample             Skip macOS sample(1) capture.
+  --sample-delay N        Delay before macOS sample(1), default $M12_SAMPLE_DELAY_SECONDS or 3.
   --expect-d3d12-sha SHA  Fail unless source and deployed game-local d3d12.dll match SHA.
   --expect-dxgi-sha SHA    Fail unless source and deployed game-local dxgi.dll match SHA.
   --expect-dxgi-dxmt-sha SHA Fail unless source and deployed game-local dxgi_dxmt.dll match SHA.
@@ -99,6 +101,7 @@ while [[ $# -gt 0 ]]; do
     --no-hide-metalsharp) HIDE_METALSHARP=0; shift ;;
     --show-metalsharp-after) SHOW_METALSHARP_AFTER=1; shift ;;
     --no-sample) SAMPLE_PROCESS=0; shift ;;
+    --sample-delay) SAMPLE_DELAY_SECONDS="$2"; shift 2 ;;
     --expect-d3d12-sha) EXPECT_D3D12_SHA="$2"; shift 2 ;;
     --expect-dxgi-sha) EXPECT_DXGI_SHA="$2"; shift 2 ;;
     --expect-dxgi-dxmt-sha) EXPECT_DXGI_DXMT_SHA="$2"; shift 2 ;;
@@ -325,7 +328,7 @@ PY
 )"
 
 if [[ -n "$PID" && "$SAMPLE_PROCESS" == "1" ]]; then
-  (sleep 3; sample "$PID" "$SAMPLE_DURATION" "$SAMPLE_INTERVAL_MS" -file "$RUN_DIR/sample-$PID.txt" >/dev/null 2>&1 || true) &
+  (sleep "$SAMPLE_DELAY_SECONDS"; sample "$PID" "$SAMPLE_DURATION" "$SAMPLE_INTERVAL_MS" -file "$RUN_DIR/sample-$PID.txt" >/dev/null 2>&1 || true) &
 fi
 if [[ -n "$PID" && -n "$PROCESS_SAMPLE_CSV" ]]; then
   python3 "$SDK_DIR/scripts/sample-m12-process.py" --pid "$PID" --seconds "$SECONDS_TO_RUN" --interval-ms "$PROCESS_SAMPLE_INTERVAL_MS" --out "$PROCESS_SAMPLE_CSV" &
@@ -361,7 +364,7 @@ if [[ "$SHOW_METALSHARP_AFTER" == "1" ]]; then
   show_metalsharp_gui
 fi
 
-RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" HIDE_METALSHARP="$HIDE_METALSHARP" SHOW_METALSHARP_AFTER="$SHOW_METALSHARP_AFTER" METALSHARP_M12CORE_ENABLE="$M12CORE_ENABLE" METALSHARP_M12CORE_REQUIRED="$M12CORE_REQUIRED" METALSHARP_M12_TRACE_PROFILE="$TRACE_PROFILE" METALSHARP_M12_LOG_PATH="$M12_LOG_PATH" METALSHARP_M12_LAUNCH_ARGS_OVERRIDE="$LAUNCH_ARGS_OVERRIDE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
+RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" SAMPLE_DELAY_SECONDS="$SAMPLE_DELAY_SECONDS" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" HIDE_METALSHARP="$HIDE_METALSHARP" SHOW_METALSHARP_AFTER="$SHOW_METALSHARP_AFTER" METALSHARP_M12CORE_ENABLE="$M12CORE_ENABLE" METALSHARP_M12CORE_REQUIRED="$M12CORE_REQUIRED" METALSHARP_M12_TRACE_PROFILE="$TRACE_PROFILE" METALSHARP_M12_LOG_PATH="$M12_LOG_PATH" METALSHARP_M12_LAUNCH_ARGS_OVERRIDE="$LAUNCH_ARGS_OVERRIDE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
 import json, os, re
 from pathlib import Path
 run = Path(os.environ['RUN_DIR'])
@@ -464,6 +467,7 @@ summary = {
   'appid': int(os.environ['APPID']),
   'pid': int(os.environ['PID']) if os.environ['PID'] else None,
   'seconds': int(os.environ['SECONDS_TO_RUN']),
+  'sample_delay_seconds': int(os.environ.get('SAMPLE_DELAY_SECONDS') or 0),
   'workers_override': os.environ['WORKERS'],
   'async_compile_override': os.environ['ASYNC_COMPILE'],
   'typed_stage_in_override': os.environ['TYPED_STAGE_IN'],
@@ -490,7 +494,34 @@ summary = {
   'translation_issue_examples': translation_issue_lines[:20],
 }
 (run/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- force_source_compile_override: `{summary['force_source_compile_override']}`", f"- hide_metalsharp_after_launch: `{summary['hide_metalsharp_after_launch']}`", f"- show_metalsharp_after: `{summary['show_metalsharp_after']}`", f"- m12core_enable: `{summary['m12core_enable']}`", f"- m12core_required: `{summary['m12core_required']}`", f"- m12_trace_profile: `{summary['m12_trace_profile']}`", f"- m12_log_path: `{summary['m12_log_path']}`", f"- m12_launch_args_override: `{summary['m12_launch_args_override']}`", f"- expected_d3d12_sha: `{summary['expected_d3d12_sha']}`", f"- expected_dxgi_sha: `{summary['expected_dxgi_sha']}`", f"- expected_dxgi_dxmt_sha: `{summary['expected_dxgi_dxmt_sha']}`", f"- expected_winemetal_dll_sha: `{summary['expected_winemetal_dll_sha']}`", f"- expected_winemetal_so_sha: `{summary['expected_winemetal_so_sha']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
+md = [
+  f"# M12 bounded launch: {summary['profile']}",
+  '',
+  f"- appid: `{summary['appid']}`",
+  f"- pid: `{summary['pid']}`",
+  f"- seconds: `{summary['seconds']}`",
+  f"- sample_delay_seconds: `{summary['sample_delay_seconds']}`",
+  f"- workers_override: `{summary['workers_override']}`",
+  f"- async_compile_override: `{summary['async_compile_override']}`",
+  f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`",
+  f"- force_source_compile_override: `{summary['force_source_compile_override']}`",
+  f"- hide_metalsharp_after_launch: `{summary['hide_metalsharp_after_launch']}`",
+  f"- show_metalsharp_after: `{summary['show_metalsharp_after']}`",
+  f"- m12core_enable: `{summary['m12core_enable']}`",
+  f"- m12core_required: `{summary['m12core_required']}`",
+  f"- m12_trace_profile: `{summary['m12_trace_profile']}`",
+  f"- m12_log_path: `{summary['m12_log_path']}`",
+  f"- m12_launch_args_override: `{summary['m12_launch_args_override']}`",
+  f"- expected_d3d12_sha: `{summary['expected_d3d12_sha']}`",
+  f"- expected_dxgi_sha: `{summary['expected_dxgi_sha']}`",
+  f"- expected_dxgi_dxmt_sha: `{summary['expected_dxgi_dxmt_sha']}`",
+  f"- expected_winemetal_dll_sha: `{summary['expected_winemetal_dll_sha']}`",
+  f"- expected_winemetal_so_sha: `{summary['expected_winemetal_so_sha']}`",
+  f"- launch_ok: `{summary['launch_ok']}`",
+  f"- launch_log: `{summary['launch_log']}`",
+  '',
+  '## New artifacts',
+]
 for k,v in counts.items(): md.append(f"- `{k}`: {v}")
 md += ['', '## Per-run runtime metrics']
 for k,v in metrics.items(): md.append(f"- `{k}`: {v}")
