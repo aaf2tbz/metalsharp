@@ -84,6 +84,8 @@ public:
 
   WMT::Reference<WMT::Buffer> GetMTLBuffer() { return m_mtl_buffer; }
   WMT::Reference<WMT::Texture> GetMTLTexture();
+  D3D12_RESOURCE_STATES GetResourceState() const { return m_state; }
+  void SetResourceState(D3D12_RESOURCE_STATES state) { m_state = state; }
   uint64_t GetTextureGPUResourceID() const { return m_tex_gpu_resource_id; }
   uint32_t GetTextureArrayLength() const;
   uint64_t GetBufferByteLength() const;

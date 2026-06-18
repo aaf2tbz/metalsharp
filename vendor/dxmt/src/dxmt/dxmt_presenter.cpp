@@ -190,6 +190,14 @@ Presenter::encodeCommands(
   if (!encoder.handle)
     return {};
   wait_fences(encoder);
+  encoder.useResource(backbuffer,
+                      (WMTResourceUsage)(WMTResourceUsageRead |
+                                         WMTResourceUsageSample),
+                      WMTRenderStageFragment);
+  encoder.useResource(gamma_lut_texture_,
+                      (WMTResourceUsage)(WMTResourceUsageRead |
+                                         WMTResourceUsageSample),
+                      WMTRenderStageFragment);
   encoder.setFragmentTexture(backbuffer, 0);
   encoder.setFragmentTexture(gamma_lut_texture_, 1);
 

@@ -1413,11 +1413,19 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
       static_cast<MTLD3D12Resource *>(m_backbuffers[m_current_buffer].ptr());
   auto src_texture = res->GetMTLTexture();
   auto work = res->GetSwapchainQueueWork();
+  D3D12_RESOURCE_STATES present_entry_state = res->GetResourceState();
+  if (present_entry_state != D3D12_RESOURCE_STATE_PRESENT &&
+      present_entry_state != D3D12_RESOURCE_STATE_COMMON) {
+    SCTRACE("Present backbuffer not in PRESENT/COMMON idx=%u state=0x%x res=%p",
+            m_current_buffer, present_entry_state, (void *)res);
+  }
   if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
     Logger::info(str::format("M12 present entry count=", m_present_count,
                              " sync=", sync_interval, " flags=0x", std::hex,
                              flags, std::dec, " idx=", m_current_buffer,
                              " backbuffer=", (void *)res,
+                             " state=0x", std::hex,
+                             (unsigned)present_entry_state, std::dec,
                              " src=", (unsigned long long)src_texture.handle,
                              " fmt=", (unsigned)m_desc.Format,
                              " size=", m_desc.Width, "x", m_desc.Height));
@@ -1667,6 +1675,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     }
   }
 
+  res->SetResourceState(D3D12_RESOURCE_STATE_PRESENT);
   m_current_buffer =
       (m_current_buffer + 1) % (m_desc.BufferCount ? m_desc.BufferCount : 2);
   if (m_frame_latency_event)

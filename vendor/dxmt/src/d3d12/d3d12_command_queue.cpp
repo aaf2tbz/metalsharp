@@ -9263,12 +9263,26 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         for (uint32_t i = 0; i < cmd->count; i++) {
           const auto &barrier = cmd->barriers[i];
           if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) {
+            auto *res = static_cast<MTLD3D12Resource *>(barrier.Transition.pResource);
+            D3D12_RESOURCE_STATES tracked_state =
+                res ? res->GetResourceState() : D3D12_RESOURCE_STATE_COMMON;
             QTRACE("  barrier[%u] transition res=%p sub=%u before=0x%x "
-                   "after=0x%x flags=0x%x",
+                   "after=0x%x flags=0x%x tracked=0x%x",
                    i, (void *)barrier.Transition.pResource,
                    barrier.Transition.Subresource,
                    barrier.Transition.StateBefore,
-                   barrier.Transition.StateAfter, barrier.Flags);
+                   barrier.Transition.StateAfter, barrier.Flags,
+                   tracked_state);
+            if (res && !(barrier.Flags & D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY)) {
+              if (tracked_state != barrier.Transition.StateBefore &&
+                  tracked_state != barrier.Transition.StateAfter) {
+                QTRACE("  barrier[%u] transition state mismatch tracked=0x%x "
+                       "before=0x%x after=0x%x res=%p",
+                       i, tracked_state, barrier.Transition.StateBefore,
+                       barrier.Transition.StateAfter, (void *)res);
+              }
+              res->SetResourceState(barrier.Transition.StateAfter);
+            }
           } else if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_UAV) {
             QTRACE("  barrier[%u] uav res=%p flags=0x%x", i,
                    (void *)barrier.UAV.pResource, barrier.Flags);
