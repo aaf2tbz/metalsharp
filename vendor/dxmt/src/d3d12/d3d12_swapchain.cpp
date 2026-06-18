@@ -2,6 +2,7 @@
 #include "d3d12_device.hpp"
 #include "d3d12_resource.hpp"
 #include "d3d12_trace.hpp"
+#include "dxgi_output.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include "Metal.hpp"
@@ -614,6 +615,9 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
     m_fs_desc = {};
     m_fs_desc.Windowed = true;
   }
+  bool enter_initial_fullscreen = !m_fs_desc.Windowed;
+  if (enter_initial_fullscreen)
+    m_fs_desc.Windowed = TRUE;
   m_source_width = m_desc.Width;
   m_source_height = m_desc.Height;
   if (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT)
@@ -634,6 +638,12 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
   EnsureMetalView();
 
   ResizeBuffers(0, m_desc.Width, m_desc.Height, m_desc.Format, m_desc.Flags);
+  if (enter_initial_fullscreen) {
+    HRESULT fs_hr = SetFullscreenState(TRUE, nullptr);
+    if (FAILED(fs_hr))
+      Logger::warn(str::format("D3D12SwapChain: initial fullscreen failed hr=0x",
+                               std::hex, fs_hr));
+  }
   Logger::info(str::format("D3D12SwapChain: ", m_desc.Width, "x", m_desc.Height,
                            " fmt=", m_desc.Format, " hwnd=", (void *)hWnd));
 }
@@ -1116,6 +1126,8 @@ MTLD3D12SwapChain::SetFullscreenState(BOOL fullscreen, IDXGIOutput *target) {
     if (IsWindow(m_hwnd) &&
         !wsi::leaveFullscreenMode(m_hwnd, &m_window_state, true))
       return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+    if (m_presenter)
+      m_presenter->changeGammaRamp(nullptr);
   } else {
     return S_OK;
   }
@@ -1259,18 +1271,25 @@ MTLD3D12SwapChain::ResizeTarget(const DXGI_MODE_DESC *new_target_params) {
     RebindMetalViewForWindowChange("resize_target_windowed");
   } else if (!m_fs_desc.Windowed) {
     m_monitor = wsi::getWindowMonitor(m_hwnd);
-    wsi::WsiMode mode{new_target_params->Width,
-                      new_target_params->Height,
-                      {new_target_params->RefreshRate.Numerator,
-                       new_target_params->RefreshRate.Denominator
-                           ? new_target_params->RefreshRate.Denominator
-                           : 1u},
-                      32,
-                      new_target_params->ScanlineOrdering ==
-                              DXGI_MODE_SCANLINE_ORDER_UPPER_FIELD_FIRST ||
-                          new_target_params->ScanlineOrdering ==
-                              DXGI_MODE_SCANLINE_ORDER_LOWER_FIELD_FIRST};
-    wsi::setWindowMode(m_monitor, m_hwnd, mode);
+    Com<IDXGIOutput1> output = m_fullscreen_target;
+    if (!output) {
+      HRESULT output_hr = GetOutputFromMonitor(m_monitor, &output);
+      if (FAILED(output_hr))
+        return output_hr;
+    }
+    DXGI_MODE_DESC1 display_mode = {};
+    display_mode.Width = new_target_params->Width;
+    display_mode.Height = new_target_params->Height;
+    display_mode.RefreshRate = new_target_params->RefreshRate;
+    display_mode.Format = new_target_params->Format;
+    display_mode.ScanlineOrdering = new_target_params->ScanlineOrdering;
+    display_mode.Scaling = new_target_params->Scaling;
+    HRESULT mode_hr = ChangeDisplayMode(output.ptr(), &display_mode);
+    if (FAILED(mode_hr))
+      return mode_hr;
+    m_fs_desc.RefreshRate = display_mode.RefreshRate;
+    m_fs_desc.ScanlineOrdering = display_mode.ScanlineOrdering;
+    m_fs_desc.Scaling = display_mode.Scaling;
     wsi::updateFullscreenWindow(m_monitor, m_hwnd, false);
     ReassertWindowForHandoff("resize_target_fullscreen");
     RebindMetalViewForWindowChange("resize_target_fullscreen");
@@ -1303,6 +1322,9 @@ MTLD3D12SwapChain::GetFrameStatistics(DXGI_FRAME_STATISTICS *stats) {
   if (!stats)
     return DXGI_ERROR_INVALID_CALL;
   memset(stats, 0, sizeof(*stats));
+  stats->PresentCount = (UINT)m_present_count;
+  stats->SyncRefreshCount = (UINT)m_present_count;
+  stats->PresentRefreshCount = (UINT)m_present_count;
   return S_OK;
 }
 
@@ -1466,6 +1488,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
   }
 
   if (!force_raw_blit && m_presenter && src_texture.handle) {
+    if (m_fullscreen_target)
+      m_presenter->changeGammaRamp(
+          static_cast<MTLDXGIOutput *>(m_fullscreen_target.ptr())->GetGammaRamp());
     auto readback_probe = EncodeSwapchainReadback(
         m_dxgi_device->GetMTLDevice(), cmdbuf, src_texture, m_desc.Width,
         m_desc.Height, m_desc.Format, m_present_count);
@@ -1689,6 +1714,9 @@ MTLD3D12SwapChain::SetBackgroundColor(const DXGI_RGBA *color) {
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::GetBackgroundColor(DXGI_RGBA *color) {
+  if (!color)
+    return E_INVALIDARG;
+  *color = {0, 0, 0, 0};
   return S_OK;
 }
 
@@ -1812,9 +1840,23 @@ HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,
                              const DXGI_SWAP_CHAIN_DESC1 *desc,
                              const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fs_desc,
                              IDXGISwapChain1 **pp_swap_chain) {
-  if (!pp_swap_chain)
-    return E_POINTER;
+  if (!desc || !pp_swap_chain)
+    return DXGI_ERROR_INVALID_CALL;
   *pp_swap_chain = nullptr;
+
+  DWORD window_process_id = 0;
+  GetWindowThreadProcessId(hWnd, &window_process_id);
+  if (window_process_id &&
+      GetProcessId(GetCurrentProcess()) != window_process_id)
+    Logger::warn("CreateD3D12SwapChain: cross-process swapchain, allowing");
+
+  if ((desc->SwapEffect != DXGI_SWAP_EFFECT_DISCARD &&
+       desc->SwapEffect != DXGI_SWAP_EFFECT_FLIP_DISCARD) &&
+      desc->BufferCount != 1) {
+    Logger::warn(str::format("CreateD3D12SwapChain: unsupported swap effect ",
+                             (unsigned)desc->SwapEffect,
+                             " with backbuffer count ", desc->BufferCount));
+  }
 
   auto swapchain =
       new MTLD3D12SwapChain(factory, device, dxgi_device, hWnd, desc, fs_desc);
