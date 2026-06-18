@@ -143,6 +143,14 @@ bool DXMTD3D12VertexRangeSafeDraw() {
   return enabled != 0;
 }
 
+bool DXMTD3D12SkipTessellationFallbackDraws() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_SKIP_TESSELLATION_FALLBACK_DRAWS");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 static uint32_t AlignReadbackPitch(uint32_t value, uint32_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -5139,6 +5147,11 @@ struct ReplayState {
     }
   }
 
+  bool ShouldSkipTessellationFallbackDraw() const {
+    return DXMTD3D12SkipTessellationFallbackDraws() && pso &&
+           pso->UsesTessellationFallback() && D3D12IsPatchTopology(topology);
+  }
+
   void LogTessellationFallbackDraw(const char *label, uint32_t element_count,
                                    uint32_t instance_count, bool indexed) {
     if (!pso || !pso->UsesTessellationFallback() ||
@@ -7971,6 +7984,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           }
           break;
         }
+        if (st.ShouldSkipTessellationFallbackDraw()) {
+          if (TakeLogBudget(&g_tessellation_fallback_draw_logs, 96)) {
+            Logger::warn(str::format(
+                "M12 skipping tessellation fallback DrawInstanced v=",
+                cmd->vertex_count, " i=", cmd->instance_count,
+                " topology=", (unsigned)st.topology, " pso=", (void *)st.pso,
+                " ", TracePsoShaderSummary(st.pso)));
+          }
+          break;
+        }
         QTRACE("DrawInstanced v=%u i=%u enc_open=%d pso=%p compiled=%d "
                "stage=%s detail=%s",
                cmd->vertex_count, cmd->instance_count, st.render_enc_open,
@@ -8114,6 +8137,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 "reason=",
                 st.UnsafeMSCOffscreenPassReason(), " idx=", cmd->index_count,
                 " inst=", cmd->instance_count, " start=", cmd->start_index,
+                " pso=", (void *)st.pso, " ", TracePsoShaderSummary(st.pso)));
+          }
+          break;
+        }
+        if (st.ShouldSkipTessellationFallbackDraw()) {
+          if (TakeLogBudget(&g_tessellation_fallback_draw_logs, 96)) {
+            Logger::warn(str::format(
+                "M12 skipping tessellation fallback DrawIndexedInstanced idx=",
+                cmd->index_count, " inst=", cmd->instance_count,
+                " start=", cmd->start_index, " topology=", (unsigned)st.topology,
                 " pso=", (void *)st.pso, " ", TracePsoShaderSummary(st.pso)));
           }
           break;

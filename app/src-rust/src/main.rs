@@ -2127,6 +2127,7 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE"
             | "METALSHARP_M12_FORCE_SWAPCHAIN_COLOR"
             | "METALSHARP_M12_FORCE_COLOR_WRITE_STATE"
+            | "METALSHARP_M12_SKIP_TESSELLATION_FALLBACK_DRAWS"
             | "METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT"
             | "METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN"
             | "METALSHARP_M12CORE_ENABLE"
@@ -2201,6 +2202,9 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE" => upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", bool_value),
             "METALSHARP_M12_FORCE_SWAPCHAIN_COLOR" => upsert_env("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR", bool_value),
             "METALSHARP_M12_FORCE_COLOR_WRITE_STATE" => upsert_env("DXMT_D3D12_FORCE_COLOR_WRITE_STATE", bool_value),
+            "METALSHARP_M12_SKIP_TESSELLATION_FALLBACK_DRAWS" => {
+                upsert_env("DXMT_D3D12_SKIP_TESSELLATION_FALLBACK_DRAWS", bool_value)
+            },
             "METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT" => {
                 upsert_env("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT", bool_value)
             },

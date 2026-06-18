@@ -12,6 +12,7 @@ WORKERS="${METALSHARP_M12_PSO_WORKERS:-}"
 ASYNC_COMPILE="${METALSHARP_M12_ASYNC_PIPELINE_COMPILE:-}"
 TYPED_STAGE_IN="${METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR:-}"
 FORCE_SOURCE_COMPILE="${METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE:-}"
+SKIP_TESSELLATION_FALLBACK_DRAWS="${METALSHARP_M12_SKIP_TESSELLATION_FALLBACK_DRAWS:-}"
 M12CORE_ENABLE="${METALSHARP_M12CORE_ENABLE:-1}"
 M12CORE_REQUIRED="${METALSHARP_M12CORE_REQUIRED:-0}"
 M12CORE_PATH="${METALSHARP_M12CORE_PATH:-}"
@@ -50,6 +51,7 @@ Options:
   --async-compile 0|1     Override DXMT_ASYNC_PIPELINE_COMPILE through backend env hook.
   --typed-stage-in 0|1    Override DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR through backend env hook.
   --force-source-compile 0|1 Override DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE through backend env hook.
+  --skip-tess-fallback-draws 0|1 Skip D3D12 patch draws using the VS/PS-only tessellation fallback.
   --trace 0|1             Override DXGI/D3D12/winemetal trace capture.
   --trace-profile PROFILE Trace profile: full or hang/light/failure. Hang keeps only low-overhead breadcrumbs.
   --log-level LEVEL       Override DXMT_LOG_LEVEL, e.g. none, error, warn, info.
@@ -84,6 +86,7 @@ while [[ $# -gt 0 ]]; do
     --async-compile) ASYNC_COMPILE="$2"; shift 2 ;;
     --typed-stage-in) TYPED_STAGE_IN="$2"; shift 2 ;;
     --force-source-compile) FORCE_SOURCE_COMPILE="$2"; shift 2 ;;
+    --skip-tess-fallback-draws) SKIP_TESSELLATION_FALLBACK_DRAWS="$2"; shift 2 ;;
     --trace) TRACE_CAPTURE="$2"; shift 2 ;;
     --trace-profile) TRACE_PROFILE="$2"; shift 2 ;;
     --log-level) M12_LOG_LEVEL="$2"; shift 2 ;;
@@ -207,6 +210,7 @@ if [[ -n "$WORKERS" ]]; then launch_env+=("METALSHARP_M12_PSO_WORKERS=$WORKERS")
 if [[ -n "$ASYNC_COMPILE" ]]; then launch_env+=("METALSHARP_M12_ASYNC_PIPELINE_COMPILE=$ASYNC_COMPILE"); fi
 if [[ -n "$TYPED_STAGE_IN" ]]; then launch_env+=("METALSHARP_M12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR=$TYPED_STAGE_IN"); fi
 if [[ -n "$FORCE_SOURCE_COMPILE" ]]; then launch_env+=("METALSHARP_M12_FORCE_DXIL_SOURCE_COMPILE=$FORCE_SOURCE_COMPILE"); fi
+if [[ -n "$SKIP_TESSELLATION_FALLBACK_DRAWS" ]]; then launch_env+=("METALSHARP_M12_SKIP_TESSELLATION_FALLBACK_DRAWS=$SKIP_TESSELLATION_FALLBACK_DRAWS"); fi
 launch_env+=("METALSHARP_M12CORE_ENABLE=$M12CORE_ENABLE")
 launch_env+=("METALSHARP_M12CORE_REQUIRED=$M12CORE_REQUIRED")
 launch_env+=("METALSHARP_M12CORE_DUMP_COUNTERS=$M12CORE_DUMP_COUNTERS")
@@ -225,6 +229,7 @@ for diagnostic_var in \
   METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE \
   METALSHARP_M12_FORCE_SWAPCHAIN_COLOR \
   METALSHARP_M12_FORCE_COLOR_WRITE_STATE \
+  METALSHARP_M12_SKIP_TESSELLATION_FALLBACK_DRAWS \
   METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT \
   METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN \
   METALSHARP_M12CORE_PATH \
