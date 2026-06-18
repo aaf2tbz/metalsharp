@@ -239,7 +239,11 @@ Tasks:
 
 ## Slice C7 — Cache-first warm start for shaders/PSOs
 
+Status: **Complete** — see `m12-core-convergence-c7-audit.md`.
+
 Touches: **P11.S1-S2/S4 + P9 metrics**
+
+Plan: `m12-core-convergence-c7-plan.md`.
 
 Tasks:
 
@@ -298,4 +302,4 @@ Final proof requires measured native execution coverage, PE fallback parity, rea
 
 ## Current next slice
 
-C0 through C6 are complete. The next active work is **C7 — Cache-first warm start for shaders/PSOs**.
+C0 through C7 are complete. The next active work is **C8 — Expand native replay coverage while thinning PE**.

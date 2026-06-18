@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000018u /* Core convergence C6 native present ownership planning. */
+  0x00000019u /* Core convergence C7 cache-first warm start planning. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -57,6 +57,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING = 1u << 26,
   M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1u << 27,
   M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1u << 28,
+  M12CORE_FEATURE_CACHE_FIRST_WARM_START = 1u << 29,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -79,7 +80,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR |
       M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING |
       M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA |
-      M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP,
+      M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP |
+      M12CORE_FEATURE_CACHE_FIRST_WARM_START,
 };
 
 typedef struct M12CoreVersion {
@@ -1467,6 +1469,79 @@ typedef struct M12CoreNativePresentOwnershipSummary {
   uint64_t transport_key;
 } M12CoreNativePresentOwnershipSummary;
 
+/* Core Convergence C7 cache-first warm-start planning.  This decides whether
+ * compatible shader/PSO/prewarm work can be skipped before translation or PSO
+ * creation is queued.  Cache payloads are still external artifacts; this ABI
+ * only exchanges scalar compatibility and hit/miss metadata.
+ */
+typedef enum M12CoreCacheWarmStartStatus {
+  M12CORE_CACHE_WARM_START_STATUS_OK = 0,
+  M12CORE_CACHE_WARM_START_STATUS_INVALID = 1,
+} M12CoreCacheWarmStartStatus;
+
+typedef enum M12CoreCacheWarmStartFlags {
+  M12CORE_CACHE_WARM_START_HAS_COMPATIBILITY_KEY = 1u << 0,
+  M12CORE_CACHE_WARM_START_HAS_INVALIDATION_PROOF = 1u << 1,
+  M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT = 1u << 2,
+  M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT = 1u << 3,
+  M12CORE_CACHE_WARM_START_PREWARM_REQUESTED = 1u << 4,
+  M12CORE_CACHE_WARM_START_FORCE_SOURCE_COMPILE = 1u << 5,
+  M12CORE_CACHE_WARM_START_CACHE_DISABLED = 1u << 6,
+} M12CoreCacheWarmStartFlags;
+
+typedef enum M12CoreCacheWarmStartSummaryFlags {
+  M12CORE_CACHE_WARM_START_SUMMARY_CACHE_FIRST_ENABLED = 1u << 0,
+  M12CORE_CACHE_WARM_START_SUMMARY_SHADER_WORK_SKIPPED = 1u << 1,
+  M12CORE_CACHE_WARM_START_SUMMARY_PSO_WORK_SKIPPED = 1u << 2,
+  M12CORE_CACHE_WARM_START_SUMMARY_PREWARM_WORK_SKIPPED = 1u << 3,
+  M12CORE_CACHE_WARM_START_SUMMARY_INVALIDATION_PROVEN = 1u << 4,
+  M12CORE_CACHE_WARM_START_SUMMARY_FALLBACK_REQUIRED = 1u << 5,
+} M12CoreCacheWarmStartSummaryFlags;
+
+typedef enum M12CoreCacheWarmStartFallbackReason {
+  M12CORE_CACHE_WARM_START_FALLBACK_NONE = 0,
+  M12CORE_CACHE_WARM_START_FALLBACK_DISABLED = 1,
+  M12CORE_CACHE_WARM_START_FALLBACK_FORCE_SOURCE = 2,
+  M12CORE_CACHE_WARM_START_FALLBACK_MISSING_COMPATIBILITY = 3,
+  M12CORE_CACHE_WARM_START_FALLBACK_MISSING_INVALIDATION_PROOF = 4,
+  M12CORE_CACHE_WARM_START_FALLBACK_CACHE_MISS = 5,
+} M12CoreCacheWarmStartFallbackReason;
+
+typedef struct M12CoreCacheWarmStartDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t shader_request_count;
+  uint32_t pipeline_request_count;
+  uint32_t prewarm_request_count;
+  uint32_t compatible_shader_hit_count;
+  uint32_t compatible_pipeline_hit_count;
+  uint32_t invalidated_entry_count;
+  uint64_t compatibility_key;
+  uint64_t invalidation_key;
+  uint64_t prewarm_pack_key;
+  uint64_t root_binding_cache_key;
+  uint64_t pipeline_cache_key;
+  uint64_t shader_cache_key;
+} M12CoreCacheWarmStartDesc;
+
+typedef struct M12CoreCacheWarmStartSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t fallback_reason;
+  uint32_t shader_work_skipped;
+  uint32_t pipeline_work_skipped;
+  uint32_t prewarm_work_skipped;
+  uint32_t fallback_shader_work;
+  uint32_t fallback_pipeline_work;
+  uint32_t invalidated_entry_count;
+  uint32_t cache_hit_count;
+  uint32_t cache_miss_count;
+  uint64_t warm_start_key;
+  uint64_t skip_work_key;
+  uint64_t invalidation_proof_key;
+} M12CoreCacheWarmStartSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1571,6 +1646,8 @@ int m12core_plan_encoder_ownership(const M12CoreEncoderOwnershipDesc *desc,
 int m12core_plan_native_present_ownership(
     const M12CoreNativePresentOwnershipDesc *desc,
     M12CoreNativePresentOwnershipSummary *out_summary);
+int m12core_plan_cache_warm_start(const M12CoreCacheWarmStartDesc *desc,
+                                  M12CoreCacheWarmStartSummary *out_summary);
 
 #ifdef __cplusplus
 }

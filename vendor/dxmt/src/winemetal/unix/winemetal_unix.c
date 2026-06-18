@@ -157,6 +157,9 @@ typedef int (*PFN_m12core_plan_encoder_ownership)(
 typedef int (*PFN_m12core_plan_native_present_ownership)(
     const M12CoreNativePresentOwnershipDesc *desc, M12CoreNativePresentOwnershipSummary *out_summary
 );
+typedef int (*PFN_m12core_plan_cache_warm_start)(
+    const M12CoreCacheWarmStartDesc *desc, M12CoreCacheWarmStartSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -195,6 +198,7 @@ static PFN_m12core_classify_packet_support p_m12core_classify_packet_support;
 static PFN_m12core_execute_replay_packet_stream p_m12core_execute_replay_packet_stream;
 static PFN_m12core_plan_encoder_ownership p_m12core_plan_encoder_ownership;
 static PFN_m12core_plan_native_present_ownership p_m12core_plan_native_present_ownership;
+static PFN_m12core_plan_cache_warm_start p_m12core_plan_cache_warm_start;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -309,6 +313,8 @@ m12core_try_load(void) {
       (PFN_m12core_plan_encoder_ownership)dlsym(m12core_handle, "m12core_plan_encoder_ownership");
   p_m12core_plan_native_present_ownership =
       (PFN_m12core_plan_native_present_ownership)dlsym(m12core_handle, "m12core_plan_native_present_ownership");
+  p_m12core_plan_cache_warm_start =
+      (PFN_m12core_plan_cache_warm_start)dlsym(m12core_handle, "m12core_plan_cache_warm_start");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -913,6 +919,16 @@ _WMTM12CorePlanNativePresentOwnership(void *obj) {
     return STATUS_SUCCESS;
 
   params->ret_success = p_m12core_plan_native_present_ownership(&params->desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CorePlanCacheWarmStart(void *obj) {
+  struct unixcall_m12core_plan_cache_warm_start *params = obj;
+  if (!params || !p_m12core_plan_cache_warm_start)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_plan_cache_warm_start(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4672,6 +4688,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreExecuteReplayPacketStream,
     &_WMTM12CorePlanEncoderOwnership,
     &_WMTM12CorePlanNativePresentOwnership,
+    &_WMTM12CorePlanCacheWarmStart,
 };
 
 #ifndef DXMT_NATIVE
@@ -4844,5 +4861,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreExecuteReplayPacketStream,
     &_WMTM12CorePlanEncoderOwnership,
     &_WMTM12CorePlanNativePresentOwnership,
+    &_WMTM12CorePlanCacheWarmStart,
 };
 #endif

@@ -86,6 +86,7 @@ enum MetalSharpM12TranslationLayerFeatureFlags : UINT64 {
   MetalSharpM12TranslationLayerFeatureEncoderOwnershipPlanning = 1ull << 17,
   MetalSharpM12TranslationLayerFeatureRootBindingCacheMetadata = 1ull << 18,
   MetalSharpM12TranslationLayerFeatureNativePresentOwnership = 1ull << 19,
+  MetalSharpM12TranslationLayerFeatureCacheFirstWarmStart = 1ull << 20,
 };
 
 struct MetalSharpM12TranslationLayerInfo {

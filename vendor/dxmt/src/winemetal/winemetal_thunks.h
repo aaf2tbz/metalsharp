@@ -725,6 +725,13 @@ struct unixcall_m12core_plan_native_present_ownership {
   M12CoreNativePresentOwnershipSummary ret_summary;
 };
 
+struct unixcall_m12core_plan_cache_warm_start {
+  M12CoreCacheWarmStartDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreCacheWarmStartSummary ret_summary;
+};
+
 struct unixcall_m12core_execute_present_blit {
   M12CorePresentExecuteDesc desc;
   obj_handle_t command_buffer;

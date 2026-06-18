@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core convergence-c6 native-present abi=1";
+  return "libm12core convergence-c7 cache-warm-start abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -2369,6 +2369,112 @@ extern "C" int m12core_plan_native_present_ownership(
     out_summary->fallback_reason = fallback;
     out_summary->pe_present_required = 1;
   }
+  return 0;
+}
+
+extern "C" int
+m12core_plan_cache_warm_start(const M12CoreCacheWarmStartDesc *desc,
+                              M12CoreCacheWarmStartSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_CACHE_WARM_START_STATUS_OK;
+  out_summary->invalidated_entry_count = desc->invalidated_entry_count;
+
+  uint64_t warm_key = 0x4d31325741524d53ull; // "M12WARMS" marker.
+  pipelineHashCombine(warm_key, desc->flags);
+  pipelineHashCombine(warm_key, desc->shader_request_count);
+  pipelineHashCombine(warm_key, desc->pipeline_request_count);
+  pipelineHashCombine(warm_key, desc->prewarm_request_count);
+  pipelineHashCombine(warm_key, desc->compatible_shader_hit_count);
+  pipelineHashCombine(warm_key, desc->compatible_pipeline_hit_count);
+  pipelineHashCombine(warm_key, desc->invalidated_entry_count);
+  pipelineHashCombine(warm_key, desc->compatibility_key);
+  pipelineHashCombine(warm_key, desc->invalidation_key);
+  pipelineHashCombine(warm_key, desc->prewarm_pack_key);
+  pipelineHashCombine(warm_key, desc->root_binding_cache_key);
+  pipelineHashCombine(warm_key, desc->pipeline_cache_key);
+  pipelineHashCombine(warm_key, desc->shader_cache_key);
+  out_summary->warm_start_key = warm_key;
+
+  uint64_t proof_key = 0x4d3132494e565052ull; // "M12INVPR" marker.
+  pipelineHashCombine(proof_key, desc->compatibility_key);
+  pipelineHashCombine(proof_key, desc->invalidation_key);
+  pipelineHashCombine(proof_key, desc->invalidated_entry_count);
+  out_summary->invalidation_proof_key = proof_key;
+
+  uint32_t fallback = M12CORE_CACHE_WARM_START_FALLBACK_NONE;
+  if (desc->flags & M12CORE_CACHE_WARM_START_CACHE_DISABLED) {
+    fallback = M12CORE_CACHE_WARM_START_FALLBACK_DISABLED;
+  } else if (desc->flags & M12CORE_CACHE_WARM_START_FORCE_SOURCE_COMPILE) {
+    fallback = M12CORE_CACHE_WARM_START_FALLBACK_FORCE_SOURCE;
+  } else if (!(desc->flags & M12CORE_CACHE_WARM_START_HAS_COMPATIBILITY_KEY) ||
+             !desc->compatibility_key) {
+    fallback = M12CORE_CACHE_WARM_START_FALLBACK_MISSING_COMPATIBILITY;
+  } else if (!(desc->flags & M12CORE_CACHE_WARM_START_HAS_INVALIDATION_PROOF) ||
+             !desc->invalidation_key || desc->invalidated_entry_count) {
+    fallback = M12CORE_CACHE_WARM_START_FALLBACK_MISSING_INVALIDATION_PROOF;
+  } else if (!(desc->flags & M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT) &&
+             !(desc->flags & M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT)) {
+    fallback = M12CORE_CACHE_WARM_START_FALLBACK_CACHE_MISS;
+  }
+
+  out_summary->cache_hit_count =
+      desc->compatible_shader_hit_count + desc->compatible_pipeline_hit_count;
+  const uint32_t requested =
+      desc->shader_request_count + desc->pipeline_request_count;
+  out_summary->cache_miss_count = requested > out_summary->cache_hit_count
+                                      ? requested - out_summary->cache_hit_count
+                                      : 0u;
+
+  if (fallback == M12CORE_CACHE_WARM_START_FALLBACK_NONE) {
+    out_summary->flags |= M12CORE_CACHE_WARM_START_SUMMARY_CACHE_FIRST_ENABLED |
+                          M12CORE_CACHE_WARM_START_SUMMARY_INVALIDATION_PROVEN;
+    if (desc->flags & M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT) {
+      out_summary->shader_work_skipped = std::min(
+          desc->shader_request_count, desc->compatible_shader_hit_count);
+      if (out_summary->shader_work_skipped)
+        out_summary->flags |=
+            M12CORE_CACHE_WARM_START_SUMMARY_SHADER_WORK_SKIPPED;
+    }
+    if (desc->flags & M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT) {
+      out_summary->pipeline_work_skipped = std::min(
+          desc->pipeline_request_count, desc->compatible_pipeline_hit_count);
+      if (out_summary->pipeline_work_skipped)
+        out_summary->flags |= M12CORE_CACHE_WARM_START_SUMMARY_PSO_WORK_SKIPPED;
+    }
+    if ((desc->flags & M12CORE_CACHE_WARM_START_PREWARM_REQUESTED) &&
+        out_summary->shader_work_skipped >= desc->shader_request_count &&
+        out_summary->pipeline_work_skipped >= desc->pipeline_request_count) {
+      out_summary->prewarm_work_skipped = desc->prewarm_request_count;
+      if (out_summary->prewarm_work_skipped)
+        out_summary->flags |=
+            M12CORE_CACHE_WARM_START_SUMMARY_PREWARM_WORK_SKIPPED;
+    }
+  } else {
+    out_summary->fallback_reason = fallback;
+    out_summary->flags |= M12CORE_CACHE_WARM_START_SUMMARY_FALLBACK_REQUIRED;
+  }
+
+  out_summary->fallback_shader_work =
+      desc->shader_request_count > out_summary->shader_work_skipped
+          ? desc->shader_request_count - out_summary->shader_work_skipped
+          : 0u;
+  out_summary->fallback_pipeline_work =
+      desc->pipeline_request_count > out_summary->pipeline_work_skipped
+          ? desc->pipeline_request_count - out_summary->pipeline_work_skipped
+          : 0u;
+
+  uint64_t skip_key = 0x4d3132534b495057ull; // "M12SKIPW" marker.
+  pipelineHashCombine(skip_key, out_summary->shader_work_skipped);
+  pipelineHashCombine(skip_key, out_summary->pipeline_work_skipped);
+  pipelineHashCombine(skip_key, out_summary->prewarm_work_skipped);
+  pipelineHashCombine(skip_key, out_summary->fallback_shader_work);
+  pipelineHashCombine(skip_key, out_summary->fallback_pipeline_work);
+  pipelineHashCombine(skip_key, warm_key);
+  out_summary->skip_work_key = skip_key;
   return 0;
 }
 

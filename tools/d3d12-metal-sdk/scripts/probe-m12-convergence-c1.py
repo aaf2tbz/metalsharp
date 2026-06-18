@@ -20,7 +20,7 @@ from typing import Any
 
 M12CORE_ABI_VERSION = 1
 M12CORE_BUILD_ID_LOW = 0x4D313243
-M12CORE_BUILD_ID_HIGH = 0x00000018
+M12CORE_BUILD_ID_HIGH = 0x00000019
 M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1 << 19
 M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1 << 20
 M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1 << 21
@@ -31,6 +31,7 @@ M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR = 1 << 25
 M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING = 1 << 26
 M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1 << 27
 M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1 << 28
+M12CORE_FEATURE_CACHE_FIRST_WARM_START = 1 << 29
 
 M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0
 M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE = 1
@@ -112,6 +113,22 @@ M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_PRESENT_PREVENTED = 1 << 4
 M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_BLIT_PREVENTED = 1 << 5
 M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_GATE_DISABLED = 1
 M12CORE_NATIVE_PRESENT_OWNERSHIP_FALLBACK_NON_RAW_PATH = 4
+
+M12CORE_CACHE_WARM_START_HAS_COMPATIBILITY_KEY = 1 << 0
+M12CORE_CACHE_WARM_START_HAS_INVALIDATION_PROOF = 1 << 1
+M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT = 1 << 2
+M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT = 1 << 3
+M12CORE_CACHE_WARM_START_PREWARM_REQUESTED = 1 << 4
+M12CORE_CACHE_WARM_START_FORCE_SOURCE_COMPILE = 1 << 5
+M12CORE_CACHE_WARM_START_SUMMARY_CACHE_FIRST_ENABLED = 1 << 0
+M12CORE_CACHE_WARM_START_SUMMARY_SHADER_WORK_SKIPPED = 1 << 1
+M12CORE_CACHE_WARM_START_SUMMARY_PSO_WORK_SKIPPED = 1 << 2
+M12CORE_CACHE_WARM_START_SUMMARY_PREWARM_WORK_SKIPPED = 1 << 3
+M12CORE_CACHE_WARM_START_SUMMARY_INVALIDATION_PROVEN = 1 << 4
+M12CORE_CACHE_WARM_START_SUMMARY_FALLBACK_REQUIRED = 1 << 5
+M12CORE_CACHE_WARM_START_FALLBACK_FORCE_SOURCE = 2
+M12CORE_CACHE_WARM_START_FALLBACK_MISSING_INVALIDATION_PROOF = 4
+M12CORE_CACHE_WARM_START_FALLBACK_CACHE_MISS = 5
 
 
 class M12CoreVersion(ctypes.Structure):
@@ -408,6 +425,45 @@ class M12CoreNativePresentOwnershipSummary(ctypes.Structure):
     ]
 
 
+class M12CoreCacheWarmStartDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("shader_request_count", ctypes.c_uint32),
+        ("pipeline_request_count", ctypes.c_uint32),
+        ("prewarm_request_count", ctypes.c_uint32),
+        ("compatible_shader_hit_count", ctypes.c_uint32),
+        ("compatible_pipeline_hit_count", ctypes.c_uint32),
+        ("invalidated_entry_count", ctypes.c_uint32),
+        ("compatibility_key", ctypes.c_uint64),
+        ("invalidation_key", ctypes.c_uint64),
+        ("prewarm_pack_key", ctypes.c_uint64),
+        ("root_binding_cache_key", ctypes.c_uint64),
+        ("pipeline_cache_key", ctypes.c_uint64),
+        ("shader_cache_key", ctypes.c_uint64),
+    ]
+
+
+class M12CoreCacheWarmStartSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("fallback_reason", ctypes.c_uint32),
+        ("shader_work_skipped", ctypes.c_uint32),
+        ("pipeline_work_skipped", ctypes.c_uint32),
+        ("prewarm_work_skipped", ctypes.c_uint32),
+        ("fallback_shader_work", ctypes.c_uint32),
+        ("fallback_pipeline_work", ctypes.c_uint32),
+        ("invalidated_entry_count", ctypes.c_uint32),
+        ("cache_hit_count", ctypes.c_uint32),
+        ("cache_miss_count", ctypes.c_uint32),
+        ("warm_start_key", ctypes.c_uint64),
+        ("skip_work_key", ctypes.c_uint64),
+        ("invalidation_proof_key", ctypes.c_uint64),
+    ]
+
+
 def default_lib_candidates(repo: pathlib.Path) -> list[pathlib.Path]:
     return [
         pathlib.Path.home() / ".metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
@@ -555,6 +611,26 @@ def present_ownership_to_dict(s: M12CoreNativePresentOwnershipSummary) -> dict[s
     }
 
 
+def warm_start_to_dict(s: M12CoreCacheWarmStartSummary) -> dict[str, Any]:
+    return {
+        "abi_version": s.abi_version,
+        "status": s.status,
+        "flags": s.flags,
+        "fallback_reason": s.fallback_reason,
+        "shader_work_skipped": s.shader_work_skipped,
+        "pipeline_work_skipped": s.pipeline_work_skipped,
+        "prewarm_work_skipped": s.prewarm_work_skipped,
+        "fallback_shader_work": s.fallback_shader_work,
+        "fallback_pipeline_work": s.fallback_pipeline_work,
+        "invalidated_entry_count": s.invalidated_entry_count,
+        "cache_hit_count": s.cache_hit_count,
+        "cache_miss_count": s.cache_miss_count,
+        "warm_start_key": f"0x{s.warm_start_key:016x}",
+        "skip_work_key": f"0x{s.skip_work_key:016x}",
+        "invalidation_proof_key": f"0x{s.invalidation_proof_key:016x}",
+    }
+
+
 def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     lib = ctypes.CDLL(str(lib_path))
     lib.m12core_get_version.argtypes = [ctypes.POINTER(M12CoreVersion)]
@@ -599,6 +675,11 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         ctypes.POINTER(M12CoreNativePresentOwnershipSummary),
     ]
     lib.m12core_plan_native_present_ownership.restype = ctypes.c_int
+    lib.m12core_plan_cache_warm_start.argtypes = [
+        ctypes.POINTER(M12CoreCacheWarmStartDesc),
+        ctypes.POINTER(M12CoreCacheWarmStartSummary),
+    ]
+    lib.m12core_plan_cache_warm_start.restype = ctypes.c_int
 
     checks: dict[str, bool] = {}
     version = M12CoreVersion()
@@ -618,6 +699,9 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     )
     checks["native_present_ownership_feature"] = bool(
         version.feature_flags & M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP
+    )
+    checks["cache_first_warm_start_feature"] = bool(
+        version.feature_flags & M12CORE_FEATURE_CACHE_FIRST_WARM_START
     )
 
     packets = (M12CoreCommandPacket * 5)(
@@ -1048,6 +1132,86 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         and bool(present_executed.flags & M12CORE_NATIVE_PRESENT_OWNERSHIP_SUMMARY_DOUBLE_BLIT_PREVENTED)
     )
 
+    warm_desc = M12CoreCacheWarmStartDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        flags=(
+            M12CORE_CACHE_WARM_START_HAS_COMPATIBILITY_KEY
+            | M12CORE_CACHE_WARM_START_HAS_INVALIDATION_PROOF
+            | M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT
+            | M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT
+            | M12CORE_CACHE_WARM_START_PREWARM_REQUESTED
+        ),
+        shader_request_count=3,
+        pipeline_request_count=2,
+        prewarm_request_count=2,
+        compatible_shader_hit_count=3,
+        compatible_pipeline_hit_count=2,
+        invalidated_entry_count=0,
+        compatibility_key=0x11110000,
+        invalidation_key=0x22220000,
+        prewarm_pack_key=0x33330000,
+        root_binding_cache_key=0x44440000,
+        pipeline_cache_key=0x55550000,
+        shader_cache_key=0x66660000,
+    )
+    warm_hit = M12CoreCacheWarmStartSummary()
+    warm_hit_rc = lib.m12core_plan_cache_warm_start(ctypes.byref(warm_desc), ctypes.byref(warm_hit))
+    checks["cache_warm_start_skips_compatible_work"] = (
+        warm_hit_rc == 0
+        and warm_hit.shader_work_skipped == 3
+        and warm_hit.pipeline_work_skipped == 2
+        and warm_hit.prewarm_work_skipped == 2
+        and warm_hit.fallback_shader_work == 0
+        and warm_hit.fallback_pipeline_work == 0
+        and bool(warm_hit.flags & M12CORE_CACHE_WARM_START_SUMMARY_CACHE_FIRST_ENABLED)
+        and bool(warm_hit.flags & M12CORE_CACHE_WARM_START_SUMMARY_INVALIDATION_PROVEN)
+        and bool(warm_hit.flags & M12CORE_CACHE_WARM_START_SUMMARY_PREWARM_WORK_SKIPPED)
+    )
+
+    warm_invalid_desc = M12CoreCacheWarmStartDesc.from_buffer_copy(warm_desc)
+    warm_invalid_desc.flags &= ~M12CORE_CACHE_WARM_START_HAS_INVALIDATION_PROOF
+    warm_invalid_desc.invalidated_entry_count = 1
+    warm_invalid = M12CoreCacheWarmStartSummary()
+    warm_invalid_rc = lib.m12core_plan_cache_warm_start(ctypes.byref(warm_invalid_desc), ctypes.byref(warm_invalid))
+    checks["cache_warm_start_invalidation_fallback"] = (
+        warm_invalid_rc == 0
+        and warm_invalid.fallback_reason == M12CORE_CACHE_WARM_START_FALLBACK_MISSING_INVALIDATION_PROOF
+        and warm_invalid.shader_work_skipped == 0
+        and warm_invalid.pipeline_work_skipped == 0
+        and warm_invalid.fallback_shader_work == 3
+        and warm_invalid.fallback_pipeline_work == 2
+        and bool(warm_invalid.flags & M12CORE_CACHE_WARM_START_SUMMARY_FALLBACK_REQUIRED)
+    )
+
+    warm_force_desc = M12CoreCacheWarmStartDesc.from_buffer_copy(warm_desc)
+    warm_force_desc.flags |= M12CORE_CACHE_WARM_START_FORCE_SOURCE_COMPILE
+    warm_force = M12CoreCacheWarmStartSummary()
+    warm_force_rc = lib.m12core_plan_cache_warm_start(ctypes.byref(warm_force_desc), ctypes.byref(warm_force))
+    checks["cache_warm_start_force_source_fallback"] = (
+        warm_force_rc == 0
+        and warm_force.fallback_reason == M12CORE_CACHE_WARM_START_FALLBACK_FORCE_SOURCE
+        and warm_force.shader_work_skipped == 0
+        and warm_force.pipeline_work_skipped == 0
+        and warm_force.fallback_shader_work == 3
+        and warm_force.fallback_pipeline_work == 2
+    )
+
+    warm_miss_desc = M12CoreCacheWarmStartDesc.from_buffer_copy(warm_desc)
+    warm_miss_desc.flags &= ~(
+        M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT | M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT
+    )
+    warm_miss = M12CoreCacheWarmStartSummary()
+    warm_miss_rc = lib.m12core_plan_cache_warm_start(ctypes.byref(warm_miss_desc), ctypes.byref(warm_miss))
+    checks["cache_warm_start_cache_miss_fallback"] = (
+        warm_miss_rc == 0
+        and warm_miss.fallback_reason == M12CORE_CACHE_WARM_START_FALLBACK_CACHE_MISS
+        and warm_miss.shader_work_skipped == 0
+        and warm_miss.pipeline_work_skipped == 0
+        and warm_miss.fallback_shader_work == 3
+        and warm_miss.fallback_pipeline_work == 2
+        and bool(warm_miss.flags & M12CORE_CACHE_WARM_START_SUMMARY_FALLBACK_REQUIRED)
+    )
+
     result: dict[str, Any] = {
         "schema": "metalsharp.m12.convergence-c1-probe.v1",
         "lib": str(lib_path),
@@ -1080,6 +1244,10 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         "native_present_raw_owned": present_ownership_to_dict(present_on),
         "native_present_presenter_fallback": present_ownership_to_dict(present_presenter),
         "native_present_double_prevented": present_ownership_to_dict(present_executed),
+        "cache_warm_start_hit": warm_start_to_dict(warm_hit),
+        "cache_warm_start_invalid": warm_start_to_dict(warm_invalid),
+        "cache_warm_start_force_source": warm_start_to_dict(warm_force),
+        "cache_warm_start_miss": warm_start_to_dict(warm_miss),
     }
     return bool(result["ok"]), result
 

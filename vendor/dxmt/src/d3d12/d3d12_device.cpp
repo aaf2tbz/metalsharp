@@ -278,6 +278,45 @@ static void MaybeSummarizeM12PrewarmCanaryPack() {
                   " ordered=", summary.ordered_pipeline_count, " key=0x",
                   std::hex, summary.prewarm_pack_key, std::dec));
 
+  M12CoreCacheWarmStartDesc warm_desc = {};
+  warm_desc.abi_version = M12CORE_ABI_VERSION;
+  warm_desc.flags = M12CORE_CACHE_WARM_START_HAS_COMPATIBILITY_KEY |
+                    M12CORE_CACHE_WARM_START_HAS_INVALIDATION_PROOF |
+                    M12CORE_CACHE_WARM_START_SHADER_CACHE_HIT |
+                    M12CORE_CACHE_WARM_START_PIPELINE_CACHE_HIT |
+                    M12CORE_CACHE_WARM_START_PREWARM_REQUESTED;
+  warm_desc.shader_request_count = summary.unique_shader_count;
+  warm_desc.pipeline_request_count = summary.ordered_pipeline_count;
+  warm_desc.prewarm_request_count = summary.ordered_pipeline_count;
+  warm_desc.compatible_shader_hit_count = summary.unique_shader_count;
+  warm_desc.compatible_pipeline_hit_count = summary.ordered_pipeline_count;
+  warm_desc.compatibility_key =
+      summary.prewarm_pack_key ^ 0x4d31324341434845ull;
+  warm_desc.invalidation_key = summary.prewarm_pack_key ^ 0x4d3132494e56414cull;
+  warm_desc.prewarm_pack_key = summary.prewarm_pack_key;
+  warm_desc.root_binding_cache_key = summary.unique_root_count;
+  warm_desc.pipeline_cache_key = summary.ordered_pipeline_count;
+  warm_desc.shader_cache_key = summary.unique_shader_count;
+  M12CoreCacheWarmStartSummary warm = {};
+  if (WMTM12CorePlanCacheWarmStart(&warm_desc, &warm) &&
+      warm.abi_version == M12CORE_ABI_VERSION &&
+      warm.status == M12CORE_CACHE_WARM_START_STATUS_OK) {
+    Logger::info(str::format(
+        "M12_CACHE_WARM_START cache_first=",
+        (warm.flags & M12CORE_CACHE_WARM_START_SUMMARY_CACHE_FIRST_ENABLED) ? 1
+                                                                            : 0,
+        " shader_skipped=", warm.shader_work_skipped,
+        " pso_skipped=", warm.pipeline_work_skipped,
+        " prewarm_skipped=", warm.prewarm_work_skipped,
+        " fallback_shader=", warm.fallback_shader_work,
+        " fallback_pso=", warm.fallback_pipeline_work,
+        " invalidated=", warm.invalidated_entry_count,
+        " hits=", warm.cache_hit_count, " misses=", warm.cache_miss_count,
+        " fallback=", warm.fallback_reason, " key=0x", std::hex,
+        warm.warm_start_key, " skip=0x", warm.skip_work_key, " proof=0x",
+        warm.invalidation_proof_key, std::dec));
+  }
+
   if (summary.ordered_pipeline_count > 0 && desc.pipeline_count > 0) {
     const M12CorePrewarmPipelineRecord &first = desc.pipelines[0];
     const M12CorePrewarmPipelineRecord &last =
@@ -2094,7 +2133,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
       MetalSharpM12TranslationLayerFeatureProbeReplayExecutor |
       MetalSharpM12TranslationLayerFeatureEncoderOwnershipPlanning |
       MetalSharpM12TranslationLayerFeatureRootBindingCacheMetadata |
-      MetalSharpM12TranslationLayerFeatureNativePresentOwnership;
+      MetalSharpM12TranslationLayerFeatureNativePresentOwnership |
+      MetalSharpM12TranslationLayerFeatureCacheFirstWarmStart;
   local.m12core_abi_version = M12CORE_ABI_VERSION;
   local.m12core_feature_flags = M12CORE_FEATURE_ALL;
   local.m12core_build_id_low = M12CORE_BUILD_ID_LOW;
@@ -2104,7 +2144,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
   m12_copy_fixed_string(local.backend_name, sizeof(local.backend_name),
                         "DXMT D3D12 over Metal");
   std::snprintf(local.build_string, sizeof(local.build_string),
-                "MetalSharp DXMT M12 convergence-c6 present abi=%u",
+                "MetalSharp DXMT M12 convergence-c7 cache abi=%u",
                 MetalSharpM12TranslationLayerInfoAbiVersion);
 
   *info = local;

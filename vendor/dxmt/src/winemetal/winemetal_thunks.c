@@ -126,6 +126,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CorePlanEncoderOwnership";
   case 167:
     return "WMTM12CorePlanNativePresentOwnership";
+  case 168:
+    return "WMTM12CorePlanCacheWarmStart";
   default:
     return "unknown";
   }
@@ -889,6 +891,24 @@ WMTM12CorePlanNativePresentOwnership(
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(167, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanCacheWarmStart(const M12CoreCacheWarmStartDesc *desc, M12CoreCacheWarmStartSummary *out_summary) {
+  struct unixcall_m12core_plan_cache_warm_start params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C7 cache-first bridge: scalar compatibility/hit metadata only. Cache
+   * payloads remain external and must not cross this transport thunk.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(168, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;
