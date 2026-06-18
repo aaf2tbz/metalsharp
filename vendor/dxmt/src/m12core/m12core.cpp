@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core convergence-c7 cache-warm-start abi=1";
+  return "libm12core convergence-c8 replay-coverage abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -2475,6 +2475,80 @@ m12core_plan_cache_warm_start(const M12CoreCacheWarmStartDesc *desc,
   pipelineHashCombine(skip_key, out_summary->fallback_pipeline_work);
   pipelineHashCombine(skip_key, warm_key);
   out_summary->skip_work_key = skip_key;
+  return 0;
+}
+
+extern "C" int
+m12core_plan_replay_coverage(const M12CoreReplayCoverageDesc *desc,
+                             M12CoreReplayCoverageSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_REPLAY_COVERAGE_STATUS_OK;
+  out_summary->com_facade_preserved =
+      (desc->flags & M12CORE_REPLAY_COVERAGE_PE_COM_FACADE_PRESENT) ? 1u : 0u;
+  if (out_summary->com_facade_preserved)
+    out_summary->flags |= M12CORE_REPLAY_COVERAGE_SUMMARY_COM_FACADE_PRESERVED;
+
+  const uint32_t unsupported =
+      desc->copy_packet_count + desc->invalid_packet_count +
+      desc->stale_handle_count + desc->missing_native_id_count +
+      (desc->unsupported_reason_flags ? 1u : 0u);
+  const bool safe =
+      (desc->flags & M12CORE_REPLAY_COVERAGE_GATE_ENABLED) &&
+      (desc->flags & M12CORE_REPLAY_COVERAGE_PACKET_STREAM_VALID) &&
+      (desc->flags & M12CORE_REPLAY_COVERAGE_SHAPE_SAFE) && !unsupported;
+  const uint32_t coverable =
+      desc->graphics_packet_count + desc->compute_packet_count +
+      desc->barrier_packet_count + desc->binding_packet_count +
+      desc->draw_packet_count + desc->dispatch_packet_count +
+      desc->clear_packet_count + desc->render_target_packet_count;
+
+  if (safe && desc->packet_count) {
+    out_summary->native_covered_packet_count =
+        coverable > desc->packet_count ? desc->packet_count : coverable;
+    out_summary->policy_native_count = out_summary->native_covered_packet_count;
+    out_summary->transport_thin = 1;
+    out_summary->flags |=
+        M12CORE_REPLAY_COVERAGE_SUMMARY_NATIVE_COVERAGE_PLANNED |
+        M12CORE_REPLAY_COVERAGE_SUMMARY_POLICY_NATIVE |
+        M12CORE_REPLAY_COVERAGE_SUMMARY_TRANSPORT_THIN;
+  }
+
+  out_summary->unsupported_packet_count = unsupported;
+  if (!safe || out_summary->native_covered_packet_count < desc->packet_count) {
+    out_summary->flags |= M12CORE_REPLAY_COVERAGE_SUMMARY_PE_FALLBACK_REQUIRED;
+    out_summary->pe_fallback_packet_count =
+        desc->packet_count > out_summary->native_covered_packet_count
+            ? desc->packet_count - out_summary->native_covered_packet_count
+            : 0u;
+    out_summary->policy_pe_count = out_summary->pe_fallback_packet_count;
+  }
+
+  uint64_t coverage_key = 0x4d3132434f564552ull; // "M12COVER" marker.
+  pipelineHashCombine(coverage_key, desc->flags);
+  pipelineHashCombine(coverage_key, desc->packet_count);
+  pipelineHashCombine(coverage_key, desc->unsupported_reason_flags);
+  pipelineHashCombine(coverage_key, desc->stream_key);
+  pipelineHashCombine(coverage_key, desc->shape_key);
+  pipelineHashCombine(coverage_key, desc->replay_execute_key);
+  pipelineHashCombine(coverage_key, desc->encoder_plan_key);
+  out_summary->coverage_key = coverage_key;
+
+  uint64_t policy_key = 0x4d3132504f4c4359ull; // "M12POLCY" marker.
+  pipelineHashCombine(policy_key, out_summary->native_covered_packet_count);
+  pipelineHashCombine(policy_key, out_summary->policy_native_count);
+  pipelineHashCombine(policy_key, out_summary->policy_pe_count);
+  pipelineHashCombine(policy_key, out_summary->flags);
+  out_summary->policy_key = policy_key;
+
+  uint64_t fallback_key = 0x4d3132464241434bull; // "M12FBACK" marker.
+  pipelineHashCombine(fallback_key, out_summary->pe_fallback_packet_count);
+  pipelineHashCombine(fallback_key, out_summary->unsupported_packet_count);
+  pipelineHashCombine(fallback_key, desc->unsupported_reason_flags);
+  out_summary->fallback_key = fallback_key;
   return 0;
 }
 

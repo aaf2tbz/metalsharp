@@ -732,6 +732,13 @@ struct unixcall_m12core_plan_cache_warm_start {
   M12CoreCacheWarmStartSummary ret_summary;
 };
 
+struct unixcall_m12core_plan_replay_coverage {
+  M12CoreReplayCoverageDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreReplayCoverageSummary ret_summary;
+};
+
 struct unixcall_m12core_execute_present_blit {
   M12CorePresentExecuteDesc desc;
   obj_handle_t command_buffer;

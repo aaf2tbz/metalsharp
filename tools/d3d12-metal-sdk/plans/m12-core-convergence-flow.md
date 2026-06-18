@@ -254,7 +254,11 @@ Tasks:
 
 ## Slice C8 — Expand native replay coverage while thinning PE
 
+Status: **Complete** — see `m12-core-convergence-c8-audit.md`.
+
 Touches: **P9.S6 / P10.S1-S2**
+
+Plan: `m12-core-convergence-c8-plan.md`.
 
 Tasks:
 
@@ -302,4 +306,4 @@ Final proof requires measured native execution coverage, PE fallback parity, rea
 
 ## Current next slice
 
-C0 through C7 are complete. The next active work is **C8 — Expand native replay coverage while thinning PE**.
+C0 through C8 are complete. The next active work is **C9 — Thin PE DLL checkpoint**.

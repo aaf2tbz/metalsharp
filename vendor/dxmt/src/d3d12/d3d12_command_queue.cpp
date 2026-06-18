@@ -215,6 +215,7 @@ static uint32_t g_handle_registry_shadow_logs = 0;
 static uint32_t g_packet_shape_shadow_logs = 0;
 static uint32_t g_probe_replay_execute_logs = 0;
 static uint32_t g_encoder_ownership_plan_logs = 0;
+static uint32_t g_replay_coverage_thin_pe_logs = 0;
 static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
@@ -6721,6 +6722,58 @@ static void LogM12CorePacketStreamShadow(
         encoder.encoder_plan_key, " root_cache=0x",
         encoder.root_binding_cache_key, " layout=0x",
         encoder.binding_layout_key, std::dec));
+  }
+
+  M12CoreReplayCoverageSummary coverage = {};
+  bool coverage_ok = false;
+  if (validate_ok && support_ok && replay_execute_ok && encoder_ok) {
+    M12CoreReplayCoverageDesc coverage_desc = {};
+    coverage_desc.abi_version = M12CORE_ABI_VERSION;
+    if (M12CoreReplayExecuteEnabled())
+      coverage_desc.flags |= M12CORE_REPLAY_COVERAGE_GATE_ENABLED;
+    if (summary.status == M12CORE_COMMAND_PACKET_STREAM_STATUS_OK)
+      coverage_desc.flags |= M12CORE_REPLAY_COVERAGE_PACKET_STREAM_VALID;
+    if (support.safe_for_probe_replay)
+      coverage_desc.flags |= M12CORE_REPLAY_COVERAGE_SHAPE_SAFE;
+    if (replay_execute.flags &
+        M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED)
+      coverage_desc.flags |= M12CORE_REPLAY_COVERAGE_REPLAY_NATIVE_EXECUTED;
+    if (encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED)
+      coverage_desc.flags |= M12CORE_REPLAY_COVERAGE_ENCODER_NATIVE_OWNED;
+    coverage_desc.flags |= M12CORE_REPLAY_COVERAGE_PE_COM_FACADE_PRESENT;
+    coverage_desc.packet_count = static_cast<uint32_t>(packets.size());
+    coverage_desc.unsupported_reason_flags = support.unsupported_reason_flags;
+    coverage_desc.graphics_packet_count = summary.graphics_packet_count;
+    coverage_desc.compute_packet_count = summary.compute_packet_count;
+    coverage_desc.copy_packet_count = summary.copy_packet_count;
+    coverage_desc.barrier_packet_count = summary.barrier_packet_count;
+    coverage_desc.binding_packet_count = summary.binding_packet_count;
+    coverage_desc.draw_packet_count = summary.draw_packet_count;
+    coverage_desc.dispatch_packet_count = summary.dispatch_packet_count;
+    coverage_desc.clear_packet_count = summary.clear_packet_count;
+    coverage_desc.render_target_packet_count =
+        replay_execute.render_target_packet_count;
+    coverage_desc.invalid_packet_count = support.invalid_packet_count;
+    coverage_desc.stale_handle_count = support.stale_handle_count;
+    coverage_desc.missing_native_id_count = support.missing_native_id_count;
+    coverage_desc.stream_key = summary.stream_key;
+    coverage_desc.shape_key = support.shape_key;
+    coverage_desc.replay_execute_key = replay_execute.replay_execute_key;
+    coverage_desc.encoder_plan_key = encoder.encoder_plan_key;
+    coverage_ok = WMTM12CorePlanReplayCoverage(&coverage_desc, &coverage) &&
+                  coverage.abi_version == M12CORE_ABI_VERSION;
+  }
+  if (coverage_ok && TakeLogBudget(&g_replay_coverage_thin_pe_logs, 192)) {
+    Logger::info(str::format(
+        "M12_REPLAY_COVERAGE_THIN_PE native_covered=",
+        coverage.native_covered_packet_count,
+        " pe_fallback=", coverage.pe_fallback_packet_count,
+        " unsupported=", coverage.unsupported_packet_count, " policy_native=",
+        coverage.policy_native_count, " policy_pe=", coverage.policy_pe_count,
+        " com_facade_preserved=", coverage.com_facade_preserved,
+        " transport_thin=", coverage.transport_thin, " flags=0x", std::hex,
+        coverage.flags, " coverage=0x", coverage.coverage_key, " policy=0x",
+        coverage.policy_key, " fallback=0x", coverage.fallback_key, std::dec));
   }
 
   if (!validate_ok || !TakeLogBudget(&g_cache_index_shadow_logs, 192))

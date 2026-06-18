@@ -128,6 +128,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CorePlanNativePresentOwnership";
   case 168:
     return "WMTM12CorePlanCacheWarmStart";
+  case 169:
+    return "WMTM12CorePlanReplayCoverage";
   default:
     return "unknown";
   }
@@ -909,6 +911,24 @@ WMTM12CorePlanCacheWarmStart(const M12CoreCacheWarmStartDesc *desc, M12CoreCache
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(168, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanReplayCoverage(const M12CoreReplayCoverageDesc *desc, M12CoreReplayCoverageSummary *out_summary) {
+  struct unixcall_m12core_plan_replay_coverage params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C8 replay coverage bridge: scalar packet coverage/policy metadata only.
+   * PE remains COM facade and fallback emitter.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(169, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

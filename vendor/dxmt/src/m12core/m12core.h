@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000019u /* Core convergence C7 cache-first warm start planning. */
+  0x0000001au /* Core convergence C8 expanded native replay coverage. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -58,6 +58,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1u << 27,
   M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1u << 28,
   M12CORE_FEATURE_CACHE_FIRST_WARM_START = 1u << 29,
+  M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE = 1u << 30,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -81,7 +82,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING |
       M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA |
       M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP |
-      M12CORE_FEATURE_CACHE_FIRST_WARM_START,
+      M12CORE_FEATURE_CACHE_FIRST_WARM_START |
+      M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE,
 };
 
 typedef struct M12CoreVersion {
@@ -1542,6 +1544,73 @@ typedef struct M12CoreCacheWarmStartSummary {
   uint64_t invalidation_proof_key;
 } M12CoreCacheWarmStartSummary;
 
+/* Core Convergence C8 expanded native replay coverage planning.  This migrates
+ * replay coverage policy into libm12core while PE remains the COM facade and
+ * fallback command emitter.
+ */
+typedef enum M12CoreReplayCoverageStatus {
+  M12CORE_REPLAY_COVERAGE_STATUS_OK = 0,
+  M12CORE_REPLAY_COVERAGE_STATUS_INVALID = 1,
+} M12CoreReplayCoverageStatus;
+
+typedef enum M12CoreReplayCoverageFlags {
+  M12CORE_REPLAY_COVERAGE_GATE_ENABLED = 1u << 0,
+  M12CORE_REPLAY_COVERAGE_PACKET_STREAM_VALID = 1u << 1,
+  M12CORE_REPLAY_COVERAGE_SHAPE_SAFE = 1u << 2,
+  M12CORE_REPLAY_COVERAGE_REPLAY_NATIVE_EXECUTED = 1u << 3,
+  M12CORE_REPLAY_COVERAGE_ENCODER_NATIVE_OWNED = 1u << 4,
+  M12CORE_REPLAY_COVERAGE_PE_COM_FACADE_PRESENT = 1u << 5,
+} M12CoreReplayCoverageFlags;
+
+typedef enum M12CoreReplayCoverageSummaryFlags {
+  M12CORE_REPLAY_COVERAGE_SUMMARY_NATIVE_COVERAGE_PLANNED = 1u << 0,
+  M12CORE_REPLAY_COVERAGE_SUMMARY_PE_FALLBACK_REQUIRED = 1u << 1,
+  M12CORE_REPLAY_COVERAGE_SUMMARY_POLICY_NATIVE = 1u << 2,
+  M12CORE_REPLAY_COVERAGE_SUMMARY_COM_FACADE_PRESERVED = 1u << 3,
+  M12CORE_REPLAY_COVERAGE_SUMMARY_TRANSPORT_THIN = 1u << 4,
+} M12CoreReplayCoverageSummaryFlags;
+
+typedef struct M12CoreReplayCoverageDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t packet_count;
+  uint32_t unsupported_reason_flags;
+  uint32_t graphics_packet_count;
+  uint32_t compute_packet_count;
+  uint32_t copy_packet_count;
+  uint32_t barrier_packet_count;
+  uint32_t binding_packet_count;
+  uint32_t draw_packet_count;
+  uint32_t dispatch_packet_count;
+  uint32_t clear_packet_count;
+  uint32_t render_target_packet_count;
+  uint32_t invalid_packet_count;
+  uint32_t stale_handle_count;
+  uint32_t missing_native_id_count;
+  uint64_t stream_key;
+  uint64_t shape_key;
+  uint64_t replay_execute_key;
+  uint64_t encoder_plan_key;
+} M12CoreReplayCoverageDesc;
+
+typedef struct M12CoreReplayCoverageSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t native_covered_packet_count;
+  uint32_t pe_fallback_packet_count;
+  uint32_t unsupported_packet_count;
+  uint32_t policy_native_count;
+  uint32_t policy_pe_count;
+  uint32_t com_facade_preserved;
+  uint32_t transport_thin;
+  uint32_t reserved0;
+  uint32_t reserved1;
+  uint64_t coverage_key;
+  uint64_t policy_key;
+  uint64_t fallback_key;
+} M12CoreReplayCoverageSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1648,6 +1717,8 @@ int m12core_plan_native_present_ownership(
     M12CoreNativePresentOwnershipSummary *out_summary);
 int m12core_plan_cache_warm_start(const M12CoreCacheWarmStartDesc *desc,
                                   M12CoreCacheWarmStartSummary *out_summary);
+int m12core_plan_replay_coverage(const M12CoreReplayCoverageDesc *desc,
+                                 M12CoreReplayCoverageSummary *out_summary);
 
 #ifdef __cplusplus
 }
