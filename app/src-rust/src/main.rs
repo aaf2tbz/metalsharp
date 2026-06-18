@@ -2133,6 +2133,9 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12CORE_REQUIRED"
             | "METALSHARP_M12CORE_PATH"
             | "METALSHARP_M12CORE_DUMP_COUNTERS"
+            | "METALSHARP_M12_TRACE_CAPTURE"
+            | "METALSHARP_M12_LOG_LEVEL"
+            | "METALSHARP_M12_LOG_PATH"
             | "METALSHARP_M12_PREWARM_PROFILE"
     )
 }
@@ -2206,6 +2209,21 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12CORE_REQUIRED" => upsert_env("DXMT_M12CORE_REQUIRED", bool_value),
             "METALSHARP_M12CORE_PATH" => upsert_env("DXMT_M12CORE_PATH", value),
             "METALSHARP_M12CORE_DUMP_COUNTERS" => upsert_env("DXMT_M12CORE_DUMP_COUNTERS", bool_value),
+            "METALSHARP_M12_TRACE_CAPTURE" => {
+                upsert_env("DXMT_DXGI_TRACE", bool_value);
+                upsert_env("DXMT_WINEMETAL_DEBUG", bool_value);
+                upsert_env("DXMT_D3D12_TRACE", bool_value);
+                if value == "0" {
+                    upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "");
+                    upsert_env("DXMT_D3D12_TRACE_MAX_MB", "0");
+                    upsert_env("DXMT_D3D12_PRESENT_LOG_INTERVAL", "0");
+                } else {
+                    upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "Device,Queue,SwapChain,Presenter,PSO");
+                    upsert_env("DXMT_D3D12_TRACE_MAX_MB", "16");
+                }
+            },
+            "METALSHARP_M12_LOG_LEVEL" => upsert_env("DXMT_LOG_LEVEL", value),
+            "METALSHARP_M12_LOG_PATH" => upsert_env("DXMT_LOG_PATH", value),
             "METALSHARP_M12_PREWARM_PROFILE" => upsert_env("METALSHARP_M12_PREWARM_PROFILE", value),
             _ => {},
         }
@@ -2662,6 +2680,9 @@ mod tests {
                 "METALSHARP_M12CORE_REQUIRED": "0",
                 "METALSHARP_M12CORE_PATH": "/tmp/libm12core.dylib",
                 "METALSHARP_M12CORE_DUMP_COUNTERS": "1",
+                "METALSHARP_M12_TRACE_CAPTURE": "0",
+                "METALSHARP_M12_LOG_LEVEL": "none",
+                "METALSHARP_M12_LOG_PATH": "none",
                 "METALSHARP_M12_PREWARM_PROFILE": "armored-core-vi-phase6-canary",
                 "UNRELATED_ENV": "1"
             }),
@@ -2677,13 +2698,23 @@ mod tests {
                 "METALSHARP_M12CORE_ENABLE".to_string(),
                 "METALSHARP_M12CORE_PATH".to_string(),
                 "METALSHARP_M12CORE_REQUIRED".to_string(),
+                "METALSHARP_M12_LOG_LEVEL".to_string(),
+                "METALSHARP_M12_LOG_PATH".to_string(),
                 "METALSHARP_M12_PREWARM_PROFILE".to_string(),
+                "METALSHARP_M12_TRACE_CAPTURE".to_string(),
             ]
         );
         assert!(env.contains(&("DXMT_M12CORE_ENABLE".to_string(), "1".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_REQUIRED".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_PATH".to_string(), "/tmp/libm12core.dylib".to_string())));
         assert!(env.contains(&("DXMT_M12CORE_DUMP_COUNTERS".to_string(), "1".to_string())));
+        assert!(env.contains(&("DXMT_DXGI_TRACE".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_WINEMETAL_DEBUG".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_TRACE".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_TRACE_MAX_MB".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_LOG_LEVEL".to_string(), "none".to_string())));
+        assert!(env.contains(&("DXMT_LOG_PATH".to_string(), "none".to_string())));
         assert!(
             env.contains(&("METALSHARP_M12_PREWARM_PROFILE".to_string(), "armored-core-vi-phase6-canary".to_string()))
         );

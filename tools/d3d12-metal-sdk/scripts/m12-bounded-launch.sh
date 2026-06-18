@@ -16,6 +16,9 @@ M12CORE_ENABLE="${METALSHARP_M12CORE_ENABLE:-1}"
 M12CORE_REQUIRED="${METALSHARP_M12CORE_REQUIRED:-0}"
 M12CORE_PATH="${METALSHARP_M12CORE_PATH:-}"
 M12CORE_DUMP_COUNTERS="${METALSHARP_M12CORE_DUMP_COUNTERS:-0}"
+TRACE_CAPTURE="${METALSHARP_M12_TRACE_CAPTURE:-}"
+M12_LOG_LEVEL="${METALSHARP_M12_LOG_LEVEL:-}"
+M12_LOG_PATH="${METALSHARP_M12_LOG_PATH:-}"
 RUN_REPLAY=0
 RUN_OFFLINE_PSO=0
 KILL_AFTER=1
@@ -43,6 +46,9 @@ Options:
   --async-compile 0|1     Override DXMT_ASYNC_PIPELINE_COMPILE through backend env hook.
   --typed-stage-in 0|1    Override DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR through backend env hook.
   --force-source-compile 0|1 Override DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE through backend env hook.
+  --trace 0|1             Override DXGI/D3D12/winemetal trace capture.
+  --log-level LEVEL       Override DXMT_LOG_LEVEL, e.g. none, error, warn, info.
+  --log-path PATH         Override DXMT_LOG_PATH, e.g. none for no file logging.
   --results-dir PATH      Output directory for bounded run artifacts.
   --replay                Replay newly available corpus through metal-shaderconverter after launch.
   --offline-pso           Run offline PSO factory after launch.
@@ -70,6 +76,9 @@ while [[ $# -gt 0 ]]; do
     --async-compile) ASYNC_COMPILE="$2"; shift 2 ;;
     --typed-stage-in) TYPED_STAGE_IN="$2"; shift 2 ;;
     --force-source-compile) FORCE_SOURCE_COMPILE="$2"; shift 2 ;;
+    --trace) TRACE_CAPTURE="$2"; shift 2 ;;
+    --log-level) M12_LOG_LEVEL="$2"; shift 2 ;;
+    --log-path) M12_LOG_PATH="$2"; shift 2 ;;
     --results-dir) RESULTS_DIR="$2"; shift 2 ;;
     --replay) RUN_REPLAY=1; shift ;;
     --offline-pso) RUN_OFFLINE_PSO=1; shift ;;
@@ -173,6 +182,9 @@ launch_env+=("METALSHARP_M12CORE_ENABLE=$M12CORE_ENABLE")
 launch_env+=("METALSHARP_M12CORE_REQUIRED=$M12CORE_REQUIRED")
 launch_env+=("METALSHARP_M12CORE_DUMP_COUNTERS=$M12CORE_DUMP_COUNTERS")
 if [[ -n "$M12CORE_PATH" ]]; then launch_env+=("METALSHARP_M12CORE_PATH=$M12CORE_PATH"); fi
+if [[ -n "$TRACE_CAPTURE" ]]; then launch_env+=("METALSHARP_M12_TRACE_CAPTURE=$TRACE_CAPTURE"); fi
+if [[ -n "$M12_LOG_LEVEL" ]]; then launch_env+=("METALSHARP_M12_LOG_LEVEL=$M12_LOG_LEVEL"); fi
+if [[ -n "$M12_LOG_PATH" ]]; then launch_env+=("METALSHARP_M12_LOG_PATH=$M12_LOG_PATH"); fi
 for diagnostic_var in \
   METALSHARP_M12_DIAGNOSTIC_CAPTURE \
   METALSHARP_M12_DUMP_MSL \
