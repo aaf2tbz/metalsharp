@@ -58,6 +58,23 @@ static bool M12CorePresentExecuteEnabled() {
   return enabled;
 }
 
+static uint32_t PresentInflightLimit() {
+  static uint32_t limit = [] {
+    const char *raw = std::getenv("DXMT_D3D12_PRESENT_INFLIGHT_LIMIT");
+    if (!raw || !raw[0])
+      return 2u;
+
+    char *end = nullptr;
+    auto parsed = std::strtoul(raw, &end, 10);
+    if (end == raw)
+      return 2u;
+    if (parsed > 8)
+      return 8u;
+    return static_cast<uint32_t>(parsed);
+  }();
+  return limit;
+}
+
 static WMTPixelFormat DXGIToMTL(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R8G8B8A8_UNORM:
@@ -579,16 +596,60 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
 }
 
 MTLD3D12SwapChain::~MTLD3D12SwapChain() {
+  DrainPresentCommandBuffers(true);
+  m_presenter = nullptr;
   for (uint32_t i = 0; i < 4; i++)
     m_backbuffers[i] = nullptr;
   if (m_frame_latency_event) {
     CloseHandle(m_frame_latency_event);
     m_frame_latency_event = nullptr;
   }
-  if (m_native_view.handle)
+  if (m_native_view.handle) {
     WMT::ReleaseMetalView(m_native_view);
+    m_native_view = {};
+  }
+  m_layer = {};
   if (m_device)
     m_device->Release();
+}
+
+void MTLD3D12SwapChain::DrainPresentCommandBuffers(bool wait) {
+  for (auto &cmdbuf : m_present_inflight) {
+    if (!cmdbuf.handle)
+      continue;
+    auto status = cmdbuf.status();
+    if (wait && status <= WMTCommandBufferStatusScheduled)
+      cmdbuf.waitUntilCompleted();
+    status = cmdbuf.status();
+    if (status == WMTCommandBufferStatusError) {
+      auto error = cmdbuf.error();
+      Logger::err(str::format("M12 present command buffer error: ",
+                              error.description().getUTF8String()));
+    }
+    cmdbuf = nullptr;
+  }
+}
+
+void MTLD3D12SwapChain::TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf) {
+  uint32_t limit = PresentInflightLimit();
+  if (!cmdbuf.handle || limit == 0)
+    return;
+
+  auto &slot = m_present_inflight[m_present_submit_count % limit];
+  if (slot.handle) {
+    auto status = slot.status();
+    if (status <= WMTCommandBufferStatusScheduled)
+      slot.waitUntilCompleted();
+    status = slot.status();
+    if (status == WMTCommandBufferStatusError) {
+      auto error = slot.error();
+      Logger::err(str::format("M12 present command buffer error: ",
+                              error.description().getUTF8String()));
+    }
+    slot = nullptr;
+  }
+  slot = cmdbuf;
+  m_present_submit_count++;
 }
 
 bool MTLD3D12SwapChain::EnsureMetalView() {
@@ -1207,6 +1268,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
               sync_interval, flags);
       Logger::err("D3D12SwapChain::Present: presenter returned no drawable");
       cmdbuf.commit();
+      TrackPresentCommandBuffer(cmdbuf);
       return DXGI_STATUS_OCCLUDED;
     }
 
@@ -1248,6 +1310,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     SCTRACE("[SC_ENC] COMMIT presenter cmdbuf=%llu",
             (unsigned long long)cmdbuf.handle);
     cmdbuf.commit();
+    TrackPresentCommandBuffer(cmdbuf);
     if (readback_probe.mapped) {
       cmdbuf.waitUntilCompleted();
       LogSwapchainReadback(readback_probe, m_desc.Format);
@@ -1259,6 +1322,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
               sync_interval, flags);
       Logger::err("D3D12SwapChain::Present: layer returned no drawable");
       cmdbuf.commit();
+      TrackPresentCommandBuffer(cmdbuf);
       return DXGI_STATUS_OCCLUDED;
     }
 
@@ -1361,6 +1425,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
       cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
     cmdbuf.commit();
+    TrackPresentCommandBuffer(cmdbuf);
     if (readback_probe.mapped) {
       cmdbuf.waitUntilCompleted();
       LogSwapchainReadback(readback_probe, m_desc.Format);

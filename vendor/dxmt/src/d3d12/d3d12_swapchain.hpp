@@ -114,6 +114,8 @@ private:
   bool AttachMetalViewForHWND(HWND hwnd);
   void ConfigureLayer();
   void ReassertWindowForHandoff(const char *reason);
+  void TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf);
+  void DrainPresentCommandBuffers(bool wait);
 
   std::atomic<uint32_t> m_refCount = {1ul};
   Com<IDXGIFactory1> m_factory;
@@ -139,6 +141,8 @@ private:
   WMT::Reference<WMT::CommandQueue> m_present_queue;
   std::unique_ptr<InternalCommandLibrary> m_present_library;
   Rc<Presenter> m_presenter;
+  std::array<WMT::Reference<WMT::CommandBuffer>, 8> m_present_inflight;
+  uint64_t m_present_submit_count = 0;
   uint64_t m_last_present_wait_seq = 0;
 };
 
