@@ -1,9 +1,10 @@
 #include "d3d12_command_allocator.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 
-#define CATRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, "CmdAlloc::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define CATRACE(fmt, ...) DXMTD3D12Trace("CmdAlloc", "CmdAlloc::" fmt, ##__VA_ARGS__)
 
 namespace dxmt {
 

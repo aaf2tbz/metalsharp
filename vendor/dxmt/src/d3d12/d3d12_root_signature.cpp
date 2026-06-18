@@ -1,5 +1,6 @@
 #include "d3d12_root_signature.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include <algorithm>
@@ -138,7 +139,7 @@ struct DXStaticSampler {
 };
 #pragma pack(pop)
 
-#define RSTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define RSTRACE(fmt, ...) DXMTD3D12Trace("RootSig", fmt, ##__VA_ARGS__)
 
 static bool range_contains(size_t size, uint32_t offset, size_t bytes) {
   return offset <= size && bytes <= size - offset;

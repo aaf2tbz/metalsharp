@@ -137,7 +137,16 @@ esac
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$RESULTS_DIR/$PROFILE-$STAMP"
+if [[ "$RUN_DIR" != /* ]]; then
+  RUN_DIR="$ROOT_DIR/$RUN_DIR"
+fi
 mkdir -p "$RUN_DIR"
+if [[ -n "$TRACE_CAPTURE" && "$TRACE_CAPTURE" != "0" && -z "$M12_LOG_PATH" ]]; then
+  M12_LOG_PATH="$RUN_DIR/m12-logs/"
+fi
+if [[ -n "$M12_LOG_PATH" && "$M12_LOG_PATH" != "none" ]]; then
+  mkdir -p "$M12_LOG_PATH"
+fi
 CORPUS_DIR="$HOME/.metalsharp/shader-cache/m12/$APPID"
 LOG_ROOT="$HOME/.metalsharp/logs/m12-pipeline/$APPID"
 COMPAT_LOG_ROOT="$HOME/.metalsharp/compatdata/$APPID/logs"
@@ -347,7 +356,7 @@ if [[ "$SHOW_METALSHARP_AFTER" == "1" ]]; then
   show_metalsharp_gui
 fi
 
-RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" HIDE_METALSHARP="$HIDE_METALSHARP" SHOW_METALSHARP_AFTER="$SHOW_METALSHARP_AFTER" METALSHARP_M12CORE_ENABLE="$M12CORE_ENABLE" METALSHARP_M12CORE_REQUIRED="$M12CORE_REQUIRED" METALSHARP_M12_TRACE_PROFILE="$TRACE_PROFILE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
+RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" HIDE_METALSHARP="$HIDE_METALSHARP" SHOW_METALSHARP_AFTER="$SHOW_METALSHARP_AFTER" METALSHARP_M12CORE_ENABLE="$M12CORE_ENABLE" METALSHARP_M12CORE_REQUIRED="$M12CORE_REQUIRED" METALSHARP_M12_TRACE_PROFILE="$TRACE_PROFILE" METALSHARP_M12_LOG_PATH="$M12_LOG_PATH" METALSHARP_M12_LAUNCH_ARGS_OVERRIDE="$LAUNCH_ARGS_OVERRIDE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
 import json, os, re
 from pathlib import Path
 run = Path(os.environ['RUN_DIR'])
@@ -388,6 +397,19 @@ if launch_log and Path(launch_log).exists():
     text = Path(launch_log).read_text(errors='replace')
     log_text += '\n' + text
     log_sources.append({'path': launch_log, 'bytes': len(text.encode(errors='replace')), 'mode': 'launch_log_full'})
+run_log_dir = run / 'm12-logs'
+if run_log_dir.exists():
+    for p in sorted(run_log_dir.iterdir()):
+        if not p.is_file() or p.suffix not in {'.log', '.txt'}:
+            continue
+        try:
+            data = p.read_bytes()
+            text = data.decode(errors='replace')
+        except OSError:
+            continue
+        log_text += '\n' + text
+        log_sources.append({'path': str(p), 'bytes': len(data), 'mode': 'run_log_full'})
+
 for name, after_size in after_sizes.items():
     p = Path(name)
     if p.suffix not in {'.log', '.txt'}:
@@ -446,6 +468,8 @@ summary = {
   'm12core_enable': os.environ.get('METALSHARP_M12CORE_ENABLE', ''),
   'm12core_required': os.environ.get('METALSHARP_M12CORE_REQUIRED', ''),
   'm12_trace_profile': os.environ.get('METALSHARP_M12_TRACE_PROFILE', ''),
+  'm12_log_path': os.environ.get('METALSHARP_M12_LOG_PATH', ''),
+  'm12_launch_args_override': os.environ.get('METALSHARP_M12_LAUNCH_ARGS_OVERRIDE', ''),
   'expected_d3d12_sha': os.environ.get('EXPECT_D3D12_SHA', ''),
   'expected_dxgi_sha': os.environ.get('EXPECT_DXGI_SHA', ''),
   'expected_dxgi_dxmt_sha': os.environ.get('EXPECT_DXGI_DXMT_SHA', ''),
@@ -461,7 +485,7 @@ summary = {
   'translation_issue_examples': translation_issue_lines[:20],
 }
 (run/'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- force_source_compile_override: `{summary['force_source_compile_override']}`", f"- hide_metalsharp_after_launch: `{summary['hide_metalsharp_after_launch']}`", f"- show_metalsharp_after: `{summary['show_metalsharp_after']}`", f"- m12core_enable: `{summary['m12core_enable']}`", f"- m12core_required: `{summary['m12core_required']}`", f"- expected_d3d12_sha: `{summary['expected_d3d12_sha']}`", f"- expected_dxgi_sha: `{summary['expected_dxgi_sha']}`", f"- expected_dxgi_dxmt_sha: `{summary['expected_dxgi_dxmt_sha']}`", f"- expected_winemetal_dll_sha: `{summary['expected_winemetal_dll_sha']}`", f"- expected_winemetal_so_sha: `{summary['expected_winemetal_so_sha']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
+md = [f"# M12 bounded launch: {summary['profile']}", '', f"- appid: `{summary['appid']}`", f"- pid: `{summary['pid']}`", f"- seconds: `{summary['seconds']}`", f"- workers_override: `{summary['workers_override']}`", f"- async_compile_override: `{summary['async_compile_override']}`", f"- typed_stage_in_override: `{summary['typed_stage_in_override']}`", f"- force_source_compile_override: `{summary['force_source_compile_override']}`", f"- hide_metalsharp_after_launch: `{summary['hide_metalsharp_after_launch']}`", f"- show_metalsharp_after: `{summary['show_metalsharp_after']}`", f"- m12core_enable: `{summary['m12core_enable']}`", f"- m12core_required: `{summary['m12core_required']}`", f"- m12_trace_profile: `{summary['m12_trace_profile']}`", f"- m12_log_path: `{summary['m12_log_path']}`", f"- m12_launch_args_override: `{summary['m12_launch_args_override']}`", f"- expected_d3d12_sha: `{summary['expected_d3d12_sha']}`", f"- expected_dxgi_sha: `{summary['expected_dxgi_sha']}`", f"- expected_dxgi_dxmt_sha: `{summary['expected_dxgi_dxmt_sha']}`", f"- expected_winemetal_dll_sha: `{summary['expected_winemetal_dll_sha']}`", f"- expected_winemetal_so_sha: `{summary['expected_winemetal_so_sha']}`", f"- launch_ok: `{summary['launch_ok']}`", f"- launch_log: `{summary['launch_log']}`", '', '## New artifacts']
 for k,v in counts.items(): md.append(f"- `{k}`: {v}")
 md += ['', '## Per-run runtime metrics']
 for k,v in metrics.items(): md.append(f"- `{k}`: {v}")

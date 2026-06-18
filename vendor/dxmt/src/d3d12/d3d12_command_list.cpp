@@ -6,10 +6,11 @@
 #include "d3d12_resource.hpp"
 #include "d3d12_root_signature.hpp"
 #include "d3d12_descriptor_heap.hpp"
+#include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 
-#define CLTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, "CmdList::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define CLTRACE(fmt, ...) DXMTD3D12Trace("CmdList", "CmdList::" fmt, ##__VA_ARGS__)
 
 namespace dxmt {
 

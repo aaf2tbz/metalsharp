@@ -10079,14 +10079,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Signal(ID3D12Fence *fence,
   auto shared_event = dxmt_fence->GetMTLSharedEvent();
   if (!shared_event.handle)
     return E_FAIL;
-  {
-    FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
-    if (f) {
-      fprintf(f, "CmdQueue::Signal value=%llu fence=%p\n",
-              (unsigned long long)value, (void *)fence);
-      fclose(f);
-    }
-  }
+  QTRACE("CmdQueue::Signal value=%llu fence=%p",
+         (unsigned long long)value, (void *)fence);
   auto cmdbuf = m_wmt_queue.commandBuffer();
   if (!cmdbuf.handle)
     return E_FAIL;

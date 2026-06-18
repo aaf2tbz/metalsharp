@@ -1,12 +1,13 @@
 #include "d3d12_descriptor_heap.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_trace.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
 #include <cstring>
 #include <cstdlib>
 #include <windows.h>
 
-#define HTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, "DescHeap::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+#define HTRACE(fmt, ...) DXMTD3D12Trace("DescHeap", "DescHeap::" fmt, ##__VA_ARGS__)
 
 namespace dxmt {
 
