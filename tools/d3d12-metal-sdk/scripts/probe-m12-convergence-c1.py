@@ -20,9 +20,11 @@ from typing import Any
 
 M12CORE_ABI_VERSION = 1
 M12CORE_BUILD_ID_LOW = 0x4D313243
-M12CORE_BUILD_ID_HIGH = 0x00000014
+M12CORE_BUILD_ID_HIGH = 0x00000015
 M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1 << 19
 M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1 << 20
+M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1 << 21
+M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1 << 22
 
 M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0
 M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS = 5
@@ -221,6 +223,8 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     checks["build_high"] = version.build_id_high == M12CORE_BUILD_ID_HIGH
     checks["packet_feature"] = bool(version.feature_flags & M12CORE_FEATURE_COMMAND_PACKET_STREAM)
     checks["cache_feature"] = bool(version.feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS)
+    checks["packet_shadow_feature"] = bool(version.feature_flags & M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING)
+    checks["cache_index_shadow_feature"] = bool(version.feature_flags & M12CORE_FEATURE_CACHE_INDEX_SHADOW)
 
     packets = (M12CoreCommandPacket * 5)(
         packet(M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS, 1, M12CORE_COMMAND_PACKET_FLAG_GRAPHICS),

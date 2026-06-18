@@ -112,6 +112,11 @@ WINEMETAL_API bool
 WMTM12CorePlanReplayExecute(const M12CoreReplayExecuteDesc *desc, M12CoreReplayExecuteSummary *out_summary);
 WINEMETAL_API bool
 WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCommandStreamSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreValidateCommandPacketStream(
+    const M12CoreCommandPacketStreamDesc *desc, M12CoreCommandPacketStreamSummary *out_summary
+);
+WINEMETAL_API bool
+WMTM12CoreMakeCacheCompatibilityKey(const M12CoreCacheCompatibilityDesc *desc, M12CoreCacheCompatibilityKey *out_key);
 WINEMETAL_API bool
 WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);
 

@@ -110,6 +110,10 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreExecutePresentBlit";
   case 159:
     return "WMTM12CorePlanReplayExecute";
+  case 160:
+    return "WMTM12CoreValidateCommandPacketStream";
+  case 161:
+    return "WMTM12CoreMakeCacheCompatibilityKey";
   default:
     return "unknown";
   }
@@ -693,6 +697,52 @@ WMTM12CoreValidateCommandStream(const M12CoreCommandStreamDesc *desc, M12CoreCom
     return false;
 
   *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreValidateCommandPacketStream(
+    const M12CoreCommandPacketStreamDesc *desc, M12CoreCommandPacketStreamSummary *out_summary
+) {
+  struct unixcall_m12core_validate_command_packet_stream params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C2 shadow packet bridge: pass a PE-recorded POD packet stream for native
+   * validation/keying only.  Replay, resource lifetime, and Metal execution
+   * remain in the PE path until later gated convergence slices.
+   */
+  params.abi_version = desc->abi_version;
+  params.packet_count = desc->packet_count;
+  params.queue_type = desc->queue_type;
+  params.command_list_index = desc->command_list_index;
+  params.command_list_id = desc->command_list_id;
+  params.queue_serial = desc->queue_serial;
+  WMT_MEMPTR_SET(params.packets, desc->packets);
+  if (!winemetal_unix_call_ok(160, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreMakeCacheCompatibilityKey(const M12CoreCacheCompatibilityDesc *desc, M12CoreCacheCompatibilityKey *out_key) {
+  struct unixcall_m12core_make_cache_compatibility_key params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_key)
+    return false;
+
+  /* C2 cache-index bridge: construct only compatibility keys from scalar
+   * dimensions.  No cache payloads, metallibs, DXBC blobs, or reuse handles
+   * cross this boundary.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(161, &params) || !params.ret_success)
+    return false;
+
+  *out_key = params.ret_key;
   return true;
 }
 

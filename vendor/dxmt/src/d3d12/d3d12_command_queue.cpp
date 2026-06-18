@@ -210,6 +210,8 @@ static uint32_t g_draw_plan_logs = 0;
 static uint32_t g_replay_plan_logs = 0;
 static uint32_t g_replay_execute_plan_logs = 0;
 static uint32_t g_command_stream_shadow_logs = 0;
+static uint32_t g_packet_stream_shadow_logs = 0;
+static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
@@ -6037,6 +6039,420 @@ LogM12CoreReplayExecutePlan(uint32_t queue_type, uint32_t list_index,
       " hazard=", summary.hazard_score));
 }
 
+static uint64_t M12ShadowEnvU64(const char *name, uint64_t fallback) {
+  const char *value = std::getenv(name);
+  if (!value || !value[0])
+    return fallback;
+  char *end = nullptr;
+  uint64_t parsed = std::strtoull(value, &end, 0);
+  return end && end != value ? parsed : fallback;
+}
+
+static uint32_t M12PacketKindForCommand(CmdType type, uint32_t &flags) {
+  flags = 0;
+  switch (type) {
+  case CmdType::DrawInstanced:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_DRAW;
+  case CmdType::DrawIndexedInstanced:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_DRAW_INDEXED;
+  case CmdType::Dispatch:
+    flags = M12CORE_COMMAND_PACKET_FLAG_COMPUTE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_DISPATCH;
+  case CmdType::ExecuteIndirect:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_DRAW;
+  case CmdType::CopyBufferRegion:
+  case CmdType::CopyTextureRegion:
+  case CmdType::CopyResource:
+  case CmdType::ResolveSubresource:
+  case CmdType::WriteBufferImmediate:
+  case CmdType::BeginQuery:
+  case CmdType::EndQuery:
+  case CmdType::ResolveQueryData:
+    flags = M12CORE_COMMAND_PACKET_FLAG_COPY |
+            M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE;
+    return M12CORE_COMMAND_PACKET_KIND_COPY;
+  case CmdType::SetPipelineState:
+    flags = M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE;
+    return M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE;
+  case CmdType::SetGraphicsRootSignature:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE;
+    return M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE;
+  case CmdType::SetComputeRootSignature:
+    flags = M12CORE_COMMAND_PACKET_FLAG_COMPUTE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE;
+    return M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE;
+  case CmdType::SetDescriptorHeaps:
+    flags = M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_SET_DESCRIPTOR_HEAP;
+  case CmdType::SetGraphicsRoot32BitConstants:
+  case CmdType::SetGraphicsRootConstantBufferView:
+  case CmdType::SetGraphicsRootShaderResourceView:
+  case CmdType::SetGraphicsRootUnorderedAccessView:
+  case CmdType::SetGraphicsRootDescriptorTable:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING;
+  case CmdType::SetComputeRoot32BitConstants:
+  case CmdType::SetComputeRootConstantBufferView:
+  case CmdType::SetComputeRootShaderResourceView:
+  case CmdType::SetComputeRootUnorderedAccessView:
+  case CmdType::SetComputeRootDescriptorTable:
+    flags = M12CORE_COMMAND_PACKET_FLAG_COMPUTE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING;
+  case CmdType::IASetPrimitiveTopology:
+  case CmdType::IASetVertexBuffers:
+  case CmdType::IASetIndexBuffer:
+  case CmdType::RSSetViewports:
+  case CmdType::RSSetScissorRects:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING;
+  case CmdType::OMSetRenderTargets:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+    return M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS;
+  case CmdType::OMSetBlendFactor:
+  case CmdType::OMSetStencilRef:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS;
+    return M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING;
+  case CmdType::ClearRenderTargetView:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE;
+    return M12CORE_COMMAND_PACKET_KIND_CLEAR_RTV;
+  case CmdType::ClearDepthStencilView:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE;
+    return M12CORE_COMMAND_PACKET_KIND_CLEAR_DSV;
+  case CmdType::ClearUnorderedAccessView:
+    flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
+            M12CORE_COMMAND_PACKET_FLAG_COMPUTE |
+            M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE;
+    return M12CORE_COMMAND_PACKET_KIND_CLEAR_UAV;
+  case CmdType::ResourceBarrier:
+    flags = M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE;
+    return M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER;
+  default:
+    flags = M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED;
+    return M12CORE_COMMAND_PACKET_KIND_COPY;
+  }
+}
+
+static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
+                                     const CmdHeader *header) {
+  switch (header->type) {
+  case CmdType::DrawInstanced: {
+    auto *cmd = reinterpret_cast<const CmdDrawInstanced *>(header);
+    packet.value0 = cmd->vertex_count;
+    packet.value1 = cmd->instance_count;
+    packet.value2 = cmd->start_vertex;
+    packet.value3 = cmd->start_instance;
+    break;
+  }
+  case CmdType::DrawIndexedInstanced: {
+    auto *cmd = reinterpret_cast<const CmdDrawIndexedInstanced *>(header);
+    packet.value0 = cmd->index_count;
+    packet.value1 = cmd->instance_count;
+    packet.value2 = cmd->start_index;
+    packet.value3 =
+        static_cast<uint64_t>(static_cast<int64_t>(cmd->base_vertex));
+    break;
+  }
+  case CmdType::Dispatch: {
+    auto *cmd = reinterpret_cast<const CmdDispatch *>(header);
+    packet.value0 = cmd->x;
+    packet.value1 = cmd->y;
+    packet.value2 = cmd->z;
+    break;
+  }
+  case CmdType::ExecuteIndirect: {
+    auto *cmd = reinterpret_cast<const CmdExecuteIndirect *>(header);
+    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->signature);
+    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->argument_buffer);
+    packet.object_id2 = reinterpret_cast<uintptr_t>(cmd->count_buffer);
+    packet.value0 = cmd->max_command_count;
+    packet.value1 = cmd->argument_buffer_offset;
+    packet.value2 = cmd->count_buffer_offset;
+    break;
+  }
+  case CmdType::SetPipelineState: {
+    auto *cmd = reinterpret_cast<const CmdSetPipelineState *>(header);
+    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->pso);
+    break;
+  }
+  case CmdType::SetGraphicsRootSignature:
+  case CmdType::SetComputeRootSignature: {
+    auto *cmd = reinterpret_cast<const CmdSetRootSignature *>(header);
+    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->root_sig);
+    break;
+  }
+  case CmdType::SetGraphicsRoot32BitConstants:
+  case CmdType::SetComputeRoot32BitConstants: {
+    auto *cmd = reinterpret_cast<const CmdSetRoot32BitConstants *>(header);
+    packet.value0 = cmd->root_param_index;
+    packet.value1 = cmd->count;
+    packet.value2 = cmd->dst_offset;
+    break;
+  }
+  case CmdType::SetGraphicsRootConstantBufferView:
+  case CmdType::SetComputeRootConstantBufferView:
+  case CmdType::SetGraphicsRootShaderResourceView:
+  case CmdType::SetComputeRootShaderResourceView:
+  case CmdType::SetGraphicsRootUnorderedAccessView:
+  case CmdType::SetComputeRootUnorderedAccessView: {
+    auto *cmd = reinterpret_cast<const CmdSetRootCBV *>(header);
+    packet.value0 = cmd->root_param_index;
+    packet.object_id0 = cmd->address;
+    break;
+  }
+  case CmdType::SetGraphicsRootDescriptorTable:
+  case CmdType::SetComputeRootDescriptorTable: {
+    auto *cmd = reinterpret_cast<const CmdSetRootDescriptorTable *>(header);
+    packet.value0 = cmd->root_param_index;
+    packet.object_id0 = cmd->base_descriptor.ptr;
+    break;
+  }
+  case CmdType::SetDescriptorHeaps: {
+    auto *cmd = reinterpret_cast<const CmdSetDescriptorHeaps *>(header);
+    packet.value0 = cmd->count;
+    break;
+  }
+  case CmdType::IASetVertexBuffers: {
+    auto *cmd = reinterpret_cast<const CmdIASetVertexBuffers *>(header);
+    packet.value0 = cmd->start_slot;
+    packet.value1 = cmd->count;
+    break;
+  }
+  case CmdType::IASetIndexBuffer: {
+    auto *cmd = reinterpret_cast<const CmdIASetIndexBuffer *>(header);
+    packet.object_id0 = cmd->view.BufferLocation;
+    packet.value0 = cmd->view.SizeInBytes;
+    packet.value1 = cmd->view.Format;
+    break;
+  }
+  case CmdType::RSSetViewports: {
+    auto *cmd = reinterpret_cast<const CmdRSSetViewports *>(header);
+    packet.value0 = cmd->count;
+    break;
+  }
+  case CmdType::RSSetScissorRects: {
+    auto *cmd = reinterpret_cast<const CmdRSSetScissorRects *>(header);
+    packet.value0 = cmd->count;
+    break;
+  }
+  case CmdType::OMSetRenderTargets: {
+    auto *cmd = reinterpret_cast<const CmdOMSetRenderTargets *>(header);
+    packet.value0 = cmd->rt_count;
+    packet.value1 = cmd->has_dsv ? 1u : 0u;
+    break;
+  }
+  case CmdType::ClearRenderTargetView: {
+    auto *cmd = reinterpret_cast<const CmdClearRTV *>(header);
+    packet.object_id0 = cmd->rtv.ptr;
+    break;
+  }
+  case CmdType::ClearDepthStencilView: {
+    auto *cmd = reinterpret_cast<const CmdClearDSV *>(header);
+    packet.object_id0 = cmd->dsv.ptr;
+    packet.value0 = cmd->flags;
+    break;
+  }
+  case CmdType::ClearUnorderedAccessView: {
+    auto *cmd = reinterpret_cast<const CmdClearUAV *>(header);
+    packet.object_id0 = cmd->gpu_handle.ptr;
+    packet.object_id1 = cmd->cpu_handle.ptr;
+    packet.object_id2 = reinterpret_cast<uintptr_t>(cmd->resource);
+    packet.value0 = cmd->is_float ? 1u : 0u;
+    break;
+  }
+  case CmdType::ResourceBarrier: {
+    auto *cmd = reinterpret_cast<const CmdResourceBarrier *>(header);
+    packet.value0 = cmd->count;
+    break;
+  }
+  case CmdType::CopyBufferRegion: {
+    auto *cmd = reinterpret_cast<const CmdCopyBufferRegion *>(header);
+    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->dst);
+    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->src);
+    packet.value0 = cmd->dst_offset;
+    packet.value1 = cmd->src_offset;
+    packet.value2 = cmd->byte_count;
+    break;
+  }
+  case CmdType::CopyTextureRegion: {
+    auto *cmd = reinterpret_cast<const CmdCopyTextureRegion *>(header);
+    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->dst_resource);
+    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->src_resource);
+    packet.value0 = cmd->dst_subresource;
+    packet.value1 = cmd->src_subresource;
+    break;
+  }
+  case CmdType::CopyResource: {
+    auto *cmd = reinterpret_cast<const CmdCopyResource *>(header);
+    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->dst);
+    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->src);
+    break;
+  }
+  default:
+    break;
+  }
+}
+
+static bool M12BuildPacketStream(const std::vector<uint8_t> &cmds,
+                                 std::vector<M12CoreCommandPacket> &packets,
+                                 uint32_t &unsupported_reason_count) {
+  packets.clear();
+  unsupported_reason_count = 0;
+  size_t offset = 0;
+  uint64_t sequence = 1;
+  while (offset < cmds.size()) {
+    if (offset + sizeof(CmdHeader) > cmds.size())
+      return false;
+    const auto *header =
+        reinterpret_cast<const CmdHeader *>(cmds.data() + offset);
+    if (header->size < sizeof(CmdHeader) || header->size > 65536 ||
+        offset + header->size > cmds.size())
+      return false;
+
+    M12CoreCommandPacket packet = {};
+    uint32_t flags = 0;
+    packet.header.abi_version = M12CORE_ABI_VERSION;
+    packet.header.kind = M12PacketKindForCommand(header->type, flags);
+    packet.header.flags = flags;
+    packet.header.payload_qwords =
+        static_cast<uint32_t>((header->size - sizeof(CmdHeader) + 7u) / 8u);
+    packet.header.sequence = sequence++;
+    packet.value3 = static_cast<uint32_t>(header->type);
+    if (flags & M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED)
+      unsupported_reason_count++;
+    M12PopulatePacketPayload(packet, header);
+    packets.push_back(packet);
+    offset += header->size;
+  }
+  return true;
+}
+
+static void LogM12CorePacketStreamShadow(uint32_t queue_type,
+                                         uint32_t list_index,
+                                         uint64_t command_list_id,
+                                         uint64_t queue_serial,
+                                         const std::vector<uint8_t> &cmds,
+                                         const D3D12CommandStreamStats &stats) {
+  if (!TakeLogBudget(&g_packet_stream_shadow_logs, 192))
+    return;
+
+  std::vector<M12CoreCommandPacket> packets;
+  uint32_t unsupported_reason_count = 0;
+  const bool packet_recording_ok =
+      M12BuildPacketStream(cmds, packets, unsupported_reason_count);
+  M12CoreCommandPacketStreamSummary summary = {};
+  bool validate_ok = false;
+  if (packet_recording_ok) {
+    M12CoreCommandPacketStreamDesc desc = {};
+    desc.abi_version = M12CORE_ABI_VERSION;
+    desc.packet_count = static_cast<uint32_t>(packets.size());
+    desc.queue_type = queue_type;
+    desc.command_list_index = list_index;
+    desc.command_list_id = command_list_id;
+    desc.queue_serial = queue_serial;
+    desc.packets = packets.empty() ? nullptr : packets.data();
+    validate_ok = WMTM12CoreValidateCommandPacketStream(&desc, &summary) &&
+                  summary.abi_version == M12CORE_ABI_VERSION;
+  }
+
+  const uint32_t valid_stream =
+      validate_ok && summary.status == M12CORE_COMMAND_PACKET_STREAM_STATUS_OK
+          ? 1u
+          : 0u;
+  Logger::info(str::format(
+      "M12_PACKET_STREAM_SHADOW packet_streams_seen=1 packet_streams_valid=",
+      valid_stream, " unsupported_packet_reason=",
+      validate_ok ? summary.unsupported_packet_count
+                  : unsupported_reason_count + (packet_recording_ok ? 0u : 1u),
+      " queue=", queue_type, " list=", list_index,
+      " cmdlist_id=", (unsigned long long)command_list_id,
+      " serial=", (unsigned long long)queue_serial, " packets=", packets.size(),
+      " cmds=", stats.command_count,
+      " status=", validate_ok ? summary.status : 1u,
+      " invalid=", validate_ok ? summary.invalid_packet_count : 1u,
+      " graphics=", validate_ok ? summary.graphics_packet_count : 0u,
+      " compute=", validate_ok ? summary.compute_packet_count : 0u,
+      " copy=", validate_ok ? summary.copy_packet_count : 0u,
+      " barriers=", validate_ok ? summary.barrier_packet_count : 0u,
+      " draws=", validate_ok ? summary.draw_packet_count : 0u,
+      " dispatch=", validate_ok ? summary.dispatch_packet_count : 0u,
+      " clears=", validate_ok ? summary.clear_packet_count : 0u,
+      " bindings=", validate_ok ? summary.binding_packet_count : 0u, " key=0x",
+      std::hex, validate_ok ? summary.stream_key : 0ull, " seqxor=0x",
+      validate_ok ? summary.packet_sequence_xor : 0ull, std::dec));
+
+  if (!validate_ok || !TakeLogBudget(&g_cache_index_shadow_logs, 192))
+    return;
+
+  M12CoreCacheCompatibilityDesc cache_desc = {};
+  cache_desc.abi_version = M12CORE_ABI_VERSION;
+  cache_desc.artifact_kind = M12CORE_CACHE_ARTIFACT_ROOT_BINDING_PLAN;
+  cache_desc.flags =
+      M12CORE_CACHE_COMPAT_HAS_APPID | M12CORE_CACHE_COMPAT_HAS_DEVICE |
+      M12CORE_CACHE_COMPAT_HAS_RUNTIME | M12CORE_CACHE_COMPAT_HAS_TRANSLATOR |
+      M12CORE_CACHE_COMPAT_HAS_ROOT_BINDING |
+      M12CORE_CACHE_COMPAT_HAS_PIPELINE | M12CORE_CACHE_COMPAT_HAS_METAL |
+      M12CORE_CACHE_COMPAT_HAS_SCHEMA;
+  cache_desc.schema_version = 2;
+  cache_desc.appid =
+      M12ShadowEnvU64("SteamAppId", M12ShadowEnvU64("STEAM_COMPAT_APP_ID", 1));
+  cache_desc.profile_key = queue_serial ? queue_serial : command_list_id;
+  cache_desc.device_key = 0x4d31324445564345ull ^
+                          (static_cast<uint64_t>(queue_type) << 32) ^
+                          command_list_id;
+  cache_desc.os_metal_key = 0x4d4554414c5631ull;
+  cache_desc.core_build_key =
+      (static_cast<uint64_t>(M12CORE_BUILD_ID_HIGH) << 32) |
+      M12CORE_BUILD_ID_LOW;
+  cache_desc.core_feature_flags = M12CORE_FEATURE_ALL;
+  cache_desc.translator_key = 0x44584d5443310002ull;
+  cache_desc.root_binding_key = summary.stream_key;
+  cache_desc.pipeline_key = summary.packet_sequence_xor
+                                ? summary.packet_sequence_xor
+                                : summary.stream_key;
+  cache_desc.artifact_key = summary.stream_key;
+
+  M12CoreCacheCompatibilityKey cache_key = {};
+  const bool cache_ok =
+      WMTM12CoreMakeCacheCompatibilityKey(&cache_desc, &cache_key) &&
+      cache_key.abi_version == M12CORE_ABI_VERSION;
+  const uint32_t cache_index_written =
+      cache_ok && cache_key.status == M12CORE_CACHE_COMPAT_STATUS_OK ? 1u : 0u;
+  const uint32_t cache_index_corrupt = cache_ok ? 0u : 1u;
+  Logger::info(str::format(
+      "M12_CACHE_INDEX_SHADOW cache_index_written=", cache_index_written,
+      " cache_index_corrupt=", cache_index_corrupt,
+      " status=", cache_ok ? cache_key.status : 1u, " missing=0x", std::hex,
+      cache_ok ? cache_key.missing_flags : cache_desc.flags, " compat=0x",
+      cache_ok ? cache_key.compatibility_key : 0ull, " invalidate=0x",
+      cache_ok ? cache_key.invalidation_key : 0ull, " stream=0x",
+      summary.stream_key, " artifact=0x", cache_desc.artifact_key, std::dec));
+}
+
 static void LogM12CoreCommandStreamShadow(
     uint32_t queue_type, uint32_t list_index, uint64_t command_list_id,
     uint64_t queue_serial, const D3D12CommandStreamStats &stats,
@@ -9204,6 +9620,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       LogM12CoreCommandStreamShadow(
           (uint32_t)m_desc.Type, li, command_list_id, queue_serial,
           stream_stats, st, has_swapchain_work_target, (uint32_t)status);
+      LogM12CorePacketStreamShadow((uint32_t)m_desc.Type, li, command_list_id,
+                                   queue_serial, cmds, stream_stats);
       LogM12CoreRenderPassPlan((uint32_t)m_desc.Type, li, command_list_id,
                                queue_serial, stream_stats, st,
                                has_swapchain_work_target, (uint32_t)status);

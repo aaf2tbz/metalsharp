@@ -633,6 +633,26 @@ struct unixcall_m12core_plan_present_execute {
   M12CorePresentExecuteSummary ret_summary;
 };
 
+struct unixcall_m12core_validate_command_packet_stream {
+  uint32_t abi_version;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  struct WMTConstMemoryPointer packets;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreCommandPacketStreamSummary ret_summary;
+};
+
+struct unixcall_m12core_make_cache_compatibility_key {
+  M12CoreCacheCompatibilityDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreCacheCompatibilityKey ret_key;
+};
+
 struct unixcall_m12core_execute_present_blit {
   M12CorePresentExecuteDesc desc;
   obj_handle_t command_buffer;

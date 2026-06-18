@@ -22,7 +22,7 @@ static constexpr UINT MetalSharpM12TranslationLayerVendorMetalSharp = 0x4d533132
 static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;        // DX12
 static constexpr UINT M12CORE_ABI_VERSION = 1;
 static constexpr UINT M12CORE_BUILD_ID_LOW = 0x4d313243u; // M12C
-static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x00000014u;
+static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x00000015u;
 static constexpr uint64_t FeatureD3D12 = 1ull << 0;
 static constexpr uint64_t FeatureDXMT = 1ull << 1;
 static constexpr uint64_t FeatureLibM12Core = 1ull << 2;
@@ -35,6 +35,8 @@ static constexpr uint64_t FeatureCommandStreamDescriptors = 1ull << 8;
 static constexpr uint64_t FeatureRenderPassHazardPlanning = 1ull << 9;
 static constexpr uint64_t FeaturePresentExecutePlanning = 1ull << 10;
 static constexpr uint64_t FeatureReplayExecutePlanning = 1ull << 11;
+static constexpr uint64_t FeatureCommandPacketShadowRecording = 1ull << 12;
+static constexpr uint64_t FeatureCacheIndexShadow = 1ull << 13;
 static constexpr UINT M12CORE_FEATURE_DRAW_PLANNING = 1u << 12;
 static constexpr UINT M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13;
 static constexpr UINT M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14;
@@ -44,6 +46,8 @@ static constexpr UINT M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING = 1u << 17;
 static constexpr UINT M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING = 1u << 18;
 static constexpr UINT M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1u << 19;
 static constexpr UINT M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1u << 20;
+static constexpr UINT M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1u << 21;
+static constexpr UINT M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1u << 22;
 
 struct MetalSharpM12TranslationLayerInfo {
     UINT abi_version;
@@ -164,7 +168,8 @@ int main() {
         (info.feature_flags & FeaturePresentPlanning) && (info.feature_flags & FeatureReplayPlanning) &&
         (info.feature_flags & FeatureCommandStreamDescriptors) &&
         (info.feature_flags & FeatureRenderPassHazardPlanning) &&
-        (info.feature_flags & FeaturePresentExecutePlanning) && (info.feature_flags & FeatureReplayExecutePlanning);
+        (info.feature_flags & FeaturePresentExecutePlanning) && (info.feature_flags & FeatureReplayExecutePlanning) &&
+        (info.feature_flags & FeatureCommandPacketShadowRecording) && (info.feature_flags & FeatureCacheIndexShadow);
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(qi_hr) && SUCCEEDED(info_hr) &&
                 info.abi_version == MetalSharpM12TranslationLayerInfoAbiVersion &&
                 info.struct_size == sizeof(MetalSharpM12TranslationLayerInfo) &&
@@ -180,7 +185,9 @@ int main() {
                 (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING) &&
                 (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING) &&
                 (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_STREAM) &&
-                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS) && has_required_layer_features;
+                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_INDEX_SHADOW) && has_required_layer_features;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-m12-detection.v1\",\n");

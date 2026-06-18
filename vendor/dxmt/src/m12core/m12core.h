@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000014u /* Core convergence C1 packet/cache schema foundation. */
+  0x00000015u /* Core convergence C2 shadow packet/cache recording. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -49,6 +49,8 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING = 1u << 18,
   M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1u << 19,
   M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1u << 20,
+  M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1u << 21,
+  M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1u << 22,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -63,7 +65,9 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING |
       M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING |
       M12CORE_FEATURE_COMMAND_PACKET_STREAM |
-      M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS,
+      M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS |
+      M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING |
+      M12CORE_FEATURE_CACHE_INDEX_SHADOW,
 };
 
 typedef struct M12CoreVersion {

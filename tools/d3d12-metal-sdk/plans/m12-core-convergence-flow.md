@@ -111,6 +111,8 @@ Done when:
 
 ## Slice C2 — Shadow packet recording + shadow cache index
 
+Status: **Complete** — see `m12-core-convergence-c2-audit.md`.
+
 Touches: **P9.S1 / P11.S1-S2 shadow**
 
 Tasks:
@@ -127,6 +129,13 @@ Required metrics:
 - `unsupported_packet_reason` counts.
 - `cache_index_written`.
 - `cache_index_corrupt=0`.
+
+Validation snapshot:
+
+- Native convergence probe passed with build high `0x00000015` and feature flags `0x007fffff`.
+- Command replay probe emitted `M12_PACKET_STREAM_SHADOW packet_streams_seen=1 packet_streams_valid=1 unsupported_packet_reason=0`.
+- Command replay probe emitted `M12_CACHE_INDEX_SHADOW cache_index_written=1 cache_index_corrupt=0`.
+- Backend dry-run matrix passed for Elden Ring, Subnautica 2, Armored Core VI, Schedule I, and PEAK.
 
 ## Slice C3 — Native handle registry + cache identity binding
 
