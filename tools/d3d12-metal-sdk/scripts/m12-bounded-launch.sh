@@ -20,6 +20,7 @@ TRACE_CAPTURE="${METALSHARP_M12_TRACE_CAPTURE:-}"
 TRACE_PROFILE="${METALSHARP_M12_TRACE_PROFILE:-}"
 M12_LOG_LEVEL="${METALSHARP_M12_LOG_LEVEL:-}"
 M12_LOG_PATH="${METALSHARP_M12_LOG_PATH:-}"
+LAUNCH_ARGS_OVERRIDE="${METALSHARP_M12_LAUNCH_ARGS_OVERRIDE:-}"
 RUN_REPLAY=0
 RUN_OFFLINE_PSO=0
 KILL_AFTER=1
@@ -53,6 +54,7 @@ Options:
   --trace-profile PROFILE Trace profile: full or hang/light/failure. Hang keeps only low-overhead breadcrumbs.
   --log-level LEVEL       Override DXMT_LOG_LEVEL, e.g. none, error, warn, info.
   --log-path PATH         Override DXMT_LOG_PATH, e.g. none for no file logging.
+  --launch-args-override VALUE Override game launch args; use __empty__ for no forced args.
   --results-dir PATH      Output directory for bounded run artifacts.
   --replay                Replay newly available corpus through metal-shaderconverter after launch.
   --offline-pso           Run offline PSO factory after launch.
@@ -86,6 +88,7 @@ while [[ $# -gt 0 ]]; do
     --trace-profile) TRACE_PROFILE="$2"; shift 2 ;;
     --log-level) M12_LOG_LEVEL="$2"; shift 2 ;;
     --log-path) M12_LOG_PATH="$2"; shift 2 ;;
+    --launch-args-override) LAUNCH_ARGS_OVERRIDE="$2"; shift 2 ;;
     --results-dir) RESULTS_DIR="$2"; shift 2 ;;
     --replay) RUN_REPLAY=1; shift ;;
     --offline-pso) RUN_OFFLINE_PSO=1; shift ;;
@@ -203,6 +206,7 @@ if [[ -n "$TRACE_CAPTURE" ]]; then launch_env+=("METALSHARP_M12_TRACE_CAPTURE=$T
 if [[ -n "$TRACE_PROFILE" ]]; then launch_env+=("METALSHARP_M12_TRACE_PROFILE=$TRACE_PROFILE"); fi
 if [[ -n "$M12_LOG_LEVEL" ]]; then launch_env+=("METALSHARP_M12_LOG_LEVEL=$M12_LOG_LEVEL"); fi
 if [[ -n "$M12_LOG_PATH" ]]; then launch_env+=("METALSHARP_M12_LOG_PATH=$M12_LOG_PATH"); fi
+if [[ -n "$LAUNCH_ARGS_OVERRIDE" ]]; then launch_env+=("METALSHARP_M12_LAUNCH_ARGS_OVERRIDE=$LAUNCH_ARGS_OVERRIDE"); fi
 for diagnostic_var in \
   METALSHARP_M12_DIAGNOSTIC_CAPTURE \
   METALSHARP_M12_DUMP_MSL \
@@ -215,6 +219,7 @@ for diagnostic_var in \
   METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT \
   METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN \
   METALSHARP_M12CORE_PATH \
+  METALSHARP_M12_LAUNCH_ARGS_OVERRIDE \
   METALSHARP_M12_PREWARM_PROFILE; do
   if [[ -n "${!diagnostic_var:-}" ]]; then
     launch_env+=("$diagnostic_var=${!diagnostic_var}")
@@ -241,6 +246,7 @@ print(json.dumps(payload, separators=(",", ":")))
 PY
 )
 
+printf '%s\n' "$REQUEST_JSON" > "$RUN_DIR/request.json"
 curl -m 45 -sS -X POST "$BACKEND_URL/steam/launch-game" \
   -H 'Content-Type: application/json' \
   -d "$REQUEST_JSON" > "$RUN_DIR/launch.json"
