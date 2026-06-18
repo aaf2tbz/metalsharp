@@ -5148,8 +5148,11 @@ struct ReplayState {
   }
 
   bool ShouldSkipTessellationFallbackDraw() const {
+    // The PSO is authoritative here: D3D12 records tessellation on the PSO
+    // via HS/DS + patch topology type, while the command stream's current
+    // primitive topology may not always preserve a patch-list enum by replay.
     return DXMTD3D12SkipTessellationFallbackDraws() && pso &&
-           pso->UsesTessellationFallback() && D3D12IsPatchTopology(topology);
+           pso->UsesTessellationFallback();
   }
 
   void LogTessellationFallbackDraw(const char *label, uint32_t element_count,
