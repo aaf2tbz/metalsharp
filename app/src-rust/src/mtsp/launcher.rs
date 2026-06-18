@@ -620,7 +620,8 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
     let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
     let unix_lib_dir = if matches!(pipeline, PipelineId::M12 | PipelineId::M13) {
         let dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
-        for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+        for sidecar in ["winemetal.so", "libm12core.dylib", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"]
+        {
             let path = dir.join(sidecar);
             let present = path.exists();
             let sha = if present { crate::diagnostics::file_sha256(&path) } else { None };
@@ -664,6 +665,8 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
             "DYLD_FALLBACK_LIBRARY_PATH": env_keys.contains("DYLD_FALLBACK_LIBRARY_PATH") || env_keys.contains("LD_LIBRARY_PATH"),
             "SteamAppId": env_keys.contains("SteamAppId"),
             "DXMT_WINEMETAL_UNIXLIB": env_keys.contains("DXMT_WINEMETAL_UNIXLIB"),
+            "DXMT_M12CORE_ENABLE": env_keys.contains("DXMT_M12CORE_ENABLE"),
+            "DXMT_M12CORE_REQUIRED": env_keys.contains("DXMT_M12CORE_REQUIRED"),
         },
         "missing": missing,
     })
@@ -4459,6 +4462,8 @@ mod tests {
         let m12_env = m12.get("env_keys_present").unwrap();
         assert_eq!(m12_env.get("WINEDLLOVERRIDES").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12_env.get("SteamAppId").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(m12_env.get("DXMT_M12CORE_ENABLE").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(m12_env.get("DXMT_M12CORE_REQUIRED").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12.get("dry_run").and_then(|v| v.as_bool()), Some(true));
 
         let _ = std::fs::remove_dir_all(&home);
@@ -4483,7 +4488,8 @@ mod tests {
             .iter()
             .map(|s| s.get("filename").unwrap().as_str().unwrap().to_string())
             .collect();
-        for required in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+        for required in ["winemetal.so", "libm12core.dylib", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"]
+        {
             assert!(
                 sidecar_names.contains(&required.to_string()),
                 "M12 dry-run must verify {}: {:?}",
@@ -4504,6 +4510,11 @@ mod tests {
         assert!(
             missing_filenames.contains(&"d3d12.dll".to_string()),
             "M12 dry-run must flag missing d3d12.dll: {:?}",
+            missing_filenames
+        );
+        assert!(
+            missing_filenames.contains(&"libm12core.dylib".to_string()),
+            "M12 dry-run must flag missing libm12core.dylib: {:?}",
             missing_filenames
         );
         assert_eq!(dry.get("ok").and_then(|v| v.as_bool()), Some(false), "empty home must yield ok=false");
