@@ -679,16 +679,23 @@ bool MTLD3D12SwapChain::EnsureMetalView() {
   }
   m_layer = {};
 
-  HWND candidates[5] = {
+  HWND candidates[4] = {
       m_hwnd,
       GetAncestor(m_hwnd, GA_ROOT),
       GetAncestor(m_hwnd, GA_ROOTOWNER),
       ::GetParent(m_hwnd),
-      GetForegroundWindow(),
   };
   for (HWND candidate : candidates) {
-    if (!candidate)
+    if (!candidate || !IsWindow(candidate))
       continue;
+    DWORD candidate_pid = 0;
+    GetWindowThreadProcessId(candidate, &candidate_pid);
+    if (window_pid && candidate_pid && candidate_pid != window_pid) {
+      SCTRACE("EnsureMetalView skip candidate hwnd=%p pid=%lu original_pid=%lu",
+              (void *)candidate, (unsigned long)candidate_pid,
+              (unsigned long)window_pid);
+      continue;
+    }
     if (AttachMetalViewForHWND(candidate)) {
       if (candidate != m_hwnd) {
         SCTRACE("EnsureMetalView attached via fallback hwnd=%p original=%p",
@@ -738,6 +745,25 @@ bool MTLD3D12SwapChain::AttachMetalViewForHWND(HWND hwnd) {
   m_native_view = candidate_view;
   m_layer = candidate_layer;
   return true;
+}
+
+void MTLD3D12SwapChain::RebindMetalViewForWindowChange(const char *reason) {
+  DrainPresentCommandBuffers(true);
+  m_presenter = nullptr;
+  if (m_native_view.handle) {
+    WMT::ReleaseMetalView(m_native_view);
+    m_native_view = {};
+  }
+  m_layer = {};
+  if (EnsureMetalView()) {
+    Logger::info(str::format("M12 rebound Metal view reason=",
+                             reason ? reason : "unknown", " hwnd=",
+                             (void *)m_hwnd));
+  } else {
+    Logger::err(str::format("M12 failed to rebound Metal view reason=",
+                            reason ? reason : "unknown", " hwnd=",
+                            (void *)m_hwnd));
+  }
 }
 
 void MTLD3D12SwapChain::ReassertWindowForHandoff(const char *reason) {
@@ -795,10 +821,8 @@ void MTLD3D12SwapChain::ConfigureLayer() {
 
   auto source_format = DXGIToMTL(m_desc.Format);
   auto layer_format = DXGIToDisplayLayerMTL(m_desc.Format);
-  auto width =
-      m_source_width ? m_source_width : (m_desc.Width ? m_desc.Width : 1);
-  auto height =
-      m_source_height ? m_source_height : (m_desc.Height ? m_desc.Height : 1);
+  auto width = m_desc.Width ? m_desc.Width : 1;
+  auto height = m_desc.Height ? m_desc.Height : 1;
   auto sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
 
   if (m_presenter) {
@@ -926,7 +950,7 @@ MTLD3D12SwapChain::SetFullscreenState(BOOL fullscreen, IDXGIOutput *target) {
     wsi::leaveFullscreenMode(m_hwnd, &m_window_state, false);
   }
   ReassertWindowForHandoff(fullscreen ? "set_fullscreen" : "set_windowed");
-  EnsureMetalView();
+  RebindMetalViewForWindowChange(fullscreen ? "set_fullscreen" : "set_windowed");
   return S_OK;
 }
 
@@ -1058,15 +1082,10 @@ MTLD3D12SwapChain::ResizeTarget(const DXGI_MODE_DESC *new_target_params) {
 
   if (m_fs_desc.Windowed && new_target_params->Width &&
       new_target_params->Height) {
-    RECT client = {0, 0, static_cast<LONG>(new_target_params->Width),
-                   static_cast<LONG>(new_target_params->Height)};
-    DWORD style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_STYLE));
-    DWORD ex_style = static_cast<DWORD>(GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE));
-    AdjustWindowRectEx(&client, style, FALSE, ex_style);
-    SetWindowPos(m_hwnd, nullptr, 0, 0, client.right - client.left,
-                 client.bottom - client.top,
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    wsi::resizeWindow(m_hwnd, &m_window_state, new_target_params->Width,
+                      new_target_params->Height);
     ReassertWindowForHandoff("resize_target_windowed");
+    RebindMetalViewForWindowChange("resize_target_windowed");
   } else if (!m_fs_desc.Windowed) {
     m_monitor = wsi::getWindowMonitor(m_hwnd);
     wsi::WsiMode mode{new_target_params->Width,
@@ -1083,6 +1102,7 @@ MTLD3D12SwapChain::ResizeTarget(const DXGI_MODE_DESC *new_target_params) {
     wsi::setWindowMode(m_monitor, m_hwnd, mode);
     wsi::updateFullscreenWindow(m_monitor, m_hwnd, false);
     ReassertWindowForHandoff("resize_target_fullscreen");
+    RebindMetalViewForWindowChange("resize_target_fullscreen");
   }
   return S_OK;
 }

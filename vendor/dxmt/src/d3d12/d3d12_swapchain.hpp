@@ -114,6 +114,7 @@ private:
   bool AttachMetalViewForHWND(HWND hwnd);
   void ConfigureLayer();
   void ReassertWindowForHandoff(const char *reason);
+  void RebindMetalViewForWindowChange(const char *reason);
   void TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf);
   void DrainPresentCommandBuffers(bool wait);
 
