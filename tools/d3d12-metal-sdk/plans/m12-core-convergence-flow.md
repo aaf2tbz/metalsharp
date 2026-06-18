@@ -288,6 +288,8 @@ Tasks:
 
 ## Slice C10 — Final multi-game convergence validation
 
+Status: **Complete for ownership milestone** — see `m12-core-convergence-c10-audit.md`. Elden Ring and Armored Core VI were visually confirmed by the user; Subnautica 2 is explicitly deferred by user instruction.
+
 Touches: **P9/P10/P11 final**
 
 Order:
@@ -310,4 +312,4 @@ Final proof requires measured native execution coverage, PE fallback parity, rea
 
 ## Current next slice
 
-C0 through C9 are complete. **C10 is ready/staged** for bounded 2.5-minute visual confirmation tests; see `m12-core-convergence-c10-readiness.md`. Visual/game launches still require explicit user approval.
+C0 through C10 are complete for the C-roadmap ownership milestone. Subnautica 2 remains deferred for a separate future compute/unsafe-draw investigation and should not be run without explicit user approval.
