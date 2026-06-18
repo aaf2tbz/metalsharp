@@ -76,10 +76,10 @@ DXMT_M12CORE_PATH="$HOME/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm1
   - `m12core_feature_flags=0x0fffffff`
   - `feature_flags=0x000000000007ffff`
   - `build_string=MetalSharp DXMT M12 convergence-c4-c5 replay abi=1`
-- Command replay gate-off log: `/tmp/m12-c4-c5-command-replay-gateoff.out`
+- Command replay gate-off log: `/tmp/m12-c4-c5-command-replay-gateoff-captured.out`
   - `M12_PROBE_REPLAY_EXECUTE gate=0 native_executed=0 whole_list_fallback=1 fallback=1`
   - `M12_ENCODER_OWNERSHIP_PLAN ... cache_payload_reuse=0 layout_validation_required=1`
-- Command replay gate-on log: `/tmp/m12-c4-c5-command-replay-gateon2.out`
+- Command replay gate-on log: `/tmp/m12-c4-c5-command-replay-gateon-captured.out`
   - `M12_REPLAY_EXECUTE_PLAN ... gate=1 fallback=3` from legacy C5 planner (indirect unsupported).
   - `M12_PACKET_SHAPE_SHADOW ... reasons=0x3 ... safe_for_probe_replay=0`
   - `M12_PROBE_REPLAY_EXECUTE gate=1 native_executed=0 whole_list_fallback=1 fallback=4 validation=0x3`
