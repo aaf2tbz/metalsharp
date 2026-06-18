@@ -139,6 +139,15 @@ typedef int (*PFN_m12core_validate_command_packet_stream)(
 typedef int (*PFN_m12core_make_cache_compatibility_key)(
     const M12CoreCacheCompatibilityDesc *desc, M12CoreCacheCompatibilityKey *out_key
 );
+typedef int (*PFN_m12core_register_handle)(
+    const M12CoreHandleRegistryDesc *desc, M12CoreHandleRegistryResult *out_result
+);
+typedef int (*PFN_m12core_validate_handle)(
+    const M12CoreHandleValidationDesc *desc, M12CoreHandleValidationResult *out_result
+);
+typedef int (*PFN_m12core_classify_packet_support)(
+    const M12CorePacketSupportDesc *desc, M12CorePacketSupportSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -171,6 +180,9 @@ static PFN_m12core_plan_present_execute p_m12core_plan_present_execute;
 static PFN_m12core_plan_replay_execute p_m12core_plan_replay_execute;
 static PFN_m12core_validate_command_packet_stream p_m12core_validate_command_packet_stream;
 static PFN_m12core_make_cache_compatibility_key p_m12core_make_cache_compatibility_key;
+static PFN_m12core_register_handle p_m12core_register_handle;
+static PFN_m12core_validate_handle p_m12core_validate_handle;
+static PFN_m12core_classify_packet_support p_m12core_classify_packet_support;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -275,6 +287,10 @@ m12core_try_load(void) {
       (PFN_m12core_validate_command_packet_stream)dlsym(m12core_handle, "m12core_validate_command_packet_stream");
   p_m12core_make_cache_compatibility_key =
       (PFN_m12core_make_cache_compatibility_key)dlsym(m12core_handle, "m12core_make_cache_compatibility_key");
+  p_m12core_register_handle = (PFN_m12core_register_handle)dlsym(m12core_handle, "m12core_register_handle");
+  p_m12core_validate_handle = (PFN_m12core_validate_handle)dlsym(m12core_handle, "m12core_validate_handle");
+  p_m12core_classify_packet_support =
+      (PFN_m12core_classify_packet_support)dlsym(m12core_handle, "m12core_classify_packet_support");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -782,6 +798,45 @@ _WMTM12CoreMakeCacheCompatibilityKey(void *obj) {
     return STATUS_SUCCESS;
 
   params->ret_success = p_m12core_make_cache_compatibility_key(&params->desc, &params->ret_key) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreRegisterHandle(void *obj) {
+  struct unixcall_m12core_register_handle *params = obj;
+  if (!params || !p_m12core_register_handle)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_register_handle(&params->desc, &params->ret_result) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreValidateHandle(void *obj) {
+  struct unixcall_m12core_validate_handle *params = obj;
+  if (!params || !p_m12core_validate_handle)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_validate_handle(&params->desc, &params->ret_result) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreClassifyPacketSupport(void *obj) {
+  struct unixcall_m12core_classify_packet_support *params = obj;
+  if (!params || !p_m12core_classify_packet_support)
+    return STATUS_SUCCESS;
+
+  M12CorePacketSupportDesc desc;
+  memset(&desc, 0, sizeof(desc));
+  desc.abi_version = params->abi_version;
+  desc.packet_count = params->packet_count;
+  desc.queue_type = params->queue_type;
+  desc.flags = params->flags;
+  desc.stream_key = params->stream_key;
+  desc.packet_sequence_xor = params->packet_sequence_xor;
+  desc.packets = (const M12CoreCommandPacket *)params->packets.ptr;
+  params->ret_success = p_m12core_classify_packet_support(&desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4535,6 +4590,9 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CorePlanReplayExecute,
     &_WMTM12CoreValidateCommandPacketStream,
     &_WMTM12CoreMakeCacheCompatibilityKey,
+    &_WMTM12CoreRegisterHandle,
+    &_WMTM12CoreValidateHandle,
+    &_WMTM12CoreClassifyPacketSupport,
 };
 
 #ifndef DXMT_NATIVE
@@ -4701,5 +4759,8 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CorePlanReplayExecute,
     &_WMTM12CoreValidateCommandPacketStream,
     &_WMTM12CoreMakeCacheCompatibilityKey,
+    &_WMTM12CoreRegisterHandle,
+    &_WMTM12CoreValidateHandle,
+    &_WMTM12CoreClassifyPacketSupport,
 };
 #endif

@@ -137,18 +137,63 @@ Validation snapshot:
 - Command replay probe emitted `M12_CACHE_INDEX_SHADOW cache_index_written=1 cache_index_corrupt=0`.
 - Backend dry-run matrix passed for Elden Ring, Subnautica 2, Armored Core VI, Schedule I, and PEAK.
 
-## Slice C3 — Native handle registry + cache identity binding
+## Slice C3 — Native handle registry + packet ID migration
 
-Touches: **P9.S2 / P11.S0-S1**
+Status: **Complete** — see `m12-core-convergence-c3-c35-audit.md`.
+
+Touches: **P9.S2 / P11.S0-S1 shadow**
+
+Plan: `m12-core-convergence-c3-c35-plan.md`.
 
 Tasks:
 
-- Add native-side scalar handle IDs for resources, PSOs, root signatures, descriptor/binding plans, and swapchain images.
-- Packets reference scalar native IDs.
-- Cache entries bind to IDs only after compatibility validation.
+- Add native-side scalar handle IDs for resources, PSOs, root signatures, descriptor heaps/handles, command signatures, query heaps, descriptor/binding plans, and swapchain images.
+- Packets reference scalar native registry IDs instead of raw PE pointer-shaped IDs where object identities exist.
 - Add stale-handle and lifetime probes.
+- Keep cache identity binding shadow-only; do not enable cache payload reuse yet.
 
-## Slice C4 — Probe-native replay executor + negative cache
+Required metrics:
+
+- `handle_registry_registered`.
+- `packet_native_ids`.
+- `packet_raw_ids`.
+- `stale_handle_detected=0` on valid probe streams.
+
+Validation snapshot:
+
+- Native convergence probe passed with build high `0x00000016` and feature flags `0x01ffffff`.
+- Native probe covered handle registration, validation, and stale-handle detection.
+- Command replay probe emitted `M12_HANDLE_REGISTRY_SHADOW handle_registry_registered=8 packet_native_ids=8 packet_raw_ids=0 stale_handle_detected=0`.
+
+## Slice C3.5 — Unsupported-shape classifier + negative cache shadow
+
+Status: **Complete** — see `m12-core-convergence-c3-c35-audit.md`.
+
+Touches: **P9.S2.5 / P11.S5 shadow**
+
+Plan: `m12-core-convergence-c3-c35-plan.md`.
+
+Tasks:
+
+- Classify real packet streams as safe, unsupported, invalid, or stale-handle before C4 native replay.
+- Add conservative unsupported reason counts for indirect execution, copy/resolve/query/write-immediate shapes, invalid packets, stale handles, and missing required native IDs.
+- Add negative-cache shadow keys for unsupported shapes only.
+- Do not skip execution, alter cache lookup, or enable native replay.
+
+Required metrics:
+
+- `unsupported_shape_seen`.
+- `negative_cache_shadow_written`.
+- `negative_cache_corrupt=0`.
+- `safe_for_probe_replay`.
+
+Validation snapshot:
+
+- Native probe covered safe, unsupported/copy negative-cache, and stale/missing-native-ID shapes.
+- Command replay probe emitted `M12_PACKET_SHAPE_SHADOW unsupported_shape_seen=1 negative_cache_shadow_written=1 negative_cache_corrupt=0 safe_for_probe_replay=0`.
+- Backend dry-run matrix passed for Elden Ring, Subnautica 2, Armored Core VI, Schedule I, and PEAK.
+
+## Slice C4 — Probe-native replay executor
 
 Touches: **P9.S3 / P11.S5**
 
@@ -156,8 +201,7 @@ Tasks:
 
 - Enable native replay for mini/probe packet streams behind `DXMT_M12CORE_REPLAY_EXECUTE=1`.
 - Support clears, RT/DSV setup, barriers, viewport/scissor, PSO/root/bindings, draw/draw-indexed where fully supported.
-- Add negative-cache entries for unsupported packet shapes.
-- Whole-list fallback on unsupported packets.
+- Read the C3.5 classifier/negative-cache shadow outputs, but keep whole-list fallback on unsupported packets.
 
 ## Slice C5 — Render-pass/encoder ownership + root/binding cache
 

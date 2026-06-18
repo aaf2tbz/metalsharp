@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core convergence-c2 shadow-packet-cache-index abi=1";
+  return "libm12core convergence-c3-c35 handle-shape-shadow abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -206,6 +206,63 @@ bool regularFileExists(const char *path) {
 
 void pipelineHashCombine(uint64_t &hash, uint64_t value) {
   hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+}
+
+bool validHandleKind(uint32_t kind) {
+  return kind >= M12CORE_HANDLE_KIND_RESOURCE &&
+         kind <= M12CORE_HANDLE_KIND_SWAPCHAIN_IMAGE;
+}
+
+uint64_t makeHandleKey(const M12CoreHandleRegistryDesc &desc) {
+  uint64_t key = 0x4d3132484e444cull; // "M12HNDL" marker.
+  pipelineHashCombine(key, desc.kind);
+  pipelineHashCombine(key, desc.flags);
+  pipelineHashCombine(key, desc.generation);
+  pipelineHashCombine(key, desc.source_key);
+  pipelineHashCombine(key, desc.aux_key0);
+  pipelineHashCombine(key, desc.aux_key1);
+  pipelineHashCombine(key, desc.owner_key);
+  return key;
+}
+
+uint64_t makeRegistryId(uint32_t kind, uint32_t generation,
+                        uint64_t handle_key) {
+  /* Scalar shadow ID layout: marker/kind/generation/hash.  It is stable and
+   * validateable without storing ownership-bearing native objects.
+   */
+  return 0xa500000000000000ull | ((uint64_t)(kind & 0xffu) << 48) |
+         ((uint64_t)(generation & 0xffffu) << 32) |
+         (handle_key & 0xffffffffull);
+}
+
+uint32_t registryIdKind(uint64_t registry_id) {
+  return (uint32_t)((registry_id >> 48) & 0xffu);
+}
+
+uint32_t registryIdGeneration(uint64_t registry_id) {
+  return (uint32_t)((registry_id >> 32) & 0xffffu);
+}
+
+bool registryIdHasMarker(uint64_t registry_id) {
+  return (registry_id & 0xff00000000000000ull) == 0xa500000000000000ull;
+}
+
+bool packetKindRequiresNativeId(uint32_t kind, uint32_t flags) {
+  (void)flags;
+  switch (kind) {
+  case M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE:
+  case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE:
+  case M12CORE_COMMAND_PACKET_KIND_CLEAR_RTV:
+  case M12CORE_COMMAND_PACKET_KIND_CLEAR_DSV:
+  case M12CORE_COMMAND_PACKET_KIND_CLEAR_UAV:
+  case M12CORE_COMMAND_PACKET_KIND_DRAW:
+  case M12CORE_COMMAND_PACKET_KIND_DRAW_INDEXED:
+  case M12CORE_COMMAND_PACKET_KIND_DISPATCH:
+  case M12CORE_COMMAND_PACKET_KIND_COPY:
+    return true;
+  default:
+    return false;
+  }
 }
 
 dxmt::dxil::MSLShader toRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
@@ -1792,6 +1849,171 @@ m12core_make_cache_compatibility_key(const M12CoreCacheCompatibilityDesc *desc,
   out_key->artifact_kind = desc->artifact_kind;
   out_key->compatibility_key = key;
   out_key->invalidation_key = invalidation;
+  return 0;
+}
+
+extern "C" int
+m12core_register_handle(const M12CoreHandleRegistryDesc *desc,
+                        M12CoreHandleRegistryResult *out_result) {
+  if (!desc || !out_result || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_result, 0, sizeof(*out_result));
+
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  out_result->kind = desc->kind;
+  out_result->generation = desc->generation;
+  if (!validHandleKind(desc->kind)) {
+    out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_UNSUPPORTED_KIND;
+    return 0;
+  }
+  if (!desc->source_key || !desc->generation) {
+    out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_INVALID;
+    return 0;
+  }
+
+  const uint64_t handle_key = makeHandleKey(*desc);
+  out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_OK;
+  out_result->handle_key = handle_key;
+  out_result->registry_id =
+      makeRegistryId(desc->kind, desc->generation, handle_key);
+  return 0;
+}
+
+extern "C" int
+m12core_validate_handle(const M12CoreHandleValidationDesc *desc,
+                        M12CoreHandleValidationResult *out_result) {
+  if (!desc || !out_result || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_result, 0, sizeof(*out_result));
+
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  out_result->registry_id = desc->registry_id;
+  out_result->actual_kind = registryIdKind(desc->registry_id);
+  out_result->actual_generation = registryIdGeneration(desc->registry_id);
+  if (!registryIdHasMarker(desc->registry_id) || !out_result->actual_kind ||
+      !out_result->actual_generation) {
+    out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_INVALID;
+    return 0;
+  }
+  if (desc->expected_kind && desc->expected_kind != out_result->actual_kind) {
+    out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_UNSUPPORTED_KIND;
+    return 0;
+  }
+  if (desc->expected_generation &&
+      desc->expected_generation != out_result->actual_generation) {
+    out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_STALE;
+    return 0;
+  }
+
+  out_result->status = M12CORE_HANDLE_REGISTRY_STATUS_OK;
+  return 0;
+}
+
+extern "C" int
+m12core_classify_packet_support(const M12CorePacketSupportDesc *desc,
+                                M12CorePacketSupportSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_PACKET_SUPPORT_STATUS_SAFE;
+
+  if (desc->packet_count && !desc->packets) {
+    out_summary->status = M12CORE_PACKET_SUPPORT_STATUS_INVALID;
+    out_summary->unsupported_reason_flags |=
+        M12CORE_PACKET_UNSUPPORTED_INVALID_PACKET;
+    out_summary->invalid_packet_count = desc->packet_count;
+    return 0;
+  }
+
+  uint64_t shape_key = 0x4d31325348415045ull; // "M12SHAPE" marker.
+  pipelineHashCombine(shape_key, desc->packet_count);
+  pipelineHashCombine(shape_key, desc->queue_type);
+  pipelineHashCombine(shape_key, desc->stream_key);
+  pipelineHashCombine(shape_key, desc->packet_sequence_xor);
+
+  for (uint32_t i = 0; i < desc->packet_count; i++) {
+    const M12CoreCommandPacket &packet = desc->packets[i];
+    const uint32_t kind = packet.header.kind;
+    const uint32_t flags = packet.header.flags;
+    pipelineHashCombine(shape_key, kind);
+    pipelineHashCombine(shape_key, flags);
+
+    bool invalid = packet.header.abi_version != M12CORE_ABI_VERSION ||
+                   kind == M12CORE_COMMAND_PACKET_KIND_UNKNOWN ||
+                   kind > M12CORE_COMMAND_PACKET_KIND_PRESENT;
+    bool counted_unsupported_packet = false;
+    auto markUnsupportedPacket = [&]() {
+      if (!counted_unsupported_packet) {
+        out_summary->unsupported_shape_count++;
+        counted_unsupported_packet = true;
+      }
+    };
+
+    if (invalid) {
+      out_summary->invalid_packet_count++;
+      markUnsupportedPacket();
+      out_summary->unsupported_reason_flags |=
+          M12CORE_PACKET_UNSUPPORTED_INVALID_PACKET;
+      continue;
+    }
+
+    const bool explicit_unsupported =
+        (flags & M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED) != 0;
+    if (explicit_unsupported) {
+      markUnsupportedPacket();
+      if (kind == M12CORE_COMMAND_PACKET_KIND_DRAW) {
+        out_summary->unsupported_reason_flags |=
+            M12CORE_PACKET_UNSUPPORTED_INDIRECT;
+      } else {
+        out_summary->unsupported_reason_flags |=
+            M12CORE_PACKET_UNSUPPORTED_UNKNOWN_KIND;
+      }
+    } else if (kind == M12CORE_COMMAND_PACKET_KIND_COPY) {
+      markUnsupportedPacket();
+      out_summary->unsupported_reason_flags |= M12CORE_PACKET_UNSUPPORTED_COPY;
+    }
+
+    const bool has_native_id = registryIdHasMarker(packet.object_id0) ||
+                               registryIdHasMarker(packet.object_id1) ||
+                               registryIdHasMarker(packet.object_id2) ||
+                               registryIdHasMarker(packet.object_id3);
+    if (packetKindRequiresNativeId(kind, flags) && !has_native_id) {
+      out_summary->missing_native_id_count++;
+      markUnsupportedPacket();
+      out_summary->unsupported_reason_flags |=
+          M12CORE_PACKET_UNSUPPORTED_MISSING_NATIVE_ID;
+    }
+    const uint64_t ids[4] = {packet.object_id0, packet.object_id1,
+                             packet.object_id2, packet.object_id3};
+    bool packet_has_stale_handle = false;
+    for (uint32_t id_index = 0; id_index < 4; id_index++) {
+      if (ids[id_index] && !registryIdHasMarker(ids[id_index])) {
+        out_summary->stale_handle_count++;
+        packet_has_stale_handle = true;
+        out_summary->unsupported_reason_flags |=
+            M12CORE_PACKET_UNSUPPORTED_STALE_HANDLE;
+      }
+    }
+    if (packet_has_stale_handle)
+      markUnsupportedPacket();
+  }
+
+  out_summary->shape_key = shape_key;
+  if (out_summary->invalid_packet_count)
+    out_summary->status = M12CORE_PACKET_SUPPORT_STATUS_INVALID;
+  else if (out_summary->unsupported_reason_flags)
+    out_summary->status = M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED;
+  out_summary->safe_for_probe_replay =
+      out_summary->status == M12CORE_PACKET_SUPPORT_STATUS_SAFE ? 1u : 0u;
+  if (out_summary->status == M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED) {
+    uint64_t negative = 0x4d31324e45474348ull; // "M12NEGCH" marker.
+    pipelineHashCombine(negative, out_summary->unsupported_reason_flags);
+    pipelineHashCombine(negative, out_summary->unsupported_shape_count);
+    pipelineHashCombine(negative, shape_key);
+    out_summary->negative_cache_key = negative;
+  }
   return 0;
 }
 

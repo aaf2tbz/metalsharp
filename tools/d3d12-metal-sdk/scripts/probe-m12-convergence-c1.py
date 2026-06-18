@@ -20,21 +20,28 @@ from typing import Any
 
 M12CORE_ABI_VERSION = 1
 M12CORE_BUILD_ID_LOW = 0x4D313243
-M12CORE_BUILD_ID_HIGH = 0x00000015
+M12CORE_BUILD_ID_HIGH = 0x00000016
 M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1 << 19
 M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1 << 20
 M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1 << 21
 M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1 << 22
+M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY = 1 << 23
+M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER = 1 << 24
 
 M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0
+M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE = 1
 M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS = 5
 M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER = 6
 M12CORE_COMMAND_PACKET_KIND_DRAW = 10
 M12CORE_COMMAND_PACKET_KIND_DISPATCH = 12
+M12CORE_COMMAND_PACKET_KIND_COPY = 13
 M12CORE_COMMAND_PACKET_KIND_PRESENT = 14
 M12CORE_COMMAND_PACKET_FLAG_GRAPHICS = 1 << 0
 M12CORE_COMMAND_PACKET_FLAG_COMPUTE = 1 << 1
+M12CORE_COMMAND_PACKET_FLAG_COPY = 1 << 2
 M12CORE_COMMAND_PACKET_FLAG_PRESENT = 1 << 3
+M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE = 1 << 4
+M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE = 1 << 5
 M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED = 1 << 8
 M12CORE_COMMAND_PACKET_STREAM_STATUS_OK = 0
 M12CORE_COMMAND_PACKET_STREAM_STATUS_INVALID = 1
@@ -53,6 +60,18 @@ M12CORE_CACHE_COMPAT_HAS_SCHEMA = 1 << 7
 M12CORE_CACHE_COMPAT_STATUS_OK = 0
 M12CORE_CACHE_COMPAT_STATUS_INVALID = 1
 M12CORE_CACHE_COMPAT_STATUS_MISSING_DIMENSION = 2
+
+M12CORE_HANDLE_KIND_RESOURCE = 1
+M12CORE_HANDLE_KIND_PIPELINE = 2
+M12CORE_HANDLE_REGISTRY_STATUS_OK = 0
+M12CORE_HANDLE_REGISTRY_STATUS_STALE = 3
+M12CORE_PACKET_SUPPORT_STATUS_SAFE = 0
+M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED = 1
+M12CORE_PACKET_SUPPORT_STATUS_INVALID = 2
+M12CORE_PACKET_UNSUPPORTED_INDIRECT = 1 << 0
+M12CORE_PACKET_UNSUPPORTED_COPY = 1 << 1
+M12CORE_PACKET_UNSUPPORTED_STALE_HANDLE = 1 << 5
+M12CORE_PACKET_UNSUPPORTED_MISSING_NATIVE_ID = 1 << 6
 
 
 class M12CoreVersion(ctypes.Structure):
@@ -152,6 +171,77 @@ class M12CoreCacheCompatibilityKey(ctypes.Structure):
     ]
 
 
+class M12CoreHandleRegistryDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("kind", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("generation", ctypes.c_uint32),
+        ("source_key", ctypes.c_uint64),
+        ("aux_key0", ctypes.c_uint64),
+        ("aux_key1", ctypes.c_uint64),
+        ("owner_key", ctypes.c_uint64),
+    ]
+
+
+class M12CoreHandleRegistryResult(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("kind", ctypes.c_uint32),
+        ("generation", ctypes.c_uint32),
+        ("registry_id", ctypes.c_uint64),
+        ("handle_key", ctypes.c_uint64),
+    ]
+
+
+class M12CoreHandleValidationDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("expected_kind", ctypes.c_uint32),
+        ("expected_generation", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("registry_id", ctypes.c_uint64),
+    ]
+
+
+class M12CoreHandleValidationResult(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("actual_kind", ctypes.c_uint32),
+        ("actual_generation", ctypes.c_uint32),
+        ("registry_id", ctypes.c_uint64),
+    ]
+
+
+class M12CorePacketSupportDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("packet_count", ctypes.c_uint32),
+        ("queue_type", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("stream_key", ctypes.c_uint64),
+        ("packet_sequence_xor", ctypes.c_uint64),
+        ("packets", ctypes.POINTER(M12CoreCommandPacket)),
+    ]
+
+
+class M12CorePacketSupportSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("unsupported_reason_flags", ctypes.c_uint32),
+        ("unsupported_shape_count", ctypes.c_uint32),
+        ("invalid_packet_count", ctypes.c_uint32),
+        ("stale_handle_count", ctypes.c_uint32),
+        ("missing_native_id_count", ctypes.c_uint32),
+        ("safe_for_probe_replay", ctypes.c_uint32),
+        ("negative_cache_key", ctypes.c_uint64),
+        ("shape_key", ctypes.c_uint64),
+    ]
+
+
 def default_lib_candidates(repo: pathlib.Path) -> list[pathlib.Path]:
     return [
         pathlib.Path.home() / ".metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
@@ -201,6 +291,42 @@ def cache_key_to_dict(k: M12CoreCacheCompatibilityKey) -> dict[str, Any]:
     }
 
 
+def handle_result_to_dict(r: M12CoreHandleRegistryResult) -> dict[str, Any]:
+    return {
+        "abi_version": r.abi_version,
+        "status": r.status,
+        "kind": r.kind,
+        "generation": r.generation,
+        "registry_id": f"0x{r.registry_id:016x}",
+        "handle_key": f"0x{r.handle_key:016x}",
+    }
+
+
+def handle_validation_to_dict(r: M12CoreHandleValidationResult) -> dict[str, Any]:
+    return {
+        "abi_version": r.abi_version,
+        "status": r.status,
+        "actual_kind": r.actual_kind,
+        "actual_generation": r.actual_generation,
+        "registry_id": f"0x{r.registry_id:016x}",
+    }
+
+
+def support_to_dict(s: M12CorePacketSupportSummary) -> dict[str, Any]:
+    return {
+        "abi_version": s.abi_version,
+        "status": s.status,
+        "unsupported_reason_flags": s.unsupported_reason_flags,
+        "unsupported_shape_count": s.unsupported_shape_count,
+        "invalid_packet_count": s.invalid_packet_count,
+        "stale_handle_count": s.stale_handle_count,
+        "missing_native_id_count": s.missing_native_id_count,
+        "safe_for_probe_replay": s.safe_for_probe_replay,
+        "negative_cache_key": f"0x{s.negative_cache_key:016x}",
+        "shape_key": f"0x{s.shape_key:016x}",
+    }
+
+
 def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     lib = ctypes.CDLL(str(lib_path))
     lib.m12core_get_version.argtypes = [ctypes.POINTER(M12CoreVersion)]
@@ -215,6 +341,21 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         ctypes.POINTER(M12CoreCacheCompatibilityKey),
     ]
     lib.m12core_make_cache_compatibility_key.restype = ctypes.c_int
+    lib.m12core_register_handle.argtypes = [
+        ctypes.POINTER(M12CoreHandleRegistryDesc),
+        ctypes.POINTER(M12CoreHandleRegistryResult),
+    ]
+    lib.m12core_register_handle.restype = ctypes.c_int
+    lib.m12core_validate_handle.argtypes = [
+        ctypes.POINTER(M12CoreHandleValidationDesc),
+        ctypes.POINTER(M12CoreHandleValidationResult),
+    ]
+    lib.m12core_validate_handle.restype = ctypes.c_int
+    lib.m12core_classify_packet_support.argtypes = [
+        ctypes.POINTER(M12CorePacketSupportDesc),
+        ctypes.POINTER(M12CorePacketSupportSummary),
+    ]
+    lib.m12core_classify_packet_support.restype = ctypes.c_int
 
     checks: dict[str, bool] = {}
     version = M12CoreVersion()
@@ -225,6 +366,8 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     checks["cache_feature"] = bool(version.feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS)
     checks["packet_shadow_feature"] = bool(version.feature_flags & M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING)
     checks["cache_index_shadow_feature"] = bool(version.feature_flags & M12CORE_FEATURE_CACHE_INDEX_SHADOW)
+    checks["handle_registry_feature"] = bool(version.feature_flags & M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY)
+    checks["shape_classifier_feature"] = bool(version.feature_flags & M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER)
 
     packets = (M12CoreCommandPacket * 5)(
         packet(M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS, 1, M12CORE_COMMAND_PACKET_FLAG_GRAPHICS),
@@ -358,6 +501,115 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         unknown_rc == 0 and unknown_key.status == M12CORE_CACHE_COMPAT_STATUS_INVALID
     )
 
+    handle_desc = M12CoreHandleRegistryDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        kind=M12CORE_HANDLE_KIND_PIPELINE,
+        flags=0,
+        generation=1,
+        source_key=0xABCDEF,
+        aux_key0=0x10,
+        aux_key1=0x20,
+        owner_key=0x30,
+    )
+    handle_result = M12CoreHandleRegistryResult()
+    handle_rc = lib.m12core_register_handle(ctypes.byref(handle_desc), ctypes.byref(handle_result))
+    checks["handle_register_ok"] = (
+        handle_rc == 0
+        and handle_result.status == M12CORE_HANDLE_REGISTRY_STATUS_OK
+        and handle_result.registry_id != 0
+    )
+
+    validation_desc = M12CoreHandleValidationDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        expected_kind=M12CORE_HANDLE_KIND_PIPELINE,
+        expected_generation=1,
+        reserved=0,
+        registry_id=handle_result.registry_id,
+    )
+    validation_result = M12CoreHandleValidationResult()
+    validation_rc = lib.m12core_validate_handle(ctypes.byref(validation_desc), ctypes.byref(validation_result))
+    checks["handle_validate_ok"] = (
+        validation_rc == 0 and validation_result.status == M12CORE_HANDLE_REGISTRY_STATUS_OK
+    )
+
+    stale_desc = M12CoreHandleValidationDesc.from_buffer_copy(validation_desc)
+    stale_desc.expected_generation = 2
+    stale_result = M12CoreHandleValidationResult()
+    stale_rc = lib.m12core_validate_handle(ctypes.byref(stale_desc), ctypes.byref(stale_result))
+    checks["handle_stale_detected"] = (
+        stale_rc == 0 and stale_result.status == M12CORE_HANDLE_REGISTRY_STATUS_STALE
+    )
+
+    safe_packets = (M12CoreCommandPacket * 1)(
+        packet(
+            M12CORE_COMMAND_PACKET_KIND_DRAW,
+            11,
+            M12CORE_COMMAND_PACKET_FLAG_GRAPHICS | M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE,
+        )
+    )
+    safe_packets[0].object_id0 = handle_result.registry_id
+    safe_support_desc = M12CorePacketSupportDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        packet_count=1,
+        queue_type=0,
+        flags=0,
+        stream_key=valid_summary.stream_key,
+        packet_sequence_xor=valid_summary.packet_sequence_xor,
+        packets=ctypes.cast(safe_packets, ctypes.POINTER(M12CoreCommandPacket)),
+    )
+    safe_support = M12CorePacketSupportSummary()
+    safe_support_rc = lib.m12core_classify_packet_support(
+        ctypes.byref(safe_support_desc), ctypes.byref(safe_support)
+    )
+    checks["shape_safe"] = (
+        safe_support_rc == 0
+        and safe_support.status == M12CORE_PACKET_SUPPORT_STATUS_SAFE
+        and safe_support.safe_for_probe_replay == 1
+    )
+
+    copy_packets = (M12CoreCommandPacket * 1)(
+        packet(
+            M12CORE_COMMAND_PACKET_KIND_COPY,
+            12,
+            M12CORE_COMMAND_PACKET_FLAG_COPY | M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE,
+        )
+    )
+    copy_packets[0].object_id0 = handle_result.registry_id
+    copy_support_desc = M12CorePacketSupportDesc.from_buffer_copy(safe_support_desc)
+    copy_support_desc.packet_sequence_xor ^= 0x12
+    copy_support_desc.packets = ctypes.cast(copy_packets, ctypes.POINTER(M12CoreCommandPacket))
+    copy_support = M12CorePacketSupportSummary()
+    copy_support_rc = lib.m12core_classify_packet_support(
+        ctypes.byref(copy_support_desc), ctypes.byref(copy_support)
+    )
+    checks["shape_unsupported_copy_negative"] = (
+        copy_support_rc == 0
+        and copy_support.status == M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED
+        and bool(copy_support.unsupported_reason_flags & M12CORE_PACKET_UNSUPPORTED_COPY)
+        and copy_support.negative_cache_key != 0
+    )
+
+    stale_packets = (M12CoreCommandPacket * 1)(
+        packet(
+            M12CORE_COMMAND_PACKET_KIND_DRAW,
+            13,
+            M12CORE_COMMAND_PACKET_FLAG_GRAPHICS | M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE,
+        )
+    )
+    stale_packets[0].object_id0 = 0x12345678
+    stale_support_desc = M12CorePacketSupportDesc.from_buffer_copy(safe_support_desc)
+    stale_support_desc.packet_sequence_xor ^= 0x13
+    stale_support_desc.packets = ctypes.cast(stale_packets, ctypes.POINTER(M12CoreCommandPacket))
+    stale_support = M12CorePacketSupportSummary()
+    stale_support_rc = lib.m12core_classify_packet_support(
+        ctypes.byref(stale_support_desc), ctypes.byref(stale_support)
+    )
+    checks["shape_stale_or_missing"] = (
+        stale_support_rc == 0
+        and stale_support.status == M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED
+        and bool(stale_support.unsupported_reason_flags & M12CORE_PACKET_UNSUPPORTED_STALE_HANDLE)
+    )
+
     result: dict[str, Any] = {
         "schema": "metalsharp.m12.convergence-c1-probe.v1",
         "lib": str(lib_path),
@@ -376,6 +628,12 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         "changed_cache_key": cache_key_to_dict(changed_key),
         "missing_cache_key": cache_key_to_dict(missing_key),
         "unknown_cache_key": cache_key_to_dict(unknown_key),
+        "handle": handle_result_to_dict(handle_result),
+        "handle_validation": handle_validation_to_dict(validation_result),
+        "stale_handle_validation": handle_validation_to_dict(stale_result),
+        "safe_shape": support_to_dict(safe_support),
+        "copy_shape": support_to_dict(copy_support),
+        "stale_shape": support_to_dict(stale_support),
     }
     return bool(result["ok"]), result
 

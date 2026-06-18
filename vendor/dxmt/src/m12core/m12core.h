@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000015u /* Core convergence C2 shadow packet/cache recording. */
+  0x00000016u /* Core convergence C3/C3.5 handle IDs and shape shadowing. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -51,6 +51,8 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1u << 20,
   M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1u << 21,
   M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1u << 22,
+  M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY = 1u << 23,
+  M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER = 1u << 24,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -67,7 +69,9 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_COMMAND_PACKET_STREAM |
       M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS |
       M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING |
-      M12CORE_FEATURE_CACHE_INDEX_SHADOW,
+      M12CORE_FEATURE_CACHE_INDEX_SHADOW |
+      M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY |
+      M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER,
 };
 
 typedef struct M12CoreVersion {
@@ -1136,6 +1140,113 @@ typedef struct M12CoreCacheCompatibilityKey {
   uint64_t invalidation_key;
 } M12CoreCacheCompatibilityKey;
 
+/* Core Convergence C3 shadow handle registry.  Registry IDs are scalar native
+ * identities for packet references only; they are not ownership-bearing object
+ * handles and must not be used to execute or retain PE/Metal/COM objects.
+ */
+typedef enum M12CoreHandleKind {
+  M12CORE_HANDLE_KIND_UNKNOWN = 0,
+  M12CORE_HANDLE_KIND_RESOURCE = 1,
+  M12CORE_HANDLE_KIND_PIPELINE = 2,
+  M12CORE_HANDLE_KIND_ROOT_SIGNATURE = 3,
+  M12CORE_HANDLE_KIND_DESCRIPTOR_HEAP = 4,
+  M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE = 5,
+  M12CORE_HANDLE_KIND_COMMAND_SIGNATURE = 6,
+  M12CORE_HANDLE_KIND_QUERY_HEAP = 7,
+  M12CORE_HANDLE_KIND_SWAPCHAIN_IMAGE = 8,
+} M12CoreHandleKind;
+
+typedef enum M12CoreHandleRegistryStatus {
+  M12CORE_HANDLE_REGISTRY_STATUS_OK = 0,
+  M12CORE_HANDLE_REGISTRY_STATUS_INVALID = 1,
+  M12CORE_HANDLE_REGISTRY_STATUS_UNSUPPORTED_KIND = 2,
+  M12CORE_HANDLE_REGISTRY_STATUS_STALE = 3,
+} M12CoreHandleRegistryStatus;
+
+typedef enum M12CoreHandleRegistryFlags {
+  M12CORE_HANDLE_REGISTRY_FLAG_TRANSIENT = 1u << 0,
+  M12CORE_HANDLE_REGISTRY_FLAG_EXTERNAL = 1u << 1,
+} M12CoreHandleRegistryFlags;
+
+typedef struct M12CoreHandleRegistryDesc {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint32_t flags;
+  uint32_t generation;
+  uint64_t source_key;
+  uint64_t aux_key0;
+  uint64_t aux_key1;
+  uint64_t owner_key;
+} M12CoreHandleRegistryDesc;
+
+typedef struct M12CoreHandleRegistryResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t kind;
+  uint32_t generation;
+  uint64_t registry_id;
+  uint64_t handle_key;
+} M12CoreHandleRegistryResult;
+
+typedef struct M12CoreHandleValidationDesc {
+  uint32_t abi_version;
+  uint32_t expected_kind;
+  uint32_t expected_generation;
+  uint32_t reserved;
+  uint64_t registry_id;
+} M12CoreHandleValidationDesc;
+
+typedef struct M12CoreHandleValidationResult {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t actual_kind;
+  uint32_t actual_generation;
+  uint64_t registry_id;
+} M12CoreHandleValidationResult;
+
+/* Core Convergence C3.5 packet-shape classifier.  This is conservative and
+ * shadow-only: unsupported/negative-cache results do not affect PE execution.
+ */
+typedef enum M12CorePacketSupportStatus {
+  M12CORE_PACKET_SUPPORT_STATUS_SAFE = 0,
+  M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED = 1,
+  M12CORE_PACKET_SUPPORT_STATUS_INVALID = 2,
+} M12CorePacketSupportStatus;
+
+typedef enum M12CorePacketUnsupportedReason {
+  M12CORE_PACKET_UNSUPPORTED_NONE = 0,
+  M12CORE_PACKET_UNSUPPORTED_INDIRECT = 1u << 0,
+  M12CORE_PACKET_UNSUPPORTED_COPY = 1u << 1,
+  M12CORE_PACKET_UNSUPPORTED_QUERY = 1u << 2,
+  M12CORE_PACKET_UNSUPPORTED_UNKNOWN_KIND = 1u << 3,
+  M12CORE_PACKET_UNSUPPORTED_INVALID_PACKET = 1u << 4,
+  M12CORE_PACKET_UNSUPPORTED_STALE_HANDLE = 1u << 5,
+  M12CORE_PACKET_UNSUPPORTED_MISSING_NATIVE_ID = 1u << 6,
+} M12CorePacketUnsupportedReason;
+
+typedef struct M12CorePacketSupportDesc {
+  uint32_t abi_version;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t flags;
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+  const M12CoreCommandPacket *packets;
+} M12CorePacketSupportDesc;
+
+typedef struct M12CorePacketSupportSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t unsupported_reason_flags;
+  uint32_t unsupported_shape_count;
+  uint32_t invalid_packet_count;
+  uint32_t stale_handle_count;
+  uint32_t missing_native_id_count;
+  uint32_t safe_for_probe_replay;
+  uint64_t negative_cache_key;
+  uint64_t shape_key;
+} M12CorePacketSupportSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1226,6 +1337,12 @@ int m12core_validate_command_packet_stream(
 int m12core_make_cache_compatibility_key(
     const M12CoreCacheCompatibilityDesc *desc,
     M12CoreCacheCompatibilityKey *out_key);
+int m12core_register_handle(const M12CoreHandleRegistryDesc *desc,
+                            M12CoreHandleRegistryResult *out_result);
+int m12core_validate_handle(const M12CoreHandleValidationDesc *desc,
+                            M12CoreHandleValidationResult *out_result);
+int m12core_classify_packet_support(const M12CorePacketSupportDesc *desc,
+                                    M12CorePacketSupportSummary *out_summary);
 
 #ifdef __cplusplus
 }

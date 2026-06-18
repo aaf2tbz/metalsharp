@@ -118,6 +118,12 @@ WINEMETAL_API bool WMTM12CoreValidateCommandPacketStream(
 WINEMETAL_API bool
 WMTM12CoreMakeCacheCompatibilityKey(const M12CoreCacheCompatibilityDesc *desc, M12CoreCacheCompatibilityKey *out_key);
 WINEMETAL_API bool
+WMTM12CoreRegisterHandle(const M12CoreHandleRegistryDesc *desc, M12CoreHandleRegistryResult *out_result);
+WINEMETAL_API bool
+WMTM12CoreValidateHandle(const M12CoreHandleValidationDesc *desc, M12CoreHandleValidationResult *out_result);
+WINEMETAL_API bool
+WMTM12CoreClassifyPacketSupport(const M12CorePacketSupportDesc *desc, M12CorePacketSupportSummary *out_summary);
+WINEMETAL_API bool
 WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);
 
 enum WMTStringEncoding : uint64_t {

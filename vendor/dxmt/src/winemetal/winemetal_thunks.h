@@ -653,6 +653,33 @@ struct unixcall_m12core_make_cache_compatibility_key {
   M12CoreCacheCompatibilityKey ret_key;
 };
 
+struct unixcall_m12core_register_handle {
+  M12CoreHandleRegistryDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreHandleRegistryResult ret_result;
+};
+
+struct unixcall_m12core_validate_handle {
+  M12CoreHandleValidationDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreHandleValidationResult ret_result;
+};
+
+struct unixcall_m12core_classify_packet_support {
+  uint32_t abi_version;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t flags;
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+  struct WMTConstMemoryPointer packets;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CorePacketSupportSummary ret_summary;
+};
+
 struct unixcall_m12core_execute_present_blit {
   M12CorePresentExecuteDesc desc;
   obj_handle_t command_buffer;

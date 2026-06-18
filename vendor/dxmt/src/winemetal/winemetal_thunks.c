@@ -114,6 +114,12 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreValidateCommandPacketStream";
   case 161:
     return "WMTM12CoreMakeCacheCompatibilityKey";
+  case 162:
+    return "WMTM12CoreRegisterHandle";
+  case 163:
+    return "WMTM12CoreValidateHandle";
+  case 164:
+    return "WMTM12CoreClassifyPacketSupport";
   default:
     return "unknown";
   }
@@ -743,6 +749,63 @@ WMTM12CoreMakeCacheCompatibilityKey(const M12CoreCacheCompatibilityDesc *desc, M
     return false;
 
   *out_key = params.ret_key;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreRegisterHandle(const M12CoreHandleRegistryDesc *desc, M12CoreHandleRegistryResult *out_result) {
+  struct unixcall_m12core_register_handle params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_result)
+    return false;
+
+  /* C3 handle registry bridge: scalar identity keying only.  The returned ID is
+   * not an ownership-bearing native/Metal/COM handle and cannot execute work.
+   */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(162, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreValidateHandle(const M12CoreHandleValidationDesc *desc, M12CoreHandleValidationResult *out_result) {
+  struct unixcall_m12core_validate_handle params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_result)
+    return false;
+
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(163, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreClassifyPacketSupport(const M12CorePacketSupportDesc *desc, M12CorePacketSupportSummary *out_summary) {
+  struct unixcall_m12core_classify_packet_support params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C3.5 classifier bridge: unsupported-shape and negative-cache shadow only.
+   * Results must not skip PE execution or enable native replay.
+   */
+  params.abi_version = desc->abi_version;
+  params.packet_count = desc->packet_count;
+  params.queue_type = desc->queue_type;
+  params.flags = desc->flags;
+  params.stream_key = desc->stream_key;
+  params.packet_sequence_xor = desc->packet_sequence_xor;
+  WMT_MEMPTR_SET(params.packets, desc->packets);
+  if (!winemetal_unix_call_ok(164, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
   return true;
 }
 

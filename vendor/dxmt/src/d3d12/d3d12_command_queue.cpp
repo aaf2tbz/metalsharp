@@ -211,6 +211,8 @@ static uint32_t g_replay_plan_logs = 0;
 static uint32_t g_replay_execute_plan_logs = 0;
 static uint32_t g_command_stream_shadow_logs = 0;
 static uint32_t g_packet_stream_shadow_logs = 0;
+static uint32_t g_handle_registry_shadow_logs = 0;
+static uint32_t g_packet_shape_shadow_logs = 0;
 static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
@@ -6073,7 +6075,8 @@ static uint32_t M12PacketKindForCommand(CmdType type, uint32_t &flags) {
     flags = M12CORE_COMMAND_PACKET_FLAG_GRAPHICS |
             M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE |
             M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE |
-            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS;
+            M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS |
+            M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED;
     return M12CORE_COMMAND_PACKET_KIND_DRAW;
   case CmdType::CopyBufferRegion:
   case CmdType::CopyTextureRegion:
@@ -6157,11 +6160,69 @@ static uint32_t M12PacketKindForCommand(CmdType type, uint32_t &flags) {
   }
 }
 
-static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
-                                     const CmdHeader *header) {
+struct M12ShadowHandleStats {
+  uint32_t registered = 0;
+  uint32_t native_ids = 0;
+  uint32_t raw_ids = 0;
+  uint32_t stale_handles = 0;
+};
+
+static uint64_t M12RegisterShadowHandle(uint32_t kind, uint64_t source_key,
+                                        uint64_t aux_key0, uint64_t aux_key1,
+                                        uint64_t owner_key,
+                                        M12ShadowHandleStats &stats) {
+  if (!source_key)
+    return 0;
+
+  M12CoreHandleRegistryDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.kind = kind;
+  desc.generation = 1;
+  desc.source_key = source_key;
+  desc.aux_key0 = aux_key0;
+  desc.aux_key1 = aux_key1;
+  desc.owner_key = owner_key;
+
+  M12CoreHandleRegistryResult result = {};
+  if (!WMTM12CoreRegisterHandle(&desc, &result) ||
+      result.abi_version != M12CORE_ABI_VERSION ||
+      result.status != M12CORE_HANDLE_REGISTRY_STATUS_OK ||
+      !result.registry_id) {
+    stats.raw_ids++;
+    return source_key;
+  }
+
+  M12CoreHandleValidationDesc validation = {};
+  validation.abi_version = M12CORE_ABI_VERSION;
+  validation.expected_kind = kind;
+  validation.expected_generation = 1;
+  validation.registry_id = result.registry_id;
+  M12CoreHandleValidationResult validation_result = {};
+  if (!WMTM12CoreValidateHandle(&validation, &validation_result) ||
+      validation_result.abi_version != M12CORE_ABI_VERSION ||
+      validation_result.status != M12CORE_HANDLE_REGISTRY_STATUS_OK) {
+    stats.stale_handles++;
+    stats.raw_ids++;
+    return source_key;
+  }
+
+  stats.registered++;
+  stats.native_ids++;
+  return result.registry_id;
+}
+
+static void
+M12PopulatePacketPayload(M12CoreCommandPacket &packet, const CmdHeader *header,
+                         M12ShadowHandleStats &handle_stats,
+                         uint64_t &graphics_pso_id, uint64_t &compute_pso_id,
+                         uint64_t &graphics_root_id, uint64_t &compute_root_id,
+                         uint64_t &descriptor_heap_id) {
   switch (header->type) {
   case CmdType::DrawInstanced: {
     auto *cmd = reinterpret_cast<const CmdDrawInstanced *>(header);
+    packet.object_id0 = graphics_pso_id;
+    packet.object_id1 = graphics_root_id;
+    packet.object_id2 = descriptor_heap_id;
     packet.value0 = cmd->vertex_count;
     packet.value1 = cmd->instance_count;
     packet.value2 = cmd->start_vertex;
@@ -6170,6 +6231,9 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   }
   case CmdType::DrawIndexedInstanced: {
     auto *cmd = reinterpret_cast<const CmdDrawIndexedInstanced *>(header);
+    packet.object_id0 = graphics_pso_id;
+    packet.object_id1 = graphics_root_id;
+    packet.object_id2 = descriptor_heap_id;
     packet.value0 = cmd->index_count;
     packet.value1 = cmd->instance_count;
     packet.value2 = cmd->start_index;
@@ -6179,6 +6243,9 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   }
   case CmdType::Dispatch: {
     auto *cmd = reinterpret_cast<const CmdDispatch *>(header);
+    packet.object_id0 = compute_pso_id;
+    packet.object_id1 = compute_root_id;
+    packet.object_id2 = descriptor_heap_id;
     packet.value0 = cmd->x;
     packet.value1 = cmd->y;
     packet.value2 = cmd->z;
@@ -6186,9 +6253,18 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   }
   case CmdType::ExecuteIndirect: {
     auto *cmd = reinterpret_cast<const CmdExecuteIndirect *>(header);
-    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->signature);
-    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->argument_buffer);
-    packet.object_id2 = reinterpret_cast<uintptr_t>(cmd->count_buffer);
+    packet.object_id0 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_COMMAND_SIGNATURE,
+                                reinterpret_cast<uintptr_t>(cmd->signature),
+                                cmd->max_command_count, 0, 0, handle_stats);
+    packet.object_id1 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_RESOURCE,
+        reinterpret_cast<uintptr_t>(cmd->argument_buffer),
+        cmd->argument_buffer_offset, 0, 0, handle_stats);
+    packet.object_id2 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_RESOURCE,
+                                reinterpret_cast<uintptr_t>(cmd->count_buffer),
+                                cmd->count_buffer_offset, 0, 0, handle_stats);
     packet.value0 = cmd->max_command_count;
     packet.value1 = cmd->argument_buffer_offset;
     packet.value2 = cmd->count_buffer_offset;
@@ -6196,18 +6272,38 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   }
   case CmdType::SetPipelineState: {
     auto *cmd = reinterpret_cast<const CmdSetPipelineState *>(header);
-    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->pso);
+    auto *pso = static_cast<const MTLD3D12PipelineState *>(cmd->pso);
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_PIPELINE, reinterpret_cast<uintptr_t>(cmd->pso), 0,
+        pso && pso->IsCompute() ? 2u : 1u, 0, handle_stats);
+    if (pso && pso->IsCompute())
+      compute_pso_id = packet.object_id0;
+    else
+      graphics_pso_id = packet.object_id0;
     break;
   }
-  case CmdType::SetGraphicsRootSignature:
+  case CmdType::SetGraphicsRootSignature: {
+    auto *cmd = reinterpret_cast<const CmdSetRootSignature *>(header);
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_ROOT_SIGNATURE,
+        reinterpret_cast<uintptr_t>(cmd->root_sig), 0, 0, 0, handle_stats);
+    graphics_root_id = packet.object_id0;
+    break;
+  }
   case CmdType::SetComputeRootSignature: {
     auto *cmd = reinterpret_cast<const CmdSetRootSignature *>(header);
-    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->root_sig);
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_ROOT_SIGNATURE,
+        reinterpret_cast<uintptr_t>(cmd->root_sig), 0, 0, 0, handle_stats);
+    compute_root_id = packet.object_id0;
     break;
   }
   case CmdType::SetGraphicsRoot32BitConstants:
   case CmdType::SetComputeRoot32BitConstants: {
     auto *cmd = reinterpret_cast<const CmdSetRoot32BitConstants *>(header);
+    packet.object_id0 = header->type == CmdType::SetGraphicsRoot32BitConstants
+                            ? graphics_root_id
+                            : compute_root_id;
     packet.value0 = cmd->root_param_index;
     packet.value1 = cmd->count;
     packet.value2 = cmd->dst_offset;
@@ -6220,31 +6316,63 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   case CmdType::SetGraphicsRootUnorderedAccessView:
   case CmdType::SetComputeRootUnorderedAccessView: {
     auto *cmd = reinterpret_cast<const CmdSetRootCBV *>(header);
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE, cmd->address,
+        cmd->root_param_index, static_cast<uint32_t>(header->type),
+        header->type == CmdType::SetGraphicsRootConstantBufferView ||
+                header->type == CmdType::SetGraphicsRootShaderResourceView ||
+                header->type == CmdType::SetGraphicsRootUnorderedAccessView
+            ? graphics_root_id
+            : compute_root_id,
+        handle_stats);
+    packet.object_id1 =
+        header->type == CmdType::SetGraphicsRootConstantBufferView ||
+                header->type == CmdType::SetGraphicsRootShaderResourceView ||
+                header->type == CmdType::SetGraphicsRootUnorderedAccessView
+            ? graphics_root_id
+            : compute_root_id;
     packet.value0 = cmd->root_param_index;
-    packet.object_id0 = cmd->address;
     break;
   }
   case CmdType::SetGraphicsRootDescriptorTable:
   case CmdType::SetComputeRootDescriptorTable: {
     auto *cmd = reinterpret_cast<const CmdSetRootDescriptorTable *>(header);
+    const bool graphics =
+        header->type == CmdType::SetGraphicsRootDescriptorTable;
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE, cmd->base_descriptor.ptr,
+        cmd->root_param_index, graphics ? 1u : 2u,
+        graphics ? graphics_root_id : compute_root_id, handle_stats);
+    packet.object_id1 = graphics ? graphics_root_id : compute_root_id;
     packet.value0 = cmd->root_param_index;
-    packet.object_id0 = cmd->base_descriptor.ptr;
     break;
   }
   case CmdType::SetDescriptorHeaps: {
     auto *cmd = reinterpret_cast<const CmdSetDescriptorHeaps *>(header);
     packet.value0 = cmd->count;
+    if (cmd->count) {
+      packet.object_id0 =
+          M12RegisterShadowHandle(M12CORE_HANDLE_KIND_DESCRIPTOR_HEAP,
+                                  reinterpret_cast<uintptr_t>(cmd->heaps[0]),
+                                  cmd->count, 0, 0, handle_stats);
+      descriptor_heap_id = packet.object_id0;
+    } else {
+      descriptor_heap_id = 0;
+    }
     break;
   }
   case CmdType::IASetVertexBuffers: {
     auto *cmd = reinterpret_cast<const CmdIASetVertexBuffers *>(header);
+    packet.object_id0 = descriptor_heap_id;
     packet.value0 = cmd->start_slot;
     packet.value1 = cmd->count;
     break;
   }
   case CmdType::IASetIndexBuffer: {
     auto *cmd = reinterpret_cast<const CmdIASetIndexBuffer *>(header);
-    packet.object_id0 = cmd->view.BufferLocation;
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_RESOURCE, cmd->view.BufferLocation,
+        cmd->view.SizeInBytes, cmd->view.Format, 0, handle_stats);
     packet.value0 = cmd->view.SizeInBytes;
     packet.value1 = cmd->view.Format;
     break;
@@ -6263,24 +6391,43 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
     auto *cmd = reinterpret_cast<const CmdOMSetRenderTargets *>(header);
     packet.value0 = cmd->rt_count;
     packet.value1 = cmd->has_dsv ? 1u : 0u;
+    if (cmd->rt_count)
+      packet.object_id0 = M12RegisterShadowHandle(
+          M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE, cmd->rts[0].ptr, cmd->rt_count,
+          cmd->has_dsv ? 1u : 0u, 0, handle_stats);
+    if (cmd->has_dsv)
+      packet.object_id1 =
+          M12RegisterShadowHandle(M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE,
+                                  cmd->dsv.ptr, 0, 1u, 0, handle_stats);
     break;
   }
   case CmdType::ClearRenderTargetView: {
     auto *cmd = reinterpret_cast<const CmdClearRTV *>(header);
-    packet.object_id0 = cmd->rtv.ptr;
+    packet.object_id0 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE,
+                                cmd->rtv.ptr, 0, 0, 0, handle_stats);
     break;
   }
   case CmdType::ClearDepthStencilView: {
     auto *cmd = reinterpret_cast<const CmdClearDSV *>(header);
-    packet.object_id0 = cmd->dsv.ptr;
+    packet.object_id0 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE,
+                                cmd->dsv.ptr, cmd->flags, 0, 0, handle_stats);
     packet.value0 = cmd->flags;
     break;
   }
   case CmdType::ClearUnorderedAccessView: {
     auto *cmd = reinterpret_cast<const CmdClearUAV *>(header);
-    packet.object_id0 = cmd->gpu_handle.ptr;
-    packet.object_id1 = cmd->cpu_handle.ptr;
-    packet.object_id2 = reinterpret_cast<uintptr_t>(cmd->resource);
+    packet.object_id0 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE,
+                                cmd->gpu_handle.ptr, 0, 0, 0, handle_stats);
+    packet.object_id1 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_DESCRIPTOR_HANDLE,
+                                cmd->cpu_handle.ptr, 0, 1u, 0, handle_stats);
+    packet.object_id2 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_RESOURCE,
+                                reinterpret_cast<uintptr_t>(cmd->resource), 0,
+                                cmd->is_float ? 1u : 0u, 0, handle_stats);
     packet.value0 = cmd->is_float ? 1u : 0u;
     break;
   }
@@ -6291,8 +6438,12 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   }
   case CmdType::CopyBufferRegion: {
     auto *cmd = reinterpret_cast<const CmdCopyBufferRegion *>(header);
-    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->dst);
-    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->src);
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_RESOURCE, reinterpret_cast<uintptr_t>(cmd->dst),
+        cmd->dst_offset, cmd->byte_count, 0, handle_stats);
+    packet.object_id1 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_RESOURCE, reinterpret_cast<uintptr_t>(cmd->src),
+        cmd->src_offset, cmd->byte_count, 0, handle_stats);
     packet.value0 = cmd->dst_offset;
     packet.value1 = cmd->src_offset;
     packet.value2 = cmd->byte_count;
@@ -6300,16 +6451,26 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
   }
   case CmdType::CopyTextureRegion: {
     auto *cmd = reinterpret_cast<const CmdCopyTextureRegion *>(header);
-    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->dst_resource);
-    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->src_resource);
+    packet.object_id0 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_RESOURCE,
+                                reinterpret_cast<uintptr_t>(cmd->dst_resource),
+                                cmd->dst_subresource, 0, 0, handle_stats);
+    packet.object_id1 =
+        M12RegisterShadowHandle(M12CORE_HANDLE_KIND_RESOURCE,
+                                reinterpret_cast<uintptr_t>(cmd->src_resource),
+                                cmd->src_subresource, 0, 0, handle_stats);
     packet.value0 = cmd->dst_subresource;
     packet.value1 = cmd->src_subresource;
     break;
   }
   case CmdType::CopyResource: {
     auto *cmd = reinterpret_cast<const CmdCopyResource *>(header);
-    packet.object_id0 = reinterpret_cast<uintptr_t>(cmd->dst);
-    packet.object_id1 = reinterpret_cast<uintptr_t>(cmd->src);
+    packet.object_id0 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_RESOURCE, reinterpret_cast<uintptr_t>(cmd->dst), 0,
+        0, 0, handle_stats);
+    packet.object_id1 = M12RegisterShadowHandle(
+        M12CORE_HANDLE_KIND_RESOURCE, reinterpret_cast<uintptr_t>(cmd->src), 0,
+        0, 0, handle_stats);
     break;
   }
   default:
@@ -6319,11 +6480,17 @@ static void M12PopulatePacketPayload(M12CoreCommandPacket &packet,
 
 static bool M12BuildPacketStream(const std::vector<uint8_t> &cmds,
                                  std::vector<M12CoreCommandPacket> &packets,
-                                 uint32_t &unsupported_reason_count) {
+                                 uint32_t &unsupported_reason_count,
+                                 M12ShadowHandleStats &handle_stats) {
   packets.clear();
   unsupported_reason_count = 0;
   size_t offset = 0;
   uint64_t sequence = 1;
+  uint64_t graphics_pso_id = 0;
+  uint64_t compute_pso_id = 0;
+  uint64_t graphics_root_id = 0;
+  uint64_t compute_root_id = 0;
+  uint64_t descriptor_heap_id = 0;
   while (offset < cmds.size()) {
     if (offset + sizeof(CmdHeader) > cmds.size())
       return false;
@@ -6344,7 +6511,9 @@ static bool M12BuildPacketStream(const std::vector<uint8_t> &cmds,
     packet.value3 = static_cast<uint32_t>(header->type);
     if (flags & M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED)
       unsupported_reason_count++;
-    M12PopulatePacketPayload(packet, header);
+    M12PopulatePacketPayload(packet, header, handle_stats, graphics_pso_id,
+                             compute_pso_id, graphics_root_id, compute_root_id,
+                             descriptor_heap_id);
     packets.push_back(packet);
     offset += header->size;
   }
@@ -6362,8 +6531,9 @@ static void LogM12CorePacketStreamShadow(uint32_t queue_type,
 
   std::vector<M12CoreCommandPacket> packets;
   uint32_t unsupported_reason_count = 0;
-  const bool packet_recording_ok =
-      M12BuildPacketStream(cmds, packets, unsupported_reason_count);
+  M12ShadowHandleStats handle_stats = {};
+  const bool packet_recording_ok = M12BuildPacketStream(
+      cmds, packets, unsupported_reason_count, handle_stats);
   M12CoreCommandPacketStreamSummary summary = {};
   bool validate_ok = false;
   if (packet_recording_ok) {
@@ -6404,6 +6574,47 @@ static void LogM12CorePacketStreamShadow(uint32_t queue_type,
       " bindings=", validate_ok ? summary.binding_packet_count : 0u, " key=0x",
       std::hex, validate_ok ? summary.stream_key : 0ull, " seqxor=0x",
       validate_ok ? summary.packet_sequence_xor : 0ull, std::dec));
+
+  if (packet_recording_ok &&
+      TakeLogBudget(&g_handle_registry_shadow_logs, 192)) {
+    Logger::info(str::format(
+        "M12_HANDLE_REGISTRY_SHADOW handle_registry_registered=",
+        handle_stats.registered, " packet_native_ids=", handle_stats.native_ids,
+        " packet_raw_ids=", handle_stats.raw_ids, " stale_handle_detected=",
+        handle_stats.stale_handles, " packets=", packets.size(),
+        " queue=", queue_type, " list=", list_index,
+        " cmdlist_id=", (unsigned long long)command_list_id,
+        " serial=", (unsigned long long)queue_serial));
+  }
+
+  M12CorePacketSupportSummary support = {};
+  bool support_ok = false;
+  if (validate_ok) {
+    M12CorePacketSupportDesc support_desc = {};
+    support_desc.abi_version = M12CORE_ABI_VERSION;
+    support_desc.packet_count = static_cast<uint32_t>(packets.size());
+    support_desc.queue_type = queue_type;
+    support_desc.stream_key = summary.stream_key;
+    support_desc.packet_sequence_xor = summary.packet_sequence_xor;
+    support_desc.packets = packets.empty() ? nullptr : packets.data();
+    support_ok = WMTM12CoreClassifyPacketSupport(&support_desc, &support) &&
+                 support.abi_version == M12CORE_ABI_VERSION;
+  }
+  if (support_ok && TakeLogBudget(&g_packet_shape_shadow_logs, 192)) {
+    const uint32_t negative_cache_shadow_written =
+        support.negative_cache_key ? 1u : 0u;
+    Logger::info(str::format(
+        "M12_PACKET_SHAPE_SHADOW unsupported_shape_seen=",
+        support.unsupported_shape_count ? 1u : 0u,
+        " negative_cache_shadow_written=", negative_cache_shadow_written,
+        " negative_cache_corrupt=0 safe_for_probe_replay=",
+        support.safe_for_probe_replay, " status=", support.status,
+        " reasons=0x", std::hex, support.unsupported_reason_flags,
+        " negative=0x", support.negative_cache_key, " shape=0x",
+        support.shape_key, std::dec, " invalid=", support.invalid_packet_count,
+        " stale=", support.stale_handle_count,
+        " missing_native_id=", support.missing_native_id_count));
+  }
 
   if (!validate_ok || !TakeLogBudget(&g_cache_index_shadow_logs, 192))
     return;
@@ -9511,11 +9722,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       case CmdType::SetDescriptorHeaps: {
         auto *cmd = reinterpret_cast<const CmdSetDescriptorHeaps *>(header);
         st.desc_heap_count = cmd->count > 2 ? 2 : cmd->count;
-        auto *heaps = reinterpret_cast<ID3D12DescriptorHeap *const *>(
-            reinterpret_cast<const uint8_t *>(cmd) +
-            sizeof(CmdSetDescriptorHeaps) - sizeof(ID3D12DescriptorHeap *));
         for (uint32_t i = 0; i < st.desc_heap_count; i++)
-          st.desc_heaps[i] = heaps[i];
+          st.desc_heaps[i] = cmd->heaps[i];
         break;
       }
       default:
