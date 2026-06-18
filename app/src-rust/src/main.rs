@@ -2222,18 +2222,21 @@ fn apply_launch_env_overrides(
                 if value == "0" {
                     upsert_env("DXMT_WINEMETAL_DEBUG", "0");
                     upsert_env("DXMT_DXIL_TRACE", "0");
+                    upsert_env("DXMT_D3D12_PSO_TRACE", "0");
                     upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "");
                     upsert_env("DXMT_D3D12_TRACE_MAX_MB", "0");
                     upsert_env("DXMT_D3D12_PRESENT_LOG_INTERVAL", "0");
                 } else if matches!(trace_profile.as_str(), "hang" | "failure" | "light") {
                     upsert_env("DXMT_WINEMETAL_DEBUG", "0");
                     upsert_env("DXMT_DXIL_TRACE", "0");
-                    upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "SwapChain,Presenter,PSO");
-                    upsert_env("DXMT_D3D12_TRACE_MAX_MB", "4");
-                    upsert_env("DXMT_D3D12_PRESENT_LOG_INTERVAL", "120");
+                    upsert_env("DXMT_D3D12_PSO_TRACE", "0");
+                    upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "SwapChain,Presenter");
+                    upsert_env("DXMT_D3D12_TRACE_MAX_MB", "8");
+                    upsert_env("DXMT_D3D12_PRESENT_LOG_INTERVAL", "300");
                 } else {
                     upsert_env("DXMT_WINEMETAL_DEBUG", bool_value);
                     upsert_env("DXMT_DXIL_TRACE", bool_value);
+                    upsert_env("DXMT_D3D12_PSO_TRACE", bool_value);
                     upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "Device,Queue,SwapChain,Presenter,PSO");
                     upsert_env("DXMT_D3D12_TRACE_MAX_MB", "16");
                 }
@@ -2733,6 +2736,7 @@ mod tests {
         assert!(env.contains(&("DXMT_DXGI_TRACE".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_WINEMETAL_DEBUG".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_DXIL_TRACE".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_PSO_TRACE".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_D3D12_TRACE".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_D3D12_TRACE_MAX_MB".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "0".to_string())));
@@ -2767,9 +2771,10 @@ mod tests {
         assert!(env.contains(&("DXMT_D3D12_TRACE".to_string(), "1".to_string())));
         assert!(env.contains(&("DXMT_WINEMETAL_DEBUG".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_DXIL_TRACE".to_string(), "0".to_string())));
-        assert!(env.contains(&("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "SwapChain,Presenter,PSO".to_string())));
-        assert!(env.contains(&("DXMT_D3D12_TRACE_MAX_MB".to_string(), "4".to_string())));
-        assert!(env.contains(&("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_PSO_TRACE".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "SwapChain,Presenter".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_TRACE_MAX_MB".to_string(), "8".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "300".to_string())));
         assert!(env.contains(&("DXMT_LOG_LEVEL".to_string(), "warn".to_string())));
     }
 }

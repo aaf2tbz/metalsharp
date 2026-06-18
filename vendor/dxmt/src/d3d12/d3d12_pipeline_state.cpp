@@ -8,7 +8,15 @@
 #include "util_string.hpp"
 #include "Metal.hpp"
 
-#define PTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-pso.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
+static bool DXMTD3D12PSOTraceEnabled() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_PSO_TRACE");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
+#define PTRACE(fmt, ...) do { if (DXMTD3D12PSOTraceEnabled()) { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-pso.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } } while(0)
 #include "airconv_public.h"
 #include "dxmt_format.hpp"
 #include "dxil/dxil_container.hpp"
