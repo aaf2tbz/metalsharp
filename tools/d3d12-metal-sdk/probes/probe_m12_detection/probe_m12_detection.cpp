@@ -22,7 +22,7 @@ static constexpr UINT MetalSharpM12TranslationLayerVendorMetalSharp = 0x4d533132
 static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;        // DX12
 static constexpr UINT M12CORE_ABI_VERSION = 1;
 static constexpr UINT M12CORE_BUILD_ID_LOW = 0x4d313243u; // M12C
-static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x0000001au;
+static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x0000001bu;
 static constexpr uint64_t FeatureD3D12 = 1ull << 0;
 static constexpr uint64_t FeatureDXMT = 1ull << 1;
 static constexpr uint64_t FeatureLibM12Core = 1ull << 2;
@@ -45,6 +45,7 @@ static constexpr uint64_t FeatureRootBindingCacheMetadata = 1ull << 18;
 static constexpr uint64_t FeatureNativePresentOwnership = 1ull << 19;
 static constexpr uint64_t FeatureCacheFirstWarmStart = 1ull << 20;
 static constexpr uint64_t FeatureExpandedNativeReplayCoverage = 1ull << 21;
+static constexpr uint64_t FeatureThinPECheckpoint = 1ull << 22;
 static constexpr UINT M12CORE_FEATURE_DRAW_PLANNING = 1u << 12;
 static constexpr UINT M12CORE_FEATURE_PRESENT_PLANNING = 1u << 13;
 static constexpr UINT M12CORE_FEATURE_REPLAY_PLANNING = 1u << 14;
@@ -64,6 +65,7 @@ static constexpr UINT M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1u << 27;
 static constexpr UINT M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1u << 28;
 static constexpr UINT M12CORE_FEATURE_CACHE_FIRST_WARM_START = 1u << 29;
 static constexpr UINT M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE = 1u << 30;
+static constexpr UINT M12CORE_FEATURE_THIN_PE_CHECKPOINT = 1u << 31;
 
 struct MetalSharpM12TranslationLayerInfo {
     UINT abi_version;
@@ -190,33 +192,34 @@ int main() {
         (info.feature_flags & FeatureProbeReplayExecutor) && (info.feature_flags & FeatureEncoderOwnershipPlanning) &&
         (info.feature_flags & FeatureRootBindingCacheMetadata) &&
         (info.feature_flags & FeatureNativePresentOwnership) && (info.feature_flags & FeatureCacheFirstWarmStart) &&
-        (info.feature_flags & FeatureExpandedNativeReplayCoverage);
-    bool pass =
-        SUCCEEDED(create_hr) && SUCCEEDED(qi_hr) && SUCCEEDED(info_hr) &&
-        info.abi_version == MetalSharpM12TranslationLayerInfoAbiVersion &&
-        info.struct_size == sizeof(MetalSharpM12TranslationLayerInfo) &&
-        info.vendor_id == MetalSharpM12TranslationLayerVendorMetalSharp &&
-        info.layer_id == MetalSharpM12TranslationLayerIdDxmtM12 && info.m12core_abi_version == M12CORE_ABI_VERSION &&
-        info.m12core_build_id_low == M12CORE_BUILD_ID_LOW && info.m12core_build_id_high == M12CORE_BUILD_ID_HIGH &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_DRAW_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_STREAM) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_INDEX_SHADOW) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_FIRST_WARM_START) &&
-        (info.m12core_feature_flags & M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE) && has_required_layer_features;
+        (info.feature_flags & FeatureExpandedNativeReplayCoverage) && (info.feature_flags & FeatureThinPECheckpoint);
+    bool pass = SUCCEEDED(create_hr) && SUCCEEDED(qi_hr) && SUCCEEDED(info_hr) &&
+                info.abi_version == MetalSharpM12TranslationLayerInfoAbiVersion &&
+                info.struct_size == sizeof(MetalSharpM12TranslationLayerInfo) &&
+                info.vendor_id == MetalSharpM12TranslationLayerVendorMetalSharp &&
+                info.layer_id == MetalSharpM12TranslationLayerIdDxmtM12 &&
+                info.m12core_abi_version == M12CORE_ABI_VERSION && info.m12core_build_id_low == M12CORE_BUILD_ID_LOW &&
+                info.m12core_build_id_high == M12CORE_BUILD_ID_HIGH &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_DRAW_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_STREAM) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_INDEX_SHADOW) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_FIRST_WARM_START) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_THIN_PE_CHECKPOINT) && has_required_layer_features;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-m12-detection.v1\",\n");

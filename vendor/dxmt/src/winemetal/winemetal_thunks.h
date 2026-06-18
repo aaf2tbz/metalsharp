@@ -739,6 +739,13 @@ struct unixcall_m12core_plan_replay_coverage {
   M12CoreReplayCoverageSummary ret_summary;
 };
 
+struct unixcall_m12core_plan_thin_pe_checkpoint {
+  M12CoreThinPECheckpointDesc desc;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreThinPECheckpointSummary ret_summary;
+};
+
 struct unixcall_m12core_execute_present_blit {
   M12CorePresentExecuteDesc desc;
   obj_handle_t command_buffer;

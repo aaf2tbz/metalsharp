@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x0000001au /* Core convergence C8 expanded native replay coverage. */
+  0x0000001bu /* Core convergence C9 thin PE checkpoint. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -59,6 +59,7 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1u << 28,
   M12CORE_FEATURE_CACHE_FIRST_WARM_START = 1u << 29,
   M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE = 1u << 30,
+  M12CORE_FEATURE_THIN_PE_CHECKPOINT = 1u << 31,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -83,7 +84,8 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA |
       M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP |
       M12CORE_FEATURE_CACHE_FIRST_WARM_START |
-      M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE,
+      M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE |
+      M12CORE_FEATURE_THIN_PE_CHECKPOINT,
 };
 
 typedef struct M12CoreVersion {
@@ -1611,6 +1613,63 @@ typedef struct M12CoreReplayCoverageSummary {
   uint64_t fallback_key;
 } M12CoreReplayCoverageSummary;
 
+/* Core Convergence C9 thin PE checkpoint. */
+typedef enum M12CoreThinPECheckpointStatus {
+  M12CORE_THIN_PE_CHECKPOINT_STATUS_OK = 0,
+  M12CORE_THIN_PE_CHECKPOINT_STATUS_INVALID = 1,
+} M12CoreThinPECheckpointStatus;
+
+typedef enum M12CoreThinPECheckpointFlags {
+  M12CORE_THIN_PE_HAS_D3D12_COM_SERIALIZER = 1u << 0,
+  M12CORE_THIN_PE_HAS_DXGI_BOOTSTRAP = 1u << 1,
+  M12CORE_THIN_PE_HAS_DXGI_BRIDGE = 1u << 2,
+  M12CORE_THIN_PE_HAS_WINEMETAL_THUNK_TRANSPORT = 1u << 3,
+  M12CORE_THIN_PE_HAS_WINEMETAL_NATIVE_LOADER = 1u << 4,
+  M12CORE_THIN_PE_HAS_CORE_RUNTIME_OWNER = 1u << 5,
+  M12CORE_THIN_PE_HAS_CORE_CACHE_OWNER = 1u << 6,
+  M12CORE_THIN_PE_HAS_PE_FALLBACK = 1u << 7,
+  M12CORE_THIN_PE_OBSOLETE_POLICY_QUARANTINED = 1u << 8,
+} M12CoreThinPECheckpointFlags;
+
+typedef enum M12CoreThinPECheckpointSummaryFlags {
+  M12CORE_THIN_PE_CHECKPOINT_READY = 1u << 0,
+  M12CORE_THIN_PE_CHECKPOINT_C10_READY = 1u << 1,
+  M12CORE_THIN_PE_CHECKPOINT_FALLBACK_SAFE = 1u << 2,
+  M12CORE_THIN_PE_CHECKPOINT_TRANSPORT_THIN = 1u << 3,
+} M12CoreThinPECheckpointSummaryFlags;
+
+typedef struct M12CoreThinPECheckpointDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t pe_renderer_policy_count;
+  uint32_t quarantined_policy_count;
+  uint32_t native_policy_count;
+  uint32_t fallback_policy_count;
+  uint32_t unixcall_count;
+  uint32_t reserved0;
+  uint64_t build_key;
+  uint64_t feature_flags;
+  uint64_t validation_key;
+} M12CoreThinPECheckpointDesc;
+
+typedef struct M12CoreThinPECheckpointSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t missing_role_flags;
+  uint32_t thin_pe_ready;
+  uint32_t c10_visual_ready;
+  uint32_t obsolete_policy_remaining;
+  uint32_t fallback_safe;
+  uint32_t transport_thin;
+  uint32_t reserved0;
+  uint32_t reserved1;
+  uint32_t reserved2;
+  uint64_t checkpoint_key;
+  uint64_t role_key;
+  uint64_t c10_readiness_key;
+} M12CoreThinPECheckpointSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1719,6 +1778,9 @@ int m12core_plan_cache_warm_start(const M12CoreCacheWarmStartDesc *desc,
                                   M12CoreCacheWarmStartSummary *out_summary);
 int m12core_plan_replay_coverage(const M12CoreReplayCoverageDesc *desc,
                                  M12CoreReplayCoverageSummary *out_summary);
+int m12core_plan_thin_pe_checkpoint(
+    const M12CoreThinPECheckpointDesc *desc,
+    M12CoreThinPECheckpointSummary *out_summary);
 
 #ifdef __cplusplus
 }

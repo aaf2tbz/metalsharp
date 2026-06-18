@@ -269,7 +269,11 @@ Tasks:
 
 ## Slice C9 — Thin PE DLL checkpoint
 
+Status: **Complete** — see `m12-core-convergence-c9-audit.md`.
+
 Touches: **P10 finalization**
+
+Plan: `m12-core-convergence-c9-plan.md`.
 
 Tasks:
 
@@ -306,4 +310,4 @@ Final proof requires measured native execution coverage, PE fallback parity, rea
 
 ## Current next slice
 
-C0 through C8 are complete. The next active work is **C9 — Thin PE DLL checkpoint**.
+C0 through C9 are complete. **C10 is ready/staged** for bounded 2.5-minute visual confirmation tests; see `m12-core-convergence-c10-readiness.md`. Visual/game launches still require explicit user approval.

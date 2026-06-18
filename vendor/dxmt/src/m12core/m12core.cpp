@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core convergence-c8 replay-coverage abi=1";
+  return "libm12core convergence-c9 thin-pe abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -2549,6 +2549,79 @@ m12core_plan_replay_coverage(const M12CoreReplayCoverageDesc *desc,
   pipelineHashCombine(fallback_key, out_summary->unsupported_packet_count);
   pipelineHashCombine(fallback_key, desc->unsupported_reason_flags);
   out_summary->fallback_key = fallback_key;
+  return 0;
+}
+
+extern "C" int
+m12core_plan_thin_pe_checkpoint(const M12CoreThinPECheckpointDesc *desc,
+                                M12CoreThinPECheckpointSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_THIN_PE_CHECKPOINT_STATUS_OK;
+
+  const uint32_t required =
+      M12CORE_THIN_PE_HAS_D3D12_COM_SERIALIZER |
+      M12CORE_THIN_PE_HAS_DXGI_BOOTSTRAP | M12CORE_THIN_PE_HAS_DXGI_BRIDGE |
+      M12CORE_THIN_PE_HAS_WINEMETAL_THUNK_TRANSPORT |
+      M12CORE_THIN_PE_HAS_WINEMETAL_NATIVE_LOADER |
+      M12CORE_THIN_PE_HAS_CORE_RUNTIME_OWNER |
+      M12CORE_THIN_PE_HAS_CORE_CACHE_OWNER | M12CORE_THIN_PE_HAS_PE_FALLBACK |
+      M12CORE_THIN_PE_OBSOLETE_POLICY_QUARANTINED;
+  out_summary->missing_role_flags = required & ~desc->flags;
+  out_summary->obsolete_policy_remaining =
+      desc->pe_renderer_policy_count > desc->quarantined_policy_count
+          ? desc->pe_renderer_policy_count - desc->quarantined_policy_count
+          : 0u;
+  out_summary->fallback_safe =
+      (desc->flags & M12CORE_THIN_PE_HAS_PE_FALLBACK) ? 1u : 0u;
+  out_summary->transport_thin =
+      (desc->flags & M12CORE_THIN_PE_HAS_WINEMETAL_THUNK_TRANSPORT) &&
+              (desc->flags & M12CORE_THIN_PE_HAS_WINEMETAL_NATIVE_LOADER)
+          ? 1u
+          : 0u;
+
+  const bool ready = out_summary->missing_role_flags == 0 &&
+                     out_summary->obsolete_policy_remaining == 0 &&
+                     desc->native_policy_count >= desc->fallback_policy_count &&
+                     out_summary->fallback_safe && out_summary->transport_thin;
+  if (ready) {
+    out_summary->thin_pe_ready = 1;
+    out_summary->c10_visual_ready = 1;
+    out_summary->flags |=
+        M12CORE_THIN_PE_CHECKPOINT_READY | M12CORE_THIN_PE_CHECKPOINT_C10_READY;
+  }
+  if (out_summary->fallback_safe)
+    out_summary->flags |= M12CORE_THIN_PE_CHECKPOINT_FALLBACK_SAFE;
+  if (out_summary->transport_thin)
+    out_summary->flags |= M12CORE_THIN_PE_CHECKPOINT_TRANSPORT_THIN;
+
+  uint64_t checkpoint_key = 0x4d31325448495045ull; // "M12THIPE" marker.
+  pipelineHashCombine(checkpoint_key, desc->flags);
+  pipelineHashCombine(checkpoint_key, desc->pe_renderer_policy_count);
+  pipelineHashCombine(checkpoint_key, desc->quarantined_policy_count);
+  pipelineHashCombine(checkpoint_key, desc->native_policy_count);
+  pipelineHashCombine(checkpoint_key, desc->fallback_policy_count);
+  pipelineHashCombine(checkpoint_key, desc->unixcall_count);
+  pipelineHashCombine(checkpoint_key, desc->build_key);
+  pipelineHashCombine(checkpoint_key, desc->feature_flags);
+  pipelineHashCombine(checkpoint_key, desc->validation_key);
+  out_summary->checkpoint_key = checkpoint_key;
+
+  uint64_t role_key = 0x4d3132524f4c4553ull; // "M12ROLES" marker.
+  pipelineHashCombine(role_key, desc->flags);
+  pipelineHashCombine(role_key, out_summary->missing_role_flags);
+  pipelineHashCombine(role_key, out_summary->thin_pe_ready);
+  out_summary->role_key = role_key;
+
+  uint64_t c10_key = 0x4d31324331305244ull; // "M12C10RD" marker.
+  pipelineHashCombine(c10_key, out_summary->c10_visual_ready);
+  pipelineHashCombine(c10_key, out_summary->fallback_safe);
+  pipelineHashCombine(c10_key, out_summary->transport_thin);
+  pipelineHashCombine(c10_key, checkpoint_key);
+  out_summary->c10_readiness_key = c10_key;
   return 0;
 }
 

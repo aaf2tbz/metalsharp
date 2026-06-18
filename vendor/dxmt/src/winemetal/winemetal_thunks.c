@@ -130,6 +130,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CorePlanCacheWarmStart";
   case 169:
     return "WMTM12CorePlanReplayCoverage";
+  case 170:
+    return "WMTM12CorePlanThinPECheckpoint";
   default:
     return "unknown";
   }
@@ -929,6 +931,22 @@ WMTM12CorePlanReplayCoverage(const M12CoreReplayCoverageDesc *desc, M12CoreRepla
    */
   params.desc = *desc;
   if (!winemetal_unix_call_ok(169, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanThinPECheckpoint(const M12CoreThinPECheckpointDesc *desc, M12CoreThinPECheckpointSummary *out_summary) {
+  struct unixcall_m12core_plan_thin_pe_checkpoint params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C9 thin-PE checkpoint bridge: scalar role/readiness metadata only. */
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(170, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

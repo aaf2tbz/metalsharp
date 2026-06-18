@@ -136,6 +136,8 @@ WMTM12CorePlanCacheWarmStart(const M12CoreCacheWarmStartDesc *desc, M12CoreCache
 WINEMETAL_API bool
 WMTM12CorePlanReplayCoverage(const M12CoreReplayCoverageDesc *desc, M12CoreReplayCoverageSummary *out_summary);
 WINEMETAL_API bool
+WMTM12CorePlanThinPECheckpoint(const M12CoreThinPECheckpointDesc *desc, M12CoreThinPECheckpointSummary *out_summary);
+WINEMETAL_API bool
 WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);
 
 enum WMTStringEncoding : uint64_t {

@@ -177,7 +177,45 @@ static uint64_t M12PrewarmCanaryProfileKey(const char *profile) {
   return 0;
 }
 
+static void MaybeLogM12ThinPECheckpoint() {
+  M12CoreThinPECheckpointDesc desc = {};
+  desc.abi_version = M12CORE_ABI_VERSION;
+  desc.flags =
+      M12CORE_THIN_PE_HAS_D3D12_COM_SERIALIZER |
+      M12CORE_THIN_PE_HAS_DXGI_BOOTSTRAP | M12CORE_THIN_PE_HAS_DXGI_BRIDGE |
+      M12CORE_THIN_PE_HAS_WINEMETAL_THUNK_TRANSPORT |
+      M12CORE_THIN_PE_HAS_WINEMETAL_NATIVE_LOADER |
+      M12CORE_THIN_PE_HAS_CORE_RUNTIME_OWNER |
+      M12CORE_THIN_PE_HAS_CORE_CACHE_OWNER | M12CORE_THIN_PE_HAS_PE_FALLBACK |
+      M12CORE_THIN_PE_OBSOLETE_POLICY_QUARANTINED;
+  desc.pe_renderer_policy_count = 0;
+  desc.quarantined_policy_count = 0;
+  desc.native_policy_count = 9;
+  desc.fallback_policy_count = 9;
+  desc.unixcall_count = 171;
+  desc.build_key =
+      ((uint64_t)M12CORE_BUILD_ID_HIGH << 32) | (uint64_t)M12CORE_BUILD_ID_LOW;
+  desc.feature_flags = M12CORE_FEATURE_ALL;
+  desc.validation_key = 0x4d31324339504f44ull;
+
+  M12CoreThinPECheckpointSummary summary = {};
+  if (!WMTM12CorePlanThinPECheckpoint(&desc, &summary) ||
+      summary.status != M12CORE_THIN_PE_CHECKPOINT_STATUS_OK)
+    return;
+
+  Logger::info(str::format(
+      "M12_THIN_PE_CHECKPOINT ready=", summary.thin_pe_ready, " c10_ready=",
+      summary.c10_visual_ready, " fallback_safe=", summary.fallback_safe,
+      " transport_thin=", summary.transport_thin,
+      " obsolete_remaining=", summary.obsolete_policy_remaining, " missing=0x",
+      std::hex, summary.missing_role_flags, " flags=0x", summary.flags,
+      " checkpoint=0x", summary.checkpoint_key, " roles=0x", summary.role_key,
+      " c10=0x", summary.c10_readiness_key, std::dec));
+}
+
 static void MaybeSummarizeM12PrewarmCanaryPack() {
+  MaybeLogM12ThinPECheckpoint();
+
   char appid[32] = {};
   char profile[128] = {};
   GetEnvironmentVariableA("SteamAppId", appid, sizeof(appid));
@@ -2135,7 +2173,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
       MetalSharpM12TranslationLayerFeatureRootBindingCacheMetadata |
       MetalSharpM12TranslationLayerFeatureNativePresentOwnership |
       MetalSharpM12TranslationLayerFeatureCacheFirstWarmStart |
-      MetalSharpM12TranslationLayerFeatureExpandedNativeReplayCoverage;
+      MetalSharpM12TranslationLayerFeatureExpandedNativeReplayCoverage |
+      MetalSharpM12TranslationLayerFeatureThinPECheckpoint;
   local.m12core_abi_version = M12CORE_ABI_VERSION;
   local.m12core_feature_flags = M12CORE_FEATURE_ALL;
   local.m12core_build_id_low = M12CORE_BUILD_ID_LOW;
@@ -2145,7 +2184,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetMetalSharpM12TranslationLayerInfo(
   m12_copy_fixed_string(local.backend_name, sizeof(local.backend_name),
                         "DXMT D3D12 over Metal");
   std::snprintf(local.build_string, sizeof(local.build_string),
-                "MetalSharp DXMT M12 convergence-c8 replay abi=%u",
+                "MetalSharp DXMT M12 convergence-c9 thin-pe abi=%u",
                 MetalSharpM12TranslationLayerInfoAbiVersion);
 
   *info = local;

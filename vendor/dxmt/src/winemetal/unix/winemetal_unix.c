@@ -163,6 +163,9 @@ typedef int (*PFN_m12core_plan_cache_warm_start)(
 typedef int (*PFN_m12core_plan_replay_coverage)(
     const M12CoreReplayCoverageDesc *desc, M12CoreReplayCoverageSummary *out_summary
 );
+typedef int (*PFN_m12core_plan_thin_pe_checkpoint)(
+    const M12CoreThinPECheckpointDesc *desc, M12CoreThinPECheckpointSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -203,6 +206,7 @@ static PFN_m12core_plan_encoder_ownership p_m12core_plan_encoder_ownership;
 static PFN_m12core_plan_native_present_ownership p_m12core_plan_native_present_ownership;
 static PFN_m12core_plan_cache_warm_start p_m12core_plan_cache_warm_start;
 static PFN_m12core_plan_replay_coverage p_m12core_plan_replay_coverage;
+static PFN_m12core_plan_thin_pe_checkpoint p_m12core_plan_thin_pe_checkpoint;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -321,6 +325,8 @@ m12core_try_load(void) {
       (PFN_m12core_plan_cache_warm_start)dlsym(m12core_handle, "m12core_plan_cache_warm_start");
   p_m12core_plan_replay_coverage =
       (PFN_m12core_plan_replay_coverage)dlsym(m12core_handle, "m12core_plan_replay_coverage");
+  p_m12core_plan_thin_pe_checkpoint =
+      (PFN_m12core_plan_thin_pe_checkpoint)dlsym(m12core_handle, "m12core_plan_thin_pe_checkpoint");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -945,6 +951,16 @@ _WMTM12CorePlanReplayCoverage(void *obj) {
     return STATUS_SUCCESS;
 
   params->ret_success = p_m12core_plan_replay_coverage(&params->desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CorePlanThinPECheckpoint(void *obj) {
+  struct unixcall_m12core_plan_thin_pe_checkpoint *params = obj;
+  if (!params || !p_m12core_plan_thin_pe_checkpoint)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_plan_thin_pe_checkpoint(&params->desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4706,6 +4722,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CorePlanNativePresentOwnership,
     &_WMTM12CorePlanCacheWarmStart,
     &_WMTM12CorePlanReplayCoverage,
+    &_WMTM12CorePlanThinPECheckpoint,
 };
 
 #ifndef DXMT_NATIVE
@@ -4880,5 +4897,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CorePlanNativePresentOwnership,
     &_WMTM12CorePlanCacheWarmStart,
     &_WMTM12CorePlanReplayCoverage,
+    &_WMTM12CorePlanThinPECheckpoint,
 };
 #endif

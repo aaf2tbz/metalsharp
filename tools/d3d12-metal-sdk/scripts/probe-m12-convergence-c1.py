@@ -20,7 +20,7 @@ from typing import Any
 
 M12CORE_ABI_VERSION = 1
 M12CORE_BUILD_ID_LOW = 0x4D313243
-M12CORE_BUILD_ID_HIGH = 0x0000001A
+M12CORE_BUILD_ID_HIGH = 0x0000001B
 M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1 << 19
 M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1 << 20
 M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1 << 21
@@ -33,6 +33,7 @@ M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1 << 27
 M12CORE_FEATURE_NATIVE_PRESENT_OWNERSHIP = 1 << 28
 M12CORE_FEATURE_CACHE_FIRST_WARM_START = 1 << 29
 M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE = 1 << 30
+M12CORE_FEATURE_THIN_PE_CHECKPOINT = 1 << 31
 
 M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0
 M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE = 1
@@ -140,6 +141,20 @@ M12CORE_REPLAY_COVERAGE_SUMMARY_PE_FALLBACK_REQUIRED = 1 << 1
 M12CORE_REPLAY_COVERAGE_SUMMARY_POLICY_NATIVE = 1 << 2
 M12CORE_REPLAY_COVERAGE_SUMMARY_COM_FACADE_PRESERVED = 1 << 3
 M12CORE_REPLAY_COVERAGE_SUMMARY_TRANSPORT_THIN = 1 << 4
+
+M12CORE_THIN_PE_HAS_D3D12_COM_SERIALIZER = 1 << 0
+M12CORE_THIN_PE_HAS_DXGI_BOOTSTRAP = 1 << 1
+M12CORE_THIN_PE_HAS_DXGI_BRIDGE = 1 << 2
+M12CORE_THIN_PE_HAS_WINEMETAL_THUNK_TRANSPORT = 1 << 3
+M12CORE_THIN_PE_HAS_WINEMETAL_NATIVE_LOADER = 1 << 4
+M12CORE_THIN_PE_HAS_CORE_RUNTIME_OWNER = 1 << 5
+M12CORE_THIN_PE_HAS_CORE_CACHE_OWNER = 1 << 6
+M12CORE_THIN_PE_HAS_PE_FALLBACK = 1 << 7
+M12CORE_THIN_PE_OBSOLETE_POLICY_QUARANTINED = 1 << 8
+M12CORE_THIN_PE_CHECKPOINT_READY = 1 << 0
+M12CORE_THIN_PE_CHECKPOINT_C10_READY = 1 << 1
+M12CORE_THIN_PE_CHECKPOINT_FALLBACK_SAFE = 1 << 2
+M12CORE_THIN_PE_CHECKPOINT_TRANSPORT_THIN = 1 << 3
 
 
 class M12CoreVersion(ctypes.Structure):
@@ -520,6 +535,42 @@ class M12CoreReplayCoverageSummary(ctypes.Structure):
     ]
 
 
+class M12CoreThinPECheckpointDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("pe_renderer_policy_count", ctypes.c_uint32),
+        ("quarantined_policy_count", ctypes.c_uint32),
+        ("native_policy_count", ctypes.c_uint32),
+        ("fallback_policy_count", ctypes.c_uint32),
+        ("unixcall_count", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("build_key", ctypes.c_uint64),
+        ("feature_flags", ctypes.c_uint64),
+        ("validation_key", ctypes.c_uint64),
+    ]
+
+
+class M12CoreThinPECheckpointSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("missing_role_flags", ctypes.c_uint32),
+        ("thin_pe_ready", ctypes.c_uint32),
+        ("c10_visual_ready", ctypes.c_uint32),
+        ("obsolete_policy_remaining", ctypes.c_uint32),
+        ("fallback_safe", ctypes.c_uint32),
+        ("transport_thin", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("reserved1", ctypes.c_uint32),
+        ("reserved2", ctypes.c_uint32),
+        ("checkpoint_key", ctypes.c_uint64),
+        ("role_key", ctypes.c_uint64),
+        ("c10_readiness_key", ctypes.c_uint64),
+    ]
+
+
 def default_lib_candidates(repo: pathlib.Path) -> list[pathlib.Path]:
     return [
         pathlib.Path.home() / ".metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
@@ -705,6 +756,23 @@ def replay_coverage_to_dict(s: M12CoreReplayCoverageSummary) -> dict[str, Any]:
     }
 
 
+def thin_pe_checkpoint_to_dict(s: M12CoreThinPECheckpointSummary) -> dict[str, Any]:
+    return {
+        "abi_version": s.abi_version,
+        "status": s.status,
+        "flags": s.flags,
+        "missing_role_flags": s.missing_role_flags,
+        "thin_pe_ready": s.thin_pe_ready,
+        "c10_visual_ready": s.c10_visual_ready,
+        "obsolete_policy_remaining": s.obsolete_policy_remaining,
+        "fallback_safe": s.fallback_safe,
+        "transport_thin": s.transport_thin,
+        "checkpoint_key": f"0x{s.checkpoint_key:016x}",
+        "role_key": f"0x{s.role_key:016x}",
+        "c10_readiness_key": f"0x{s.c10_readiness_key:016x}",
+    }
+
+
 def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     lib = ctypes.CDLL(str(lib_path))
     lib.m12core_get_version.argtypes = [ctypes.POINTER(M12CoreVersion)]
@@ -759,6 +827,11 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         ctypes.POINTER(M12CoreReplayCoverageSummary),
     ]
     lib.m12core_plan_replay_coverage.restype = ctypes.c_int
+    lib.m12core_plan_thin_pe_checkpoint.argtypes = [
+        ctypes.POINTER(M12CoreThinPECheckpointDesc),
+        ctypes.POINTER(M12CoreThinPECheckpointSummary),
+    ]
+    lib.m12core_plan_thin_pe_checkpoint.restype = ctypes.c_int
 
     checks: dict[str, bool] = {}
     version = M12CoreVersion()
@@ -784,6 +857,9 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     )
     checks["expanded_native_replay_coverage_feature"] = bool(
         version.feature_flags & M12CORE_FEATURE_EXPANDED_NATIVE_REPLAY_COVERAGE
+    )
+    checks["thin_pe_checkpoint_feature"] = bool(
+        version.feature_flags & M12CORE_FEATURE_THIN_PE_CHECKPOINT
     )
 
     packets = (M12CoreCommandPacket * 5)(
@@ -1350,6 +1426,45 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         and bool(coverage_copy.flags & M12CORE_REPLAY_COVERAGE_SUMMARY_PE_FALLBACK_REQUIRED)
     )
 
+    thin_desc = M12CoreThinPECheckpointDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        flags=(
+            M12CORE_THIN_PE_HAS_D3D12_COM_SERIALIZER
+            | M12CORE_THIN_PE_HAS_DXGI_BOOTSTRAP
+            | M12CORE_THIN_PE_HAS_DXGI_BRIDGE
+            | M12CORE_THIN_PE_HAS_WINEMETAL_THUNK_TRANSPORT
+            | M12CORE_THIN_PE_HAS_WINEMETAL_NATIVE_LOADER
+            | M12CORE_THIN_PE_HAS_CORE_RUNTIME_OWNER
+            | M12CORE_THIN_PE_HAS_CORE_CACHE_OWNER
+            | M12CORE_THIN_PE_HAS_PE_FALLBACK
+            | M12CORE_THIN_PE_OBSOLETE_POLICY_QUARANTINED
+        ),
+        pe_renderer_policy_count=0,
+        quarantined_policy_count=0,
+        native_policy_count=9,
+        fallback_policy_count=9,
+        unixcall_count=171,
+        reserved0=0,
+        build_key=(M12CORE_BUILD_ID_HIGH << 32) | M12CORE_BUILD_ID_LOW,
+        feature_flags=int(version.feature_flags),
+        validation_key=0x4D31324339504F44,
+    )
+    thin = M12CoreThinPECheckpointSummary()
+    thin_rc = lib.m12core_plan_thin_pe_checkpoint(ctypes.byref(thin_desc), ctypes.byref(thin))
+    checks["thin_pe_checkpoint_c10_ready"] = (
+        thin_rc == 0
+        and thin.thin_pe_ready == 1
+        and thin.c10_visual_ready == 1
+        and thin.missing_role_flags == 0
+        and thin.obsolete_policy_remaining == 0
+        and thin.fallback_safe == 1
+        and thin.transport_thin == 1
+        and bool(thin.flags & M12CORE_THIN_PE_CHECKPOINT_READY)
+        and bool(thin.flags & M12CORE_THIN_PE_CHECKPOINT_C10_READY)
+        and bool(thin.flags & M12CORE_THIN_PE_CHECKPOINT_FALLBACK_SAFE)
+        and bool(thin.flags & M12CORE_THIN_PE_CHECKPOINT_TRANSPORT_THIN)
+    )
+
     result: dict[str, Any] = {
         "schema": "metalsharp.m12.convergence-c1-probe.v1",
         "lib": str(lib_path),
@@ -1388,6 +1503,7 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         "cache_warm_start_miss": warm_start_to_dict(warm_miss),
         "replay_coverage_safe": replay_coverage_to_dict(coverage_safe),
         "replay_coverage_copy_fallback": replay_coverage_to_dict(coverage_copy),
+        "thin_pe_checkpoint": thin_pe_checkpoint_to_dict(thin),
     }
     return bool(result["ok"]), result
 
