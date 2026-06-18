@@ -22,7 +22,7 @@ static constexpr UINT MetalSharpM12TranslationLayerVendorMetalSharp = 0x4d533132
 static constexpr UINT MetalSharpM12TranslationLayerIdDxmtM12 = 0x44583132u;        // DX12
 static constexpr UINT M12CORE_ABI_VERSION = 1;
 static constexpr UINT M12CORE_BUILD_ID_LOW = 0x4d313243u; // M12C
-static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x00000013u;
+static constexpr UINT M12CORE_BUILD_ID_HIGH = 0x00000014u;
 static constexpr uint64_t FeatureD3D12 = 1ull << 0;
 static constexpr uint64_t FeatureDXMT = 1ull << 1;
 static constexpr uint64_t FeatureLibM12Core = 1ull << 2;
@@ -42,6 +42,8 @@ static constexpr UINT M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS = 1u << 15;
 static constexpr UINT M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING = 1u << 16;
 static constexpr UINT M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING = 1u << 17;
 static constexpr UINT M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING = 1u << 18;
+static constexpr UINT M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1u << 19;
+static constexpr UINT M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1u << 20;
 
 struct MetalSharpM12TranslationLayerInfo {
     UINT abi_version;
@@ -176,7 +178,9 @@ int main() {
                 (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS) &&
                 (info.m12core_feature_flags & M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING) &&
                 (info.m12core_feature_flags & M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING) &&
-                (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING) && has_required_layer_features;
+                (info.m12core_feature_flags & M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_COMMAND_PACKET_STREAM) &&
+                (info.m12core_feature_flags & M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS) && has_required_layer_features;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-m12-detection.v1\",\n");

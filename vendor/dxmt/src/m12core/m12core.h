@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000013u /* Phase-9 replay execute eligibility foundation. */
+  0x00000014u /* Core convergence C1 packet/cache schema foundation. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -47,6 +47,8 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING = 1u << 16,
   M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING = 1u << 17,
   M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING = 1u << 18,
+  M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1u << 19,
+  M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1u << 20,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -59,7 +61,9 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_COMMAND_STREAM_DESCRIPTORS |
       M12CORE_FEATURE_RENDER_PASS_HAZARD_PLANNING |
       M12CORE_FEATURE_PRESENT_EXECUTE_PLANNING |
-      M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING,
+      M12CORE_FEATURE_REPLAY_EXECUTE_PLANNING |
+      M12CORE_FEATURE_COMMAND_PACKET_STREAM |
+      M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS,
 };
 
 typedef struct M12CoreVersion {
@@ -971,6 +975,163 @@ typedef struct M12CoreSM50ReflectionResult {
   uint32_t required_arguments;
 } M12CoreSM50ReflectionResult;
 
+/* Core Convergence C1 packet ABI.  These packets are not an execution API yet:
+ * they are the scalar command-stream description that later C slices will feed
+ * from PE command recording into libm12core validation, cache lookup, and then
+ * gated native execution.  Keep every field POD/scalar and append-only.
+ */
+typedef enum M12CoreCommandPacketKind {
+  M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0,
+  M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE = 1,
+  M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE = 2,
+  M12CORE_COMMAND_PACKET_KIND_SET_DESCRIPTOR_HEAP = 3,
+  M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING = 4,
+  M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS = 5,
+  M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER = 6,
+  M12CORE_COMMAND_PACKET_KIND_CLEAR_RTV = 7,
+  M12CORE_COMMAND_PACKET_KIND_CLEAR_DSV = 8,
+  M12CORE_COMMAND_PACKET_KIND_CLEAR_UAV = 9,
+  M12CORE_COMMAND_PACKET_KIND_DRAW = 10,
+  M12CORE_COMMAND_PACKET_KIND_DRAW_INDEXED = 11,
+  M12CORE_COMMAND_PACKET_KIND_DISPATCH = 12,
+  M12CORE_COMMAND_PACKET_KIND_COPY = 13,
+  M12CORE_COMMAND_PACKET_KIND_PRESENT = 14,
+} M12CoreCommandPacketKind;
+
+typedef enum M12CoreCommandPacketFlags {
+  M12CORE_COMMAND_PACKET_FLAG_GRAPHICS = 1u << 0,
+  M12CORE_COMMAND_PACKET_FLAG_COMPUTE = 1u << 1,
+  M12CORE_COMMAND_PACKET_FLAG_COPY = 1u << 2,
+  M12CORE_COMMAND_PACKET_FLAG_PRESENT = 1u << 3,
+  M12CORE_COMMAND_PACKET_FLAG_USES_RESOURCE = 1u << 4,
+  M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE = 1u << 5,
+  M12CORE_COMMAND_PACKET_FLAG_USES_ROOT_SIGNATURE = 1u << 6,
+  M12CORE_COMMAND_PACKET_FLAG_USES_BINDINGS = 1u << 7,
+  M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED = 1u << 8,
+} M12CoreCommandPacketFlags;
+
+typedef enum M12CoreCommandPacketStreamStatus {
+  M12CORE_COMMAND_PACKET_STREAM_STATUS_OK = 0,
+  M12CORE_COMMAND_PACKET_STREAM_STATUS_INVALID = 1,
+  M12CORE_COMMAND_PACKET_STREAM_STATUS_UNSUPPORTED = 2,
+} M12CoreCommandPacketStreamStatus;
+
+typedef enum M12CoreCommandPacketStreamSummaryFlags {
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_GRAPHICS = 1u << 0,
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_COMPUTE = 1u << 1,
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_COPY = 1u << 2,
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_PRESENT = 1u << 3,
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_BARRIERS = 1u << 4,
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_UNSUPPORTED = 1u << 5,
+  M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_INVALID = 1u << 6,
+} M12CoreCommandPacketStreamSummaryFlags;
+
+typedef struct M12CoreCommandPacketHeader {
+  uint32_t abi_version;
+  uint32_t kind;
+  uint32_t flags;
+  uint32_t payload_qwords;
+  uint64_t sequence;
+} M12CoreCommandPacketHeader;
+
+typedef struct M12CoreCommandPacket {
+  M12CoreCommandPacketHeader header;
+  uint64_t object_id0;
+  uint64_t object_id1;
+  uint64_t object_id2;
+  uint64_t object_id3;
+  uint64_t value0;
+  uint64_t value1;
+  uint64_t value2;
+  uint64_t value3;
+} M12CoreCommandPacket;
+
+typedef struct M12CoreCommandPacketStreamDesc {
+  uint32_t abi_version;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  const M12CoreCommandPacket *packets;
+} M12CoreCommandPacketStreamDesc;
+
+typedef struct M12CoreCommandPacketStreamSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t summary_flags;
+  uint32_t unsupported_packet_count;
+  uint32_t invalid_packet_count;
+  uint32_t graphics_packet_count;
+  uint32_t compute_packet_count;
+  uint32_t copy_packet_count;
+  uint32_t present_packet_count;
+  uint32_t barrier_packet_count;
+  uint32_t draw_packet_count;
+  uint32_t dispatch_packet_count;
+  uint32_t clear_packet_count;
+  uint32_t binding_packet_count;
+  uint32_t reserved[2];
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+} M12CoreCommandPacketStreamSummary;
+
+/* Core Convergence C1 cache compatibility schema.  A compatible warm-cache hit
+ * must match every required dimension; missing required dimensions make the key
+ * invalid so stale artifacts cannot bypass layout or runtime validation.
+ */
+typedef enum M12CoreCacheArtifactKind {
+  M12CORE_CACHE_ARTIFACT_UNKNOWN = 0,
+  M12CORE_CACHE_ARTIFACT_SHADER_FUNCTION = 1,
+  M12CORE_CACHE_ARTIFACT_RENDER_PSO = 2,
+  M12CORE_CACHE_ARTIFACT_COMPUTE_PSO = 3,
+  M12CORE_CACHE_ARTIFACT_ROOT_BINDING_PLAN = 4,
+  M12CORE_CACHE_ARTIFACT_PREWARM_PACK = 5,
+} M12CoreCacheArtifactKind;
+
+typedef enum M12CoreCacheCompatibilityFlags {
+  M12CORE_CACHE_COMPAT_HAS_APPID = 1u << 0,
+  M12CORE_CACHE_COMPAT_HAS_DEVICE = 1u << 1,
+  M12CORE_CACHE_COMPAT_HAS_RUNTIME = 1u << 2,
+  M12CORE_CACHE_COMPAT_HAS_TRANSLATOR = 1u << 3,
+  M12CORE_CACHE_COMPAT_HAS_ROOT_BINDING = 1u << 4,
+  M12CORE_CACHE_COMPAT_HAS_PIPELINE = 1u << 5,
+  M12CORE_CACHE_COMPAT_HAS_METAL = 1u << 6,
+  M12CORE_CACHE_COMPAT_HAS_SCHEMA = 1u << 7,
+} M12CoreCacheCompatibilityFlags;
+
+typedef enum M12CoreCacheCompatibilityStatus {
+  M12CORE_CACHE_COMPAT_STATUS_OK = 0,
+  M12CORE_CACHE_COMPAT_STATUS_INVALID = 1,
+  M12CORE_CACHE_COMPAT_STATUS_MISSING_DIMENSION = 2,
+} M12CoreCacheCompatibilityStatus;
+
+typedef struct M12CoreCacheCompatibilityDesc {
+  uint32_t abi_version;
+  uint32_t artifact_kind;
+  uint32_t flags;
+  uint32_t schema_version;
+  uint64_t appid;
+  uint64_t profile_key;
+  uint64_t device_key;
+  uint64_t os_metal_key;
+  uint64_t core_build_key;
+  uint64_t core_feature_flags;
+  uint64_t translator_key;
+  uint64_t root_binding_key;
+  uint64_t pipeline_key;
+  uint64_t artifact_key;
+} M12CoreCacheCompatibilityDesc;
+
+typedef struct M12CoreCacheCompatibilityKey {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t missing_flags;
+  uint32_t artifact_kind;
+  uint64_t compatibility_key;
+  uint64_t invalidation_key;
+} M12CoreCacheCompatibilityKey;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1055,6 +1216,12 @@ int m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
                                     M12CoreCommandStreamSummary *out_summary);
 int m12core_plan_render_pass(const M12CoreRenderPassPlanDesc *desc,
                              M12CoreRenderPassPlanSummary *out_summary);
+int m12core_validate_command_packet_stream(
+    const M12CoreCommandPacketStreamDesc *desc,
+    M12CoreCommandPacketStreamSummary *out_summary);
+int m12core_make_cache_compatibility_key(
+    const M12CoreCacheCompatibilityDesc *desc,
+    M12CoreCacheCompatibilityKey *out_key);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,7 @@
 # libm12core unified loader roadmap
 
+> Current execution note: Phase 9 foundation / visual acceptance is KEEP, but full command replay and presenter ownership continue under the interleaved M12 Core Convergence Flow. Use `tools/d3d12-metal-sdk/plans/m12-core-convergence-flow.md` as the authoritative Phase 9/10/11 execution plan; this roadmap remains historical/source context.
+
 ## Purpose
 
 Move M12 from a scattered PE-DLL-centered implementation toward a GPTK/D3DMetal-style architecture with thin Windows ABI shims and a unified native/core runtime library, tentatively `libm12core`.

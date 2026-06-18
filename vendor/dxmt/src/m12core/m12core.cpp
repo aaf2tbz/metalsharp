@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core phase9 replay-execute-eligibility abi=1";
+  return "libm12core convergence-c1 packet-cache-schema abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -1575,6 +1575,223 @@ m12core_validate_command_stream(const M12CoreCommandStreamDesc *desc,
   out_summary->binding_change_count = binding_changes;
   out_summary->command_stream_key = key;
   out_summary->scheduled_work_count = scheduled;
+  return 0;
+}
+
+extern "C" int m12core_validate_command_packet_stream(
+    const M12CoreCommandPacketStreamDesc *desc,
+    M12CoreCommandPacketStreamSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_COMMAND_PACKET_STREAM_STATUS_OK;
+
+  if (desc->packet_count && !desc->packets) {
+    out_summary->status = M12CORE_COMMAND_PACKET_STREAM_STATUS_INVALID;
+    out_summary->summary_flags |=
+        M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_INVALID;
+    out_summary->invalid_packet_count = desc->packet_count;
+    return 0;
+  }
+
+  uint64_t key = 0x4d31325041434b54ull; // "M12PACKT" marker.
+  pipelineHashCombine(key, desc->packet_count);
+  pipelineHashCombine(key, desc->queue_type);
+  pipelineHashCombine(key, desc->command_list_index);
+  pipelineHashCombine(key, desc->command_list_id);
+  pipelineHashCombine(key, desc->queue_serial);
+
+  for (uint32_t i = 0; i < desc->packet_count; i++) {
+    const M12CoreCommandPacket &packet = desc->packets[i];
+    const uint32_t kind = packet.header.kind;
+    bool invalid = packet.header.abi_version != M12CORE_ABI_VERSION ||
+                   kind == M12CORE_COMMAND_PACKET_KIND_UNKNOWN ||
+                   kind > M12CORE_COMMAND_PACKET_KIND_PRESENT;
+    bool unsupported =
+        (packet.header.flags & M12CORE_COMMAND_PACKET_FLAG_UNSUPPORTED) != 0;
+
+    pipelineHashCombine(key, packet.header.kind);
+    pipelineHashCombine(key, packet.header.flags);
+    pipelineHashCombine(key, packet.header.payload_qwords);
+    pipelineHashCombine(key, packet.header.sequence);
+    pipelineHashCombine(key, packet.object_id0);
+    pipelineHashCombine(key, packet.object_id1);
+    pipelineHashCombine(key, packet.object_id2);
+    pipelineHashCombine(key, packet.object_id3);
+    pipelineHashCombine(key, packet.value0);
+    pipelineHashCombine(key, packet.value1);
+    pipelineHashCombine(key, packet.value2);
+    pipelineHashCombine(key, packet.value3);
+    out_summary->packet_sequence_xor ^= packet.header.sequence;
+
+    if (invalid) {
+      out_summary->invalid_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_INVALID;
+      continue;
+    }
+    if (unsupported) {
+      out_summary->unsupported_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_UNSUPPORTED;
+    }
+
+    bool counted_graphics = false;
+    bool counted_compute = false;
+    bool counted_copy = false;
+    bool counted_present = false;
+
+    switch (kind) {
+    case M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE:
+    case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE:
+    case M12CORE_COMMAND_PACKET_KIND_SET_DESCRIPTOR_HEAP:
+    case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING:
+      out_summary->binding_packet_count++;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS:
+      out_summary->graphics_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_GRAPHICS;
+      out_summary->binding_packet_count++;
+      counted_graphics = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER:
+      out_summary->barrier_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_BARRIERS;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_CLEAR_RTV:
+    case M12CORE_COMMAND_PACKET_KIND_CLEAR_DSV:
+    case M12CORE_COMMAND_PACKET_KIND_CLEAR_UAV:
+      out_summary->clear_packet_count++;
+      out_summary->graphics_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_GRAPHICS;
+      counted_graphics = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_DRAW:
+    case M12CORE_COMMAND_PACKET_KIND_DRAW_INDEXED:
+      out_summary->draw_packet_count++;
+      out_summary->graphics_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_GRAPHICS;
+      counted_graphics = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_DISPATCH:
+      out_summary->dispatch_packet_count++;
+      out_summary->compute_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_COMPUTE;
+      counted_compute = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_COPY:
+      out_summary->copy_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_COPY;
+      counted_copy = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_PRESENT:
+      out_summary->present_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_PRESENT;
+      counted_present = true;
+      break;
+    default:
+      break;
+    }
+
+    if ((packet.header.flags & M12CORE_COMMAND_PACKET_FLAG_GRAPHICS) &&
+        !counted_graphics) {
+      out_summary->graphics_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_GRAPHICS;
+    }
+    if ((packet.header.flags & M12CORE_COMMAND_PACKET_FLAG_COMPUTE) &&
+        !counted_compute) {
+      out_summary->compute_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_COMPUTE;
+    }
+    if ((packet.header.flags & M12CORE_COMMAND_PACKET_FLAG_COPY) &&
+        !counted_copy) {
+      out_summary->copy_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_COPY;
+    }
+    if ((packet.header.flags & M12CORE_COMMAND_PACKET_FLAG_PRESENT) &&
+        !counted_present) {
+      out_summary->present_packet_count++;
+      out_summary->summary_flags |=
+          M12CORE_COMMAND_PACKET_STREAM_SUMMARY_HAS_PRESENT;
+    }
+  }
+
+  if (out_summary->invalid_packet_count)
+    out_summary->status = M12CORE_COMMAND_PACKET_STREAM_STATUS_INVALID;
+  else if (out_summary->unsupported_packet_count)
+    out_summary->status = M12CORE_COMMAND_PACKET_STREAM_STATUS_UNSUPPORTED;
+  out_summary->stream_key = key;
+  return 0;
+}
+
+extern "C" int
+m12core_make_cache_compatibility_key(const M12CoreCacheCompatibilityDesc *desc,
+                                     M12CoreCacheCompatibilityKey *out_key) {
+  if (!desc || !out_key || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_key, 0, sizeof(*out_key));
+
+  constexpr uint32_t required =
+      M12CORE_CACHE_COMPAT_HAS_APPID | M12CORE_CACHE_COMPAT_HAS_DEVICE |
+      M12CORE_CACHE_COMPAT_HAS_RUNTIME | M12CORE_CACHE_COMPAT_HAS_TRANSLATOR |
+      M12CORE_CACHE_COMPAT_HAS_SCHEMA;
+  uint32_t missing = required & ~desc->flags;
+  if (!desc->schema_version)
+    missing |= M12CORE_CACHE_COMPAT_HAS_SCHEMA;
+  if (!desc->appid)
+    missing |= M12CORE_CACHE_COMPAT_HAS_APPID;
+  if (!desc->device_key)
+    missing |= M12CORE_CACHE_COMPAT_HAS_DEVICE;
+  if (!desc->core_build_key)
+    missing |= M12CORE_CACHE_COMPAT_HAS_RUNTIME;
+  if (!desc->translator_key)
+    missing |= M12CORE_CACHE_COMPAT_HAS_TRANSLATOR;
+
+  uint64_t key = 0x4d31324341434845ull; // "M12CACHE" marker.
+  pipelineHashCombine(key, desc->artifact_kind);
+  pipelineHashCombine(key, desc->schema_version);
+  pipelineHashCombine(key, desc->appid);
+  pipelineHashCombine(key, desc->profile_key);
+  pipelineHashCombine(key, desc->device_key);
+  pipelineHashCombine(key, desc->os_metal_key);
+  pipelineHashCombine(key, desc->core_build_key);
+  pipelineHashCombine(key, desc->core_feature_flags);
+  pipelineHashCombine(key, desc->translator_key);
+  pipelineHashCombine(key, desc->root_binding_key);
+  pipelineHashCombine(key, desc->pipeline_key);
+  pipelineHashCombine(key, desc->artifact_key);
+
+  uint64_t invalidation = 0x4d3132494e56414cull; // "M12INVAL" marker.
+  pipelineHashCombine(invalidation, desc->schema_version);
+  pipelineHashCombine(invalidation, desc->device_key);
+  pipelineHashCombine(invalidation, desc->os_metal_key);
+  pipelineHashCombine(invalidation, desc->core_build_key);
+  pipelineHashCombine(invalidation, desc->core_feature_flags);
+  pipelineHashCombine(invalidation, desc->translator_key);
+  pipelineHashCombine(invalidation, desc->root_binding_key);
+
+  out_key->abi_version = M12CORE_ABI_VERSION;
+  out_key->status = missing ? M12CORE_CACHE_COMPAT_STATUS_MISSING_DIMENSION
+                            : M12CORE_CACHE_COMPAT_STATUS_OK;
+  if (desc->artifact_kind == M12CORE_CACHE_ARTIFACT_UNKNOWN ||
+      desc->artifact_kind > M12CORE_CACHE_ARTIFACT_PREWARM_PACK)
+    out_key->status = M12CORE_CACHE_COMPAT_STATUS_INVALID;
+  out_key->missing_flags = missing;
+  out_key->artifact_kind = desc->artifact_kind;
+  out_key->compatibility_key = key;
+  out_key->invalidation_key = invalidation;
   return 0;
 }
 

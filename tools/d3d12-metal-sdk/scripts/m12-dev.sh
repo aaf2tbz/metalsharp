@@ -20,6 +20,7 @@ Developer-first M12 entrypoints:
   mini              Run focused one-purpose D3D12 mini probes.
   probes            Run the full required D3D12 SDK probe matrix.
   pipeline-contract Validate the M12 launch/logging contract against the tree.
+  convergence-probe Validate the native M12 Core Convergence C1 ABI.
   shader-engine     Validate the M12 shader-engine contract.
   shader-lab        Stage captured game shader corpora on AverySSD and Metal-compile them.
   stress-game       Build/stage/run the 15-second DX12-only M12 stress game.
@@ -97,6 +98,14 @@ run_probe_matrix_validator() {
   python3 "$SDK_DIR/scripts/validate-probe-matrix.py" "$@"
 }
 
+run_convergence_probe() {
+  local stamp
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  python3 "$SDK_DIR/scripts/probe-m12-convergence-c1.py" \
+    --json "$RESULTS_DIR/m12-convergence-c1-probe-$stamp.json" \
+    "$@"
+}
+
 run_probes() {
   "$SDK_DIR/scripts/run-probes.sh" \
     --profile "$PROFILE" \
@@ -164,6 +173,9 @@ case "$command" in
   pipeline-contract)
     run_pipeline_contract "$@"
     ;;
+  convergence-probe)
+    run_convergence_probe "$@"
+    ;;
   shader-lab)
     run_shader_lab "$@"
     ;;
@@ -176,6 +188,7 @@ case "$command" in
     run_contracts
     run_pipeline_contract
     run_layout
+    run_convergence_probe
     run_probes "$@"
     run_compare
     run_probe_matrix_validator
