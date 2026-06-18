@@ -103,6 +103,42 @@ static WMTPixelFormat DXGIToDisplayLayerMTL(DXGI_FORMAT fmt) {
   }
 }
 
+static WMTColorSpace ConvertColorSpace(DXGI_COLOR_SPACE_TYPE color_space,
+                                       bool hdr) {
+  switch (color_space) {
+  case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709:
+    return WMTColorSpaceSRGB;
+  case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
+    return hdr ? WMTColorSpaceHDR_scRGB : WMTColorSpaceSRGBLinear;
+  case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+    return WMTColorSpaceHDR_PQ;
+  case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020:
+    return WMTColorSpaceBT2020;
+  default:
+    return WMTColorSpaceInvalid;
+  }
+}
+
+static uint32_t GetMonitorFormatBpp(DXGI_FORMAT fmt) {
+  switch (fmt) {
+  case DXGI_FORMAT_R8G8B8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8A8_UNORM:
+  case DXGI_FORMAT_B8G8R8X8_UNORM:
+  case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+  case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+  case DXGI_FORMAT_R10G10B10A2_UNORM:
+  case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+    return 32;
+  case DXGI_FORMAT_R16G16B16A16_FLOAT:
+    return 64;
+  default:
+    Logger::warn(str::format("M12 GetMonitorFormatBpp unknown format=",
+                             (unsigned)fmt));
+    return 32;
+  }
+}
+
 static bool CanUseRawSwapchainBlit(DXGI_FORMAT fmt) {
   switch (fmt) {
   case DXGI_FORMAT_R8G8B8A8_UNORM:
@@ -118,6 +154,10 @@ static bool CanUseRawSwapchainBlit(DXGI_FORMAT fmt) {
 
 static bool IsSupportedColorSpaceForFormat(DXGI_FORMAT fmt,
                                            DXGI_COLOR_SPACE_TYPE color_space) {
+  auto target = ConvertColorSpace(color_space, false);
+  if (target == WMTColorSpaceInvalid || !CGColorSpace_checkColorSpaceSupported(target))
+    return false;
+
   switch (color_space) {
   case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709:
     return fmt == DXGI_FORMAT_R8G8B8A8_UNORM ||
@@ -125,7 +165,10 @@ static bool IsSupportedColorSpaceForFormat(DXGI_FORMAT fmt,
            fmt == DXGI_FORMAT_B8G8R8A8_UNORM ||
            fmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
   case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
-    return fmt == DXGI_FORMAT_R10G10B10A2_UNORM;
+  case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+  case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020:
+    return fmt == DXGI_FORMAT_R10G10B10A2_UNORM ||
+           fmt == DXGI_FORMAT_R16G16B16A16_FLOAT;
   default:
     return false;
   }
@@ -821,14 +864,22 @@ void MTLD3D12SwapChain::ConfigureLayer() {
 
   auto source_format = DXGIToMTL(m_desc.Format);
   auto layer_format = DXGIToDisplayLayerMTL(m_desc.Format);
+  auto target_color_space = ConvertColorSpace(
+      m_desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT
+          ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+          : m_color_space,
+      LayerSupportEDR());
+  if (target_color_space == WMTColorSpaceInvalid)
+    target_color_space = WMTColorSpaceSRGB;
   auto width = m_desc.Width ? m_desc.Width : 1;
   auto height = m_desc.Height ? m_desc.Height : 1;
   auto sample_count = m_desc.SampleDesc.Count ? m_desc.SampleDesc.Count : 1;
 
   if (m_presenter) {
-    m_presenter->changeLayerProperties(source_format, layer_format,
-                                       WMTColorSpaceSRGB, width, height,
-                                       sample_count);
+    if (m_presenter->changeLayerProperties(source_format, layer_format,
+                                           target_color_space, width, height,
+                                           sample_count))
+      DrainPresentCommandBuffers(true);
   } else {
     WMTLayerProps props = {};
     m_layer.getProps(props);
@@ -856,6 +907,84 @@ void MTLD3D12SwapChain::ConfigureLayer() {
           props.drawable_width, props.drawable_height, props.contents_scale,
           (unsigned)source_format, (unsigned)props.pixel_format,
           (int)props.framebuffer_only, m_presenter ? 1 : 0);
+}
+
+bool MTLD3D12SwapChain::LayerSupportEDR() {
+  if (!m_layer.handle)
+    return false;
+  WMTEDRValue edr_value = {};
+  MetalLayer_getEDRValue(m_layer, &edr_value);
+  return edr_value.maximum_potential_edr_color_component_value > 1.0f;
+}
+
+HRESULT MTLD3D12SwapChain::GetOutputFromMonitor(HMONITOR monitor,
+                                                IDXGIOutput1 **ppOutput) {
+  if (!ppOutput)
+    return DXGI_ERROR_INVALID_CALL;
+  *ppOutput = nullptr;
+
+  Com<IDXGIAdapter> adapter;
+  Com<IDXGIOutput> output;
+  if (FAILED(m_dxgi_device->GetAdapter(&adapter)))
+    return E_FAIL;
+
+  for (uint32_t i = 0; SUCCEEDED(adapter->EnumOutputs(i, &output)); i++) {
+    DXGI_OUTPUT_DESC output_desc = {};
+    output->GetDesc(&output_desc);
+    if (output_desc.Monitor == monitor)
+      return output->QueryInterface(IID_PPV_ARGS(ppOutput));
+    output = nullptr;
+  }
+
+  return DXGI_ERROR_NOT_FOUND;
+}
+
+HRESULT MTLD3D12SwapChain::ChangeDisplayMode(IDXGIOutput1 *output,
+                                             DXGI_MODE_DESC1 *mode) {
+  if (!output || !mode)
+    return DXGI_ERROR_INVALID_CALL;
+
+  DXGI_MODE_DESC1 preferred = *mode;
+  DXGI_MODE_DESC1 selected = {};
+  if (!(m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH)) {
+    preferred.Width = 0;
+    preferred.Height = 0;
+  }
+  if (preferred.Format == DXGI_FORMAT_UNKNOWN)
+    preferred.Format = m_desc.Format;
+
+  HRESULT hr = output->FindClosestMatchingMode1(&preferred, &selected, nullptr);
+  if (FAILED(hr)) {
+    Logger::err(str::format("M12 ChangeDisplayMode FindClosest failed fmt=",
+                            (unsigned)preferred.Format, " mode=",
+                            preferred.Width, "x", preferred.Height));
+    return hr;
+  }
+
+  if (!selected.RefreshRate.Denominator)
+    selected.RefreshRate.Denominator = 1;
+
+  DXGI_OUTPUT_DESC output_desc = {};
+  output->GetDesc(&output_desc);
+  wsi::WsiMode wsi_mode{
+      selected.Width,
+      selected.Height,
+      {selected.RefreshRate.Numerator, selected.RefreshRate.Denominator},
+      GetMonitorFormatBpp(selected.Format),
+      selected.ScanlineOrdering == DXGI_MODE_SCANLINE_ORDER_UPPER_FIELD_FIRST ||
+          selected.ScanlineOrdering == DXGI_MODE_SCANLINE_ORDER_LOWER_FIELD_FIRST};
+  if (!wsi::setWindowMode(output_desc.Monitor, m_hwnd, wsi_mode))
+    return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+
+  *mode = selected;
+  return S_OK;
+}
+
+HRESULT MTLD3D12SwapChain::RestoreDisplayMode(HMONITOR monitor) {
+  if (!monitor)
+    return DXGI_ERROR_INVALID_CALL;
+  return wsi::restoreDisplayMode(monitor) ? S_OK
+                                          : DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::QueryInterface(REFIID riid,
@@ -938,17 +1067,59 @@ MTLD3D12SwapChain::SetFullscreenState(BOOL fullscreen, IDXGIOutput *target) {
   if (!m_hwnd || !IsWindow(m_hwnd))
     return DXGI_ERROR_INVALID_CALL;
 
-  m_fs_desc.Windowed = !fullscreen;
-  m_fullscreen_target = target;
-  m_monitor = wsi::getWindowMonitor(m_hwnd);
-  if (fullscreen) {
-    if (!wsi::enterFullscreenMode(m_monitor, m_hwnd, &m_window_state, false)) {
+  Com<IDXGIOutput1> output;
+  if (target) {
+    if (FAILED(target->QueryInterface(IID_PPV_ARGS(&output))))
+      return DXGI_ERROR_INVALID_CALL;
+    DXGI_OUTPUT_DESC target_desc = {};
+    output->GetDesc(&target_desc);
+    if (!m_fs_desc.Windowed && fullscreen && m_monitor != target_desc.Monitor) {
+      HRESULT hr = SetFullscreenState(FALSE, nullptr);
+      if (FAILED(hr))
+        return hr;
+    }
+  }
+
+  if (m_fs_desc.Windowed && fullscreen) {
+    if (!output && FAILED(GetOutputFromMonitor(wsi::getWindowMonitor(m_hwnd), &output))) {
+      Logger::err("M12 SetFullscreenState failed to query containing output");
+      return E_FAIL;
+    }
+
+    DXGI_MODE_DESC1 preferred = {m_desc.Width,
+                                 m_desc.Height,
+                                 m_fs_desc.RefreshRate,
+                                 m_desc.Format,
+                                 DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
+                                 DXGI_MODE_SCALING_UNSPECIFIED};
+    HRESULT hr = ChangeDisplayMode(output.ptr(), &preferred);
+    if (FAILED(hr))
+      return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
+
+    DXGI_OUTPUT_DESC output_desc = {};
+    output->GetDesc(&output_desc);
+    m_monitor = output_desc.Monitor;
+    m_fullscreen_target = output;
+    m_fs_desc.Windowed = FALSE;
+
+    bool mode_switch = (m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH) != 0;
+    if (!wsi::enterFullscreenMode(m_monitor, m_hwnd, &m_window_state, mode_switch)) {
       SCTRACE("SetFullscreenState enter fullscreen failed hwnd=%p", m_hwnd);
       return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
     }
+  } else if (!m_fs_desc.Windowed && !fullscreen) {
+    if (FAILED(RestoreDisplayMode(m_monitor)))
+      Logger::warn("M12 SetFullscreenState failed to restore display mode");
+    m_fs_desc.Windowed = TRUE;
+    m_fullscreen_target = nullptr;
+    m_monitor = wsi::getWindowMonitor(m_hwnd);
+    if (IsWindow(m_hwnd) &&
+        !wsi::leaveFullscreenMode(m_hwnd, &m_window_state, true))
+      return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE;
   } else {
-    wsi::leaveFullscreenMode(m_hwnd, &m_window_state, false);
+    return S_OK;
   }
+
   ReassertWindowForHandoff(fullscreen ? "set_fullscreen" : "set_windowed");
   RebindMetalViewForWindowChange(fullscreen ? "set_fullscreen" : "set_windowed");
   return S_OK;
@@ -1112,11 +1283,16 @@ MTLD3D12SwapChain::GetContainingOutput(IDXGIOutput **output) {
   if (!output)
     return E_POINTER;
   *output = nullptr;
-  Com<IDXGIAdapter> adapter;
-  HRESULT hr = m_factory->EnumAdapters(0, &adapter);
+  if (!m_hwnd || !IsWindow(m_hwnd))
+    return DXGI_ERROR_INVALID_CALL;
+
+  Com<IDXGIOutput1> containing;
+  HRESULT hr = m_fullscreen_target
+                   ? m_fullscreen_target->QueryInterface(IID_PPV_ARGS(&containing))
+                   : GetOutputFromMonitor(wsi::getWindowMonitor(m_hwnd), &containing);
   if (FAILED(hr))
     return hr;
-  hr = adapter->EnumOutputs(0, output);
+  *output = containing.ref();
   SCTRACE("GetContainingOutput -> hr=0x%lx output=%p", hr,
           output ? *output : nullptr);
   return hr;
@@ -1172,6 +1348,20 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::GetCoreWindow(REFIID riid,
 
 HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     UINT sync_interval, UINT flags, const DXGI_PRESENT_PARAMETERS *params) {
+  if (sync_interval > 4)
+    return DXGI_ERROR_INVALID_CALL;
+
+  HRESULT present_status = S_OK;
+  bool window_minimized = m_hwnd && IsWindow(m_hwnd) && wsi::isMinimized(m_hwnd);
+  if ((window_minimized || m_desc.Width == 0 || m_desc.Height == 0) &&
+      m_desc.SwapEffect <= DXGI_SWAP_EFFECT_SEQUENTIAL)
+    present_status = DXGI_STATUS_OCCLUDED;
+
+  if (flags & DXGI_PRESENT_TEST)
+    return present_status;
+  if (present_status == DXGI_STATUS_OCCLUDED)
+    return present_status;
+
   m_present_count++;
   if (m_present_count <= 8 || (m_present_count % PresentLogInterval()) == 0)
     ReassertWindowForHandoff("present");
@@ -1546,7 +1736,16 @@ MTLD3D12SwapChain::GetMaximumFrameLatency(UINT *pMaxLatency) {
   return S_OK;
 }
 HANDLE STDMETHODCALLTYPE MTLD3D12SwapChain::GetFrameLatencyWaitableObject() {
-  return m_frame_latency_event;
+  if (!(m_desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT) ||
+      !m_frame_latency_event)
+    return nullptr;
+
+  HANDLE result = nullptr;
+  HANDLE process = GetCurrentProcess();
+  if (!DuplicateHandle(process, m_frame_latency_event, process, &result, 0,
+                       FALSE, DUPLICATE_SAME_ACCESS))
+    return nullptr;
+  return result;
 }
 HRESULT STDMETHODCALLTYPE
 MTLD3D12SwapChain::SetMatrixTransform(const DXGI_MATRIX_3X2_F *pMatrix) {
@@ -1574,6 +1773,11 @@ MTLD3D12SwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace) {
   CheckColorSpaceSupport(ColorSpace, &support);
   if (!(support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT))
     return E_INVALIDARG;
+  auto target_color_space = ConvertColorSpace(ColorSpace, LayerSupportEDR());
+  if (target_color_space == WMTColorSpaceInvalid)
+    return E_INVALIDARG;
+  if (m_presenter && m_presenter->changeLayerColorSpace(target_color_space))
+    DrainPresentCommandBuffers(true);
   m_color_space = ColorSpace;
   return S_OK;
 }
@@ -1585,8 +1789,22 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers1(
   return ResizeBuffers(BufferCount, Width, Height, Format, SwapChainFlags);
 }
 HRESULT STDMETHODCALLTYPE
-MTLD3D12SwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE, UINT, void *) {
-  return S_OK;
+MTLD3D12SwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE Type, UINT Size,
+                                  void *pMetaData) {
+  if (Type == DXGI_HDR_METADATA_TYPE_NONE) {
+    if (m_presenter)
+      m_presenter->changeHDRMetadata(nullptr);
+    return S_OK;
+  }
+  if (Type == DXGI_HDR_METADATA_TYPE_HDR10) {
+    if (Size != sizeof(WMTHDRMetadata))
+      return E_INVALIDARG;
+    if (m_presenter)
+      m_presenter->changeHDRMetadata(
+          reinterpret_cast<const WMTHDRMetadata *>(pMetaData));
+    return S_OK;
+  }
+  return DXGI_ERROR_UNSUPPORTED;
 }
 
 HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,

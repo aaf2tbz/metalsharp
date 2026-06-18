@@ -113,6 +113,10 @@ private:
   bool EnsureMetalView();
   bool AttachMetalViewForHWND(HWND hwnd);
   void ConfigureLayer();
+  bool LayerSupportEDR();
+  HRESULT GetOutputFromMonitor(HMONITOR Monitor, IDXGIOutput1 **ppOutput);
+  HRESULT ChangeDisplayMode(IDXGIOutput1 *output, DXGI_MODE_DESC1 *mode);
+  HRESULT RestoreDisplayMode(HMONITOR monitor);
   void ReassertWindowForHandoff(const char *reason);
   void RebindMetalViewForWindowChange(const char *reason);
   void TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf);
@@ -130,7 +134,7 @@ private:
   DXGI_SWAP_CHAIN_DESC1 m_desc = {};
   DXGI_SWAP_CHAIN_FULLSCREEN_DESC m_fs_desc = {};
   DXGI_COLOR_SPACE_TYPE m_color_space = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
-  Com<IDXGIOutput> m_fullscreen_target;
+  Com<IDXGIOutput1> m_fullscreen_target;
   UINT m_source_width = 0;
   UINT m_source_height = 0;
   UINT m_frame_latency = 1;
