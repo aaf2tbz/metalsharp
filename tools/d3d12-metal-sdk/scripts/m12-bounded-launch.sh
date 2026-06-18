@@ -17,6 +17,7 @@ M12CORE_REQUIRED="${METALSHARP_M12CORE_REQUIRED:-0}"
 M12CORE_PATH="${METALSHARP_M12CORE_PATH:-}"
 M12CORE_DUMP_COUNTERS="${METALSHARP_M12CORE_DUMP_COUNTERS:-0}"
 TRACE_CAPTURE="${METALSHARP_M12_TRACE_CAPTURE:-}"
+TRACE_PROFILE="${METALSHARP_M12_TRACE_PROFILE:-}"
 M12_LOG_LEVEL="${METALSHARP_M12_LOG_LEVEL:-}"
 M12_LOG_PATH="${METALSHARP_M12_LOG_PATH:-}"
 RUN_REPLAY=0
@@ -49,6 +50,7 @@ Options:
   --typed-stage-in 0|1    Override DXMT_D3D12_TYPED_STAGE_IN_VERTEX_DESCRIPTOR through backend env hook.
   --force-source-compile 0|1 Override DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE through backend env hook.
   --trace 0|1             Override DXGI/D3D12/winemetal trace capture.
+  --trace-profile PROFILE Trace profile: full or hang/light/failure. Hang keeps only low-overhead breadcrumbs.
   --log-level LEVEL       Override DXMT_LOG_LEVEL, e.g. none, error, warn, info.
   --log-path PATH         Override DXMT_LOG_PATH, e.g. none for no file logging.
   --results-dir PATH      Output directory for bounded run artifacts.
@@ -81,6 +83,7 @@ while [[ $# -gt 0 ]]; do
     --typed-stage-in) TYPED_STAGE_IN="$2"; shift 2 ;;
     --force-source-compile) FORCE_SOURCE_COMPILE="$2"; shift 2 ;;
     --trace) TRACE_CAPTURE="$2"; shift 2 ;;
+    --trace-profile) TRACE_PROFILE="$2"; shift 2 ;;
     --log-level) M12_LOG_LEVEL="$2"; shift 2 ;;
     --log-path) M12_LOG_PATH="$2"; shift 2 ;;
     --results-dir) RESULTS_DIR="$2"; shift 2 ;;
@@ -197,6 +200,7 @@ launch_env+=("METALSHARP_M12CORE_REQUIRED=$M12CORE_REQUIRED")
 launch_env+=("METALSHARP_M12CORE_DUMP_COUNTERS=$M12CORE_DUMP_COUNTERS")
 if [[ -n "$M12CORE_PATH" ]]; then launch_env+=("METALSHARP_M12CORE_PATH=$M12CORE_PATH"); fi
 if [[ -n "$TRACE_CAPTURE" ]]; then launch_env+=("METALSHARP_M12_TRACE_CAPTURE=$TRACE_CAPTURE"); fi
+if [[ -n "$TRACE_PROFILE" ]]; then launch_env+=("METALSHARP_M12_TRACE_PROFILE=$TRACE_PROFILE"); fi
 if [[ -n "$M12_LOG_LEVEL" ]]; then launch_env+=("METALSHARP_M12_LOG_LEVEL=$M12_LOG_LEVEL"); fi
 if [[ -n "$M12_LOG_PATH" ]]; then launch_env+=("METALSHARP_M12_LOG_PATH=$M12_LOG_PATH"); fi
 for diagnostic_var in \
@@ -337,7 +341,7 @@ if [[ "$SHOW_METALSHARP_AFTER" == "1" ]]; then
   show_metalsharp_gui
 fi
 
-RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" HIDE_METALSHARP="$HIDE_METALSHARP" SHOW_METALSHARP_AFTER="$SHOW_METALSHARP_AFTER" METALSHARP_M12CORE_ENABLE="$M12CORE_ENABLE" METALSHARP_M12CORE_REQUIRED="$M12CORE_REQUIRED" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
+RUN_DIR="$RUN_DIR" PROFILE="$PROFILE" APPID="$APPID" PID="$PID" SECONDS_TO_RUN="$SECONDS_TO_RUN" WORKERS="$WORKERS" ASYNC_COMPILE="$ASYNC_COMPILE" TYPED_STAGE_IN="$TYPED_STAGE_IN" FORCE_SOURCE_COMPILE="$FORCE_SOURCE_COMPILE" HIDE_METALSHARP="$HIDE_METALSHARP" SHOW_METALSHARP_AFTER="$SHOW_METALSHARP_AFTER" METALSHARP_M12CORE_ENABLE="$M12CORE_ENABLE" METALSHARP_M12CORE_REQUIRED="$M12CORE_REQUIRED" METALSHARP_M12_TRACE_PROFILE="$TRACE_PROFILE" EXPECT_D3D12_SHA="$EXPECT_D3D12_SHA" EXPECT_DXGI_SHA="$EXPECT_DXGI_SHA" EXPECT_DXGI_DXMT_SHA="$EXPECT_DXGI_DXMT_SHA" EXPECT_WINEMETAL_DLL_SHA="$EXPECT_WINEMETAL_DLL_SHA" EXPECT_WINEMETAL_SO_SHA="$EXPECT_WINEMETAL_SO_SHA" CORPUS_DIR="$CORPUS_DIR" python3 - <<'PY'
 import json, os, re
 from pathlib import Path
 run = Path(os.environ['RUN_DIR'])
@@ -435,6 +439,7 @@ summary = {
   'show_metalsharp_after': os.environ.get('SHOW_METALSHARP_AFTER', ''),
   'm12core_enable': os.environ.get('METALSHARP_M12CORE_ENABLE', ''),
   'm12core_required': os.environ.get('METALSHARP_M12CORE_REQUIRED', ''),
+  'm12_trace_profile': os.environ.get('METALSHARP_M12_TRACE_PROFILE', ''),
   'expected_d3d12_sha': os.environ.get('EXPECT_D3D12_SHA', ''),
   'expected_dxgi_sha': os.environ.get('EXPECT_DXGI_SHA', ''),
   'expected_dxgi_dxmt_sha': os.environ.get('EXPECT_DXGI_DXMT_SHA', ''),

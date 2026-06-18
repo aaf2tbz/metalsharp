@@ -9,8 +9,17 @@
 #include <map>
 #include <set>
 
+static bool
+dxmt_dxil_trace_enabled() {
+  const char *value = std::getenv("DXMT_DXIL_TRACE");
+  return value && value[0] && std::strcmp(value, "0") != 0;
+}
+
 static FILE *
 dxmt_dxil_open_trace_log(const char *fallback_name) {
+  if (!dxmt_dxil_trace_enabled())
+    return nullptr;
+
   const char *root = std::getenv("DXMT_LOG_PATH");
   const char *file = fallback_name && fallback_name[0] ? fallback_name : "dxmt-dxil-trace.log";
   char path[4096];
