@@ -474,6 +474,7 @@ async function launchApp(id: string, engine: string) {
     launchErrors.value[id] = "";
     diagnosticsOpen.value[id] = false;
     toast.show(warning ? `Launched ${app.name}: ${warning}` : `Launched ${app.name}`, "success");
+    await getAPI().hideApp();
   } else {
     const error = result?.error ?? `Failed to launch ${app.name}`;
     launchErrors.value[id] = error;

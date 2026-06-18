@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, onUnmounted, watch, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api } from "../composables/useApi";
+import { api, getAPI } from "../composables/useApi";
 import GameCard from "../components/GameCard.vue";
 import IconCrosshair from "~icons/lucide/crosshair";
 import IconRefreshCcw from "~icons/lucide/refresh-ccw";
@@ -226,6 +226,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
       wineSteamRunning.value = true;
     if (isMacSteamLaunch(launchMethod) || launchResult.gameType === "macos_steam") macSteamRunning.value = true;
     toast.show(`Launched ${game.name}`, "success");
+    await getAPI().hideApp();
   } else {
     toast.show(launchResult?.error ?? `Failed to launch ${game.name}`, "error");
   }

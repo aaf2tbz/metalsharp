@@ -708,6 +708,13 @@ function registerIpc() {
     return { ok: true };
   });
 
+  ipcMain.handle("app:hide", async () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+    return { ok: true };
+  });
+
   ipcMain.handle("backend:restart", async () => {
     if (isUiOnlyRuntime()) return { ok: true };
     return bridge.restart();

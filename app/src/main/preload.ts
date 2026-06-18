@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("metalsharp", {
   openLogsFolder: () => ipcRenderer.invoke("app:open-logs-folder"),
   openMetalsharpFolder: () => ipcRenderer.invoke("app:open-metalsharp-folder"),
   repairDataAccess: () => ipcRenderer.invoke("app:repair-data-access"),
+  hideApp: () => ipcRenderer.invoke("app:hide"),
   copyText: (text: string) => ipcRenderer.invoke("app:copy-text", text),
   restartBackend: () => ipcRenderer.invoke("backend:restart"),
   isBackendAlive: () => ipcRenderer.invoke("backend:is-alive"),

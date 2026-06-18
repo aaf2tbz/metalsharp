@@ -156,6 +156,7 @@ type MetalsharpAPI = {
     error?: string;
   }>;
   copyText: (text: string) => Promise<{ ok: boolean; error?: string }>;
+  hideApp: () => Promise<{ ok: boolean }>;
   restartBackend: () => Promise<{ ok: boolean; error?: string }>;
   isBackendAlive: () => Promise<boolean>;
   updaterEnsureReady: () => Promise<UpdaterReadyResult>;
