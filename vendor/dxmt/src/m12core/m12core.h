@@ -21,7 +21,7 @@ extern "C" {
 #define M12CORE_ABI_VERSION 1u
 #define M12CORE_BUILD_ID_LOW 0x4d313243u /* "M12C" marker. */
 #define M12CORE_BUILD_ID_HIGH                                                  \
-  0x00000016u /* Core convergence C3/C3.5 handle IDs and shape shadowing. */
+  0x00000017u /* Core convergence C4/C5 probe replay and encoder plans. */
 
 /* Feature flags describe which roadmap slices are implemented by the loaded
  * core.  Phase 1 is deliberately inert: it proves loader/fallback behavior
@@ -53,6 +53,9 @@ enum M12CoreFeatureFlags {
   M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1u << 22,
   M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY = 1u << 23,
   M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER = 1u << 24,
+  M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR = 1u << 25,
+  M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING = 1u << 26,
+  M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1u << 27,
   M12CORE_FEATURE_ALL =
       M12CORE_FEATURE_INERT_LOADER | M12CORE_FEATURE_COUNTERS |
       M12CORE_FEATURE_SHADER_INTROSPECTION | M12CORE_FEATURE_SHADER_FUNCTIONS |
@@ -71,7 +74,10 @@ enum M12CoreFeatureFlags {
       M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING |
       M12CORE_FEATURE_CACHE_INDEX_SHADOW |
       M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY |
-      M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER,
+      M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER |
+      M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR |
+      M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING |
+      M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA,
 };
 
 typedef struct M12CoreVersion {
@@ -1247,6 +1253,134 @@ typedef struct M12CorePacketSupportSummary {
   uint64_t shape_key;
 } M12CorePacketSupportSummary;
 
+/* Core Convergence C4 probe-native replay executor.  This is still a scalar
+ * packet executor: it validates and replays packet state inside libm12core for
+ * mini/probe streams, but does not receive or own PE C++/COM/Metal objects.
+ */
+typedef enum M12CoreReplayPacketExecuteStatus {
+  M12CORE_REPLAY_PACKET_EXECUTE_STATUS_OK = 0,
+  M12CORE_REPLAY_PACKET_EXECUTE_STATUS_INVALID = 1,
+} M12CoreReplayPacketExecuteStatus;
+
+typedef enum M12CoreReplayPacketExecuteFlags {
+  M12CORE_REPLAY_PACKET_EXECUTE_GATE_ENABLED = 1u << 0,
+  M12CORE_REPLAY_PACKET_EXECUTE_ALLOW_PROBE_NATIVE = 1u << 1,
+} M12CoreReplayPacketExecuteFlags;
+
+typedef enum M12CoreReplayPacketExecuteSummaryFlags {
+  M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_GATE_ENABLED = 1u << 0,
+  M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_ELIGIBLE = 1u << 1,
+  M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED = 1u << 2,
+  M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_WHOLE_LIST_FALLBACK = 1u << 3,
+} M12CoreReplayPacketExecuteSummaryFlags;
+
+typedef enum M12CoreReplayPacketExecuteFallbackReason {
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE = 0,
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_GATE_DISABLED = 1,
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_EMPTY_STREAM = 2,
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_INVALID_STREAM = 3,
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE = 4,
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_STALE_HANDLE = 5,
+  M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_MISSING_NATIVE_ID = 6,
+} M12CoreReplayPacketExecuteFallbackReason;
+
+typedef struct M12CoreReplayPacketExecuteDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+  const M12CoreCommandPacket *packets;
+} M12CoreReplayPacketExecuteDesc;
+
+typedef struct M12CoreReplayPacketExecuteSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t fallback_reason;
+  uint32_t validation_flags;
+  uint32_t planned_packet_count;
+  uint32_t executed_packet_count;
+  uint32_t binding_packet_count;
+  uint32_t clear_packet_count;
+  uint32_t draw_packet_count;
+  uint32_t dispatch_packet_count;
+  uint32_t barrier_packet_count;
+  uint32_t render_target_packet_count;
+  uint32_t fallback_packet_index;
+  uint64_t replay_execute_key;
+  uint64_t native_state_key;
+} M12CoreReplayPacketExecuteSummary;
+
+/* Core Convergence C5 encoder ownership/root-binding cache metadata.  The
+ * native core owns scalar encoder open/close decisions and cache keys for
+ * native-executed packet streams; PE still owns Metal object emission until a
+ * later transport slice moves object ownership.
+ */
+typedef enum M12CoreEncoderOwnershipStatus {
+  M12CORE_ENCODER_OWNERSHIP_STATUS_OK = 0,
+  M12CORE_ENCODER_OWNERSHIP_STATUS_INVALID = 1,
+} M12CoreEncoderOwnershipStatus;
+
+typedef enum M12CoreEncoderOwnershipFlags {
+  M12CORE_ENCODER_OWNERSHIP_GATE_ENABLED = 1u << 0,
+  M12CORE_ENCODER_OWNERSHIP_REPLAY_NATIVE_EXECUTED = 1u << 1,
+  M12CORE_ENCODER_OWNERSHIP_HAS_RENDER_TARGETS = 1u << 2,
+  M12CORE_ENCODER_OWNERSHIP_HAS_DSV = 1u << 3,
+  M12CORE_ENCODER_OWNERSHIP_HAS_DESCRIPTOR_HEAPS = 1u << 4,
+  M12CORE_ENCODER_OWNERSHIP_HAS_RESOURCE_LAYOUT_VALIDATION = 1u << 5,
+} M12CoreEncoderOwnershipFlags;
+
+typedef enum M12CoreEncoderOwnershipSummaryFlags {
+  M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED = 1u << 0,
+  M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN = 1u << 1,
+  M12CORE_ENCODER_OWNERSHIP_SUMMARY_LAYOUT_VALIDATION_REQUIRED = 1u << 2,
+  M12CORE_ENCODER_OWNERSHIP_SUMMARY_CACHE_PAYLOAD_REUSE_DISABLED = 1u << 3,
+} M12CoreEncoderOwnershipSummaryFlags;
+
+typedef struct M12CoreEncoderOwnershipDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t render_target_count;
+  uint32_t descriptor_heap_count;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+  uint64_t replay_execute_key;
+  uint64_t resource_layout_key;
+  const M12CoreCommandPacket *packets;
+} M12CoreEncoderOwnershipDesc;
+
+typedef struct M12CoreEncoderOwnershipSummary {
+  uint32_t abi_version;
+  uint32_t status;
+  uint32_t flags;
+  uint32_t validation_flags;
+  uint32_t planned_encoder_count;
+  uint32_t encoder_open_count;
+  uint32_t encoder_close_count;
+  uint32_t render_encoder_count;
+  uint32_t compute_encoder_count;
+  uint32_t blit_encoder_count;
+  uint32_t binding_cache_entry_count;
+  uint32_t cache_payload_reuse_enabled;
+  uint32_t resource_layout_validation_required;
+  uint32_t reserved0;
+  uint64_t encoder_plan_key;
+  uint64_t root_binding_cache_key;
+  uint64_t binding_layout_key;
+} M12CoreEncoderOwnershipSummary;
+
 /* Returns 0 on success. Non-zero values are reserved for future detailed
  * status codes once PE-side callers start depending on this ABI.
  */
@@ -1343,6 +1477,11 @@ int m12core_validate_handle(const M12CoreHandleValidationDesc *desc,
                             M12CoreHandleValidationResult *out_result);
 int m12core_classify_packet_support(const M12CorePacketSupportDesc *desc,
                                     M12CorePacketSupportSummary *out_summary);
+int m12core_execute_replay_packet_stream(
+    const M12CoreReplayPacketExecuteDesc *desc,
+    M12CoreReplayPacketExecuteSummary *out_summary);
+int m12core_plan_encoder_ownership(const M12CoreEncoderOwnershipDesc *desc,
+                                   M12CoreEncoderOwnershipSummary *out_summary);
 
 #ifdef __cplusplus
 }

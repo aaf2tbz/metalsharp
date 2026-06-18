@@ -146,7 +146,7 @@ extern "C" int m12core_get_version(M12CoreVersion *out_version) {
 }
 
 extern "C" const char *m12core_build_string(void) {
-  return "libm12core convergence-c3-c35 handle-shape-shadow abi=1";
+  return "libm12core convergence-c4-c5 replay-encoder abi=1";
 }
 
 extern "C" int m12core_record_counter(uint32_t counter_id, uint64_t delta) {
@@ -2013,6 +2013,255 @@ m12core_classify_packet_support(const M12CorePacketSupportDesc *desc,
     pipelineHashCombine(negative, out_summary->unsupported_shape_count);
     pipelineHashCombine(negative, shape_key);
     out_summary->negative_cache_key = negative;
+  }
+  return 0;
+}
+
+extern "C" int m12core_execute_replay_packet_stream(
+    const M12CoreReplayPacketExecuteDesc *desc,
+    M12CoreReplayPacketExecuteSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  uint64_t execute_key = 0x4d31325052455845ull; // "M12PREXE" marker.
+  pipelineHashCombine(execute_key, desc->flags);
+  pipelineHashCombine(execute_key, desc->packet_count);
+  pipelineHashCombine(execute_key, desc->queue_type);
+  pipelineHashCombine(execute_key, desc->command_list_index);
+  pipelineHashCombine(execute_key, desc->command_list_id);
+  pipelineHashCombine(execute_key, desc->queue_serial);
+  pipelineHashCombine(execute_key, desc->stream_key);
+  pipelineHashCombine(execute_key, desc->packet_sequence_xor);
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_REPLAY_PACKET_EXECUTE_STATUS_OK;
+  out_summary->replay_execute_key = execute_key;
+  out_summary->fallback_packet_index = UINT32_MAX;
+  if (desc->flags & M12CORE_REPLAY_PACKET_EXECUTE_GATE_ENABLED)
+    out_summary->flags |= M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_GATE_ENABLED;
+
+  uint32_t fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE;
+  if (!(desc->flags & M12CORE_REPLAY_PACKET_EXECUTE_GATE_ENABLED)) {
+    fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_GATE_DISABLED;
+  } else if (!desc->packet_count || !desc->packets) {
+    fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_EMPTY_STREAM;
+  }
+
+  M12CoreCommandPacketStreamSummary stream = {};
+  M12CorePacketSupportSummary support = {};
+  if (fallback == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE) {
+    M12CoreCommandPacketStreamDesc stream_desc = {};
+    stream_desc.abi_version = M12CORE_ABI_VERSION;
+    stream_desc.packet_count = desc->packet_count;
+    stream_desc.queue_type = desc->queue_type;
+    stream_desc.command_list_index = desc->command_list_index;
+    stream_desc.command_list_id = desc->command_list_id;
+    stream_desc.queue_serial = desc->queue_serial;
+    stream_desc.packets = desc->packets;
+    if (m12core_validate_command_packet_stream(&stream_desc, &stream) != 0 ||
+        stream.status == M12CORE_COMMAND_PACKET_STREAM_STATUS_INVALID) {
+      fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_INVALID_STREAM;
+      out_summary->validation_flags |=
+          M12CORE_PACKET_UNSUPPORTED_INVALID_PACKET;
+    }
+  }
+
+  if (fallback == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE) {
+    M12CorePacketSupportDesc support_desc = {};
+    support_desc.abi_version = M12CORE_ABI_VERSION;
+    support_desc.packet_count = desc->packet_count;
+    support_desc.queue_type = desc->queue_type;
+    support_desc.stream_key =
+        desc->stream_key ? desc->stream_key : stream.stream_key;
+    support_desc.packet_sequence_xor = desc->packet_sequence_xor
+                                           ? desc->packet_sequence_xor
+                                           : stream.packet_sequence_xor;
+    support_desc.packets = desc->packets;
+    if (m12core_classify_packet_support(&support_desc, &support) != 0 ||
+        support.status != M12CORE_PACKET_SUPPORT_STATUS_SAFE ||
+        !support.safe_for_probe_replay) {
+      out_summary->validation_flags = support.unsupported_reason_flags;
+      if (support.stale_handle_count)
+        fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_STALE_HANDLE;
+      else if (support.missing_native_id_count)
+        fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_MISSING_NATIVE_ID;
+      else
+        fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE;
+    }
+  }
+
+  if (fallback == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE) {
+    uint64_t state_key = 0x4d31325354415445ull; // "M12STATE" marker.
+    for (uint32_t i = 0; i < desc->packet_count; i++) {
+      const M12CoreCommandPacket &packet = desc->packets[i];
+      const uint32_t kind = packet.header.kind;
+      pipelineHashCombine(state_key, kind);
+      pipelineHashCombine(state_key, packet.header.flags);
+      pipelineHashCombine(state_key, packet.header.sequence);
+      pipelineHashCombine(state_key, packet.object_id0);
+      pipelineHashCombine(state_key, packet.object_id1);
+      pipelineHashCombine(state_key, packet.object_id2);
+      pipelineHashCombine(state_key, packet.value0);
+      switch (kind) {
+      case M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE:
+      case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE:
+      case M12CORE_COMMAND_PACKET_KIND_SET_DESCRIPTOR_HEAP:
+      case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING:
+        out_summary->binding_packet_count++;
+        break;
+      case M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS:
+        out_summary->render_target_packet_count++;
+        break;
+      case M12CORE_COMMAND_PACKET_KIND_CLEAR_RTV:
+      case M12CORE_COMMAND_PACKET_KIND_CLEAR_DSV:
+      case M12CORE_COMMAND_PACKET_KIND_CLEAR_UAV:
+        out_summary->clear_packet_count++;
+        break;
+      case M12CORE_COMMAND_PACKET_KIND_DRAW:
+      case M12CORE_COMMAND_PACKET_KIND_DRAW_INDEXED:
+        out_summary->draw_packet_count++;
+        break;
+      case M12CORE_COMMAND_PACKET_KIND_DISPATCH:
+        out_summary->dispatch_packet_count++;
+        break;
+      case M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER:
+        out_summary->barrier_packet_count++;
+        break;
+      default:
+        fallback = M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE;
+        out_summary->fallback_packet_index = i;
+        out_summary->validation_flags |=
+            M12CORE_PACKET_UNSUPPORTED_UNKNOWN_KIND;
+        break;
+      }
+      if (fallback != M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE)
+        break;
+    }
+    if (fallback == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE) {
+      out_summary->flags |=
+          M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_ELIGIBLE |
+          M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED;
+      out_summary->planned_packet_count = desc->packet_count;
+      out_summary->executed_packet_count = desc->packet_count;
+      out_summary->native_state_key = state_key;
+    }
+  }
+
+  if (fallback != M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE) {
+    out_summary->flags |=
+        M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_WHOLE_LIST_FALLBACK;
+    out_summary->fallback_reason = fallback;
+    out_summary->planned_packet_count = 0;
+    out_summary->executed_packet_count = 0;
+    if (out_summary->fallback_packet_index == UINT32_MAX)
+      out_summary->fallback_packet_index = 0;
+  }
+  return 0;
+}
+
+extern "C" int
+m12core_plan_encoder_ownership(const M12CoreEncoderOwnershipDesc *desc,
+                               M12CoreEncoderOwnershipSummary *out_summary) {
+  if (!desc || !out_summary || desc->abi_version != M12CORE_ABI_VERSION)
+    return 1;
+  std::memset(out_summary, 0, sizeof(*out_summary));
+
+  out_summary->abi_version = M12CORE_ABI_VERSION;
+  out_summary->status = M12CORE_ENCODER_OWNERSHIP_STATUS_OK;
+  out_summary->resource_layout_validation_required = 1;
+  out_summary->flags |=
+      M12CORE_ENCODER_OWNERSHIP_SUMMARY_LAYOUT_VALIDATION_REQUIRED |
+      M12CORE_ENCODER_OWNERSHIP_SUMMARY_CACHE_PAYLOAD_REUSE_DISABLED;
+
+  uint64_t plan_key = 0x4d3132454e434f44ull; // "M12ENCOD" marker.
+  pipelineHashCombine(plan_key, desc->flags);
+  pipelineHashCombine(plan_key, desc->packet_count);
+  pipelineHashCombine(plan_key, desc->queue_type);
+  pipelineHashCombine(plan_key, desc->command_list_index);
+  pipelineHashCombine(plan_key, desc->render_target_count);
+  pipelineHashCombine(plan_key, desc->descriptor_heap_count);
+  pipelineHashCombine(plan_key, desc->command_list_id);
+  pipelineHashCombine(plan_key, desc->queue_serial);
+  pipelineHashCombine(plan_key, desc->stream_key);
+  pipelineHashCombine(plan_key, desc->packet_sequence_xor);
+  pipelineHashCombine(plan_key, desc->replay_execute_key);
+  pipelineHashCombine(plan_key, desc->resource_layout_key);
+  out_summary->encoder_plan_key = plan_key;
+
+  if (!(desc->flags & M12CORE_ENCODER_OWNERSHIP_GATE_ENABLED) ||
+      !(desc->flags & M12CORE_ENCODER_OWNERSHIP_REPLAY_NATIVE_EXECUTED) ||
+      !(desc->flags &
+        M12CORE_ENCODER_OWNERSHIP_HAS_RESOURCE_LAYOUT_VALIDATION) ||
+      !desc->packet_count || !desc->packets) {
+    out_summary->validation_flags = 1u;
+    return 0;
+  }
+
+  bool has_render = false;
+  bool has_compute = false;
+  bool has_blit = false;
+  uint32_t binding_entries = 0;
+  uint64_t binding_key = 0x4d31325242434b59ull; // "M12RBCKY" marker.
+  uint64_t layout_key = desc->resource_layout_key
+                            ? desc->resource_layout_key
+                            : 0x4d31324c41594f54ull; // "M12LAYOT" marker.
+  for (uint32_t i = 0; i < desc->packet_count; i++) {
+    const M12CoreCommandPacket &packet = desc->packets[i];
+    switch (packet.header.kind) {
+    case M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE:
+    case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_SIGNATURE:
+    case M12CORE_COMMAND_PACKET_KIND_SET_DESCRIPTOR_HEAP:
+    case M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING:
+      binding_entries++;
+      pipelineHashCombine(binding_key, packet.header.kind);
+      pipelineHashCombine(binding_key, packet.object_id0);
+      pipelineHashCombine(binding_key, packet.object_id1);
+      pipelineHashCombine(binding_key, packet.value0);
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS:
+    case M12CORE_COMMAND_PACKET_KIND_CLEAR_RTV:
+    case M12CORE_COMMAND_PACKET_KIND_CLEAR_DSV:
+    case M12CORE_COMMAND_PACKET_KIND_CLEAR_UAV:
+    case M12CORE_COMMAND_PACKET_KIND_DRAW:
+    case M12CORE_COMMAND_PACKET_KIND_DRAW_INDEXED:
+      has_render = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_DISPATCH:
+      has_compute = true;
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER:
+      pipelineHashCombine(layout_key, packet.value0);
+      break;
+    case M12CORE_COMMAND_PACKET_KIND_COPY:
+    case M12CORE_COMMAND_PACKET_KIND_PRESENT:
+      has_blit = true;
+      break;
+    default:
+      out_summary->validation_flags |= 2u;
+      break;
+    }
+  }
+
+  out_summary->render_encoder_count = has_render ? 1u : 0u;
+  out_summary->compute_encoder_count = has_compute ? 1u : 0u;
+  out_summary->blit_encoder_count = has_blit ? 1u : 0u;
+  out_summary->planned_encoder_count = out_summary->render_encoder_count +
+                                       out_summary->compute_encoder_count +
+                                       out_summary->blit_encoder_count;
+  out_summary->encoder_open_count = out_summary->planned_encoder_count;
+  out_summary->encoder_close_count = out_summary->planned_encoder_count;
+  out_summary->binding_cache_entry_count = binding_entries;
+  out_summary->root_binding_cache_key = binding_key;
+  out_summary->binding_layout_key = layout_key;
+  out_summary->cache_payload_reuse_enabled = 0;
+  if (out_summary->planned_encoder_count) {
+    out_summary->flags |=
+        M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED;
+  }
+  if (binding_entries) {
+    out_summary->flags |=
+        M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN;
   }
   return 0;
 }

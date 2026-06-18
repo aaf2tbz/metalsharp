@@ -213,6 +213,8 @@ static uint32_t g_command_stream_shadow_logs = 0;
 static uint32_t g_packet_stream_shadow_logs = 0;
 static uint32_t g_handle_registry_shadow_logs = 0;
 static uint32_t g_packet_shape_shadow_logs = 0;
+static uint32_t g_probe_replay_execute_logs = 0;
+static uint32_t g_encoder_ownership_plan_logs = 0;
 static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
@@ -6520,12 +6522,10 @@ static bool M12BuildPacketStream(const std::vector<uint8_t> &cmds,
   return true;
 }
 
-static void LogM12CorePacketStreamShadow(uint32_t queue_type,
-                                         uint32_t list_index,
-                                         uint64_t command_list_id,
-                                         uint64_t queue_serial,
-                                         const std::vector<uint8_t> &cmds,
-                                         const D3D12CommandStreamStats &stats) {
+static void LogM12CorePacketStreamShadow(
+    uint32_t queue_type, uint32_t list_index, uint64_t command_list_id,
+    uint64_t queue_serial, const std::vector<uint8_t> &cmds,
+    const D3D12CommandStreamStats &stats, const ReplayState &state) {
   if (!TakeLogBudget(&g_packet_stream_shadow_logs, 192))
     return;
 
@@ -6614,6 +6614,113 @@ static void LogM12CorePacketStreamShadow(uint32_t queue_type,
         support.shape_key, std::dec, " invalid=", support.invalid_packet_count,
         " stale=", support.stale_handle_count,
         " missing_native_id=", support.missing_native_id_count));
+  }
+
+  M12CoreReplayPacketExecuteSummary replay_execute = {};
+  bool replay_execute_ok = false;
+  if (validate_ok) {
+    M12CoreReplayPacketExecuteDesc replay_desc = {};
+    replay_desc.abi_version = M12CORE_ABI_VERSION;
+    replay_desc.flags = M12CORE_REPLAY_PACKET_EXECUTE_ALLOW_PROBE_NATIVE;
+    if (M12CoreReplayExecuteEnabled())
+      replay_desc.flags |= M12CORE_REPLAY_PACKET_EXECUTE_GATE_ENABLED;
+    replay_desc.packet_count = static_cast<uint32_t>(packets.size());
+    replay_desc.queue_type = queue_type;
+    replay_desc.command_list_index = list_index;
+    replay_desc.command_list_id = command_list_id;
+    replay_desc.queue_serial = queue_serial;
+    replay_desc.stream_key = summary.stream_key;
+    replay_desc.packet_sequence_xor = summary.packet_sequence_xor;
+    replay_desc.packets = packets.empty() ? nullptr : packets.data();
+    replay_execute_ok =
+        WMTM12CoreExecuteReplayPacketStream(&replay_desc, &replay_execute) &&
+        replay_execute.abi_version == M12CORE_ABI_VERSION;
+  }
+  if (replay_execute_ok && TakeLogBudget(&g_probe_replay_execute_logs, 192)) {
+    const uint32_t native_executed =
+        (replay_execute.flags &
+         M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED)
+            ? 1u
+            : 0u;
+    Logger::info(str::format(
+        "M12_PROBE_REPLAY_EXECUTE gate=", M12CoreReplayExecuteEnabled() ? 1 : 0,
+        " native_executed=", native_executed, " whole_list_fallback=",
+        (replay_execute.flags &
+         M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_WHOLE_LIST_FALLBACK)
+            ? 1
+            : 0,
+        " fallback=", replay_execute.fallback_reason,
+        " packets_planned=", replay_execute.planned_packet_count,
+        " packets_executed=", replay_execute.executed_packet_count,
+        " bindings=", replay_execute.binding_packet_count,
+        " clears=", replay_execute.clear_packet_count,
+        " draws=", replay_execute.draw_packet_count,
+        " dispatch=", replay_execute.dispatch_packet_count,
+        " barriers=", replay_execute.barrier_packet_count,
+        " rts=", replay_execute.render_target_packet_count, " validation=0x",
+        std::hex, replay_execute.validation_flags, " key=0x",
+        replay_execute.replay_execute_key, " state=0x",
+        replay_execute.native_state_key, std::dec));
+  }
+
+  M12CoreEncoderOwnershipSummary encoder = {};
+  bool encoder_ok = false;
+  if (replay_execute_ok) {
+    M12CoreEncoderOwnershipDesc encoder_desc = {};
+    encoder_desc.abi_version = M12CORE_ABI_VERSION;
+    if (M12CoreReplayExecuteEnabled())
+      encoder_desc.flags |= M12CORE_ENCODER_OWNERSHIP_GATE_ENABLED;
+    if (replay_execute.flags &
+        M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED)
+      encoder_desc.flags |= M12CORE_ENCODER_OWNERSHIP_REPLAY_NATIVE_EXECUTED;
+    if (state.rt_count)
+      encoder_desc.flags |= M12CORE_ENCODER_OWNERSHIP_HAS_RENDER_TARGETS;
+    if (state.has_dsv)
+      encoder_desc.flags |= M12CORE_ENCODER_OWNERSHIP_HAS_DSV;
+    if (state.desc_heap_count)
+      encoder_desc.flags |= M12CORE_ENCODER_OWNERSHIP_HAS_DESCRIPTOR_HEAPS;
+    encoder_desc.flags |=
+        M12CORE_ENCODER_OWNERSHIP_HAS_RESOURCE_LAYOUT_VALIDATION;
+    encoder_desc.packet_count = static_cast<uint32_t>(packets.size());
+    encoder_desc.queue_type = queue_type;
+    encoder_desc.command_list_index = list_index;
+    encoder_desc.render_target_count = state.rt_count;
+    encoder_desc.descriptor_heap_count = state.desc_heap_count;
+    encoder_desc.command_list_id = command_list_id;
+    encoder_desc.queue_serial = queue_serial;
+    encoder_desc.stream_key = summary.stream_key;
+    encoder_desc.packet_sequence_xor = summary.packet_sequence_xor;
+    encoder_desc.replay_execute_key = replay_execute.replay_execute_key;
+    encoder_desc.resource_layout_key = summary.stream_key ^
+                                       replay_execute.native_state_key ^
+                                       0x4d31324c41594f54ull;
+    encoder_desc.packets = packets.empty() ? nullptr : packets.data();
+    encoder_ok = WMTM12CorePlanEncoderOwnership(&encoder_desc, &encoder) &&
+                 encoder.abi_version == M12CORE_ABI_VERSION;
+  }
+  if (encoder_ok && TakeLogBudget(&g_encoder_ownership_plan_logs, 192)) {
+    Logger::info(str::format(
+        "M12_ENCODER_OWNERSHIP_PLAN native_encoder_owned=",
+        (encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED)
+            ? 1
+            : 0,
+        " root_binding_cache_written=",
+        (encoder.flags &
+         M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN)
+            ? 1
+            : 0,
+        " cache_payload_reuse=", encoder.cache_payload_reuse_enabled,
+        " layout_validation_required=",
+        encoder.resource_layout_validation_required, " encoders=",
+        encoder.planned_encoder_count, " open=", encoder.encoder_open_count,
+        " close=", encoder.encoder_close_count,
+        " render=", encoder.render_encoder_count, " compute=",
+        encoder.compute_encoder_count, " blit=", encoder.blit_encoder_count,
+        " binding_entries=", encoder.binding_cache_entry_count,
+        " validation=0x", std::hex, encoder.validation_flags, " plan=0x",
+        encoder.encoder_plan_key, " root_cache=0x",
+        encoder.root_binding_cache_key, " layout=0x",
+        encoder.binding_layout_key, std::dec));
   }
 
   if (!validate_ok || !TakeLogBudget(&g_cache_index_shadow_logs, 192))
@@ -9829,7 +9936,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           (uint32_t)m_desc.Type, li, command_list_id, queue_serial,
           stream_stats, st, has_swapchain_work_target, (uint32_t)status);
       LogM12CorePacketStreamShadow((uint32_t)m_desc.Type, li, command_list_id,
-                                   queue_serial, cmds, stream_stats);
+                                   queue_serial, cmds, stream_stats, st);
       LogM12CoreRenderPassPlan((uint32_t)m_desc.Type, li, command_list_id,
                                queue_serial, stream_stats, st,
                                has_swapchain_work_target, (uint32_t)status);

@@ -20,16 +20,20 @@ from typing import Any
 
 M12CORE_ABI_VERSION = 1
 M12CORE_BUILD_ID_LOW = 0x4D313243
-M12CORE_BUILD_ID_HIGH = 0x00000016
+M12CORE_BUILD_ID_HIGH = 0x00000017
 M12CORE_FEATURE_COMMAND_PACKET_STREAM = 1 << 19
 M12CORE_FEATURE_CACHE_COMPATIBILITY_KEYS = 1 << 20
 M12CORE_FEATURE_COMMAND_PACKET_SHADOW_RECORDING = 1 << 21
 M12CORE_FEATURE_CACHE_INDEX_SHADOW = 1 << 22
 M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY = 1 << 23
 M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER = 1 << 24
+M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR = 1 << 25
+M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING = 1 << 26
+M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA = 1 << 27
 
 M12CORE_COMMAND_PACKET_KIND_UNKNOWN = 0
 M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE = 1
+M12CORE_COMMAND_PACKET_KIND_SET_ROOT_BINDING = 4
 M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS = 5
 M12CORE_COMMAND_PACKET_KIND_RESOURCE_BARRIER = 6
 M12CORE_COMMAND_PACKET_KIND_DRAW = 10
@@ -72,6 +76,24 @@ M12CORE_PACKET_UNSUPPORTED_INDIRECT = 1 << 0
 M12CORE_PACKET_UNSUPPORTED_COPY = 1 << 1
 M12CORE_PACKET_UNSUPPORTED_STALE_HANDLE = 1 << 5
 M12CORE_PACKET_UNSUPPORTED_MISSING_NATIVE_ID = 1 << 6
+
+M12CORE_REPLAY_PACKET_EXECUTE_GATE_ENABLED = 1 << 0
+M12CORE_REPLAY_PACKET_EXECUTE_ALLOW_PROBE_NATIVE = 1 << 1
+M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_ELIGIBLE = 1 << 1
+M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED = 1 << 2
+M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_WHOLE_LIST_FALLBACK = 1 << 3
+M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE = 0
+M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_GATE_DISABLED = 1
+M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE = 4
+
+M12CORE_ENCODER_OWNERSHIP_GATE_ENABLED = 1 << 0
+M12CORE_ENCODER_OWNERSHIP_REPLAY_NATIVE_EXECUTED = 1 << 1
+M12CORE_ENCODER_OWNERSHIP_HAS_RENDER_TARGETS = 1 << 2
+M12CORE_ENCODER_OWNERSHIP_HAS_RESOURCE_LAYOUT_VALIDATION = 1 << 5
+M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED = 1 << 0
+M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN = 1 << 1
+M12CORE_ENCODER_OWNERSHIP_SUMMARY_LAYOUT_VALIDATION_REQUIRED = 1 << 2
+M12CORE_ENCODER_OWNERSHIP_SUMMARY_CACHE_PAYLOAD_REUSE_DISABLED = 1 << 3
 
 
 class M12CoreVersion(ctypes.Structure):
@@ -242,6 +264,85 @@ class M12CorePacketSupportSummary(ctypes.Structure):
     ]
 
 
+class M12CoreReplayPacketExecuteDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("packet_count", ctypes.c_uint32),
+        ("queue_type", ctypes.c_uint32),
+        ("command_list_index", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("command_list_id", ctypes.c_uint64),
+        ("queue_serial", ctypes.c_uint64),
+        ("stream_key", ctypes.c_uint64),
+        ("packet_sequence_xor", ctypes.c_uint64),
+        ("packets", ctypes.POINTER(M12CoreCommandPacket)),
+    ]
+
+
+class M12CoreReplayPacketExecuteSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("fallback_reason", ctypes.c_uint32),
+        ("validation_flags", ctypes.c_uint32),
+        ("planned_packet_count", ctypes.c_uint32),
+        ("executed_packet_count", ctypes.c_uint32),
+        ("binding_packet_count", ctypes.c_uint32),
+        ("clear_packet_count", ctypes.c_uint32),
+        ("draw_packet_count", ctypes.c_uint32),
+        ("dispatch_packet_count", ctypes.c_uint32),
+        ("barrier_packet_count", ctypes.c_uint32),
+        ("render_target_packet_count", ctypes.c_uint32),
+        ("fallback_packet_index", ctypes.c_uint32),
+        ("replay_execute_key", ctypes.c_uint64),
+        ("native_state_key", ctypes.c_uint64),
+    ]
+
+
+class M12CoreEncoderOwnershipDesc(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("packet_count", ctypes.c_uint32),
+        ("queue_type", ctypes.c_uint32),
+        ("command_list_index", ctypes.c_uint32),
+        ("render_target_count", ctypes.c_uint32),
+        ("descriptor_heap_count", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("command_list_id", ctypes.c_uint64),
+        ("queue_serial", ctypes.c_uint64),
+        ("stream_key", ctypes.c_uint64),
+        ("packet_sequence_xor", ctypes.c_uint64),
+        ("replay_execute_key", ctypes.c_uint64),
+        ("resource_layout_key", ctypes.c_uint64),
+        ("packets", ctypes.POINTER(M12CoreCommandPacket)),
+    ]
+
+
+class M12CoreEncoderOwnershipSummary(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("status", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("validation_flags", ctypes.c_uint32),
+        ("planned_encoder_count", ctypes.c_uint32),
+        ("encoder_open_count", ctypes.c_uint32),
+        ("encoder_close_count", ctypes.c_uint32),
+        ("render_encoder_count", ctypes.c_uint32),
+        ("compute_encoder_count", ctypes.c_uint32),
+        ("blit_encoder_count", ctypes.c_uint32),
+        ("binding_cache_entry_count", ctypes.c_uint32),
+        ("cache_payload_reuse_enabled", ctypes.c_uint32),
+        ("resource_layout_validation_required", ctypes.c_uint32),
+        ("reserved0", ctypes.c_uint32),
+        ("encoder_plan_key", ctypes.c_uint64),
+        ("root_binding_cache_key", ctypes.c_uint64),
+        ("binding_layout_key", ctypes.c_uint64),
+    ]
+
+
 def default_lib_candidates(repo: pathlib.Path) -> list[pathlib.Path]:
     return [
         pathlib.Path.home() / ".metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/libm12core.dylib",
@@ -327,6 +428,48 @@ def support_to_dict(s: M12CorePacketSupportSummary) -> dict[str, Any]:
     }
 
 
+def replay_execute_to_dict(s: M12CoreReplayPacketExecuteSummary) -> dict[str, Any]:
+    return {
+        "abi_version": s.abi_version,
+        "status": s.status,
+        "flags": s.flags,
+        "fallback_reason": s.fallback_reason,
+        "validation_flags": s.validation_flags,
+        "planned_packet_count": s.planned_packet_count,
+        "executed_packet_count": s.executed_packet_count,
+        "binding_packet_count": s.binding_packet_count,
+        "clear_packet_count": s.clear_packet_count,
+        "draw_packet_count": s.draw_packet_count,
+        "dispatch_packet_count": s.dispatch_packet_count,
+        "barrier_packet_count": s.barrier_packet_count,
+        "render_target_packet_count": s.render_target_packet_count,
+        "fallback_packet_index": s.fallback_packet_index,
+        "replay_execute_key": f"0x{s.replay_execute_key:016x}",
+        "native_state_key": f"0x{s.native_state_key:016x}",
+    }
+
+
+def encoder_to_dict(s: M12CoreEncoderOwnershipSummary) -> dict[str, Any]:
+    return {
+        "abi_version": s.abi_version,
+        "status": s.status,
+        "flags": s.flags,
+        "validation_flags": s.validation_flags,
+        "planned_encoder_count": s.planned_encoder_count,
+        "encoder_open_count": s.encoder_open_count,
+        "encoder_close_count": s.encoder_close_count,
+        "render_encoder_count": s.render_encoder_count,
+        "compute_encoder_count": s.compute_encoder_count,
+        "blit_encoder_count": s.blit_encoder_count,
+        "binding_cache_entry_count": s.binding_cache_entry_count,
+        "cache_payload_reuse_enabled": s.cache_payload_reuse_enabled,
+        "resource_layout_validation_required": s.resource_layout_validation_required,
+        "encoder_plan_key": f"0x{s.encoder_plan_key:016x}",
+        "root_binding_cache_key": f"0x{s.root_binding_cache_key:016x}",
+        "binding_layout_key": f"0x{s.binding_layout_key:016x}",
+    }
+
+
 def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     lib = ctypes.CDLL(str(lib_path))
     lib.m12core_get_version.argtypes = [ctypes.POINTER(M12CoreVersion)]
@@ -356,6 +499,16 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         ctypes.POINTER(M12CorePacketSupportSummary),
     ]
     lib.m12core_classify_packet_support.restype = ctypes.c_int
+    lib.m12core_execute_replay_packet_stream.argtypes = [
+        ctypes.POINTER(M12CoreReplayPacketExecuteDesc),
+        ctypes.POINTER(M12CoreReplayPacketExecuteSummary),
+    ]
+    lib.m12core_execute_replay_packet_stream.restype = ctypes.c_int
+    lib.m12core_plan_encoder_ownership.argtypes = [
+        ctypes.POINTER(M12CoreEncoderOwnershipDesc),
+        ctypes.POINTER(M12CoreEncoderOwnershipSummary),
+    ]
+    lib.m12core_plan_encoder_ownership.restype = ctypes.c_int
 
     checks: dict[str, bool] = {}
     version = M12CoreVersion()
@@ -368,6 +521,11 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     checks["cache_index_shadow_feature"] = bool(version.feature_flags & M12CORE_FEATURE_CACHE_INDEX_SHADOW)
     checks["handle_registry_feature"] = bool(version.feature_flags & M12CORE_FEATURE_NATIVE_HANDLE_REGISTRY)
     checks["shape_classifier_feature"] = bool(version.feature_flags & M12CORE_FEATURE_PACKET_SHAPE_CLASSIFIER)
+    checks["probe_replay_executor_feature"] = bool(version.feature_flags & M12CORE_FEATURE_PROBE_REPLAY_EXECUTOR)
+    checks["encoder_ownership_feature"] = bool(version.feature_flags & M12CORE_FEATURE_ENCODER_OWNERSHIP_PLANNING)
+    checks["root_binding_cache_metadata_feature"] = bool(
+        version.feature_flags & M12CORE_FEATURE_ROOT_BINDING_CACHE_METADATA
+    )
 
     packets = (M12CoreCommandPacket * 5)(
         packet(M12CORE_COMMAND_PACKET_KIND_SET_RENDER_TARGETS, 1, M12CORE_COMMAND_PACKET_FLAG_GRAPHICS),
@@ -540,17 +698,23 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         stale_rc == 0 and stale_result.status == M12CORE_HANDLE_REGISTRY_STATUS_STALE
     )
 
-    safe_packets = (M12CoreCommandPacket * 1)(
+    safe_packets = (M12CoreCommandPacket * 2)(
+        packet(
+            M12CORE_COMMAND_PACKET_KIND_SET_PIPELINE,
+            11,
+            M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE,
+        ),
         packet(
             M12CORE_COMMAND_PACKET_KIND_DRAW,
-            11,
+            12,
             M12CORE_COMMAND_PACKET_FLAG_GRAPHICS | M12CORE_COMMAND_PACKET_FLAG_USES_PIPELINE,
-        )
+        ),
     )
     safe_packets[0].object_id0 = handle_result.registry_id
+    safe_packets[1].object_id0 = handle_result.registry_id
     safe_support_desc = M12CorePacketSupportDesc(
         abi_version=M12CORE_ABI_VERSION,
-        packet_count=1,
+        packet_count=2,
         queue_type=0,
         flags=0,
         stream_key=valid_summary.stream_key,
@@ -576,6 +740,7 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     )
     copy_packets[0].object_id0 = handle_result.registry_id
     copy_support_desc = M12CorePacketSupportDesc.from_buffer_copy(safe_support_desc)
+    copy_support_desc.packet_count = 1
     copy_support_desc.packet_sequence_xor ^= 0x12
     copy_support_desc.packets = ctypes.cast(copy_packets, ctypes.POINTER(M12CoreCommandPacket))
     copy_support = M12CorePacketSupportSummary()
@@ -598,6 +763,7 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
     )
     stale_packets[0].object_id0 = 0x12345678
     stale_support_desc = M12CorePacketSupportDesc.from_buffer_copy(safe_support_desc)
+    stale_support_desc.packet_count = 1
     stale_support_desc.packet_sequence_xor ^= 0x13
     stale_support_desc.packets = ctypes.cast(stale_packets, ctypes.POINTER(M12CoreCommandPacket))
     stale_support = M12CorePacketSupportSummary()
@@ -608,6 +774,95 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         stale_support_rc == 0
         and stale_support.status == M12CORE_PACKET_SUPPORT_STATUS_UNSUPPORTED
         and bool(stale_support.unsupported_reason_flags & M12CORE_PACKET_UNSUPPORTED_STALE_HANDLE)
+    )
+
+    replay_off_desc = M12CoreReplayPacketExecuteDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        flags=M12CORE_REPLAY_PACKET_EXECUTE_ALLOW_PROBE_NATIVE,
+        packet_count=2,
+        queue_type=0,
+        command_list_index=0,
+        reserved0=0,
+        command_list_id=0x1234,
+        queue_serial=0x57,
+        stream_key=valid_summary.stream_key,
+        packet_sequence_xor=valid_summary.packet_sequence_xor,
+        packets=ctypes.cast(safe_packets, ctypes.POINTER(M12CoreCommandPacket)),
+    )
+    replay_off = M12CoreReplayPacketExecuteSummary()
+    replay_off_rc = lib.m12core_execute_replay_packet_stream(ctypes.byref(replay_off_desc), ctypes.byref(replay_off))
+    checks["probe_replay_gate_off_fallback"] = (
+        replay_off_rc == 0
+        and replay_off.fallback_reason == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_GATE_DISABLED
+        and bool(replay_off.flags & M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_WHOLE_LIST_FALLBACK)
+    )
+
+    replay_on_desc = M12CoreReplayPacketExecuteDesc.from_buffer_copy(replay_off_desc)
+    replay_on_desc.flags |= M12CORE_REPLAY_PACKET_EXECUTE_GATE_ENABLED
+    replay_on = M12CoreReplayPacketExecuteSummary()
+    replay_on_rc = lib.m12core_execute_replay_packet_stream(ctypes.byref(replay_on_desc), ctypes.byref(replay_on))
+    checks["probe_replay_gate_on_executes_safe"] = (
+        replay_on_rc == 0
+        and replay_on.fallback_reason == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_NONE
+        and replay_on.executed_packet_count == 2
+        and replay_on.binding_packet_count == 1
+        and replay_on.draw_packet_count == 1
+        and bool(replay_on.flags & M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_NATIVE_EXECUTED)
+    )
+
+    replay_copy_desc = M12CoreReplayPacketExecuteDesc.from_buffer_copy(replay_on_desc)
+    replay_copy_desc.packet_count = 1
+    replay_copy_desc.packets = ctypes.cast(copy_packets, ctypes.POINTER(M12CoreCommandPacket))
+    replay_copy = M12CoreReplayPacketExecuteSummary()
+    replay_copy_rc = lib.m12core_execute_replay_packet_stream(ctypes.byref(replay_copy_desc), ctypes.byref(replay_copy))
+    checks["probe_replay_unsupported_fallback"] = (
+        replay_copy_rc == 0
+        and replay_copy.fallback_reason == M12CORE_REPLAY_PACKET_EXECUTE_FALLBACK_UNSUPPORTED_SHAPE
+        and replay_copy.executed_packet_count == 0
+        and bool(replay_copy.flags & M12CORE_REPLAY_PACKET_EXECUTE_SUMMARY_WHOLE_LIST_FALLBACK)
+    )
+
+    encoder_desc = M12CoreEncoderOwnershipDesc(
+        abi_version=M12CORE_ABI_VERSION,
+        flags=(
+            M12CORE_ENCODER_OWNERSHIP_GATE_ENABLED
+            | M12CORE_ENCODER_OWNERSHIP_REPLAY_NATIVE_EXECUTED
+            | M12CORE_ENCODER_OWNERSHIP_HAS_RENDER_TARGETS
+            | M12CORE_ENCODER_OWNERSHIP_HAS_RESOURCE_LAYOUT_VALIDATION
+        ),
+        packet_count=2,
+        queue_type=0,
+        command_list_index=0,
+        render_target_count=1,
+        descriptor_heap_count=0,
+        reserved0=0,
+        command_list_id=0x1234,
+        queue_serial=0x58,
+        stream_key=valid_summary.stream_key,
+        packet_sequence_xor=valid_summary.packet_sequence_xor,
+        replay_execute_key=replay_on.replay_execute_key,
+        resource_layout_key=0x515253545556,
+        packets=ctypes.cast(safe_packets, ctypes.POINTER(M12CoreCommandPacket)),
+    )
+    encoder = M12CoreEncoderOwnershipSummary()
+    encoder_rc = lib.m12core_plan_encoder_ownership(ctypes.byref(encoder_desc), ctypes.byref(encoder))
+    checks["encoder_ownership_plan"] = (
+        encoder_rc == 0
+        and encoder.planned_encoder_count == 1
+        and encoder.render_encoder_count == 1
+        and encoder.encoder_open_count == encoder.encoder_close_count == 1
+        and bool(encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_NATIVE_ENCODER_OWNED)
+    )
+    checks["root_binding_cache_metadata"] = (
+        encoder.binding_cache_entry_count == 1
+        and encoder.root_binding_cache_key != 0
+        and bool(encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_ROOT_BINDING_CACHE_WRITTEN)
+    )
+    checks["encoder_layout_validation_and_no_payload_reuse"] = (
+        encoder.resource_layout_validation_required == 1
+        and encoder.cache_payload_reuse_enabled == 0
+        and bool(encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_LAYOUT_VALIDATION_REQUIRED)
+        and bool(encoder.flags & M12CORE_ENCODER_OWNERSHIP_SUMMARY_CACHE_PAYLOAD_REUSE_DISABLED)
     )
 
     result: dict[str, Any] = {
@@ -634,6 +889,10 @@ def run_probe(lib_path: pathlib.Path) -> tuple[bool, dict[str, Any]]:
         "safe_shape": support_to_dict(safe_support),
         "copy_shape": support_to_dict(copy_support),
         "stale_shape": support_to_dict(stale_support),
+        "probe_replay_gate_off": replay_execute_to_dict(replay_off),
+        "probe_replay_gate_on": replay_execute_to_dict(replay_on),
+        "probe_replay_unsupported": replay_execute_to_dict(replay_copy),
+        "encoder_ownership": encoder_to_dict(encoder),
     }
     return bool(result["ok"]), result
 

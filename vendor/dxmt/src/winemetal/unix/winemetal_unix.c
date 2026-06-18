@@ -148,6 +148,12 @@ typedef int (*PFN_m12core_validate_handle)(
 typedef int (*PFN_m12core_classify_packet_support)(
     const M12CorePacketSupportDesc *desc, M12CorePacketSupportSummary *out_summary
 );
+typedef int (*PFN_m12core_execute_replay_packet_stream)(
+    const M12CoreReplayPacketExecuteDesc *desc, M12CoreReplayPacketExecuteSummary *out_summary
+);
+typedef int (*PFN_m12core_plan_encoder_ownership)(
+    const M12CoreEncoderOwnershipDesc *desc, M12CoreEncoderOwnershipSummary *out_summary
+);
 
 static void *m12core_handle;
 static M12CoreVersion m12core_version;
@@ -183,6 +189,8 @@ static PFN_m12core_make_cache_compatibility_key p_m12core_make_cache_compatibili
 static PFN_m12core_register_handle p_m12core_register_handle;
 static PFN_m12core_validate_handle p_m12core_validate_handle;
 static PFN_m12core_classify_packet_support p_m12core_classify_packet_support;
+static PFN_m12core_execute_replay_packet_stream p_m12core_execute_replay_packet_stream;
+static PFN_m12core_plan_encoder_ownership p_m12core_plan_encoder_ownership;
 static _Atomic uint64_t m12core_bridge_batches;
 static _Atomic uint64_t m12core_bridge_delta_total;
 static _Atomic uint64_t m12core_shader_function_calls;
@@ -291,6 +299,10 @@ m12core_try_load(void) {
   p_m12core_validate_handle = (PFN_m12core_validate_handle)dlsym(m12core_handle, "m12core_validate_handle");
   p_m12core_classify_packet_support =
       (PFN_m12core_classify_packet_support)dlsym(m12core_handle, "m12core_classify_packet_support");
+  p_m12core_execute_replay_packet_stream =
+      (PFN_m12core_execute_replay_packet_stream)dlsym(m12core_handle, "m12core_execute_replay_packet_stream");
+  p_m12core_plan_encoder_ownership =
+      (PFN_m12core_plan_encoder_ownership)dlsym(m12core_handle, "m12core_plan_encoder_ownership");
   if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
       m12core_version.abi_version != M12CORE_ABI_VERSION) {
     m12core_log_line("version check failed; unloading inert core");
@@ -837,6 +849,54 @@ _WMTM12CoreClassifyPacketSupport(void *obj) {
   desc.packet_sequence_xor = params->packet_sequence_xor;
   desc.packets = (const M12CoreCommandPacket *)params->packets.ptr;
   params->ret_success = p_m12core_classify_packet_support(&desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreExecuteReplayPacketStream(void *obj) {
+  struct unixcall_m12core_execute_replay_packet_stream *params = obj;
+  if (!params || !p_m12core_execute_replay_packet_stream)
+    return STATUS_SUCCESS;
+
+  M12CoreReplayPacketExecuteDesc desc;
+  memset(&desc, 0, sizeof(desc));
+  desc.abi_version = params->abi_version;
+  desc.flags = params->flags;
+  desc.packet_count = params->packet_count;
+  desc.queue_type = params->queue_type;
+  desc.command_list_index = params->command_list_index;
+  desc.command_list_id = params->command_list_id;
+  desc.queue_serial = params->queue_serial;
+  desc.stream_key = params->stream_key;
+  desc.packet_sequence_xor = params->packet_sequence_xor;
+  desc.packets = (const M12CoreCommandPacket *)params->packets.ptr;
+  params->ret_success = p_m12core_execute_replay_packet_stream(&desc, &params->ret_summary) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CorePlanEncoderOwnership(void *obj) {
+  struct unixcall_m12core_plan_encoder_ownership *params = obj;
+  if (!params || !p_m12core_plan_encoder_ownership)
+    return STATUS_SUCCESS;
+
+  M12CoreEncoderOwnershipDesc desc;
+  memset(&desc, 0, sizeof(desc));
+  desc.abi_version = params->abi_version;
+  desc.flags = params->flags;
+  desc.packet_count = params->packet_count;
+  desc.queue_type = params->queue_type;
+  desc.command_list_index = params->command_list_index;
+  desc.render_target_count = params->render_target_count;
+  desc.descriptor_heap_count = params->descriptor_heap_count;
+  desc.command_list_id = params->command_list_id;
+  desc.queue_serial = params->queue_serial;
+  desc.stream_key = params->stream_key;
+  desc.packet_sequence_xor = params->packet_sequence_xor;
+  desc.replay_execute_key = params->replay_execute_key;
+  desc.resource_layout_key = params->resource_layout_key;
+  desc.packets = (const M12CoreCommandPacket *)params->packets.ptr;
+  params->ret_success = p_m12core_plan_encoder_ownership(&desc, &params->ret_summary) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -4593,6 +4653,8 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CoreRegisterHandle,
     &_WMTM12CoreValidateHandle,
     &_WMTM12CoreClassifyPacketSupport,
+    &_WMTM12CoreExecuteReplayPacketStream,
+    &_WMTM12CorePlanEncoderOwnership,
 };
 
 #ifndef DXMT_NATIVE
@@ -4762,5 +4824,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CoreRegisterHandle,
     &_WMTM12CoreValidateHandle,
     &_WMTM12CoreClassifyPacketSupport,
+    &_WMTM12CoreExecuteReplayPacketStream,
+    &_WMTM12CorePlanEncoderOwnership,
 };
 #endif

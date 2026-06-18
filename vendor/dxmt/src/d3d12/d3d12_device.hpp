@@ -82,6 +82,9 @@ enum MetalSharpM12TranslationLayerFeatureFlags : UINT64 {
   MetalSharpM12TranslationLayerFeatureCacheIndexShadow = 1ull << 13,
   MetalSharpM12TranslationLayerFeatureNativeHandleRegistry = 1ull << 14,
   MetalSharpM12TranslationLayerFeaturePacketShapeClassifier = 1ull << 15,
+  MetalSharpM12TranslationLayerFeatureProbeReplayExecutor = 1ull << 16,
+  MetalSharpM12TranslationLayerFeatureEncoderOwnershipPlanning = 1ull << 17,
+  MetalSharpM12TranslationLayerFeatureRootBindingCacheMetadata = 1ull << 18,
 };
 
 struct MetalSharpM12TranslationLayerInfo {

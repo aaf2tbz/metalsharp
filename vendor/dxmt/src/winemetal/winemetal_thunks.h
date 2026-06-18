@@ -680,6 +680,44 @@ struct unixcall_m12core_classify_packet_support {
   M12CorePacketSupportSummary ret_summary;
 };
 
+struct unixcall_m12core_execute_replay_packet_stream {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+  struct WMTConstMemoryPointer packets;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreReplayPacketExecuteSummary ret_summary;
+};
+
+struct unixcall_m12core_plan_encoder_ownership {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint32_t packet_count;
+  uint32_t queue_type;
+  uint32_t command_list_index;
+  uint32_t render_target_count;
+  uint32_t descriptor_heap_count;
+  uint32_t reserved0;
+  uint64_t command_list_id;
+  uint64_t queue_serial;
+  uint64_t stream_key;
+  uint64_t packet_sequence_xor;
+  uint64_t replay_execute_key;
+  uint64_t resource_layout_key;
+  struct WMTConstMemoryPointer packets;
+  uint32_t ret_success;
+  uint32_t reserved;
+  M12CoreEncoderOwnershipSummary ret_summary;
+};
+
 struct unixcall_m12core_execute_present_blit {
   M12CorePresentExecuteDesc desc;
   obj_handle_t command_buffer;

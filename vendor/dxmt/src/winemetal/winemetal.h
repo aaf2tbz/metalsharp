@@ -123,6 +123,11 @@ WINEMETAL_API bool
 WMTM12CoreValidateHandle(const M12CoreHandleValidationDesc *desc, M12CoreHandleValidationResult *out_result);
 WINEMETAL_API bool
 WMTM12CoreClassifyPacketSupport(const M12CorePacketSupportDesc *desc, M12CorePacketSupportSummary *out_summary);
+WINEMETAL_API bool WMTM12CoreExecuteReplayPacketStream(
+    const M12CoreReplayPacketExecuteDesc *desc, M12CoreReplayPacketExecuteSummary *out_summary
+);
+WINEMETAL_API bool
+WMTM12CorePlanEncoderOwnership(const M12CoreEncoderOwnershipDesc *desc, M12CoreEncoderOwnershipSummary *out_summary);
 WINEMETAL_API bool
 WMTM12CorePlanRenderPass(const M12CoreRenderPassPlanDesc *desc, M12CoreRenderPassPlanSummary *out_summary);
 

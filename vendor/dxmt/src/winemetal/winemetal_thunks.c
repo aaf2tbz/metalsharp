@@ -120,6 +120,10 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CoreValidateHandle";
   case 164:
     return "WMTM12CoreClassifyPacketSupport";
+  case 165:
+    return "WMTM12CoreExecuteReplayPacketStream";
+  case 166:
+    return "WMTM12CorePlanEncoderOwnership";
   default:
     return "unknown";
   }
@@ -803,6 +807,66 @@ WMTM12CoreClassifyPacketSupport(const M12CorePacketSupportDesc *desc, M12CorePac
   params.packet_sequence_xor = desc->packet_sequence_xor;
   WMT_MEMPTR_SET(params.packets, desc->packets);
   if (!winemetal_unix_call_ok(164, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreExecuteReplayPacketStream(
+    const M12CoreReplayPacketExecuteDesc *desc, M12CoreReplayPacketExecuteSummary *out_summary
+) {
+  struct unixcall_m12core_execute_replay_packet_stream params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C4 probe replay bridge: pass POD packet streams for gated scalar native
+   * execution planning. PE replay remains the whole-list fallback authority.
+   */
+  params.abi_version = desc->abi_version;
+  params.flags = desc->flags;
+  params.packet_count = desc->packet_count;
+  params.queue_type = desc->queue_type;
+  params.command_list_index = desc->command_list_index;
+  params.command_list_id = desc->command_list_id;
+  params.queue_serial = desc->queue_serial;
+  params.stream_key = desc->stream_key;
+  params.packet_sequence_xor = desc->packet_sequence_xor;
+  WMT_MEMPTR_SET(params.packets, desc->packets);
+  if (!winemetal_unix_call_ok(165, &params) || !params.ret_success)
+    return false;
+
+  *out_summary = params.ret_summary;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CorePlanEncoderOwnership(const M12CoreEncoderOwnershipDesc *desc, M12CoreEncoderOwnershipSummary *out_summary) {
+  struct unixcall_m12core_plan_encoder_ownership params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_summary)
+    return false;
+
+  /* C5 encoder/cache bridge: scalar encoder ownership plans and cache metadata
+   * only. No Metal object or cache payload crosses this ABI.
+   */
+  params.abi_version = desc->abi_version;
+  params.flags = desc->flags;
+  params.packet_count = desc->packet_count;
+  params.queue_type = desc->queue_type;
+  params.command_list_index = desc->command_list_index;
+  params.render_target_count = desc->render_target_count;
+  params.descriptor_heap_count = desc->descriptor_heap_count;
+  params.command_list_id = desc->command_list_id;
+  params.queue_serial = desc->queue_serial;
+  params.stream_key = desc->stream_key;
+  params.packet_sequence_xor = desc->packet_sequence_xor;
+  params.replay_execute_key = desc->replay_execute_key;
+  params.resource_layout_key = desc->resource_layout_key;
+  WMT_MEMPTR_SET(params.packets, desc->packets);
+  if (!winemetal_unix_call_ok(166, &params) || !params.ret_success)
     return false;
 
   *out_summary = params.ret_summary;

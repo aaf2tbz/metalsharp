@@ -195,7 +195,11 @@ Validation snapshot:
 
 ## Slice C4 — Probe-native replay executor
 
+Status: **Complete** — see `m12-core-convergence-c4-c5-audit.md`.
+
 Touches: **P9.S3 / P11.S5**
+
+Plan: `m12-core-convergence-c4-c5-plan.md`.
 
 Tasks:
 
@@ -205,7 +209,11 @@ Tasks:
 
 ## Slice C5 — Render-pass/encoder ownership + root/binding cache
 
+Status: **Complete** — see `m12-core-convergence-c4-c5-audit.md`.
+
 Touches: **P9.S4 / P11.S3**
+
+Plan: `m12-core-convergence-c4-c5-plan.md`.
 
 Tasks:
 
@@ -286,4 +294,4 @@ Final proof requires measured native execution coverage, PE fallback parity, rea
 
 ## Current next slice
 
-C0 is the saved roadmap/status reconciliation. C1 is the first implementation slice and must land before C2 attempts real command stream recording.
+C0 through C5 are complete. The next active work is **C6 — Native presenter ownership + thin transport boundary**.
