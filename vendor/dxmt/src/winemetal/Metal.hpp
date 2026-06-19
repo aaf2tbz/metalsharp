@@ -675,6 +675,11 @@ public:
     return MTLCommandBuffer_waitUntilCompleted(handle);
   }
 
+  void
+  addCompletedSignal(uint64_t *serial_value, uint64_t *completed_value, uint64_t *status_value, uint64_t value) {
+    return MTLCommandBuffer_addCompletedSignal(handle, serial_value, completed_value, status_value, value);
+  }
+
   WMTCommandBufferStatus
   status() {
     return MTLCommandBuffer_status(handle);

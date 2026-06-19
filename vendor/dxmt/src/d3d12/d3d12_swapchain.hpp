@@ -2,6 +2,7 @@
 
 #include "com/com_pointer.hpp"
 #include "d3d12.h"
+#include "d3d12_command_buffer_completion.hpp"
 #include "dxgi_interfaces.h"
 #include "dxmt_presenter.hpp"
 #include "Metal.hpp"
@@ -115,6 +116,7 @@ private:
   void ConfigureLayer();
   void ReassertWindowForHandoff(const char *reason);
   void RebindMetalViewForWindowChange(const char *reason);
+  void WaitForPresentCommandBufferSlot();
   void TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf);
   void DrainPresentCommandBuffers(bool wait);
 
@@ -142,7 +144,7 @@ private:
   WMT::Reference<WMT::CommandQueue> m_present_queue;
   std::unique_ptr<InternalCommandLibrary> m_present_library;
   Rc<Presenter> m_presenter;
-  std::array<WMT::Reference<WMT::CommandBuffer>, 8> m_present_inflight;
+  std::array<D3D12MetalCommandBufferCompletionSlot, 8> m_present_inflight;
   uint64_t m_present_submit_count = 0;
   uint64_t m_last_present_wait_seq = 0;
 };

@@ -132,6 +132,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CorePlanReplayCoverage";
   case 170:
     return "WMTM12CorePlanThinPECheckpoint";
+  case 171:
+    return "MTLCommandBuffer_addCompletedSignal";
   default:
     return "unknown";
   }
@@ -2195,4 +2197,17 @@ MTLDevice_newTileRenderPipelineState(
   if (err_out)
     *err_out = params.ret_error;
   return params.ret_pso;
+}
+
+WINEMETAL_API void
+MTLCommandBuffer_addCompletedSignal(
+    obj_handle_t cmdbuf, uint64_t *serial_value, uint64_t *completed_value,
+    uint64_t *status_value, uint64_t value) {
+  struct unixcall_mtlcommandbuffer_completed_signal params;
+  params.cmdbuf = cmdbuf;
+  params.serial_ptr = PtrToUInt64(serial_value);
+  params.completed_ptr = PtrToUInt64(completed_value);
+  params.status_ptr = PtrToUInt64(status_value);
+  params.value = value;
+  UNIX_CALL(171, &params);
 }

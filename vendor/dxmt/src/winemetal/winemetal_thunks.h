@@ -390,6 +390,14 @@ struct unixcall_mtlcommandbuffer_blitcommandencoderwithsamplebuffers {
   obj_handle_t ret;
 };
 
+struct unixcall_mtlcommandbuffer_completed_signal {
+  obj_handle_t cmdbuf;
+  uint64_t serial_ptr;
+  uint64_t completed_ptr;
+  uint64_t status_ptr;
+  uint64_t value;
+};
+
 struct unixcall_mtldevice_newlibrary_source {
   obj_handle_t device;
   struct WMTConstMemoryPointer source;

@@ -218,14 +218,56 @@ bool BuildVertexDescriptorFromMetalFunction(WMT::Function function,
 
 class AsyncPipelineCompiler {
 public:
+  ~AsyncPipelineCompiler() { Shutdown(); }
+
   void Enqueue(MTLD3D12PipelineState *pso) {
     EnsureStarted();
     pso->AddRef();
     {
       std::lock_guard<std::mutex> lock(m_mutex);
+      if (m_stop) {
+        pso->Release();
+        return;
+      }
       m_queue.push_back(pso);
     }
     m_cv.notify_one();
+  }
+
+  void Shutdown() {
+    std::vector<std::thread> workers;
+    std::deque<MTLD3D12PipelineState *> pending;
+    {
+      std::lock_guard<std::mutex> start_lock(m_start_mutex);
+      {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_stop = true;
+        pending.swap(m_queue);
+      }
+      workers.swap(m_workers);
+      m_started = false;
+      m_worker_count = 0;
+    }
+    m_cv.notify_all();
+    for (auto &worker : workers) {
+      if (worker.joinable())
+        worker.join();
+    }
+    for (auto *pso : pending) {
+      if (pso)
+        pso->Release();
+    }
+  }
+
+  void RequestShutdown() {
+    {
+      std::lock_guard<std::mutex> start_lock(m_start_mutex);
+      {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_stop = true;
+      }
+    }
+    m_cv.notify_all();
   }
 
 private:
@@ -238,7 +280,7 @@ private:
     Logger::info(str::format("M12 async PSO compiler starting workers=",
                              m_worker_count));
     for (uint32_t i = 0; i < m_worker_count; i++) {
-      std::thread([this, i]() { WorkerLoop(i); }).detach();
+      m_workers.emplace_back([this, i]() { WorkerLoop(i); });
     }
   }
 
@@ -247,7 +289,9 @@ private:
       MTLD3D12PipelineState *pso = nullptr;
       {
         std::unique_lock<std::mutex> lock(m_mutex);
-        m_cv.wait(lock, [this]() { return !m_queue.empty(); });
+        m_cv.wait(lock, [this]() { return m_stop || !m_queue.empty(); });
+        if (m_stop && m_queue.empty())
+          break;
         pso = m_queue.front();
         m_queue.pop_front();
       }
@@ -258,14 +302,17 @@ private:
       pso->RunAsyncCompile();
       pso->Release();
     }
+    PSTRACE("PSO async worker[%u] stopped", worker_index);
   }
 
   std::mutex m_start_mutex;
   bool m_started = false;
+  bool m_stop = false;
   uint32_t m_worker_count = 0;
   std::mutex m_mutex;
   std::condition_variable m_cv;
   std::deque<MTLD3D12PipelineState *> m_queue;
+  std::vector<std::thread> m_workers;
 };
 
 AsyncPipelineCompiler &GetAsyncPipelineCompiler() {
@@ -1217,6 +1264,14 @@ constexpr WMTStencilOperation kStencilOperationMap[] = {
 };
 
 } // namespace
+
+void ShutdownAsyncPipelineCompiler() {
+  GetAsyncPipelineCompiler().Shutdown();
+}
+
+void RequestShutdownAsyncPipelineCompiler() {
+  GetAsyncPipelineCompiler().RequestShutdown();
+}
 
 std::mutex MTLD3D12PipelineState::s_shader_mutex;
 std::unordered_map<size_t, WMT::Reference<WMT::Function>> MTLD3D12PipelineState::s_shader_cache;

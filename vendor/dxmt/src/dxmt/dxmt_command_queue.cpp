@@ -22,11 +22,37 @@
 #include "dxmt_statistics.hpp"
 #include "util_env.hpp"
 #include "util_win32_compat.h"
+#include <algorithm>
 #include <atomic>
+#include <mutex>
+#include <vector>
 
 #define ASYNC_ENCODING 1
 
 namespace dxmt {
+
+namespace {
+std::mutex &CommandQueueRegistryMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+std::vector<CommandQueue *> &CommandQueueRegistry() {
+  static auto *registry = new std::vector<CommandQueue *>();
+  return *registry;
+}
+
+void RegisterCommandQueue(CommandQueue *queue) {
+  std::lock_guard<std::mutex> lock(CommandQueueRegistryMutex());
+  CommandQueueRegistry().push_back(queue);
+}
+
+void UnregisterCommandQueue(CommandQueue *queue) {
+  std::lock_guard<std::mutex> lock(CommandQueueRegistryMutex());
+  auto &registry = CommandQueueRegistry();
+  registry.erase(std::remove(registry.begin(), registry.end(), queue), registry.end());
+}
+} // namespace
 
 void *
 CommandChunk::allocate_cpu_heap(size_t size, size_t alignment) {
@@ -34,6 +60,8 @@ CommandChunk::allocate_cpu_heap(size_t size, size_t alignment) {
 }
 
 CommandQueue::CommandQueue(WMT::Device device) :
+    stopped(false),
+    shutdown_started(false),
     encodeThread([this]() { this->EncodingThread(); }),
     finishThread([this]() { this->WaitForFinishThread(); }),
     device(device),
@@ -61,6 +89,7 @@ CommandQueue::CommandQueue(WMT::Device device) :
     chunk.reset();
   };
   event = device.newSharedEvent();
+  RegisterCommandQueue(this);
 
   std::string env = env::getEnvVar("DXMT_CAPTURE_FRAME");
 
@@ -73,21 +102,55 @@ CommandQueue::CommandQueue(WMT::Device device) :
 }
 
 CommandQueue::~CommandQueue() {
+  UnregisterCommandQueue(this);
+  Shutdown();
+}
+
+void
+CommandQueue::RequestShutdown() {
+  stopped.store(true, std::memory_order_release);
+  ready_for_encode.fetch_add(1, std::memory_order_release);
+  ready_for_encode.notify_all();
+  ready_for_commit.fetch_add(1, std::memory_order_release);
+  ready_for_commit.notify_all();
+  chunk_ongoing.notify_all();
+  cpu_coherent.signal(UINT64_MAX);
+  frame_latency_fence_.signal(UINT64_MAX);
+}
+
+void
+CommandQueue::Shutdown() {
+  bool expected = false;
+  if (!shutdown_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+    return;
+
   TRACE("Destructing command queue");
-  stopped.store(true);
-  ready_for_encode++;
-  ready_for_encode.notify_one();
-  ready_for_commit++;
-  ready_for_commit.notify_one();
-  SharedEventListener_destroy(shared_event_listener);
-  encodeThread.join();
-  finishThread.join();
+  RequestShutdown();
+
+  if (shared_event_listener) {
+    SharedEventListener_destroy(shared_event_listener);
+    shared_event_listener = 0;
+  }
+
+  if (encodeThread.joinable())
+    encodeThread.join();
+  if (finishThread.joinable())
+    finishThread.join();
   for (unsigned i = 0; i < kCommandChunkCount; i++) {
     auto &chunk = chunks[i];
     chunk.reset();
   };
-  event_listener_thread.join();
+  if (event_listener_thread.joinable())
+    event_listener_thread.join();
   TRACE("Destructed command queue");
+}
+
+void RequestShutdownActiveCommandQueues() {
+  std::lock_guard<std::mutex> lock(CommandQueueRegistryMutex());
+  for (auto *queue : CommandQueueRegistry()) {
+    if (queue)
+      queue->RequestShutdown();
+  }
 }
 
 void

@@ -2028,9 +2028,17 @@ extern "C" HRESULT WINAPI D3D12GetInterface(REFCLSID clsid, REFIID riid,
 
 #ifdef _WIN32
 extern void install_crash_handler();
+namespace dxmt { void RequestShutdownAsyncPipelineCompiler(); }
+namespace dxmt { void RequestShutdownActiveCommandQueues(); }
+namespace {
+HMODULE g_d3d12_module_pin = nullptr;
+}
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
   if (reason == DLL_PROCESS_ATTACH) {
     DisableThreadLibraryCalls(instance);
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                       reinterpret_cast<LPCSTR>(&D3D12SDKVersion),
+                       &g_d3d12_module_pin);
     install_crash_handler();
     FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
@@ -2053,6 +2061,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
       fclose(f);
     }
   } else if (reason == DLL_PROCESS_DETACH) {
+    dxmt::RequestShutdownAsyncPipelineCompiler();
+    dxmt::RequestShutdownActiveCommandQueues();
     FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       char exe[MAX_PATH];

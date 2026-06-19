@@ -1372,6 +1372,24 @@ _MTLCommandBuffer_status(void *obj) {
 }
 
 static NTSTATUS
+_MTLCommandBuffer_addCompletedSignal(void *obj) {
+  struct unixcall_mtlcommandbuffer_completed_signal *params = obj;
+  _Atomic(uint64_t) *serial = (_Atomic(uint64_t) *)(uintptr_t)params->serial_ptr;
+  _Atomic(uint64_t) *completed = (_Atomic(uint64_t) *)(uintptr_t)params->completed_ptr;
+  _Atomic(uint64_t) *status = (_Atomic(uint64_t) *)(uintptr_t)params->status_ptr;
+  uint64_t value = params->value;
+  [(id<MTLCommandBuffer>)params->cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+    if (serial && atomic_load_explicit(serial, memory_order_acquire) != value)
+      return;
+    if (status)
+      atomic_store_explicit(status, (uint64_t)[buffer status], memory_order_release);
+    if (completed)
+      atomic_store_explicit(completed, value, memory_order_release);
+  }];
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 _MTLDevice_newSharedEvent(void *obj) {
   struct unixcall_generic_obj_obj_ret *params = obj;
   params->ret = (obj_handle_t)[(id<MTLDevice>)params->handle newSharedEvent];
@@ -4723,6 +4741,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CorePlanCacheWarmStart,
     &_WMTM12CorePlanReplayCoverage,
     &_WMTM12CorePlanThinPECheckpoint,
+    &_MTLCommandBuffer_addCompletedSignal,
 };
 
 #ifndef DXMT_NATIVE
@@ -4898,5 +4917,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CorePlanCacheWarmStart,
     &_WMTM12CorePlanReplayCoverage,
     &_WMTM12CorePlanThinPECheckpoint,
+    &_MTLCommandBuffer_addCompletedSignal,
 };
 #endif

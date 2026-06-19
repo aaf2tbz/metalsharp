@@ -188,6 +188,10 @@ WINEMETAL_API void MTLCommandBuffer_commit(obj_handle_t cmdbuf);
 
 WINEMETAL_API void MTLCommandBuffer_waitUntilCompleted(obj_handle_t cmdbuf);
 
+WINEMETAL_API void MTLCommandBuffer_addCompletedSignal(
+    obj_handle_t cmdbuf, uint64_t *serial_value, uint64_t *completed_value,
+    uint64_t *status_value, uint64_t value);
+
 enum WMTCommandBufferStatus : uint64_t {
   WMTCommandBufferStatusNotEnqueued = 0,
   WMTCommandBufferStatusEnqueued = 1,

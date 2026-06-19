@@ -151,6 +151,34 @@ bool DXMTD3D12SkipTessellationFallbackDraws() {
   return enabled != 0;
 }
 
+bool DXMTD3D12GPUHangSafetyMode() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_GPU_HANG_SAFETY");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12StrictArgumentBufferResources() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_STRICT_ARG_BUFFER_RESOURCES");
+    if (!value || !value[0])
+      return DXMTD3D12GPUHangSafetyMode() ? 1 : 0;
+    return value[0] != '0' ? 1 : 0;
+  }();
+  return enabled != 0;
+}
+
+bool DXMTD3D12BarrierSafetyDiagnostics() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_BARRIER_SAFETY_DIAGNOSTICS");
+    if (!value || !value[0])
+      return DXMTD3D12GPUHangSafetyMode() ? 1 : 0;
+    return value[0] != '0' ? 1 : 0;
+  }();
+  return enabled != 0;
+}
+
 uint32_t DXMTD3D12MetalQueueMaxInflight() {
   static uint32_t limit = [] {
     const char *value = std::getenv("DXMT_D3D12_METAL_QUEUE_MAX_INFLIGHT");
@@ -230,6 +258,7 @@ static uint32_t g_swapchain_fragment_completeness_logs = 0;
 static uint32_t g_tessellation_fallback_draw_logs = 0;
 static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_command_list_summary_logs = 0;
+static uint32_t g_command_buffer_slot_wait_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
 static uint32_t g_draw_plan_logs = 0;
 static uint32_t g_replay_plan_logs = 0;
@@ -244,6 +273,12 @@ static uint32_t g_replay_coverage_thin_pe_logs = 0;
 static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
+static uint32_t g_gpu_hang_safety_argbuf_logs = 0;
+static uint32_t g_gpu_hang_safety_barrier_logs = 0;
+static uint64_t g_gpu_hang_safety_argbuf_resources = 0;
+static uint64_t g_gpu_hang_safety_argbuf_missing = 0;
+static uint64_t g_gpu_hang_safety_uav_barriers = 0;
+static uint64_t g_gpu_hang_safety_aliasing_barriers = 0;
 static uint64_t g_queue_submit_serial = 0;
 
 static uint32_t g_quarantine_zero_vb_offscreen = 0;
@@ -2943,12 +2978,40 @@ struct ReplayState {
   WMT::Reference<WMT::Buffer> null_vertex_arg_buf;
   WMT::Reference<WMT::Texture> null_direct_texture;
   WMT::Reference<WMT::SamplerState> null_direct_sampler;
+  struct ArgumentBufferResourceUse {
+    uint64_t handle = 0;
+    WMTResourceUsage usage = WMTResourceUsageRead;
+    const char *label = nullptr;
+  };
+  std::vector<ArgumentBufferResourceUse> compute_argbuf_resource_uses;
   VertexBufferEntry vertex_table_data[kVertexBufferSlotCount] = {};
   WMT::Reference<WMT::Buffer> vertex_table_buf;
   WMT::Reference<WMT::Buffer> transient_table_slab;
   uint64_t transient_table_slab_offset = 0;
   std::vector<void *> transient_table_slab_hosts;
   std::vector<WMT::Reference<WMT::Buffer>> transient_buffers;
+
+  void TrackComputeArgumentBufferResource(uint64_t handle,
+                                          WMTResourceUsage usage,
+                                          const char *label) {
+    if (!DXMTD3D12StrictArgumentBufferResources() || !handle)
+      return;
+    for (auto &entry : compute_argbuf_resource_uses) {
+      if (entry.handle == handle) {
+        entry.usage = (WMTResourceUsage)((uint32_t)entry.usage | (uint32_t)usage);
+        return;
+      }
+    }
+    compute_argbuf_resource_uses.push_back({handle, usage, label});
+    __atomic_add_fetch(&g_gpu_hang_safety_argbuf_resources, 1,
+                       __ATOMIC_RELAXED);
+    if (TakeLogBudget(&g_gpu_hang_safety_argbuf_logs, 96)) {
+      Logger::info(str::format("M12 GPU hang safety tracked compute argbuf resource handle=",
+                               (unsigned long long)handle, " usage=0x",
+                               std::hex, (uint32_t)usage, std::dec,
+                               " label=", label ? label : "unknown"));
+    }
+  }
 
   WMT::Reference<WMT::Buffer>
   MakeTransientBuffer(MTLD3D12Device *device, uint64_t length,
@@ -3420,7 +3483,8 @@ struct ReplayState {
                               D3D12_GPU_VIRTUAL_ADDRESS address,
                               WMTResourceUsage usage,
                               WMTRenderStages render_stages,
-                              const char *label) {
+                              const char *label,
+                              bool track_compute_argbuf_resource = false) {
     if (!address)
       return false;
 
@@ -3442,6 +3506,9 @@ struct ReplayState {
     if (render_enc_open) {
       render_enc.useResource(res->GetMTLBuffer(), usage, render_stages);
     }
+    if (track_compute_argbuf_resource)
+      TrackComputeArgumentBufferResource(res->GetMTLBuffer().handle, usage,
+                                         label);
     QTRACE("%s: RootBuffer slot=%u space=%u addr=0x%llx len=%llu offset=%u",
            label, arg.SM50BindingSlot, arg.SM50RegisterSpace,
            (unsigned long long)address, (unsigned long long)length,
@@ -3453,7 +3520,8 @@ struct ReplayState {
                                    const MTL_SM50_SHADER_ARGUMENT &arg,
                                    D3D12_GPU_VIRTUAL_ADDRESS address,
                                    uint64_t size, WMTRenderStages stages,
-                                   const char *label) {
+                                   const char *label,
+                                   bool track_compute_argbuf_resource = false) {
     if (!address)
       return false;
 
@@ -3470,6 +3538,9 @@ struct ReplayState {
       if (render_enc_open)
         render_enc.useResource(res->GetMTLBuffer(), WMTResourceUsageRead,
                                stages);
+      if (track_compute_argbuf_resource)
+        TrackComputeArgumentBufferResource(res->GetMTLBuffer().handle,
+                                           WMTResourceUsageRead, label);
     }
 
     data[arg.StructurePtrOffset] = address;
@@ -4925,6 +4996,7 @@ struct ReplayState {
       return 0;
     }
     memset(comp_arg_buf_data, 0, qword_count * 8);
+    compute_argbuf_resource_uses.clear();
 
     auto *dxmt_sig =
         compute_root_sig
@@ -4965,7 +5037,7 @@ struct ReplayState {
             BindRootBufferArgument(device, comp_arg_buf_data, arg,
                                    comp_srvs[root_desc_idx],
                                    WMTResourceUsageRead, WMTRenderStageVertex,
-                                   "BuildComputeArgBuf")) {
+                                   "BuildComputeArgBuf", true)) {
           continue;
         }
         if (arg.Type == SM50BindingType::UAV &&
@@ -4977,7 +5049,7 @@ struct ReplayState {
                 device, comp_arg_buf_data, arg, comp_uavs[root_desc_idx],
                 (WMTResourceUsage)(WMTResourceUsageRead |
                                    WMTResourceUsageWrite),
-                WMTRenderStageVertex, "BuildComputeArgBuf")) {
+                WMTRenderStageVertex, "BuildComputeArgBuf", true)) {
           continue;
         }
         if (arg.Type == SM50BindingType::ConstantBuffer &&
@@ -4990,7 +5062,7 @@ struct ReplayState {
                                                    : root_cbvs[root_desc_idx];
           if (WriteConstantBufferArgument(device, comp_arg_buf_data, arg,
                                           cbv_addr, 0, WMTRenderStageVertex,
-                                          "BuildComputeArgBuf"))
+                                          "BuildComputeArgBuf", true))
             continue;
         }
         if (arg.Type == SM50BindingType::Sampler && dxmt_sig) {
@@ -5056,19 +5128,27 @@ struct ReplayState {
           WriteConstantBufferArgument(
               device, comp_arg_buf_data, arg, desc->cbv.BufferLocation,
               desc->cbv.SizeInBytes, WMTRenderStageVertex,
-              "BuildComputeArgBuf");
+              "BuildComputeArgBuf", true);
           continue;
         }
 
-        if (!desc->resource)
+        if (!desc->resource) {
+          if (DXMTD3D12StrictArgumentBufferResources()) {
+            __atomic_add_fetch(&g_gpu_hang_safety_argbuf_missing, 1,
+                               __ATOMIC_RELAXED);
+          }
           continue;
+        }
         auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
         QTRACE("BuildComputeArgBuf: res arg type=%d root=%u desc_off=%u res=%p "
                "flags=0x%x offset=%u",
                (int)arg.Type, root_idx, descriptor_offset, (void *)res,
                arg.Flags, arg.StructurePtrOffset);
         if (MSCArgumentAcceptsBuffer(arg, res) && res->GetMTLBuffer().handle) {
+          WMTResourceUsage usage = WMTResourceUsageRead;
           if (arg.Type == SM50BindingType::UAV) {
+            usage = (WMTResourceUsage)(WMTResourceUsageRead |
+                                       WMTResourceUsageWrite);
             comp_arg_buf_data[arg.StructurePtrOffset] =
                 res->GetGPUVirtualAddress() + UAVBufferByteOffset(desc);
             comp_arg_buf_data[arg.StructurePtrOffset + 1] =
@@ -5079,12 +5159,20 @@ struct ReplayState {
             comp_arg_buf_data[arg.StructurePtrOffset + 1] =
                 SRVBufferByteLength(desc, res);
           }
+          TrackComputeArgumentBufferResource(res->GetMTLBuffer().handle, usage,
+                                             "BuildComputeArgBuf descriptor-buffer");
         } else if (auto tex = DescriptorTexture(desc, res); tex.handle) {
+          WMTResourceUsage usage = arg.Type == SM50BindingType::UAV
+                                       ? (WMTResourceUsage)(WMTResourceUsageRead |
+                                                           WMTResourceUsageWrite)
+                                       : WMTResourceUsageRead;
           WriteMSCTextureArgument(comp_arg_buf_data, arg,
                                   DescriptorTextureGPUResourceID(desc, res),
                                   arg.Type == SM50BindingType::UAV
                                       ? UAVTextureArrayLength(desc, res)
                                       : SRVTextureArrayLength(desc, res));
+          TrackComputeArgumentBufferResource(tex.handle, usage,
+                                             "BuildComputeArgBuf descriptor-texture");
         }
       }
     }
@@ -5475,7 +5563,7 @@ struct ReplayState {
             i < graphics_root_sig->GetParameters().size()) {
           const auto &param = graphics_root_sig->GetParameters()[i];
           if (param.type == type) {
-            *out_vis = param.shader_visibility;
+            *out_vis = static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility);
             return param.register_index;
           }
         }
@@ -5661,7 +5749,8 @@ struct ReplayState {
           if (graphics_root_sig &&
               i < graphics_root_sig->GetParameters().size()) {
             const auto &param = graphics_root_sig->GetParameters()[i];
-            D3D12_SHADER_VISIBILITY table_vis = param.shader_visibility;
+            D3D12_SHADER_VISIBILITY table_vis =
+                static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility);
             if (param.type == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE &&
                 !param.ranges.empty()) {
               for (const auto &range : param.ranges) {
@@ -7406,6 +7495,19 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     uint32_t bind_index = st.BindIndexOrFallback(
         st.pso->GetCSReflection().ArgumentBufferBindIndex, st.kArgBufSlot);
     append_compute_setbuffer(st.comp_arg_buf.handle, 0, bind_index);
+    if (DXMTD3D12StrictArgumentBufferResources()) {
+      append_compute_useresource(st.comp_arg_buf.handle, WMTResourceUsageRead);
+      for (const auto &entry : st.compute_argbuf_resource_uses)
+        append_compute_useresource(entry.handle, entry.usage);
+      if (TakeLogBudget(&g_gpu_hang_safety_argbuf_logs, 96)) {
+        Logger::info(str::format(
+            "M12 GPU hang safety compute argbuf resources qwords=",
+            comp_arg_qwords, " tracked=",
+            (unsigned long long)st.compute_argbuf_resource_uses.size(),
+            " argbuf=", (unsigned long long)st.comp_arg_buf.handle,
+            " pso=", (void *)st.pso, " ", TracePsoShaderSummary(st.pso)));
+      }
+    }
     QTRACE("%s: bound compute arg table slot=%u qwords=%u handle=%llu",
            trace_prefix, bind_index, comp_arg_qwords,
            (unsigned long long)st.comp_arg_buf.handle);
@@ -7802,7 +7904,80 @@ MTLD3D12CommandQueue::MTLD3D12CommandQueue(MTLD3D12Device *device,
 
 MTLD3D12CommandQueue::~MTLD3D12CommandQueue() {
   QTRACE("CmdQueue::dtor this=%p", (void *)this);
+  for (auto &slot : m_metal_inflight) {
+    if (!slot.cmdbuf.handle)
+      continue;
+    auto status = IsD3D12MetalCompletionSlotComplete(slot)
+                      ? D3D12MetalCompletionSlotStatus(slot)
+                      : slot.cmdbuf.status();
+    if (status <= WMTCommandBufferStatusScheduled)
+      slot.cmdbuf.waitUntilCompleted();
+    status = IsD3D12MetalCompletionSlotComplete(slot)
+                 ? D3D12MetalCompletionSlotStatus(slot)
+                 : slot.cmdbuf.status();
+    if (status == WMTCommandBufferStatusError) {
+      auto error = slot.cmdbuf.error();
+      Logger::err(str::format("M12 command queue buffer error during teardown: ",
+                              error.description().getUTF8String()));
+    }
+    ResetD3D12MetalCompletionSlot(slot);
+  }
   m_device->Release();
+}
+
+void MTLD3D12CommandQueue::WaitForMetalCommandBufferSlot(const char *reason) {
+  uint32_t limit = std::max<uint32_t>(
+      1, std::min<uint32_t>(m_metal_queue_max_inflight,
+                            static_cast<uint32_t>(m_metal_inflight.size())));
+  auto &slot = m_metal_inflight[m_metal_submit_count % limit];
+  if (!slot.cmdbuf.handle)
+    return;
+
+  auto status = IsD3D12MetalCompletionSlotComplete(slot)
+                    ? D3D12MetalCompletionSlotStatus(slot)
+                    : slot.cmdbuf.status();
+  if (status <= WMTCommandBufferStatusScheduled) {
+    if (TakeLogBudget(&g_command_buffer_slot_wait_logs, 32)) {
+      Logger::warn(str::format(
+          "M12 command queue waiting for completion-tracked slot reason=",
+          reason, " status=", (int)status, " serial=",
+          (unsigned long long)D3D12MetalCompletionSlotSerial(slot),
+          " submit_count=",
+          (unsigned long long)m_metal_submit_count, " limit=", limit));
+    }
+    slot.cmdbuf.waitUntilCompleted();
+  }
+  status = IsD3D12MetalCompletionSlotComplete(slot)
+               ? D3D12MetalCompletionSlotStatus(slot)
+               : slot.cmdbuf.status();
+  if (status == WMTCommandBufferStatusError) {
+    auto error = slot.cmdbuf.error();
+    Logger::err(str::format("M12 command queue buffer error reason=", reason,
+                            " error=",
+                            error.description().getUTF8String()));
+  }
+  ResetD3D12MetalCompletionSlot(slot);
+}
+
+WMT::CommandBuffer
+MTLD3D12CommandQueue::AcquireMetalCommandBuffer(const char *reason) {
+  WaitForMetalCommandBufferSlot(reason);
+  return m_wmt_queue.commandBuffer();
+}
+
+void MTLD3D12CommandQueue::TrackMetalCommandBuffer(WMT::CommandBuffer cmdbuf,
+                                                   const char *reason) {
+  if (!cmdbuf.handle)
+    return;
+
+  uint32_t limit = std::max<uint32_t>(
+      1, std::min<uint32_t>(m_metal_queue_max_inflight,
+                            static_cast<uint32_t>(m_metal_inflight.size())));
+  auto &slot = m_metal_inflight[m_metal_submit_count % limit];
+  if (slot.cmdbuf.handle)
+    WaitForMetalCommandBufferSlot(reason);
+  ArmD3D12MetalCompletionSlot(slot, cmdbuf, m_metal_submit_count + 1);
+  m_metal_submit_count++;
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -7913,7 +8088,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     const uint64_t command_list_id = list->GetDebugId();
 
     QTRACE("ECL: creating cmdbuf from m_wmt_queue");
-    auto cmdbuf = m_wmt_queue.commandBuffer();
+    auto cmdbuf = AcquireMetalCommandBuffer("ExecuteCommandLists");
     QTRACE("ECL: cmdbuf handle=%llu", (unsigned long long)cmdbuf.handle);
     if (!cmdbuf.handle) {
       Logger::err("ExecuteCommandLists: failed to create Metal command buffer");
@@ -7929,6 +8104,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                          cmds.size());
     if (cmds.empty()) {
       QTRACE("ExecuteCommandLists: empty cmdlist, committing");
+      TrackMetalCommandBuffer(cmdbuf, "ExecuteCommandLists.empty");
       cmdbuf.commit();
       QTRACE("ExecuteCommandLists: empty cmdlist committed ok");
       continue;
@@ -9314,9 +9490,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       case CmdType::ResourceBarrier: {
         auto *cmd = reinterpret_cast<const CmdResourceBarrier *>(header);
         QTRACE("ResourceBarrier count=%u", cmd->count);
+        uint32_t safety_uav_count = 0;
+        uint32_t safety_aliasing_count = 0;
+        uint32_t safety_transition_count = 0;
         for (uint32_t i = 0; i < cmd->count; i++) {
           const auto &barrier = cmd->barriers[i];
           if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) {
+            safety_transition_count++;
             auto *res = static_cast<MTLD3D12Resource *>(barrier.Transition.pResource);
             D3D12_RESOURCE_STATES tracked_state =
                 res ? res->GetResourceState() : D3D12_RESOURCE_STATE_COMMON;
@@ -9338,15 +9518,38 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               res->SetResourceState(barrier.Transition.StateAfter);
             }
           } else if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_UAV) {
+            safety_uav_count++;
+            if (DXMTD3D12BarrierSafetyDiagnostics()) {
+              __atomic_add_fetch(&g_gpu_hang_safety_uav_barriers, 1,
+                                 __ATOMIC_RELAXED);
+            }
             QTRACE("  barrier[%u] uav res=%p flags=0x%x", i,
                    (void *)barrier.UAV.pResource, barrier.Flags);
           } else if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING) {
+            safety_aliasing_count++;
+            if (DXMTD3D12BarrierSafetyDiagnostics()) {
+              __atomic_add_fetch(&g_gpu_hang_safety_aliasing_barriers, 1,
+                                 __ATOMIC_RELAXED);
+            }
             QTRACE("  barrier[%u] alias before=%p after=%p flags=0x%x", i,
                    (void *)barrier.Aliasing.pResourceBefore,
                    (void *)barrier.Aliasing.pResourceAfter, barrier.Flags);
           } else {
             QTRACE("  barrier[%u] type=%u flags=0x%x", i, barrier.Type,
                    barrier.Flags);
+          }
+        }
+
+        if (DXMTD3D12BarrierSafetyDiagnostics() &&
+            (safety_uav_count || safety_aliasing_count)) {
+          if (TakeLogBudget(&g_gpu_hang_safety_barrier_logs, 128)) {
+            Logger::info(str::format(
+                "M12 GPU hang safety barrier command transitions=",
+                safety_transition_count, " uav=", safety_uav_count,
+                " aliasing=", safety_aliasing_count, " queue_type=",
+                (unsigned)m_desc.Type, " cmdbuf=",
+                (unsigned long long)cmdbuf.handle, " event=",
+                (unsigned long long)m_barrier_event.handle));
           }
         }
 
@@ -9360,6 +9563,14 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           cmdbuf.encodeWaitForEvent(m_barrier_event, seq);
         } else {
           QTRACE("ResourceBarrier queue-order skipped: no event");
+          if (DXMTD3D12BarrierSafetyDiagnostics() &&
+              (safety_uav_count || safety_aliasing_count) &&
+              TakeLogBudget(&g_gpu_hang_safety_barrier_logs, 128)) {
+            Logger::warn(str::format(
+                "M12 GPU hang safety barrier has no queue-order event uav=",
+                safety_uav_count, " aliasing=", safety_aliasing_count,
+                " queue_type=", (unsigned)m_desc.Type));
+          }
         }
         break;
       }
@@ -9978,6 +10189,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
+    TrackMetalCommandBuffer(cmdbuf, "ExecuteCommandLists");
     cmdbuf.commit();
     const bool sync_execute =
         DXMTD3D12SyncExecuteCommandBuffers() ||
@@ -10135,13 +10347,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Signal(ID3D12Fence *fence,
     return E_FAIL;
   QTRACE("CmdQueue::Signal value=%llu fence=%p",
          (unsigned long long)value, (void *)fence);
-  auto cmdbuf = m_wmt_queue.commandBuffer();
+  auto cmdbuf = AcquireMetalCommandBuffer("Signal");
   if (!cmdbuf.handle)
     return E_FAIL;
   cmdbuf.encodeSignalEvent(shared_event, value);
   DXMTD3D12ScopedTimer signal_timer("Queue", "SignalFence");
   signal_timer.SetDetail("queue_type=%u value=%llu fence=%p", m_desc.Type,
                          (unsigned long long)value, (void *)fence);
+  TrackMetalCommandBuffer(cmdbuf, "Signal");
   cmdbuf.commit();
   QTRACE("CmdQueue::Signal queued queue_type=%u value=%llu fence=%p",
          m_desc.Type, (unsigned long long)value, (void *)fence);
@@ -10158,13 +10371,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Wait(ID3D12Fence *fence,
   auto shared_event = dxmt_fence->GetMTLSharedEvent();
   if (!shared_event.handle)
     return E_FAIL;
-  auto cmdbuf = m_wmt_queue.commandBuffer();
+  auto cmdbuf = AcquireMetalCommandBuffer("Wait");
   if (!cmdbuf.handle)
     return E_FAIL;
   cmdbuf.encodeWaitForEvent(shared_event, value);
   DXMTD3D12ScopedTimer wait_timer("Queue", "WaitFence");
   wait_timer.SetDetail("queue_type=%u value=%llu fence=%p", m_desc.Type,
                        (unsigned long long)value, (void *)fence);
+  TrackMetalCommandBuffer(cmdbuf, "Wait");
   cmdbuf.commit();
   QTRACE("CmdQueue::Wait queued queue_type=%u value=%llu fence=%p", m_desc.Type,
          (unsigned long long)value, (void *)fence);

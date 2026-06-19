@@ -2,9 +2,11 @@
 
 #include "com/com_pointer.hpp"
 #include "d3d12.h"
+#include "d3d12_command_buffer_completion.hpp"
 #include "dxgi_interfaces.h"
 #include "dxmt_command_queue.hpp"
 #include "Metal.hpp"
+#include <array>
 #include <atomic>
 
 namespace dxmt {
@@ -77,6 +79,10 @@ public:
   CommandQueue &GetDXMTCommandQueue() { return m_queue; }
 
 private:
+  WMT::CommandBuffer AcquireMetalCommandBuffer(const char *reason);
+  void WaitForMetalCommandBufferSlot(const char *reason);
+  void TrackMetalCommandBuffer(WMT::CommandBuffer cmdbuf, const char *reason);
+
   MTLD3D12Device *m_device;
   CommandQueue &m_queue;
   D3D12_COMMAND_QUEUE_DESC m_desc;
@@ -86,6 +92,8 @@ private:
   WMT::Reference<WMT::Event> m_barrier_event;
   uint64_t m_barrier_seq = 0;
   uint32_t m_metal_queue_max_inflight = 1;
+  std::array<D3D12MetalCommandBufferCompletionSlot, 64> m_metal_inflight;
+  uint64_t m_metal_submit_count = 0;
 };
 
 } // namespace dxmt

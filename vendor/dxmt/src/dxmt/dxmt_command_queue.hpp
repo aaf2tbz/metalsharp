@@ -166,6 +166,7 @@ private:
   CpuFence cpu_coherent;
   CpuFence frame_latency_fence_;
   std::atomic_bool stopped;
+  std::atomic_bool shutdown_started;
 
   std::array<CommandChunk, kCommandChunkCount> chunks;
   uint64_t encoder_seq = 1;
@@ -205,6 +206,10 @@ public:
   CommandQueue(WMT::Device device);
 
   ~CommandQueue();
+
+  void Shutdown();
+
+  void RequestShutdown();
 
   CommandChunk *
   CurrentChunk() {

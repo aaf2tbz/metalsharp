@@ -4,16 +4,22 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
 
 #include <d3d12.h>
+#include <d3dcompiler.h>
 #include <dxgi1_4.h>
 
 static const GUID IID_D3D12DeviceProbe = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
 
 using D3D12CreateDeviceFn = HRESULT(WINAPI*)(IUnknown*, D3D_FEATURE_LEVEL, REFIID, void**);
+using D3D12SerializeRootSignatureFn = HRESULT(WINAPI*)(const D3D12_ROOT_SIGNATURE_DESC*, D3D_ROOT_SIGNATURE_VERSION,
+                                                       ID3DBlob**, ID3DBlob**);
+using D3DCompileFn = HRESULT(WINAPI*)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO*, ID3DInclude*, LPCSTR, LPCSTR,
+                                      UINT, UINT, ID3DBlob**, ID3DBlob**);
 using CreateDXGIFactory2Fn = HRESULT(WINAPI*)(UINT, REFIID, void**);
 
 struct Pixel {
@@ -52,6 +58,17 @@ static std::string getenv_string(const char* key) {
     return value;
 }
 
+static UINT getenv_uint(const char* key, UINT fallback) {
+    std::string value = getenv_string(key);
+    if (value.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    unsigned long parsed = std::strtoul(value.c_str(), &end, 10);
+    return end && end != value.c_str() ? static_cast<UINT>(parsed) : fallback;
+}
+
+
 static std::string json_escape(const std::string& input) {
     std::string out;
     out.reserve(input.size() + 8);
@@ -85,12 +102,31 @@ static void print_hr(const char* key, HRESULT hr, bool comma = true) {
                 comma ? "," : "");
 }
 
+static void shutdown_log(const char* message) {
+    std::fprintf(stderr, "%s\n", message);
+    std::fflush(stderr);
+}
+
+static void shutdown_logf(const char* fmt, UINT value) {
+    std::fprintf(stderr, fmt, value);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+}
+
 static void pump_messages() {
     MSG msg = {};
     while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+}
+
+static void pump_messages_for_ms(DWORD ms) {
+    DWORD start = GetTickCount();
+    do {
+        pump_messages();
+        Sleep(10);
+    } while (GetTickCount() - start < ms);
 }
 
 static LRESULT CALLBACK probe_window_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -115,7 +151,7 @@ static D3D12_HEAP_PROPERTIES heap_props(D3D12_HEAP_TYPE type) {
     return props;
 }
 
-static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes) {
+static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE) {
     D3D12_RESOURCE_DESC desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     desc.Width = bytes;
@@ -125,6 +161,7 @@ static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes) {
     desc.Format = DXGI_FORMAT_UNKNOWN;
     desc.SampleDesc.Count = 1;
     desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    desc.Flags = flags;
     return desc;
 }
 
@@ -142,6 +179,13 @@ static D3D12_RESOURCE_BARRIER transition_barrier(ID3D12Resource* resource, D3D12
 static D3D12_CPU_DESCRIPTOR_HANDLE offset_cpu(D3D12_CPU_DESCRIPTOR_HANDLE start, UINT increment, UINT index) {
     start.ptr += static_cast<SIZE_T>(increment) * index;
     return start;
+}
+
+static D3D12_RESOURCE_BARRIER uav_barrier(ID3D12Resource* resource) {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = resource;
+    return barrier;
 }
 
 static Pixel read_pixel(const uint8_t* data, UINT row_pitch, UINT x, UINT y) {
@@ -177,6 +221,175 @@ static bool execute_and_wait(ID3D12CommandQueue* queue, ID3D12GraphicsCommandLis
         return false;
     }
     return wait_for_fence(fence, fence_value, event_handle);
+}
+
+static HRESULT compile_shader(D3DCompileFn compile_fn, const char* hlsl, const char* entry, const char* target,
+                              ID3DBlob** out, std::string& errors) {
+    if (!compile_fn) {
+        return E_NOINTERFACE;
+    }
+    ID3DBlob* err = nullptr;
+    HRESULT hr = compile_fn(hlsl, std::strlen(hlsl), nullptr, nullptr, nullptr, entry, target, 0, 0, out, &err);
+    if (err) {
+        errors.assign(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize());
+        err->Release();
+    }
+    return hr;
+}
+
+static HRESULT serialize_root_signature(D3D12SerializeRootSignatureFn serialize_fn,
+                                        const D3D12_ROOT_SIGNATURE_DESC& desc, ID3DBlob** out,
+                                        std::string& errors) {
+    if (!serialize_fn) {
+        return E_NOINTERFACE;
+    }
+    ID3DBlob* err = nullptr;
+    HRESULT hr = serialize_fn(&desc, D3D_ROOT_SIGNATURE_VERSION_1, out, &err);
+    if (err) {
+        errors.assign(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize());
+        err->Release();
+    }
+    return hr;
+}
+
+struct DescriptorStressResult {
+    UINT requested = 0;
+    UINT completed = 0;
+    HRESULT setup_hr = S_OK;
+    HRESULT last_hr = S_OK;
+    std::string detail;
+
+    bool pass() const { return completed == requested && SUCCEEDED(setup_hr) && SUCCEEDED(last_hr); }
+};
+
+static DescriptorStressResult run_descriptor_compute_stress(
+    ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
+    ID3D12GraphicsCommandList* list, ID3D12Fence* fence, HANDLE event_handle, UINT64& fence_value,
+    D3D12SerializeRootSignatureFn serialize_fn, D3DCompileFn compile_fn, UINT frames) {
+    DescriptorStressResult result = {};
+    result.requested = frames;
+    if (frames == 0) {
+        return result;
+    }
+    if (!device || !queue || !allocator || !list || !fence || !event_handle) {
+        result.setup_hr = E_POINTER;
+        result.last_hr = E_POINTER;
+        result.detail = "missing d3d12 object";
+        return result;
+    }
+
+    ID3D12DescriptorHeap* heap = nullptr;
+    ID3D12Resource* uav_buffer = nullptr;
+    ID3DBlob* root_blob = nullptr;
+    ID3DBlob* cs_blob = nullptr;
+    ID3D12RootSignature* root_sig = nullptr;
+    ID3D12PipelineState* pso = nullptr;
+
+    D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+    heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    heap_desc.NumDescriptors = 1;
+    heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    result.setup_hr = device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&heap));
+
+    if (SUCCEEDED(result.setup_hr)) {
+        D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+        D3D12_RESOURCE_DESC desc = buffer_desc(4096, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                          IID_PPV_ARGS(&uav_buffer));
+    }
+    if (SUCCEEDED(result.setup_hr)) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
+        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uav.Format = DXGI_FORMAT_UNKNOWN;
+        uav.Buffer.NumElements = 1024;
+        uav.Buffer.StructureByteStride = 4;
+        device->CreateUnorderedAccessView(uav_buffer, nullptr, &uav, heap->GetCPUDescriptorHandleForHeapStart());
+    }
+    if (SUCCEEDED(result.setup_hr)) {
+        D3D12_DESCRIPTOR_RANGE range = {};
+        range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        range.NumDescriptors = 1;
+        range.BaseShaderRegister = 0;
+        range.RegisterSpace = 0;
+        range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        D3D12_ROOT_PARAMETER param = {};
+        param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        param.DescriptorTable.NumDescriptorRanges = 1;
+        param.DescriptorTable.pDescriptorRanges = &range;
+        D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+        root_desc.NumParameters = 1;
+        root_desc.pParameters = &param;
+        std::string errors;
+        result.setup_hr = serialize_root_signature(serialize_fn, root_desc, &root_blob, errors);
+        if (FAILED(result.setup_hr)) {
+            result.detail = errors;
+        }
+    }
+    if (SUCCEEDED(result.setup_hr)) {
+        result.setup_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                      IID_PPV_ARGS(&root_sig));
+    }
+    if (SUCCEEDED(result.setup_hr)) {
+        const char* hlsl =
+            "RWStructuredBuffer<uint> outbuf : register(u0);\n"
+            "[numthreads(1,1,1)]\n"
+            "void main(uint3 tid : SV_DispatchThreadID) {\n"
+            "  uint oldv;\n"
+            "  InterlockedAdd(outbuf[0], 1, oldv);\n"
+            "}\n";
+        std::string errors;
+        result.setup_hr = compile_shader(compile_fn, hlsl, "main", "cs_5_0", &cs_blob, errors);
+        if (FAILED(result.setup_hr)) {
+            result.detail = errors;
+        }
+    }
+    if (SUCCEEDED(result.setup_hr)) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = root_sig;
+        pso_desc.CS.pShaderBytecode = cs_blob->GetBufferPointer();
+        pso_desc.CS.BytecodeLength = cs_blob->GetBufferSize();
+        result.setup_hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&pso));
+    }
+
+    for (UINT frame = 0; frame < frames && SUCCEEDED(result.setup_hr); ++frame) {
+        result.last_hr = allocator->Reset();
+        if (SUCCEEDED(result.last_hr)) {
+            result.last_hr = list->Reset(allocator, pso);
+        }
+        if (SUCCEEDED(result.last_hr)) {
+            ID3D12DescriptorHeap* heaps[] = {heap};
+            list->SetDescriptorHeaps(1, heaps);
+            list->SetComputeRootSignature(root_sig);
+            list->SetComputeRootDescriptorTable(0, heap->GetGPUDescriptorHandleForHeapStart());
+            list->Dispatch(1, 1, 1);
+            D3D12_RESOURCE_BARRIER barrier = uav_barrier(uav_buffer);
+            list->ResourceBarrier(1, &barrier);
+            result.last_hr = list->Close();
+        }
+        if (SUCCEEDED(result.last_hr)) {
+            ID3D12CommandList* lists[] = {list};
+            queue->ExecuteCommandLists(1, lists);
+            fence_value += 1;
+            result.last_hr = queue->Signal(fence, fence_value);
+            if (SUCCEEDED(result.last_hr) && !wait_for_fence(fence, fence_value, event_handle)) {
+                result.last_hr = E_FAIL;
+            }
+        }
+        if (FAILED(result.last_hr)) {
+            break;
+        }
+        result.completed += 1;
+    }
+
+    safe_release(pso);
+    safe_release(root_sig);
+    safe_release(cs_blob);
+    safe_release(root_blob);
+    safe_release(uav_buffer);
+    safe_release(heap);
+    return result;
 }
 
 static bool verify_texture_color(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
@@ -283,8 +496,42 @@ static bool clear_present_and_verify(ID3D12Device* device, ID3D12CommandQueue* q
     return false;
 }
 
+static bool clear_present_only(ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
+                               ID3D12GraphicsCommandList* list, ID3D12Fence* fence, HANDLE event_handle,
+                               UINT64& fence_value, IDXGISwapChain3* swapchain, ID3D12Resource* backbuffer,
+                               D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle, D3D12_RESOURCE_STATES before_state,
+                               const float clear_color[4], HRESULT& present_hr_out, HANDLE frame_latency_waitable) {
+    present_hr_out = E_FAIL;
+    if (FAILED(allocator->Reset()) || FAILED(list->Reset(allocator, nullptr))) {
+        return false;
+    }
+    D3D12_RESOURCE_BARRIER to_rtv = transition_barrier(backbuffer, before_state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    list->ResourceBarrier(1, &to_rtv);
+    list->OMSetRenderTargets(1, &rtv_handle, FALSE, nullptr);
+    list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
+    D3D12_RESOURCE_BARRIER to_present = transition_barrier(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                           D3D12_RESOURCE_STATE_PRESENT);
+    list->ResourceBarrier(1, &to_present);
+    if (FAILED(list->Close()) || !execute_and_wait(queue, list, fence, event_handle, fence_value)) {
+        return false;
+    }
+    present_hr_out = swapchain->Present(0, 0);
+    if (SUCCEEDED(present_hr_out) && frame_latency_waitable) {
+        WaitForSingleObject(frame_latency_waitable, 0);
+    }
+    pump_messages();
+    return SUCCEEDED(present_hr_out);
+}
+
 int main() {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
     std::string profile = getenv_string("D3D12_METAL_SDK_PROFILE");
+    UINT stress_frames_requested = getenv_uint("M12_PRESENT_WINDOWED_STRESS_FRAMES", 0);
+    UINT descriptor_stress_frames_requested = getenv_uint("M12_PRESENT_WINDOWED_DESCRIPTOR_STRESS_FRAMES", 0);
+    UINT shutdown_grace_ms = getenv_uint("M12_PRESENT_WINDOWED_SHUTDOWN_GRACE_MS", 500);
+    UINT skip_freelib = getenv_uint("M12_PRESENT_WINDOWED_SKIP_FREELIB", 0);
 
     const UINT initial_width = 128;
     const UINT initial_height = 96;
@@ -293,8 +540,15 @@ int main() {
 
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");
     HMODULE dxgi = LoadLibraryA("dxgi.dll");
+    HMODULE d3dcompiler = LoadLibraryA("d3dcompiler_47.dll");
+    if (!d3dcompiler) {
+        d3dcompiler = LoadLibraryA("d3dcompiler_43.dll");
+    }
 
     auto d3d12_create_device = load_proc<D3D12CreateDeviceFn>(d3d12, "D3D12CreateDevice");
+    auto d3d12_serialize_root_signature =
+        load_proc<D3D12SerializeRootSignatureFn>(d3d12, "D3D12SerializeRootSignature");
+    auto d3d_compile = load_proc<D3DCompileFn>(d3dcompiler, "D3DCompile");
     auto create_dxgi_factory2 = load_proc<CreateDXGIFactory2Fn>(dxgi, "CreateDXGIFactory2");
 
     HRESULT register_class_hr = S_OK;
@@ -376,6 +630,10 @@ int main() {
     UINT present_count_after_first = 0;
     UINT present_count_after_second = 0;
     UINT present_count_after_resize = 0;
+    UINT stress_frames_completed = 0;
+    HRESULT stress_last_present_hr = S_OK;
+    UINT present_count_after_stress = 0;
+    DescriptorStressResult descriptor_stress = {};
     UINT initial_index = 0;
     UINT index_after_first = 0;
     UINT index_after_second = 0;
@@ -395,6 +653,8 @@ int main() {
     bool frame_latency_verified = false;
     bool color_space_verified = false;
     bool fullscreen_windowed_verified = false;
+    bool stress_verified = stress_frames_requested == 0;
+    bool descriptor_stress_verified = descriptor_stress_frames_requested == 0;
 
     if (!d3d12 || !dxgi || !d3d12_create_device || !create_dxgi_factory2 || !hwnd || FAILED(register_class_hr)) {
         create_factory_hr = d3d12_create_device ? create_factory_hr : E_NOINTERFACE;
@@ -597,6 +857,35 @@ int main() {
 
             swapchain3->GetLastPresentCount(&present_count_after_resize);
             index_after_resize = swapchain3->GetCurrentBackBufferIndex();
+
+            descriptor_stress = run_descriptor_compute_stress(
+                device, queue, allocator, list, fence, fence_event, fence_value, d3d12_serialize_root_signature,
+                d3d_compile, descriptor_stress_frames_requested);
+            descriptor_stress_verified = descriptor_stress.pass();
+
+            static const float stress_colors[4][4] = {
+                {1.0f, 0.1f, 0.1f, 1.0f},
+                {0.1f, 1.0f, 0.1f, 1.0f},
+                {0.1f, 0.1f, 1.0f, 1.0f},
+                {1.0f, 1.0f, 0.1f, 1.0f},
+            };
+            for (UINT frame = 0; frame < stress_frames_requested; ++frame) {
+                UINT current = swapchain3->GetCurrentBackBufferIndex();
+                if (current >= resized_buffers.size() || !resized_buffers[current]) {
+                    stress_last_present_hr = E_FAIL;
+                    break;
+                }
+                bool ok = clear_present_only(queue, allocator, list, fence, fence_event, fence_value, swapchain3,
+                                             resized_buffers[current], offset_cpu(rtv_start, rtv_increment, current),
+                                             D3D12_RESOURCE_STATE_PRESENT, stress_colors[frame % 4],
+                                             stress_last_present_hr, frame_latency_waitable);
+                if (!ok) {
+                    break;
+                }
+                stress_frames_completed += 1;
+            }
+            swapchain3->GetLastPresentCount(&present_count_after_stress);
+            stress_verified = stress_frames_completed == stress_frames_requested && SUCCEEDED(stress_last_present_hr);
         }
 
         present_counts_verified = initial_present_count == 0 && present_count_after_first == 1 &&
@@ -613,7 +902,8 @@ int main() {
                 initial_dimensions_verified && buffer0_verified && buffer1_verified && present_counts_verified &&
                 index_progression_verified && SUCCEEDED(resize_hr) && resize_dimensions_verified &&
                 resize_replaced_buffers && resized_buffer_verified && device_ownership_verified &&
-                frame_latency_verified && color_space_verified && fullscreen_windowed_verified;
+                frame_latency_verified && color_space_verified && fullscreen_windowed_verified && stress_verified &&
+                descriptor_stress_verified;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-present-windowed.v1\",\n");
@@ -634,7 +924,9 @@ int main() {
     std::printf("    \"device_ownership_verified\": %s,\n", device_ownership_verified ? "true" : "false");
     std::printf("    \"frame_latency_verified\": %s,\n", frame_latency_verified ? "true" : "false");
     std::printf("    \"color_space_verified\": %s,\n", color_space_verified ? "true" : "false");
-    std::printf("    \"fullscreen_windowed_verified\": %s\n", fullscreen_windowed_verified ? "true" : "false");
+    std::printf("    \"fullscreen_windowed_verified\": %s,\n", fullscreen_windowed_verified ? "true" : "false");
+    std::printf("    \"stress_verified\": %s,\n", stress_verified ? "true" : "false");
+    std::printf("    \"descriptor_stress_verified\": %s\n", descriptor_stress_verified ? "true" : "false");
     std::printf("  },\n");
     std::printf("  \"window\": {\n");
     std::printf("    \"hwnd\": \"%p\",\n", hwnd);
@@ -644,13 +936,26 @@ int main() {
     std::printf("    \"initial\": %u,\n", initial_present_count);
     std::printf("    \"after_first\": %u,\n", present_count_after_first);
     std::printf("    \"after_second\": %u,\n", present_count_after_second);
-    std::printf("    \"after_resize\": %u\n", present_count_after_resize);
+    std::printf("    \"after_resize\": %u,\n", present_count_after_resize);
+    std::printf("    \"after_stress\": %u\n", present_count_after_stress);
     std::printf("  },\n");
     std::printf("  \"backbuffer_indices\": {\n");
     std::printf("    \"initial\": %u,\n", initial_index);
     std::printf("    \"after_first\": %u,\n", index_after_first);
     std::printf("    \"after_second\": %u,\n", index_after_second);
     std::printf("    \"after_resize\": %u\n", index_after_resize);
+    std::printf("  },\n");
+    std::printf("  \"stress\": {\n");
+    std::printf("    \"requested_frames\": %u,\n", stress_frames_requested);
+    std::printf("    \"completed_frames\": %u,\n", stress_frames_completed);
+    print_hr("last_present", stress_last_present_hr, false);
+    std::printf("  },\n");
+    std::printf("  \"descriptor_stress\": {\n");
+    std::printf("    \"requested_frames\": %u,\n", descriptor_stress.requested);
+    std::printf("    \"completed_frames\": %u,\n", descriptor_stress.completed);
+    print_hr("setup", descriptor_stress.setup_hr);
+    print_hr("last", descriptor_stress.last_hr);
+    std::printf("    \"detail\": \"%s\"\n", json_escape(descriptor_stress.detail).c_str());
     std::printf("  },\n");
     std::printf("  \"ownership\": {\n");
     std::printf("    \"created_device\": \"%p\",\n", device);
@@ -701,16 +1006,15 @@ int main() {
     std::printf("  }\n");
     std::printf("}\n");
 
+    shutdown_log("probe shutdown: release backbuffers");
     for (auto& buffer : resized_buffers) {
         safe_release(buffer);
     }
     for (auto& buffer : buffers) {
         safe_release(buffer);
     }
-    if (fence_event) {
-        CloseHandle(fence_event);
-    }
-    safe_release(fence);
+
+    shutdown_log("probe shutdown: release D3D12 objects");
     safe_release(list);
     safe_release(allocator);
     safe_release(rtv_heap);
@@ -719,17 +1023,42 @@ int main() {
     safe_release(swapchain3);
     safe_release(swapchain1);
     safe_release(queue);
+    safe_release(fence);
+    if (fence_event) {
+        CloseHandle(fence_event);
+        fence_event = nullptr;
+    }
     safe_release(device);
     safe_release(factory4);
+
+    shutdown_logf("probe shutdown: pump/grace %u ms", shutdown_grace_ms);
+    pump_messages_for_ms(shutdown_grace_ms);
+
+    shutdown_log("probe shutdown: destroy window");
     if (hwnd) {
         DestroyWindow(hwnd);
+        hwnd = nullptr;
     }
-    if (d3d12) {
-        FreeLibrary(d3d12);
-    }
-    if (dxgi) {
-        FreeLibrary(dxgi);
-    }
+    pump_messages_for_ms(50);
 
+    shutdown_logf("probe shutdown: free libraries skip=%u", skip_freelib);
+    if (!skip_freelib && d3d12) {
+        shutdown_log("probe shutdown: FreeLibrary d3d12");
+        FreeLibrary(d3d12);
+        shutdown_log("probe shutdown: FreeLibrary d3d12 done");
+    }
+    if (!skip_freelib && dxgi) {
+        shutdown_log("probe shutdown: FreeLibrary dxgi");
+        FreeLibrary(dxgi);
+        shutdown_log("probe shutdown: FreeLibrary dxgi done");
+    }
+    if (!skip_freelib && d3dcompiler) {
+        shutdown_log("probe shutdown: FreeLibrary d3dcompiler");
+        FreeLibrary(d3dcompiler);
+        shutdown_log("probe shutdown: FreeLibrary d3dcompiler done");
+    }
+    shutdown_log("probe shutdown: return");
+
+    ExitProcess(pass ? 0 : 1);
     return pass ? 0 : 1;
 }

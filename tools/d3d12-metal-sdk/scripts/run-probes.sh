@@ -847,14 +847,21 @@ fi
 
 REAL_WINE_BIN="$WINE_BIN"
 PROBE_WINE_WRAPPER="$RESULTS_DIR/wine-probe-wrapper.sh"
-cat > "$PROBE_WINE_WRAPPER" <<'EOF_WINE_WRAPPER'
+if [[ "${D3D12_METAL_SDK_DISABLE_WINE_STDERR_FILTER:-0}" == "1" ]]; then
+  cat > "$PROBE_WINE_WRAPPER" <<EOF_WINE_WRAPPER
+#!/usr/bin/env bash
+exec "$REAL_WINE_BIN" "\$@"
+EOF_WINE_WRAPPER
+else
+  cat > "$PROBE_WINE_WRAPPER" <<'EOF_WINE_WRAPPER'
 #!/usr/bin/env bash
 set -o pipefail
 "$D3D12_METAL_SDK_REAL_WINE" "$@" 2> >(grep -v -E '^(mscompatdb:|mscompatdb:error:|mscompatdb:warn:|mscompatdb:trace:)' >&2)
 exit $?
 EOF_WINE_WRAPPER
+  export D3D12_METAL_SDK_REAL_WINE="$REAL_WINE_BIN"
+fi
 chmod +x "$PROBE_WINE_WRAPPER"
-export D3D12_METAL_SDK_REAL_WINE="$REAL_WINE_BIN"
 WINE_BIN="$PROBE_WINE_WRAPPER"
 RESULT_FILE="$RESULTS_DIR/probe-loader-${PROFILE}.json"
 AGILITY_RESULT_FILE="$RESULTS_DIR/probe-agility-ue5-${PROFILE}.json"
