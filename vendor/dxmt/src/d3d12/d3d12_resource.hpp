@@ -84,6 +84,14 @@ public:
 
   WMT::Reference<WMT::Buffer> GetMTLBuffer() { return m_mtl_buffer; }
   WMT::Reference<WMT::Texture> GetMTLTexture();
+
+  // Non-materializing accessors for diagnostics/lifetime planning.  In
+  // particular, GetMTLTexture() may lazily allocate a Metal texture for
+  // texture resources whose backing has not been materialized yet; retention
+  // probes must use these peek helpers instead.
+  WMT::Reference<WMT::Buffer> PeekMTLBuffer() const { return m_mtl_buffer; }
+  WMT::Reference<WMT::Texture> PeekMTLTexture() const { return m_mtl_texture; }
+
   D3D12_RESOURCE_STATES GetResourceState() const { return m_state; }
   void SetResourceState(D3D12_RESOURCE_STATES state) { m_state = state; }
   uint64_t GetTextureGPUResourceID() const { return m_tex_gpu_resource_id; }

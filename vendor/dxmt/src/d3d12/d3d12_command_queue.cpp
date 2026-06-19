@@ -179,6 +179,14 @@ bool DXMTD3D12BarrierSafetyDiagnostics() {
   return enabled != 0;
 }
 
+bool DXMTD3D12ReplayRetentionDiagnostics() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_REPLAY_RETENTION_DIAGNOSTICS");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 uint32_t DXMTD3D12MetalQueueMaxInflight() {
   static uint32_t limit = [] {
     const char *value = std::getenv("DXMT_D3D12_METAL_QUEUE_MAX_INFLIGHT");
@@ -273,6 +281,7 @@ static uint32_t g_replay_coverage_thin_pe_logs = 0;
 static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
+static uint32_t g_replay_retention_diagnostic_logs = 0;
 static uint32_t g_gpu_hang_safety_argbuf_logs = 0;
 static uint32_t g_gpu_hang_safety_barrier_logs = 0;
 static uint64_t g_gpu_hang_safety_argbuf_resources = 0;
@@ -911,6 +920,42 @@ static std::string ResourceSummary(MTLD3D12Resource *res) {
       " bytes=", (unsigned long long)res->GetBufferByteLength(),
       " swapchain=", res->IsSwapchainBackBuffer(), " bb=",
       res->IsSwapchainBackBuffer() ? res->SwapchainBackBufferIndex() : 0u);
+}
+
+static void LogReplayRetentionCandidate(const char *label,
+                                        MTLD3D12Resource *res) {
+  if (!DXMTD3D12ReplayRetentionDiagnostics() || !res)
+    return;
+  if (!TakeLogBudget(&g_replay_retention_diagnostic_logs, 512))
+    return;
+
+  D3D12_RESOURCE_DESC desc = {};
+  res->GetDesc(&desc);
+  auto tex = res->PeekMTLTexture();
+  auto buf = res->PeekMTLBuffer();
+  Logger::info(str::format(
+      "M12 replay retention candidate label=", label ? label : "unknown",
+      " res=", (void *)res, " dim=", (unsigned)desc.Dimension,
+      " fmt=", (unsigned)desc.Format, " size=", desc.Width, "x",
+      (unsigned)desc.Height, "x", (unsigned)desc.DepthOrArraySize,
+      " state=0x", std::hex, (unsigned)res->GetResourceState(), std::dec,
+      " existing_buf=", (unsigned long long)buf.handle,
+      " existing_tex=", (unsigned long long)tex.handle,
+      " swapchain=", res->IsSwapchainBackBuffer(), " bb=",
+      res->IsSwapchainBackBuffer() ? res->SwapchainBackBufferIndex() : 0u));
+}
+
+static void LogReplayRetentionSnapshotCandidate(
+    const char *label, const D3D12DescriptorSnapshot &snapshot) {
+  if (!DXMTD3D12ReplayRetentionDiagnostics() || !snapshot.valid)
+    return;
+  LogReplayRetentionCandidate(label,
+                              static_cast<MTLD3D12Resource *>(snapshot.resource));
+  if (snapshot.resource_uav_counter) {
+    LogReplayRetentionCandidate(
+        str::format(label ? label : "unknown", ".counter").c_str(),
+        static_cast<MTLD3D12Resource *>(snapshot.resource_uav_counter));
+  }
 }
 
 static std::string DescriptorSummary(const D3D12Descriptor *desc,
@@ -5332,6 +5377,7 @@ struct ReplayState {
       if (!res && desc && desc->resource)
         res = static_cast<MTLD3D12Resource *>(desc->resource);
       if (res) {
+        LogReplayRetentionCandidate("render_pass_rtv", res);
         auto tex = res->GetMTLTexture();
         QTRACE("EnsureRenderEncoder: rt[%u] desc=%p res=%p tex=%llu", i,
                (void *)desc, (void *)res, (unsigned long long)tex.handle);
@@ -5354,6 +5400,7 @@ struct ReplayState {
       if (!res && desc && desc->resource)
         res = static_cast<MTLD3D12Resource *>(desc->resource);
       if (res) {
+        LogReplayRetentionCandidate("render_pass_dsv", res);
         QTRACE("EnsureRenderEncoder: dsv desc=%p res=%p tex=%llu", (void *)desc,
                (void *)res, (unsigned long long)res->GetMTLTexture().handle);
         if (res->GetMTLTexture().handle) {
@@ -8681,6 +8728,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         }
 
         auto *arg_res = static_cast<MTLD3D12Resource *>(cmd->argument_buffer);
+        LogReplayRetentionCandidate("execute_indirect_args", arg_res);
         void *arg_base = nullptr;
         HRESULT map_hr = arg_res->Map(0, nullptr, &arg_base);
         if (FAILED(map_hr) || !arg_base) {
@@ -8693,6 +8741,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         uint32_t command_count = cmd->max_command_count;
         if (cmd->count_buffer) {
           auto *count_res = static_cast<MTLD3D12Resource *>(cmd->count_buffer);
+          LogReplayRetentionCandidate("execute_indirect_count", count_res);
           void *count_base = nullptr;
           HRESULT count_hr = count_res->Map(0, nullptr, &count_base);
           if (SUCCEEDED(count_hr) && count_base &&
@@ -9031,6 +9080,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           st.CloseRenderEncoder();
           auto *dst_res = static_cast<MTLD3D12Resource *>(cmd->dst);
           auto *src_res = static_cast<MTLD3D12Resource *>(cmd->src);
+          LogReplayRetentionCandidate("copy_buffer_dst", dst_res);
+          LogReplayRetentionCandidate("copy_buffer_src", src_res);
           if (dst_res->GetMTLBuffer().handle &&
               src_res->GetMTLBuffer().handle) {
             auto blit = cmdbuf.blitCommandEncoder();
@@ -9069,6 +9120,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         if (!dst_res || !src_res)
           break;
 
+        LogReplayRetentionCandidate("copy_texture_dst", dst_res);
+        LogReplayRetentionCandidate("copy_texture_src", src_res);
         QTRACE("CopyTextureRegion dst=%p src=%p dst_type=%u src_type=%u",
                (void *)dst_res, (void *)src_res, cmd->dst_type, cmd->src_type);
 
@@ -9275,6 +9328,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         auto *src_res = static_cast<MTLD3D12Resource *>(cmd->src);
         if (!dst_res || !src_res)
           break;
+        LogReplayRetentionCandidate("copy_resource_dst", dst_res);
+        LogReplayRetentionCandidate("copy_resource_src", src_res);
         st.CloseRenderEncoder();
 
         if (dst_res->GetMTLBuffer().handle && src_res->GetMTLBuffer().handle) {
@@ -9336,6 +9391,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         D3D12_RESOURCE_DESC dst_desc = {};
         src_res->GetDesc(&src_desc);
         dst_res->GetDesc(&dst_desc);
+        LogReplayRetentionCandidate("resolve_dst", dst_res);
+        LogReplayRetentionCandidate("resolve_src", src_res);
         QTRACE("ResolveSubresource dst=%p sub=%u src=%p sub=%u fmt=%u mode=%u "
                "rect=%u dst=%u,%u",
                (void *)dst_res, cmd->dst_sub, (void *)src_res, cmd->src_sub,
@@ -9438,6 +9495,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             continue;
           }
 
+          LogReplayRetentionCandidate("write_buffer_immediate_dst", res);
+
           uint64_t dst_offset = dest - res->GetGPUVirtualAddress();
           void *mapped = nullptr;
           HRESULT map_hr = res->Map(0, nullptr, &mapped);
@@ -9523,6 +9582,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) {
             safety_transition_count++;
             auto *res = static_cast<MTLD3D12Resource *>(barrier.Transition.pResource);
+            LogReplayRetentionCandidate("transition_barrier", res);
             D3D12_RESOURCE_STATES tracked_state =
                 res ? res->GetResourceState() : D3D12_RESOURCE_STATE_COMMON;
             QTRACE("  barrier[%u] transition res=%p sub=%u before=0x%x "
@@ -9548,6 +9608,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               __atomic_add_fetch(&g_gpu_hang_safety_uav_barriers, 1,
                                  __ATOMIC_RELAXED);
             }
+            LogReplayRetentionCandidate(
+                "uav_barrier",
+                static_cast<MTLD3D12Resource *>(barrier.UAV.pResource));
             QTRACE("  barrier[%u] uav res=%p flags=0x%x", i,
                    (void *)barrier.UAV.pResource, barrier.Flags);
           } else if (barrier.Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING) {
@@ -9556,6 +9619,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               __atomic_add_fetch(&g_gpu_hang_safety_aliasing_barriers, 1,
                                  __ATOMIC_RELAXED);
             }
+            LogReplayRetentionCandidate(
+                "aliasing_barrier_before",
+                static_cast<MTLD3D12Resource *>(barrier.Aliasing.pResourceBefore));
+            LogReplayRetentionCandidate(
+                "aliasing_barrier_after",
+                static_cast<MTLD3D12Resource *>(barrier.Aliasing.pResourceAfter));
             QTRACE("  barrier[%u] alias before=%p after=%p flags=0x%x", i,
                    (void *)barrier.Aliasing.pResourceBefore,
                    (void *)barrier.Aliasing.pResourceAfter, barrier.Flags);
@@ -9674,6 +9743,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           if (!res && desc && desc->resource)
             res = static_cast<MTLD3D12Resource *>(desc->resource);
           if (res) {
+            LogReplayRetentionCandidate("clear_rtv_target", res);
             QTRACE("ClearRenderTargetView handle=0x%llx desc=%p res=%p "
                    "tex=%llu color=%f,%f,%f,%f",
                    (unsigned long long)cmd->rtv.ptr, (void *)desc, (void *)res,
@@ -9718,6 +9788,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           if (!res && desc && desc->resource)
             res = static_cast<MTLD3D12Resource *>(desc->resource);
           if (res) {
+            LogReplayRetentionCandidate("clear_rtv_preserve_rtv", res);
             if (res->GetMTLTexture().handle && !rp.colors[i].texture) {
               rp.colors[i].texture = res->GetMTLTexture().handle;
               rp.colors[i].load_action = WMTLoadActionLoad;
@@ -9733,6 +9804,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           if (!res && desc && desc->resource)
             res = static_cast<MTLD3D12Resource *>(desc->resource);
           if (res) {
+            LogReplayRetentionCandidate("clear_rtv_preserve_dsv", res);
             if (res->GetMTLTexture().handle) {
               rp.depth.texture = res->GetMTLTexture().handle;
               rp.depth.load_action = WMTLoadActionLoad;
@@ -9770,6 +9842,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           if (!res && desc && desc->resource)
             res = static_cast<MTLD3D12Resource *>(desc->resource);
           if (res) {
+            LogReplayRetentionCandidate("clear_dsv_preserve_rtv", res);
             if (res->GetMTLTexture().handle) {
               rp.colors[i].texture = res->GetMTLTexture().handle;
               rp.colors[i].load_action = WMTLoadActionLoad;
@@ -9791,6 +9864,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           if (!res && desc && desc->resource)
             res = static_cast<MTLD3D12Resource *>(desc->resource);
           if (res) {
+            LogReplayRetentionCandidate("clear_dsv_target", res);
             if (res->GetMTLTexture().handle) {
               rp.depth.texture = res->GetMTLTexture().handle;
               rp.depth.load_action = (cmd->flags & D3D12_CLEAR_FLAG_DEPTH)
@@ -9833,6 +9907,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                         : st.SnapshotResource(cmd->uav_snapshot);
         if (!res && desc && desc->resource)
           res = static_cast<MTLD3D12Resource *>(desc->resource);
+        LogReplayRetentionSnapshotCandidate("clear_uav_snapshot", cmd->uav_snapshot);
+        LogReplayRetentionCandidate("clear_uav_resource", res);
         bool zero_clear = cmd->values[0] == 0 && cmd->values[1] == 0 &&
                           cmd->values[2] == 0 && cmd->values[3] == 0;
         QTRACE("ClearUnorderedAccessView%s cpu=0x%llx gpu=0x%llx res=%p "
