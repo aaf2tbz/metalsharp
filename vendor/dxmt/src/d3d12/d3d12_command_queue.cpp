@@ -151,6 +151,23 @@ bool DXMTD3D12SkipTessellationFallbackDraws() {
   return enabled != 0;
 }
 
+uint32_t DXMTD3D12MetalQueueMaxInflight() {
+  static uint32_t limit = [] {
+    const char *value = std::getenv("DXMT_D3D12_METAL_QUEUE_MAX_INFLIGHT");
+    if (!value || !value[0])
+      return 32u;
+
+    char *end = nullptr;
+    unsigned long parsed = std::strtoul(value, &end, 10);
+    if (end == value || parsed == 0)
+      return 32u;
+    if (parsed > 64ul)
+      return 64u;
+    return static_cast<uint32_t>(parsed);
+  }();
+  return limit;
+}
+
 static uint32_t AlignReadbackPitch(uint32_t value, uint32_t alignment) {
   return (value + alignment - 1) & ~(alignment - 1);
 }
@@ -7773,12 +7790,13 @@ MTLD3D12CommandQueue::MTLD3D12CommandQueue(MTLD3D12Device *device,
     : m_device(device), m_queue(queue), m_desc(desc) {
   m_device->AddRef();
   auto wmt_dev = m_device->GetDXMTDevice().device();
-  m_wmt_queue = wmt_dev.newCommandQueue(1);
+  m_metal_queue_max_inflight = DXMTD3D12MetalQueueMaxInflight();
+  m_wmt_queue = wmt_dev.newCommandQueue(m_metal_queue_max_inflight);
   m_barrier_event = wmt_dev.newEvent();
-  QTRACE(
-      "CmdQueue::ctor this=%p device=%p type=%u priority=%d flags=0x%x node=%u",
-      (void *)this, (void *)device, desc.Type, desc.Priority, desc.Flags,
-      desc.NodeMask);
+  QTRACE("CmdQueue::ctor this=%p device=%p type=%u priority=%d flags=0x%x "
+         "node=%u max_inflight=%u",
+         (void *)this, (void *)device, desc.Type, desc.Priority, desc.Flags,
+         desc.NodeMask, m_metal_queue_max_inflight);
   Logger::info("D3D12CommandQueue created");
 }
 

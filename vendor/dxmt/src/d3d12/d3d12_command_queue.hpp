@@ -85,6 +85,7 @@ private:
   WMT::Reference<WMT::CommandQueue> m_wmt_queue;
   WMT::Reference<WMT::Event> m_barrier_event;
   uint64_t m_barrier_seq = 0;
+  uint32_t m_metal_queue_max_inflight = 1;
 };
 
 } // namespace dxmt
