@@ -83,6 +83,29 @@ MTLD3D12GraphicsCommandList::~MTLD3D12GraphicsCommandList() {
   m_device->Release();
 }
 
+D3D12DescriptorSnapshot MTLD3D12GraphicsCommandList::SnapshotDescriptor(
+    D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+  D3D12DescriptorSnapshot snapshot = {};
+  if (!handle.ptr)
+    return snapshot;
+
+  auto *desc = reinterpret_cast<const D3D12Descriptor *>(handle.ptr);
+  if (!desc)
+    return snapshot;
+
+  snapshot.valid = 1;
+  snapshot.type = desc->type;
+  snapshot.cbv = desc->cbv;
+  snapshot.srv = desc->srv;
+  snapshot.uav = desc->uav;
+  snapshot.rtv = desc->rtv;
+  snapshot.dsv = desc->dsv;
+  snapshot.sampler = desc->sampler;
+  snapshot.resource = desc->resource;
+  snapshot.resource_uav_counter = desc->resource_uav_counter;
+  return snapshot;
+}
+
 HRESULT STDMETHODCALLTYPE
 MTLD3D12GraphicsCommandList::QueryInterface(REFIID riid, void **ppvObject) {
   if (!ppvObject)
@@ -593,11 +616,15 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::OMSetRenderTargets(
   cmd.single_handle = single_handle != 0;
   cmd.has_dsv = dsv != nullptr;
   if (rts) {
-    for (UINT i = 0; i < rt_count && i < 8; i++)
+    for (UINT i = 0; i < rt_count && i < 8; i++) {
       cmd.rts[i] = rts[i];
+      cmd.rt_snapshots[i] = SnapshotDescriptor(rts[i]);
+    }
   }
-  if (dsv)
+  if (dsv) {
     cmd.dsv = *dsv;
+    cmd.dsv_snapshot = SnapshotDescriptor(*dsv);
+  }
   Emit(cmd);
 }
 
@@ -607,6 +634,7 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::ClearDepthStencilView(
   CmdClearDSV cmd = {};
   cmd.header = {CmdType::ClearDepthStencilView, sizeof(cmd)};
   cmd.dsv = dsv;
+  cmd.dsv_snapshot = SnapshotDescriptor(dsv);
   cmd.flags = flags;
   cmd.depth = depth;
   cmd.stencil = stencil;
@@ -619,6 +647,7 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::ClearRenderTargetView(
   CmdClearRTV cmd = {};
   cmd.header = {CmdType::ClearRenderTargetView, sizeof(cmd)};
   cmd.rtv = rtv;
+  cmd.rtv_snapshot = SnapshotDescriptor(rtv);
   if (color)
     memcpy(cmd.color, color, 16);
   else
@@ -634,6 +663,7 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::ClearUnorderedAccessViewUint
   cmd.header = {CmdType::ClearUnorderedAccessView, sizeof(cmd)};
   cmd.gpu_handle = gpu_handle;
   cmd.cpu_handle = cpu_handle;
+  cmd.uav_snapshot = SnapshotDescriptor(cpu_handle);
   cmd.resource = resource;
   if (values)
     memcpy(cmd.values, values, sizeof(cmd.values));
@@ -649,6 +679,7 @@ MTLD3D12GraphicsCommandList::ClearUnorderedAccessViewFloat(
   cmd.header = {CmdType::ClearUnorderedAccessView, sizeof(cmd)};
   cmd.gpu_handle = gpu_handle;
   cmd.cpu_handle = cpu_handle;
+  cmd.uav_snapshot = SnapshotDescriptor(cpu_handle);
   cmd.resource = resource;
   cmd.is_float = 1;
   if (values)

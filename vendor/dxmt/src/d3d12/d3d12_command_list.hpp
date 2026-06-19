@@ -267,6 +267,7 @@ public:
   const std::vector<uint8_t> &GetCommands() const { return m_cmds; }
   void ClearCommands() { m_cmds.clear(); }
   uint64_t GetDebugId() const { return m_debug_id; }
+  D3D12DescriptorSnapshot SnapshotDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
 
 private:
   template <typename T> void Emit(const T &cmd) {

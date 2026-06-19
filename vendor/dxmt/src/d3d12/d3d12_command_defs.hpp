@@ -182,12 +182,27 @@ struct CmdRSSetScissorRects {
   D3D12_RECT rects[1];
 };
 
+struct D3D12DescriptorSnapshot {
+  uint8_t valid = 0;
+  D3D12_DESCRIPTOR_HEAP_TYPE type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
+  D3D12_CONSTANT_BUFFER_VIEW_DESC cbv = {};
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
+  D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
+  D3D12_RENDER_TARGET_VIEW_DESC rtv = {};
+  D3D12_DEPTH_STENCIL_VIEW_DESC dsv = {};
+  D3D12_SAMPLER_DESC sampler = {};
+  ID3D12Resource *resource = nullptr;
+  ID3D12Resource *resource_uav_counter = nullptr;
+};
+
 struct CmdOMSetRenderTargets {
   CmdHeader header;
   uint32_t rt_count;
   bool single_handle;
   D3D12_CPU_DESCRIPTOR_HANDLE rts[8];
+  D3D12DescriptorSnapshot rt_snapshots[8];
   D3D12_CPU_DESCRIPTOR_HANDLE dsv;
+  D3D12DescriptorSnapshot dsv_snapshot;
   bool has_dsv;
 };
 
@@ -204,12 +219,14 @@ struct CmdOMStencilRef {
 struct CmdClearRTV {
   CmdHeader header;
   D3D12_CPU_DESCRIPTOR_HANDLE rtv;
+  D3D12DescriptorSnapshot rtv_snapshot;
   float color[4];
 };
 
 struct CmdClearDSV {
   CmdHeader header;
   D3D12_CPU_DESCRIPTOR_HANDLE dsv;
+  D3D12DescriptorSnapshot dsv_snapshot;
   D3D12_CLEAR_FLAGS flags;
   float depth;
   uint8_t stencil;
@@ -219,6 +236,7 @@ struct CmdClearUAV {
   CmdHeader header;
   D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
   D3D12_CPU_DESCRIPTOR_HANDLE cpu_handle;
+  D3D12DescriptorSnapshot uav_snapshot;
   ID3D12Resource *resource;
   uint32_t values[4];
   uint8_t is_float;

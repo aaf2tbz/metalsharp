@@ -806,6 +806,18 @@ static bool DSVHasStencil(const D3D12Descriptor *desc) {
   return FormatHasStencil(format);
 }
 
+static bool DSVSnapshotHasStencil(const D3D12DescriptorSnapshot &snapshot) {
+  if (!snapshot.valid || !snapshot.resource)
+    return false;
+  DXGI_FORMAT format = snapshot.dsv.Format;
+  if (format == DXGI_FORMAT_UNKNOWN) {
+    D3D12_RESOURCE_DESC resource_desc = {};
+    static_cast<MTLD3D12Resource *>(snapshot.resource)->GetDesc(&resource_desc);
+    format = resource_desc.Format;
+  }
+  return FormatHasStencil(format);
+}
+
 static const char *DescriptorRangeTypeName(D3D12_DESCRIPTOR_RANGE_TYPE type) {
   switch (type) {
   case D3D12_DESCRIPTOR_RANGE_TYPE_SRV:
@@ -1020,7 +1032,9 @@ struct ReplayState {
   uint32_t stencil_ref = 0;
 
   D3D12_CPU_DESCRIPTOR_HANDLE rt_handles[8] = {};
+  D3D12DescriptorSnapshot rt_snapshots[8] = {};
   D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = {};
+  D3D12DescriptorSnapshot dsv_snapshot = {};
   uint32_t rt_count = 0;
   bool has_dsv = false;
 
@@ -1073,11 +1087,18 @@ struct ReplayState {
     return SwapchainRenderTargetResource() != nullptr;
   }
 
+  MTLD3D12Resource *SnapshotResource(const D3D12DescriptorSnapshot &snapshot) const {
+    return snapshot.valid && snapshot.resource
+               ? static_cast<MTLD3D12Resource *>(snapshot.resource)
+               : nullptr;
+  }
+
   MTLD3D12Resource *SwapchainRenderTargetResource() const {
     for (uint32_t i = 0; i < rt_count && i < 8; i++) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
-      auto *res =
-          desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
+      auto *res = SnapshotResource(rt_snapshots[i]);
+      if (!res && desc)
+        res = static_cast<MTLD3D12Resource *>(desc->resource);
       if (res && res->IsSwapchainBackBuffer())
         return res;
     }
@@ -5307,8 +5328,10 @@ struct ReplayState {
     bool has_valid_rt = false;
     for (uint32_t i = 0; i < rt_count && i < 8; i++) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
-      if (desc && desc->resource) {
-        auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+      auto *res = SnapshotResource(rt_snapshots[i]);
+      if (!res && desc && desc->resource)
+        res = static_cast<MTLD3D12Resource *>(desc->resource);
+      if (res) {
         auto tex = res->GetMTLTexture();
         QTRACE("EnsureRenderEncoder: rt[%u] desc=%p res=%p tex=%llu", i,
                (void *)desc, (void *)res, (unsigned long long)tex.handle);
@@ -5327,13 +5350,15 @@ struct ReplayState {
     DXGI_FORMAT effective_dsv_format = EffectiveDSVFormatForPSO(pso);
     if (has_dsv && effective_dsv_format != DXGI_FORMAT_UNKNOWN) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(dsv_handle.ptr);
-      if (desc && desc->resource) {
-        auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+      auto *res = SnapshotResource(dsv_snapshot);
+      if (!res && desc && desc->resource)
+        res = static_cast<MTLD3D12Resource *>(desc->resource);
+      if (res) {
         QTRACE("EnsureRenderEncoder: dsv desc=%p res=%p tex=%llu", (void *)desc,
                (void *)res, (unsigned long long)res->GetMTLTexture().handle);
         if (res->GetMTLTexture().handle) {
           rp.depth.texture = res->GetMTLTexture().handle;
-          if (DSVHasStencil(desc))
+          if (DSVSnapshotHasStencil(dsv_snapshot) || DSVHasStencil(desc))
             rp.stencil.texture = res->GetMTLTexture().handle;
           has_valid_rt = true;
           render_enc_has_dsv = true;
@@ -9582,10 +9607,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                cmd->rt_count, cmd->single_handle ? 1 : 0, cmd->has_dsv ? 1 : 0);
         for (uint32_t i = 0; i < cmd->rt_count && i < 8; i++) {
           st.rt_handles[i] = cmd->rts[i];
+          st.rt_snapshots[i] = cmd->rt_snapshots[i];
           auto *desc =
               reinterpret_cast<const D3D12Descriptor *>(st.rt_handles[i].ptr);
-          auto *res =
-              desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
+          auto *res = st.SnapshotResource(st.rt_snapshots[i]);
+          if (!res && desc)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
           QTRACE(
               "OMSetRenderTargets rt[%u] handle=0x%llx desc=%p res=%p tex=%llu",
               i, (unsigned long long)st.rt_handles[i].ptr, (void *)desc,
@@ -9611,10 +9638,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         st.has_dsv = cmd->has_dsv;
         if (cmd->has_dsv) {
           st.dsv_handle = cmd->dsv;
+          st.dsv_snapshot = cmd->dsv_snapshot;
           auto *desc =
               reinterpret_cast<const D3D12Descriptor *>(st.dsv_handle.ptr);
-          auto *res =
-              desc ? static_cast<MTLD3D12Resource *>(desc->resource) : nullptr;
+          auto *res = st.SnapshotResource(st.dsv_snapshot);
+          if (!res && desc)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
           QTRACE("OMSetRenderTargets dsv handle=0x%llx desc=%p res=%p tex=%llu",
                  (unsigned long long)st.dsv_handle.ptr, (void *)desc,
                  (void *)res,
@@ -9641,8 +9670,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
         {
           auto *desc = reinterpret_cast<const D3D12Descriptor *>(cmd->rtv.ptr);
-          if (desc && desc->resource) {
-            auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          auto *res = st.SnapshotResource(cmd->rtv_snapshot);
+          if (!res && desc && desc->resource)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if (res) {
             QTRACE("ClearRenderTargetView handle=0x%llx desc=%p res=%p "
                    "tex=%llu color=%f,%f,%f,%f",
                    (unsigned long long)cmd->rtv.ptr, (void *)desc, (void *)res,
@@ -9683,8 +9714,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             continue;
           auto *desc =
               reinterpret_cast<const D3D12Descriptor *>(st.rt_handles[i].ptr);
-          if (desc && desc->resource) {
-            auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          auto *res = st.SnapshotResource(st.rt_snapshots[i]);
+          if (!res && desc && desc->resource)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if (res) {
             if (res->GetMTLTexture().handle && !rp.colors[i].texture) {
               rp.colors[i].texture = res->GetMTLTexture().handle;
               rp.colors[i].load_action = WMTLoadActionLoad;
@@ -9696,13 +9729,15 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         if (st.has_dsv) {
           auto *desc =
               reinterpret_cast<const D3D12Descriptor *>(st.dsv_handle.ptr);
-          if (desc && desc->resource) {
-            auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          auto *res = st.SnapshotResource(st.dsv_snapshot);
+          if (!res && desc && desc->resource)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if (res) {
             if (res->GetMTLTexture().handle) {
               rp.depth.texture = res->GetMTLTexture().handle;
               rp.depth.load_action = WMTLoadActionLoad;
               rp.depth.store_action = WMTStoreActionStore;
-              if (DSVHasStencil(desc)) {
+              if (DSVSnapshotHasStencil(st.dsv_snapshot) || DSVHasStencil(desc)) {
                 rp.stencil.texture = res->GetMTLTexture().handle;
                 rp.stencil.load_action = WMTLoadActionLoad;
                 rp.stencil.store_action = WMTStoreActionStore;
@@ -9731,8 +9766,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         for (uint32_t i = 0; i < st.rt_count && i < 8; i++) {
           auto *desc =
               reinterpret_cast<const D3D12Descriptor *>(st.rt_handles[i].ptr);
-          if (desc && desc->resource) {
-            auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          auto *res = st.SnapshotResource(st.rt_snapshots[i]);
+          if (!res && desc && desc->resource)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if (res) {
             if (res->GetMTLTexture().handle) {
               rp.colors[i].texture = res->GetMTLTexture().handle;
               rp.colors[i].load_action = WMTLoadActionLoad;
@@ -9750,8 +9787,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
         {
           auto *desc = reinterpret_cast<const D3D12Descriptor *>(cmd->dsv.ptr);
-          if (desc && desc->resource) {
-            auto *res = static_cast<MTLD3D12Resource *>(desc->resource);
+          auto *res = st.SnapshotResource(cmd->dsv_snapshot);
+          if (!res && desc && desc->resource)
+            res = static_cast<MTLD3D12Resource *>(desc->resource);
+          if (res) {
             if (res->GetMTLTexture().handle) {
               rp.depth.texture = res->GetMTLTexture().handle;
               rp.depth.load_action = (cmd->flags & D3D12_CLEAR_FLAG_DEPTH)
@@ -9760,7 +9799,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               rp.depth.store_action = WMTStoreActionStore;
               if (cmd->flags & D3D12_CLEAR_FLAG_DEPTH)
                 rp.depth.clear_depth = cmd->depth;
-              if (DSVHasStencil(desc)) {
+              if (DSVSnapshotHasStencil(cmd->dsv_snapshot) || DSVHasStencil(desc)) {
                 rp.stencil.texture = res->GetMTLTexture().handle;
                 rp.stencil.load_action = (cmd->flags & D3D12_CLEAR_FLAG_STENCIL)
                                              ? WMTLoadActionClear
@@ -9772,7 +9811,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               QTRACE("ClearDepthStencilView handle=0x%llx flags=0x%x "
                      "stencil_attached=%d depth=%f stencil=%u",
                      (unsigned long long)cmd->dsv.ptr, cmd->flags,
-                     DSVHasStencil(desc), cmd->depth, cmd->stencil);
+                     DSVSnapshotHasStencil(cmd->dsv_snapshot) || DSVHasStencil(desc),
+                     cmd->depth, cmd->stencil);
             }
           }
         }
@@ -9790,9 +9830,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             reinterpret_cast<const D3D12Descriptor *>(cmd->cpu_handle.ptr);
         auto *res = cmd->resource
                         ? static_cast<MTLD3D12Resource *>(cmd->resource)
-                        : (desc && desc->resource
-                               ? static_cast<MTLD3D12Resource *>(desc->resource)
-                               : nullptr);
+                        : st.SnapshotResource(cmd->uav_snapshot);
+        if (!res && desc && desc->resource)
+          res = static_cast<MTLD3D12Resource *>(desc->resource);
         bool zero_clear = cmd->values[0] == 0 && cmd->values[1] == 0 &&
                           cmd->values[2] == 0 && cmd->values[3] == 0;
         QTRACE("ClearUnorderedAccessView%s cpu=0x%llx gpu=0x%llx res=%p "
