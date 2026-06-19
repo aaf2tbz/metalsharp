@@ -187,6 +187,14 @@ bool DXMTD3D12ReplayRetentionDiagnostics() {
   return enabled != 0;
 }
 
+bool DXMTD3D12RetainRenderAttachments() {
+  static int enabled = [] {
+    const char *value = std::getenv("DXMT_D3D12_RETAIN_RENDER_ATTACHMENTS");
+    return value && value[0] && value[0] != '0';
+  }();
+  return enabled != 0;
+}
+
 uint32_t DXMTD3D12MetalQueueMaxInflight() {
   static uint32_t limit = [] {
     const char *value = std::getenv("DXMT_D3D12_METAL_QUEUE_MAX_INFLIGHT");
@@ -282,6 +290,7 @@ static uint32_t g_cache_index_shadow_logs = 0;
 static uint32_t g_render_pass_plan_logs = 0;
 static uint32_t g_ac6_candidate_resource_logs = 0;
 static uint32_t g_replay_retention_diagnostic_logs = 0;
+static uint32_t g_render_attachment_use_resource_logs = 0;
 static uint32_t g_gpu_hang_safety_argbuf_logs = 0;
 static uint32_t g_gpu_hang_safety_barrier_logs = 0;
 static uint64_t g_gpu_hang_safety_argbuf_resources = 0;
@@ -5343,6 +5352,47 @@ struct ReplayState {
     }
   }
 
+  void UseRenderAttachmentResource(MTLD3D12Resource *res, const char *label) {
+    if (!DXMTD3D12RetainRenderAttachments() || !render_enc.handle || !res)
+      return;
+
+    auto tex = res->PeekMTLTexture();
+    if (!tex.handle)
+      return;
+
+    render_enc.useResource(
+        tex, (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite),
+        WMTRenderStageFragment);
+    if (TakeLogBudget(&g_render_attachment_use_resource_logs, 64)) {
+      Logger::info(str::format(
+          "M12 render attachment useResource label=", label ? label : "unknown",
+          " res=", (void *)res, " tex=", (unsigned long long)tex.handle,
+          " swapchain=", res->IsSwapchainBackBuffer(), " bb=",
+          res->IsSwapchainBackBuffer() ? res->SwapchainBackBufferIndex() : 0u));
+    }
+  }
+
+  void UseActiveRenderAttachmentResources() {
+    if (!DXMTD3D12RetainRenderAttachments() || !render_enc.handle)
+      return;
+
+    for (uint32_t i = 0; i < rt_count && i < 8; i++) {
+      auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
+      auto *res = SnapshotResource(rt_snapshots[i]);
+      if (!res && desc && desc->resource)
+        res = static_cast<MTLD3D12Resource *>(desc->resource);
+      UseRenderAttachmentResource(res, "render_pass_rtv");
+    }
+
+    if (has_dsv) {
+      auto *desc = reinterpret_cast<const D3D12Descriptor *>(dsv_handle.ptr);
+      auto *res = SnapshotResource(dsv_snapshot);
+      if (!res && desc && desc->resource)
+        res = static_cast<MTLD3D12Resource *>(desc->resource);
+      UseRenderAttachmentResource(res, "render_pass_dsv");
+    }
+  }
+
   void EnsureRenderEncoder() {
     if (render_enc_open)
       return;
@@ -5430,6 +5480,7 @@ struct ReplayState {
       return;
     }
     render_enc_open = true;
+    UseActiveRenderAttachmentResources();
     ResetTrackedRenderBindings();
     if (has_swapchain_rt && TakeLogBudget(&g_swapchain_encoder_logs, 24)) {
       Logger::info(str::format(
