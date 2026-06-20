@@ -275,9 +275,17 @@ Do not proceed to Phase 3 unless this offline proof passes and leaves the `dxmt_
 
 ---
 
-## Phase 3 — Descriptor attachment, refined layout
+## Phase 3 — Completed descriptor attachment, refined layout
+
+Status: completed with offline proof in:
+
+```text
+tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-141018/phase3-proof-summary.md
+```
 
 Goal: attach archive handles to Metal pipeline descriptors without introducing stack-lifetime hazards or tracing overhead.
+
+Phase 3 makes descriptor archive fields live when `DXMT_D3D12_BINARY_ARCHIVE=1`, but Phase 4 still gates any live/menu/AC6 validation because Objective-C archive mutation serialization and exception safety are not installed yet.
 
 ### Lifetime enforcement
 

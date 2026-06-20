@@ -33,6 +33,7 @@ static bool DXMTD3D12PSOTraceEnabled() {
 #include <cstring>
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
 #include <thread>
@@ -71,6 +72,10 @@ struct M12BinaryArchiveContext {
   const char *native_path = nullptr;
   bool enabled = false;
   bool allow_lookup = false;
+};
+
+struct M12BinaryArchiveCompilePayload {
+  obj_handle_t heap_archive_handles[1] = {NULL_OBJECT_HANDLE};
 };
 
 M12BinaryArchiveContext g_m12_binary_archive_context;
@@ -252,6 +257,28 @@ M12BinaryArchiveContext &GetM12BinaryArchiveContext(WMT::Device wmt_device) {
   std::call_once(g_m12_binary_archive_once, InitializeM12BinaryArchiveContext,
                  wmt_device);
   return g_m12_binary_archive_context;
+}
+
+template <typename PipelineInfo>
+void AttachM12BinaryArchiveInfo(PipelineInfo &info,
+                                M12BinaryArchiveContext &context,
+                                M12BinaryArchiveCompilePayload &payload) {
+  info.binary_archive_for_serialization = NULL_OBJECT_HANDLE;
+  info.binary_archives_for_lookup.set(nullptr);
+  info.num_binary_archives_for_lookup = 0;
+  info.fail_on_binary_archive_miss = false;
+  payload.heap_archive_handles[0] = NULL_OBJECT_HANDLE;
+
+  std::lock_guard<std::mutex> lock(context.mutex);
+  if (!context.enabled || !context.archive.handle)
+    return;
+
+  payload.heap_archive_handles[0] = context.archive.handle;
+  info.binary_archive_for_serialization = context.archive.handle;
+  if (context.allow_lookup) {
+    info.binary_archives_for_lookup.set(payload.heap_archive_handles);
+    info.num_binary_archives_for_lookup = 1;
+  }
 }
 
 WMTAttributeFormat AttributeFormatForMetalDataType(uint32_t type) {
@@ -2411,7 +2438,7 @@ bool MTLD3D12PipelineState::Compile() {
   lock.unlock();
 
   auto wmt_device = m_device->GetDXMTDevice().device();
-  (void)GetM12BinaryArchiveContext(wmt_device);
+  auto &m12_binary_archive_context = GetM12BinaryArchiveContext(wmt_device);
   WMT::Reference<WMT::Error> err;
 
   if (m_is_compute) {
@@ -2429,6 +2456,10 @@ bool MTLD3D12PipelineState::Compile() {
 
     WMTComputePipelineInfo info = {};
     WMT::InitializeComputePipelineInfo(info);
+    auto m12_binary_archive_payload =
+        std::make_unique<M12BinaryArchiveCompilePayload>();
+    AttachM12BinaryArchiveInfo(info, m12_binary_archive_context,
+                               *m12_binary_archive_payload);
     info.compute_function = cs_func.handle;
 
     size_t compute_pipeline_cache_key = cs_hash;
@@ -2631,6 +2662,10 @@ bool MTLD3D12PipelineState::Compile() {
 
   WMTRenderPipelineInfo info;
   WMT::InitializeRenderPipelineInfo(info);
+  auto m12_binary_archive_payload =
+      std::make_unique<M12BinaryArchiveCompilePayload>();
+  AttachM12BinaryArchiveInfo(info, m12_binary_archive_context,
+                             *m12_binary_archive_payload);
 
   if (vs_func.handle)
     info.vertex_function = vs_func.handle;
