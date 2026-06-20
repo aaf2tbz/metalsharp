@@ -2140,6 +2140,8 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12_LOG_PATH"
             | "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE"
             | "METALSHARP_M12_PREWARM_PROFILE"
+            | "METALSHARP_M12_BINARY_ARCHIVE"
+            | "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP"
     )
 }
 
@@ -2250,6 +2252,10 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12_LOG_PATH" => upsert_env("DXMT_LOG_PATH", value),
             "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE" => upsert_env("METALSHARP_M12_LAUNCH_ARGS_OVERRIDE", value),
             "METALSHARP_M12_PREWARM_PROFILE" => upsert_env("METALSHARP_M12_PREWARM_PROFILE", value),
+            "METALSHARP_M12_BINARY_ARCHIVE" => upsert_env("DXMT_D3D12_BINARY_ARCHIVE", bool_value),
+            "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP", bool_value)
+            },
             _ => {},
         }
         applied.push(key.clone());
@@ -2711,6 +2717,8 @@ mod tests {
                 "METALSHARP_M12_LOG_PATH": "none",
                 "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE": "__empty__",
                 "METALSHARP_M12_PREWARM_PROFILE": "armored-core-vi-phase6-canary",
+                "METALSHARP_M12_BINARY_ARCHIVE": "1",
+                "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP": "1",
                 "UNRELATED_ENV": "1"
             }),
         );
@@ -2725,6 +2733,8 @@ mod tests {
                 "METALSHARP_M12CORE_ENABLE".to_string(),
                 "METALSHARP_M12CORE_PATH".to_string(),
                 "METALSHARP_M12CORE_REQUIRED".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP".to_string(),
                 "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE".to_string(),
                 "METALSHARP_M12_LOG_LEVEL".to_string(),
                 "METALSHARP_M12_LOG_PATH".to_string(),
@@ -2746,6 +2756,8 @@ mod tests {
         assert!(env.contains(&("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "0".to_string())));
         assert!(env.contains(&("DXMT_LOG_LEVEL".to_string(), "none".to_string())));
         assert!(env.contains(&("DXMT_LOG_PATH".to_string(), "none".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE".to_string(), "1".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP".to_string(), "1".to_string())));
         assert!(env.contains(&("METALSHARP_M12_LAUNCH_ARGS_OVERRIDE".to_string(), "__empty__".to_string())));
         assert!(
             env.contains(&("METALSHARP_M12_PREWARM_PROFILE".to_string(), "armored-core-vi-phase6-canary".to_string()))
