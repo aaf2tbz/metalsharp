@@ -68,7 +68,6 @@ static UINT getenv_uint(const char* key, UINT fallback) {
     return end && end != value.c_str() ? static_cast<UINT>(parsed) : fallback;
 }
 
-
 static std::string json_escape(const std::string& input) {
     std::string out;
     out.reserve(input.size() + 8);
@@ -253,8 +252,7 @@ static HRESULT compile_shader(D3DCompileFn compile_fn, const char* hlsl, const c
 }
 
 static HRESULT serialize_root_signature(D3D12SerializeRootSignatureFn serialize_fn,
-                                        const D3D12_ROOT_SIGNATURE_DESC& desc, ID3DBlob** out,
-                                        std::string& errors) {
+                                        const D3D12_ROOT_SIGNATURE_DESC& desc, ID3DBlob** out, std::string& errors) {
     if (!serialize_fn) {
         return E_NOINTERFACE;
     }
@@ -277,10 +275,12 @@ struct DescriptorStressResult {
     bool pass() const { return completed == requested && SUCCEEDED(setup_hr) && SUCCEEDED(last_hr); }
 };
 
-static DescriptorStressResult run_descriptor_compute_stress(
-    ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
-    ID3D12GraphicsCommandList* list, ID3D12Fence* fence, HANDLE event_handle, UINT64& fence_value,
-    D3D12SerializeRootSignatureFn serialize_fn, D3DCompileFn compile_fn, UINT frames) {
+static DescriptorStressResult run_descriptor_compute_stress(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                                            ID3D12CommandAllocator* allocator,
+                                                            ID3D12GraphicsCommandList* list, ID3D12Fence* fence,
+                                                            HANDLE event_handle, UINT64& fence_value,
+                                                            D3D12SerializeRootSignatureFn serialize_fn,
+                                                            D3DCompileFn compile_fn, UINT frames) {
     DescriptorStressResult result = {};
     result.requested = frames;
     if (frames == 0) {
@@ -309,9 +309,9 @@ static DescriptorStressResult run_descriptor_compute_stress(
     if (SUCCEEDED(result.setup_hr)) {
         D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
         D3D12_RESOURCE_DESC desc = buffer_desc(4096, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                          IID_PPV_ARGS(&uav_buffer));
+        result.setup_hr =
+            device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&uav_buffer));
     }
     if (SUCCEEDED(result.setup_hr)) {
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
@@ -347,13 +347,12 @@ static DescriptorStressResult run_descriptor_compute_stress(
                                                       IID_PPV_ARGS(&root_sig));
     }
     if (SUCCEEDED(result.setup_hr)) {
-        const char* hlsl =
-            "RWStructuredBuffer<uint> outbuf : register(u0);\n"
-            "[numthreads(1,1,1)]\n"
-            "void main(uint3 tid : SV_DispatchThreadID) {\n"
-            "  uint oldv;\n"
-            "  InterlockedAdd(outbuf[0], 1, oldv);\n"
-            "}\n";
+        const char* hlsl = "RWStructuredBuffer<uint> outbuf : register(u0);\n"
+                           "[numthreads(1,1,1)]\n"
+                           "void main(uint3 tid : SV_DispatchThreadID) {\n"
+                           "  uint oldv;\n"
+                           "  InterlockedAdd(outbuf[0], 1, oldv);\n"
+                           "}\n";
         std::string errors;
         result.setup_hr = compile_shader(compile_fn, hlsl, "main", "cs_5_0", &cs_blob, errors);
         if (FAILED(result.setup_hr)) {
@@ -487,9 +486,11 @@ struct DescriptorMutationResult {
     }
 };
 
-static DescriptorMutationResult run_descriptor_mutation_snapshot_stress(
-    ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
-    ID3D12GraphicsCommandList* list, ID3D12Fence* fence, HANDLE event_handle, UINT64& fence_value) {
+static DescriptorMutationResult run_descriptor_mutation_snapshot_stress(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                                                        ID3D12CommandAllocator* allocator,
+                                                                        ID3D12GraphicsCommandList* list,
+                                                                        ID3D12Fence* fence, HANDLE event_handle,
+                                                                        UINT64& fence_value) {
     DescriptorMutationResult result = {};
     if (!device || !queue || !allocator || !list || !fence || !event_handle) {
         result.setup_hr = E_POINTER;
@@ -509,15 +510,15 @@ static DescriptorMutationResult run_descriptor_mutation_snapshot_stress(
     if (SUCCEEDED(result.setup_hr)) {
         D3D12_CLEAR_VALUE clear = {};
         clear.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        D3D12_RESOURCE_DESC desc = texture2d_desc(64, 64, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                                  D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
-        result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                          D3D12_RESOURCE_STATE_RENDER_TARGET, &clear,
-                                                          IID_PPV_ARGS(&rtv_a));
+        D3D12_RESOURCE_DESC desc =
+            texture2d_desc(64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+        result.setup_hr =
+            device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                            D3D12_RESOURCE_STATE_RENDER_TARGET, &clear, IID_PPV_ARGS(&rtv_a));
         if (SUCCEEDED(result.setup_hr)) {
-            result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                              D3D12_RESOURCE_STATE_RENDER_TARGET, &clear,
-                                                              IID_PPV_ARGS(&rtv_b));
+            result.setup_hr =
+                device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                D3D12_RESOURCE_STATE_RENDER_TARGET, &clear, IID_PPV_ARGS(&rtv_b));
         }
     }
     if (SUCCEEDED(result.setup_hr)) {
@@ -548,9 +549,8 @@ static DescriptorMutationResult run_descriptor_mutation_snapshot_stress(
         }
         if (SUCCEEDED(result.rtv_hr)) {
             result.rtv_snapshot_verified = verify_texture_color(device, queue, allocator, list, fence, event_handle,
-                                                                 fence_value, rtv_a,
-                                                                 D3D12_RESOURCE_STATE_RENDER_TARGET, 255, 0, 0,
-                                                                 result.rtv_pixel, result.rtv_map_hr);
+                                                                fence_value, rtv_a, D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                                                255, 0, 0, result.rtv_pixel, result.rtv_map_hr);
         }
     }
 
@@ -567,15 +567,14 @@ static DescriptorMutationResult run_descriptor_mutation_snapshot_stress(
         D3D12_CLEAR_VALUE clear = {};
         clear.Format = DXGI_FORMAT_D32_FLOAT;
         clear.DepthStencil.Depth = 1.0f;
-        D3D12_RESOURCE_DESC desc = texture2d_desc(64, 64, DXGI_FORMAT_D32_FLOAT,
-                                                  D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
-        result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                          D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
-                                                          IID_PPV_ARGS(&dsv_a));
+        D3D12_RESOURCE_DESC desc =
+            texture2d_desc(64, 64, DXGI_FORMAT_D32_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL);
+        result.setup_hr = device->CreateCommittedResource(
+            &default_heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&dsv_a));
         if (SUCCEEDED(result.setup_hr)) {
-            result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                              D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear,
-                                                              IID_PPV_ARGS(&dsv_b));
+            result.setup_hr =
+                device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear, IID_PPV_ARGS(&dsv_b));
         }
     }
     if (SUCCEEDED(result.setup_hr)) {
@@ -617,13 +616,13 @@ static DescriptorMutationResult run_descriptor_mutation_snapshot_stress(
     }
     if (SUCCEEDED(result.setup_hr)) {
         D3D12_RESOURCE_DESC desc = buffer_desc(4096, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-        result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                          D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                          IID_PPV_ARGS(&uav_a));
+        result.setup_hr =
+            device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&uav_a));
         if (SUCCEEDED(result.setup_hr)) {
-            result.setup_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
-                                                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                              IID_PPV_ARGS(&uav_b));
+            result.setup_hr =
+                device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &desc,
+                                                D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&uav_b));
         }
     }
     if (SUCCEEDED(result.setup_hr)) {
@@ -731,8 +730,8 @@ static bool clear_present_only(ID3D12CommandQueue* queue, ID3D12CommandAllocator
     list->ResourceBarrier(1, &to_rtv);
     list->OMSetRenderTargets(1, &rtv_handle, FALSE, nullptr);
     list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
-    D3D12_RESOURCE_BARRIER to_present = transition_barrier(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                                           D3D12_RESOURCE_STATE_PRESENT);
+    D3D12_RESOURCE_BARRIER to_present =
+        transition_barrier(backbuffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
     list->ResourceBarrier(1, &to_present);
     if (FAILED(list->Close()) || !execute_and_wait(queue, list, fence, event_handle, fence_value)) {
         return false;
@@ -1083,9 +1082,9 @@ int main() {
             swapchain3->GetLastPresentCount(&present_count_after_resize);
             index_after_resize = swapchain3->GetCurrentBackBufferIndex();
 
-            descriptor_stress = run_descriptor_compute_stress(
-                device, queue, allocator, list, fence, fence_event, fence_value, d3d12_serialize_root_signature,
-                d3d_compile, descriptor_stress_frames_requested);
+            descriptor_stress = run_descriptor_compute_stress(device, queue, allocator, list, fence, fence_event,
+                                                              fence_value, d3d12_serialize_root_signature, d3d_compile,
+                                                              descriptor_stress_frames_requested);
             descriptor_stress_verified = descriptor_stress.pass();
 
             if (descriptor_mutation_requested) {
