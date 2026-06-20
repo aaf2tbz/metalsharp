@@ -536,6 +536,59 @@ Do not proceed to Phase 6 unless batched serialization passes offline under conc
 
 ---
 
+## Phase 5B — Generated-MSL `.metallib` loadability proof before gameplay canary
+
+Status: planned as an offline confidence gate, not a runtime translation rewrite.
+
+Goal: prove that persistent generated-MSL `.metallib` sidecars are not merely written and discovered, but are actually loadable and usable through the paths M12 will use when they exist. This phase respects the existing DXIL/HLSL → generated-MSL path: menu/UI rendering already proves that translation path is valuable and working, so Phase 5B must not replace, broaden, or perturb it.
+
+### Scope
+
+Use a temporary proof cache copied from the real AC6 generated shader cache:
+
+```text
+~/.metalsharp/shader-cache/m12/1888160/*.msl
+```
+
+Do not mutate the live shader cache during the proof. Do not stage runtime files. Do not launch Steam, Wine, wineserver, AC6, menu, or Continue.
+
+### Proof shape
+
+Add and run a focused offline runner:
+
+```text
+tools/d3d12-metal-sdk/scripts/run-m12-metallib-phase5b-proof.py
+```
+
+The runner must:
+
+1. Select and record a bounded deterministic sample of real AC6 generated `.msl` sidecars.
+2. Copy those `.msl` files into a results-local proof cache.
+3. Materialize `.metallib` files using the existing Apple `metal`/`metallib` path.
+4. Verify freshness, nonzero size, and `MTLB` header invariants.
+5. Load every `.metallib` directly with Metal `newLibraryWithData` and find an entry function.
+6. Load every `.metallib` through `m12core_create_shader_function` with `M12CORE_SHADER_FUNCTION_INPUT_METALLIB`.
+7. Confirm the second `m12core_create_shader_function` call for each hash hits the in-process function cache.
+8. Verify the DXMT source contract still attempts `<hash>.metallib` before generated-MSL source compile or DXIL lowering fallback.
+9. Verify the `dxmt_m12` runtime snapshot is unchanged before/after the proof.
+10. Wrap subprocesses in hard timeouts with process-group termination so a hung `metal`/`metallib`, `newLibraryWithData`, or `m12core_create_shader_function` probe cannot block the gate indefinitely.
+
+### Acceptance
+
+- Selected inputs are real AC6 generated-MSL sidecars and are copied into a proof-local cache.
+- `.metallib` materialization succeeds for all selected hashes.
+- Freshness validation passes for all selected hashes.
+- Direct Metal load via `newLibraryWithData` passes for all selected hashes.
+- M12Core metallib load via `M12CORE_SHADER_FUNCTION_INPUT_METALLIB` passes for all selected hashes.
+- M12Core second-load cache-hit proof passes for all selected hashes.
+- DXMT runtime contract proves `.metallib` is preferred before generated-MSL or DXIL fallback.
+- Timeout/process-group kill behavior is active and proven by the runner.
+- No live shader-cache mutation, runtime staging, Steam/Wine/AC6 launch, logging, or tracing occurs.
+
+Do not use Phase 5B as justification for a gameplay/Continue canary unless the load/use gates pass. If direct Metal load passes but M12Core load fails, the artifact cache is not safe to rely on inside M12.
+
+---
+
 ## Phase 6 — Silent validation gates / circuit breaker
 
 Goal: detect archive incompatibility before menu rendering and disable lookup for the process if the archive path is unsafe.

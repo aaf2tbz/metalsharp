@@ -6,7 +6,7 @@ control-flow shape around CompileShader's DXIL fallback:
 
   probe cache policy / paths
   try opening <hash>.metallib
-  if (!mf) { cached .msl source fallback, then DXIL->MSL lowering }
+  if (!mf) { DXIL->MSL lowering, then generated-MSL source compile }
   else/use-mf { m12core M12CORE_SHADER_FUNCTION_INPUT_METALLIB, then WMT fallback }
 
 The metallib success block is textually after the !mf fallback block, so simple
@@ -128,8 +128,8 @@ def verify(path: pathlib.Path) -> tuple[list[Check], dict[str, Any]]:
     pre_fallback = text[metallib_open_idx:fallback_if_idx] if metallib_open_idx >= 0 and fallback_if_idx >= 0 else ""
     checks.append(Check(
         "no-msl-source-before-fallback-guard",
-        "M12CORE_SHADER_FUNCTION_INPUT_MSL_SOURCE" not in pre_fallback and "ReadShaderText(msl_path" not in pre_fallback,
-        "Cached .msl source path is not reachable until metallib open fails (!mf)",
+        "M12CORE_SHADER_FUNCTION_INPUT_MSL_SOURCE" not in pre_fallback,
+        "Generated-MSL source compile path is not reachable until metallib open fails (!mf)",
         line_of(text, fallback_if_idx),
     ))
     checks.append(Check(
@@ -139,11 +139,13 @@ def verify(path: pathlib.Path) -> tuple[list[Check], dict[str, Any]]:
         line_of(text, fallback_if_idx),
     ))
 
+    source_compile_rel = fallback_block.find("M12CORE_SHADER_FUNCTION_INPUT_MSL_SOURCE")
+    wmt_source_rel = fallback_block.find("wmt_device.newLibraryWithSource")
     checks.append(Check(
-        "cached-msl-inside-fallback",
-        "ReadShaderText(msl_path" in fallback_block and "M12CORE_SHADER_FUNCTION_INPUT_MSL_SOURCE" in fallback_block,
-        "Cached .msl source reuse is contained inside the !mf fallback branch",
-        line_of(text, fallback_block.find("ReadShaderText(msl_path") + fallback_if_idx) if "ReadShaderText(msl_path" in fallback_block else None,
+        "generated-msl-source-compile-inside-fallback",
+        source_compile_rel >= 0 and wmt_source_rel > source_compile_rel,
+        "Generated-MSL source compile paths are contained inside the !mf metallib-miss fallback branch",
+        line_of(text, source_compile_rel + fallback_if_idx) if source_compile_rel >= 0 else None,
     ))
     checks.append(Check(
         "dxil-lowering-inside-fallback",

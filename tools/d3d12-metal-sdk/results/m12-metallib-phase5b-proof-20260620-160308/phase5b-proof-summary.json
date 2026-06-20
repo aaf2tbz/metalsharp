@@ -1,0 +1,833 @@
+{
+  "acceptance": {
+    "commands_passed": true,
+    "dxmt_m12_runtime_snapshot_unchanged": true,
+    "dxmt_runtime_contract_prefers_metallib_before_msl_dxil_fallback": true,
+    "hard_timeout_process_group_kill_active": true,
+    "m12core_second_load_hits_function_cache": true,
+    "metallib_materialization_succeeded": true,
+    "metallibs_are_fresh_nonzero_with_mtlb_header": true,
+    "metallibs_load_with_m12core_shader_function_path": true,
+    "metallibs_load_with_metal_newLibraryWithData": true,
+    "no_wine_steam_ac6_runtime_staging_commands_requested": true,
+    "proof_cache_only_live_shader_cache_not_mutated": true,
+    "selected_real_ac6_generated_msl_sidecars": true
+  },
+  "commands": [
+    {
+      "cmd": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/materialize-m12-msl-metallibs.py",
+        "--cache-dir",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+        "--hash-file",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/selected-hashes.txt",
+        "--workers",
+        "2",
+        "--timeout",
+        "180",
+        "--strict",
+        "--out",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/materialize.json"
+      ],
+      "elapsed_sec": 2.671,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/materialize.stderr.txt",
+      "stderr_size": 0,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/materialize.stdout.txt",
+      "stdout_size": 424,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/verify-m12-metallib-freshness.py",
+        "--cache-dir",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+        "--hash-file",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/selected-hashes.txt",
+        "--strict",
+        "--out",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/freshness.json"
+      ],
+      "elapsed_sec": 0.132,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/freshness.stderr.txt",
+      "stderr_size": 0,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/freshness.stdout.txt",
+      "stdout_size": 162,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/opt/homebrew/opt/python@3.14/bin/python3.14",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/verify-m12-metallib-runtime-contract.py",
+        "--source",
+        "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp",
+        "--json",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/runtime-contract.json"
+      ],
+      "elapsed_sec": 0.13,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/runtime-contract.stderr.txt",
+      "stderr_size": 0,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/runtime-contract.stdout.txt",
+      "stdout_size": 1121,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/probe-metal-metallib-load.sh",
+        "--cache-dir",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+        "--hash-file",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/selected-hashes.txt"
+      ],
+      "elapsed_sec": 0.953,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/metal-probe.stderr.txt",
+      "stderr_size": 0,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/metal-probe.stdout.txt",
+      "stdout_size": 459,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/probe-m12-metallib-load.sh",
+        "--cache-dir",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+        "--hash-file",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/selected-hashes.txt"
+      ],
+      "elapsed_sec": 1.331,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/m12core-probe.stderr.txt",
+      "stderr_size": 126,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/m12core-probe.stdout.txt",
+      "stdout_size": 707,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    }
+  ],
+  "freshness": {
+    "cache_dir": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+    "counts": {
+      "category:fresh": 8,
+      "fresh": 8
+    },
+    "fresh": 8,
+    "nonfresh": [],
+    "rows": [
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "035eda86ce184ec9",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992989.5506263,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/035eda86ce184ec9.metallib",
+          "size": 42397
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/035eda86ce184ec9.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974357.0009208,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/035eda86ce184ec9.msl",
+          "size": 338483
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "28e798d611ca9d9b",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992989.5242379,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/28e798d611ca9d9b.metallib",
+          "size": 34525
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/28e798d611ca9d9b.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974383.9346182,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/28e798d611ca9d9b.msl",
+          "size": 319667
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "30b7ac004179379b",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992990.2444453,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/30b7ac004179379b.metallib",
+          "size": 28397
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/30b7ac004179379b.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974422.91609,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/30b7ac004179379b.msl",
+          "size": 332969
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "358d2013e6f2e72d",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992990.2981503,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/358d2013e6f2e72d.metallib",
+          "size": 54077
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/358d2013e6f2e72d.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974357.660191,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/358d2013e6f2e72d.msl",
+          "size": 344017
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "4b1b88ab893f62d4",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992990.8507702,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/4b1b88ab893f62d4.metallib",
+          "size": 11293
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/4b1b88ab893f62d4.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781971365.116903,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/4b1b88ab893f62d4.msl",
+          "size": 350899
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "5e927c8c9dfba1ac",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992990.9713416,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/5e927c8c9dfba1ac.metallib",
+          "size": 53773
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/5e927c8c9dfba1ac.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974442.6188076,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/5e927c8c9dfba1ac.msl",
+          "size": 326659
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "80a670aae31c7878",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992991.5550334,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/80a670aae31c7878.metallib",
+          "size": 41309
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/80a670aae31c7878.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974426.7421482,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/80a670aae31c7878.msl",
+          "size": 339253
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      },
+      {
+        "categories": [
+          "fresh"
+        ],
+        "hash": "9b9158ee986ea931",
+        "metallib": {
+          "exists": true,
+          "mtime": 1781992991.5922446,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/9b9158ee986ea931.metallib",
+          "size": 32877
+        },
+        "metallib_error": {
+          "exists": false,
+          "mtime": null,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/9b9158ee986ea931.metallib.err.txt",
+          "size": null
+        },
+        "msl": {
+          "exists": true,
+          "mtime": 1781974371.709634,
+          "path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/9b9158ee986ea931.msl",
+          "size": 320352
+        },
+        "objdump_error": null,
+        "objdump_ok": null,
+        "status": "fresh"
+      }
+    ],
+    "schema": "metalsharp.m12.metallib-freshness.v1",
+    "total": 8
+  },
+  "live_cache_after": {
+    "035eda86ce184ec9.metallib": {
+      "exists": false
+    },
+    "035eda86ce184ec9.metallib.err.txt": {
+      "exists": false
+    },
+    "035eda86ce184ec9.msl": {
+      "exists": true,
+      "mtime_ns": 1781974357000920831,
+      "sha256": "920757bc147e9bba669cefa86688d839cad99f3273092fb2616b52cf5e09e33c",
+      "size": 338483
+    },
+    "28e798d611ca9d9b.metallib": {
+      "exists": false
+    },
+    "28e798d611ca9d9b.metallib.err.txt": {
+      "exists": false
+    },
+    "28e798d611ca9d9b.msl": {
+      "exists": true,
+      "mtime_ns": 1781974383934618151,
+      "sha256": "be8627683503dd48785c6f45157a37c0df3f585b7be78dc389d8cbd2c19bbfca",
+      "size": 319667
+    },
+    "30b7ac004179379b.metallib": {
+      "exists": false
+    },
+    "30b7ac004179379b.metallib.err.txt": {
+      "exists": false
+    },
+    "30b7ac004179379b.msl": {
+      "exists": true,
+      "mtime_ns": 1781974422916089922,
+      "sha256": "d1e38b35a81d404655394d2735e68e04120b0898286a5c103c304ec8887f73d9",
+      "size": 332969
+    },
+    "358d2013e6f2e72d.metallib": {
+      "exists": false
+    },
+    "358d2013e6f2e72d.metallib.err.txt": {
+      "exists": false
+    },
+    "358d2013e6f2e72d.msl": {
+      "exists": true,
+      "mtime_ns": 1781974357660190951,
+      "sha256": "a6b9802e1df8dcc6224772ec3d829bda5186f49105b932e4280d4452ee266334",
+      "size": 344017
+    },
+    "4b1b88ab893f62d4.metallib": {
+      "exists": false
+    },
+    "4b1b88ab893f62d4.metallib.err.txt": {
+      "exists": false
+    },
+    "4b1b88ab893f62d4.msl": {
+      "exists": true,
+      "mtime_ns": 1781971365116903152,
+      "sha256": "3074b0cba5145649c3af08c465769cbb1e5c094662fe4fabf06388c04c8a3f9f",
+      "size": 350899
+    },
+    "5e927c8c9dfba1ac.metallib": {
+      "exists": false
+    },
+    "5e927c8c9dfba1ac.metallib.err.txt": {
+      "exists": false
+    },
+    "5e927c8c9dfba1ac.msl": {
+      "exists": true,
+      "mtime_ns": 1781974442618807568,
+      "sha256": "7e368c1531d16ea2490d7fdd0b690797e4939016eecc082e053f7edc4c2378cf",
+      "size": 326659
+    },
+    "80a670aae31c7878.metallib": {
+      "exists": false
+    },
+    "80a670aae31c7878.metallib.err.txt": {
+      "exists": false
+    },
+    "80a670aae31c7878.msl": {
+      "exists": true,
+      "mtime_ns": 1781974426742148256,
+      "sha256": "6030ae8c9e8a460facfb0a2ea50b68a7c42946e5300cbe09c1e83cf9c12c6c7d",
+      "size": 339253
+    },
+    "9b9158ee986ea931.metallib": {
+      "exists": false
+    },
+    "9b9158ee986ea931.metallib.err.txt": {
+      "exists": false
+    },
+    "9b9158ee986ea931.msl": {
+      "exists": true,
+      "mtime_ns": 1781974371709634140,
+      "sha256": "8c77466c31df391cb158431c647f76069a011d1ae11022e97ff24e55ce008b63",
+      "size": 320352
+    }
+  },
+  "live_cache_before": {
+    "035eda86ce184ec9.metallib": {
+      "exists": false
+    },
+    "035eda86ce184ec9.metallib.err.txt": {
+      "exists": false
+    },
+    "035eda86ce184ec9.msl": {
+      "exists": true,
+      "mtime_ns": 1781974357000920831,
+      "sha256": "920757bc147e9bba669cefa86688d839cad99f3273092fb2616b52cf5e09e33c",
+      "size": 338483
+    },
+    "28e798d611ca9d9b.metallib": {
+      "exists": false
+    },
+    "28e798d611ca9d9b.metallib.err.txt": {
+      "exists": false
+    },
+    "28e798d611ca9d9b.msl": {
+      "exists": true,
+      "mtime_ns": 1781974383934618151,
+      "sha256": "be8627683503dd48785c6f45157a37c0df3f585b7be78dc389d8cbd2c19bbfca",
+      "size": 319667
+    },
+    "30b7ac004179379b.metallib": {
+      "exists": false
+    },
+    "30b7ac004179379b.metallib.err.txt": {
+      "exists": false
+    },
+    "30b7ac004179379b.msl": {
+      "exists": true,
+      "mtime_ns": 1781974422916089922,
+      "sha256": "d1e38b35a81d404655394d2735e68e04120b0898286a5c103c304ec8887f73d9",
+      "size": 332969
+    },
+    "358d2013e6f2e72d.metallib": {
+      "exists": false
+    },
+    "358d2013e6f2e72d.metallib.err.txt": {
+      "exists": false
+    },
+    "358d2013e6f2e72d.msl": {
+      "exists": true,
+      "mtime_ns": 1781974357660190951,
+      "sha256": "a6b9802e1df8dcc6224772ec3d829bda5186f49105b932e4280d4452ee266334",
+      "size": 344017
+    },
+    "4b1b88ab893f62d4.metallib": {
+      "exists": false
+    },
+    "4b1b88ab893f62d4.metallib.err.txt": {
+      "exists": false
+    },
+    "4b1b88ab893f62d4.msl": {
+      "exists": true,
+      "mtime_ns": 1781971365116903152,
+      "sha256": "3074b0cba5145649c3af08c465769cbb1e5c094662fe4fabf06388c04c8a3f9f",
+      "size": 350899
+    },
+    "5e927c8c9dfba1ac.metallib": {
+      "exists": false
+    },
+    "5e927c8c9dfba1ac.metallib.err.txt": {
+      "exists": false
+    },
+    "5e927c8c9dfba1ac.msl": {
+      "exists": true,
+      "mtime_ns": 1781974442618807568,
+      "sha256": "7e368c1531d16ea2490d7fdd0b690797e4939016eecc082e053f7edc4c2378cf",
+      "size": 326659
+    },
+    "80a670aae31c7878.metallib": {
+      "exists": false
+    },
+    "80a670aae31c7878.metallib.err.txt": {
+      "exists": false
+    },
+    "80a670aae31c7878.msl": {
+      "exists": true,
+      "mtime_ns": 1781974426742148256,
+      "sha256": "6030ae8c9e8a460facfb0a2ea50b68a7c42946e5300cbe09c1e83cf9c12c6c7d",
+      "size": 339253
+    },
+    "9b9158ee986ea931.metallib": {
+      "exists": false
+    },
+    "9b9158ee986ea931.metallib.err.txt": {
+      "exists": false
+    },
+    "9b9158ee986ea931.msl": {
+      "exists": true,
+      "mtime_ns": 1781974371709634140,
+      "sha256": "8c77466c31df391cb158431c647f76069a011d1ae11022e97ff24e55ce008b63",
+      "size": 320352
+    }
+  },
+  "m12core_probe": {
+    "failures": 0,
+    "ok_lines": 8,
+    "output": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/m12core-probe/probe-output.txt",
+    "second_cache_hits": 8,
+    "summary_found": true,
+    "text_tail": "ok hash=035eda86ce184ec9 bytes=42397 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=28e798d611ca9d9b bytes=34525 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=30b7ac004179379b bytes=28397 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=358d2013e6f2e72d bytes=54077 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=4b1b88ab893f62d4 bytes=11293 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=5e927c8c9dfba1ac bytes=53773 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=80a670aae31c7878 bytes=41309 first_cache_hit=0 second_cache_hit=1 entry=main\nok hash=9b9158ee986ea931 bytes=32877 first_cache_hit=0 second_cache_hit=1 entry=main\nsummary total=8 failures=0\n",
+    "total": 8
+  },
+  "materialize": {
+    "cache_dir": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+    "counts": {
+      "ok": 8
+    },
+    "metal_tool": "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.42.0.tueL7J/Metal.xctoolchain/usr/bin/metal",
+    "metallib_tool": "/var/run/com.apple.security.cryptexd/mnt/com.apple.MobileAsset.MetalToolchain-v17.6.42.0.tueL7J/Metal.xctoolchain/usr/bin/metallib",
+    "rows": [
+      {
+        "bytes": 42397,
+        "elapsed_ms": 512,
+        "hash": "035eda86ce184ec9",
+        "metal_ms": 474,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/035eda86ce184ec9.metallib",
+        "metallib_ms": 35,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/035eda86ce184ec9.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 34525,
+        "elapsed_ms": 485,
+        "hash": "28e798d611ca9d9b",
+        "metal_ms": 423,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/28e798d611ca9d9b.metallib",
+        "metallib_ms": 59,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/28e798d611ca9d9b.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 28397,
+        "elapsed_ms": 719,
+        "hash": "30b7ac004179379b",
+        "metal_ms": 668,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/30b7ac004179379b.metallib",
+        "metallib_ms": 49,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/30b7ac004179379b.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 54077,
+        "elapsed_ms": 747,
+        "hash": "358d2013e6f2e72d",
+        "metal_ms": 694,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/358d2013e6f2e72d.metallib",
+        "metallib_ms": 51,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/358d2013e6f2e72d.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 11293,
+        "elapsed_ms": 605,
+        "hash": "4b1b88ab893f62d4",
+        "metal_ms": 563,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/4b1b88ab893f62d4.metallib",
+        "metallib_ms": 40,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/4b1b88ab893f62d4.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 53773,
+        "elapsed_ms": 672,
+        "hash": "5e927c8c9dfba1ac",
+        "metal_ms": 624,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/5e927c8c9dfba1ac.metallib",
+        "metallib_ms": 47,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/5e927c8c9dfba1ac.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 41309,
+        "elapsed_ms": 703,
+        "hash": "80a670aae31c7878",
+        "metal_ms": 649,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/80a670aae31c7878.metallib",
+        "metallib_ms": 52,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/80a670aae31c7878.msl",
+        "status": "ok"
+      },
+      {
+        "bytes": 32877,
+        "elapsed_ms": 620,
+        "hash": "9b9158ee986ea931",
+        "metal_ms": 575,
+        "metallib": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/9b9158ee986ea931.metallib",
+        "metallib_ms": 42,
+        "msl": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/9b9158ee986ea931.msl",
+        "status": "ok"
+      }
+    ],
+    "schema": "metalsharp.m12.msl-metallib-materialize.v1",
+    "total": 8
+  },
+  "metal_probe": {
+    "failures": 0,
+    "ok_lines": 8,
+    "output": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/metal-probe/probe-output.txt",
+    "second_cache_hits": 0,
+    "summary_found": true,
+    "text_tail": "ok hash=035eda86ce184ec9 bytes=42397 function=ps_main\nok hash=28e798d611ca9d9b bytes=34525 function=ps_main\nok hash=30b7ac004179379b bytes=28397 function=ps_main\nok hash=358d2013e6f2e72d bytes=54077 function=ps_main\nok hash=4b1b88ab893f62d4 bytes=11293 function=cs_main\nok hash=5e927c8c9dfba1ac bytes=53773 function=ps_main\nok hash=80a670aae31c7878 bytes=41309 function=ps_main\nok hash=9b9158ee986ea931 bytes=32877 function=ps_main\nsummary total=8 failures=0\n",
+    "total": 8
+  },
+  "passed": true,
+  "proof_cache_dir": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache",
+  "results_dir": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308",
+  "runtime_contract": {
+    "checks": [
+      {
+        "detail": "WMTM12CoreProbeShaderCache precedes the .metallib fopen policy/open",
+        "id": "cache-lookup-before-metallib-open",
+        "line": 1747,
+        "ok": true
+      },
+      {
+        "detail": "DXMT attempts to open <hash>.metallib before entering the !mf fallback branch",
+        "id": "metallib-open-before-fallback-branch",
+        "line": 1778,
+        "ok": true
+      },
+      {
+        "detail": "The if (!mf) fallback block is parseable by brace matching",
+        "id": "fallback-branch-parsed",
+        "line": 1790,
+        "ok": true
+      },
+      {
+        "detail": "Generated-MSL source compile path is not reachable until metallib open fails (!mf)",
+        "id": "no-msl-source-before-fallback-guard",
+        "line": 1790,
+        "ok": true
+      },
+      {
+        "detail": "DXIL parsing/lowering is not reachable until metallib open fails (!mf)",
+        "id": "no-dxil-lowering-before-fallback-guard",
+        "line": 1790,
+        "ok": true
+      },
+      {
+        "detail": "Generated-MSL source compile paths are contained inside the !mf metallib-miss fallback branch",
+        "id": "generated-msl-source-compile-inside-fallback",
+        "line": 1923,
+        "ok": true
+      },
+      {
+        "detail": "DXIL parsing/lowering is contained inside the !mf fallback branch",
+        "id": "dxil-lowering-inside-fallback",
+        "line": 1796,
+        "ok": true
+      },
+      {
+        "detail": "On metallib hit, DXMT calls M12Core with M12CORE_SHADER_FUNCTION_INPUT_METALLIB before WMT newLibrary fallback",
+        "id": "m12core-metallib-before-wmt-fallback",
+        "line": 2098,
+        "ok": true
+      },
+      {
+        "detail": "Metallib-hit path records hit counters before loading the library",
+        "id": "metallib-hit-records-counter",
+        "line": 2026,
+        "ok": true
+      }
+    ],
+    "indices": {
+      "cache_lookup_line": 1747,
+      "fallback_branch_line": 1790,
+      "fallback_end_line": 2023,
+      "m12core_metallib_input_line": 2098,
+      "metallib_open_line": 1778,
+      "wmt_metallib_fallback_line": 2141
+    },
+    "ok": true,
+    "source": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp"
+  },
+  "runtime_snapshot_file_count": 13,
+  "sample_rows": [
+    {
+      "copy_sha256": "920757bc147e9bba669cefa86688d839cad99f3273092fb2616b52cf5e09e33c",
+      "copy_size": 338483,
+      "hash": "035eda86ce184ec9",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/035eda86ce184ec9.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/035eda86ce184ec9.msl",
+      "source_exists": true,
+      "source_sha256": "920757bc147e9bba669cefa86688d839cad99f3273092fb2616b52cf5e09e33c",
+      "source_size": 338483
+    },
+    {
+      "copy_sha256": "be8627683503dd48785c6f45157a37c0df3f585b7be78dc389d8cbd2c19bbfca",
+      "copy_size": 319667,
+      "hash": "28e798d611ca9d9b",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/28e798d611ca9d9b.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/28e798d611ca9d9b.msl",
+      "source_exists": true,
+      "source_sha256": "be8627683503dd48785c6f45157a37c0df3f585b7be78dc389d8cbd2c19bbfca",
+      "source_size": 319667
+    },
+    {
+      "copy_sha256": "d1e38b35a81d404655394d2735e68e04120b0898286a5c103c304ec8887f73d9",
+      "copy_size": 332969,
+      "hash": "30b7ac004179379b",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/30b7ac004179379b.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/30b7ac004179379b.msl",
+      "source_exists": true,
+      "source_sha256": "d1e38b35a81d404655394d2735e68e04120b0898286a5c103c304ec8887f73d9",
+      "source_size": 332969
+    },
+    {
+      "copy_sha256": "a6b9802e1df8dcc6224772ec3d829bda5186f49105b932e4280d4452ee266334",
+      "copy_size": 344017,
+      "hash": "358d2013e6f2e72d",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/358d2013e6f2e72d.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/358d2013e6f2e72d.msl",
+      "source_exists": true,
+      "source_sha256": "a6b9802e1df8dcc6224772ec3d829bda5186f49105b932e4280d4452ee266334",
+      "source_size": 344017
+    },
+    {
+      "copy_sha256": "3074b0cba5145649c3af08c465769cbb1e5c094662fe4fabf06388c04c8a3f9f",
+      "copy_size": 350899,
+      "hash": "4b1b88ab893f62d4",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/4b1b88ab893f62d4.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/4b1b88ab893f62d4.msl",
+      "source_exists": true,
+      "source_sha256": "3074b0cba5145649c3af08c465769cbb1e5c094662fe4fabf06388c04c8a3f9f",
+      "source_size": 350899
+    },
+    {
+      "copy_sha256": "7e368c1531d16ea2490d7fdd0b690797e4939016eecc082e053f7edc4c2378cf",
+      "copy_size": 326659,
+      "hash": "5e927c8c9dfba1ac",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/5e927c8c9dfba1ac.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/5e927c8c9dfba1ac.msl",
+      "source_exists": true,
+      "source_sha256": "7e368c1531d16ea2490d7fdd0b690797e4939016eecc082e053f7edc4c2378cf",
+      "source_size": 326659
+    },
+    {
+      "copy_sha256": "6030ae8c9e8a460facfb0a2ea50b68a7c42946e5300cbe09c1e83cf9c12c6c7d",
+      "copy_size": 339253,
+      "hash": "80a670aae31c7878",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/80a670aae31c7878.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/80a670aae31c7878.msl",
+      "source_exists": true,
+      "source_sha256": "6030ae8c9e8a460facfb0a2ea50b68a7c42946e5300cbe09c1e83cf9c12c6c7d",
+      "source_size": 339253
+    },
+    {
+      "copy_sha256": "8c77466c31df391cb158431c647f76069a011d1ae11022e97ff24e55ce008b63",
+      "copy_size": 320352,
+      "hash": "9b9158ee986ea931",
+      "proof_copy": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/proof-cache/9b9158ee986ea931.msl",
+      "source": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160/9b9158ee986ea931.msl",
+      "source_exists": true,
+      "source_sha256": "8c77466c31df391cb158431c647f76069a011d1ae11022e97ff24e55ce008b63",
+      "source_size": 320352
+    }
+  ],
+  "schema": "metalsharp.m12.metallib_phase5b_proof.v1",
+  "selected_hash_file": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/selected-hashes.txt",
+  "selected_hashes": [
+    "035eda86ce184ec9",
+    "28e798d611ca9d9b",
+    "30b7ac004179379b",
+    "358d2013e6f2e72d",
+    "4b1b88ab893f62d4",
+    "5e927c8c9dfba1ac",
+    "80a670aae31c7878",
+    "9b9158ee986ea931"
+  ],
+  "source_cache_dir": "/Users/alexmondello/.metalsharp/shader-cache/m12/1888160",
+  "timeout_selftest": {
+    "cmd": [
+      "/opt/homebrew/opt/python@3.14/bin/python3.14",
+      "-c",
+      "import time; time.sleep(30)"
+    ],
+    "elapsed_sec": 1.008,
+    "returncode": -15,
+    "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/timeout-selftest.stderr.txt",
+    "stderr_size": 0,
+    "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-metallib-phase5b-proof-20260620-160308/timeout-selftest.stdout.txt",
+    "stdout_size": 0,
+    "still_running_after_sigkill": false,
+    "timeout": true
+  }
+}
