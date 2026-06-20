@@ -658,7 +658,72 @@ Add and run a circuit-breaker offline proof that covers:
 - no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
 - timeout/process-group kill is active.
 
-Do not proceed to any live menu canary unless Phase 1 and all Phase 2–6 offline proofs pass.
+Do not proceed to any live menu canary unless Phase 1 and all Phase 2–6B offline proofs pass.
+
+---
+
+## Phase 6B — DXMT generated-MSL `.metallib` safety guard / circuit breaker
+
+Status: planned alongside Phase 6. This is a runtime-safety hardening phase, not runtime `.metallib` materialization.
+
+Goal: ensure custom DXMT can safely consume pre-existing/generated-MSL `.metallib` sidecars when they exist, while never letting stale, corrupt, wrong, or failed `.metallib` artifacts poison startup/menu/gameplay. Phase 5B proved valid `.metallib` files are loadable through Metal and M12Core; Phase 6B makes the runtime lookup policy safe enough to coexist with Phase 6 binary-archive validation.
+
+### Why this is needed
+
+Current custom DXMT already attempts `<hash>.metallib` before generated-MSL source compile. However, the lookup policy currently treats file existence as sufficient availability. That is too weak for live/gameplay activation because a bad sidecar can force the cached-metallib path and return shader failure instead of falling back to the proven DXIL/HLSL → generated-MSL path.
+
+Phase 6B must preserve the working generated-MSL fallback. It must not introduce runtime `xcrun metal`/`metallib` subprocesses, and it must not attempt to serialize `newLibraryWithSource` output into `.metallib` inside the game process.
+
+### Runtime policy shape
+
+Harden `m12core_probe_shader_cache()` / PE-side use so `metallib_available` means "safe to try", not merely "file exists".
+
+A `.metallib` is available only when:
+
+- `DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE` is not enabled;
+- the file exists as a regular file;
+- file size is nonzero;
+- the first four bytes are `MTLB`;
+- if `<hash>.msl` exists, `.metallib` is not older than `.msl`;
+- no active `<hash>.metallib.err.txt` exists newer than or equal to the `.metallib`;
+- the process-local bad-metallib denylist has not disabled this hash after a previous load/function failure.
+
+Rules:
+
+- A missing or unavailable `.metallib` must silently fall back to the existing generated-MSL / DXIL lowering path.
+- A `.metallib` load failure or function-lookup failure must mark the hash unavailable for the current process and retry via generated-MSL fallback, not fail the PSO immediately.
+- Fallback after a bad `.metallib` must not rewrite or weaken the proven DXIL/HLSL → MSL translation path.
+- Runtime `.metallib` writeback/materialization remains out of scope. Offline/launcher-managed materialization can be considered later after 6B passes.
+- Preserve existing C/POD ABI discipline. Do not add ABI fields unless a separate ABI/layout proof requires it.
+- Silent by default: no logging/tracing in normal menu/gameplay paths.
+
+### Required offline proof before Phase 7
+
+Add and run a focused Phase 6B proof harness using temporary shader-cache fixtures only. It must not use the live AC6 shader cache except as read-only source material copied into a proof cache.
+
+The proof must cover:
+
+- valid fresh `.metallib`: `metallib_available=true`, direct Metal load passes, M12Core load passes;
+- missing `.metallib`: unavailable and source fallback remains reachable;
+- zero-byte `.metallib`: unavailable;
+- invalid-header `.metallib`: unavailable;
+- stale `.metallib` older than `.msl`: unavailable;
+- active `.metallib.err.txt`: unavailable;
+- `DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE=1`: unavailable even if valid;
+- load failure / function lookup failure: process-local denylist is set and fallback path is selected;
+- no generated `.metallib`, `.air`, or error artifact is written into the live shader cache;
+- no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
+- timeout/process-group kill is active.
+
+Acceptance:
+
+- Bad/stale/poisoned `.metallib` files cannot force shader failure when source fallback is available.
+- Valid `.metallib` files remain usable through the Phase 5B-proven Metal and M12Core paths.
+- The generated-MSL fallback remains byte-for-byte/source-contract equivalent outside the guarded retry path.
+- Runtime writeback/materialization is still absent unless a later explicit phase adds it.
+- The proof records source checks, fixture matrix, command outputs, and runtime/cache snapshots.
+
+Do not proceed to a live menu canary that relies on binary archive or `.metallib` warm-cache behavior unless Phase 6 and Phase 6B offline proofs both pass.
 
 ---
 
@@ -669,7 +734,7 @@ Goal: prove the startup/menu path still behaves like Slice-3 before any Continue
 Required before launch:
 
 - Phase 1 offline corpus proof is complete and committed;
-- Phase 2–6 offline proofs all pass on the exact source being staged;
+- Phase 2–6B offline proofs all pass on the exact source being staged;
 - no proof required Wine, Steam, AC6, runtime staging, logging, or tracing;
 - restored/rebuilt baseline can still launch menu;
 - `dxmt_m12` route verified;
