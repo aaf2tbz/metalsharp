@@ -38,6 +38,7 @@ static bool DXMTD3D12PSOTraceEnabled() {
 #include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
+#include <unordered_set>
 #include <vector>
 #include <process.h>
 #include <windows.h>
@@ -62,6 +63,9 @@ std::atomic<uint64_t> g_compute_pipeline_cache_hits{0};
 std::atomic<uint64_t> g_compute_pipeline_cache_misses{0};
 std::atomic<uint64_t> g_compile_wait_count{0};
 std::atomic<uint64_t> g_compile_wait_ns{0};
+
+std::mutex g_bad_metallib_cache_mutex;
+std::unordered_set<size_t> g_bad_metallib_cache;
 
 std::mutex g_metal_pipeline_cache_mutex;
 std::unordered_map<size_t, WMT::Reference<WMT::RenderPipelineState>> g_render_pipeline_cache;
@@ -111,6 +115,16 @@ std::string DescribeNSObject(obj_handle_t handle) {
     return "unknown";
   auto desc = WMT::String{NSObject_description(handle)}.getUTF8String();
   return desc.empty() ? "unknown" : desc;
+}
+
+bool IsBadMetallibCacheEntry(size_t hash) {
+  std::lock_guard<std::mutex> lock(g_bad_metallib_cache_mutex);
+  return g_bad_metallib_cache.find(hash) != g_bad_metallib_cache.end();
+}
+
+void MarkBadMetallibCacheEntry(size_t hash) {
+  std::lock_guard<std::mutex> lock(g_bad_metallib_cache_mutex);
+  g_bad_metallib_cache.insert(hash);
 }
 
 bool IsTransientMetalCompilerError(const std::string &desc) {
@@ -1840,20 +1854,24 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           DumpShaderBlob(dxbc_path, bytecode, size);
 
           FILE *mf = nullptr;
+          bool metallib_retry_attempted = false;
+          bool metallib_cache_denied = IsBadMetallibCacheEntry(hash);
           if (core_lookup_valid) {
-            if (core_lookup.metallib_available)
+            if (core_lookup.metallib_available && !metallib_cache_denied)
               mf = fopen(metallib_path, "rb");
             if (!core_lookup.metallib_available && core_lookup.force_source_compile &&
                 core_lookup.metallib_exists)
               PSTRACE("  cached metallib ignored by libm12core lookup policy due to DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
           } else {
-            mf = fopen(metallib_path, "rb");
+            if (!metallib_cache_denied)
+              mf = fopen(metallib_path, "rb");
             if (mf && force_source_compile) {
               fclose(mf);
               mf = nullptr;
               PSTRACE("  cached metallib ignored by DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE; attempting DXIL->MSL compilation");
             }
           }
+compile_dxil_source_fallback:
           if (!mf) {
             uint64_t misses = ++g_shader_metallib_cache_misses;
             dxmt::m12core::RecordCounter(M12CORE_COUNTER_SHADER_METALLIB_CACHE_MISSES);
@@ -2182,25 +2200,33 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
               }
               if (core_function.status == M12CORE_SHADER_FUNCTION_STATUS_LIBRARY_FAILED) {
                 auto err_desc = core_error.handle ? DescribeNSObject(core_error.handle) : "unknown";
-                DumpShaderText(metallib_error_path, err_desc.c_str());
-                DumpShaderBlob(dxbc_path, bytecode, size);
-                PSTRACE("  libm12core cached metallib load FAILED: %s", err_desc.c_str());
+                PSTRACE("  libm12core cached metallib load FAILED, falling back to source: %s", err_desc.c_str());
+                if (!IsTransientMetalCompilerError(err_desc))
+                  MarkBadMetallibCacheEntry(hash);
+                if (!metallib_retry_attempted) {
+                  metallib_retry_attempted = true;
+                  mf = nullptr;
+                  goto compile_dxil_source_fallback;
+                }
                 return RecordCompileFailure(
                     "shader/m12core_dxil_cached_metallib_load",
                     str::format(func_name,
                                 " libm12core cached metallib load failed: ",
                                 err_desc,
-                                "; metallib ", metallib_path, "; error ",
-                                metallib_error_path, "; dxbc ", dxbc_path));
+                                "; metallib ", metallib_path));
               }
-              PSTRACE("  libm12core cached metallib function lookup failed status=%u", core_function.status);
-              DumpShaderBlob(dxbc_path, bytecode, size);
+              PSTRACE("  libm12core cached metallib function lookup failed status=%u, falling back to source", core_function.status);
+              MarkBadMetallibCacheEntry(hash);
+              if (!metallib_retry_attempted) {
+                metallib_retry_attempted = true;
+                mf = nullptr;
+                goto compile_dxil_source_fallback;
+              }
               return RecordCompileFailure(
                   "shader/m12core_dxil_cached_function_lookup",
                   str::format(func_name,
                               " libm12core cached metallib function lookup failed; metallib ",
-                              metallib_path, "; reflection ", reflection_path,
-                              "; dxbc ", dxbc_path));
+                              metallib_path, "; reflection ", reflection_path));
             }
 
             auto dispatch_data = WMT::MakeDispatchData(lib_data.data(), lib_size);
@@ -2231,35 +2257,49 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                 apply_cached_reflection();
                 return true;
               } else {
-                PSTRACE("  fallback WMT newFunction returned null");
-                DumpShaderBlob(dxbc_path, bytecode, size);
+                PSTRACE("  fallback WMT newFunction returned null; falling back to source");
+                MarkBadMetallibCacheEntry(hash);
+                if (!metallib_retry_attempted) {
+                  metallib_retry_attempted = true;
+                  mf = nullptr;
+                  goto compile_dxil_source_fallback;
+                }
                 return RecordCompileFailure(
                     "shader/dxil_cached_function_lookup",
                     str::format(func_name,
                                 " cached metallib function lookup failed; metallib ",
-                                metallib_path, "; reflection ", reflection_path,
-                                "; dxbc ", dxbc_path));
+                                metallib_path, "; reflection ", reflection_path));
               }
             } else {
               auto err_desc = DescribeNSObject(err.handle);
-              DumpShaderText(metallib_error_path, err_desc.c_str());
-              DumpShaderBlob(dxbc_path, bytecode, size);
-              PSTRACE("  fallback WMT newLibrary FAILED: %s", err_desc.c_str());
+              PSTRACE("  fallback WMT newLibrary FAILED, falling back to source: %s", err_desc.c_str());
+              if (!IsTransientMetalCompilerError(err_desc))
+                MarkBadMetallibCacheEntry(hash);
+              if (!metallib_retry_attempted) {
+                metallib_retry_attempted = true;
+                mf = nullptr;
+                goto compile_dxil_source_fallback;
+              }
               return RecordCompileFailure(
                   "shader/dxil_cached_metallib_load",
                   str::format(func_name,
                               " cached metallib load failed: ",
                               err_desc,
-                              "; metallib ", metallib_path, "; error ",
-                              metallib_error_path, "; dxbc ", dxbc_path));
+                              "; metallib ", metallib_path));
             }
           } else {
             fclose(mf);
-            DumpShaderBlob(dxbc_path, bytecode, size);
+            PSTRACE("  cached metallib empty; falling back to source");
+            MarkBadMetallibCacheEntry(hash);
+            if (!metallib_retry_attempted) {
+              metallib_retry_attempted = true;
+              mf = nullptr;
+              goto compile_dxil_source_fallback;
+            }
             return RecordCompileFailure(
                 "shader/dxil_cached_metallib_empty",
                 str::format(func_name, " cached metallib empty; metallib ",
-                            metallib_path, "; dxbc ", dxbc_path));
+                            metallib_path));
           }
           break;
         }

@@ -198,10 +198,44 @@ extern "C" int m12core_shader_contains_dxil(const void *bytecode,
   return 0;
 }
 
+bool regularFileStat(const char *path, struct stat *out_stat) {
+  struct stat st;
+  if (!path || !path[0] || stat(path, &st) != 0 || !S_ISREG(st.st_mode))
+    return false;
+  if (out_stat)
+    *out_stat = st;
+  return true;
+}
+
 bool regularFileExists(const char *path) {
   struct stat st;
-  return path && path[0] && stat(path, &st) == 0 && S_ISREG(st.st_mode) &&
-         st.st_size > 0;
+  return regularFileStat(path, &st) && st.st_size > 0;
+}
+
+bool fileHasMTLBHeader(const char *path) {
+  FILE *f = std::fopen(path, "rb");
+  if (!f)
+    return false;
+  char magic[4] = {};
+  size_t n = std::fread(magic, 1, sizeof(magic), f);
+  std::fclose(f);
+  return n == sizeof(magic) && std::memcmp(magic, "MTLB", 4) == 0;
+}
+
+bool metallibFreshForSource(const char *metallib_path, const char *msl_path,
+                            const struct stat &metallib_stat) {
+  struct stat msl_stat;
+  if (!regularFileStat(msl_path, &msl_stat))
+    return true;
+  return metallib_stat.st_mtime >= msl_stat.st_mtime;
+}
+
+bool metallibHasActiveError(const char *error_path,
+                            const struct stat &metallib_stat) {
+  struct stat error_stat;
+  if (!regularFileStat(error_path, &error_stat))
+    return false;
+  return error_stat.st_mtime >= metallib_stat.st_mtime;
 }
 
 void pipelineHashCombine(uint64_t &hash, uint64_t value) {
@@ -437,10 +471,24 @@ m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
   if (m12core_format_shader_cache_paths(cache_root, shader_hash,
                                         &out_lookup->paths) != 0)
     return 1;
-  out_lookup->metallib_exists =
-      regularFileExists(out_lookup->paths.metallib_path) ? 1u : 0u;
+  char msl_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  std::snprintf(msl_path, sizeof(msl_path), "%s.msl", out_lookup->paths.cache_path);
+  msl_path[sizeof(msl_path) - 1] = '\0';
+
+  struct stat metallib_stat;
+  const bool metallib_regular_nonzero =
+      regularFileStat(out_lookup->paths.metallib_path, &metallib_stat) &&
+      metallib_stat.st_size > 0;
+  out_lookup->metallib_exists = metallib_regular_nonzero ? 1u : 0u;
   out_lookup->metallib_available =
-      (!force_source_compile && out_lookup->metallib_exists) ? 1u : 0u;
+      (!force_source_compile && metallib_regular_nonzero &&
+       fileHasMTLBHeader(out_lookup->paths.metallib_path) &&
+       metallibFreshForSource(out_lookup->paths.metallib_path, msl_path,
+                              metallib_stat) &&
+       !metallibHasActiveError(out_lookup->paths.metallib_error_path,
+                               metallib_stat))
+          ? 1u
+          : 0u;
   return 0;
 }
 

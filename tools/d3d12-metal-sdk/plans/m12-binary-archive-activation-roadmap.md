@@ -662,7 +662,7 @@ Do not proceed to any live menu canary unless Phase 1 and all Phase 2–6B offli
 
 ## Phase 6B — DXMT generated-MSL `.metallib` safety guard / circuit breaker
 
-Status: planned alongside Phase 6. This is a runtime-safety hardening phase, not runtime `.metallib` materialization.
+Status: complete. Offline proof: `tools/d3d12-metal-sdk/results/m12-metallib-phase6b-proof-20260620-170729/phase6b-proof-summary.md` (`PASS`). This is a runtime-safety hardening phase, not runtime `.metallib` materialization.
 
 Goal: ensure custom DXMT can safely consume pre-existing/generated-MSL `.metallib` sidecars when they exist, while never letting stale, corrupt, wrong, or failed `.metallib` artifacts poison startup/menu/gameplay. Phase 5B proved valid `.metallib` files are loadable through Metal and M12Core; Phase 6B makes the runtime lookup policy safe enough to coexist with Phase 6 binary-archive validation.
 
@@ -692,6 +692,7 @@ Rules:
 - A `.metallib` load failure or function-lookup failure must mark the hash unavailable for the current process and retry via generated-MSL fallback, not fail the PSO immediately.
 - Fallback after a bad `.metallib` must not rewrite or weaken the proven DXIL/HLSL → MSL translation path.
 - Runtime `.metallib` writeback/materialization remains out of scope. Offline/launcher-managed materialization can be considered later after 6B passes.
+- Runtime cached-`.metallib` load/function failures use a process-local denylist and source fallback; they do not write new `.metallib.err.txt` sidecars. `.metallib.err.txt` is treated as an offline materializer/external quarantine marker for cross-session policy.
 - Preserve existing C/POD ABI discipline. Do not add ABI fields unless a separate ABI/layout proof requires it.
 - Silent by default: no logging/tracing in normal menu/gameplay paths.
 
