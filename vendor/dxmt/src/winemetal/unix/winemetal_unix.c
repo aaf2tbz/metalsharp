@@ -4325,11 +4325,25 @@ static NTSTATUS
 _MTLBinaryArchive_serialize(void *obj) {
   struct unixcall_mtlbinaryarchive_serialize *params = obj;
   NSString *path_str = [[NSString alloc] initWithCString:params->url.ptr encoding:NSUTF8StringEncoding];
-  NSURL *url = [[NSURL alloc] initFileURLWithPath:path_str];
-  NSError *err = NULL;
-  [(id<MTLBinaryArchive>)params->archive serializeToURL:url error:&err];
-  params->ret_error = (obj_handle_t)err;
-  [url release];
+  NSString *tmp_path_str = [path_str stringByAppendingString:@".tmp"];
+  NSURL *tmp_url = [[NSURL alloc] initFileURLWithPath:tmp_path_str];
+  id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)params->archive;
+  @synchronized(archive) {
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      [[NSFileManager defaultManager] removeItemAtPath:tmp_path_str error:nil];
+      [archive serializeToURL:tmp_url error:nil];
+      NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:tmp_path_str error:nil];
+      if ([[attrs objectForKey:NSFileSize] unsignedLongLongValue] > 0)
+        rename([tmp_path_str fileSystemRepresentation], [path_str fileSystemRepresentation]);
+    } @catch(NSException * exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+    }
+  }
+  params->ret_error = 0;
+  [tmp_url release];
   [path_str release];
   return STATUS_SUCCESS;
 }

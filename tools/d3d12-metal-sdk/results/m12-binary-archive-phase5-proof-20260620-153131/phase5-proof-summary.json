@@ -1,0 +1,105 @@
+{
+  "acceptance": {
+    "commands_passed": true,
+    "concurrent_archive_add_and_serialize_ordered_by_mutex": true,
+    "dxmt_m12_runtime_snapshot_unchanged": true,
+    "hard_timeout_process_group_kill_active": true,
+    "no_global_device_runtime_lock_held_around_command_recording_simulation": true,
+    "no_per_pso_serialization_below_threshold": true,
+    "no_wine_steam_ac6_runtime_staging_logging_or_tracing": true,
+    "output_archive_nonzero_and_reloadable": true,
+    "relaxed_atomic_counter_triggers_only_at_interval": true,
+    "source_invariants_pass": true,
+    "strict_lookup_passes_after_serialization": true
+  },
+  "archive_path": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/m12-phase5-proof.binarchive",
+  "archive_sha256": "41ad90c230c3c1f1681341586f9849e5349e15320335ab68224e83e0aaf7536b",
+  "commands": [
+    {
+      "cmd": [
+        "clang++",
+        "-std=c++17",
+        "-ObjC++",
+        "-O2",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/probes/probe_m12_binary_archive_serialization_phase5/probe_m12_binary_archive_serialization_phase5.mm",
+        "-framework",
+        "Foundation",
+        "-framework",
+        "Metal",
+        "-lpthread",
+        "-o",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_serialization_phase5"
+      ],
+      "elapsed_sec": 1.116,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/compile.stderr.txt",
+      "stderr_size": 0,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/compile.stdout.txt",
+      "stdout_size": 0,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_serialization_phase5",
+        "--output",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/probe-result.json",
+        "--archive",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/m12-phase5-proof.binarchive"
+      ],
+      "elapsed_sec": 0.243,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/probe.stderr.txt",
+      "stderr_size": 0,
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/probe.stdout.txt",
+      "stdout_size": 0,
+      "still_running_after_sigkill": false,
+      "timeout": false
+    }
+  ],
+  "passed": true,
+  "pipeline_state": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp",
+  "probe": {
+    "add_compute_ok": true,
+    "add_render_ok": true,
+    "archive_size": 32288,
+    "baseline_pso_creation_ok": true,
+    "before_threshold_size": 0,
+    "max_active_archive_mutators": 1,
+    "passed": true,
+    "serializations_after_threshold": 1,
+    "serializations_before_threshold": 0,
+    "strict_lookup_ok": true
+  },
+  "probe_source": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/probes/probe_m12_binary_archive_serialization_phase5/probe_m12_binary_archive_serialization_phase5.mm",
+  "results_dir": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131",
+  "runtime_snapshot_file_count": 13,
+  "schema": "metalsharp.m12.binary_archive_phase5_proof.v1",
+  "script": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/run-m12-binary-archive-phase5-proof.py",
+  "source_checks": {
+    "checks": {
+      "compute_success_records_non_cache_opportunity": true,
+      "context_has_relaxed_counter": true,
+      "context_has_serialize_in_flight_guard": true,
+      "copy_checks_enabled_archive_path": true,
+      "copy_copies_reference_and_path": true,
+      "exit_flush_registered_and_present": true,
+      "periodic_serialize_has_in_flight_guard": true,
+      "periodic_serialize_is_async": true,
+      "periodic_thread_creation_failure_is_caught": true,
+      "record_serializes_only_on_interval": true,
+      "record_skips_disabled_archive": true,
+      "record_uses_relaxed_fetch_add": true,
+      "render_success_records_non_cache_opportunity": true,
+      "serialize_now_calls_archive_serialize": true,
+      "serialize_thunk_exception_safe": true,
+      "serialize_thunk_object_synchronized": true,
+      "serialize_thunk_silent": true,
+      "serialize_thunk_uses_archive_mutex": true,
+      "serialize_thunk_uses_temp_atomic_rename": true,
+      "threshold_constant_256": true
+    },
+    "passed": true
+  },
+  "winemetal_unix": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/src/winemetal/unix/winemetal_unix.c"
+}

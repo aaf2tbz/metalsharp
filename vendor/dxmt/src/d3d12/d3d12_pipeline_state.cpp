@@ -48,6 +48,7 @@ namespace dxmt {
 
 namespace {
 constexpr uint32_t kMetalD3D12VertexBufferSlotCount = 29;
+constexpr uint64_t kM12BinaryArchiveSerializeInterval = 256;
 
 std::atomic<uint64_t> g_shader_memory_cache_hits{0};
 std::atomic<uint64_t> g_shader_memory_cache_misses{0};
@@ -69,6 +70,8 @@ std::unordered_map<size_t, WMT::Reference<WMT::ComputePipelineState>> g_compute_
 struct M12BinaryArchiveContext {
   std::mutex mutex;
   WMT::Reference<WMT::BinaryArchive> archive;
+  std::atomic<uint64_t> pso_compile_counter{0};
+  std::atomic<bool> serialize_in_flight{false};
   const char *native_path = nullptr;
   bool enabled = false;
   bool allow_lookup = false;
@@ -204,6 +207,8 @@ void EnsureDirectoryBestEffort(const char *path) {
   CreateDirectoryA(partial, nullptr);
 }
 
+void FlushM12BinaryArchiveAtExit();
+
 const char *FormatM12BinaryArchivePath(WMT::Device wmt_device) {
   char root[768] = {};
   if (!ReadEnvPath("DXMT_PIPELINE_CACHE_PATH", root, sizeof(root)) &&
@@ -251,12 +256,85 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
   }
 
   ctx.enabled = true;
+  std::atexit(FlushM12BinaryArchiveAtExit);
 }
 
 M12BinaryArchiveContext &GetM12BinaryArchiveContext(WMT::Device wmt_device) {
   std::call_once(g_m12_binary_archive_once, InitializeM12BinaryArchiveContext,
                  wmt_device);
   return g_m12_binary_archive_context;
+}
+
+bool CopyM12BinaryArchiveForSerialization(
+    M12BinaryArchiveContext &context,
+    WMT::Reference<WMT::BinaryArchive> &archive,
+    const char *&native_path) {
+  std::lock_guard<std::mutex> lock(context.mutex);
+  if (!context.enabled || !context.archive.handle || !context.native_path)
+    return false;
+  archive = context.archive;
+  native_path = context.native_path;
+  return true;
+}
+
+void SerializeM12BinaryArchiveNow(WMT::Reference<WMT::BinaryArchive> archive,
+                                  const char *native_path) {
+  WMT::Reference<WMT::Error> err;
+  archive.serialize(native_path, err);
+}
+
+void MaybeSerializeM12BinaryArchive(M12BinaryArchiveContext &context) {
+  if (context.serialize_in_flight.exchange(true, std::memory_order_acq_rel))
+    return;
+
+  WMT::Reference<WMT::BinaryArchive> archive;
+  const char *native_path = nullptr;
+  if (!CopyM12BinaryArchiveForSerialization(context, archive, native_path)) {
+    context.serialize_in_flight.store(false, std::memory_order_release);
+    return;
+  }
+
+  try {
+    std::thread([archive = std::move(archive), native_path, &context]() mutable {
+      SerializeM12BinaryArchiveNow(std::move(archive), native_path);
+      context.serialize_in_flight.store(false, std::memory_order_release);
+    }).detach();
+  } catch (...) {
+    context.serialize_in_flight.store(false, std::memory_order_release);
+  }
+}
+
+void FlushM12BinaryArchiveAtExit() {
+  auto &context = g_m12_binary_archive_context;
+  if (!context.pso_compile_counter.load(std::memory_order_relaxed))
+    return;
+
+  for (uint32_t i = 0; i < 5000 &&
+                       context.serialize_in_flight.load(std::memory_order_acquire);
+       i++)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  if (context.serialize_in_flight.exchange(true, std::memory_order_acq_rel))
+    return;
+
+  WMT::Reference<WMT::BinaryArchive> archive;
+  const char *native_path = nullptr;
+  if (CopyM12BinaryArchiveForSerialization(context, archive, native_path))
+    SerializeM12BinaryArchiveNow(std::move(archive), native_path);
+  context.serialize_in_flight.store(false, std::memory_order_release);
+}
+
+void RecordM12BinaryArchivePsoOpportunity(M12BinaryArchiveContext &context) {
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (!context.enabled || !context.archive.handle)
+      return;
+  }
+
+  uint64_t current_count =
+      context.pso_compile_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+  if ((current_count % kM12BinaryArchiveSerializeInterval) == 0)
+    MaybeSerializeM12BinaryArchive(context);
 }
 
 template <typename PipelineInfo>
@@ -2508,6 +2586,7 @@ bool MTLD3D12PipelineState::Compile() {
 
     std::string err_desc = "unknown";
     bool compute_core_creation_used = false;
+    bool compute_core_create_cache_hit = false;
     if (!m_compute_pso.handle) {
       for (uint32_t attempt = 0; attempt < 4; attempt++) {
         err = nullptr;
@@ -2524,6 +2603,7 @@ bool MTLD3D12PipelineState::Compile() {
                                        m_compute_pso, err,
                                        core_create_cache_hit)) {
           compute_core_creation_used = true;
+          compute_core_create_cache_hit = core_create_cache_hit;
           Logger::info(str::format("PSO_PRESSURE metal_compute_create_native key=0x",
                                    std::hex, compute_pipeline_cache_key,
                                    " cs=0x", cs_hash, std::dec,
@@ -2544,6 +2624,9 @@ bool MTLD3D12PipelineState::Compile() {
                 attempt + 1, err_desc.c_str());
         Sleep(50 * (attempt + 1));
       }
+      if (m_compute_pso.handle && (!compute_core_creation_used ||
+                                   !compute_core_create_cache_hit))
+        RecordM12BinaryArchivePsoOpportunity(m12_binary_archive_context);
       if (m_compute_pso.handle && !compute_core_creation_used) {
         if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_COMPUTE,
                                        compute_pipeline_cache_key,
@@ -2973,6 +3056,7 @@ bool MTLD3D12PipelineState::Compile() {
 
   std::string render_err_desc = "unknown";
   bool render_core_creation_used = false;
+  bool render_core_create_cache_hit = false;
   if (!m_render_pso.handle) {
     for (uint32_t attempt = 0; attempt < 4; attempt++) {
       err = nullptr;
@@ -2990,6 +3074,7 @@ bool MTLD3D12PipelineState::Compile() {
                                      m_render_pso, err,
                                      core_create_cache_hit)) {
         render_core_creation_used = true;
+        render_core_create_cache_hit = core_create_cache_hit;
         Logger::info(str::format("PSO_PRESSURE metal_render_create_native key=0x",
                                  std::hex, render_pipeline_cache_key,
                                  " pso=0x", pso_manifest_hash,
@@ -3011,6 +3096,9 @@ bool MTLD3D12PipelineState::Compile() {
               attempt + 1, render_err_desc.c_str());
       Sleep(50 * (attempt + 1));
     }
+    if (m_render_pso.handle && (!render_core_creation_used ||
+                                !render_core_create_cache_hit))
+      RecordM12BinaryArchivePsoOpportunity(m12_binary_archive_context);
     if (m_render_pso.handle && !render_core_creation_used) {
       if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_RENDER,
                                      render_pipeline_cache_key,

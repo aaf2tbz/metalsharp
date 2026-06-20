@@ -461,9 +461,15 @@ Do not proceed to Phase 5 unless silent fallback and mutex behavior are proven o
 
 ---
 
-## Phase 5 — Serialization, batched and performance-focused
+## Phase 5 — Completed serialization, batched and performance-focused
 
-Goal: serialize the warm archive periodically without stalling command recording or the broader device runtime.
+Status: completed with offline proof in:
+
+```text
+tools/d3d12-metal-sdk/results/m12-binary-archive-phase5-proof-20260620-153131/phase5-proof-summary.md
+```
+
+Goal: serialize the warm archive periodically without stalling command recording or the broader device runtime. Periodic threshold flushes are dispatched asynchronously with a guarded best-effort fallback on thread-creation failure; a process-exit flush persists the trailing partial batch silently. Native serialization writes a temporary archive and atomically renames it into place only after a nonzero serialize, avoiding canonical archive corruption on teardown.
 
 ### Atomic flush threshold
 
