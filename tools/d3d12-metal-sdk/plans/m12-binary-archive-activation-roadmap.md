@@ -740,7 +740,7 @@ Required before launch:
 - `mscompatdb` absent;
 - backend on `METALSHARP_PORT=9277`;
 - dry-run `ok=true`, `pipeline=m12`;
-- preflight passes;
+- preflight passes, including staged-runtime hash parity against the exact local build being canaried;
 - no logging/tracing/timeouts in request.
 
 Launch env for binary archive menu canary:

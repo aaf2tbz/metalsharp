@@ -115,6 +115,11 @@ def main() -> int:
         "--results-dir",
         default=str(Path(__file__).resolve().parents[1] / "results"),
     )
+    parser.add_argument(
+        "--build-dir",
+        default="",
+        help="Optional DXMT build directory to compare against the staged runtime.",
+    )
     args = parser.parse_args()
 
     dxmt_runtime = Path(args.dxmt_runtime)
@@ -194,12 +199,40 @@ def main() -> int:
             | {"role": "game_local_winemetal"}
         )
 
+    build_comparisons: list[dict] = []
+    if args.build_dir:
+        build_dir = Path(args.build_dir)
+        comparison_pairs = [
+            ("d3d12.dll", build_dir / "src/d3d12/d3d12.dll", dxmt_runtime / "x86_64-windows/d3d12.dll"),
+            ("dxgi.dll", build_dir / "src/dxgi/dxgi.dll", dxmt_runtime / "x86_64-windows/dxgi.dll"),
+            ("dxgi_dxmt.dll", build_dir / "src/dxgi/dxgi_dxmt.dll", dxmt_runtime / "x86_64-windows/dxgi_dxmt.dll"),
+            ("winemetal.dll", build_dir / "src/winemetal/winemetal.dll", dxmt_runtime / "x86_64-windows/winemetal.dll"),
+            ("winemetal.so", build_dir / "src/winemetal/unix/winemetal.so", dxmt_runtime / "x86_64-unix/winemetal.so"),
+            ("libm12core.dylib", build_dir / "src/m12core/libm12core.dylib", dxmt_runtime / "x86_64-unix/libm12core.dylib"),
+        ]
+        for role, build_path, staged_path in comparison_pairs:
+            build_hash = sha256(build_path)
+            staged_hash = sha256(staged_path)
+            build_comparisons.append(
+                {
+                    "role": f"build_match_{role}",
+                    "build_path": str(build_path),
+                    "staged_path": str(staged_path),
+                    "build_exists": build_path.exists(),
+                    "staged_exists": staged_path.exists(),
+                    "build_sha256": build_hash,
+                    "staged_sha256": staged_hash,
+                    "ok": build_hash is not None and build_hash == staged_hash,
+                }
+            )
+
     failures = [entry for entry in entries if not entry.get("ok")]
+    build_failures = [entry for entry in build_comparisons if not entry.get("ok")]
     result = {
         "schema": "metalsharp.d3d12-metal.runtime-preflight.v1",
         "profile": args.profile,
-        "ok": not failures and abi_status.returncode == 0,
-        "failure_count": len(failures),
+        "ok": not failures and not build_failures and abi_status.returncode == 0,
+        "failure_count": len(failures) + len(build_failures),
         "winemetal_abi": {
             "ok": abi_status.returncode == 0,
             "result": str(abi_result_path),
@@ -207,6 +240,7 @@ def main() -> int:
             "stderr": abi_status.stderr.strip(),
         },
         "entries": entries,
+        "build_comparisons": build_comparisons,
         "notes": [
             "DXMT d3d12.dll must expose D3D12CreateDevice by name and ordinal 101.",
             "DXGI bootstrap and real DXMT DLLs must expose factory exports by name and ordinals 9, 10, and 11.",
@@ -219,7 +253,7 @@ def main() -> int:
     out_path = results_dir / f"runtime-preflight-{args.profile}.json"
     out_path.write_text(json.dumps(result, indent=2) + "\n")
     print(out_path)
-    if failures or abi_status.returncode != 0:
+    if failures or build_failures or abi_status.returncode != 0:
         if abi_status.stderr:
             print(abi_status.stderr, file=sys.stderr, end="")
         for failure in failures:
@@ -227,6 +261,12 @@ def main() -> int:
                 f"preflight failed: {failure.get('role')} {failure.get('path')} "
                 f"missing={failure.get('missing_exports', [])} "
                 f"missing_ordinals={failure.get('missing_ordinals', [])}",
+                file=sys.stderr,
+            )
+        for failure in build_failures:
+            print(
+                f"preflight failed: staged runtime does not match build for {failure.get('role')} "
+                f"build={failure.get('build_path')} staged={failure.get('staged_path')}",
                 file=sys.stderr,
             )
         return 1
