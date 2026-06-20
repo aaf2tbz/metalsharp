@@ -253,6 +253,20 @@ Acceptance:
 - Cold missing archive falls back to empty in-memory archive.
 - Existing archive file can be loaded silently.
 
+### Required offline proof before Phase 3
+
+Add and run a focused offline unit/probe gate that proves:
+
+- env parsing enables/disables archive state correctly;
+- bypass env disables lookup without disabling archive population;
+- archive path formatting happens once and uses process-lifetime storage;
+- existing archive load succeeds for the Phase 1 generated archive;
+- missing/corrupt archive falls back to an empty in-memory archive;
+- no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs during the proof;
+- the proof process is wrapped with a hard timeout and process-group kill.
+
+Do not proceed to Phase 3 unless this offline proof passes and leaves the `dxmt_m12` runtime snapshot unchanged.
+
 ---
 
 ## Phase 3 — Descriptor attachment, refined layout
@@ -317,6 +331,28 @@ Acceptance:
 - Compute and render PSO paths attach `binary_archive_for_serialization` when archive is enabled.
 - Lookup archive array is attached only when `allow_lookup=true` and bypass is off.
 - Heap payload lifetime is proven for async worker use.
+
+### Required offline proof before Phase 4
+
+Add and run a descriptor-attachment offline proof that exercises compute and render payloads with:
+
+- archive disabled;
+- archive enabled with lookup bypassed;
+- archive enabled with lookup allowed;
+- circuit breaker forcing `allow_lookup=false`;
+- async-worker-shaped heap payload lifetime.
+
+The proof must assert:
+
+- `binary_archive_for_serialization` is set only when archive is enabled;
+- lookup pointer/count are null/zero under bypass or circuit breaker;
+- lookup pointer/count reference heap-owned payload storage when lookup is allowed;
+- no transient stack archive-handle array is used across async boundaries;
+- runtime `fail_on_binary_archive_miss=false`;
+- no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
+- timeout/process-group kill is active.
+
+Do not proceed to Phase 4 unless all descriptor cases pass offline.
 
 ---
 
@@ -386,6 +422,21 @@ Acceptance:
 - Normal PSO creation continues if archive add fails.
 - No logging overhead is introduced.
 
+### Required offline proof before Phase 5
+
+Add and run a native ObjC safety proof that verifies:
+
+- render and compute `add*PipelineFunctionsWithDescriptor:error:` are isolated under the archive mutex;
+- normal add success still allows baseline PSO creation;
+- forced failure/exception paths unlock the mutex;
+- failure clears descriptor archive lookup state for that descriptor;
+- standard PSO creation continues after archive-add failure;
+- stdout/stderr remain empty for archive failure paths;
+- no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
+- timeout/process-group kill is active.
+
+Do not proceed to Phase 5 unless silent fallback and mutex behavior are proven offline.
+
 ---
 
 ## Phase 5 — Serialization, batched and performance-focused
@@ -439,6 +490,21 @@ Acceptance:
 - Archive file is nonzero after successful serialization.
 - No per-PSO serialization.
 - No logging or tracing in normal operation.
+
+### Required offline proof before Phase 6
+
+Add and run a batched-serialization stress proof that verifies:
+
+- relaxed atomic counter triggers serialization only at the intended interval;
+- no per-PSO serialization occurs below the threshold;
+- concurrent archive add + serialize is ordered by the archive mutex;
+- output archive is nonzero and reloadable;
+- strict lookup still passes for all initially valid selected corpus candidates after serialization;
+- no global device/runtime lock is held around command recording simulation;
+- no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
+- timeout/process-group kill is active.
+
+Do not proceed to Phase 6 unless batched serialization passes offline under concurrency.
 
 ---
 
@@ -498,6 +564,21 @@ Acceptance:
 - Good archive layouts allow lookup when bypass is off.
 - Validation has no visible log output.
 
+### Required offline proof before Phase 7
+
+Add and run a circuit-breaker offline proof that covers:
+
+- good archive: validation passes and `allow_lookup=true` when bypass is off;
+- bypass env: validation may pass but lookup remains disabled;
+- missing/corrupt/empty archive: `allow_lookup=false`;
+- serialization failure: `allow_lookup=false`;
+- archive population remains allowed when lookup is disabled;
+- no logs/tracing are emitted by validation failure paths;
+- no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
+- timeout/process-group kill is active.
+
+Do not proceed to any live menu canary unless Phase 1 and all Phase 2–6 offline proofs pass.
+
 ---
 
 ## Phase 7 — Baseline/menu canary gate
@@ -506,6 +587,9 @@ Goal: prove the startup/menu path still behaves like Slice-3 before any Continue
 
 Required before launch:
 
+- Phase 1 offline corpus proof is complete and committed;
+- Phase 2–6 offline proofs all pass on the exact source being staged;
+- no proof required Wine, Steam, AC6, runtime staging, logging, or tracing;
 - restored/rebuilt baseline can still launch menu;
 - `dxmt_m12` route verified;
 - `mscompatdb` absent;
