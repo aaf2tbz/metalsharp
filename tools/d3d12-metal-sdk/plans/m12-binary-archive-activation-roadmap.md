@@ -591,6 +591,8 @@ Do not use Phase 5B as justification for a gameplay/Continue canary unless the l
 
 ## Phase 6 — Silent validation gates / circuit breaker
 
+Status: complete. Offline proof: `tools/d3d12-metal-sdk/results/m12-binary-archive-phase6-proof-20260620-164349/phase6-proof-summary.md` (`PASS`).
+
 Goal: detect archive incompatibility before menu rendering and disable lookup for the process if the archive path is unsafe.
 
 ### Preflight validation timing
@@ -606,13 +608,9 @@ Perform a minimal in-process check:
 1. Create a temporary in-memory archive.
 2. Construct a minimal dummy pipeline descriptor template suitable for the current device/path.
 3. Add it to the temporary archive.
-4. Serialize it to:
-
-```text
-/tmp/m12_test.bin
-```
-
+4. Serialize it to a process-unique temporary validation file under the resolved archive/cache directory.
 5. Inspect serialization success and resulting file size.
+6. Remove the validation file and its `.tmp` sidecar.
 
 ### Circuit breaker action
 

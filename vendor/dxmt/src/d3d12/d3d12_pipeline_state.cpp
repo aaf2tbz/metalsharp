@@ -209,6 +209,64 @@ void EnsureDirectoryBestEffort(const char *path) {
 
 void FlushM12BinaryArchiveAtExit();
 
+bool RegularFileHasBytes(const char *path) {
+  if (!path || !path[0])
+    return false;
+  struct stat st = {};
+  return stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
+bool ValidateM12BinaryArchiveLookupSupport(WMT::Device wmt_device,
+                                           const char *validation_dir) {
+  static constexpr const char *kValidationSource =
+      "#include <metal_stdlib>\n"
+      "using namespace metal;\n"
+      "kernel void m12_binary_archive_validation_cs(uint id [[thread_position_in_grid]]) { }\n";
+  static constexpr const char *kValidationFunction =
+      "m12_binary_archive_validation_cs";
+  char validation_path[1024] = {};
+  char validation_tmp_path[1060] = {};
+  const char *dir = validation_dir && validation_dir[0] ? validation_dir : "/tmp";
+  snprintf(validation_path, sizeof(validation_path), "%s/m12-test-%lu.bin",
+           dir, (unsigned long)GetCurrentProcessId());
+  snprintf(validation_tmp_path, sizeof(validation_tmp_path), "%s.tmp", validation_path);
+
+  unlink(validation_path);
+  unlink(validation_tmp_path);
+
+  WMT::Reference<WMT::Error> err;
+  auto validation_archive = wmt_device.newBinaryArchive(nullptr, err);
+  if (!validation_archive.handle)
+    return false;
+
+  err = nullptr;
+  auto library = wmt_device.newLibraryWithSource(
+      kValidationSource, strlen(kValidationSource), err);
+  if (!library.handle)
+    return false;
+
+  auto function = library.newFunction(kValidationFunction);
+  if (!function.handle)
+    return false;
+
+  WMTComputePipelineInfo info;
+  WMT::InitializeComputePipelineInfo(info);
+  info.compute_function = function.handle;
+  info.binary_archive_for_serialization = validation_archive.handle;
+
+  err = nullptr;
+  auto pipeline = wmt_device.newComputePipelineState(info, err);
+  if (!pipeline.handle)
+    return false;
+
+  err = nullptr;
+  validation_archive.serialize(validation_path, err);
+  const bool ok = RegularFileHasBytes(validation_path);
+  unlink(validation_path);
+  unlink(validation_tmp_path);
+  return ok;
+}
+
 const char *FormatM12BinaryArchivePath(WMT::Device wmt_device) {
   char root[768] = {};
   if (!ReadEnvPath("DXMT_PIPELINE_CACHE_PATH", root, sizeof(root)) &&
@@ -230,21 +288,28 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
     return;
 
   ctx.native_path = FormatM12BinaryArchivePath(wmt_device);
-  ctx.allow_lookup = !EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP");
+  const bool bypass_lookup = EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP");
+  ctx.allow_lookup = false;
 
   char parent[1024] = {};
   snprintf(parent, sizeof(parent), "%s", ctx.native_path ? ctx.native_path : "");
   char *slash = strrchr(parent, '/');
   char *backslash = strrchr(parent, '\\');
   char *last = slash && backslash ? std::max(slash, backslash) : (slash ? slash : backslash);
+  const char *validation_dir = nullptr;
   if (last) {
     *last = '\0';
     EnsureDirectoryBestEffort(parent);
+    validation_dir = parent;
   }
 
   WMT::Reference<WMT::Error> err;
-  if (ctx.native_path && access(ctx.native_path, F_OK) == 0)
+  const bool existing_archive_has_bytes = RegularFileHasBytes(ctx.native_path);
+  bool loaded_existing_archive = false;
+  if (ctx.native_path && access(ctx.native_path, F_OK) == 0 && existing_archive_has_bytes) {
     ctx.archive = wmt_device.newBinaryArchive(ctx.native_path, err);
+    loaded_existing_archive = ctx.archive.handle != NULL_OBJECT_HANDLE;
+  }
   if (!ctx.archive.handle) {
     err = nullptr;
     ctx.archive = wmt_device.newBinaryArchive(nullptr, err);
@@ -255,6 +320,8 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
     return;
   }
 
+  const bool validation_passed = ValidateM12BinaryArchiveLookupSupport(wmt_device, validation_dir);
+  ctx.allow_lookup = validation_passed && loaded_existing_archive && !bypass_lookup;
   ctx.enabled = true;
   std::atexit(FlushM12BinaryArchiveAtExit);
 }
