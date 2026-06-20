@@ -65,6 +65,17 @@ std::mutex g_metal_pipeline_cache_mutex;
 std::unordered_map<size_t, WMT::Reference<WMT::RenderPipelineState>> g_render_pipeline_cache;
 std::unordered_map<size_t, WMT::Reference<WMT::ComputePipelineState>> g_compute_pipeline_cache;
 
+struct M12BinaryArchiveContext {
+  std::mutex mutex;
+  WMT::Reference<WMT::BinaryArchive> archive;
+  const char *native_path = nullptr;
+  bool enabled = false;
+  bool allow_lookup = false;
+};
+
+M12BinaryArchiveContext g_m12_binary_archive_context;
+std::once_flag g_m12_binary_archive_once;
+
 std::string ShaderCacheDir() {
   const char *env_path = std::getenv("DXMT_SHADER_CACHE_PATH");
   std::string path = (env_path && env_path[0]) ? env_path : "/tmp/dxmt_shader_cache";
@@ -141,6 +152,106 @@ bool EnvFlagEnabled(const char *name) {
   char value[16] = {};
   DWORD len = GetEnvironmentVariableA(name, value, sizeof(value));
   return len > 0 && value[0] && value[0] != '0';
+}
+
+bool EnvSwitchOne(const char *name) {
+  char value[8] = {};
+  DWORD len = GetEnvironmentVariableA(name, value, sizeof(value));
+  return len == 1 && value[0] == '1';
+}
+
+DWORD ReadEnvPath(const char *name, char *out, size_t out_size) {
+  if (!out || !out_size)
+    return 0;
+  out[0] = '\0';
+  DWORD len = GetEnvironmentVariableA(name, out, (DWORD)out_size);
+  if (!len || len >= out_size) {
+    out[0] = '\0';
+    return 0;
+  }
+  while (len > 1 && (out[len - 1] == '/' || out[len - 1] == '\\'))
+    out[--len] = '\0';
+  return len;
+}
+
+void EnsureDirectoryBestEffort(const char *path) {
+  if (!path || !path[0])
+    return;
+
+  char partial[1024] = {};
+  snprintf(partial, sizeof(partial), "%s", path);
+  size_t len = strlen(partial);
+  while (len > 1 && (partial[len - 1] == '/' || partial[len - 1] == '\\'))
+    partial[--len] = '\0';
+
+  for (char *p = partial + 1; *p; p++) {
+    if (*p != '/' && *p != '\\')
+      continue;
+    char saved = *p;
+    *p = '\0';
+    if (partial[0]) {
+      mkdir(partial);
+      CreateDirectoryA(partial, nullptr);
+    }
+    *p = saved;
+  }
+  mkdir(partial);
+  CreateDirectoryA(partial, nullptr);
+}
+
+const char *FormatM12BinaryArchivePath(WMT::Device wmt_device) {
+  char root[768] = {};
+  if (!ReadEnvPath("DXMT_PIPELINE_CACHE_PATH", root, sizeof(root)) &&
+      !ReadEnvPath("DXMT_SHADER_CACHE_PATH", root, sizeof(root))) {
+    snprintf(root, sizeof(root), "%s", "/tmp/dxmt_shader_cache");
+  }
+
+  char path[1024] = {};
+  snprintf(path, sizeof(path), "%s/m12-metal-binary-archive-%016llx.binarchive",
+           root, (unsigned long long)wmt_device.registryID());
+  return strdup(path);
+}
+
+void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
+  auto &ctx = g_m12_binary_archive_context;
+  std::lock_guard<std::mutex> lock(ctx.mutex);
+
+  if (!EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE"))
+    return;
+
+  ctx.native_path = FormatM12BinaryArchivePath(wmt_device);
+  ctx.allow_lookup = !EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP");
+
+  char parent[1024] = {};
+  snprintf(parent, sizeof(parent), "%s", ctx.native_path ? ctx.native_path : "");
+  char *slash = strrchr(parent, '/');
+  char *backslash = strrchr(parent, '\\');
+  char *last = slash && backslash ? std::max(slash, backslash) : (slash ? slash : backslash);
+  if (last) {
+    *last = '\0';
+    EnsureDirectoryBestEffort(parent);
+  }
+
+  WMT::Reference<WMT::Error> err;
+  if (ctx.native_path && access(ctx.native_path, F_OK) == 0)
+    ctx.archive = wmt_device.newBinaryArchive(ctx.native_path, err);
+  if (!ctx.archive.handle) {
+    err = nullptr;
+    ctx.archive = wmt_device.newBinaryArchive(nullptr, err);
+  }
+  if (!ctx.archive.handle) {
+    ctx.native_path = nullptr;
+    ctx.allow_lookup = false;
+    return;
+  }
+
+  ctx.enabled = true;
+}
+
+M12BinaryArchiveContext &GetM12BinaryArchiveContext(WMT::Device wmt_device) {
+  std::call_once(g_m12_binary_archive_once, InitializeM12BinaryArchiveContext,
+                 wmt_device);
+  return g_m12_binary_archive_context;
 }
 
 WMTAttributeFormat AttributeFormatForMetalDataType(uint32_t type) {
@@ -2300,6 +2411,7 @@ bool MTLD3D12PipelineState::Compile() {
   lock.unlock();
 
   auto wmt_device = m_device->GetDXMTDevice().device();
+  (void)GetM12BinaryArchiveContext(wmt_device);
   WMT::Reference<WMT::Error> err;
 
   if (m_is_compute) {

@@ -161,9 +161,15 @@ Acceptance:
 
 ---
 
-## Phase 2 — PE-side archive manager, streamlined
+## Phase 2 — Completed PE-side archive manager, streamlined
 
-Implement in:
+Status: completed with offline proof in:
+
+```text
+tools/d3d12-metal-sdk/results/m12-binary-archive-phase2-proof-20260620-134726/phase2-proof-summary.md
+```
+
+Implemented in:
 
 ```text
 vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp
