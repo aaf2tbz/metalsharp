@@ -9,6 +9,7 @@
 #include "objc/objc-runtime.h"
 #include <bootstrap.h>
 #include <mach/mach_port.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +54,8 @@ static FILE *
 winemetal_critical_log(void) {
   return winemetal_open_log("winemetal-unix-debug.log");
 }
+
+static pthread_mutex_t g_m12_binary_archive_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * Phase-1 libm12core loader
@@ -1778,8 +1781,18 @@ _MTLDevice_newComputePipelineState(void *obj) {
   }
   params->ret_error = (obj_handle_t)err;
   if (params->ret_pso && !err && info->binary_archive_for_serialization) {
-    [(id<MTLBinaryArchive>)info->binary_archive_for_serialization addComputePipelineFunctionsWithDescriptor:descriptor
-                                                                                                      error:&err];
+    id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
+    @synchronized(archive) {
+      pthread_mutex_lock(&g_m12_binary_archive_mutex);
+      @try {
+        [archive addComputePipelineFunctionsWithDescriptor:descriptor error:nil];
+      } @catch(NSException * exception) {
+        (void)exception;
+        descriptor.binaryArchives = nil;
+      } @finally {
+        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      }
+    }
   }
   [descriptor release];
   return STATUS_SUCCESS;
@@ -2023,8 +2036,18 @@ _MTLDevice_newRenderPipelineState(void *obj) {
   }
   params->ret_error = (obj_handle_t)err;
   if (params->ret_pso && !err && info->binary_archive_for_serialization) {
-    [(id<MTLBinaryArchive>)info->binary_archive_for_serialization addRenderPipelineFunctionsWithDescriptor:descriptor
-                                                                                                     error:&err];
+    id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
+    @synchronized(archive) {
+      pthread_mutex_lock(&g_m12_binary_archive_mutex);
+      @try {
+        [archive addRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
+      } @catch(NSException * exception) {
+        (void)exception;
+        descriptor.binaryArchives = nil;
+      } @finally {
+        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      }
+    }
   }
   [descriptor release];
   return STATUS_SUCCESS;
@@ -2164,9 +2187,18 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
   if (@available(macOS 15, *)) {
     if (params->ret_pso && !err && info->binary_archive_for_serialization) {
-      [(id<MTLBinaryArchive>)info->binary_archive_for_serialization
-          addMeshRenderPipelineFunctionsWithDescriptor:descriptor
-                                                 error:&err];
+      id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
+      @synchronized(archive) {
+        pthread_mutex_lock(&g_m12_binary_archive_mutex);
+        @try {
+          [archive addMeshRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
+        } @catch(NSException * exception) {
+          (void)exception;
+          descriptor.binaryArchives = nil;
+        } @finally {
+          pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+        }
+      }
     }
   }
 #endif
@@ -4549,9 +4581,18 @@ _MTLDevice_newTileRenderPipelineState(void *obj) {
 #if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
   if (@available(macOS 15, *)) {
     if (params->ret_pso && !err && info->binary_archive_for_serialization) {
-      [(id<MTLBinaryArchive>)info->binary_archive_for_serialization
-          addTileRenderPipelineFunctionsWithDescriptor:descriptor
-                                                 error:&err];
+      id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
+      @synchronized(archive) {
+        pthread_mutex_lock(&g_m12_binary_archive_mutex);
+        @try {
+          [archive addTileRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
+        } @catch(NSException * exception) {
+          (void)exception;
+          descriptor.binaryArchives = nil;
+        } @finally {
+          pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+        }
+      }
     }
   }
 #endif

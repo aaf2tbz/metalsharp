@@ -27,6 +27,7 @@ static pthread_mutex_t g_shader_function_cache_mutex = PTHREAD_MUTEX_INITIALIZER
 static NSMutableDictionary<NSString *, id<MTLFunction>> *g_shader_function_cache;
 static pthread_mutex_t g_pipeline_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NSMutableDictionary<NSString *, id> *g_pipeline_cache;
+static pthread_mutex_t g_m12_binary_archive_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void m12core_copy_cstr(char *dst, size_t dst_size, const char *src) {
   if (!dst || !dst_size)
@@ -218,8 +219,18 @@ static id<MTLComputePipelineState> m12core_create_compute_pipeline(
     pipeline = nil;
   }
   if (pipeline && !error && info->binary_archive_for_serialization) {
-    [(id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization addComputePipelineFunctionsWithDescriptor:descriptor
-                                                                                                                 error:&error];
+    id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization;
+    @synchronized(archive) {
+      pthread_mutex_lock(&g_m12_binary_archive_mutex);
+      @try {
+        [archive addComputePipelineFunctionsWithDescriptor:descriptor error:nil];
+      } @catch (NSException *exception) {
+        (void)exception;
+        descriptor.binaryArchives = nil;
+      } @finally {
+        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      }
+    }
   }
   if (error_out)
     *error_out = error;
@@ -331,8 +342,18 @@ static id<MTLRenderPipelineState> m12core_create_render_pipeline(
     pipeline = nil;
   }
   if (pipeline && !error && info->binary_archive_for_serialization) {
-    [(id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization addRenderPipelineFunctionsWithDescriptor:descriptor
-                                                                                                                error:&error];
+    id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization;
+    @synchronized(archive) {
+      pthread_mutex_lock(&g_m12_binary_archive_mutex);
+      @try {
+        [archive addRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
+      } @catch (NSException *exception) {
+        (void)exception;
+        descriptor.binaryArchives = nil;
+      } @finally {
+        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      }
+    }
   }
   if (error_out)
     *error_out = error;

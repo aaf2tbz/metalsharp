@@ -370,14 +370,22 @@ Do not proceed to Phase 4 unless all descriptor cases pass offline.
 
 ---
 
-## Phase 4 — ObjC-side archive safety, zero overhead
+## Phase 4 — Completed ObjC-side archive safety, zero overhead
 
-Implement in both:
+Status: completed with offline proof in:
+
+```text
+tools/d3d12-metal-sdk/results/m12-binary-archive-phase4-proof-20260620-143727/phase4-proof-summary.md
+```
+
+Implemented in both:
 
 ```text
 vendor/dxmt/src/m12core/m12core_metal.c
 vendor/dxmt/src/winemetal/unix/winemetal_unix.c
 ```
+
+WineMetal mesh/tile archive-add sites are also guarded because they mutate the same process/shared `MTLBinaryArchive` object. Cross-module serialization between m12core and WineMetal fallback paths is provided by object-level `@synchronized(archive)`, which locks on the shared Objective-C archive object. Each module's local pthread mutex is only an intra-module belt-and-suspenders guard and must not be treated as a cross-shared-library lock.
 
 ### Mutex scope isolation
 
