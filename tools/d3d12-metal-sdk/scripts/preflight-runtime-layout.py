@@ -28,6 +28,11 @@ D3D12_EXPORTS = [
     "D3D12SerializeVersionedRootSignature",
 ]
 
+D3D11_EXPORTS = [
+    "D3D11CreateDevice",
+    "D3D11CreateDeviceAndSwapChain",
+]
+
 DXGI_EXPORTS = [
     "CreateDXGIFactory",
     "CreateDXGIFactory1",
@@ -153,6 +158,14 @@ def main() -> int:
         | {"role": "dxmt_windows_d3d12"}
     )
     entries.append(
+        inspect_file(dxmt_runtime / "x86_64-windows" / "d3d11.dll", D3D11_EXPORTS)
+        | {"role": "dxmt_windows_d3d11"}
+    )
+    entries.append(
+        inspect_file(dxmt_runtime / "x86_64-windows" / "d3d10core.dll", [])
+        | {"role": "dxmt_windows_d3d10core"}
+    )
+    entries.append(
         inspect_file(dxmt_runtime / "x86_64-windows" / "dxgi.dll", DXGI_EXPORTS, [9, 10, 11])
         | {"role": "dxmt_windows_dxgi_bootstrap"}
     )
@@ -204,6 +217,8 @@ def main() -> int:
         build_dir = Path(args.build_dir)
         comparison_pairs = [
             ("d3d12.dll", build_dir / "src/d3d12/d3d12.dll", dxmt_runtime / "x86_64-windows/d3d12.dll"),
+            ("d3d11.dll", build_dir / "src/d3d11/d3d11.dll", dxmt_runtime / "x86_64-windows/d3d11.dll"),
+            ("d3d10core.dll", build_dir / "src/d3d10/d3d10core.dll", dxmt_runtime / "x86_64-windows/d3d10core.dll"),
             ("dxgi.dll", build_dir / "src/dxgi/dxgi.dll", dxmt_runtime / "x86_64-windows/dxgi.dll"),
             ("dxgi_dxmt.dll", build_dir / "src/dxgi/dxgi_dxmt.dll", dxmt_runtime / "x86_64-windows/dxgi_dxmt.dll"),
             ("winemetal.dll", build_dir / "src/winemetal/winemetal.dll", dxmt_runtime / "x86_64-windows/winemetal.dll"),

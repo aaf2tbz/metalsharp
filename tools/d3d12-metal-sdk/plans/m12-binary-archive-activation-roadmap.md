@@ -771,54 +771,89 @@ Acceptance:
 
 AC6 live launches require explicit user approval.
 
-### Run 1 — Bake memory / populate archive
+### Current Phase 8 truth — full-DLL staged run fixed the apparent failure
 
-Launch with:
+Status: **fixed / do not treat the earlier Phase 8A mixed-runtime hang as current evidence**.
 
-```text
-DXMT_D3D12_BINARY_ARCHIVE=1
-DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP=1
-```
+The important Phase 8 outcome was not a binary-archive runtime regression. The apparent post-Continue failure was invalidated after discovering that the staged M12 runtime had incomplete DLL coverage: `d3d11.dll` and `d3d10core.dll` were not explicitly rebuilt/staged/preflight-parity-checked with the rest of the M12 surface.
 
-Expected behavior:
-
-- Game uses normal raw MSL/library/PSO creation behavior for lookup.
-- Archive serialization/add paths silently bake observed render/compute PSOs into the background binary archive.
-- User can enter Continue/world-load streaming to populate the archive with complex visibility/indirect/compute/render pipelines.
-- No lookup dependency exists on Run 1, so a cold/partial archive cannot affect rendering.
-
-Success evidence:
-
-- Menu renders normally first.
-- Continue path reaches the target workload without new archive-specific failure.
-- Archive file exists and is nonzero after the run.
-
-### Run 2 — Warm archive lookup
-
-Launch with:
+The corrected staging work added full build/stage/preflight coverage for the atomic M12 DLL set:
 
 ```text
-DXMT_D3D12_BINARY_ARCHIVE=1
-DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP=0
+d3d12.dll
+d3d11.dll
+d3d10core.dll
+dxgi.dll
+dxgi_dxmt.dll
+winemetal.dll
+winemetal.so
+libm12core.dylib
 ```
 
-Expected behavior:
+Evidence:
 
-- Silent validation passes.
-- `context.allow_lookup=true`.
-- Matching PSO creation requests can use the warm binary archive for final pipeline creation.
-- Menu/world-load should see reduced final PSO creation pressure.
+```text
+Full-DLL staging / preflight:
+tools/d3d12-metal-sdk/results/m12-full-dll-staging-fix-20260620-215250/
 
-Important caveat:
+Full-DLL AC6 launch + Continue/turtle capture:
+tools/d3d12-metal-sdk/results/m12-full-dll-staging-fix-launch-20260620-215442/
+```
 
-- This run can reduce Metal PSO creation pressure.
-- It does not guarantee elimination of generated-MSL source-library compilation unless a persistent `.metallib` cache is also active for those shaders.
+Observed result:
 
-Success evidence:
+- corrected full-DLL staging/preflight passed with `ok=true`, `failure_count=0`, and build-to-staged hash parity for the full atomic DLL set;
+- AC6 launched via `POST /steam/launch-game` on `METALSHARP_PORT=9277` with pipeline `m12`;
+- user confirmed the full-DLL staged run rendered / worked;
+- post-Continue turtle capture was collected and AC6 was quit;
+- the turtle sample did **not** show the earlier DXIL→MSL lowering storm; it mainly showed Metal/IOGPU command queue submission:
 
-- Menu renders normally.
-- Continue/world-load proceeds without command-buffer timeout / no-render regression.
-- Archive-backed warm run shows fewer expensive PSO creation stalls than Run 1.
+```text
+com.Metal.CommandQueueDispatch
+-[_MTLCommandQueue _submitAvailableCommandBuffers]
+-[IOGPUMetalCommandQueue submitCommandBuffers:count:]
+-[IOGPUMetalCommandQueue _submitCommandBuffers:count:]
+```
+
+Interpretation:
+
+- the earlier `m12-phase8a-continue-canary-population-off-20260620-183420` black-screen/hang is **superseded** because it was captured under partial/mixed runtime staging;
+- do not use that older Phase 8A result as proof that population-off binary archive or Phase 8 currently fails;
+- before any future AC6 Continue canary, require full-DLL build/stage/preflight parity for the atomic set above;
+- keep binary archive population split from enable/lookup: population remains opt-in only.
+
+### Safe Phase 8 launch mode after the fix
+
+Population-off / lookup-bypassed canaries should use:
+
+```text
+METALSHARP_M12_LOG_LEVEL=none
+METALSHARP_M12_LOG_PATH=none
+METALSHARP_M12_TRACE_CAPTURE=0
+METALSHARP_M12_BINARY_ARCHIVE=1
+METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP=1
+# Omit METALSHARP_M12_BINARY_ARCHIVE_POPULATE unless explicitly testing population.
+```
+
+Required gates before treating a result as valid:
+
+- route is `POST /steam/launch-game`;
+- port is `METALSHARP_PORT=9277`;
+- runtime route is `~/.metalsharp/runtime/wine/lib/dxmt_m12`;
+- `mscompatdb` remains absent;
+- no stale/partial staged runtime;
+- full atomic DLL set above has build↔staged hash parity;
+- `d3d11.dll` and `d3d10core.dll` are explicitly included in build/stage/preflight, not merely assumed because files exist.
+
+### Deferred — live archive population / warm lookup
+
+Live binary archive population remains deferred until redesigned/proven offline. The original Run 1/Run 2 archive plan is still conceptually useful, but it must not be interpreted as the current successful Phase 8 path.
+
+If population is reintroduced later, use separate explicit phases:
+
+1. population omitted: menu + Continue parity baseline;
+2. population enabled only after offline proof and menu parity;
+3. warm lookup enabled only after population safety is proven.
 
 ---
 

@@ -62,12 +62,16 @@ ninja -C "${BUILD_DIR}" \
   src/m12core/libm12core.dylib \
   src/winemetal/unix/winemetal.so \
   src/winemetal/winemetal.dll \
-  src/d3d12/d3d12.dll
+  src/d3d12/d3d12.dll \
+  src/d3d11/d3d11.dll \
+  src/d3d10/d3d10core.dll
 
 echo "x86_64 LLVM ready: ${LLVM_DIR}"
 echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi.dll"
 echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi_dxmt.dll"
 echo "rebuilt: ${BUILD_DIR}/src/d3d12/d3d12.dll"
+echo "rebuilt: ${BUILD_DIR}/src/d3d11/d3d11.dll"
+echo "rebuilt: ${BUILD_DIR}/src/d3d10/d3d10core.dll"
 echo "rebuilt: ${BUILD_DIR}/src/m12core/libm12core.dylib"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/winemetal.dll"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/unix/winemetal.so"
