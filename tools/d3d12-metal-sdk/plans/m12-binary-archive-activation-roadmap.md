@@ -845,6 +845,28 @@ Required gates before treating a result as valid:
 - full atomic DLL set above has build↔staged hash parity;
 - `d3d11.dll` and `d3d10core.dll` are explicitly included in build/stage/preflight, not merely assumed because files exist.
 
+### Phase A baseline lock guard
+
+Use this offline guard before any future AC6/M12 live evidence run:
+
+```text
+tools/d3d12-metal-sdk/scripts/lock-m12-phase8-baseline.sh
+```
+
+The guard does not launch Steam, Wine games, or AC6. It verifies:
+
+- `mscompatdb` is absent;
+- `preflight-runtime-layout.py` passes against `~/.metalsharp/runtime/wine/lib/dxmt_m12`;
+- the full atomic M12 DLL set has build↔staged SHA-256 parity.
+
+Latest Phase A evidence:
+
+```text
+tools/d3d12-metal-sdk/results/m12-phase8-baseline-lock-20260620-221605/phase8-baseline-lock-summary.md
+```
+
+Result: `ok=true`, `failure_count=0`, `winemetal_abi_ok=true`, full atomic runtime parity green.
+
 ### Deferred — live archive population / warm lookup
 
 Live binary archive population remains deferred until redesigned/proven offline. The original Run 1/Run 2 archive plan is still conceptually useful, but it must not be interpreted as the current successful Phase 8 path.
