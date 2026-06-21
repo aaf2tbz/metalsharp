@@ -320,7 +320,8 @@ The handle array must outlive:
 Populate raw WMT structs directly. No text parsing, identifier tracing, or logging.
 
 ```cpp
-info.binary_archive_for_serialization = context.archive.handle;
+if (context.allow_population)
+  info.binary_archive_for_serialization = context.archive.handle;
 
 if (context.allow_lookup && !env_bypass_lookup) {
   info.binary_archives_for_lookup.set(payload->heap_archive_handles);
@@ -335,14 +336,15 @@ info.fail_on_binary_archive_miss = false;
 
 Rules:
 
-- Serialization/archive-add can be enabled even when lookup is bypassed.
+- Serialization/archive-add is gated separately from lookup and requires explicit population enablement.
+- Lookup bypass must also avoid implicit archive mutation/population unless population is explicitly enabled.
 - `fail_on_binary_archive_miss` remains false; archive misses must never fail gameplay.
 - No WMT ABI layout changes.
 - No archive descriptor logging.
 
 Acceptance:
 
-- Compute and render PSO paths attach `binary_archive_for_serialization` when archive is enabled.
+- Compute and render PSO paths attach `binary_archive_for_serialization` only when archive population is explicitly enabled.
 - Lookup archive array is attached only when `allow_lookup=true` and bypass is off.
 - Heap payload lifetime is proven for async worker use.
 
@@ -358,7 +360,7 @@ Add and run a descriptor-attachment offline proof that exercises compute and ren
 
 The proof must assert:
 
-- `binary_archive_for_serialization` is set only when archive is enabled;
+- `binary_archive_for_serialization` is set only when archive population is explicitly enabled;
 - lookup pointer/count are null/zero under bypass or circuit breaker;
 - lookup pointer/count reference heap-owned payload storage when lookup is allowed;
 - no transient stack archive-handle array is used across async boundaries;
@@ -633,7 +635,7 @@ unless `DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP=1` is set.
 Rules:
 
 - No logs are generated.
-- Archive population can remain enabled even when lookup is disabled.
+- Archive population is disabled by default and requires explicit `DXMT_D3D12_BINARY_ARCHIVE_POPULATE=1`.
 - Lookup is never enabled after validation failure.
 - Invalid/corrupt archive layouts must degrade to standard compilation, not game failure.
 
@@ -651,7 +653,8 @@ Add and run a circuit-breaker offline proof that covers:
 - bypass env: validation may pass but lookup remains disabled;
 - missing/corrupt/empty archive: `allow_lookup=false`;
 - serialization failure: `allow_lookup=false`;
-- archive population remains allowed when lookup is disabled;
+- archive population remains disabled by default when lookup is disabled;
+- explicit `DXMT_D3D12_BINARY_ARCHIVE_POPULATE=1` enables population without enabling lookup;
 - no logs/tracing are emitted by validation failure paths;
 - no Wine, Steam, AC6 launch, runtime staging, logging, or tracing occurs;
 - timeout/process-group kill is active.
@@ -751,6 +754,7 @@ METALSHARP_M12_LOG_PATH=none
 METALSHARP_M12_TRACE_CAPTURE=0
 METALSHARP_M12_BINARY_ARCHIVE=1
 METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP=1
+# Intentionally omit METALSHARP_M12_BINARY_ARCHIVE_POPULATE for Phase 7 menu parity.
 ```
 
 No Continue in this phase.

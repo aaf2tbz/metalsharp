@@ -79,6 +79,7 @@ struct M12BinaryArchiveContext {
   const char *native_path = nullptr;
   bool enabled = false;
   bool allow_lookup = false;
+  bool allow_population = false;
 };
 
 struct M12BinaryArchiveCompilePayload {
@@ -303,7 +304,9 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
 
   ctx.native_path = FormatM12BinaryArchivePath(wmt_device);
   const bool bypass_lookup = EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP");
+  const bool allow_population = EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE");
   ctx.allow_lookup = false;
+  ctx.allow_population = false;
 
   char parent[1024] = {};
   snprintf(parent, sizeof(parent), "%s", ctx.native_path ? ctx.native_path : "");
@@ -336,6 +339,7 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
 
   const bool validation_passed = ValidateM12BinaryArchiveLookupSupport(wmt_device, validation_dir);
   ctx.allow_lookup = validation_passed && loaded_existing_archive && !bypass_lookup;
+  ctx.allow_population = allow_population;
   ctx.enabled = true;
   std::atexit(FlushM12BinaryArchiveAtExit);
 }
@@ -351,7 +355,8 @@ bool CopyM12BinaryArchiveForSerialization(
     WMT::Reference<WMT::BinaryArchive> &archive,
     const char *&native_path) {
   std::lock_guard<std::mutex> lock(context.mutex);
-  if (!context.enabled || !context.archive.handle || !context.native_path)
+  if (!context.enabled || !context.archive.handle || !context.native_path ||
+      !context.allow_population)
     return false;
   archive = context.archive;
   native_path = context.native_path;
@@ -408,7 +413,7 @@ void FlushM12BinaryArchiveAtExit() {
 void RecordM12BinaryArchivePsoOpportunity(M12BinaryArchiveContext &context) {
   {
     std::lock_guard<std::mutex> lock(context.mutex);
-    if (!context.enabled || !context.archive.handle)
+    if (!context.enabled || !context.archive.handle || !context.allow_population)
       return;
   }
 
@@ -433,7 +438,8 @@ void AttachM12BinaryArchiveInfo(PipelineInfo &info,
     return;
 
   payload.heap_archive_handles[0] = context.archive.handle;
-  info.binary_archive_for_serialization = context.archive.handle;
+  if (context.allow_population)
+    info.binary_archive_for_serialization = context.archive.handle;
   if (context.allow_lookup) {
     info.binary_archives_for_lookup.set(payload.heap_archive_handles);
     info.num_binary_archives_for_lookup = 1;

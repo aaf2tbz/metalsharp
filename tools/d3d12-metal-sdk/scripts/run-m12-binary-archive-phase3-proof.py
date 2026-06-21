@@ -128,7 +128,8 @@ def source_checks() -> dict[str, Any]:
         and "info.binary_archives_for_lookup.set(nullptr);" in helper
         and "info.num_binary_archives_for_lookup = 0;" in helper
         and "info.fail_on_binary_archive_miss = false;" in helper,
-        "serialization_attached_when_enabled": "info.binary_archive_for_serialization = context.archive.handle;" in helper,
+        "serialization_gated_by_allow_population": "if (context.allow_population)" in helper
+        and "info.binary_archive_for_serialization = context.archive.handle;" in helper,
         "lookup_gated_by_allow_lookup": "if (context.allow_lookup)" in helper,
         "lookup_uses_heap_payload": "info.binary_archives_for_lookup.set(payload.heap_archive_handles);" in helper,
         "no_stack_archive_handle_array": "obj_handle_t archive_handles[1]" not in text,
@@ -198,7 +199,7 @@ def main() -> int:
     commands.append(run_bounded(compile_cmd, timeout=args.timeout, stdout=out_dir / "compile.stdout.txt", stderr=out_dir / "compile.stderr.txt"))
 
     probe_cases: list[dict[str, Any]] = []
-    case_names = ["disabled", "lookup-bypassed", "lookup-allowed", "circuit-breaker"]
+    case_names = ["disabled", "lookup-bypassed", "lookup-allowed", "population-enabled", "circuit-breaker"]
     if commands[-1]["returncode"] == 0 and not commands[-1]["timeout"]:
         for case_name in case_names:
             case_dir = out_dir / case_name
@@ -216,19 +217,22 @@ def main() -> int:
     disabled = cases.get("disabled", {})
     bypass = cases.get("lookup-bypassed", {})
     allowed = cases.get("lookup-allowed", {})
+    population = cases.get("population-enabled", {})
     circuit = cases.get("circuit-breaker", {})
     all_cases_passed = len(probe_cases) == len(case_names) and all(case.get("passed") for case in probe_cases)
     all_fail_on_miss_false = all(
         case.get("compute_fail_on_miss") is False and case.get("render_fail_on_miss") is False for case in probe_cases
     )
     acceptance = {
-        "compute_and_render_serialization_only_when_enabled": bool(
+        "compute_and_render_serialization_only_when_population_allowed": bool(
             disabled.get("compute_serialization_set") is False
             and disabled.get("render_serialization_set") is False
-            and bypass.get("compute_serialization_set") is True
-            and bypass.get("render_serialization_set") is True
-            and allowed.get("compute_serialization_set") is True
-            and allowed.get("render_serialization_set") is True
+            and bypass.get("compute_serialization_set") is False
+            and bypass.get("render_serialization_set") is False
+            and allowed.get("compute_serialization_set") is False
+            and allowed.get("render_serialization_set") is False
+            and population.get("compute_serialization_set") is True
+            and population.get("render_serialization_set") is True
         ),
         "lookup_attached_only_when_allowed": bool(
             bypass.get("compute_lookup_count") == 0

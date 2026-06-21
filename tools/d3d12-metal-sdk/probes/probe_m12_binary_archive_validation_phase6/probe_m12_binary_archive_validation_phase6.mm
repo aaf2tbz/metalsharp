@@ -16,6 +16,7 @@ struct ProbeArchiveContext {
     const char* native_path = nullptr;
     bool enabled = false;
     bool allow_lookup = false;
+    bool allow_population = false;
     bool existing_archive_has_bytes = false;
     bool loaded_existing_archive = false;
     bool used_memory_fallback = false;
@@ -193,7 +194,9 @@ static void initializeContext(ProbeArchiveContext& ctx, id<MTLDevice> device, bo
 
     ctx.native_path = formatArchivePath(device);
     const bool bypass_lookup = envSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP");
+    const bool allow_population = envSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE");
     ctx.allow_lookup = false;
+    ctx.allow_population = false;
 
     char parent[1024] = {};
     snprintf(parent, sizeof(parent), "%s", ctx.native_path ? ctx.native_path : "");
@@ -222,6 +225,7 @@ static void initializeContext(ProbeArchiveContext& ctx, id<MTLDevice> device, bo
 
     ctx.validation_passed = validateBinaryArchiveLookupSupport(device, validation_path, force_validation_failure);
     ctx.allow_lookup = ctx.validation_passed && ctx.loaded_existing_archive && !bypass_lookup;
+    ctx.allow_population = allow_population;
     ctx.enabled = true;
 }
 
@@ -269,7 +273,7 @@ int main(int argc, char** argv) {
         bool prepared_corrupt = false;
         bool prepared_empty = false;
         bool force_validation_failure = false;
-        if (!strcmp(case_name, "good") || !strcmp(case_name, "bypass")) {
+        if (!strcmp(case_name, "good") || !strcmp(case_name, "good-populate") || !strcmp(case_name, "bypass")) {
             prepared_good = createGoodArchive(device, expected_path);
         } else if (!strcmp(case_name, "corrupt")) {
             prepared_corrupt = writeTextFile(expected_path, "not-a-metal-binary-archive\n");
@@ -283,15 +287,18 @@ int main(int argc, char** argv) {
         ProbeArchiveContext ctx;
         initializeContext(ctx, device, force_validation_failure, validation_path);
 
-        const bool population_allowed = ctx.enabled && ctx.archive != nil && ctx.native_path != nullptr;
+        const bool population_allowed =
+            ctx.enabled && ctx.archive != nil && ctx.native_path != nullptr && ctx.allow_population;
         const bool lookup_disabled_but_population_allowed = !ctx.allow_lookup && population_allowed;
 
         NSDictionary* out = @{
             @"case" : [NSString stringWithUTF8String:case_name],
             @"env_enable_exact_one" : @(envSwitchOne("DXMT_D3D12_BINARY_ARCHIVE")),
             @"env_bypass_exact_one" : @(envSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP")),
+            @"env_populate_exact_one" : @(envSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE")),
             @"enabled" : @(ctx.enabled),
             @"allow_lookup" : @(ctx.allow_lookup),
+            @"allow_population" : @(ctx.allow_population),
             @"archive_handle_nonzero" : @(ctx.archive != nil),
             @"population_allowed" : @(population_allowed),
             @"lookup_disabled_but_population_allowed" : @(lookup_disabled_but_population_allowed),

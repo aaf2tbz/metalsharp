@@ -1,0 +1,220 @@
+{
+  "acceptance": {
+    "async_worker_shaped_heap_payload_lifetime": true,
+    "commands_passed": true,
+    "compute_and_render_serialization_only_when_population_allowed": true,
+    "dxmt_m12_runtime_snapshot_unchanged": true,
+    "hard_timeout_process_group_kill_active": true,
+    "lookup_attached_only_when_allowed": true,
+    "lookup_pointer_uses_heap_payload_storage": true,
+    "no_wine_steam_ac6_runtime_staging_logging_or_tracing": true,
+    "runtime_fail_on_binary_archive_miss_false": true,
+    "source_invariants_pass": true
+  },
+  "commands": [
+    {
+      "cmd": [
+        "clang++",
+        "-std=c++17",
+        "-O2",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/probes/probe_m12_binary_archive_descriptor_phase3/probe_m12_binary_archive_descriptor_phase3.cpp",
+        "-o",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_descriptor_phase3"
+      ],
+      "elapsed_sec": 0.628,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/compile.stderr.txt",
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/compile.stdout.txt",
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_descriptor_phase3",
+        "--case",
+        "disabled",
+        "--output",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/disabled/result.json"
+      ],
+      "elapsed_sec": 0.132,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/disabled/stderr.txt",
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/disabled/stdout.txt",
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_descriptor_phase3",
+        "--case",
+        "lookup-bypassed",
+        "--output",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/lookup-bypassed/result.json"
+      ],
+      "elapsed_sec": 0.005,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/lookup-bypassed/stderr.txt",
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/lookup-bypassed/stdout.txt",
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_descriptor_phase3",
+        "--case",
+        "lookup-allowed",
+        "--output",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/lookup-allowed/result.json"
+      ],
+      "elapsed_sec": 0.005,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/lookup-allowed/stderr.txt",
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/lookup-allowed/stdout.txt",
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_descriptor_phase3",
+        "--case",
+        "population-enabled",
+        "--output",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/population-enabled/result.json"
+      ],
+      "elapsed_sec": 0.005,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/population-enabled/stderr.txt",
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/population-enabled/stdout.txt",
+      "still_running_after_sigkill": false,
+      "timeout": false
+    },
+    {
+      "cmd": [
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/out/bin/probe_m12_binary_archive_descriptor_phase3",
+        "--case",
+        "circuit-breaker",
+        "--output",
+        "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/circuit-breaker/result.json"
+      ],
+      "elapsed_sec": 0.005,
+      "returncode": 0,
+      "stderr": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/circuit-breaker/stderr.txt",
+      "stdout": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053/circuit-breaker/stdout.txt",
+      "still_running_after_sigkill": false,
+      "timeout": false
+    }
+  ],
+  "passed": true,
+  "pipeline_state": "/Users/alexmondello/metalsharp-m12-lab/vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp",
+  "probe_cases": [
+    {
+      "allow_lookup": false,
+      "allow_population": false,
+      "case": "disabled",
+      "compute_fail_on_miss": false,
+      "compute_lookup_count": 0,
+      "compute_lookup_heap_payload": true,
+      "compute_serialization_set": false,
+      "compute_valid": true,
+      "enabled": false,
+      "passed": true,
+      "render_fail_on_miss": false,
+      "render_lookup_count": 0,
+      "render_lookup_heap_payload": true,
+      "render_serialization_set": false,
+      "render_valid": true
+    },
+    {
+      "allow_lookup": false,
+      "allow_population": false,
+      "case": "lookup-bypassed",
+      "compute_fail_on_miss": false,
+      "compute_lookup_count": 0,
+      "compute_lookup_heap_payload": true,
+      "compute_serialization_set": false,
+      "compute_valid": true,
+      "enabled": true,
+      "passed": true,
+      "render_fail_on_miss": false,
+      "render_lookup_count": 0,
+      "render_lookup_heap_payload": true,
+      "render_serialization_set": false,
+      "render_valid": true
+    },
+    {
+      "allow_lookup": true,
+      "allow_population": false,
+      "case": "lookup-allowed",
+      "compute_fail_on_miss": false,
+      "compute_lookup_count": 1,
+      "compute_lookup_heap_payload": true,
+      "compute_serialization_set": false,
+      "compute_valid": true,
+      "enabled": true,
+      "passed": true,
+      "render_fail_on_miss": false,
+      "render_lookup_count": 1,
+      "render_lookup_heap_payload": true,
+      "render_serialization_set": false,
+      "render_valid": true
+    },
+    {
+      "allow_lookup": false,
+      "allow_population": true,
+      "case": "population-enabled",
+      "compute_fail_on_miss": false,
+      "compute_lookup_count": 0,
+      "compute_lookup_heap_payload": true,
+      "compute_serialization_set": true,
+      "compute_valid": true,
+      "enabled": true,
+      "passed": true,
+      "render_fail_on_miss": false,
+      "render_lookup_count": 0,
+      "render_lookup_heap_payload": true,
+      "render_serialization_set": true,
+      "render_valid": true
+    },
+    {
+      "allow_lookup": false,
+      "allow_population": false,
+      "case": "circuit-breaker",
+      "compute_fail_on_miss": false,
+      "compute_lookup_count": 0,
+      "compute_lookup_heap_payload": true,
+      "compute_serialization_set": false,
+      "compute_valid": true,
+      "enabled": true,
+      "passed": true,
+      "render_fail_on_miss": false,
+      "render_lookup_count": 0,
+      "render_lookup_heap_payload": true,
+      "render_serialization_set": false,
+      "render_valid": true
+    }
+  ],
+  "probe_source": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/probes/probe_m12_binary_archive_descriptor_phase3/probe_m12_binary_archive_descriptor_phase3.cpp",
+  "results_dir": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/results/m12-binary-archive-phase3-proof-20260620-180053",
+  "runtime_snapshot_file_count": 13,
+  "schema": "metalsharp.m12.binary_archive_phase3_proof.v1",
+  "script": "/Users/alexmondello/metalsharp-m12-lab/tools/d3d12-metal-sdk/scripts/run-m12-binary-archive-phase3-proof.py",
+  "source_checks": {
+    "abi_changes": [],
+    "checks": {
+      "compile_keeps_context_reference": true,
+      "compile_payload_struct_present": true,
+      "compute_descriptor_attached_before_creation": true,
+      "helper_present": true,
+      "helper_resets_safe_defaults": true,
+      "helper_uses_context_mutex": true,
+      "lookup_gated_by_allow_lookup": true,
+      "lookup_uses_heap_payload": true,
+      "no_archive_descriptor_logging_added": true,
+      "no_stack_archive_handle_array": true,
+      "no_wmt_abi_layout_changes": true,
+      "render_descriptor_attached_before_creation": true,
+      "serialization_gated_by_allow_population": true
+    },
+    "passed": true
+  }
+}

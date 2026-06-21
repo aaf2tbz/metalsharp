@@ -35,6 +35,7 @@ struct ProbeArchiveContext {
     obj_handle_t archive = NULL_OBJECT_HANDLE;
     bool enabled = false;
     bool allow_lookup = false;
+    bool allow_population = false;
 };
 
 struct M12BinaryArchiveCompilePayload {
@@ -54,7 +55,8 @@ static void attachArchiveInfo(PipelineInfo& info, ProbeArchiveContext& context,
         return;
 
     payload.heap_archive_handles[0] = context.archive;
-    info.binary_archive_for_serialization = context.archive;
+    if (context.allow_population)
+        info.binary_archive_for_serialization = context.archive;
     if (context.allow_lookup) {
         info.binary_archives_for_lookup.set(payload.heap_archive_handles);
         info.num_binary_archives_for_lookup = 1;
@@ -92,11 +94,13 @@ static ProbeArchiveContext contextForCase(const char* name) {
     if (std::strcmp(name, "disabled") == 0)
         return {};
     if (std::strcmp(name, "lookup-bypassed") == 0)
-        return {0x123456789abcdef0ULL, true, false};
+        return {0x123456789abcdef0ULL, true, false, false};
     if (std::strcmp(name, "lookup-allowed") == 0)
-        return {0x123456789abcdef0ULL, true, true};
+        return {0x123456789abcdef0ULL, true, true, false};
+    if (std::strcmp(name, "population-enabled") == 0)
+        return {0x123456789abcdef0ULL, true, false, true};
     if (std::strcmp(name, "circuit-breaker") == 0)
-        return {0x123456789abcdef0ULL, true, false};
+        return {0x123456789abcdef0ULL, true, false, false};
     return {};
 }
 
@@ -111,7 +115,8 @@ static bool validateRequest(const Request& request, const ProbeArchiveContext& c
                info.num_binary_archives_for_lookup == 0 &&
                request.payload.heap_archive_handles[0] == NULL_OBJECT_HANDLE;
     }
-    if (info.binary_archive_for_serialization != context.archive)
+    const obj_handle_t expected_serialization = context.allow_population ? context.archive : NULL_OBJECT_HANDLE;
+    if (info.binary_archive_for_serialization != expected_serialization)
         return false;
     if (request.payload.heap_archive_handles[0] != context.archive)
         return false;
@@ -151,6 +156,7 @@ static int runCase(const char* case_name, const char* output) {
                   "  \"case\": \"%s\",\n"
                   "  \"enabled\": %s,\n"
                   "  \"allow_lookup\": %s,\n"
+                  "  \"allow_population\": %s,\n"
                   "  \"compute_serialization_set\": %s,\n"
                   "  \"render_serialization_set\": %s,\n"
                   "  \"compute_lookup_count\": %u,\n"
@@ -164,6 +170,7 @@ static int runCase(const char* case_name, const char* output) {
                   "  \"passed\": %s\n"
                   "}\n",
                   case_name, jsonBool(context.enabled).c_str(), jsonBool(context.allow_lookup).c_str(),
+                  jsonBool(context.allow_population).c_str(),
                   jsonBool(compute->info.binary_archive_for_serialization != NULL_OBJECT_HANDLE).c_str(),
                   jsonBool(render->info.binary_archive_for_serialization != NULL_OBJECT_HANDLE).c_str(),
                   (unsigned)compute->info.num_binary_archives_for_lookup,

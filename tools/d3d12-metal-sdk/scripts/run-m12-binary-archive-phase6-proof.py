@@ -121,7 +121,9 @@ def source_checks() -> dict[str, Any]:
         "existing_archive_must_be_regular_nonzero": "existing_archive_has_bytes = RegularFileHasBytes(ctx.native_path);" in init_body
         and "access(ctx.native_path,F_OK)==0&&existing_archive_has_bytes" in init_compact,
         "validation_failure_permanently_disables_lookup": "validation_passed && loaded_existing_archive && !bypass_lookup" in init_body,
-        "population_enabled_even_when_lookup_disabled": "ctx.enabled = true;" in init_body
+        "population_requires_explicit_env": "EnvSwitchOne(\"DXMT_D3D12_BINARY_ARCHIVE_POPULATE\")" in init_body
+        and "ctx.allow_population = allow_population;" in init_body,
+        "serialization_gated_by_population": "if (context.allow_population)" in attach_body
         and "info.binary_archive_for_serialization = context.archive.handle;" in attach_body,
         "bypass_env_still_honored": "EnvSwitchOne(\"DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP\")" in init_body,
         "no_archive_validation_logging_added": "DXMT_D3D12_BINARY_ARCHIVE_LOG" not in text
@@ -198,7 +200,7 @@ def main() -> int:
     commands.append(run_bounded(compile_cmd, timeout=args.timeout, stdout=out_dir / "compile.stdout.txt", stderr=out_dir / "compile.stderr.txt"))
 
     cases: list[dict[str, Any]] = []
-    case_names = ["good", "bypass", "missing", "corrupt", "empty", "validation-failure"]
+    case_names = ["good", "good-populate", "bypass", "missing", "corrupt", "empty", "validation-failure"]
     if commands[-1]["returncode"] == 0 and not commands[-1]["timeout"]:
         for case_name in case_names:
             case_dir = out_dir / case_name
@@ -209,8 +211,11 @@ def main() -> int:
             env["DXMT_PIPELINE_CACHE_PATH"] = str(case_dir / "pipeline-cache")
             env.pop("DXMT_SHADER_CACHE_PATH", None)
             env.pop("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP", None)
+            env.pop("DXMT_D3D12_BINARY_ARCHIVE_POPULATE", None)
             if case_name == "bypass":
                 env["DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP"] = "1"
+            if case_name == "good-populate":
+                env["DXMT_D3D12_BINARY_ARCHIVE_POPULATE"] = "1"
             validation_path = case_dir / "m12-phase6-validation-test.bin"
             for stale in (validation_path, Path(str(validation_path) + ".tmp")):
                 if stale.exists():
@@ -239,6 +244,7 @@ def main() -> int:
     probe_silent = bool(probe_commands) and all(c.get("stdout_size") == 0 and c.get("stderr_size") == 0 for c in probe_commands)
 
     good = cases_by_name.get("good", {})
+    good_populate = cases_by_name.get("good-populate", {})
     bypass = cases_by_name.get("bypass", {})
     missing = cases_by_name.get("missing", {})
     corrupt = cases_by_name.get("corrupt", {})
@@ -273,8 +279,14 @@ def main() -> int:
             and validation_failure.get("validation_passed") is False
             and validation_failure.get("allow_lookup") is False
         ),
-        "archive_population_remains_allowed_when_lookup_disabled": bool(
-            disabled_cases and all(c.get("population_allowed") is True for c in disabled_cases)
+        "archive_population_disabled_by_default_even_when_lookup_disabled": bool(
+            disabled_cases and all(c.get("population_allowed") is False for c in disabled_cases)
+        ),
+        "archive_population_requires_explicit_env": bool(
+            good.get("population_allowed") is False
+            and good_populate.get("population_allowed") is True
+            and good_populate.get("allow_population") is True
+            and good_populate.get("env_populate_exact_one") is True
         ),
         "validation_failure_paths_emit_no_probe_logs": probe_silent,
         "validation_temp_artifacts_are_cleaned": validation_leftovers_absent,
