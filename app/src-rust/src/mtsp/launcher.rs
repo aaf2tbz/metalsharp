@@ -4712,6 +4712,39 @@ mod tests {
     }
 
     #[test]
+    fn m12_phase8_launch_env_matches_ac6_for_elden_ring() {
+        let home = test_dir("m12-phase8-ac6-elden-env");
+        let node = get_pipeline(PipelineId::M12);
+
+        let ac6_env = steam_pipeline_env_pairs(&home, node, 1888160);
+        let elden_env = steam_pipeline_env_pairs(&home, node, 1245620);
+        let locked_keys = [
+            "DXMT_M12CORE_ENABLE",
+            "DXMT_M12CORE_REQUIRED",
+            "DXMT_D3D12_FORCE_SWAPCHAIN_BLIT",
+            "DXMT_D3D12_AUTOPRESENT_SWAPCHAIN",
+            "DXMT_D3D12_LIVE_PRESENT",
+            "DXMT_D3D12_REASSERT_WINDOW_HANDOFF",
+            "DXMT_D3D12_DISABLE_RUNTIME_MSC",
+            "DXMT_D3D12_FORCE_COLOR_WRITE_STATE",
+            "DXMT_METALFX_SPATIAL_SWAPCHAIN",
+            "DXMT_METALFX_SPATIAL",
+            "DXMT_METALFX_TEMPORAL",
+            "DXMT_CONFIG",
+        ];
+
+        for key in locked_keys {
+            assert_eq!(last_env_value(&elden_env, key), last_env_value(&ac6_env, key), "{key}");
+        }
+        assert_eq!(last_env_value(&elden_env, "DXMT_M12CORE_ENABLE"), Some("1"));
+        assert_eq!(last_env_value(&elden_env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
+        assert_eq!(last_env_value(&elden_env, "DXMT_METALFX_SPATIAL"), Some("0"));
+        assert_eq!(last_env_value(&elden_env, "DXMT_METALFX_TEMPORAL"), Some("0"));
+        assert_eq!(last_env_value(&elden_env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn m32_env_keeps_wine_fallback_cache_without_dxmt_config() {
         let home = test_dir("m32-env");
         let node = get_pipeline(PipelineId::M32);
