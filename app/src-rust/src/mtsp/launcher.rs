@@ -4712,12 +4712,12 @@ mod tests {
     }
 
     #[test]
-    fn m12_phase8_launch_env_matches_ac6_for_elden_ring() {
-        let home = test_dir("m12-phase8-ac6-elden-env");
+    fn m12_phase8_launch_env_matches_ac6_for_elden_ring_and_subnautica2() {
+        let home = test_dir("m12-phase8-ac6-elden-subnautica-env");
         let node = get_pipeline(PipelineId::M12);
 
         let ac6_env = steam_pipeline_env_pairs(&home, node, 1888160);
-        let elden_env = steam_pipeline_env_pairs(&home, node, 1245620);
+        let title_envs = [("elden-ring", steam_pipeline_env_pairs(&home, node, 1245620)), ("subnautica2", steam_pipeline_env_pairs(&home, node, 1962700))];
         let locked_keys = [
             "DXMT_M12CORE_ENABLE",
             "DXMT_M12CORE_REQUIRED",
@@ -4733,14 +4733,16 @@ mod tests {
             "DXMT_CONFIG",
         ];
 
-        for key in locked_keys {
-            assert_eq!(last_env_value(&elden_env, key), last_env_value(&ac6_env, key), "{key}");
+        for (title, env) in title_envs {
+            for key in locked_keys {
+                assert_eq!(last_env_value(&env, key), last_env_value(&ac6_env, key), "{title} {key}");
+            }
+            assert_eq!(last_env_value(&env, "DXMT_M12CORE_ENABLE"), Some("1"), "{title}");
+            assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"), "{title}");
+            assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL"), Some("0"), "{title}");
+            assert_eq!(last_env_value(&env, "DXMT_METALFX_TEMPORAL"), Some("0"), "{title}");
+            assert_eq!(last_env_value(&env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"), "{title}");
         }
-        assert_eq!(last_env_value(&elden_env, "DXMT_M12CORE_ENABLE"), Some("1"));
-        assert_eq!(last_env_value(&elden_env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"));
-        assert_eq!(last_env_value(&elden_env, "DXMT_METALFX_SPATIAL"), Some("0"));
-        assert_eq!(last_env_value(&elden_env, "DXMT_METALFX_TEMPORAL"), Some("0"));
-        assert_eq!(last_env_value(&elden_env, "DXMT_CONFIG"), Some("d3d11.preferredMaxFrameRate=60"));
         let _ = std::fs::remove_dir_all(home);
     }
 
