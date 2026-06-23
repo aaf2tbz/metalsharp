@@ -27,7 +27,6 @@ ARTIFACTS = [
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
     ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
-    ("src/m12core/libm12core.dylib", "x86_64-unix/libm12core.dylib"),
 ]
 
 UNIX_SIDECARS = [
@@ -64,6 +63,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-dir", type=Path, default=DEFAULT_RESULTS_DIR)
     parser.add_argument("--profile", default="metalsharp")
     parser.add_argument("--dry-run", action="store_true", help="Write the manifest without copying files.")
+    parser.add_argument(
+        "--include-m12core-sidecar",
+        action="store_true",
+        help="Also stage libm12core.dylib for explicit sidecar override/dev comparisons. Normal M12 runtime does not require it.",
+    )
     return parser.parse_args()
 
 
@@ -98,10 +102,17 @@ def main() -> int:
         [
             ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
             ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
-            ("src/m12core/libm12core.dylib", str(wine_lib_dir / "x86_64-unix" / "libm12core.dylib")),
             ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
         ]
     )
+    if args.include_m12core_sidecar:
+        artifacts.extend(
+            [
+                ("src/m12core/libm12core.dylib", "x86_64-unix/libm12core.dylib"),
+                ("src/m12core/libm12core.dylib", str(wine_lib_dir / "x86_64-unix" / "libm12core.dylib")),
+            ]
+        )
+
     for sidecar in UNIX_SIDECARS:
         source = sidecar_source(sidecar)
         if source is None:
@@ -149,6 +160,7 @@ def main() -> int:
         "build_dir": str(build_dir),
         "runtime_dir": str(runtime_dir),
         "dry_run": args.dry_run,
+        "include_m12core_sidecar": args.include_m12core_sidecar,
         "ok": not failures and not mismatches,
         "failure_count": len(failures) + len(mismatches),
         "failures": failures,
