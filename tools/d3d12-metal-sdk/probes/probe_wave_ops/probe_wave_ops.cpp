@@ -178,7 +178,7 @@ static CaseResult run_case(ID3D12Device* device, ID3D12RootSignature* root, cons
     result.name = wave_case.name;
 
     char dxil_path[128] = {};
-    std::snprintf(dxil_path, sizeof(dxil_path), "Z:\\tmp\\dxmt_wave_%s.dxil", wave_case.name);
+    std::snprintf(dxil_path, sizeof(dxil_path), "dxmt_wave_%s.dxil", wave_case.name);
     DeleteFileA(dxil_path);
 
     std::string command = "dxc.exe -nologo -HV 2021 -Od -E ";
@@ -187,7 +187,7 @@ static CaseResult run_case(ID3D12Device* device, ID3D12RootSignature* root, cons
     command += wave_case.target;
     command += " -Fo ";
     command += dxil_path;
-    command += " Z:\\tmp\\dxmt_wave_ops.hlsl";
+    command += " dxmt_wave_ops.hlsl";
     result.dxc_exit_code = run_process_wait(command);
 
     std::vector<uint8_t> dxil = read_binary_file(dxil_path);
@@ -254,7 +254,7 @@ void cs_prefix(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
 }
 )";
 
-    bool hlsl_written = write_text_file("Z:\\tmp\\dxmt_wave_ops.hlsl", hlsl);
+    bool hlsl_written = write_text_file("dxmt_wave_ops.hlsl", hlsl);
 
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");
     HMODULE dxcompiler = LoadLibraryA("dxcompiler.dll");

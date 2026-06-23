@@ -306,6 +306,8 @@ static CaseResult run_case(ID3D12Device* device, const SemanticCase& semantic_ca
     ID3D12CommandQueue* queue = nullptr;
     ID3D12CommandAllocator* allocator = nullptr;
     ID3D12GraphicsCommandList* list = nullptr;
+    ID3D12CommandAllocator* copy_allocator = nullptr;
+    ID3D12GraphicsCommandList* copy_list = nullptr;
     ID3D12DescriptorHeap* heap = nullptr;
     ID3D12Resource* input = nullptr;
     ID3D12Resource* output = nullptr;
@@ -381,15 +383,22 @@ static CaseResult run_case(ID3D12Device* device, const SemanticCase& semantic_ca
         list->SetComputeRootDescriptorTable(1, offset_gpu(gpu_start, inc, 0));
         list->SetPipelineState(pso);
         list->Dispatch(1, 1, 1);
-        D3D12_RESOURCE_BARRIER uav_barrier = {};
-        uav_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-        uav_barrier.UAV.pResource = output;
-        list->ResourceBarrier(1, &uav_barrier);
-        D3D12_RESOURCE_BARRIER copy_barrier =
-            transition_barrier(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        list->ResourceBarrier(1, &copy_barrier);
-        list->CopyResource(readback, output);
         hr = execute_and_wait(queue, list);
+        if (SUCCEEDED(hr))
+            hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&copy_allocator));
+        if (SUCCEEDED(hr))
+            hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, copy_allocator, nullptr, IID_PPV_ARGS(&copy_list));
+        if (SUCCEEDED(hr)) {
+            D3D12_RESOURCE_BARRIER uav_barrier = {};
+            uav_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+            uav_barrier.UAV.pResource = output;
+            copy_list->ResourceBarrier(1, &uav_barrier);
+            D3D12_RESOURCE_BARRIER copy_barrier =
+                transition_barrier(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            copy_list->ResourceBarrier(1, &copy_barrier);
+            copy_list->CopyResource(readback, output);
+            hr = execute_and_wait(queue, copy_list);
+        }
     }
 
     if (SUCCEEDED(hr)) {
@@ -412,6 +421,8 @@ static CaseResult run_case(ID3D12Device* device, const SemanticCase& semantic_ca
     safe_release(output);
     safe_release(input);
     safe_release(heap);
+    safe_release(copy_list);
+    safe_release(copy_allocator);
     safe_release(list);
     safe_release(allocator);
     safe_release(queue);

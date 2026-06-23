@@ -52,7 +52,7 @@ static std::string ensureScalarIndex(const std::string &val) {
 }
 
 MSLType DXILIRBuilder::resolveType(uint32_t type_id, const LLVMModule &mod) {
-    if (type_id == 0 || type_id >= mod.types.size())
+    if (type_id >= mod.types.size())
         return {MSLTypeKind::Unknown, 0, {}};
     auto &t = mod.types[type_id];
     switch (t.kind) {

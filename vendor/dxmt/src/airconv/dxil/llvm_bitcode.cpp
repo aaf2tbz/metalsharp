@@ -183,6 +183,7 @@ static constexpr uint32_t kFuncCode_InstGEP_OLD = 4;
 static constexpr uint32_t kFuncCode_InstInBoundsGEP_OLD = 30;
 static constexpr uint32_t kFuncCode_InstGEP = 43;
 static constexpr uint32_t kFuncCode_InstLoad = 20;
+static constexpr uint32_t kFuncCode_InstAtomicRMW = 38;
 static constexpr uint32_t kFuncCode_InstStore = 44;
 static constexpr uint32_t kFuncCode_InstExtractVal = 26;
 static constexpr uint32_t kFuncCode_InstInsertVal = 27;
@@ -396,6 +397,14 @@ static const LLVMValue *findConstantById(const LLVMModule &module, uint32_t id) 
   for (auto &constant : module.constants) {
     if (constant.id == id)
       return &constant;
+  }
+  return nullptr;
+}
+
+static const LLVMGlobal *findGlobalById(const LLVMModule &module, uint32_t id) {
+  for (auto &global : module.globals) {
+    if (global.value_id == id)
+      return &global;
   }
   return nullptr;
 }
@@ -966,12 +975,14 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     return decodeRelativeValue(encoded, next_value);
   };
 
-  auto valueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot, uint32_t &type_id) {
-    uint32_t value_id = slot < record.size() ? value(record[slot++]) : 0;
+  auto inferValueType = [&](uint32_t value_id, size_t &slot,
+                            const std::vector<uint64_t> &record,
+                            uint32_t &type_id) {
     type_id = 0;
-
     if (value_id >= next_value && slot < record.size()) {
       type_id = (uint32_t)record[slot++];
+    } else if (auto global = findGlobalById(ctx.module, value_id)) {
+      type_id = global->type_id;
     } else if (auto constant = findConstantById(ctx.module, value_id)) {
       type_id = constant->type_id;
     } else {
@@ -979,7 +990,23 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         if (c.id == value_id) { type_id = c.type_id; break; }
       }
     }
+  };
 
+  auto valueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot, uint32_t &type_id) {
+    uint32_t value_id = slot < record.size() ? value(record[slot++]) : 0;
+    inferValueType(value_id, slot, record, type_id);
+    return value_id;
+  };
+
+  auto memoryValueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot, uint32_t &type_id) {
+    if (slot >= record.size()) {
+      type_id = 0;
+      return 0u;
+    }
+    uint64_t raw = record[slot++];
+    uint32_t raw_id = (uint32_t)raw;
+    uint32_t value_id = findGlobalById(ctx.module, raw_id) ? raw_id : value(raw);
+    inferValueType(value_id, slot, record, type_id);
     return value_id;
   };
 
@@ -1042,8 +1069,6 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       for (size_t i = 0; i < fn.blocks.size(); i++) {
         fn.block_value_ids[i] = (uint32_t)i;
       }
-      if (!fn.blocks.empty())
-        next_value++;
       fn.instruction_start_value = next_value;
       cur_block = 0;
       break;
@@ -1119,6 +1144,32 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           }
         }
 
+        if (return_type_id >= ctx.module.types.size() ||
+            ctx.module.types[return_type_id].kind == LLVMType::Void) {
+          std::string callee_name;
+          for (const auto &dfn : ctx.module.functions) {
+            if (dfn.value_id == callee) {
+              callee_name = dfn.name;
+              break;
+            }
+          }
+          if (callee_name.rfind("dx.op.", 0) == 0 &&
+              callee_name.find("barrier") == std::string::npos &&
+              callee_name.find("Store") == std::string::npos &&
+              callee_name.find("store") == std::string::npos) {
+            uint32_t wanted_bits = callee_name.find(".i64") != std::string::npos ? 64u : 32u;
+            for (uint32_t i = 0; i < ctx.module.types.size(); i++) {
+              const auto &type = ctx.module.types[i];
+              if (type.kind == LLVMType::Integer && type.bit_width == wanted_bits) {
+                return_type_id = i;
+                break;
+              }
+              if (return_type_id == 0 && type.kind == LLVMType::Float)
+                return_type_id = i;
+            }
+          }
+        }
+
         inst.type_id = return_type_id;
         inst.operands.push_back(callee);
         inst.operands.push_back(function_type_id);
@@ -1139,7 +1190,8 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
                 cc_info, function_type_id, inst.type_id, callee,
                 inst.operands.size() > 2 ? inst.operands.size() - 2 : 0);
         fn.blocks[cur_block].instructions.push_back(inst);
-        if (inst.type_id != 0)
+        if (inst.type_id < ctx.module.types.size() &&
+            ctx.module.types[inst.type_id].kind != LLVMType::Void)
           noteResult();
       }
       break;
@@ -1197,7 +1249,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         inst.opcode = LLVMInstruction::Load;
         size_t slot = 1;
         uint32_t ptr_type_id = 0;
-        inst.operands.push_back(valueTypePair(ops, slot, ptr_type_id));
+        inst.operands.push_back(memoryValueTypePair(ops, slot, ptr_type_id));
         if (slot + 3 == ops.size())
           inst.type_id = (uint32_t)ops[slot++];
         else if (ptr_type_id < ctx.module.types.size() &&
@@ -1215,12 +1267,33 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
         inst.opcode = LLVMInstruction::Store;
         size_t slot = 1;
         uint32_t ptr_type_id = 0;
-        uint32_t ptr = valueTypePair(ops, slot, ptr_type_id);
+        uint32_t ptr = memoryValueTypePair(ops, slot, ptr_type_id);
         uint32_t value_type_id = 0;
         uint32_t stored = valueTypePair(ops, slot, value_type_id);
         inst.operands.push_back(ptr);
         inst.operands.push_back(stored);
         fn.blocks[cur_block].instructions.push_back(inst);
+      }
+      break;
+    }
+    case kFuncCode_InstAtomicRMW: {
+      if (cur_block < fn.blocks.size()) {
+        LLVMInstruction inst;
+        inst.opcode = LLVMInstruction::AtomicRMW;
+        size_t slot = 1;
+        uint32_t ptr_type_id = 0;
+        uint32_t ptr = memoryValueTypePair(ops, slot, ptr_type_id);
+        uint32_t stored = popValue(ops, slot);
+        uint32_t op = slot < ops.size() ? (uint32_t)ops[slot++] : 0;
+        inst.operands.push_back(ptr);
+        inst.operands.push_back(stored);
+        inst.operands.push_back(op);
+        if (ptr_type_id < ctx.module.types.size() &&
+            ctx.module.types[ptr_type_id].kind == LLVMType::Pointer &&
+            !ctx.module.types[ptr_type_id].type_refs.empty())
+          inst.type_id = ctx.module.types[ptr_type_id].type_refs[0];
+        fn.blocks[cur_block].instructions.push_back(inst);
+        noteResult();
       }
       break;
     }
@@ -1244,13 +1317,32 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     }
     case kFuncCode_InstCmp:
     case kFuncCode_InstCmp2: {
+      // CMP/CMP2 records are usually [opty, opval, opval, pred] after the
+      // record code, but DXIL also appears in a compact legacy form
+      // [opval, opval, pred].  Support both so the compare result consumes its
+      // value slot and branches reference the i1 result instead of the lhs.
       if (cur_block < fn.blocks.size() && ops.size() >= 4) {
         LLVMInstruction inst;
         size_t slot = 1;
         uint32_t type_id = 0;
-        uint32_t lhs = valueTypePair(ops, slot, type_id);
-        uint32_t rhs = popValue(ops, slot);
-        uint32_t pred = slot < ops.size() ? (uint32_t)ops[slot] : 0;
+        uint32_t lhs = 0;
+        uint32_t rhs = 0;
+        uint32_t pred = 0;
+        if (ops.size() >= 5) {
+          type_id = (uint32_t)ops[slot++];
+          lhs = popValue(ops, slot);
+          rhs = popValue(ops, slot);
+          pred = slot < ops.size() ? (uint32_t)ops[slot] : 0;
+        } else {
+          lhs = popValue(ops, slot);
+          rhs = popValue(ops, slot);
+          pred = slot < ops.size() ? (uint32_t)ops[slot] : 0;
+          if (auto constant = findConstantById(ctx.module, lhs))
+            type_id = constant->type_id;
+          for (auto &c : fn.constants) {
+            if (c.id == lhs) { type_id = c.type_id; break; }
+          }
+        }
         inst.opcode = decodeCmp(pred);
         inst.type_id = type_id;
         inst.operands.push_back(pred);
@@ -1703,9 +1795,12 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
         next_module_value_id = next_function_value_id;
       if (ops.size() > 1)
         gv.type_id = (uint32_t)ops[1];
-      if (ops.size() > 2)
+      if (ops.size() > 2) {
         gv.is_constant = (ops[2] & 1) != 0;
-      if (gv.type_id < module.types.size() &&
+        if ((ops[2] & 2) != 0)
+          gv.address_space = (uint32_t)(ops[2] >> 2);
+      }
+      if (gv.address_space == 0 && gv.type_id < module.types.size() &&
           module.types[gv.type_id].kind == LLVMType::Pointer)
         gv.address_space = module.types[gv.type_id].address_space;
       if (use_strtab_names && ops.size() > 4) {

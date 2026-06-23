@@ -2681,12 +2681,14 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS1 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    o->WaveOps = TRUE;
-    o->WaveLaneCountMin = 32;
-    o->WaveLaneCountMax = 32;
-    o->TotalLaneCount = 32;
+    // Do not advertise WaveOps or 64-bit shader ops until the runtime shader
+    // correctness probes can prove execution, not just DXIL compile/PSO link.
+    o->WaveOps = FALSE;
+    o->WaveLaneCountMin = 0;
+    o->WaveLaneCountMax = 0;
+    o->TotalLaneCount = 0;
     o->ExpandedComputeResourceStates = TRUE;
-    o->Int64ShaderOps = TRUE;
+    o->Int64ShaderOps = FALSE;
     return S_OK;
   }
   case D3D12_FEATURE_ROOT_SIGNATURE: {

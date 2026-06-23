@@ -103,7 +103,9 @@ enum DXIntrinsicOpcode {
   DXOP_WaveAllTrue = 114,
   DXOP_WaveReadLaneAt = 117,
   DXOP_WaveReadLaneFirst = 118,
+  DXOP_WaveActiveOp = 119,
   DXOP_QuadReadLaneAt = 122,
+  DXOP_QuadOp = 123,
   DXOP_LegacyF16ToF32 = 131,
   DXOP_LegacyF32ToF16 = 132,
 };
@@ -387,12 +389,14 @@ static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
   if (strncmp(s, "legacyF32ToF16", 14) == 0) return DXOP_LegacyF32ToF16;
   if (strncmp(s, "waveReadLaneFirst", 17) == 0) return DXOP_WaveReadLaneFirst;
   if (strncmp(s, "waveReadLaneAt", 14) == 0) return DXOP_WaveReadLaneAt;
+  if (strncmp(s, "waveActiveOp", 12) == 0) return DXOP_WaveActiveOp;
   if (strncmp(s, "waveIsFirstLane", 15) == 0) return DXOP_WaveIsFirstLane;
   if (strncmp(s, "waveGetLaneIndex", 16) == 0) return DXOP_WaveGetLaneIndex;
   if (strncmp(s, "waveGetLaneCount", 16) == 0) return DXOP_WaveGetLaneCount;
   if (strncmp(s, "waveAnyTrue", 11) == 0) return DXOP_WaveAnyTrue;
   if (strncmp(s, "waveAllTrue", 11) == 0) return DXOP_WaveAllTrue;
   if (strncmp(s, "quadReadLaneAt", 14) == 0) return DXOP_QuadReadLaneAt;
+  if (strncmp(s, "quadOp", 6) == 0) return DXOP_QuadOp;
   if (strncmp(s, "sample.", 7) == 0) return DXOP_TextureSample;
   if (strncmp(s, "textureLoad.", 12) == 0) return DXOP_TextureLoad;
   if (strncmp(s, "threadIdInGroup", 15) == 0) return DXOP_ThreadIDInGroup;
@@ -585,7 +589,9 @@ void DXILToMSL::emitFunctionPrologue(EmitContext &ctx) {
     os << "  uint3 dtid [[thread_position_in_grid]],\n";
     os << "  uint3 gtid [[thread_position_in_threadgroup]],\n";
     os << "  uint3 ggid [[threadgroup_position_in_grid]],\n";
-    os << "  uint3 gsz [[threads_per_threadgroup]]\n";
+    os << "  uint3 gsz [[threads_per_threadgroup]],\n";
+    os << "  uint simd_tid [[thread_index_in_simdgroup]],\n";
+    os << "  uint simd_size [[threads_per_simdgroup]]\n";
     os << ") {\n";
   } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
     os << "vertex output_v vs_main(\n";
@@ -1180,37 +1186,64 @@ std::string DXILToMSL::translateDXIntrinsic(EmitContext &ctx, uint32_t intrinsic
   }
 
   case DXOP_WaveReadLaneFirst: {
-    if (args.size() < 2) return "0";
-    return "simd_broadcast_first(" + valueArg(1, "0") + ")";
+    if (args.empty()) return "0";
+    return "simd_broadcast_first(" + valueArg(0, "0") + ")";
   }
 
   case DXOP_WaveReadLaneAt: {
-    if (args.size() < 3) return "0";
-    return "simd_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+    if (args.size() < 2) return "0";
+    return "simd_broadcast(" + valueArg(0, "0") + ", (uint)(" + valueArg(1, "0") + "))";
+  }
+
+  case DXOP_WaveActiveOp: {
+    if (args.empty()) return "0";
+    uint32_t op = 0;
+    if (args.size() > 1)
+      parseUnsignedLiteral(valueArg(1, "0"), op);
+    switch (op) {
+    case 0: return "simd_sum(" + valueArg(0, "0") + ")";
+    case 1: return "simd_product(" + valueArg(0, "0") + ")";
+    case 2: return "simd_min(" + valueArg(0, "0") + ")";
+    case 3: return "simd_max(" + valueArg(0, "0") + ")";
+    default: return valueArg(0, "0");
+    }
   }
 
   case DXOP_WaveIsFirstLane:
     return "simd_is_first()";
 
   case DXOP_WaveGetLaneIndex:
-    return "simd_lane_id()";
+    return "simd_tid";
 
   case DXOP_WaveGetLaneCount:
-    return "simd_lane_count()";
+    return "simd_size";
 
   case DXOP_WaveAnyTrue: {
-    if (args.size() < 2) return "0";
-    return "simd_any(" + valueArg(1, "0") + ") ? 1 : 0";
+    if (args.empty()) return "0";
+    return "simd_any(" + valueArg(0, "0") + ") ? 1 : 0";
   }
 
   case DXOP_WaveAllTrue: {
-    if (args.size() < 2) return "0";
-    return "simd_all(" + valueArg(1, "0") + ") ? 1 : 0";
+    if (args.empty()) return "0";
+    return "simd_all(" + valueArg(0, "0") + ") ? 1 : 0";
   }
 
   case DXOP_QuadReadLaneAt: {
-    if (args.size() < 3) return "0";
-    return "quad_broadcast(" + valueArg(1, "0") + ", (uint)(" + valueArg(2, "0") + "))";
+    if (args.size() < 2) return "0";
+    return "quad_broadcast(" + valueArg(0, "0") + ", (uint)(" + valueArg(1, "0") + "))";
+  }
+
+  case DXOP_QuadOp: {
+    if (args.empty()) return "0";
+    uint32_t op = 0;
+    if (args.size() > 1)
+      parseUnsignedLiteral(valueArg(1, "0"), op);
+    switch (op) {
+    case 0: return "quad_shuffle_xor(" + valueArg(0, "0") + ", 1)";
+    case 1: return "quad_shuffle_xor(" + valueArg(0, "0") + ", 2)";
+    case 2: return "quad_shuffle_xor(" + valueArg(0, "0") + ", 3)";
+    default: return valueArg(0, "0");
+    }
   }
 
   default:
@@ -1279,6 +1312,22 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       ctx.value_table.resize(needed + 1);
     if (ctx.value_type_ids.size() <= needed)
       ctx.value_type_ids.resize(needed + 1, 0);
+  };
+
+  auto pointerAddressSpace = [&](uint32_t idx) -> const char * {
+    std::string value = getValue(idx);
+    if (startsWith(value, "(threadgroup") || startsWith(value, "threadgroup"))
+      return "threadgroup";
+    if (startsWith(value, "(thread") || startsWith(value, "thread"))
+      return "thread";
+    if (idx < ctx.value_type_ids.size()) {
+      uint32_t type_id = ctx.value_type_ids[idx];
+      if (type_id < ctx.mod.types.size() &&
+          ctx.mod.types[type_id].kind == LLVMType::Pointer &&
+          ctx.mod.types[type_id].address_space == 3)
+        return "threadgroup";
+    }
+    return "device";
   };
 
   switch (inst.opcode) {
@@ -1650,10 +1699,22 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     break;
   }
 
-  case LLVMInstruction::FCmp: {
+  case LLVMInstruction::FCmp:
+  case LLVMInstruction::ICmp: {
     ensureValueTable(value_counter);
     if (inst.operands.size() >= 3) {
       uint32_t pred = inst.operands[0];
+      if (inst.opcode == LLVMInstruction::ICmp && pred >= 32) {
+        switch (pred) {
+        case 32: pred = 1; break;
+        case 33: pred = 6; break;
+        case 34: case 38: pred = 2; break;
+        case 35: case 39: pred = 3; break;
+        case 36: case 40: pred = 4; break;
+        case 37: case 41: pred = 5; break;
+        default: break;
+        }
+      }
       auto lhs = getValue(inst.operands[1]);
       auto rhs = getValue(inst.operands[2]);
       const char *cmp_str = "false";
@@ -1720,10 +1781,15 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     }
     auto ptr_expr = getValue(inst.operands[0]);
     std::string loaded_type = "int";
-    if (inst.type_id > 0 && inst.type_id < ctx.mod.types.size()) {
+    if (inst.type_id < ctx.mod.types.size()) {
       loaded_type = getTypeName(ctx.mod.types[inst.type_id], ctx.mod);
     }
-    std::string load_expr = "*(" + loaded_type + "*)(" + ptr_expr + ")";
+    std::string load_expr;
+    if (std::strcmp(pointerAddressSpace(inst.operands[0]), "threadgroup") == 0 &&
+        (loaded_type == "uint" || loaded_type == "int"))
+      load_expr = "atomic_load_explicit((threadgroup atomic_uint*)(" + ptr_expr + "), memory_order_relaxed)";
+    else
+      load_expr = "*(" + loaded_type + "*)(" + ptr_expr + ")";
     ensureValueTable(value_counter);
     ctx.value_table[value_counter] = load_expr;
     if (ctx.value_type_ids.size() <= value_counter)
@@ -1740,7 +1806,40 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
     }
     auto ptr_expr = getValue(inst.operands[0]);
     auto val_expr = getValue(inst.operands[1]);
-    os << "  *(" << ptr_expr << ") = " << val_expr << "; // store\n";
+    if (std::strcmp(pointerAddressSpace(inst.operands[0]), "threadgroup") == 0)
+      os << "  atomic_store_explicit((threadgroup atomic_uint*)(" << ptr_expr
+         << "), (uint)(" << val_expr << "), memory_order_relaxed);\n";
+    else
+      os << "  *(" << ptr_expr << ") = " << val_expr << "; // store\n";
+    break;
+  }
+
+  case LLVMInstruction::AtomicRMW: {
+    ensureValueTable(value_counter);
+    std::string expr = "0";
+    if (inst.operands.size() >= 3) {
+      auto ptr_expr = getValue(inst.operands[0]);
+      auto val_expr = getValue(inst.operands[1]);
+      uint32_t op = inst.operands[2];
+      const char *atomic_fn = nullptr;
+      switch (op) {
+      case 0: atomic_fn = "atomic_exchange_explicit"; break;
+      case 1: atomic_fn = "atomic_fetch_add_explicit"; break;
+      case 2: atomic_fn = "atomic_fetch_sub_explicit"; break;
+      case 3: atomic_fn = "atomic_fetch_and_explicit"; break;
+      case 5: atomic_fn = "atomic_fetch_or_explicit"; break;
+      case 6: atomic_fn = "atomic_fetch_xor_explicit"; break;
+      default: break;
+      }
+      if (atomic_fn && std::strcmp(pointerAddressSpace(inst.operands[0]), "threadgroup") == 0)
+        expr = std::string(atomic_fn) + "((threadgroup atomic_uint*)(" + ptr_expr + "), (uint)(" + val_expr + "), memory_order_relaxed)";
+    }
+    os << "  uint " << result << " = " << expr << ";\n";
+    ctx.value_table[value_counter] = result;
+    if (ctx.value_type_ids.size() <= value_counter)
+      ctx.value_type_ids.resize(value_counter + 1, 0);
+    ctx.value_type_ids[value_counter] = inst.type_id;
+    value_counter++;
     break;
   }
 

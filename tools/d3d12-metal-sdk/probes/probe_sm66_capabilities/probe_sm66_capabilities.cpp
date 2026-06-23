@@ -218,7 +218,7 @@ static CaseResult run_case(ID3D12Device* device, ID3D12RootSignature* root, cons
     result.name = audit_case.name;
     result.category = audit_case.category;
 
-    const std::string base = std::string("Z:\\tmp\\dxmt_sm66_") + audit_case.entry;
+    const std::string base = std::string("dxmt_sm66_") + audit_case.entry;
     const std::string dxil_path = base + ".dxil";
     const std::string error_path = base + ".err";
     DeleteFileA(dxil_path.c_str());
@@ -230,7 +230,7 @@ static CaseResult run_case(ID3D12Device* device, ID3D12RootSignature* root, cons
     command += dxil_path;
     command += " -Fe ";
     command += error_path;
-    command += " Z:\\tmp\\dxmt_sm66_capabilities.hlsl";
+    command += " dxmt_sm66_capabilities.hlsl";
 
     result.dxc_exit_code = run_process_wait(command);
     std::vector<uint8_t> dxil = read_binary_file(dxil_path.c_str());
@@ -264,7 +264,7 @@ static CaseResult run_case(ID3D12Device* device, ID3D12RootSignature* root, cons
 
 int main() {
     const bool warmup_only = getenv_string("D3D12_METAL_SDK_SM66_MODE") == "warmup";
-    const char* hlsl_path = "Z:\\tmp\\dxmt_sm66_capabilities.hlsl";
+    const char* hlsl_path = "dxmt_sm66_capabilities.hlsl";
     const char* hlsl = R"(
 RWByteAddressBuffer outbuf : register(u0);
 ByteAddressBuffer inputs[2] : register(t0);

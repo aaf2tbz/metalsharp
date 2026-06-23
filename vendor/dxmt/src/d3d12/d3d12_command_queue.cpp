@@ -868,6 +868,34 @@ static const char *RootParameterTypeName(D3D12_ROOT_PARAMETER_TYPE type) {
   }
 }
 
+static uint32_t D3D12M12DirectBufferBaseForRange(
+    D3D12_DESCRIPTOR_RANGE_TYPE type) {
+  switch (type) {
+  case D3D12_DESCRIPTOR_RANGE_TYPE_CBV:
+    return 0;
+  case D3D12_DESCRIPTOR_RANGE_TYPE_SRV:
+    return 8;
+  case D3D12_DESCRIPTOR_RANGE_TYPE_UAV:
+    return 16;
+  default:
+    return 0;
+  }
+}
+
+static uint32_t D3D12M12DirectBufferBaseForRootParameter(
+    D3D12_ROOT_PARAMETER_TYPE type) {
+  switch (type) {
+  case D3D12_ROOT_PARAMETER_TYPE_CBV:
+    return 0;
+  case D3D12_ROOT_PARAMETER_TYPE_SRV:
+    return 8;
+  case D3D12_ROOT_PARAMETER_TYPE_UAV:
+    return 16;
+  default:
+    return 0;
+  }
+}
+
 static const char *ShaderVisibilityName(uint32_t visibility) {
   switch ((D3D12_SHADER_VISIBILITY)visibility) {
   case D3D12_SHADER_VISIBILITY_ALL:
@@ -7705,12 +7733,13 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
       append_cmd(&sb, sizeof(sb));
     }
     auto compute_root_register = [&](D3D12_ROOT_PARAMETER_TYPE type) {
+      uint32_t reg = i;
       if (compute_sig && i < compute_sig->GetParameters().size()) {
         const auto &param = compute_sig->GetParameters()[i];
         if (param.type == type)
-          return param.register_index;
+          reg = param.register_index;
       }
-      return i;
+      return D3D12M12DirectBufferBaseForRootParameter(type) + reg;
     };
 
     auto bind_compute_buffer_address = [&](D3D12_GPU_VIRTUAL_ADDRESS address,
@@ -7760,7 +7789,8 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
       }
       if (!desc->resource)
         return;
-      uint32_t buf_slot = shader_register;
+      uint32_t buf_slot =
+          D3D12M12DirectBufferBaseForRange(range_type) + shader_register;
       if (buf_slot >= 31)
         return;
       auto *res = static_cast<MTLD3D12Resource *>(desc->resource);

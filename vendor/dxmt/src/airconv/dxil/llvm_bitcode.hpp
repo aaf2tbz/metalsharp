@@ -94,6 +94,7 @@ struct LLVMInstruction {
     Store = 82,
     Alloca = 83,
     GetElementPtr = 84,
+    AtomicRMW = 85,
   } opcode;
 
   uint32_t type_id = 0;

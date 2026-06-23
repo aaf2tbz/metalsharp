@@ -279,7 +279,7 @@ static CaseResult run_dxc_case(ID3D12Device* device, ID3D12RootSignature* root, 
     result.expected_rejection = corpus_case.expected_rejection;
     result.waveops_case = corpus_case.waveops_case;
 
-    const std::string base = std::string("Z:\\tmp\\dxmt_shader_corpus_") + corpus_case.name;
+    const std::string base = std::string("dxmt_shader_corpus_") + corpus_case.name;
     const std::string dxil_path = base + ".dxil";
     const std::string error_path = base + ".err";
     DeleteFileA(dxil_path.c_str());
@@ -293,7 +293,7 @@ static CaseResult run_dxc_case(ID3D12Device* device, ID3D12RootSignature* root, 
     command += dxil_path;
     command += " -Fe ";
     command += error_path;
-    command += " Z:\\tmp\\dxmt_shader_corpus.hlsl";
+    command += " dxmt_shader_corpus.hlsl";
 
     result.dxc_exit_code = run_process_wait(command);
     std::vector<uint8_t> dxil = read_binary_file(dxil_path.c_str());
@@ -416,7 +416,7 @@ float4 ps_main(VSOut input) : SV_Target0 {
 }
 
 int main() {
-    const char* hlsl_path = "Z:\\tmp\\dxmt_shader_corpus.hlsl";
+    const char* hlsl_path = "dxmt_shader_corpus.hlsl";
     const char* hlsl = R"(
 RWByteAddressBuffer out_uav : register(u0);
 RWStructuredBuffer<uint4> out_structured : register(u1);

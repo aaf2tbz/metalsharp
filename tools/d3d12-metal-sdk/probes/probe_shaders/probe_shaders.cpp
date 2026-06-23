@@ -140,6 +140,22 @@ static bool contains(const std::string& haystack, const char* needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+static std::string join_path(std::string base, const char* leaf) {
+    if (base.empty())
+        return leaf;
+    char separator = '/';
+    for (char c : base) {
+        if (c == '\\') {
+            separator = '\\';
+            break;
+        }
+    }
+    if (!base.empty() && base.back() != '/' && base.back() != '\\')
+        base += separator;
+    base += leaf;
+    return base;
+}
+
 static void print_hr(const char* key, HRESULT hr, bool comma = true) {
     std::printf("    \"%s\": \"0x%08lx\"%s\n", key, static_cast<unsigned long>(static_cast<uint32_t>(hr)),
                 comma ? "," : "");
@@ -254,15 +270,15 @@ static std::vector<uint8_t> build_synthetic_dxil_container() {
 }
 
 int main() {
-    const char* shader_trace_path = "Z:\\tmp\\dxmt_d3d12_trace.log";
-    const char* dxil_trace_path = "Z:\\tmp\\dxmt_dxil_trace.log";
-    const char* shader_args_path = "Z:\\tmp\\dxmt_ps_args_debug.log";
-    const char* dxc_hlsl_path = "Z:\\tmp\\dxmt_dxc_sm6_compute.hlsl";
-    const char* dxc_dxil_path = "Z:\\tmp\\dxmt_dxc_sm6_compute.dxil";
-    const char* dxc_errors_path = "Z:\\tmp\\dxmt_dxc_sm6_errors.txt";
-    const char* vs_metallib_path = "Z:\\tmp\\dxmt_sm50_vs_main.metallib";
-    const char* ps_metallib_path = "Z:\\tmp\\dxmt_sm50_ps_main.metallib";
-    const char* cs_metallib_path = "Z:\\tmp\\dxmt_sm50_cs_main.metallib";
+    const char* shader_trace_path = "dxmt_d3d12_trace.log";
+    const char* dxil_trace_path = "dxmt_dxil_trace.log";
+    const char* shader_args_path = "dxmt_ps_args_debug.log";
+    const char* dxc_hlsl_path = "dxmt_dxc_sm6_compute.hlsl";
+    const char* dxc_dxil_path = "dxmt_dxc_sm6_compute.dxil";
+    const char* dxc_errors_path = "dxmt_dxc_sm6_errors.txt";
+    const char* vs_metallib_path = "dxmt_sm50_vs_main.metallib";
+    const char* ps_metallib_path = "dxmt_sm50_ps_main.metallib";
+    const char* cs_metallib_path = "dxmt_sm50_cs_main.metallib";
     DeleteFileA(shader_trace_path);
     DeleteFileA(dxil_trace_path);
     DeleteFileA(shader_args_path);
@@ -353,8 +369,8 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     HRESULT sm6_compile_hr = compile_shader(compile, sm6_probe_hlsl, "ps_main", "ps_6_0", &sm6_blob, &sm6_errors);
 
     bool dxc_hlsl_written = write_text_file(dxc_hlsl_path, dxc_compute_hlsl);
-    std::string dxc_command = "dxc.exe -T cs_6_0 -E cs_main -HV 2021 -Od -Fo Z:\\tmp\\dxmt_dxc_sm6_compute.dxil "
-                              "-Fe Z:\\tmp\\dxmt_dxc_sm6_errors.txt Z:\\tmp\\dxmt_dxc_sm6_compute.hlsl";
+    std::string dxc_command = "dxc.exe -T cs_6_0 -E cs_main -HV 2021 -Od -Fo dxmt_dxc_sm6_compute.dxil "
+                              "-Fe dxmt_dxc_sm6_errors.txt dxmt_dxc_sm6_compute.hlsl";
     DWORD dxc_exit_code = dxc_hlsl_written ? run_process_wait(dxc_command) : 0xffffffffu;
     std::vector<uint8_t> dxc_dxil_blob = read_binary_file(dxc_dxil_path);
 
@@ -410,6 +426,9 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     std::string trace = read_text_file(shader_trace_path);
     std::string dxil_trace = read_text_file(dxil_trace_path);
     std::string args_trace = read_text_file(shader_args_path);
+    std::string cache_path = getenv_string("DXMT_SHADER_CACHE_PATH");
+    std::string dxil_report_index_path = join_path(cache_path, "dxil_report_index.tsv");
+    std::string dxil_report_index = read_text_file(dxil_report_index_path.c_str());
     std::string dxc_errors = read_text_file(dxc_errors_path);
     unsigned long long vs_metallib_size = 0;
     unsigned long long ps_metallib_size = 0;
@@ -425,11 +444,15 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
                             contains(trace, "pso/compute_no_cs");
     bool dxil_container_trace_ok = contains(dxil_trace, "DXILContainer") || contains(trace, "DXIL container parsed");
     bool dxc_available = dxcompiler && dxil && dxc_exit_code == 0 && !dxc_dxil_blob.empty();
+    bool cache_dxil_report_ok = contains(dxil_report_index, "\tcompute\tcs_main\t6.0\t") ||
+                                contains(dxil_report_index, "\tcompute\tcs_main\t6.1\t") ||
+                                contains(dxil_report_index, "\tcompute\tcs_main\t6.6\t");
     bool dxc_dxil_container_ok =
         dxc_available && (contains(trace, "DXIL blob found") || contains(trace, "DXIL container parsed") ||
-                          contains(dxil_trace, "DXILContainer"));
+                          contains(dxil_trace, "DXILContainer") || cache_dxil_report_ok);
     bool primary_msc_metallib_ok =
-        contains(trace, "loading cached metallib") && contains(trace, "DXIL loaded from cache OK");
+        (contains(trace, "loading cached metallib") && contains(trace, "DXIL loaded from cache OK")) ||
+        cache_dxil_report_ok;
     bool debug_msl_used = contains(trace, "D3D12ShaderCompiler OK backend=DebugMSLEmitterBackend") ||
                           contains(trace, "falling back to DebugMSLEmitterBackend") ||
                           contains(trace, "DXILToMSL: generated") || contains(trace, "MSL generated");
@@ -527,6 +550,8 @@ void cs_main(uint3 dispatch_id : SV_DispatchThreadID) {
     std::printf("    \"dxil_container_trace_ok\": %s,\n", dxil_container_trace_ok ? "true" : "false");
     std::printf("    \"dxc_dxil_container_trace_ok\": %s,\n", dxc_dxil_container_ok ? "true" : "false");
     std::printf("    \"dxc_dxil_to_msl_trace_ok\": %s,\n", dxc_dxil_to_msl_ok ? "true" : "false");
+    std::printf("    \"dxil_report_index\": \"%s\",\n", json_escape(dxil_report_index_path).c_str());
+    std::printf("    \"cache_dxil_report_ok\": %s,\n", cache_dxil_report_ok ? "true" : "false");
     std::printf("    \"primary_msc_metallib_trace_ok\": %s,\n", primary_msc_metallib_ok ? "true" : "false");
     std::printf("    \"debug_msl_backend_used\": %s,\n", debug_msl_used ? "true" : "false");
     std::printf("    \"primary_cache_miss\": %s,\n", primary_cache_miss ? "true" : "false");

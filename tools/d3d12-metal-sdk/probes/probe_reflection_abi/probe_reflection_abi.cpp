@@ -144,14 +144,19 @@ static DWORD run_process_wait(std::string command_line) {
 static std::string windows_cache_glob(std::string path) {
     if (path.empty())
         return "";
-    for (char& c : path) {
-        if (c == '/')
-            c = '\\';
+    // The Wine probe harness passes DXMT_SHADER_CACHE_PATH as the host/POSIX
+    // path consumed by DXMT.  Keep that spelling instead of rewriting to Z:\\;
+    // Wine file APIs can glob the slash path while the Z: rewrite is not
+    // guaranteed to exist in the isolated probe prefix.
+    char separator = '/';
+    for (char c : path) {
+        if (c == '\\') {
+            separator = '\\';
+            break;
+        }
     }
-    if (!path.empty() && path[0] == '\\')
-        path = "Z:" + path;
-    if (!path.empty() && path.back() != '\\')
-        path += "\\";
+    if (!path.empty() && path.back() != '/' && path.back() != '\\')
+        path += separator;
     return path + "*.json";
 }
 
@@ -321,13 +326,12 @@ void cs_reflect(uint3 id : SV_DispatchThreadID) {
 }
 )";
 
-    bool hlsl_written = write_text_file("Z:\\tmp\\dxmt_reflection_abi.hlsl", hlsl);
-    DeleteFileA("Z:\\tmp\\dxmt_reflection_abi.dxil");
-    DWORD dxc_exit_code =
-        hlsl_written ? run_process_wait("dxc.exe -nologo -HV 2021 -Od -E cs_reflect -T cs_6_0 "
-                                        "-Fo Z:\\tmp\\dxmt_reflection_abi.dxil Z:\\tmp\\dxmt_reflection_abi.hlsl")
-                     : 0xffffffffu;
-    std::vector<uint8_t> dxil = read_binary_file("Z:\\tmp\\dxmt_reflection_abi.dxil");
+    bool hlsl_written = write_text_file("dxmt_reflection_abi.hlsl", hlsl);
+    DeleteFileA("dxmt_reflection_abi.dxil");
+    DWORD dxc_exit_code = hlsl_written ? run_process_wait("dxc.exe -nologo -HV 2021 -Od -E cs_reflect -T cs_6_0 "
+                                                          "-Fo dxmt_reflection_abi.dxil dxmt_reflection_abi.hlsl")
+                                       : 0xffffffffu;
+    std::vector<uint8_t> dxil = read_binary_file("dxmt_reflection_abi.dxil");
 
     HMODULE d3d12 = LoadLibraryA("d3d12.dll");
     HMODULE dxcompiler = LoadLibraryA("dxcompiler.dll");
