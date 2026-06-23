@@ -30,7 +30,9 @@ Hard gates:
   2. Full atomic M12 DLL set must exist in the build and staged runtime.
   3. Build and staged hashes must match for:
      d3d12.dll, d3d11.dll, d3d10core.dll, dxgi.dll, dxgi_dxmt.dll,
-     winemetal.dll, winemetal.so, libm12core.dylib.
+     winemetal.dll, winemetal.so.
+  4. winemetal.so must contain internal m12core symbols and must not require
+     a libm12core.dylib sidecar.
 USAGE
 }
 
@@ -122,7 +124,6 @@ atomic = [
     "dxgi_dxmt.dll",
     "winemetal.dll",
     "winemetal.so",
-    "libm12core.dylib",
 ]
 by_name = {}
 for item in preflight.get("build_comparisons", []):
