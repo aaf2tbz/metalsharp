@@ -50,6 +50,82 @@ def sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def run_text(command: list[str]) -> str:
+    return subprocess.check_output(command, text=True, stderr=subprocess.DEVNULL)
+
+
+def mach_o_dependencies(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        output = run_text(["otool", "-L", str(path)])
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return []
+    deps: list[str] = []
+    for line in output.splitlines()[1:]:
+        line = line.strip()
+        if line:
+            deps.append(line.split(" ", 1)[0])
+    return deps
+
+
+def unix_global_symbols(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    for command in (["nm", "-gU", str(path)], ["nm", "-g", str(path)]):
+        try:
+            output = run_text(command)
+            break
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            output = ""
+    symbols: set[str] = set()
+    for line in output.splitlines():
+        parts = line.strip().split()
+        if parts:
+            name = parts[-1]
+            symbols.add(name)
+            if name.startswith("_"):
+                symbols.add(name[1:])
+    return symbols
+
+
+def binary_strings(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        return set(run_text(["strings", str(path)]).splitlines())
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return set()
+
+
+def inspect_internal_m12core_winemetal(path: Path) -> dict:
+    required_symbols = [
+        "m12core_get_version",
+        "m12core_lower_dxil_to_msl",
+        "m12core_create_shader_function",
+        "m12core_create_pipeline_state",
+        "m12core_plan_thin_pe_checkpoint",
+    ]
+    deps = mach_o_dependencies(path)
+    symbols = unix_global_symbols(path)
+    strings = binary_strings(path)
+    missing_symbols = [name for name in required_symbols if name not in symbols]
+    libm12core_deps = [dep for dep in deps if "libm12core" in dep]
+    default_sidecar_paths = [value for value in strings if value == "@loader_path/libm12core.dylib"]
+    return {
+        "role": "dxmt_unix_winemetal_internal_m12core",
+        "path": str(path),
+        "exists": path.exists(),
+        "size": path.stat().st_size if path.exists() else 0,
+        "sha256": sha256(path),
+        "required_symbols": required_symbols,
+        "missing_symbols": missing_symbols,
+        "libm12core_dependencies": libm12core_deps,
+        "default_sidecar_paths": default_sidecar_paths,
+        "ok": path.exists() and not missing_symbols and not libm12core_deps and not default_sidecar_paths,
+    }
+
+
 def export_table_for(path: Path) -> tuple[set[str], set[int]]:
     if not path.exists() or path.suffix.lower() != ".dll":
         return set(), set()
@@ -205,6 +281,7 @@ def main() -> int:
                 "ok": path.exists() and path.stat().st_size > 0 if path.exists() else False,
             }
         )
+    entries.append(inspect_internal_m12core_winemetal(dxmt_runtime / "x86_64-unix" / "winemetal.so"))
 
     if args.game_dir:
         entries.append(
@@ -223,7 +300,6 @@ def main() -> int:
             ("dxgi_dxmt.dll", build_dir / "src/dxgi/dxgi_dxmt.dll", dxmt_runtime / "x86_64-windows/dxgi_dxmt.dll"),
             ("winemetal.dll", build_dir / "src/winemetal/winemetal.dll", dxmt_runtime / "x86_64-windows/winemetal.dll"),
             ("winemetal.so", build_dir / "src/winemetal/unix/winemetal.so", dxmt_runtime / "x86_64-unix/winemetal.so"),
-            ("libm12core.dylib", build_dir / "src/m12core/libm12core.dylib", dxmt_runtime / "x86_64-unix/libm12core.dylib"),
         ]
         for role, build_path, staged_path in comparison_pairs:
             build_hash = sha256(build_path)
@@ -261,6 +337,7 @@ def main() -> int:
             "DXGI bootstrap and real DXMT DLLs must expose factory exports by name and ordinals 9, 10, and 11.",
             "Steam/global Wine Winemetal copies must preserve legacy wrapper exports.",
             "DXMT/game-local Winemetal copies must preserve legacy exports and expose new shader bridge exports.",
+            "DXMT winemetal.so must contain internal m12core symbols and must not require a libm12core.dylib sidecar.",
             "Do not launch Steam or a game while this preflight is red.",
         ],
     }
