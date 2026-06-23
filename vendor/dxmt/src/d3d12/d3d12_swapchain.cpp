@@ -669,8 +669,8 @@ void MTLD3D12SwapChain::WaitForPresentCommandBufferSlot() {
     if (TakePresentLogBudget(32)) {
       Logger::warn(str::format(
           "M12 present waiting for completion-tracked slot status=",
-          (int)status, " serial=",
-          (unsigned long long)D3D12MetalCompletionSlotSerial(slot),
+          (int)status,
+          " serial=", (unsigned long long)D3D12MetalCompletionSlotSerial(slot),
           " submit_count=", (unsigned long long)m_present_submit_count,
           " limit=", limit));
     }
@@ -687,7 +687,21 @@ void MTLD3D12SwapChain::WaitForPresentCommandBufferSlot() {
   ResetD3D12MetalCompletionSlot(slot);
 }
 
-void MTLD3D12SwapChain::TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf) {
+static void
+RetainPresentSubmissionReferences(D3D12MetalSubmissionReferences &refs,
+                                  IUnknown *resource, WMT::Texture src_texture,
+                                  WMT::Texture dst_texture,
+                                  WMT::MetalDrawable drawable) {
+  refs.RetainResource(resource);
+  refs.RetainTexture(src_texture);
+  refs.RetainTexture(dst_texture);
+  refs.RetainDrawable(drawable);
+  if (drawable.handle)
+    refs.RetainTexture(drawable.texture());
+}
+
+void MTLD3D12SwapChain::TrackPresentCommandBuffer(
+    WMT::CommandBuffer cmdbuf, D3D12MetalSubmissionReferences references) {
   uint32_t limit = PresentInflightLimit();
   if (!cmdbuf.handle || limit == 0)
     return;
@@ -695,8 +709,19 @@ void MTLD3D12SwapChain::TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf) {
   auto &slot = m_present_inflight[m_present_submit_count % limit];
   if (slot.cmdbuf.handle)
     WaitForPresentCommandBufferSlot();
-  ArmD3D12MetalCompletionSlot(slot, cmdbuf, m_present_submit_count + 1);
+  ArmD3D12MetalCompletionSlot(slot, cmdbuf, m_present_submit_count + 1,
+                              std::move(references));
   m_present_submit_count++;
+}
+
+void MTLD3D12SwapChain::TrackPresentCommandBufferWithReferences(
+    WMT::CommandBuffer cmdbuf, MTLD3D12Resource *resource,
+    WMT::Texture src_texture, WMT::Texture dst_texture,
+    WMT::MetalDrawable drawable) {
+  D3D12MetalSubmissionReferences submission_refs;
+  RetainPresentSubmissionReferences(submission_refs, resource, src_texture,
+                                    dst_texture, drawable);
+  TrackPresentCommandBuffer(cmdbuf, std::move(submission_refs));
 }
 
 bool MTLD3D12SwapChain::EnsureMetalView() {
@@ -803,13 +828,13 @@ void MTLD3D12SwapChain::RebindMetalViewForWindowChange(const char *reason) {
   }
   m_layer = {};
   if (EnsureMetalView()) {
-    Logger::info(str::format("M12 rebound Metal view reason=",
-                             reason ? reason : "unknown", " hwnd=",
-                             (void *)m_hwnd));
+    Logger::info(str::format(
+        "M12 rebound Metal view reason=", reason ? reason : "unknown",
+        " hwnd=", (void *)m_hwnd));
   } else {
-    Logger::err(str::format("M12 failed to rebound Metal view reason=",
-                            reason ? reason : "unknown", " hwnd=",
-                            (void *)m_hwnd));
+    Logger::err(str::format(
+        "M12 failed to rebound Metal view reason=", reason ? reason : "unknown",
+        " hwnd=", (void *)m_hwnd));
   }
 }
 
@@ -997,7 +1022,8 @@ MTLD3D12SwapChain::SetFullscreenState(BOOL fullscreen, IDXGIOutput *target) {
     wsi::leaveFullscreenMode(m_hwnd, &m_window_state, false);
   }
   ReassertWindowForHandoff(fullscreen ? "set_fullscreen" : "set_windowed");
-  RebindMetalViewForWindowChange(fullscreen ? "set_fullscreen" : "set_windowed");
+  RebindMetalViewForWindowChange(fullscreen ? "set_fullscreen"
+                                            : "set_windowed");
   return S_OK;
 }
 
@@ -1043,6 +1069,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count,
   SCTRACE("ResizeBuffers count=%u w=%u h=%u fmt=%u flags=0x%x (old: w=%u h=%u)",
           buffer_count, width, height, (unsigned)format, flags, m_desc.Width,
           m_desc.Height);
+  DrainPresentCommandBuffers(true);
   for (uint32_t i = 0; i < 4; i++)
     m_backbuffers[i] = nullptr;
 
@@ -1239,7 +1266,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
 
   if (!m_present_queue.handle) {
     auto wmt_device = m_dxgi_device->GetMTLDevice();
-    m_present_queue = wmt_device.newCommandQueue(PresentQueueMaxCommandBuffers());
+    m_present_queue =
+        wmt_device.newCommandQueue(PresentQueueMaxCommandBuffers());
   }
 
   WaitForPresentCommandBufferSlot();
@@ -1259,8 +1287,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     Logger::info(str::format("M12 present entry count=", m_present_count,
                              " sync=", sync_interval, " flags=0x", std::hex,
                              flags, std::dec, " idx=", m_current_buffer,
-                             " backbuffer=", (void *)res,
-                             " state=0x", std::hex,
+                             " backbuffer=", (void *)res, " state=0x", std::hex,
                              (unsigned)present_entry_state, std::dec,
                              " src=", (unsigned long long)src_texture.handle,
                              " fmt=", (unsigned)m_desc.Format,
@@ -1385,7 +1412,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT presenter cmdbuf=%llu",
             (unsigned long long)cmdbuf.handle);
-    TrackPresentCommandBuffer(cmdbuf);
+    TrackPresentCommandBufferWithReferences(cmdbuf, res, src_texture,
+                                            WMT::Texture(), drawable);
     cmdbuf.commit();
     if (readback_probe.mapped) {
       cmdbuf.waitUntilCompleted();
@@ -1500,7 +1528,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
     if (!native_present_executed)
       cmdbuf.presentDrawable(drawable);
     SCTRACE("[SC_ENC] COMMIT cmdbuf=%llu", (unsigned long long)cmdbuf.handle);
-    TrackPresentCommandBuffer(cmdbuf);
+    TrackPresentCommandBufferWithReferences(cmdbuf, res, src_texture,
+                                            dst_texture, drawable);
     cmdbuf.commit();
     if (readback_probe.mapped) {
       cmdbuf.waitUntilCompleted();

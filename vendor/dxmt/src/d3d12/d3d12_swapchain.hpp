@@ -117,7 +117,14 @@ private:
   void ReassertWindowForHandoff(const char *reason);
   void RebindMetalViewForWindowChange(const char *reason);
   void WaitForPresentCommandBufferSlot();
-  void TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf);
+  void
+  TrackPresentCommandBuffer(WMT::CommandBuffer cmdbuf,
+                            D3D12MetalSubmissionReferences references = {});
+  void TrackPresentCommandBufferWithReferences(WMT::CommandBuffer cmdbuf,
+                                               MTLD3D12Resource *resource,
+                                               WMT::Texture src_texture,
+                                               WMT::Texture dst_texture,
+                                               WMT::MetalDrawable drawable);
   void DrainPresentCommandBuffers(bool wait);
 
   std::atomic<uint32_t> m_refCount = {1ul};
