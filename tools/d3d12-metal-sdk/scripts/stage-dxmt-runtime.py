@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_BUILD_DIR = ROOT_DIR / "vendor" / "dxmt" / "build-metalsharp-x64"
-DEFAULT_RUNTIME_DIR = Path(os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt"))
+DEFAULT_RUNTIME_DIR = Path(os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt_m12"))
 DEFAULT_PREFIX_DIR = Path(os.path.expanduser("~/.metalsharp/prefix-steam"))
 DEFAULT_RESULTS_DIR = ROOT_DIR / "tools" / "d3d12-metal-sdk" / "results"
 LLVM_TOOLCHAIN_NAME = "clang+llvm-15.0.7-x86_64-apple-darwin21.0"

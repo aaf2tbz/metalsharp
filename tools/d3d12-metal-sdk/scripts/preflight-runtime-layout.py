@@ -72,6 +72,8 @@ def mach_o_dependencies(path: Path) -> list[str]:
 def unix_global_symbols(path: Path) -> set[str]:
     if not path.exists():
         return set()
+    # Darwin `nm -U` means defined-only. Prefer that for the internal m12core
+    # presence gate, then fall back to a broad global-symbol listing if needed.
     for command in (["nm", "-gU", str(path)], ["nm", "-g", str(path)]):
         try:
             output = run_text(command)
@@ -174,8 +176,8 @@ def main() -> int:
     parser.add_argument("--profile", default="metalsharp")
     parser.add_argument(
         "--dxmt-runtime",
-        default=os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt"),
-        help="Runtime root containing x86_64-windows and x86_64-unix.",
+        default=os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt_m12"),
+        help="M12 runtime root containing x86_64-windows and x86_64-unix.",
     )
     parser.add_argument(
         "--wine-runtime",
