@@ -286,8 +286,8 @@ def main() -> int:
     parser.add_argument("--profile", default="metalsharp")
     parser.add_argument(
         "--dxmt-runtime",
-        default=os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt"),
-        help="DXMT runtime root containing x86_64-windows and x86_64-unix.",
+        default=os.path.expanduser("~/.metalsharp/runtime/wine/lib/dxmt_m12"),
+        help="M12 DXMT runtime root containing x86_64-windows and x86_64-unix.",
     )
     parser.add_argument(
         "--wine-runtime",
