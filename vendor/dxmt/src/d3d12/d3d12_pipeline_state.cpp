@@ -16,7 +16,16 @@ static bool DXMTD3D12PSOTraceEnabled() {
   return enabled != 0;
 }
 
+static bool DXMTD3D12PSOOwnershipEnabled() {
+  static int enabled = []() {
+    const char *value = std::getenv("DXMT_D3D12_PSO_OWNERSHIP");
+    return value && value[0] && std::strcmp(value, "0") != 0;
+  }();
+  return enabled != 0;
+}
+
 #define PTRACE(fmt, ...) do { if (DXMTD3D12PSOTraceEnabled()) { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-pso.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } } while(0)
+#define OTRACE(fmt, ...) do { if (DXMTD3D12PSOOwnershipEnabled()) { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-pso-ownership.log"); if (_tf) { fprintf(_tf, fmt "\n", ##__VA_ARGS__); fclose(_tf); } } } while(0)
 #include "airconv_public.h"
 #include "dxmt_format.hpp"
 #include "dxil/dxil_container.hpp"
@@ -75,11 +84,20 @@ struct M12BinaryArchiveContext {
   std::mutex mutex;
   WMT::Reference<WMT::BinaryArchive> archive;
   std::atomic<uint64_t> pso_compile_counter{0};
+  std::atomic<uint64_t> compute_pso_opportunity_counter{0};
+  std::atomic<uint64_t> render_pso_opportunity_counter{0};
   std::atomic<bool> serialize_in_flight{false};
   const char *native_path = nullptr;
   bool enabled = false;
   bool allow_lookup = false;
   bool allow_population = false;
+  bool population_context_off = false;
+  bool population_no_attach = false;
+  bool population_record_off = false;
+  bool population_record_compute_off = false;
+  bool population_record_render_off = false;
+  bool queue_checkpoint_compute = false;
+  bool queue_checkpoint_render = false;
 };
 
 struct M12BinaryArchiveCompilePayload {
@@ -304,9 +322,36 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
 
   ctx.native_path = FormatM12BinaryArchivePath(wmt_device);
   const bool bypass_lookup = EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP");
-  const bool allow_population = EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE");
+  const bool population_requested = EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE");
+  const bool population_context_off = population_requested && EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF");
+  const bool allow_population = population_requested && !population_context_off;
+  const bool population_no_attach = allow_population && EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_NO_ATTACH");
+  const bool population_record_off = allow_population && EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_OFF");
+  const bool population_record_compute_off = allow_population && EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF");
+  const bool population_record_render_off = allow_population && EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF");
+  const bool queue_checkpoint = allow_population && EnvSwitchOne("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT");
+  bool queue_checkpoint_compute = queue_checkpoint;
+  bool queue_checkpoint_render = queue_checkpoint;
+  if (queue_checkpoint) {
+    char checkpoint_kind[16] = {};
+    DWORD kind_len = GetEnvironmentVariableA("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND",
+                                            checkpoint_kind, sizeof(checkpoint_kind));
+    if (kind_len > 0 && kind_len < sizeof(checkpoint_kind)) {
+      if (_stricmp(checkpoint_kind, "compute") == 0)
+        queue_checkpoint_render = false;
+      else if (_stricmp(checkpoint_kind, "render") == 0)
+        queue_checkpoint_compute = false;
+    }
+  }
   ctx.allow_lookup = false;
   ctx.allow_population = false;
+  ctx.population_context_off = false;
+  ctx.population_no_attach = false;
+  ctx.population_record_off = false;
+  ctx.population_record_compute_off = false;
+  ctx.population_record_render_off = false;
+  ctx.queue_checkpoint_compute = false;
+  ctx.queue_checkpoint_render = false;
 
   char parent[1024] = {};
   snprintf(parent, sizeof(parent), "%s", ctx.native_path ? ctx.native_path : "");
@@ -327,6 +372,11 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
     ctx.archive = wmt_device.newBinaryArchive(ctx.native_path, err);
     loaded_existing_archive = ctx.archive.handle != NULL_OBJECT_HANDLE;
   }
+  if (!ctx.archive.handle && allow_population && ctx.native_path) {
+    err = nullptr;
+    unlink(ctx.native_path);
+    ctx.archive = wmt_device.newBinaryArchive(ctx.native_path, err);
+  }
   if (!ctx.archive.handle) {
     err = nullptr;
     ctx.archive = wmt_device.newBinaryArchive(nullptr, err);
@@ -340,6 +390,13 @@ void InitializeM12BinaryArchiveContext(WMT::Device wmt_device) {
   const bool validation_passed = ValidateM12BinaryArchiveLookupSupport(wmt_device, validation_dir);
   ctx.allow_lookup = validation_passed && loaded_existing_archive && !bypass_lookup;
   ctx.allow_population = allow_population;
+  ctx.population_context_off = population_context_off;
+  ctx.population_no_attach = population_no_attach;
+  ctx.population_record_off = population_record_off;
+  ctx.population_record_compute_off = population_record_compute_off;
+  ctx.population_record_render_off = population_record_render_off;
+  ctx.queue_checkpoint_compute = queue_checkpoint_compute;
+  ctx.queue_checkpoint_render = queue_checkpoint_render;
   ctx.enabled = true;
   std::atexit(FlushM12BinaryArchiveAtExit);
 }
@@ -356,7 +413,7 @@ bool CopyM12BinaryArchiveForSerialization(
     const char *&native_path) {
   std::lock_guard<std::mutex> lock(context.mutex);
   if (!context.enabled || !context.archive.handle || !context.native_path ||
-      !context.allow_population)
+      !context.allow_population || context.population_no_attach)
     return false;
   archive = context.archive;
   native_path = context.native_path;
@@ -367,6 +424,17 @@ void SerializeM12BinaryArchiveNow(WMT::Reference<WMT::BinaryArchive> archive,
                                   const char *native_path) {
   WMT::Reference<WMT::Error> err;
   archive.serialize(native_path, err);
+}
+
+void SerializeM12BinaryArchiveCheckpoint(M12BinaryArchiveContext &context) {
+  while (context.serialize_in_flight.exchange(true, std::memory_order_acq_rel))
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+  WMT::Reference<WMT::BinaryArchive> archive;
+  const char *native_path = nullptr;
+  if (CopyM12BinaryArchiveForSerialization(context, archive, native_path))
+    SerializeM12BinaryArchiveNow(std::move(archive), native_path);
+  context.serialize_in_flight.store(false, std::memory_order_release);
 }
 
 void MaybeSerializeM12BinaryArchive(M12BinaryArchiveContext &context) {
@@ -410,16 +478,50 @@ void FlushM12BinaryArchiveAtExit() {
   context.serialize_in_flight.store(false, std::memory_order_release);
 }
 
-void RecordM12BinaryArchivePsoOpportunity(M12BinaryArchiveContext &context) {
+enum class M12BinaryArchivePsoOpportunityKind {
+  Compute,
+  Render,
+};
+
+void RecordM12BinaryArchivePsoOpportunity(M12BinaryArchiveContext &context,
+                                           M12BinaryArchivePsoOpportunityKind kind) {
+  bool population_no_attach = false;
+  bool population_record_off = false;
+  bool population_record_kind_off = false;
+  bool queue_checkpoint = false;
   {
     std::lock_guard<std::mutex> lock(context.mutex);
     if (!context.enabled || !context.archive.handle || !context.allow_population)
       return;
+    population_no_attach = context.population_no_attach;
+    population_record_off = context.population_record_off;
+    if (kind == M12BinaryArchivePsoOpportunityKind::Compute) {
+      population_record_kind_off = context.population_record_compute_off;
+      queue_checkpoint = context.queue_checkpoint_compute;
+    } else {
+      population_record_kind_off = context.population_record_render_off;
+      queue_checkpoint = context.queue_checkpoint_render;
+    }
   }
+
+  if (population_record_off || population_record_kind_off)
+    return;
 
   uint64_t current_count =
       context.pso_compile_counter.fetch_add(1, std::memory_order_relaxed) + 1;
-  if ((current_count % kM12BinaryArchiveSerializeInterval) == 0)
+  if (kind == M12BinaryArchivePsoOpportunityKind::Compute) {
+    context.compute_pso_opportunity_counter.fetch_add(1,
+                                                      std::memory_order_relaxed);
+  } else {
+    context.render_pso_opportunity_counter.fetch_add(1,
+                                                     std::memory_order_relaxed);
+  }
+  if (population_no_attach)
+    return;
+
+  if (queue_checkpoint)
+    SerializeM12BinaryArchiveCheckpoint(context);
+  else if ((current_count % kM12BinaryArchiveSerializeInterval) == 0)
     MaybeSerializeM12BinaryArchive(context);
 }
 
@@ -437,13 +539,97 @@ void AttachM12BinaryArchiveInfo(PipelineInfo &info,
   if (!context.enabled || !context.archive.handle)
     return;
 
-  payload.heap_archive_handles[0] = context.archive.handle;
-  if (context.allow_population)
+  if (context.allow_population && !context.population_no_attach)
     info.binary_archive_for_serialization = context.archive.handle;
   if (context.allow_lookup) {
+    payload.heap_archive_handles[0] = context.archive.handle;
     info.binary_archives_for_lookup.set(payload.heap_archive_handles);
     info.num_binary_archives_for_lookup = 1;
   }
+}
+
+struct M12PsoOwnershipDiagnostic {
+  size_t pipeline_cache_key = 0;
+  uint64_t root_signature_key = 0;
+  const char *pipeline_owner = "unknown";
+  bool pipeline_cache_hit = false;
+  bool pipeline_cache_native_available = false;
+  bool pipeline_cache_native_hit = false;
+  bool binary_archive_enabled = false;
+  bool binary_archive_lookup_allowed = false;
+  bool binary_archive_population_allowed = false;
+  bool binary_archive_lookup_attached = false;
+  bool binary_archive_serialization_attached = false;
+  bool binary_archive_population_no_attach = false;
+  const char *binary_archive_path = "";
+  const char *binary_archive_fallback_reason = "unknown";
+  const char *compile_result = "success";
+};
+
+const char *M12BinaryArchiveFallbackReason(const M12BinaryArchiveContext &context) {
+  if (!context.enabled)
+    return "disabled";
+  if (!context.archive.handle)
+    return "no_archive_handle";
+  if (!context.allow_lookup && !context.allow_population)
+    return "lookup_validation_failed_or_population_not_requested";
+  if (!context.allow_lookup && context.allow_population)
+    return "lookup_disabled_population_only";
+  if (context.allow_lookup && !context.allow_population)
+    return "population_disabled_lookup_only";
+  return "none";
+}
+
+M12PsoOwnershipDiagnostic MakeM12PsoOwnershipDiagnostic(
+    M12BinaryArchiveContext &context,
+    const M12BinaryArchiveCompilePayload &payload,
+    obj_handle_t serialization_handle,
+    size_t pipeline_cache_key,
+    uint64_t root_signature_key,
+    const char *pipeline_owner,
+    bool pipeline_cache_hit,
+    bool pipeline_cache_native_available,
+    bool pipeline_cache_native_hit) {
+  M12PsoOwnershipDiagnostic diag = {};
+  diag.pipeline_cache_key = pipeline_cache_key;
+  diag.root_signature_key = root_signature_key;
+  diag.pipeline_owner = pipeline_owner ? pipeline_owner : "unknown";
+  diag.pipeline_cache_hit = pipeline_cache_hit;
+  diag.pipeline_cache_native_available = pipeline_cache_native_available;
+  diag.pipeline_cache_native_hit = pipeline_cache_native_hit;
+  const bool created_with_descriptor = !pipeline_cache_hit;
+  diag.binary_archive_lookup_attached = created_with_descriptor &&
+                                       payload.heap_archive_handles[0] != NULL_OBJECT_HANDLE;
+  diag.binary_archive_serialization_attached = created_with_descriptor &&
+                                              serialization_handle != NULL_OBJECT_HANDLE;
+
+  std::lock_guard<std::mutex> lock(context.mutex);
+  diag.binary_archive_enabled = context.enabled;
+  diag.binary_archive_lookup_allowed = context.allow_lookup;
+  diag.binary_archive_population_allowed = context.allow_population;
+  diag.binary_archive_population_no_attach = context.population_no_attach;
+  diag.binary_archive_path = context.native_path ? context.native_path : "";
+  diag.binary_archive_fallback_reason = M12BinaryArchiveFallbackReason(context);
+  return diag;
+}
+
+void LogM12PsoOwnership(const char *kind, size_t pso_key, size_t vs_hash,
+                        size_t ps_hash, size_t cs_hash,
+                        const M12PsoOwnershipDiagnostic &diag) {
+  OTRACE("M12_PSO_OWNERSHIP kind=%s pso_key=0x%016zx pipeline_key=0x%016zx root_key=0x%016llx vs=0x%016zx ps=0x%016zx cs=0x%016zx owner=%s cache_hit=%u native_cache_available=%u native_cache_hit=%u archive_enabled=%u archive_lookup_allowed=%u archive_population_allowed=%u archive_lookup_attached=%u archive_serialization_attached=%u archive_path=%s archive_fallback=%s result=%s",
+         kind ? kind : "unknown", pso_key, diag.pipeline_cache_key,
+         (unsigned long long)diag.root_signature_key, vs_hash, ps_hash, cs_hash,
+         diag.pipeline_owner, diag.pipeline_cache_hit ? 1u : 0u,
+         diag.pipeline_cache_native_available ? 1u : 0u,
+         diag.pipeline_cache_native_hit ? 1u : 0u,
+         diag.binary_archive_enabled ? 1u : 0u,
+         diag.binary_archive_lookup_allowed ? 1u : 0u,
+         diag.binary_archive_population_allowed ? 1u : 0u,
+         diag.binary_archive_lookup_attached ? 1u : 0u,
+         diag.binary_archive_serialization_attached ? 1u : 0u,
+         diag.binary_archive_path ? diag.binary_archive_path : "",
+         diag.binary_archive_fallback_reason ? diag.binary_archive_fallback_reason : "",
+         diag.compile_result ? diag.compile_result : "unknown");
 }
 
 WMTAttributeFormat AttributeFormatForMetalDataType(uint32_t type) {
@@ -661,6 +847,37 @@ bool ShaderBytecodeContainsDxil(const void *bytecode, SIZE_T size) {
   return false;
 }
 
+static bool ExtractDxilPSVNumThreads(const microsoft::CDXBCParser &parser,
+                                     uint32_t out_threads[3]) {
+  constexpr uint32_t PSV0_FOURCC =
+      (uint32_t)'P' | ((uint32_t)'S' << 8) | ((uint32_t)'V' << 16) |
+      ((uint32_t)'0' << 24);
+  for (UINT32 i = 0; i < parser.GetBlobCount(); i++) {
+    if (parser.GetBlobFourCC(i) != PSV0_FOURCC)
+      continue;
+    const uint8_t *psv = static_cast<const uint8_t *>(parser.GetBlob(i));
+    UINT32 size = parser.GetBlobSize(i);
+    if (!psv || size < 4u + 48u)
+      continue;
+    uint32_t runtime_info_size = 0;
+    std::memcpy(&runtime_info_size, psv, sizeof(runtime_info_size));
+    if (runtime_info_size < 48u || size < 4u + runtime_info_size)
+      continue;
+    uint8_t shader_stage = psv[4u + 24u];
+    if (shader_stage != (uint8_t)dxmt::dxil::DxilShaderKind::Compute)
+      continue;
+    uint32_t x = 1, y = 1, z = 1;
+    std::memcpy(&x, psv + 4u + 36u, sizeof(x));
+    std::memcpy(&y, psv + 4u + 40u, sizeof(y));
+    std::memcpy(&z, psv + 4u + 44u, sizeof(z));
+    out_threads[0] = x ? x : 1;
+    out_threads[1] = y ? y : 1;
+    out_threads[2] = z ? z : 1;
+    return true;
+  }
+  return false;
+}
+
 size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
                               ShaderType type,
                               const D3D12_INPUT_LAYOUT_DESC *input_layout) {
@@ -679,6 +896,8 @@ size_t ComputeShaderCacheHash(const void *bytecode, SIZE_T size,
         hash = hash * 131 + p[i];
     }
   }
+  if (ShaderBytecodeContainsDxil(bytecode, size))
+    hash = hash * 131 + 0x4d31324458494c53ull; // M12 DXIL lowering ABI salt.
   if (type == ShaderType::Vertex && input_layout) {
     hash = hash * 131 + input_layout->NumElements;
     for (UINT i = 0; i < input_layout->NumElements; i++) {
@@ -1164,7 +1383,8 @@ void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
                             uint32_t threadgroup_width,
                             uint32_t threadgroup_height,
                             uint32_t threadgroup_depth,
-                            uintptr_t compute_function) {
+                            uintptr_t compute_function,
+                            const M12PsoOwnershipDiagnostic &ownership) {
   char path[1024];
   char metallib_path[1024];
   FormatShaderCachePath(path, sizeof(path), "pso-compute-%016zx.json", cs_hash);
@@ -1189,8 +1409,38 @@ void DumpComputePSOManifest(size_t cs_hash, SIZE_T cs_size,
           (unsigned long long)threadgroup_width,
           (unsigned long long)threadgroup_height,
           (unsigned long long)threadgroup_depth);
-  fprintf(df, "      \"metal\": { \"compute_function\": %llu }\n",
+  fprintf(df, "      \"metal\": { \"compute_function\": %llu },\n",
           (unsigned long long)compute_function);
+  fprintf(df, "      \"phase7_ownership\": {\n");
+  fprintf(df, "        \"schema\": \"metalsharp.d3d12-metal.pso-ownership.v1\",\n");
+  fprintf(df, "        \"kind\": \"compute\",\n");
+  fprintf(df, "        \"pso_key\": \"0x%016zx\",\n", cs_hash);
+  fprintf(df, "        \"pipeline_cache_key\": \"0x%016zx\",\n", ownership.pipeline_cache_key);
+  fprintf(df, "        \"root_signature_key\": \"0x%016llx\",\n", (unsigned long long)ownership.root_signature_key);
+  fprintf(df, "        \"pipeline_owner\": ");
+  WriteJsonString(df, ownership.pipeline_owner ? ownership.pipeline_owner : "unknown");
+  fprintf(df, ",\n");
+  fprintf(df, "        \"pipeline_cache\": { \"hit\": %s, \"native_available\": %s, \"native_hit\": %s },\n",
+          ownership.pipeline_cache_hit ? "true" : "false",
+          ownership.pipeline_cache_native_available ? "true" : "false",
+          ownership.pipeline_cache_native_hit ? "true" : "false");
+  fprintf(df, "        \"shader_cache_policy\": \"memory-cache -> persistent-metallib -> generated-source fallback\",\n");
+  fprintf(df, "        \"function_constants\": [],\n");
+  fprintf(df, "        \"binary_archive\": { \"path\": ");
+  WriteJsonString(df, ownership.binary_archive_path ? ownership.binary_archive_path : "");
+  fprintf(df, ", \"enabled\": %s, \"lookup_allowed\": %s, \"population_allowed\": %s, \"lookup_attached\": %s, \"serialization_attached\": %s, \"population_no_attach\": %s, \"fallback_reason\": ",
+          ownership.binary_archive_enabled ? "true" : "false",
+          ownership.binary_archive_lookup_allowed ? "true" : "false",
+          ownership.binary_archive_population_allowed ? "true" : "false",
+          ownership.binary_archive_lookup_attached ? "true" : "false",
+          ownership.binary_archive_serialization_attached ? "true" : "false",
+          ownership.binary_archive_population_no_attach ? "true" : "false");
+  WriteJsonString(df, ownership.binary_archive_fallback_reason ? ownership.binary_archive_fallback_reason : "");
+  fprintf(df, " },\n");
+  fprintf(df, "        \"compile_result\": ");
+  WriteJsonString(df, ownership.compile_result ? ownership.compile_result : "unknown");
+  fprintf(df, "\n");
+  fprintf(df, "      }\n");
   fprintf(df, "    }\n");
   fprintf(df, "  ]\n");
   fprintf(df, "}\n");
@@ -1209,7 +1459,10 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
                            bool uses_geometry_mesh,
                            bool rasterization_enabled,
                            uintptr_t vertex_function,
-                           uintptr_t fragment_function) {
+                           uintptr_t fragment_function,
+                           size_t render_pipeline_cache_key,
+                           uint64_t root_signature_key,
+                           const M12PsoOwnershipDiagnostic &ownership) {
   char path[1024];
   char vs_metallib_path[1024];
   char ps_metallib_path[1024];
@@ -1279,12 +1532,42 @@ void DumpRenderPSOManifest(size_t pso_hash, size_t vs_hash, size_t ps_hash,
   } else {
     fprintf(df, "      \"fragment\": null,\n");
   }
-  fprintf(df, "      \"metal\": { \"vertex_function\": %llu, \"fragment_function\": %llu, \"uses_stage_in\": %s, \"uses_geometry_mesh\": %s, \"rasterization_enabled\": %s }\n",
+  fprintf(df, "      \"metal\": { \"vertex_function\": %llu, \"fragment_function\": %llu, \"uses_stage_in\": %s, \"uses_geometry_mesh\": %s, \"rasterization_enabled\": %s },\n",
           (unsigned long long)vertex_function,
           (unsigned long long)fragment_function,
           uses_stage_in ? "true" : "false",
           uses_geometry_mesh ? "true" : "false",
           rasterization_enabled ? "true" : "false");
+  fprintf(df, "      \"phase7_ownership\": {\n");
+  fprintf(df, "        \"schema\": \"metalsharp.d3d12-metal.pso-ownership.v1\",\n");
+  fprintf(df, "        \"kind\": \"render\",\n");
+  fprintf(df, "        \"pso_key\": \"0x%016zx\",\n", pso_hash);
+  fprintf(df, "        \"pipeline_cache_key\": \"0x%016zx\",\n", render_pipeline_cache_key);
+  fprintf(df, "        \"root_signature_key\": \"0x%016llx\",\n", (unsigned long long)root_signature_key);
+  fprintf(df, "        \"pipeline_owner\": ");
+  WriteJsonString(df, ownership.pipeline_owner ? ownership.pipeline_owner : "unknown");
+  fprintf(df, ",\n");
+  fprintf(df, "        \"pipeline_cache\": { \"hit\": %s, \"native_available\": %s, \"native_hit\": %s },\n",
+          ownership.pipeline_cache_hit ? "true" : "false",
+          ownership.pipeline_cache_native_available ? "true" : "false",
+          ownership.pipeline_cache_native_hit ? "true" : "false");
+  fprintf(df, "        \"shader_cache_policy\": \"memory-cache -> persistent-metallib -> generated-source fallback\",\n");
+  fprintf(df, "        \"function_constants\": [],\n");
+  fprintf(df, "        \"binary_archive\": { \"path\": ");
+  WriteJsonString(df, ownership.binary_archive_path ? ownership.binary_archive_path : "");
+  fprintf(df, ", \"enabled\": %s, \"lookup_allowed\": %s, \"population_allowed\": %s, \"lookup_attached\": %s, \"serialization_attached\": %s, \"population_no_attach\": %s, \"fallback_reason\": ",
+          ownership.binary_archive_enabled ? "true" : "false",
+          ownership.binary_archive_lookup_allowed ? "true" : "false",
+          ownership.binary_archive_population_allowed ? "true" : "false",
+          ownership.binary_archive_lookup_attached ? "true" : "false",
+          ownership.binary_archive_serialization_attached ? "true" : "false",
+          ownership.binary_archive_population_no_attach ? "true" : "false");
+  WriteJsonString(df, ownership.binary_archive_fallback_reason ? ownership.binary_archive_fallback_reason : "");
+  fprintf(df, " },\n");
+  fprintf(df, "        \"compile_result\": ");
+  WriteJsonString(df, ownership.compile_result ? ownership.compile_result : "unknown");
+  fprintf(df, "\n");
+  fprintf(df, "      }\n");
   fprintf(df, "    }\n");
   fprintf(df, "  ]\n");
   fprintf(df, "}\n");
@@ -1827,7 +2110,13 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
           char dxbc_path[1024], metallib_path[1024], reflection_path[1024],
               module_summary_path[1024], dxil_report_path[1024],
               metallib_error_path[1024];
-          bool force_source_compile = EnvFlagEnabled("DXMT_D3D12_FORCE_DXIL_SOURCE_COMPILE");
+          // DXIL cached metallibs are not yet authoritative: the persisted
+          // metallib can be produced by an older lowering path and export the
+          // original HLSL entry name while the freshly lowered MSL uses the
+          // runtime ABI entry (cs_main/vs_main/ps_main).  Compile from source
+          // for DXIL until the metallib cache records the lowering ABI and
+          // entry-point reflection in the cache contract.
+          bool force_source_compile = true;
           bool core_lookup_valid = false;
           M12CoreShaderCacheLookup core_lookup = {};
           auto cache_root = ShaderCacheDir();
@@ -1906,6 +2195,19 @@ compile_dxil_source_fallback:
                                           str::format(func_name, " DXIL bitcode parse failed; dumped ", dxbc_path));
             }
 
+            uint32_t psv_threads[3] = {1, 1, 1};
+            const bool numthreads_from_metadata =
+                module->num_threads[0] != 1 || module->num_threads[1] != 1 ||
+                module->num_threads[2] != 1;
+            if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute &&
+                !numthreads_from_metadata &&
+                ExtractDxilPSVNumThreads(dxbcParser, psv_threads)) {
+              module->num_threads[0] = psv_threads[0];
+              module->num_threads[1] = psv_threads[1];
+              module->num_threads[2] = psv_threads[2];
+              PSTRACE("  DXIL PSV numthreads: %u,%u,%u", psv_threads[0],
+                      psv_threads[1], psv_threads[2]);
+            }
             PSTRACE("  Bitcode parsed: types=%zu functions=%zu constants=%zu",
                     module->types.size(), module->functions.size(), module->constants.size());
             DumpDXILModuleSummary(module_summary_path, *module, shader_info);
@@ -1969,6 +2271,11 @@ compile_dxil_source_fallback:
                                                       "; dxbc ", dxbc_path));
             }
 
+            if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
+              msl_result->tg_size[0] = module->num_threads[0];
+              msl_result->tg_size[1] = module->num_threads[1];
+              msl_result->tg_size[2] = module->num_threads[2];
+            }
             PSTRACE("  MSL generated via %s: %zu bytes, entry=%s unsupported_intrinsics=%u unsupported_opcodes=%u",
                     typed_msl_used ? "MSLLowering" : "DXILToMSL",
                     msl_result->source.size(), msl_result->entry_point.c_str(),
@@ -2667,25 +2974,33 @@ bool MTLD3D12PipelineState::Compile() {
     }
     m_compute_pipeline_cache_key = (uint64_t)compute_pipeline_cache_key;
     bool compute_core_cache_available = false;
-    bool compute_cache_hit = false;
+    bool compute_native_cache_hit = false;
+    bool compute_pe_memory_cache_hit = false;
+    bool compute_pipeline_cache_hit = false;
+    const char *compute_pipeline_owner = "unknown";
     compute_core_cache_available = LookupM12CorePipelineCache(
         M12CORE_PIPELINE_KIND_COMPUTE, compute_pipeline_cache_key,
-        m_compute_pso, compute_cache_hit);
+        m_compute_pso, compute_native_cache_hit);
     if (!compute_core_cache_available) {
       std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
       auto cached = g_compute_pipeline_cache.find(compute_pipeline_cache_key);
       if (cached != g_compute_pipeline_cache.end()) {
         m_compute_pso = cached->second;
-        compute_cache_hit = true;
+        compute_pe_memory_cache_hit = true;
       }
     }
     if (m_compute_pso.handle) {
+      compute_pipeline_cache_hit = true;
+      compute_pipeline_owner = compute_native_cache_hit
+          ? "libm12core_pipeline_cache"
+          : "pe_memory_pipeline_cache";
       uint64_t hits = ++g_compute_pipeline_cache_hits;
       dxmt::m12core::RecordCounter(M12CORE_COUNTER_COMPUTE_PIPELINE_CACHE_HITS);
       Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_hit key=0x",
                                std::hex, compute_pipeline_cache_key, std::dec,
                                " native=", compute_core_cache_available ? 1 : 0,
-                               " native_hit=", compute_cache_hit ? 1 : 0,
+                               " native_hit=", compute_native_cache_hit ? 1 : 0,
+                               " pe_memory_hit=", compute_pe_memory_cache_hit ? 1 : 0,
                                " hits=", hits));
     } else {
       uint64_t misses = ++g_compute_pipeline_cache_misses;
@@ -2693,7 +3008,8 @@ bool MTLD3D12PipelineState::Compile() {
       Logger::info(str::format("PSO_PRESSURE compute_pipeline_cache_miss key=0x",
                                std::hex, compute_pipeline_cache_key, std::dec,
                                " native=", compute_core_cache_available ? 1 : 0,
-                               " native_hit=", compute_cache_hit ? 1 : 0,
+                               " native_hit=", compute_native_cache_hit ? 1 : 0,
+                               " pe_memory_hit=", compute_pe_memory_cache_hit ? 1 : 0,
                                " misses=", misses));
     }
 
@@ -2717,6 +3033,9 @@ bool MTLD3D12PipelineState::Compile() {
                                        core_create_cache_hit)) {
           compute_core_creation_used = true;
           compute_core_create_cache_hit = core_create_cache_hit;
+          compute_pipeline_owner = core_create_cache_hit
+              ? "libm12core_create_cache_hit"
+              : "libm12core_create";
           Logger::info(str::format("PSO_PRESSURE metal_compute_create_native key=0x",
                                    std::hex, compute_pipeline_cache_key,
                                    " cs=0x", cs_hash, std::dec,
@@ -2724,8 +3043,10 @@ bool MTLD3D12PipelineState::Compile() {
           break;
         }
         m_compute_pso = wmt_device.newComputePipelineState(info, err);
-        if (m_compute_pso.handle)
+        if (m_compute_pso.handle) {
+          compute_pipeline_owner = "pe_wmt_create";
           break;
+        }
 
         err_desc = DescribeNSObject(err.handle);
         if (!IsTransientMetalCompilerError(err_desc) || attempt == 3)
@@ -2739,7 +3060,9 @@ bool MTLD3D12PipelineState::Compile() {
       }
       if (m_compute_pso.handle && (!compute_core_creation_used ||
                                    !compute_core_create_cache_hit))
-        RecordM12BinaryArchivePsoOpportunity(m12_binary_archive_context);
+        RecordM12BinaryArchivePsoOpportunity(
+            m12_binary_archive_context,
+            M12BinaryArchivePsoOpportunityKind::Compute);
       if (m_compute_pso.handle && !compute_core_creation_used) {
         if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_COMPUTE,
                                        compute_pipeline_cache_key,
@@ -2760,9 +3083,18 @@ bool MTLD3D12PipelineState::Compile() {
                                   str::format("Metal compute PSO creation failed: ",
                                               err_desc));
     }
+    auto compute_ownership = MakeM12PsoOwnershipDiagnostic(
+        m12_binary_archive_context, *m12_binary_archive_payload,
+        info.binary_archive_for_serialization, compute_pipeline_cache_key,
+        compute_root_key, compute_pipeline_owner,
+        compute_pipeline_cache_hit || compute_core_create_cache_hit,
+        compute_core_cache_available,
+        compute_native_cache_hit);
     DumpComputePSOManifest(cs_hash, m_cs.size(), m_threadgroup_size.width,
                            m_threadgroup_size.height, m_threadgroup_size.depth,
-                           (uintptr_t)cs_func.handle);
+                           (uintptr_t)cs_func.handle, compute_ownership);
+    LogM12PsoOwnership("compute", cs_hash, 0, 0, cs_hash,
+                       compute_ownership);
 
     bool cs_core_reflection = ReflectSM50WithM12Core(m_cs.data(), m_cs.size(),
                                                      m_cs_reflection, m_cs_cb_args,
@@ -3135,26 +3467,34 @@ bool MTLD3D12PipelineState::Compile() {
   }
   m_render_pipeline_cache_key = (uint64_t)render_pipeline_cache_key;
   bool render_core_cache_available = false;
-  bool render_cache_hit = false;
+  bool render_native_cache_hit = false;
+  bool render_pe_memory_cache_hit = false;
+  bool render_pipeline_cache_hit = false;
+  const char *render_pipeline_owner = "unknown";
   render_core_cache_available = LookupM12CorePipelineCache(
       M12CORE_PIPELINE_KIND_RENDER, render_pipeline_cache_key,
-      m_render_pso, render_cache_hit);
+      m_render_pso, render_native_cache_hit);
   if (!render_core_cache_available) {
     std::lock_guard<std::mutex> cache_lock(g_metal_pipeline_cache_mutex);
     auto cached = g_render_pipeline_cache.find(render_pipeline_cache_key);
     if (cached != g_render_pipeline_cache.end()) {
       m_render_pso = cached->second;
-      render_cache_hit = true;
+      render_pe_memory_cache_hit = true;
     }
   }
   if (m_render_pso.handle) {
+    render_pipeline_cache_hit = true;
+    render_pipeline_owner = render_native_cache_hit
+        ? "libm12core_pipeline_cache"
+        : "pe_memory_pipeline_cache";
     uint64_t hits = ++g_render_pipeline_cache_hits;
     dxmt::m12core::RecordCounter(M12CORE_COUNTER_RENDER_PIPELINE_CACHE_HITS);
     Logger::info(str::format("PSO_PRESSURE render_pipeline_cache_hit key=0x",
                              std::hex, render_pipeline_cache_key,
                              " pso=0x", pso_manifest_hash, std::dec,
                              " native=", render_core_cache_available ? 1 : 0,
-                             " native_hit=", render_cache_hit ? 1 : 0,
+                             " native_hit=", render_native_cache_hit ? 1 : 0,
+                             " pe_memory_hit=", render_pe_memory_cache_hit ? 1 : 0,
                              " hits=", hits));
   } else {
     uint64_t misses = ++g_render_pipeline_cache_misses;
@@ -3163,7 +3503,8 @@ bool MTLD3D12PipelineState::Compile() {
                              std::hex, render_pipeline_cache_key,
                              " pso=0x", pso_manifest_hash, std::dec,
                              " native=", render_core_cache_available ? 1 : 0,
-                             " native_hit=", render_cache_hit ? 1 : 0,
+                             " native_hit=", render_native_cache_hit ? 1 : 0,
+                             " pe_memory_hit=", render_pe_memory_cache_hit ? 1 : 0,
                              " misses=", misses));
   }
 
@@ -3188,6 +3529,9 @@ bool MTLD3D12PipelineState::Compile() {
                                      core_create_cache_hit)) {
         render_core_creation_used = true;
         render_core_create_cache_hit = core_create_cache_hit;
+        render_pipeline_owner = core_create_cache_hit
+            ? "libm12core_create_cache_hit"
+            : "libm12core_create";
         Logger::info(str::format("PSO_PRESSURE metal_render_create_native key=0x",
                                  std::hex, render_pipeline_cache_key,
                                  " pso=0x", pso_manifest_hash,
@@ -3196,8 +3540,10 @@ bool MTLD3D12PipelineState::Compile() {
         break;
       }
       m_render_pso = wmt_device.newRenderPipelineState(info, err);
-      if (m_render_pso.handle)
+      if (m_render_pso.handle) {
+        render_pipeline_owner = "pe_wmt_create";
         break;
+      }
 
       render_err_desc = DescribeNSObject(err.handle);
       if (!IsTransientMetalCompilerError(render_err_desc) || attempt == 3)
@@ -3211,7 +3557,9 @@ bool MTLD3D12PipelineState::Compile() {
     }
     if (m_render_pso.handle && (!render_core_creation_used ||
                                 !render_core_create_cache_hit))
-      RecordM12BinaryArchivePsoOpportunity(m12_binary_archive_context);
+      RecordM12BinaryArchivePsoOpportunity(
+          m12_binary_archive_context,
+          M12BinaryArchivePsoOpportunityKind::Render);
     if (m_render_pso.handle && !render_core_creation_used) {
       if (!StoreM12CorePipelineCache(M12CORE_PIPELINE_KIND_RENDER,
                                      render_pipeline_cache_key,
@@ -3272,6 +3620,13 @@ bool MTLD3D12PipelineState::Compile() {
                                             render_err_desc));
   }
   {
+    auto render_ownership = MakeM12PsoOwnershipDiagnostic(
+        m12_binary_archive_context, *m12_binary_archive_payload,
+        info.binary_archive_for_serialization, render_pipeline_cache_key,
+        render_root_key, render_pipeline_owner,
+        render_pipeline_cache_hit || render_core_create_cache_hit,
+        render_core_cache_available,
+        render_native_cache_hit);
     DumpRenderPSOManifest(
         pso_manifest_hash, vs_hash, ps_hash, gs_hash, m_vs.size(), m_ps.size(),
         m_gs.size(), m_num_render_targets, m_rtv_formats, m_dsv_format,
@@ -3279,7 +3634,10 @@ bool MTLD3D12PipelineState::Compile() {
         m_ia_slot_mask, m_ia_input_elements,
         m_vs_uses_stage_in, m_uses_geometry_mesh_pipeline,
         info.rasterization_enabled, (uintptr_t)vs_func.handle,
-        (uintptr_t)ps_func.handle);
+        (uintptr_t)ps_func.handle, render_pipeline_cache_key,
+        render_root_key, render_ownership);
+    LogM12PsoOwnership("render", pso_manifest_hash, vs_hash, ps_hash, 0,
+                       render_ownership);
   }
 
   struct WMTDepthStencilInfo ds_info = {};

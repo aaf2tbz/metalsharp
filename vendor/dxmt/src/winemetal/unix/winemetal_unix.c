@@ -1,5 +1,7 @@
 #include <stdatomic.h>
 #include <dlfcn.h>
+#include <dispatch/dispatch.h>
+#include <errno.h>
 #import <Cocoa/Cocoa.h>
 #import <ColorSync/ColorSync.h>
 #import <CoreFoundation/CFRunLoop.h>
@@ -56,6 +58,151 @@ winemetal_critical_log(void) {
 }
 
 static pthread_mutex_t g_m12_binary_archive_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t g_m12_binary_archive_population_once = PTHREAD_ONCE_INIT;
+static dispatch_queue_t g_m12_binary_archive_population_queue;
+static char g_m12_binary_archive_population_queue_key;
+
+static void
+winemetal_init_binary_archive_population_queue(void) {
+  g_m12_binary_archive_population_queue =
+      dispatch_queue_create("works.earendil.dxmt.winemetal.binary-archive-population", DISPATCH_QUEUE_SERIAL);
+  if (g_m12_binary_archive_population_queue)
+    dispatch_queue_set_specific(g_m12_binary_archive_population_queue,
+                                &g_m12_binary_archive_population_queue_key,
+                                &g_m12_binary_archive_population_queue_key, NULL);
+}
+
+static dispatch_queue_t
+winemetal_binary_archive_population_queue(void) {
+  pthread_once(&g_m12_binary_archive_population_once, winemetal_init_binary_archive_population_queue);
+  return g_m12_binary_archive_population_queue;
+}
+
+static void
+winemetal_enqueue_compute_binary_archive_population(id<MTLBinaryArchive> archive,
+                                                   MTLComputePipelineDescriptor *descriptor) {
+  if (!archive || !descriptor)
+    return;
+  dispatch_queue_t queue = winemetal_binary_archive_population_queue();
+  if (!queue)
+    return;
+  id<MTLBinaryArchive> retained_archive = [archive retain];
+  MTLComputePipelineDescriptor *descriptor_copy = [descriptor copy];
+  if (!retained_archive || !descriptor_copy) {
+    [retained_archive release];
+    [descriptor_copy release];
+    return;
+  }
+  dispatch_async(queue, ^{
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      @synchronized((id)retained_archive) {
+        [retained_archive addComputePipelineFunctionsWithDescriptor:descriptor_copy error:nil];
+      }
+    } @catch(NSException * exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      [descriptor_copy release];
+      [retained_archive release];
+    }
+  });
+}
+
+static void
+winemetal_enqueue_render_binary_archive_population(id<MTLBinaryArchive> archive,
+                                                  MTLRenderPipelineDescriptor *descriptor) {
+  if (!archive || !descriptor)
+    return;
+  dispatch_queue_t queue = winemetal_binary_archive_population_queue();
+  if (!queue)
+    return;
+  id<MTLBinaryArchive> retained_archive = [archive retain];
+  MTLRenderPipelineDescriptor *descriptor_copy = [descriptor copy];
+  if (!retained_archive || !descriptor_copy) {
+    [retained_archive release];
+    [descriptor_copy release];
+    return;
+  }
+  dispatch_async(queue, ^{
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      @synchronized((id)retained_archive) {
+        [retained_archive addRenderPipelineFunctionsWithDescriptor:descriptor_copy error:nil];
+      }
+    } @catch(NSException * exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      [descriptor_copy release];
+      [retained_archive release];
+    }
+  });
+}
+
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
+static void
+winemetal_enqueue_mesh_binary_archive_population(id<MTLBinaryArchive> archive,
+                                                MTLMeshRenderPipelineDescriptor *descriptor) {
+  if (!archive || !descriptor)
+    return;
+  dispatch_queue_t queue = winemetal_binary_archive_population_queue();
+  if (!queue)
+    return;
+  id<MTLBinaryArchive> retained_archive = [archive retain];
+  MTLMeshRenderPipelineDescriptor *descriptor_copy = [descriptor copy];
+  if (!retained_archive || !descriptor_copy) {
+    [retained_archive release];
+    [descriptor_copy release];
+    return;
+  }
+  dispatch_async(queue, ^{
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      @synchronized((id)retained_archive) {
+        [retained_archive addMeshRenderPipelineFunctionsWithDescriptor:descriptor_copy error:nil];
+      }
+    } @catch(NSException * exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      [descriptor_copy release];
+      [retained_archive release];
+    }
+  });
+}
+
+static void
+winemetal_enqueue_tile_binary_archive_population(id<MTLBinaryArchive> archive,
+                                                MTLTileRenderPipelineDescriptor *descriptor) {
+  if (!archive || !descriptor)
+    return;
+  dispatch_queue_t queue = winemetal_binary_archive_population_queue();
+  if (!queue)
+    return;
+  id<MTLBinaryArchive> retained_archive = [archive retain];
+  MTLTileRenderPipelineDescriptor *descriptor_copy = [descriptor copy];
+  if (!retained_archive || !descriptor_copy) {
+    [retained_archive release];
+    [descriptor_copy release];
+    return;
+  }
+  dispatch_async(queue, ^{
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      @synchronized((id)retained_archive) {
+        [retained_archive addTileRenderPipelineFunctionsWithDescriptor:descriptor_copy error:nil];
+      }
+    } @catch(NSException * exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      [descriptor_copy release];
+      [retained_archive release];
+    }
+  });
+}
+#endif
 
 /*
  * M12 core bridge
@@ -108,6 +255,7 @@ typedef int (*PFN_m12core_make_pipeline_cache_key_from_fields)(
 typedef int (*PFN_m12core_create_pipeline_state)(
     const M12CorePipelineCreateDesc *desc, M12CorePipelineCreateResult *out_result
 );
+typedef void (*PFN_m12core_flush_binary_archive_population)(void);
 typedef int (*PFN_m12core_summarize_root_signature)(
     const M12CoreRootSignatureDesc *desc, M12CoreRootSignatureSummary *out_summary
 );
@@ -189,6 +337,7 @@ static PFN_m12core_lookup_pipeline_cache p_m12core_lookup_pipeline_cache;
 static PFN_m12core_store_pipeline_cache p_m12core_store_pipeline_cache;
 static PFN_m12core_make_pipeline_cache_key_from_fields p_m12core_make_pipeline_cache_key_from_fields;
 static PFN_m12core_create_pipeline_state p_m12core_create_pipeline_state;
+static PFN_m12core_flush_binary_archive_population p_m12core_flush_binary_archive_population;
 static PFN_m12core_summarize_root_signature p_m12core_summarize_root_signature;
 static PFN_m12core_build_root_binding_plan p_m12core_build_root_binding_plan;
 static PFN_m12core_lookup_root_binding p_m12core_lookup_root_binding;
@@ -243,6 +392,7 @@ m12core_bind_internal(void) {
   p_m12core_store_pipeline_cache = m12core_store_pipeline_cache;
   p_m12core_make_pipeline_cache_key_from_fields = m12core_make_pipeline_cache_key_from_fields;
   p_m12core_create_pipeline_state = m12core_create_pipeline_state;
+  p_m12core_flush_binary_archive_population = m12core_flush_binary_archive_population;
   p_m12core_summarize_root_signature = m12core_summarize_root_signature;
   p_m12core_build_root_binding_plan = m12core_build_root_binding_plan;
   p_m12core_lookup_root_binding = m12core_lookup_root_binding;
@@ -369,6 +519,8 @@ m12core_try_load(void) {
   );
   p_m12core_create_pipeline_state =
       (PFN_m12core_create_pipeline_state)dlsym(m12core_handle, "m12core_create_pipeline_state");
+  p_m12core_flush_binary_archive_population =
+      (PFN_m12core_flush_binary_archive_population)dlsym(m12core_handle, "m12core_flush_binary_archive_population");
   p_m12core_summarize_root_signature =
       (PFN_m12core_summarize_root_signature)dlsym(m12core_handle, "m12core_summarize_root_signature");
   p_m12core_build_root_binding_plan =
@@ -1848,17 +2000,7 @@ _MTLDevice_newComputePipelineState(void *obj) {
   params->ret_error = (obj_handle_t)err;
   if (params->ret_pso && !err && info->binary_archive_for_serialization) {
     id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
-    @synchronized(archive) {
-      pthread_mutex_lock(&g_m12_binary_archive_mutex);
-      @try {
-        [archive addComputePipelineFunctionsWithDescriptor:descriptor error:nil];
-      } @catch(NSException * exception) {
-        (void)exception;
-        descriptor.binaryArchives = nil;
-      } @finally {
-        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
-      }
-    }
+    winemetal_enqueue_compute_binary_archive_population(archive, descriptor);
   }
   [descriptor release];
   return STATUS_SUCCESS;
@@ -2103,17 +2245,7 @@ _MTLDevice_newRenderPipelineState(void *obj) {
   params->ret_error = (obj_handle_t)err;
   if (params->ret_pso && !err && info->binary_archive_for_serialization) {
     id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
-    @synchronized(archive) {
-      pthread_mutex_lock(&g_m12_binary_archive_mutex);
-      @try {
-        [archive addRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
-      } @catch(NSException * exception) {
-        (void)exception;
-        descriptor.binaryArchives = nil;
-      } @finally {
-        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
-      }
-    }
+    winemetal_enqueue_render_binary_archive_population(archive, descriptor);
   }
   [descriptor release];
   return STATUS_SUCCESS;
@@ -2254,17 +2386,7 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   if (@available(macOS 15, *)) {
     if (params->ret_pso && !err && info->binary_archive_for_serialization) {
       id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
-      @synchronized(archive) {
-        pthread_mutex_lock(&g_m12_binary_archive_mutex);
-        @try {
-          [archive addMeshRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
-        } @catch(NSException * exception) {
-          (void)exception;
-          descriptor.binaryArchives = nil;
-        } @finally {
-          pthread_mutex_unlock(&g_m12_binary_archive_mutex);
-        }
-      }
+      winemetal_enqueue_mesh_binary_archive_population(archive, descriptor);
     }
   }
 #endif
@@ -4377,7 +4499,11 @@ _MTLDevice_newBinaryArchive(void *obj) {
     desc.url = url;
   }
   NSError *err = NULL;
-  params->ret_archive = (obj_handle_t)[(id<MTLDevice>)params->device newBinaryArchiveWithDescriptor:desc error:&err];
+  id<MTLBinaryArchive> archive = [(id<MTLDevice>)params->device newBinaryArchiveWithDescriptor:desc error:&err];
+  if (archive && path_str)
+    objc_setAssociatedObject((id)archive, @selector(dxmt_m12_binary_archive_checkpoint_path), path_str,
+                             OBJC_ASSOCIATION_COPY_NONATOMIC);
+  params->ret_archive = (obj_handle_t)archive;
   params->ret_error = (obj_handle_t)err;
   [desc release];
   if (url)
@@ -4387,28 +4513,55 @@ _MTLDevice_newBinaryArchive(void *obj) {
   return STATUS_SUCCESS;
 }
 
+static void
+winemetal_flush_binary_archive_population(void) {
+  if (p_m12core_flush_binary_archive_population)
+    p_m12core_flush_binary_archive_population();
+  dispatch_queue_t queue = winemetal_binary_archive_population_queue();
+  if (!queue)
+    return;
+  if (dispatch_get_specific(&g_m12_binary_archive_population_queue_key) ==
+      &g_m12_binary_archive_population_queue_key)
+    return;
+  dispatch_sync(queue, ^{});
+}
+
 static NTSTATUS
 _MTLBinaryArchive_serialize(void *obj) {
   struct unixcall_mtlbinaryarchive_serialize *params = obj;
+  params->ret_error = 0;
   NSString *path_str = [[NSString alloc] initWithCString:params->url.ptr encoding:NSUTF8StringEncoding];
   NSString *tmp_path_str = [path_str stringByAppendingString:@".tmp"];
   NSURL *tmp_url = [[NSURL alloc] initFileURLWithPath:tmp_path_str];
   id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)params->archive;
-  @synchronized(archive) {
-    pthread_mutex_lock(&g_m12_binary_archive_mutex);
-    @try {
+  NSError *final_err = nil;
+  winemetal_flush_binary_archive_population();
+  pthread_mutex_lock(&g_m12_binary_archive_mutex);
+  @try {
+    @synchronized(archive) {
       [[NSFileManager defaultManager] removeItemAtPath:tmp_path_str error:nil];
-      [archive serializeToURL:tmp_url error:nil];
+      NSError *serialize_err = nil;
+      BOOL ok = [archive serializeToURL:tmp_url error:&serialize_err];
       NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:tmp_path_str error:nil];
-      if ([[attrs objectForKey:NSFileSize] unsignedLongLongValue] > 0)
-        rename([tmp_path_str fileSystemRepresentation], [path_str fileSystemRepresentation]);
-    } @catch(NSException * exception) {
-      (void)exception;
-    } @finally {
-      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      unsigned long long tmp_size = [[attrs objectForKey:NSFileSize] unsignedLongLongValue];
+      if (!ok) {
+        final_err = serialize_err ?: [NSError errorWithDomain:@"MTLBinaryArchiveErrorDomain" code:1 userInfo:nil];
+      } else if (tmp_size == 0) {
+        final_err = [NSError errorWithDomain:@"MTLBinaryArchiveErrorDomain" code:1 userInfo:nil];
+      } else if (rename([tmp_path_str fileSystemRepresentation], [path_str fileSystemRepresentation]) != 0) {
+        final_err = [NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil];
+      }
     }
+  } @catch(NSException * exception) {
+    final_err = [NSError errorWithDomain:@"MTLBinaryArchiveErrorDomain"
+                                    code:1
+                                userInfo:@{NSLocalizedDescriptionKey: [exception reason] ?: @"MTLBinaryArchive serialize exception"}];
+  } @finally {
+    pthread_mutex_unlock(&g_m12_binary_archive_mutex);
   }
-  params->ret_error = 0;
+  if (final_err)
+    [[NSFileManager defaultManager] removeItemAtPath:tmp_path_str error:nil];
+  params->ret_error = final_err ? (obj_handle_t)[final_err retain] : 0;
   [tmp_url release];
   [path_str release];
   return STATUS_SUCCESS;
@@ -4662,17 +4815,7 @@ _MTLDevice_newTileRenderPipelineState(void *obj) {
   if (@available(macOS 15, *)) {
     if (params->ret_pso && !err && info->binary_archive_for_serialization) {
       id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)info->binary_archive_for_serialization;
-      @synchronized(archive) {
-        pthread_mutex_lock(&g_m12_binary_archive_mutex);
-        @try {
-          [archive addTileRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
-        } @catch(NSException * exception) {
-          (void)exception;
-          descriptor.binaryArchives = nil;
-        } @finally {
-          pthread_mutex_unlock(&g_m12_binary_archive_mutex);
-        }
-      }
+      winemetal_enqueue_tile_binary_archive_population(archive, descriptor);
     }
   }
 #endif

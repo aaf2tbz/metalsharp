@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -28,6 +29,93 @@ static NSMutableDictionary<NSString *, id<MTLFunction>> *g_shader_function_cache
 static pthread_mutex_t g_pipeline_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NSMutableDictionary<NSString *, id> *g_pipeline_cache;
 static pthread_mutex_t g_m12_binary_archive_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t g_m12_binary_archive_population_once = PTHREAD_ONCE_INIT;
+static dispatch_queue_t g_m12_binary_archive_population_queue;
+static char g_m12_binary_archive_population_queue_key;
+
+static void m12core_init_binary_archive_population_queue(void) {
+  g_m12_binary_archive_population_queue =
+      dispatch_queue_create("works.earendil.dxmt.m12core.binary-archive-population", DISPATCH_QUEUE_SERIAL);
+  if (g_m12_binary_archive_population_queue)
+    dispatch_queue_set_specific(g_m12_binary_archive_population_queue,
+                                &g_m12_binary_archive_population_queue_key,
+                                &g_m12_binary_archive_population_queue_key, NULL);
+}
+
+static dispatch_queue_t m12core_binary_archive_population_queue(void) {
+  pthread_once(&g_m12_binary_archive_population_once, m12core_init_binary_archive_population_queue);
+  return g_m12_binary_archive_population_queue;
+}
+
+void m12core_flush_binary_archive_population(void) {
+  dispatch_queue_t queue = m12core_binary_archive_population_queue();
+  if (!queue)
+    return;
+  if (dispatch_get_specific(&g_m12_binary_archive_population_queue_key) ==
+      &g_m12_binary_archive_population_queue_key)
+    return;
+  dispatch_sync(queue, ^{});
+}
+
+static void m12core_enqueue_compute_binary_archive_population(id<MTLBinaryArchive> archive,
+                                                             MTLComputePipelineDescriptor *descriptor) {
+  if (!archive || !descriptor)
+    return;
+  dispatch_queue_t queue = m12core_binary_archive_population_queue();
+  if (!queue)
+    return;
+  id<MTLBinaryArchive> retained_archive = [archive retain];
+  MTLComputePipelineDescriptor *descriptor_copy = [descriptor copy];
+  if (!retained_archive || !descriptor_copy) {
+    [retained_archive release];
+    [descriptor_copy release];
+    return;
+  }
+  dispatch_async(queue, ^{
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      @synchronized((id)retained_archive) {
+        [retained_archive addComputePipelineFunctionsWithDescriptor:descriptor_copy error:nil];
+      }
+    } @catch (NSException *exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      [descriptor_copy release];
+      [retained_archive release];
+    }
+  });
+}
+
+static void m12core_enqueue_render_binary_archive_population(id<MTLBinaryArchive> archive,
+                                                            MTLRenderPipelineDescriptor *descriptor) {
+  if (!archive || !descriptor)
+    return;
+  dispatch_queue_t queue = m12core_binary_archive_population_queue();
+  if (!queue)
+    return;
+  id<MTLBinaryArchive> retained_archive = [archive retain];
+  MTLRenderPipelineDescriptor *descriptor_copy = [descriptor copy];
+  if (!retained_archive || !descriptor_copy) {
+    [retained_archive release];
+    [descriptor_copy release];
+    return;
+  }
+  dispatch_async(queue, ^{
+    pthread_mutex_lock(&g_m12_binary_archive_mutex);
+    @try {
+      @synchronized((id)retained_archive) {
+        [retained_archive addRenderPipelineFunctionsWithDescriptor:descriptor_copy error:nil];
+      }
+    } @catch (NSException *exception) {
+      (void)exception;
+    } @finally {
+      pthread_mutex_unlock(&g_m12_binary_archive_mutex);
+      [descriptor_copy release];
+      [retained_archive release];
+    }
+  });
+}
 
 static void m12core_copy_cstr(char *dst, size_t dst_size, const char *src) {
   if (!dst || !dst_size)
@@ -220,17 +308,7 @@ static id<MTLComputePipelineState> m12core_create_compute_pipeline(
   }
   if (pipeline && !error && info->binary_archive_for_serialization) {
     id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization;
-    @synchronized(archive) {
-      pthread_mutex_lock(&g_m12_binary_archive_mutex);
-      @try {
-        [archive addComputePipelineFunctionsWithDescriptor:descriptor error:nil];
-      } @catch (NSException *exception) {
-        (void)exception;
-        descriptor.binaryArchives = nil;
-      } @finally {
-        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
-      }
-    }
+    m12core_enqueue_compute_binary_archive_population(archive, descriptor);
   }
   if (error_out)
     *error_out = error;
@@ -343,17 +421,7 @@ static id<MTLRenderPipelineState> m12core_create_render_pipeline(
   }
   if (pipeline && !error && info->binary_archive_for_serialization) {
     id<MTLBinaryArchive> archive = (id<MTLBinaryArchive>)(uintptr_t)info->binary_archive_for_serialization;
-    @synchronized(archive) {
-      pthread_mutex_lock(&g_m12_binary_archive_mutex);
-      @try {
-        [archive addRenderPipelineFunctionsWithDescriptor:descriptor error:nil];
-      } @catch (NSException *exception) {
-        (void)exception;
-        descriptor.binaryArchives = nil;
-      } @finally {
-        pthread_mutex_unlock(&g_m12_binary_archive_mutex);
-      }
-    }
+    m12core_enqueue_render_binary_archive_population(archive, descriptor);
   }
   if (error_out)
     *error_out = error;

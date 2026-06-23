@@ -123,8 +123,9 @@ def source_checks() -> dict[str, Any]:
         "validation_failure_permanently_disables_lookup": "validation_passed && loaded_existing_archive && !bypass_lookup" in init_body,
         "population_requires_explicit_env": "EnvSwitchOne(\"DXMT_D3D12_BINARY_ARCHIVE_POPULATE\")" in init_body
         and "ctx.allow_population = allow_population;" in init_body,
-        "serialization_gated_by_population": "if (context.allow_population)" in attach_body
-        and "info.binary_archive_for_serialization = context.archive.handle;" in attach_body,
+        "serialization_gated_by_population":
+            "if (context.allow_population && !context.population_no_attach)" in attach_body
+            and "info.binary_archive_for_serialization = context.archive.handle;" in attach_body,
         "bypass_env_still_honored": "EnvSwitchOne(\"DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP\")" in init_body,
         "no_archive_validation_logging_added": "DXMT_D3D12_BINARY_ARCHIVE_LOG" not in text
         and "BINARY_ARCHIVE_TRACE" not in text

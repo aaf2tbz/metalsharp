@@ -1732,6 +1732,7 @@ int m12core_store_pipeline_cache(const M12CorePipelineCacheQuery *query,
                                  uint64_t pipeline_handle);
 int m12core_create_pipeline_state(const M12CorePipelineCreateDesc *desc,
                                   M12CorePipelineCreateResult *out_result);
+void m12core_flush_binary_archive_population(void);
 int m12core_summarize_root_signature(const M12CoreRootSignatureDesc *desc,
                                      M12CoreRootSignatureSummary *out_summary);
 int m12core_build_root_binding_plan(const M12CoreRootBindingPlanDesc *desc,

@@ -2143,6 +2143,13 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12_BINARY_ARCHIVE"
             | "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP"
             | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE"
+            | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF"
+            | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_NO_ATTACH"
+            | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_OFF"
+            | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF"
+            | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF"
+            | "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT"
+            | "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND"
     )
 }
 
@@ -2258,6 +2265,32 @@ fn apply_launch_env_overrides(
                 upsert_env("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP", bool_value)
             },
             "METALSHARP_M12_BINARY_ARCHIVE_POPULATE" => upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE", bool_value),
+            "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF", bool_value)
+            },
+            "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_NO_ATTACH" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_NO_ATTACH", bool_value)
+            },
+            "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_OFF" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_OFF", bool_value)
+            },
+            "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF", bool_value)
+            },
+            "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF", bool_value)
+            },
+            "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT" => {
+                upsert_env("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT", bool_value)
+            },
+            "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND" => {
+                let normalized = value.to_ascii_lowercase();
+                if matches!(normalized.as_str(), "compute" | "render" | "both") {
+                    upsert_env("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND", normalized.as_str());
+                } else {
+                    continue;
+                }
+            },
             _ => {},
         }
         applied.push(key.clone());
@@ -2722,6 +2755,13 @@ mod tests {
                 "METALSHARP_M12_BINARY_ARCHIVE": "1",
                 "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP": "1",
                 "METALSHARP_M12_BINARY_ARCHIVE_POPULATE": "1",
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF": "0",
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_NO_ATTACH": "0",
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_OFF": "0",
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF": "0",
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF": "0",
+                "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT": "1",
+                "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND": "render",
                 "UNRELATED_ENV": "1"
             }),
         );
@@ -2739,6 +2779,13 @@ mod tests {
                 "METALSHARP_M12_BINARY_ARCHIVE".to_string(),
                 "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP".to_string(),
                 "METALSHARP_M12_BINARY_ARCHIVE_POPULATE".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_NO_ATTACH".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_OFF".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT".to_string(),
+                "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND".to_string(),
                 "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE".to_string(),
                 "METALSHARP_M12_LOG_LEVEL".to_string(),
                 "METALSHARP_M12_LOG_PATH".to_string(),
@@ -2763,6 +2810,13 @@ mod tests {
         assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE".to_string(), "1".to_string())));
         assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP".to_string(), "1".to_string())));
         assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_POPULATE".to_string(), "1".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_CONTEXT_OFF".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_NO_ATTACH".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_OFF".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_COMPUTE_OFF".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF".to_string(), "0".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT".to_string(), "1".to_string())));
+        assert!(env.contains(&("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND".to_string(), "render".to_string())));
         assert!(env.contains(&("METALSHARP_M12_LAUNCH_ARGS_OVERRIDE".to_string(), "__empty__".to_string())));
         assert!(
             env.contains(&("METALSHARP_M12_PREWARM_PROFILE".to_string(), "armored-core-vi-phase6-canary".to_string()))
