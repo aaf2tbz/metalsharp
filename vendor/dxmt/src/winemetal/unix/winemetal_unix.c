@@ -58,14 +58,15 @@ winemetal_critical_log(void) {
 static pthread_mutex_t g_m12_binary_archive_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
- * Phase-1 libm12core loader
+ * M12 core bridge
  *
- * The unified M12 core roadmap starts with an inert native dylib that is loaded
- * from the Unix side of winemetal.  Loading is env-gated so the current M12
- * renderer remains recoverable while we prove staging, version checks, and
- * fallback behavior.  Future phases should replace scattered local ownership
- * with handle-based calls through m12core.h, but this loader intentionally does
- * not move rendering work yet.
+ * M12 now uses winemetal.so as the native Metal authority.  m12core is linked
+ * into this Unix/macOS backend by default so D3D12 follows the same proven
+ * d3d10/d3d11 -> winemetal.dll -> winemetal.so loading model instead of
+ * requiring an env-gated libm12core.dylib sidecar.  An explicit
+ * DXMT_M12CORE_ENABLE=1 + DXMT_M12CORE_PATH override remains as a development
+ * escape hatch, but failure to load that override falls back to the internal
+ * core unless DXMT_M12CORE_REQUIRED=1 is also set.
  */
 typedef int (*PFN_m12core_get_version)(M12CoreVersion *out_version);
 typedef const char *(*PFN_m12core_build_string)(void);
@@ -225,6 +226,48 @@ m12core_env_enabled(const char *name) {
 }
 
 static void
+m12core_bind_internal(void) {
+  p_m12core_get_version = m12core_get_version;
+  p_m12core_build_string = m12core_build_string;
+  p_m12core_record_counter = m12core_record_counter;
+  p_m12core_get_counters = m12core_get_counters;
+  p_m12core_hash_shader_bytecode = m12core_hash_shader_bytecode;
+  p_m12core_format_shader_cache_paths = m12core_format_shader_cache_paths;
+  p_m12core_probe_shader_cache = m12core_probe_shader_cache;
+  p_m12core_parse_shader_reflection = m12core_parse_shader_reflection;
+  p_m12core_make_pipeline_cache_key = m12core_make_pipeline_cache_key;
+  p_m12core_create_shader_function = m12core_create_shader_function;
+  p_m12core_lower_dxil_to_msl = m12core_lower_dxil_to_msl;
+  p_m12core_reflect_sm50_shader = m12core_reflect_sm50_shader;
+  p_m12core_lookup_pipeline_cache = m12core_lookup_pipeline_cache;
+  p_m12core_store_pipeline_cache = m12core_store_pipeline_cache;
+  p_m12core_make_pipeline_cache_key_from_fields = m12core_make_pipeline_cache_key_from_fields;
+  p_m12core_create_pipeline_state = m12core_create_pipeline_state;
+  p_m12core_summarize_root_signature = m12core_summarize_root_signature;
+  p_m12core_build_root_binding_plan = m12core_build_root_binding_plan;
+  p_m12core_lookup_root_binding = m12core_lookup_root_binding;
+  p_m12core_summarize_prewarm_pack = m12core_summarize_prewarm_pack;
+  p_m12core_build_draw_plan = m12core_build_draw_plan;
+  p_m12core_build_present_plan = m12core_build_present_plan;
+  p_m12core_build_replay_plan = m12core_build_replay_plan;
+  p_m12core_validate_command_stream = m12core_validate_command_stream;
+  p_m12core_plan_render_pass = m12core_plan_render_pass;
+  p_m12core_plan_present_execute = m12core_plan_present_execute;
+  p_m12core_plan_replay_execute = m12core_plan_replay_execute;
+  p_m12core_validate_command_packet_stream = m12core_validate_command_packet_stream;
+  p_m12core_make_cache_compatibility_key = m12core_make_cache_compatibility_key;
+  p_m12core_register_handle = m12core_register_handle;
+  p_m12core_validate_handle = m12core_validate_handle;
+  p_m12core_classify_packet_support = m12core_classify_packet_support;
+  p_m12core_execute_replay_packet_stream = m12core_execute_replay_packet_stream;
+  p_m12core_plan_encoder_ownership = m12core_plan_encoder_ownership;
+  p_m12core_plan_native_present_ownership = m12core_plan_native_present_ownership;
+  p_m12core_plan_cache_warm_start = m12core_plan_cache_warm_start;
+  p_m12core_plan_replay_coverage = m12core_plan_replay_coverage;
+  p_m12core_plan_thin_pe_checkpoint = m12core_plan_thin_pe_checkpoint;
+}
+
+static void
 m12core_log_line(const char *message) {
   FILE *log = winemetal_critical_log();
   if (!log)
@@ -248,27 +291,59 @@ m12core_log_version(const char *path, const char *build_string) {
 
 __attribute__((constructor)) static void
 m12core_try_load(void) {
-  if (!m12core_env_enabled("DXMT_M12CORE_ENABLE"))
-    return;
-
-  const char *path = getenv("DXMT_M12CORE_PATH");
-  if (!path || !path[0])
-    path = "@loader_path/libm12core.dylib";
-
-  m12core_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-  if (!m12core_handle) {
-    const char *error = dlerror();
-    FILE *log = winemetal_critical_log();
-    if (log) {
-      fprintf(log, "[m12core] dlopen failed path=%s error=%s\n", path, error ? error : "unknown");
-      fclose(log);
-    }
+  m12core_bind_internal();
+  if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
+      m12core_version.abi_version != M12CORE_ABI_VERSION) {
+    m12core_log_line("internal core version check failed");
     if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
       abort();
     return;
   }
 
-  p_m12core_get_version = (PFN_m12core_get_version)dlsym(m12core_handle, "m12core_get_version");
+  const char *path = getenv("DXMT_M12CORE_PATH");
+  if (!m12core_env_enabled("DXMT_M12CORE_ENABLE") || !path || !path[0]) {
+    if (p_m12core_record_counter)
+      p_m12core_record_counter(M12CORE_COUNTER_LOADER_LOAD_SUCCESS, 1);
+    m12core_log_version("internal:winemetal.so", p_m12core_build_string ? p_m12core_build_string() : NULL);
+    return;
+  }
+
+  void *override_handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  if (!override_handle) {
+    const char *error = dlerror();
+    FILE *log = winemetal_critical_log();
+    if (log) {
+      fprintf(log, "[m12core] override dlopen failed path=%s error=%s; using internal core\n", path,
+              error ? error : "unknown");
+      fclose(log);
+    }
+    if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
+      abort();
+    if (p_m12core_record_counter)
+      p_m12core_record_counter(M12CORE_COUNTER_LOADER_LOAD_SUCCESS, 1);
+    m12core_log_version("internal:winemetal.so", p_m12core_build_string ? p_m12core_build_string() : NULL);
+    return;
+  }
+
+  PFN_m12core_get_version override_get_version =
+      (PFN_m12core_get_version)dlsym(override_handle, "m12core_get_version");
+  M12CoreVersion override_version;
+  memset(&override_version, 0, sizeof(override_version));
+  if (!override_get_version || override_get_version(&override_version) != 0 ||
+      override_version.abi_version != M12CORE_ABI_VERSION) {
+    m12core_log_line("override version check failed; using internal core");
+    dlclose(override_handle);
+    if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
+      abort();
+    if (p_m12core_record_counter)
+      p_m12core_record_counter(M12CORE_COUNTER_LOADER_LOAD_SUCCESS, 1);
+    m12core_log_version("internal:winemetal.so", p_m12core_build_string ? p_m12core_build_string() : NULL);
+    return;
+  }
+
+  m12core_handle = override_handle;
+  m12core_version = override_version;
+  p_m12core_get_version = override_get_version;
   p_m12core_build_string = (PFN_m12core_build_string)dlsym(m12core_handle, "m12core_build_string");
   p_m12core_record_counter = (PFN_m12core_record_counter)dlsym(m12core_handle, "m12core_record_counter");
   p_m12core_get_counters = (PFN_m12core_get_counters)dlsym(m12core_handle, "m12core_get_counters");
@@ -330,15 +405,6 @@ m12core_try_load(void) {
       (PFN_m12core_plan_replay_coverage)dlsym(m12core_handle, "m12core_plan_replay_coverage");
   p_m12core_plan_thin_pe_checkpoint =
       (PFN_m12core_plan_thin_pe_checkpoint)dlsym(m12core_handle, "m12core_plan_thin_pe_checkpoint");
-  if (!p_m12core_get_version || p_m12core_get_version(&m12core_version) != 0 ||
-      m12core_version.abi_version != M12CORE_ABI_VERSION) {
-    m12core_log_line("version check failed; unloading inert core");
-    dlclose(m12core_handle);
-    m12core_handle = NULL;
-    if (m12core_env_enabled("DXMT_M12CORE_REQUIRED"))
-      abort();
-    return;
-  }
 
   if (p_m12core_record_counter)
     p_m12core_record_counter(M12CORE_COUNTER_LOADER_LOAD_SUCCESS, 1);

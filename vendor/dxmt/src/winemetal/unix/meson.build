@@ -1,6 +1,8 @@
 winemetal_unix_src = [
   'winemetal_unix.c',
   'cache.c',
+  '../../m12core/m12core.cpp',
+  '../../m12core/m12core_metal.c',
 ]
 
 if wine_build_path != ''
