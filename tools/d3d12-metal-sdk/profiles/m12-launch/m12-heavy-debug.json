@@ -1,0 +1,27 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-heavy-debug",
+  "title": "M12 heavy debug overlay",
+  "appid": null,
+  "phase": "phase8-launch-profile-env-hygiene",
+  "status": "explicit_debug_overlay",
+  "live_launch_requires_explicit_user_approval": true,
+  "request_overlay": {
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-heavy-debug",
+      "METALSHARP_M12_TRACE_CAPTURE": "1",
+      "METALSHARP_M12_TRACE_PROFILE": "full"
+    }
+  },
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "binary_archive": "disabled_by_default",
+    "mscompatdb": "absent_intentional",
+    "heavy_tracing": "enabled_explicit_overlay",
+    "trace_components": "Device,Queue,SwapChain,Presenter,PSO"
+  },
+  "stop_rules": [
+    "Do not use for acceptance baselines unless a concrete hypothesis requires heavy trace evidence.",
+    "Do not leave heavy debug env in title profiles."
+  ]
+}

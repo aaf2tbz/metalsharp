@@ -1,0 +1,31 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-subnautica2-loading-ui",
+  "title": "Subnautica 2",
+  "appid": 1962700,
+  "phase": "phase8-launch-profile-env-hygiene",
+  "status": "offline_profile",
+  "baseline": "tools/d3d12-metal-sdk/baselines/subnautica2-june21-loading-ui.json",
+  "live_launch_requires_explicit_user_approval": true,
+  "request": {
+    "appid": 1962700,
+    "launchMethod": "m12",
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-subnautica2-loading-ui",
+      "METALSHARP_M12_TRACE_CAPTURE": "0",
+      "METALSHARP_M12_DIAGNOSTIC_CAPTURE": "0",
+      "METALSHARP_M12_DUMP_MSL": "0"
+    }
+  },
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "mscompatdb": "absent_intentional",
+    "binary_archive": "not_generic_default",
+    "heavy_tracing": "disabled_by_default",
+    "primary_hypothesis": "UE D3D12 loading/UI baseline; audio/XAudio is separate follow-up"
+  },
+  "stop_rules": [
+    "Do not use Subnautica 2 as a shader-first debugging target unless a shader gate identifies a concrete failure.",
+    "Do not inherit AC6 binary archive collection env."
+  ]
+}

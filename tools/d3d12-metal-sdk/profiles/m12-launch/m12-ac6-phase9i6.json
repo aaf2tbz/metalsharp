@@ -1,0 +1,38 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-ac6-phase9i6",
+  "title": "ARMORED CORE VI FIRES OF RUBICON",
+  "appid": 1888160,
+  "phase": "phase8-launch-profile-env-hygiene",
+  "status": "offline_profile",
+  "baseline": "tools/d3d12-metal-sdk/baselines/ac6-phase9i6.json",
+  "live_launch_requires_explicit_user_approval": true,
+  "request": {
+    "appid": 1888160,
+    "launchMethod": "m12",
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-ac6-phase9i6",
+      "METALSHARP_M12_PSO_WORKERS": "6",
+      "METALSHARP_M12_DIAGNOSTIC_CAPTURE": "0",
+      "METALSHARP_M12_DUMP_MSL": "0",
+      "METALSHARP_M12_TRACE_CAPTURE": "0",
+      "METALSHARP_M12_LOG_LEVEL": "none",
+      "METALSHARP_M12_LOG_PATH": "none"
+    }
+  },
+  "optional_collection_overlays": [
+    "m12-binary-archive-collection"
+  ],
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "mscompatdb": "absent_intentional",
+    "binary_archive": "not_generic_default; use m12-binary-archive-collection overlay for Phase 9I.6 archive collection",
+    "warm_lookup": "blocked_strict_lookup_0_of_24",
+    "heavy_tracing": "disabled_by_default"
+  },
+  "stop_rules": [
+    "Do not copy this profile into Elden Ring or Subnautica 2.",
+    "Do not enable binary archive warm lookup for acceptance; collection overlay must bypass lookup.",
+    "Do not use AC6-only diagnostic env without a named debug profile."
+  ]
+}

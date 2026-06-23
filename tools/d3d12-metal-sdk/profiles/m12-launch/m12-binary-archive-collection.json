@@ -1,0 +1,32 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-binary-archive-collection",
+  "title": "M12 binary archive collection overlay",
+  "appid": null,
+  "phase": "phase8-launch-profile-env-hygiene",
+  "status": "explicit_experiment_overlay",
+  "live_launch_requires_explicit_user_approval": true,
+  "request_overlay": {
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-binary-archive-collection",
+      "METALSHARP_M12_BINARY_ARCHIVE": "1",
+      "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP": "1",
+      "METALSHARP_M12_BINARY_ARCHIVE_POPULATE": "1",
+      "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT": "1",
+      "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND": "both"
+    }
+  },
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "binary_archive": "collection_only",
+    "warm_lookup": "bypassed_until_strict_lookup_passes",
+    "population": "enabled_explicit_overlay",
+    "mscompatdb": "absent_intentional",
+    "heavy_tracing": "disabled_by_default"
+  },
+  "stop_rules": [
+    "Do not use as a generic M12 correctness profile.",
+    "Do not remove lookup bypass until strict warm lookup proof passes.",
+    "Do not combine with Elden bootstrap profile."
+  ]
+}

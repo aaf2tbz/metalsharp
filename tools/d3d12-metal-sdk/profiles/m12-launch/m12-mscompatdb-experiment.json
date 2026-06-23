@@ -1,0 +1,25 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-mscompatdb-experiment",
+  "title": "M12 mscompatdb experiment overlay",
+  "appid": null,
+  "phase": "phase8-launch-profile-env-hygiene",
+  "status": "explicit_high_risk_experiment_overlay",
+  "live_launch_requires_explicit_user_approval": true,
+  "request_overlay": {
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-mscompatdb-experiment"
+    }
+  },
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "binary_archive": "disabled_by_default",
+    "mscompatdb": "explicit_experiment_only_not_baseline",
+    "heavy_tracing": "disabled_by_default"
+  },
+  "stop_rules": [
+    "Do not use as a baseline profile.",
+    "Do not add mscompatdb back to M12 default or title baselines.",
+    "If a launch changes behavior, classify first as loader/app-compat perturbation before D3D12 correctness."
+  ]
+}

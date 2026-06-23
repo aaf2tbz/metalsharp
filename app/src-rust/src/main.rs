@@ -2140,6 +2140,7 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12_LOG_PATH"
             | "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE"
             | "METALSHARP_M12_PREWARM_PROFILE"
+            | "METALSHARP_M12_PROFILE"
             | "METALSHARP_M12_BINARY_ARCHIVE"
             | "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP"
             | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE"
@@ -2150,6 +2151,23 @@ fn allowed_launch_env_override(key: &str) -> bool {
             | "METALSHARP_M12_BINARY_ARCHIVE_POPULATE_RECORD_RENDER_OFF"
             | "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT"
             | "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND"
+            // Phase 1 Elden bootstrap reconstruction: preserve the historical
+            // no-log/no-trace request shape without opening arbitrary env passthrough.
+            | "DXMT_M12CORE_ENABLE"
+            | "DXMT_M12CORE_REQUIRED"
+            | "DXMT_M12CORE_DUMP_COUNTERS"
+            | "DXMT_LOG_LEVEL"
+            | "DXMT_LOG_PATH"
+            | "DXMT_DXGI_TRACE"
+            | "DXMT_WINEMETAL_DEBUG"
+            | "DXMT_DXIL_TRACE"
+            | "DXMT_D3D12_TRACE"
+            | "DXMT_D3D12_PSO_TRACE"
+            | "DXMT_D3D12_TRACE_COMPONENTS"
+            | "DXMT_D3D12_TRACE_MAX_MB"
+            | "DXMT_D3D12_PRESENT_LOG_INTERVAL"
+            | "DXMT_ENABLE_WINE_LOG_OUTPUT"
+            | "WINEDEBUG"
     )
 }
 
@@ -2161,6 +2179,7 @@ fn apply_launch_env_overrides(
         return Vec::new();
     };
     let mut applied = Vec::new();
+    let mut selected_m12_profile: Option<String> = None;
     let mut diagnostic_capture_enabled = env.iter().any(|(key, value)| {
         matches!(key.as_str(), "DXMT_D3D12_SWAPCHAIN_READBACK" | "DXMT_D3D12_FINAL_RENDER_SNAPSHOT") && value != "0"
     });
@@ -2176,7 +2195,8 @@ fn apply_launch_env_overrides(
             continue;
         };
         let value = value.trim();
-        if value.is_empty() {
+        let allow_empty_value = matches!(key.as_str(), "DXMT_D3D12_TRACE_COMPONENTS");
+        if value.is_empty() && !allow_empty_value {
             continue;
         }
         let bool_value = if value == "0" { "0" } else { "1" };
@@ -2260,6 +2280,70 @@ fn apply_launch_env_overrides(
             "METALSHARP_M12_LOG_PATH" => upsert_env("DXMT_LOG_PATH", value),
             "METALSHARP_M12_LAUNCH_ARGS_OVERRIDE" => upsert_env("METALSHARP_M12_LAUNCH_ARGS_OVERRIDE", value),
             "METALSHARP_M12_PREWARM_PROFILE" => upsert_env("METALSHARP_M12_PREWARM_PROFILE", value),
+            "METALSHARP_M12_PROFILE" => {
+                let normalized = value.to_ascii_lowercase();
+                if matches!(
+                    normalized.as_str(),
+                    "m12-default"
+                        | "m12-ac6-phase9i6"
+                        | "m12-ac6-phase9i6-archive-collection"
+                        | "m12-elden-june18"
+                        | "m12-subnautica2-loading-ui"
+                        | "m12-binary-archive-collection"
+                        | "m12-heavy-debug"
+                        | "m12-mscompatdb-experiment"
+                ) {
+                    selected_m12_profile = Some(normalized.clone());
+                    upsert_env("METALSHARP_M12_PROFILE", normalized.as_str());
+                    // Request-scoped profiles must neutralize any M12 overlay that was
+                    // injected earlier from process-global METALSHARP_M12_PROFILE.
+                    upsert_env("DXMT_D3D12_BINARY_ARCHIVE", "0");
+                    upsert_env("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP", "0");
+                    upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE", "0");
+                    upsert_env("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT", "0");
+                    upsert_env("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND", "");
+                    upsert_env("DXMT_DXGI_TRACE", "0");
+                    upsert_env("DXMT_WINEMETAL_DEBUG", "0");
+                    upsert_env("DXMT_DXIL_TRACE", "0");
+                    upsert_env("DXMT_D3D12_TRACE", "0");
+                    upsert_env("DXMT_D3D12_PSO_TRACE", "0");
+                    upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "");
+                    upsert_env("DXMT_D3D12_TRACE_MAX_MB", "0");
+                    upsert_env("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC", "0");
+                    upsert_env("DXMT_D3D12_AC6_PRIME_FINAL_MASK", "0");
+                    upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", "0");
+                    upsert_env(
+                        "WINEDLLOVERRIDES",
+                        "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    );
+                    match normalized.as_str() {
+                        "m12-binary-archive-collection" | "m12-ac6-phase9i6-archive-collection" => {
+                            upsert_env("DXMT_D3D12_BINARY_ARCHIVE", "1");
+                            upsert_env("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP", "1");
+                            upsert_env("DXMT_D3D12_BINARY_ARCHIVE_POPULATE", "1");
+                            upsert_env("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT", "1");
+                            upsert_env("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND", "both");
+                        },
+                        "m12-heavy-debug" => {
+                            upsert_env("DXMT_DXGI_TRACE", "1");
+                            upsert_env("DXMT_WINEMETAL_DEBUG", "1");
+                            upsert_env("DXMT_D3D12_TRACE", "1");
+                            upsert_env("DXMT_D3D12_PSO_TRACE", "1");
+                            upsert_env("DXMT_D3D12_TRACE_COMPONENTS", "Device,Queue,SwapChain,Presenter,PSO");
+                            upsert_env("DXMT_D3D12_TRACE_MAX_MB", "16");
+                        },
+                        "m12-mscompatdb-experiment" => {
+                            upsert_env(
+                                "WINEDLLOVERRIDES",
+                                "mscompatdb,winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                            );
+                        },
+                        _ => {},
+                    }
+                } else {
+                    continue;
+                }
+            },
             "METALSHARP_M12_BINARY_ARCHIVE" => upsert_env("DXMT_D3D12_BINARY_ARCHIVE", bool_value),
             "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP" => {
                 upsert_env("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP", bool_value)
@@ -2291,9 +2375,31 @@ fn apply_launch_env_overrides(
                     continue;
                 }
             },
+            "DXMT_M12CORE_ENABLE" => upsert_env("DXMT_M12CORE_ENABLE", bool_value),
+            "DXMT_M12CORE_REQUIRED" => upsert_env("DXMT_M12CORE_REQUIRED", bool_value),
+            "DXMT_M12CORE_DUMP_COUNTERS" => upsert_env("DXMT_M12CORE_DUMP_COUNTERS", bool_value),
+            "DXMT_LOG_LEVEL" => upsert_env("DXMT_LOG_LEVEL", value),
+            "DXMT_LOG_PATH" => upsert_env("DXMT_LOG_PATH", value),
+            "DXMT_DXGI_TRACE" => upsert_env("DXMT_DXGI_TRACE", bool_value),
+            "DXMT_WINEMETAL_DEBUG" => upsert_env("DXMT_WINEMETAL_DEBUG", bool_value),
+            "DXMT_DXIL_TRACE" => upsert_env("DXMT_DXIL_TRACE", bool_value),
+            "DXMT_D3D12_TRACE" => upsert_env("DXMT_D3D12_TRACE", bool_value),
+            "DXMT_D3D12_PSO_TRACE" => upsert_env("DXMT_D3D12_PSO_TRACE", bool_value),
+            "DXMT_D3D12_TRACE_COMPONENTS" => upsert_env("DXMT_D3D12_TRACE_COMPONENTS", value),
+            "DXMT_D3D12_TRACE_MAX_MB" => upsert_env("DXMT_D3D12_TRACE_MAX_MB", value),
+            "DXMT_D3D12_PRESENT_LOG_INTERVAL" => upsert_env("DXMT_D3D12_PRESENT_LOG_INTERVAL", value),
+            "DXMT_ENABLE_WINE_LOG_OUTPUT" => upsert_env("DXMT_ENABLE_WINE_LOG_OUTPUT", bool_value),
+            "WINEDEBUG" => upsert_env("WINEDEBUG", value),
             _ => {},
         }
         applied.push(key.clone());
+    }
+    if let Some(profile) = selected_m12_profile.as_deref() {
+        if !matches!(profile, "m12-ac6-phase9i6" | "m12-ac6-phase9i6-archive-collection") {
+            upsert_env("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC", "0");
+            upsert_env("DXMT_D3D12_AC6_PRIME_FINAL_MASK", "0");
+            upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", "0");
+        }
     }
     if diagnostic_capture_enabled {
         upsert_env("DXMT_D3D12_LIVE_PRESENT", "0");

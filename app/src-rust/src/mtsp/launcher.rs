@@ -560,6 +560,105 @@ pub fn m12_verify_dry_run(appid: u32) -> serde_json::Value {
     }
 }
 
+const M12_PROFILE_DEFAULT: &str = "m12-default";
+const M12_PROFILE_AC6_PHASE9I6: &str = "m12-ac6-phase9i6";
+const M12_PROFILE_AC6_PHASE9I6_ARCHIVE_COLLECTION: &str = "m12-ac6-phase9i6-archive-collection";
+const M12_PROFILE_ELDEN_JUNE18: &str = "m12-elden-june18";
+const M12_PROFILE_SUBNAUTICA_LOADING_UI: &str = "m12-subnautica2-loading-ui";
+const M12_PROFILE_BINARY_ARCHIVE_COLLECTION: &str = "m12-binary-archive-collection";
+const M12_PROFILE_HEAVY_DEBUG: &str = "m12-heavy-debug";
+const M12_PROFILE_MSCOMPATDB_EXPERIMENT: &str = "m12-mscompatdb-experiment";
+
+fn parse_m12_profile_id(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "m12-default" => Some(M12_PROFILE_DEFAULT),
+        "m12-ac6-phase9i6" => Some(M12_PROFILE_AC6_PHASE9I6),
+        "m12-ac6-phase9i6-archive-collection" => Some(M12_PROFILE_AC6_PHASE9I6_ARCHIVE_COLLECTION),
+        "m12-elden-june18" => Some(M12_PROFILE_ELDEN_JUNE18),
+        "m12-subnautica2-loading-ui" => Some(M12_PROFILE_SUBNAUTICA_LOADING_UI),
+        "m12-binary-archive-collection" => Some(M12_PROFILE_BINARY_ARCHIVE_COLLECTION),
+        "m12-heavy-debug" => Some(M12_PROFILE_HEAVY_DEBUG),
+        "m12-mscompatdb-experiment" => Some(M12_PROFILE_MSCOMPATDB_EXPERIMENT),
+        _ => None,
+    }
+}
+
+fn inferred_m12_profile_id(appid: u32) -> &'static str {
+    match appid {
+        1888160 => M12_PROFILE_AC6_PHASE9I6,
+        1245620 => M12_PROFILE_ELDEN_JUNE18,
+        1962700 => M12_PROFILE_SUBNAUTICA_LOADING_UI,
+        _ => M12_PROFILE_DEFAULT,
+    }
+}
+
+fn m12_profile_id_for(appid: u32, pipeline_id: PipelineId) -> &'static str {
+    if pipeline_id != PipelineId::M12 {
+        return "not-m12";
+    }
+    std::env::var("METALSHARP_M12_PROFILE")
+        .ok()
+        .and_then(|value| parse_m12_profile_id(&value))
+        .unwrap_or_else(|| inferred_m12_profile_id(appid))
+}
+
+fn m12_profile_policy(profile_id: &str) -> serde_json::Value {
+    match profile_id {
+        M12_PROFILE_AC6_PHASE9I6 => serde_json::json!({
+            "baseline": "tools/d3d12-metal-sdk/baselines/ac6-phase9i6.json",
+            "profile_class": "title_baseline",
+            "binary_archive": "profile_requires_explicit_request_overrides_for_phase9i6_collection",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "absent_intentional"
+        }),
+        M12_PROFILE_AC6_PHASE9I6_ARCHIVE_COLLECTION => serde_json::json!({
+            "baseline": "tools/d3d12-metal-sdk/baselines/ac6-phase9i6.json",
+            "profile_class": "title_collection_overlay",
+            "binary_archive": "explicit_ac6_collection_overlay",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "absent_intentional"
+        }),
+        M12_PROFILE_ELDEN_JUNE18 => serde_json::json!({
+            "baseline": "tools/d3d12-metal-sdk/baselines/elden-june18-menu-drawn-present.json",
+            "profile_class": "title_bootstrap_baseline",
+            "binary_archive": "forbidden",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "absent_intentional"
+        }),
+        M12_PROFILE_SUBNAUTICA_LOADING_UI => serde_json::json!({
+            "baseline": "tools/d3d12-metal-sdk/baselines/subnautica2-june21-loading-ui.json",
+            "profile_class": "title_loading_ui_baseline",
+            "binary_archive": "not_generic_default",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "absent_intentional"
+        }),
+        M12_PROFILE_BINARY_ARCHIVE_COLLECTION => serde_json::json!({
+            "profile_class": "explicit_collection_experiment",
+            "binary_archive": "enabled_population_lookup_bypassed",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "absent_intentional"
+        }),
+        M12_PROFILE_HEAVY_DEBUG => serde_json::json!({
+            "profile_class": "explicit_debug_experiment",
+            "binary_archive": "disabled_by_default",
+            "heavy_tracing": "enabled_explicit_profile",
+            "mscompatdb": "absent_intentional"
+        }),
+        M12_PROFILE_MSCOMPATDB_EXPERIMENT => serde_json::json!({
+            "profile_class": "explicit_mscompatdb_experiment",
+            "binary_archive": "disabled_by_default",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "explicit_experiment_only"
+        }),
+        _ => serde_json::json!({
+            "profile_class": "generic_m12_default",
+            "binary_archive": "disabled_by_default",
+            "heavy_tracing": "disabled_by_default",
+            "mscompatdb": "absent_intentional"
+        }),
+    }
+}
+
 /// Read-only pipeline dry-run with an explicit home (used by tests so they
 /// never mutate the process-global METALSHARP_HOME).
 ///
@@ -579,11 +678,31 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
     let env_keys: std::collections::HashSet<&str> = env.iter().map(|(k, _)| k.as_str()).collect();
     let env_pairs_json: Vec<serde_json::Value> =
         env.iter().map(|(k, v)| serde_json::json!({ "key": k, "value": v })).collect();
+    let mut effective_env = serde_json::Map::new();
+    let mut env_values_by_key: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for (key, value) in &env {
+        effective_env.insert(key.clone(), serde_json::Value::String(value.clone()));
+        env_values_by_key.entry(key.as_str()).or_default().push(value.as_str());
+    }
+    let duplicate_key_warnings: Vec<serde_json::Value> = env_values_by_key
+        .iter()
+        .filter(|(_, values)| values.len() > 1)
+        .map(|(key, values)| serde_json::json!({ "key": key, "count": values.len(), "values": values }))
+        .collect();
+    let profile_id = m12_profile_id_for(appid, pipeline);
+    let physical_runtime_route = if matches!(pipeline, PipelineId::M12 | PipelineId::M13) {
+        "dxmt_m12"
+    } else if node.backend == "dxmt" {
+        "dxmt"
+    } else {
+        node.backend
+    };
 
     // Artifact sources derived from the pipeline node's deploy list, resolved
     // against the runtime wine root. Optional stubs (nvapi/nvngx/atidxx) are
     // tolerated as missing.
     let mut deploy_dlls: Vec<serde_json::Value> = Vec::new();
+    let mut pe_dll_hashes = serde_json::Map::new();
     let mut missing: Vec<serde_json::Value> = Vec::new();
     let mut windows_dll_dir: Option<PathBuf> = None;
     for deploy in &node.deploy_dlls {
@@ -606,6 +725,16 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
             "sha256": sha,
             "size_bytes": size,
         }));
+        pe_dll_hashes.insert(
+            deploy.filename.to_string(),
+            serde_json::json!({
+                "source_path": source_path.to_string_lossy(),
+                "present": present,
+                "sha256": sha,
+                "size_bytes": size,
+                "optional": optional_stub,
+            }),
+        );
         if !present && !optional_stub {
             missing.push(serde_json::json!({
                 "filename": deploy.filename,
@@ -645,21 +774,112 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         None
     };
 
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let game_local_root = ms_home.join("games").join(appid.to_string());
+    let mut game_local_dlls = Vec::new();
+    for dll in ["d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll", "mscompatdb.dll"] {
+        let path = game_local_root.join(dll);
+        let present = path.exists();
+        game_local_dlls.push(serde_json::json!({
+            "filename": dll,
+            "path": path.to_string_lossy(),
+            "present": present,
+            "sha256": if present { crate::diagnostics::file_sha256(&path) } else { None },
+        }));
+    }
+    let mut agility_sidecars = Vec::new();
+    for dll in ["D3D12Core.dll", "d3d12SDKLayers.dll"] {
+        let path = game_local_root.join(dll);
+        let present = path.exists();
+        agility_sidecars.push(serde_json::json!({
+            "filename": dll,
+            "path": path.to_string_lossy(),
+            "present": present,
+            "sha256": if present { crate::diagnostics::file_sha256(&path) } else { None },
+        }));
+    }
+    let wine_overrides = effective_env.get("WINEDLLOVERRIDES").and_then(|value| value.as_str()).unwrap_or_default();
+    let mscompatdb_override = wine_overrides.contains("mscompatdb");
+    let mscompatdb_game_local = game_local_dlls.iter().any(|entry| {
+        entry.get("filename").and_then(|value| value.as_str()) == Some("mscompatdb.dll")
+            && entry.get("present").and_then(|value| value.as_bool()) == Some(true)
+    });
+    let binary_archive_enabled =
+        effective_env.get("DXMT_D3D12_BINARY_ARCHIVE").and_then(|value| value.as_str()) == Some("1");
+    let binary_archive_populate =
+        effective_env.get("DXMT_D3D12_BINARY_ARCHIVE_POPULATE").and_then(|value| value.as_str()) == Some("1");
+    let binary_archive_lookup_bypassed =
+        effective_env.get("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP").and_then(|value| value.as_str()) == Some("1");
+    let trace_enabled = effective_env.get("DXMT_D3D12_TRACE").and_then(|value| value.as_str()) == Some("1")
+        || effective_env.get("DXMT_DXGI_TRACE").and_then(|value| value.as_str()) == Some("1")
+        || effective_env.get("DXMT_WINEMETAL_DEBUG").and_then(|value| value.as_str()) == Some("1");
+    let heavy_tracing = trace_enabled
+        && effective_env
+            .get("DXMT_D3D12_TRACE_COMPONENTS")
+            .and_then(|value| value.as_str())
+            .map(|value| value.contains("Device") || value.contains("PSO"))
+            .unwrap_or(false);
+
     serde_json::json!({
         "ok": missing.is_empty(),
-        "schema_version": 1,
+        "schema_version": 2,
         "dry_run": true,
         "appid": appid,
         "pipeline": pipeline,
         "pipeline_name": node.name,
+        "profile_name": profile_id,
+        "profile_policy": m12_profile_policy(profile_id),
+        "physical_runtime_route": physical_runtime_route,
         "runtime_root": ms_root.to_string_lossy(),
         "windows_dll_dir": windows_dll_dir.as_ref().map(|d| d.to_string_lossy()).unwrap_or_default(),
         "windows_dll_dir_exists": windows_dll_dir.as_ref().map(|d| d.exists()).unwrap_or(false),
         "unix_lib_dir": unix_lib_dir.as_ref().map(|d| d.to_string_lossy()),
         "unix_lib_dir_exists": unix_lib_dir.as_ref().map(|d| d.exists()),
         "deploy_dlls": deploy_dlls,
+        "pe_dll_hashes": pe_dll_hashes,
         "unix_sidecars": unix_sidecars,
+        "game_local_dll_hashes": {
+            "root": game_local_root.to_string_lossy(),
+            "root_exists": game_local_root.exists(),
+            "dlls": game_local_dlls,
+        },
+        "agility_sidecar_hashes": agility_sidecars,
         "env_pairs": env_pairs_json,
+        "ordered_raw_env": env_pairs_json,
+        "effective_env_map": effective_env.clone(),
+        "duplicate_key_warnings": duplicate_key_warnings,
+        "mscompatdb_state": {
+            "expected": if profile_id == M12_PROFILE_MSCOMPATDB_EXPERIMENT { "explicit_experiment" } else { "absent_intentional" },
+            "wine_override_mentions_mscompatdb": mscompatdb_override,
+            "game_local_mscompatdb_present": mscompatdb_game_local,
+            "state": if mscompatdb_override || mscompatdb_game_local { "present_or_requested" } else { "absent" },
+        },
+        "binary_archive_state": {
+            "enabled": binary_archive_enabled,
+            "populate": binary_archive_populate,
+            "lookup_bypassed": binary_archive_lookup_bypassed,
+            "queue_checkpoint": effective_env.get("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT").and_then(|value| value.as_str()) == Some("1"),
+            "queue_checkpoint_kind": effective_env.get("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND").and_then(|value| value.as_str()).unwrap_or(""),
+            "policy": m12_profile_policy(profile_id).get("binary_archive").cloned().unwrap_or_else(|| serde_json::Value::String("disabled_by_default".to_string())),
+        },
+        "cache_policy": {
+            "shader_cache": effective_env.get("DXMT_SHADER_CACHE_PATH").and_then(|value| value.as_str()).unwrap_or(""),
+            "pipeline_cache": effective_env.get("DXMT_PIPELINE_CACHE_PATH").and_then(|value| value.as_str()).unwrap_or(""),
+            "metal_shader_cache": effective_env.get("MTL_SHADER_CACHE_DIR").and_then(|value| value.as_str()).unwrap_or(""),
+            "log_path": effective_env.get("DXMT_LOG_PATH").and_then(|value| value.as_str()).unwrap_or(""),
+            "summary": effective_env.get("METALSHARP_CACHE_SUMMARY").and_then(|value| value.as_str()).unwrap_or(""),
+        },
+        "trace_log_policy": {
+            "trace_enabled": trace_enabled,
+            "heavy_tracing": heavy_tracing,
+            "dxgi_trace": effective_env.get("DXMT_DXGI_TRACE").and_then(|value| value.as_str()).unwrap_or("0"),
+            "d3d12_trace": effective_env.get("DXMT_D3D12_TRACE").and_then(|value| value.as_str()).unwrap_or("0"),
+            "winemetal_debug": effective_env.get("DXMT_WINEMETAL_DEBUG").and_then(|value| value.as_str()).unwrap_or("0"),
+            "components": effective_env.get("DXMT_D3D12_TRACE_COMPONENTS").and_then(|value| value.as_str()).unwrap_or(""),
+            "max_mb": effective_env.get("DXMT_D3D12_TRACE_MAX_MB").and_then(|value| value.as_str()).unwrap_or(""),
+            "log_level": effective_env.get("DXMT_LOG_LEVEL").and_then(|value| value.as_str()).unwrap_or("default"),
+            "log_path": effective_env.get("DXMT_LOG_PATH").and_then(|value| value.as_str()).unwrap_or(""),
+        },
         "env_keys_present": {
             "WINEDLLOVERRIDES": env_keys.contains("WINEDLLOVERRIDES"),
             "DXMT_SHADER_CACHE_PATH": env_keys.contains("DXMT_SHADER_CACHE_PATH"),
@@ -2065,99 +2285,123 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         ];
     }
 
-    if matches!(appid, 1962700 | 1888160 | 1245620) && pipeline_id == PipelineId::M12 {
-        let mut env = vec![
-            ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
-            ("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Device,Queue,SwapChain,Presenter,PSO".to_string()),
-            ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
-            ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
-            ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
-            ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
-            ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "0".to_string()),
-            ("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()),
-            ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "0".to_string()),
-            ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
-            ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
-            ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
-            ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
-            ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
-            ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
-            ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
-        ];
-        let diagnostic_capture = std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false);
-        if std::env::var("METALSHARP_M12_ENABLE_LIVE_PRESENT")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()));
-            env.push(("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()));
-            env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()));
-        }
-        if diagnostic_capture
-            || std::env::var("METALSHARP_M12_DUMP_MSL").map(|value| !value.is_empty() && value != "0").unwrap_or(false)
-        {
-            env.push(("DXMT_DUMP_MSL".to_string(), "1".to_string()));
-        }
-        if diagnostic_capture {
-            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
-            env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
-            env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
-            if matches!(appid, 1962700 | 1888160 | 1245620) {
-                env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
-                env.push(("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "0".to_string()));
-                env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "0".to_string()));
-            }
-            env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_COLOR_WRITE_STATE")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_AC6_PRIME_FINAL_MASK")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_AC6_PRIME_FINAL_MASK".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
-        }
-        if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN")
-            .map(|value| !value.is_empty() && value != "0")
-            .unwrap_or(false)
-        {
-            env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
-        }
+    if pipeline_id != PipelineId::M12 {
+        return Vec::new();
+    }
+
+    let profile_id = m12_profile_id_for(appid, pipeline_id);
+    let mut env = vec![("METALSHARP_M12_PROFILE".to_string(), profile_id.to_string())];
+    if profile_id == M12_PROFILE_HEAVY_DEBUG {
+        env.push(("DXMT_DXGI_TRACE".to_string(), "1".to_string()));
+        env.push(("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_TRACE".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_PSO_TRACE".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Device,Queue,SwapChain,Presenter,PSO".to_string()));
+        env.push(("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()));
+    }
+    if matches!(profile_id, M12_PROFILE_BINARY_ARCHIVE_COLLECTION | M12_PROFILE_AC6_PHASE9I6_ARCHIVE_COLLECTION) {
+        env.push(("DXMT_D3D12_BINARY_ARCHIVE".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_BINARY_ARCHIVE_POPULATE".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND".to_string(), "both".to_string()));
+    }
+    if profile_id == M12_PROFILE_MSCOMPATDB_EXPERIMENT {
+        env.push((
+            "WINEDLLOVERRIDES".to_string(),
+            "mscompatdb,winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+                .to_string(),
+        ));
+    }
+    if !matches!(appid, 1962700 | 1888160 | 1245620) {
         return env;
     }
-    Vec::new()
+
+    env.extend(vec![
+        ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
+        ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
+        ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
+        ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "0".to_string()),
+        ("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()),
+        ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "0".to_string()),
+        ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
+        ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
+        ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
+        ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
+        ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
+        ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
+        ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
+    ]);
+    let diagnostic_capture = std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false);
+    if std::env::var("METALSHARP_M12_ENABLE_LIVE_PRESENT")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()));
+    }
+    if diagnostic_capture
+        || std::env::var("METALSHARP_M12_DUMP_MSL").map(|value| !value.is_empty() && value != "0").unwrap_or(false)
+    {
+        env.push(("DXMT_DUMP_MSL".to_string(), "1".to_string()));
+    }
+    if diagnostic_capture {
+        env.push(("DXMT_D3D12_SWAPCHAIN_READBACK".to_string(), "1".to_string()));
+        env.push(("DXMT_D3D12_SWAPCHAIN_READBACK_INTERVAL".to_string(), "30".to_string()));
+        env.push(("DXMT_D3D12_FINAL_RENDER_SNAPSHOT".to_string(), "1".to_string()));
+        if matches!(appid, 1962700 | 1888160 | 1245620) {
+            env.push(("DXMT_D3D12_LIVE_PRESENT".to_string(), "0".to_string()));
+            env.push(("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "0".to_string()));
+            env.push(("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "0".to_string()));
+        }
+        env.push(("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "30".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_FORCE_SWAPCHAIN_COLOR")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_FORCE_SWAPCHAIN_COLOR".to_string(), "1".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_FORCE_COLOR_WRITE_STATE")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_AC6_PRIME_FINAL_MASK")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_AC6_PRIME_FINAL_MASK".to_string(), "1".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC".to_string(), "1".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE".to_string(), "1".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FRAGMENT")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FRAGMENT".to_string(), "1".to_string()));
+    }
+    if std::env::var("METALSHARP_M12_FORCE_DIAGNOSTIC_FULLSCREEN")
+        .map(|value| !value.is_empty() && value != "0")
+        .unwrap_or(false)
+    {
+        env.push(("DXMT_D3D12_FORCE_DIAGNOSTIC_FULLSCREEN".to_string(), "1".to_string()));
+    }
+    env
 }
 
 fn is_m9_stuck_loading_title(appid: u32) -> bool {

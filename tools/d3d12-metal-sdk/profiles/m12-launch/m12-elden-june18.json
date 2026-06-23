@@ -1,0 +1,100 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-elden-june18",
+  "title": "ELDEN RING",
+  "appid": 1245620,
+  "phase": "phase1-elden-bootstrap-reconstruction",
+  "status": "offline_prepared_no_launch",
+  "baseline": "tools/d3d12-metal-sdk/baselines/elden-june18-menu-drawn-present.json",
+  "launch_route": "POST http://127.0.0.1:9274/steam/launch-game",
+  "dry_run_routes": [
+    "GET http://127.0.0.1:9274/diagnostics/m12/dry-run?appid=1245620",
+    "GET http://127.0.0.1:9274/diagnostics/pipeline/dry-run?appid=1245620&pipeline=m12"
+  ],
+  "live_launch_requires_explicit_user_approval": true,
+  "request": {
+    "appid": 1245620,
+    "launchMethod": "m12",
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-elden-june18",
+      "METALSHARP_M12_DIAGNOSTIC_CAPTURE": "0",
+      "METALSHARP_M12_DUMP_MSL": "0",
+      "METALSHARP_M12_TRACE_CAPTURE": "0",
+      "METALSHARP_M12_LOG_LEVEL": "none",
+      "METALSHARP_M12_LOG_PATH": "none",
+      "METALSHARP_M12CORE_ENABLE": "1",
+      "METALSHARP_M12CORE_REQUIRED": "0",
+      "METALSHARP_M12CORE_DUMP_COUNTERS": "0",
+      "DXMT_M12CORE_ENABLE": "1",
+      "DXMT_M12CORE_REQUIRED": "0",
+      "DXMT_M12CORE_DUMP_COUNTERS": "0",
+      "DXMT_LOG_LEVEL": "none",
+      "DXMT_LOG_PATH": "none",
+      "DXMT_DXGI_TRACE": "0",
+      "DXMT_WINEMETAL_DEBUG": "0",
+      "DXMT_DXIL_TRACE": "0",
+      "DXMT_D3D12_TRACE": "0",
+      "DXMT_D3D12_PSO_TRACE": "0",
+      "DXMT_D3D12_TRACE_COMPONENTS": "",
+      "DXMT_D3D12_TRACE_MAX_MB": "0",
+      "DXMT_D3D12_PRESENT_LOG_INTERVAL": "0",
+      "DXMT_ENABLE_WINE_LOG_OUTPUT": "0",
+      "WINEDEBUG": "-all"
+    }
+  },
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "mscompatdb": "absent_intentional",
+    "binary_archive": "disabled_by_absence",
+    "binary_archive_population": "forbidden",
+    "binary_archive_queue_checkpoint": "forbidden",
+    "heavy_tracing": "disabled",
+    "ac6_env_bleed": "forbidden",
+    "launch_shim": "start_protected_game.exe copied/renamed game-exe shim; do not restore original EAC path as an M12 fix"
+  },
+  "required_request_overrides": {
+    "METALSHARP_M12_PROFILE": "m12-elden-june18",
+    "METALSHARP_M12_DIAGNOSTIC_CAPTURE": "0",
+    "METALSHARP_M12_DUMP_MSL": "0",
+    "METALSHARP_M12_TRACE_CAPTURE": "0",
+    "METALSHARP_M12CORE_ENABLE": "1",
+    "METALSHARP_M12CORE_REQUIRED": "0",
+    "METALSHARP_M12CORE_DUMP_COUNTERS": "0",
+    "DXMT_M12CORE_ENABLE": "1",
+    "DXMT_LOG_LEVEL": "none",
+    "DXMT_LOG_PATH": "none",
+    "DXMT_DXGI_TRACE": "0",
+    "DXMT_D3D12_TRACE": "0",
+    "DXMT_D3D12_TRACE_COMPONENTS": "",
+    "DXMT_D3D12_PRESENT_LOG_INTERVAL": "0",
+    "DXMT_ENABLE_WINE_LOG_OUTPUT": "0",
+    "WINEDEBUG": "-all"
+  },
+  "forbidden_request_overrides": [
+    "METALSHARP_M12_BINARY_ARCHIVE",
+    "METALSHARP_M12_BINARY_ARCHIVE_BYPASS_LOOKUP",
+    "METALSHARP_M12_BINARY_ARCHIVE_POPULATE",
+    "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT",
+    "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND",
+    "DXMT_D3D12_BINARY_ARCHIVE",
+    "DXMT_D3D12_BINARY_ARCHIVE_BYPASS_LOOKUP",
+    "DXMT_D3D12_BINARY_ARCHIVE_POPULATE",
+    "DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT",
+    "DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND",
+    "METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC",
+    "METALSHARP_M12_AC6_PRIME_FINAL_MASK",
+    "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE"
+  ],
+  "evidence": [
+    "tools/d3d12-metal-sdk/results/elden-ring-baseline-zero-logs-m12core-20260618-012917/request.json",
+    "tools/d3d12-metal-sdk/results/m12-c10-visual-elden-ring-20260618-011350/elden-ring-20260618-011350/summary.md",
+    "tools/d3d12-metal-sdk/results/elden-ring-baseline-zero-logs-20260618-012526/elden-ring-20260618-012526/summary.md",
+    "tools/d3d12-metal-sdk/baselines/elden-june18-menu-drawn-present.json"
+  ],
+  "stop_rules": [
+    "Do not run without explicit user approval.",
+    "If failure is before D3D12 init, do not touch shader translator or PSO cache.",
+    "Do not restore mscompatdb as an M12 fix.",
+    "Do not add AC6 binary archive or checkpoint env to this profile."
+  ]
+}

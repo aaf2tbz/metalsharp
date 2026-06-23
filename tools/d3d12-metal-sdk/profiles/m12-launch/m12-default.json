@@ -1,0 +1,38 @@
+{
+  "schema": "metalsharp.m12.launch-profile.v1",
+  "profile_id": "m12-default",
+  "title": "Generic M12 default",
+  "appid": null,
+  "phase": "phase8-launch-profile-env-hygiene",
+  "status": "offline_profile",
+  "live_launch_requires_explicit_user_approval": true,
+  "request": {
+    "launchMethod": "m12",
+    "envOverrides": {
+      "METALSHARP_M12_PROFILE": "m12-default",
+      "METALSHARP_M12_TRACE_CAPTURE": "0",
+      "METALSHARP_M12_DIAGNOSTIC_CAPTURE": "0",
+      "METALSHARP_M12_DUMP_MSL": "0"
+    }
+  },
+  "policy": {
+    "physical_route": "dxmt_m12",
+    "mscompatdb": "absent_intentional",
+    "binary_archive": "disabled_by_default",
+    "binary_archive_population": "forbidden_by_default",
+    "heavy_tracing": "disabled_by_default",
+    "cache_policy": "isolated shader-cache/m12 and pipeline-cache/m12 per appid"
+  },
+  "forbidden_request_overrides": [
+    "METALSHARP_M12_BINARY_ARCHIVE",
+    "METALSHARP_M12_BINARY_ARCHIVE_POPULATE",
+    "METALSHARP_M12_BINARY_ARCHIVE_QUEUE_CHECKPOINT",
+    "METALSHARP_M12_AC6_PRODUCER_DIAGNOSTIC",
+    "METALSHARP_M12_AC6_PRIME_FINAL_MASK",
+    "METALSHARP_M12_AC6_FORCE_PRODUCER_WHITE"
+  ],
+  "stop_rules": [
+    "Do not run live titles from this generic profile without first selecting or diffing a title profile.",
+    "Do not add binary archive, mscompatdb, or heavy tracing env to the default profile."
+  ]
+}
