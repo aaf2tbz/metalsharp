@@ -142,9 +142,6 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
                     EnvVar { key: "DXMT_D3D12_UE_SM6_COMPAT", value: "1" },
                     EnvVar { key: "DXMT_D3D12_PSO_WORKERS", value: "1" },
-                    EnvVar { key: "DXMT_M12CORE_ENABLE", value: "1" },
-                    EnvVar { key: "DXMT_M12CORE_REQUIRED", value: "0" },
-                    EnvVar { key: "DXMT_M12CORE_DUMP_COUNTERS", value: "0" },
                     EnvVar { key: "DXMT_CONFIG", value: DXMT_M12_SAFE_CONFIG },
                 ],
                 launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes"],
@@ -634,9 +631,9 @@ mod tests {
         assert!(m12_env.contains("DXMT_METALFX_SPATIAL_SWAPCHAIN"));
         assert!(m12_env.contains("DXMT_METALFX_SPATIAL"));
         assert!(m12_env.contains("DXMT_METALFX_TEMPORAL"));
-        assert!(m12_env.contains("DXMT_M12CORE_ENABLE"));
-        assert!(m12_env.contains("DXMT_M12CORE_REQUIRED"));
-        assert!(m12_env.contains("DXMT_M12CORE_DUMP_COUNTERS"));
+        assert!(!m12_env.contains("DXMT_M12CORE_ENABLE"));
+        assert!(!m12_env.contains("DXMT_M12CORE_REQUIRED"));
+        assert!(!m12_env.contains("DXMT_M12CORE_DUMP_COUNTERS"));
         let m12_env_values: std::collections::HashMap<_, _> =
             m12.env_vars.iter().map(|env| (env.key, env.value)).collect();
         assert_eq!(m12_env_values.get("DXMT_ASYNC_PIPELINE_COMPILE"), Some(&"1"));
@@ -644,9 +641,6 @@ mod tests {
         assert_eq!(m12_env_values.get("DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_METALFX_SPATIAL"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_METALFX_TEMPORAL"), Some(&"1"));
-        assert_eq!(m12_env_values.get("DXMT_M12CORE_ENABLE"), Some(&"1"));
-        assert_eq!(m12_env_values.get("DXMT_M12CORE_REQUIRED"), Some(&"0"));
-        assert_eq!(m12_env_values.get("DXMT_M12CORE_DUMP_COUNTERS"), Some(&"0"));
         assert_eq!(m12_env_values.get("DXMT_CONFIG"), Some(&DXMT_M12_SAFE_CONFIG));
 
         let m12_overrides = m12.wine_overrides.unwrap_or_default();

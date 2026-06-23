@@ -616,12 +616,13 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
     }
 
     // For the isolated M12/M13 lane, also verify the x86_64-unix sidecars that
-    // winemetal requires at runtime.
+    // winemetal requires at runtime. libm12core.dylib is intentionally not
+    // required here: M12 core logic is internal to winemetal.so, with sidecar
+    // dylib support reserved for explicit developer override comparisons.
     let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
     let unix_lib_dir = if matches!(pipeline, PipelineId::M12 | PipelineId::M13) {
         let dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
-        for sidecar in ["winemetal.so", "libm12core.dylib", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"]
-        {
+        for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
             let path = dir.join(sidecar);
             let present = path.exists();
             let sha = if present { crate::diagnostics::file_sha256(&path) } else { None };
@@ -4465,12 +4466,14 @@ mod tests {
             m11_filenames
         );
 
-        // Both dry-runs must report the env keys the launch path sets.
+        // Dry-runs must report the env keys the launch path sets. M12 no
+        // longer requires DXMT_M12CORE_* because m12core is internal to
+        // winemetal.so.
         let m12_env = m12.get("env_keys_present").unwrap();
         assert_eq!(m12_env.get("WINEDLLOVERRIDES").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12_env.get("SteamAppId").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(m12_env.get("DXMT_M12CORE_ENABLE").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(m12_env.get("DXMT_M12CORE_REQUIRED").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(m12_env.get("DXMT_M12CORE_ENABLE").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(m12_env.get("DXMT_M12CORE_REQUIRED").and_then(|v| v.as_bool()), Some(false));
         assert_eq!(m12.get("dry_run").and_then(|v| v.as_bool()), Some(true));
 
         let _ = std::fs::remove_dir_all(&home);
@@ -4495,8 +4498,7 @@ mod tests {
             .iter()
             .map(|s| s.get("filename").unwrap().as_str().unwrap().to_string())
             .collect();
-        for required in ["winemetal.so", "libm12core.dylib", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"]
-        {
+        for required in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
             assert!(
                 sidecar_names.contains(&required.to_string()),
                 "M12 dry-run must verify {}: {:?}",
@@ -4504,6 +4506,11 @@ mod tests {
                 sidecar_names
             );
         }
+        assert!(
+            !sidecar_names.contains(&"libm12core.dylib".to_string()),
+            "M12 dry-run must not require libm12core.dylib sidecar: {:?}",
+            sidecar_names
+        );
 
         // d3d12.dll is a required (non-optional) M12 artifact, so it must be
         // listed as missing when absent.
@@ -4520,8 +4527,8 @@ mod tests {
             missing_filenames
         );
         assert!(
-            missing_filenames.contains(&"libm12core.dylib".to_string()),
-            "M12 dry-run must flag missing libm12core.dylib: {:?}",
+            !missing_filenames.contains(&"libm12core.dylib".to_string()),
+            "M12 dry-run must not require missing libm12core.dylib: {:?}",
             missing_filenames
         );
         assert_eq!(dry.get("ok").and_then(|v| v.as_bool()), Some(false), "empty home must yield ok=false");
@@ -4717,10 +4724,11 @@ mod tests {
         let node = get_pipeline(PipelineId::M12);
 
         let ac6_env = steam_pipeline_env_pairs(&home, node, 1888160);
-        let title_envs = [("elden-ring", steam_pipeline_env_pairs(&home, node, 1245620)), ("subnautica2", steam_pipeline_env_pairs(&home, node, 1962700))];
+        let title_envs = [
+            ("elden-ring", steam_pipeline_env_pairs(&home, node, 1245620)),
+            ("subnautica2", steam_pipeline_env_pairs(&home, node, 1962700)),
+        ];
         let locked_keys = [
-            "DXMT_M12CORE_ENABLE",
-            "DXMT_M12CORE_REQUIRED",
             "DXMT_D3D12_FORCE_SWAPCHAIN_BLIT",
             "DXMT_D3D12_AUTOPRESENT_SWAPCHAIN",
             "DXMT_D3D12_LIVE_PRESENT",
@@ -4737,7 +4745,8 @@ mod tests {
             for key in locked_keys {
                 assert_eq!(last_env_value(&env, key), last_env_value(&ac6_env, key), "{title} {key}");
             }
-            assert_eq!(last_env_value(&env, "DXMT_M12CORE_ENABLE"), Some("1"), "{title}");
+            assert_eq!(last_env_value(&env, "DXMT_M12CORE_ENABLE"), None, "{title}");
+            assert_eq!(last_env_value(&env, "DXMT_M12CORE_REQUIRED"), None, "{title}");
             assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL_SWAPCHAIN"), Some("0"), "{title}");
             assert_eq!(last_env_value(&env, "DXMT_METALFX_SPATIAL"), Some("0"), "{title}");
             assert_eq!(last_env_value(&env, "DXMT_METALFX_TEMPORAL"), Some("0"), "{title}");

@@ -293,6 +293,15 @@ Gates:
 - Winemetal ABI preflight
 - dry-run env hygiene
 
+2026-06-23 offline evidence:
+
+- Temp unified runtime: `/tmp/metalsharp-m12-unified-offline-20260623-013609`.
+- `preflight-runtime-layout.py` passed with `ok=true`, `failures=0`.
+- Winemetal ABI preflight passed with `ok=true`, `failures=0`.
+- Normal staging omitted `libm12core.dylib`; sidecar is only explicit dev opt-in via `--include-m12core-sidecar`.
+- `winemetal.so` has internal `m12core_*` symbols, no `libm12core.dylib` Mach-O dependency, and no default `@loader_path/libm12core.dylib` string.
+- M12 launcher dry-run no longer requires `libm12core.dylib` and default M12 env no longer injects `DXMT_M12CORE_ENABLE`, `DXMT_M12CORE_REQUIRED`, or `DXMT_M12CORE_DUMP_COUNTERS`.
+
 ## Phase 13: offline full corpus matrix
 
 No game launches until this phase passes.
@@ -306,6 +315,13 @@ Matrix:
 - resource views/barriers
 - command replay/queues/fences
 - present/windowed/DXGI bootstrap
+
+2026-06-23 offline evidence:
+
+- One-purpose temp-runtime probes completed for DXGI factory, device caps, shader corpus, compute PSO, graphics PSO, command replay, queues, resources, descriptors, barriers/render-pass, resource-views/formats, and heap aliasing.
+- Native binary archive Phase 6 proof passed all validation/circuit-breaker cases, including bypass, missing/corrupt/empty, explicit population gating, cleanup, source invariants, hard timeout, and unchanged runtime snapshot.
+- Native binary archive corpus proof passed on selected AC6 cache PSOs: `archive_add_ok=5`, `baseline_create_ok=5`, `strict_lookup_create_ok=5`, archive serialized/reloaded (`435008` bytes, sha256 `e1544cb577ed0a9c14d1864249b612f6c6507697d1a69537e8c37a68c1e40ae7`).
+- Full `--mini-only` aggregate was intentionally stopped at a 90s cap after only host-runtime output; use one-purpose probe outputs above as the bounded confidence gate.
 
 Title corpora:
 
