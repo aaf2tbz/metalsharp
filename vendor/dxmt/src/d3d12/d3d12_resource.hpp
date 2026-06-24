@@ -5,6 +5,8 @@
 #include "Metal.hpp"
 #include "winemetal.h"
 #include <atomic>
+#include <mutex>
+#include <vector>
 
 namespace dxmt {
 
@@ -27,6 +29,8 @@ struct D3D12SwapchainBackbufferWork {
   int32_t command_buffer_status = 0;
   int64_t replay_ms = 0;
   int64_t wait_ms = 0;
+  WMT::Reference<WMT::CommandBuffer> producer_cmdbuf;
+  uint64_t producer_submit_serial = 0;
 };
 
 class MTLD3D12Resource : public ID3D12Resource {
@@ -97,6 +101,10 @@ public:
   uint64_t GetTextureGPUResourceID() const { return m_tex_gpu_resource_id; }
   uint32_t GetTextureArrayLength() const;
   uint64_t GetBufferByteLength() const;
+  bool ReadBufferShadow(uint64_t offset, void *dst, uint64_t bytes) const;
+  void WriteBufferShadow(uint64_t offset, const void *src, uint64_t bytes);
+  void CopyBufferShadowRangeTo(MTLD3D12Resource *dst, uint64_t src_offset,
+                               uint64_t dst_offset, uint64_t bytes) const;
 
   void MarkSwapchainBackBuffer(uint32_t index, MTLD3D12SwapChain *swapchain) {
     m_is_swapchain_backbuffer = true;
@@ -133,6 +141,13 @@ private:
   uint32_t m_swapchain_buffer_index = 0;
   MTLD3D12SwapChain *m_swapchain = nullptr;
   D3D12SwapchainBackbufferWork m_swapchain_work = {};
+  struct BufferShadowSegment {
+    uint64_t offset = 0;
+    std::vector<uint8_t> bytes;
+  };
+
+  mutable std::mutex m_shadow_mutex;
+  std::vector<BufferShadowSegment> m_buffer_shadow_segments;
 
   void *m_cpu_addr = nullptr;
   uint64_t m_gpu_addr = 0;

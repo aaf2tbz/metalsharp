@@ -79,8 +79,81 @@ MTLD3D12CommandAllocator::GetDevice(REFIID riid, void **device) {
   return m_device->QueryInterface(riid, device);
 }
 
-HRESULT STDMETHODCALLTYPE MTLD3D12CommandAllocator::Reset() {
+bool MTLD3D12CommandAllocator::RetireIfCompletedLocked() {
+  if (!m_in_flight)
+    return true;
+  bool completed = false;
+  if (m_completion_fence &&
+      m_completion_fence->GetCompletedValue() >= m_completion_value)
+    completed = true;
+  if (!completed && m_completion_cmdbuf.handle) {
+    auto status = m_completion_cmdbuf.status();
+    completed = status > WMTCommandBufferStatusScheduled;
+  }
+  if (!completed)
+    return false;
+  m_in_flight = false;
+  m_completion_fence = nullptr;
+  m_completion_value = 0;
+  m_completion_cmdbuf = nullptr;
+  return true;
+}
+
+void MTLD3D12CommandAllocator::NotifyListOpened() {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  m_open_list_count++;
+}
+
+void MTLD3D12CommandAllocator::NotifyListClosed() {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  if (m_open_list_count)
+    m_open_list_count--;
+}
+
+HRESULT MTLD3D12CommandAllocator::ValidateReusable() {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  if (m_open_list_count)
+    return E_FAIL;
+  if (!RetireIfCompletedLocked())
+    return E_FAIL;
   return S_OK;
+}
+
+void MTLD3D12CommandAllocator::MarkSubmitted() {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  m_in_flight = true;
+  m_completion_fence = nullptr;
+  m_completion_value = 0;
+  m_completion_cmdbuf = nullptr;
+}
+
+void MTLD3D12CommandAllocator::AttachCompletionFence(ID3D12Fence *fence,
+                                                     uint64_t value) {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  if (!m_in_flight)
+    return;
+  m_completion_fence = fence;
+  m_completion_value = value;
+}
+
+void MTLD3D12CommandAllocator::AttachCompletionCommandBuffer(
+    WMT::CommandBuffer cmdbuf) {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  if (!m_in_flight)
+    return;
+  m_completion_cmdbuf = cmdbuf;
+}
+
+void MTLD3D12CommandAllocator::MarkCompleted() {
+  std::lock_guard<std::mutex> lock(m_state_mutex);
+  m_in_flight = false;
+  m_completion_fence = nullptr;
+  m_completion_value = 0;
+  m_completion_cmdbuf = nullptr;
+}
+
+HRESULT STDMETHODCALLTYPE MTLD3D12CommandAllocator::Reset() {
+  return ValidateReusable();
 }
 
 } // namespace dxmt

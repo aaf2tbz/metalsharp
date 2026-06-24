@@ -152,6 +152,7 @@ private:
   std::unique_ptr<InternalCommandLibrary> m_present_library;
   Rc<Presenter> m_presenter;
   std::array<D3D12MetalCommandBufferCompletionSlot, 8> m_present_inflight;
+  std::array<D3D12MetalSubmissionReferences, 8> m_present_refs;
   uint64_t m_present_submit_count = 0;
   uint64_t m_last_present_wait_seq = 0;
 };

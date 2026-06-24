@@ -20,7 +20,8 @@ public:
   MTLD3D12GraphicsCommandList(MTLD3D12Device *device,
                               MTLD3D12CommandAllocator *allocator,
                               D3D12_COMMAND_LIST_TYPE type,
-                              ID3D12PipelineState *initial_state);
+                              ID3D12PipelineState *initial_state,
+                              bool initially_closed = false);
   ~MTLD3D12GraphicsCommandList();
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
@@ -267,6 +268,8 @@ public:
   const std::vector<uint8_t> &GetCommands() const { return m_cmds; }
   void ClearCommands() { m_cmds.clear(); }
   uint64_t GetDebugId() const { return m_debug_id; }
+  bool IsClosed() const { return m_closed; }
+  MTLD3D12CommandAllocator *GetAllocator() const { return m_allocator; }
   D3D12DescriptorSnapshot SnapshotDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
 
 private:

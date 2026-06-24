@@ -633,9 +633,12 @@ MTLD3D12SwapChain::~MTLD3D12SwapChain() {
 }
 
 void MTLD3D12SwapChain::DrainPresentCommandBuffers(bool wait) {
-  for (auto &slot : m_present_inflight) {
-    if (!slot.cmdbuf.handle)
+  for (uint32_t i = 0; i < m_present_inflight.size(); i++) {
+    auto &slot = m_present_inflight[i];
+    if (!slot.cmdbuf.handle) {
+      m_present_refs[i] = {};
       continue;
+    }
     auto status = IsD3D12MetalCompletionSlotComplete(slot)
                       ? D3D12MetalCompletionSlotStatus(slot)
                       : slot.cmdbuf.status();
@@ -650,6 +653,7 @@ void MTLD3D12SwapChain::DrainPresentCommandBuffers(bool wait) {
                               error.description().getUTF8String()));
     }
     ResetD3D12MetalCompletionSlot(slot);
+    m_present_refs[i] = {};
   }
 }
 
@@ -658,7 +662,8 @@ void MTLD3D12SwapChain::WaitForPresentCommandBufferSlot() {
   if (limit == 0)
     return;
 
-  auto &slot = m_present_inflight[m_present_submit_count % limit];
+  uint32_t slot_index = m_present_submit_count % limit;
+  auto &slot = m_present_inflight[slot_index];
   if (!slot.cmdbuf.handle)
     return;
 
@@ -685,6 +690,7 @@ void MTLD3D12SwapChain::WaitForPresentCommandBufferSlot() {
                             error.description().getUTF8String()));
   }
   ResetD3D12MetalCompletionSlot(slot);
+  m_present_refs[slot_index] = {};
 }
 
 static void
@@ -701,16 +707,18 @@ RetainPresentSubmissionReferences(D3D12MetalSubmissionReferences &refs,
 }
 
 void MTLD3D12SwapChain::TrackPresentCommandBuffer(
-    WMT::CommandBuffer cmdbuf, D3D12MetalSubmissionReferences references) {
+    WMT::CommandBuffer cmdbuf, D3D12MetalSubmissionReferences submission_refs) {
   uint32_t limit = PresentInflightLimit();
   if (!cmdbuf.handle || limit == 0)
     return;
 
-  auto &slot = m_present_inflight[m_present_submit_count % limit];
+  uint32_t slot_index = m_present_submit_count % limit;
+  auto &slot = m_present_inflight[slot_index];
   if (slot.cmdbuf.handle)
     WaitForPresentCommandBufferSlot();
+  m_present_refs[slot_index] = std::move(submission_refs);
   ArmD3D12MetalCompletionSlot(slot, cmdbuf, m_present_submit_count + 1,
-                              std::move(references));
+                              {});
   m_present_submit_count++;
 }
 
@@ -1315,17 +1323,33 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
 
   auto &dxmt_queue = m_device->GetDXMTDevice().queue();
   bool present_waited_for_render = false;
-  uint64_t present_wait_seq = dxmt_queue.CurrentSeqId();
-  if (present_wait_seq > 0)
-    present_wait_seq -= 1;
-  if (present_wait_seq > m_last_present_wait_seq) {
-    if (LivePresentEnabled()) {
-      if (m_present_count <= 20 ||
-          (m_present_count % PresentLogInterval()) == 0) {
-        SCTRACE("Present live mode skipping CPU render wait seq=%llu buffer=%u",
-                (unsigned long long)present_wait_seq, m_current_buffer);
-      }
-    } else {
+  uint64_t present_wait_seq = work.producer_submit_serial;
+  if (LivePresentEnabled()) {
+    if (m_present_count <= 20 ||
+        (m_present_count % PresentLogInterval()) == 0) {
+      SCTRACE("Present live mode skipping producer wait seq=%llu buffer=%u",
+              (unsigned long long)present_wait_seq, m_current_buffer);
+    }
+  } else if (work.producer_cmdbuf.handle) {
+    SCTRACE("Present waiting for producer cmdbuf seq=%llu buffer=%u",
+            (unsigned long long)present_wait_seq, m_current_buffer);
+    auto wait_begin = std::chrono::steady_clock::now();
+    work.producer_cmdbuf.waitUntilCompleted();
+    auto wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - wait_begin)
+                       .count();
+    present_waited_for_render = true;
+    if (wait_ms >= DXMTD3D12TimingMinMs()) {
+      SCTRACE("Present wait_producer_cmdbuf_ms=%lld seq=%llu buffer=%u",
+              (long long)wait_ms, (unsigned long long)present_wait_seq,
+              m_current_buffer);
+    }
+  } else {
+    uint64_t fallback_seq = dxmt_queue.CurrentSeqId();
+    if (fallback_seq > 0)
+      fallback_seq -= 1;
+    present_wait_seq = fallback_seq;
+    if (present_wait_seq > m_last_present_wait_seq) {
       SCTRACE("Present waiting for render seq=%llu",
               (unsigned long long)present_wait_seq);
       auto wait_begin = std::chrono::steady_clock::now();
@@ -1339,8 +1363,20 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::Present1(
                 (long long)wait_ms, (unsigned long long)present_wait_seq,
                 m_current_buffer);
       }
+      m_last_present_wait_seq = present_wait_seq;
     }
-    m_last_present_wait_seq = present_wait_seq;
+  }
+  if (m_present_count <= 20 || (m_present_count % PresentLogInterval()) == 0) {
+    Logger::info(str::format(
+        "M12 present confidence_gate backbuffer=", (void *)res,
+        " producer_queue=d3d12 render_serial=",
+        (unsigned long long)work.serial,
+        " producer_submit_serial=",
+        (unsigned long long)work.producer_submit_serial,
+        " present_queue=dxgi_present present_waited_serial=",
+        (unsigned long long)present_wait_seq,
+        " waited=", present_waited_for_render,
+        " classification=", SwapchainWorkClassification(work)));
   }
 
   const bool force_raw_blit_requested =

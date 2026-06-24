@@ -8,9 +8,11 @@
 #include "Metal.hpp"
 #include <array>
 #include <atomic>
+#include <vector>
 
 namespace dxmt {
 
+class MTLD3D12CommandAllocator;
 class MTLD3D12Device;
 
 class MTLD3D12CommandQueue : public ID3D12CommandQueue {
@@ -81,7 +83,9 @@ public:
 private:
   WMT::CommandBuffer AcquireMetalCommandBuffer(const char *reason);
   void WaitForMetalCommandBufferSlot(const char *reason);
-  void TrackMetalCommandBuffer(WMT::CommandBuffer cmdbuf, const char *reason);
+  uint64_t TrackMetalCommandBuffer(WMT::CommandBuffer cmdbuf, const char *reason);
+  void TrackSubmittedAllocator(MTLD3D12CommandAllocator *allocator);
+  void AttachPendingAllocatorsToFence(ID3D12Fence *fence, UINT64 value);
 
   MTLD3D12Device *m_device;
   CommandQueue &m_queue;
@@ -94,6 +98,7 @@ private:
   uint32_t m_metal_queue_max_inflight = 1;
   std::array<D3D12MetalCommandBufferCompletionSlot, 64> m_metal_inflight;
   uint64_t m_metal_submit_count = 0;
+  std::vector<Com<MTLD3D12CommandAllocator>> m_pending_allocators;
 };
 
 } // namespace dxmt

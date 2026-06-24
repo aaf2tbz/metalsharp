@@ -2,7 +2,9 @@
 
 #include "com/com_pointer.hpp"
 #include "d3d12.h"
+#include "Metal.hpp"
 #include <atomic>
+#include <mutex>
 
 namespace dxmt {
 
@@ -32,9 +34,25 @@ public:
 
   D3D12_COMMAND_LIST_TYPE GetType() const { return m_type; }
 
+  void NotifyListOpened();
+  void NotifyListClosed();
+  HRESULT ValidateReusable();
+  void MarkSubmitted();
+  void AttachCompletionFence(ID3D12Fence *fence, uint64_t value);
+  void AttachCompletionCommandBuffer(WMT::CommandBuffer cmdbuf);
+  void MarkCompleted();
+
 private:
+  bool RetireIfCompletedLocked();
+
   MTLD3D12Device *m_device;
   D3D12_COMMAND_LIST_TYPE m_type;
+  mutable std::mutex m_state_mutex;
+  uint32_t m_open_list_count = 0;
+  bool m_in_flight = false;
+  Com<ID3D12Fence> m_completion_fence;
+  uint64_t m_completion_value = 0;
+  WMT::Reference<WMT::CommandBuffer> m_completion_cmdbuf;
   std::atomic<uint32_t> m_refCount = {1ul};
   std::atomic<uint32_t> m_refPrivate = {1ul};
 };

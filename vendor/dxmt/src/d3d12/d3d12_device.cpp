@@ -4496,9 +4496,17 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::EnqueueMakeResident(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandList1(
     UINT node_mask, D3D12_COMMAND_LIST_TYPE type,
     D3D12_COMMAND_LIST_FLAGS flags, REFIID riid, void **command_list) {
-  TRACE("ID3D12Device4::CreateCommandList1 -> delegating to CreateCommandList");
-  return CreateCommandList(node_mask, type, nullptr, nullptr, riid,
-                           command_list);
+  TRACE("ID3D12Device4::CreateCommandList1");
+  if (!command_list)
+    return E_POINTER;
+  InitReturnPtr(command_list);
+
+  auto list = new MTLD3D12GraphicsCommandList(this, nullptr, type, nullptr,
+                                              true);
+  HRESULT hr = list->QueryInterface(riid, command_list);
+  if (FAILED(hr))
+    list->Release();
+  return hr;
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateProtectedResourceSession(

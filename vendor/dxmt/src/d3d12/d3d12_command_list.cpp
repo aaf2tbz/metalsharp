@@ -61,14 +61,19 @@ static void LogCommandListLifecycle(const char *label, uint64_t id,
 
 MTLD3D12GraphicsCommandList::MTLD3D12GraphicsCommandList(
     MTLD3D12Device *device, MTLD3D12CommandAllocator *allocator,
-    D3D12_COMMAND_LIST_TYPE type, ID3D12PipelineState *initial_state)
-    : m_device(device), m_allocator(allocator), m_type(type) {
+    D3D12_COMMAND_LIST_TYPE type, ID3D12PipelineState *initial_state,
+    bool initially_closed)
+    : m_device(device), m_allocator(allocator), m_type(type),
+      m_closed(initially_closed) {
   m_debug_id =
       __atomic_add_fetch(&g_command_list_debug_id, 1, __ATOMIC_RELAXED);
   m_device->AddRef();
-  if (m_allocator)
+  if (m_allocator) {
     m_allocator->AddRef();
-  if (initial_state) {
+    if (!m_closed)
+      m_allocator->NotifyListOpened();
+  }
+  if (initial_state && !m_closed) {
     CmdSetPipelineState cmd = {};
     cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
     cmd.pso = initial_state;
@@ -78,8 +83,11 @@ MTLD3D12GraphicsCommandList::MTLD3D12GraphicsCommandList(
 }
 
 MTLD3D12GraphicsCommandList::~MTLD3D12GraphicsCommandList() {
-  if (m_allocator)
+  if (m_allocator) {
+    if (!m_closed)
+      m_allocator->NotifyListClosed();
     m_allocator->Release();
+  }
   m_device->Release();
 }
 
@@ -178,7 +186,11 @@ MTLD3D12GraphicsCommandList::GetType() {
 
 HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Close() {
   CLTRACE("Close");
+  if (m_closed)
+    return E_FAIL;
   m_closed = true;
+  if (m_allocator)
+    m_allocator->NotifyListClosed();
   LogCommandListLifecycle("close", m_debug_id, m_type, m_cmds, m_closed);
   return S_OK;
 }
@@ -186,7 +198,27 @@ HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Close() {
 HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Reset(
     ID3D12CommandAllocator *allocator, ID3D12PipelineState *initial_state) {
   CLTRACE("Reset");
+  if (!m_closed)
+    return E_FAIL;
+  if (!allocator)
+    return E_INVALIDARG;
+
+  auto *new_allocator = static_cast<MTLD3D12CommandAllocator *>(allocator);
+  if (new_allocator->GetType() != m_type)
+    return E_INVALIDARG;
+  HRESULT hr = new_allocator->ValidateReusable();
+  if (FAILED(hr))
+    return hr;
+
+  if (new_allocator != m_allocator) {
+    new_allocator->AddRef();
+    if (m_allocator)
+      m_allocator->Release();
+    m_allocator = new_allocator;
+  }
+
   m_closed = false;
+  m_allocator->NotifyListOpened();
   m_cmds.clear();
   if (initial_state) {
     CmdSetPipelineState cmd = {};

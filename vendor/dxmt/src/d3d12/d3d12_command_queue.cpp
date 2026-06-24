@@ -1,5 +1,6 @@
 #include "d3d12_command_queue.hpp"
 #include "d3d12_binding_completeness.hpp"
+#include "d3d12_command_allocator.hpp"
 #include "d3d12_command_list.hpp"
 #include "d3d12_command_stats.hpp"
 #include "d3d12_descriptor_heap.hpp"
@@ -8118,10 +8119,10 @@ MTLD3D12CommandQueue::AcquireMetalCommandBuffer(const char *reason) {
   return m_wmt_queue.commandBuffer();
 }
 
-void MTLD3D12CommandQueue::TrackMetalCommandBuffer(WMT::CommandBuffer cmdbuf,
-                                                   const char *reason) {
+uint64_t MTLD3D12CommandQueue::TrackMetalCommandBuffer(
+    WMT::CommandBuffer cmdbuf, const char *reason) {
   if (!cmdbuf.handle)
-    return;
+    return 0;
 
   uint32_t limit = std::max<uint32_t>(
       1, std::min<uint32_t>(m_metal_queue_max_inflight,
@@ -8129,8 +8130,29 @@ void MTLD3D12CommandQueue::TrackMetalCommandBuffer(WMT::CommandBuffer cmdbuf,
   auto &slot = m_metal_inflight[m_metal_submit_count % limit];
   if (slot.cmdbuf.handle)
     WaitForMetalCommandBufferSlot(reason);
-  ArmD3D12MetalCompletionSlot(slot, cmdbuf, m_metal_submit_count + 1);
+  const uint64_t serial = m_metal_submit_count + 1;
+  ArmD3D12MetalCompletionSlot(slot, cmdbuf, serial);
   m_metal_submit_count++;
+  return serial;
+}
+
+void MTLD3D12CommandQueue::TrackSubmittedAllocator(
+    MTLD3D12CommandAllocator *allocator) {
+  if (!allocator)
+    return;
+  allocator->MarkSubmitted();
+  m_pending_allocators.emplace_back(allocator);
+}
+
+void MTLD3D12CommandQueue::AttachPendingAllocatorsToFence(ID3D12Fence *fence,
+                                                          UINT64 value) {
+  if (!fence)
+    return;
+  for (auto &allocator : m_pending_allocators) {
+    if (allocator)
+      allocator->AttachCompletionFence(fence, value);
+  }
+  m_pending_allocators.clear();
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -8238,7 +8260,14 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       QTRACE("ECL: list %u is null, skipping", li);
       continue;
     }
+    if (!list->IsClosed()) {
+      Logger::err(str::format(
+          "ExecuteCommandLists rejected open command list id=",
+          (unsigned long long)list->GetDebugId()));
+      continue;
+    }
     const uint64_t command_list_id = list->GetDebugId();
+    auto *submitted_allocator = list->GetAllocator();
 
     QTRACE("ECL: creating cmdbuf from m_wmt_queue");
     auto cmdbuf = AcquireMetalCommandBuffer("ExecuteCommandLists");
@@ -8257,7 +8286,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                          cmds.size());
     if (cmds.empty()) {
       QTRACE("ExecuteCommandLists: empty cmdlist, committing");
+      TrackSubmittedAllocator(submitted_allocator);
       TrackMetalCommandBuffer(cmdbuf, "ExecuteCommandLists.empty");
+      if (submitted_allocator)
+        submitted_allocator->AttachCompletionCommandBuffer(cmdbuf);
       cmdbuf.commit();
       QTRACE("ExecuteCommandLists: empty cmdlist committed ok");
       continue;
@@ -8812,33 +8844,39 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         LogReplayRetentionCandidate("execute_indirect_args", arg_res);
         void *arg_base = nullptr;
         HRESULT map_hr = arg_res->Map(0, nullptr, &arg_base);
-        if (FAILED(map_hr) || !arg_base) {
-          QTRACE("ExecuteIndirect SKIPPED argument buffer not CPU-visible "
-                 "hr=0x%08x",
-                 (unsigned)map_hr);
-          break;
-        }
+        bool arg_mapped = SUCCEEDED(map_hr) && arg_base;
 
         uint32_t command_count = cmd->max_command_count;
         if (cmd->count_buffer) {
           auto *count_res = static_cast<MTLD3D12Resource *>(cmd->count_buffer);
           LogReplayRetentionCandidate("execute_indirect_count", count_res);
+          uint32_t gpu_count = command_count;
+          bool have_count = false;
           void *count_base = nullptr;
           HRESULT count_hr = count_res->Map(0, nullptr, &count_base);
           if (SUCCEEDED(count_hr) && count_base &&
               cmd->count_buffer_offset + sizeof(uint32_t) <=
                   count_res->GetBufferByteLength()) {
-            uint32_t gpu_count = *reinterpret_cast<const uint32_t *>(
+            gpu_count = *reinterpret_cast<const uint32_t *>(
                 static_cast<const uint8_t *>(count_base) +
                 cmd->count_buffer_offset);
+            have_count = true;
+          } else if (cmd->count_buffer_offset + sizeof(uint32_t) <=
+                     count_res->GetBufferByteLength()) {
+            have_count = count_res->ReadBufferShadow(
+                cmd->count_buffer_offset, &gpu_count, sizeof(gpu_count));
+          }
+          if (SUCCEEDED(count_hr) && count_base)
+            count_res->Unmap(0, nullptr);
+          if (have_count) {
             command_count = std::min(command_count, gpu_count);
             QTRACE("ExecuteIndirect count buffer value=%u clamped=%u",
                    gpu_count, command_count);
           } else {
-            QTRACE("ExecuteIndirect count buffer unavailable hr=0x%08x",
+            QTRACE("ExecuteIndirect SKIPPED unreadable count buffer hr=0x%08x",
                    (unsigned)count_hr);
+            command_count = 0;
           }
-          count_res->Unmap(0, nullptr);
         }
 
         auto replay_indirect_draw = [&](const D3D12_DRAW_ARGUMENTS &args) {
@@ -8981,17 +9019,88 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             };
 
         const auto arg_len = arg_res->GetBufferByteLength();
-        const uint8_t *arg_bytes = static_cast<const uint8_t *>(arg_base);
+        if (cmd->argument_buffer_offset > arg_len) {
+          QTRACE("ExecuteIndirect SKIPPED argument offset out of bounds off=%llu len=%llu",
+                 (unsigned long long)cmd->argument_buffer_offset,
+                 (unsigned long long)arg_len);
+          if (arg_mapped)
+            arg_res->Unmap(0, nullptr);
+          break;
+        }
+        uint64_t max_records =
+            (arg_len - cmd->argument_buffer_offset) / sig_desc->ByteStride;
+        if (command_count > max_records)
+          command_count = static_cast<uint32_t>(std::min<uint64_t>(
+              max_records, std::numeric_limits<uint32_t>::max()));
+
+        auto indirect_argument_size = [](const D3D12_INDIRECT_ARGUMENT_DESC &arg) -> uint64_t {
+          switch (arg.Type) {
+          case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW:
+            return sizeof(D3D12_DRAW_ARGUMENTS);
+          case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED:
+            return sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+          case D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH:
+            return sizeof(D3D12_DISPATCH_ARGUMENTS);
+          case D3D12_INDIRECT_ARGUMENT_TYPE_VERTEX_BUFFER_VIEW:
+            return sizeof(D3D12_VERTEX_BUFFER_VIEW);
+          case D3D12_INDIRECT_ARGUMENT_TYPE_INDEX_BUFFER_VIEW:
+            return sizeof(D3D12_INDEX_BUFFER_VIEW);
+          case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT:
+            return uint64_t(arg.Constant.Num32BitValuesToSet) * sizeof(uint32_t);
+          case D3D12_INDIRECT_ARGUMENT_TYPE_CONSTANT_BUFFER_VIEW:
+          case D3D12_INDIRECT_ARGUMENT_TYPE_SHADER_RESOURCE_VIEW:
+          case D3D12_INDIRECT_ARGUMENT_TYPE_UNORDERED_ACCESS_VIEW:
+            return sizeof(D3D12_GPU_VIRTUAL_ADDRESS);
+          default:
+            return 0;
+          }
+        };
+
+        uint64_t record_payload_bytes = 0;
+        for (uint32_t ai = 0; ai < sig_desc->NumArgumentDescs; ai++)
+          record_payload_bytes += indirect_argument_size(sig_desc->pArgumentDescs[ai]);
+        if (record_payload_bytes > sig_desc->ByteStride) {
+          QTRACE("ExecuteIndirect SKIPPED payload=%llu exceeds stride=%u",
+                 (unsigned long long)record_payload_bytes,
+                 sig_desc->ByteStride);
+          if (arg_mapped)
+            arg_res->Unmap(0, nullptr);
+          break;
+        }
+
+        constexpr uint64_t kMaxExecuteIndirectRecordShadowBytes = 64ull << 10;
+        if (!arg_mapped && record_payload_bytes > kMaxExecuteIndirectRecordShadowBytes) {
+          QTRACE("ExecuteIndirect SKIPPED oversized unmapped payload=%llu",
+                 (unsigned long long)record_payload_bytes);
+          break;
+        }
+        std::vector<uint8_t> record_shadow;
+        if (!arg_mapped)
+          record_shadow.resize(static_cast<size_t>(record_payload_bytes));
+
         for (uint32_t ci = 0; ci < command_count; ci++) {
           uint64_t record_off =
               cmd->argument_buffer_offset + uint64_t(ci) * sig_desc->ByteStride;
+          const uint8_t *record_bytes =
+              arg_mapped ? static_cast<const uint8_t *>(arg_base) + record_off
+                         : record_shadow.data();
+          if (!arg_mapped && record_payload_bytes &&
+              !arg_res->ReadBufferShadow(record_off, record_shadow.data(),
+                                         record_payload_bytes)) {
+            QTRACE("ExecuteIndirect record %u unavailable off=%llu payload=%llu stride=%u hr=0x%08x",
+                   ci, (unsigned long long)record_off,
+                   (unsigned long long)record_payload_bytes,
+                   sig_desc->ByteStride, (unsigned)map_hr);
+            continue;
+          }
           uint64_t cursor = 0;
           bool valid_record = true;
           for (uint32_t ai = 0; ai < sig_desc->NumArgumentDescs; ai++) {
             const auto &arg_desc = sig_desc->pArgumentDescs[ai];
             auto can_read = [&](uint64_t size) {
               bool ok = record_off + cursor + size <= arg_len &&
-                        cursor + size <= sig_desc->ByteStride;
+                        cursor + size <= sig_desc->ByteStride &&
+                        (arg_mapped || cursor + size <= record_payload_bytes);
               if (!ok) {
                 QTRACE("ExecuteIndirect cmd=%u arg=%u type=%u out-of-bounds "
                        "cursor=%llu size=%llu stride=%u len=%llu",
@@ -9001,7 +9110,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               }
               return ok;
             };
-            const uint8_t *src = arg_bytes + record_off + cursor;
+            const uint8_t *src = record_bytes + cursor;
             switch (arg_desc.Type) {
             case D3D12_INDIRECT_ARGUMENT_TYPE_DRAW: {
               if (!can_read(sizeof(D3D12_DRAW_ARGUMENTS))) {
@@ -9148,7 +9257,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
               break;
           }
         }
-        arg_res->Unmap(0, nullptr);
+        if (arg_mapped)
+          arg_res->Unmap(0, nullptr);
         break;
       }
       case CmdType::CopyBufferRegion: {
@@ -9163,6 +9273,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           auto *src_res = static_cast<MTLD3D12Resource *>(cmd->src);
           LogReplayRetentionCandidate("copy_buffer_dst", dst_res);
           LogReplayRetentionCandidate("copy_buffer_src", src_res);
+          st.MarkSwapchainWorkEncoded(dst_res);
+          src_res->CopyBufferShadowRangeTo(dst_res, cmd->src_offset,
+                                           cmd->dst_offset, cmd->byte_count);
           if (dst_res->GetMTLBuffer().handle &&
               src_res->GetMTLBuffer().handle) {
             auto blit = cmdbuf.blitCommandEncoder();
@@ -9203,6 +9316,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
         LogReplayRetentionCandidate("copy_texture_dst", dst_res);
         LogReplayRetentionCandidate("copy_texture_src", src_res);
+        st.MarkSwapchainWorkEncoded(dst_res);
         QTRACE("CopyTextureRegion dst=%p src=%p dst_type=%u src_type=%u",
                (void *)dst_res, (void *)src_res, cmd->dst_type, cmd->src_type);
 
@@ -9411,9 +9525,18 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           break;
         LogReplayRetentionCandidate("copy_resource_dst", dst_res);
         LogReplayRetentionCandidate("copy_resource_src", src_res);
+        st.MarkSwapchainWorkEncoded(dst_res);
         st.CloseRenderEncoder();
 
         if (dst_res->GetMTLBuffer().handle && src_res->GetMTLBuffer().handle) {
+          D3D12_RESOURCE_DESC src_desc = {};
+          D3D12_RESOURCE_DESC dst_desc = {};
+          src_res->GetDesc(&src_desc);
+          dst_res->GetDesc(&dst_desc);
+          const uint64_t copy_length = std::min<uint64_t>(src_desc.Width,
+                                                          dst_desc.Width);
+          src_res->CopyBufferShadowRangeTo(dst_res, 0, 0, copy_length);
+
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_copyres_buf", blit.handle);
           ScopedMetalEncoderEnd blit_guard{blit, "blit_copyres_buf"};
@@ -9428,9 +9551,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           copy.src_offset = 0;
           copy.dst = dst_res->GetMTLBuffer().handle;
           copy.dst_offset = 0;
-          D3D12_RESOURCE_DESC src_desc;
-          src_res->GetDesc(&src_desc);
-          copy.copy_length = src_desc.Width;
+          copy.copy_length = copy_length;
           blit.encodeCommands(reinterpret_cast<const wmtcmd_blit_nop *>(&copy));
           EndMetalEncoder(blit, "blit_copyres_buf");
         } else if (dst_res->GetMTLTexture().handle &&
@@ -9474,6 +9595,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         dst_res->GetDesc(&dst_desc);
         LogReplayRetentionCandidate("resolve_dst", dst_res);
         LogReplayRetentionCandidate("resolve_src", src_res);
+        st.MarkSwapchainWorkEncoded(dst_res);
         QTRACE("ResolveSubresource dst=%p sub=%u src=%p sub=%u fmt=%u mode=%u "
                "rect=%u dst=%u,%u",
                (void *)dst_res, cmd->dst_sub, (void *)src_res, cmd->src_sub,
@@ -9579,6 +9701,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           LogReplayRetentionCandidate("write_buffer_immediate_dst", res);
 
           uint64_t dst_offset = dest - res->GetGPUVirtualAddress();
+          if (dst_offset + sizeof(value) <= res->GetBufferByteLength())
+            res->WriteBufferShadow(dst_offset, &value, sizeof(value));
           void *mapped = nullptr;
           HRESULT map_hr = res->Map(0, nullptr, &mapped);
           if (SUCCEEDED(map_hr) && mapped &&
@@ -10019,7 +10143,25 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           break;
         }
 
+        auto write_clear_shadow = [&](const uint8_t *pattern) {
+          constexpr uint64_t kClearShadowChunk = 16ull << 20;
+          std::vector<uint8_t> shadow;
+          uint64_t written = 0;
+          while (written < clear_length) {
+            const uint64_t to_write =
+                std::min<uint64_t>(kClearShadowChunk, clear_length - written);
+            shadow.resize(static_cast<size_t>(to_write));
+            for (uint64_t i = 0; i < to_write; i++)
+              shadow[static_cast<size_t>(i)] = pattern[(written + i) & 15];
+            res->WriteBufferShadow(clear_offset + written, shadow.data(),
+                                   to_write);
+            written += to_write;
+          }
+        };
+
         if (zero_clear) {
+          const uint8_t zero_pattern[16] = {};
+          write_clear_shadow(zero_pattern);
           auto blit = cmdbuf.blitCommandEncoder();
           ENC_CREATE("blit_clearuav", blit.handle);
           ScopedMetalEncoderEnd blit_guard{blit, "blit_clearuav"};
@@ -10053,6 +10195,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         for (uint64_t off = 0; off < clear_length; off++)
           dst[off] = pattern[off & 15];
         res->Unmap(0, nullptr);
+        write_clear_shadow(pattern);
         QTRACE("ClearUnorderedAccessView CPU pattern clear off=%llu len=%llu",
                (unsigned long long)clear_offset,
                (unsigned long long)clear_length);
@@ -10110,10 +10253,20 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                  std::min(stride, sizeof(value)));
         }
 
+        const uint64_t dst_buffer_len = dst->GetBufferByteLength();
+        if (cmd->dst_offset > dst_buffer_len ||
+            bytes > dst_buffer_len - cmd->dst_offset) {
+          QTRACE("ResolveQueryData SKIPPED out-of-range off=%llu bytes=%zu "
+                 "len=%llu",
+                 (unsigned long long)cmd->dst_offset, bytes,
+                 (unsigned long long)dst_buffer_len);
+          break;
+        }
+        dst->WriteBufferShadow(cmd->dst_offset, results.data(), bytes);
+
         void *mapped = nullptr;
         HRESULT map_hr = dst->Map(0, nullptr, &mapped);
-        if (SUCCEEDED(map_hr) && mapped &&
-            cmd->dst_offset + bytes <= dst->GetBufferByteLength()) {
+        if (SUCCEEDED(map_hr) && mapped) {
           memcpy(static_cast<uint8_t *>(mapped) + cmd->dst_offset,
                  results.data(), bytes);
           dst->Unmap(0, nullptr);
@@ -10386,7 +10539,11 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     st.CaptureSwapchainRenderReadback(m_device, cmdbuf);
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
-    TrackMetalCommandBuffer(cmdbuf, "ExecuteCommandLists");
+    TrackSubmittedAllocator(submitted_allocator);
+    uint64_t producer_submit_serial =
+        TrackMetalCommandBuffer(cmdbuf, "ExecuteCommandLists");
+    if (submitted_allocator)
+      submitted_allocator->AttachCompletionCommandBuffer(cmdbuf);
     cmdbuf.commit();
     const bool sync_execute =
         DXMTD3D12SyncExecuteCommandBuffers() ||
@@ -10407,6 +10564,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
     auto status =
         sync_execute ? cmdbuf.status() : WMTCommandBufferStatusCommitted;
+    if (sync_execute && submitted_allocator)
+      submitted_allocator->MarkCompleted();
     QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld sync=%u "
            "queue_type=%u",
            (int)status, (long long)wait_ms, sync_execute ? 1u : 0u,
@@ -10435,6 +10594,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           __atomic_add_fetch(&g_queue_submit_serial, 1, __ATOMIC_RELAXED);
       D3D12SwapchainBackbufferWork work = {};
       work.serial = queue_serial;
+      work.producer_submit_serial = producer_submit_serial;
+      work.producer_cmdbuf = cmdbuf;
       work.command_count = stream_stats.command_count;
       work.draw_count = draw_count;
       work.indexed_draw_count = indexed_draw_count;
@@ -10551,6 +10712,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12CommandQueue::Signal(ID3D12Fence *fence,
   DXMTD3D12ScopedTimer signal_timer("Queue", "SignalFence");
   signal_timer.SetDetail("queue_type=%u value=%llu fence=%p", m_desc.Type,
                          (unsigned long long)value, (void *)fence);
+  AttachPendingAllocatorsToFence(fence, value);
   TrackMetalCommandBuffer(cmdbuf, "Signal");
   cmdbuf.commit();
   QTRACE("CmdQueue::Signal queued queue_type=%u value=%llu fence=%p",

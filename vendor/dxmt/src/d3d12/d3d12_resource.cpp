@@ -5,6 +5,8 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 
+#include <algorithm>
+
 #define RTRACE(fmt, ...) DXMTD3D12Trace("Resource", fmt, ##__VA_ARGS__)
 
 namespace dxmt {
@@ -217,6 +219,231 @@ uint64_t MTLD3D12Resource::GetBufferByteLength() const {
   if (m_desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
     return m_desc.Width;
   return m_buf_info.length;
+}
+
+bool MTLD3D12Resource::ReadBufferShadow(uint64_t offset, void *dst,
+                                        uint64_t bytes) const {
+  if (!dst || m_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER)
+    return false;
+  if (bytes == 0)
+    return true;
+  if (offset > m_desc.Width || bytes > m_desc.Width - offset)
+    return false;
+  if (m_cpu_addr) {
+    memcpy(dst, static_cast<const uint8_t *>(m_cpu_addr) + offset,
+           static_cast<size_t>(bytes));
+    return true;
+  }
+
+  std::lock_guard<std::mutex> lock(m_shadow_mutex);
+  uint64_t copied = 0;
+  auto *out = static_cast<uint8_t *>(dst);
+  while (copied < bytes) {
+    const uint64_t cursor = offset + copied;
+    const BufferShadowSegment *covering = nullptr;
+    for (const auto &segment : m_buffer_shadow_segments) {
+      const uint64_t segment_size = segment.bytes.size();
+      if (cursor >= segment.offset && cursor - segment.offset < segment_size) {
+        covering = &segment;
+        break;
+      }
+    }
+    if (!covering)
+      return false;
+    const uint64_t segment_delta = cursor - covering->offset;
+    const uint64_t available = covering->bytes.size() - segment_delta;
+    const uint64_t to_copy = std::min<uint64_t>(available, bytes - copied);
+    memcpy(out + copied, covering->bytes.data() + segment_delta,
+           static_cast<size_t>(to_copy));
+    copied += to_copy;
+  }
+  return true;
+}
+
+void MTLD3D12Resource::WriteBufferShadow(uint64_t offset, const void *src,
+                                         uint64_t bytes) {
+  constexpr uint64_t kMaxSingleShadowWrite = 16ull << 20;
+  constexpr uint64_t kMaxTotalShadowBytes = 64ull << 20;
+
+  if (!src || m_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || !bytes)
+    return;
+  if (offset > m_desc.Width || bytes > m_desc.Width - offset)
+    return;
+  if (m_cpu_addr)
+    memcpy(static_cast<uint8_t *>(m_cpu_addr) + offset, src,
+           static_cast<size_t>(bytes));
+  if (bytes > kMaxSingleShadowWrite)
+    return;
+
+  const uint64_t write_end = offset + bytes;
+  BufferShadowSegment new_segment;
+  new_segment.offset = offset;
+  new_segment.bytes.assign(static_cast<const uint8_t *>(src),
+                           static_cast<const uint8_t *>(src) + bytes);
+
+  std::lock_guard<std::mutex> lock(m_shadow_mutex);
+  std::vector<BufferShadowSegment> next;
+  next.reserve(m_buffer_shadow_segments.size() + 1);
+
+  for (const auto &segment : m_buffer_shadow_segments) {
+    if (segment.bytes.empty())
+      continue;
+    const uint64_t segment_start = segment.offset;
+    const uint64_t segment_end = segment.offset + segment.bytes.size();
+    if (segment_end <= offset || segment_start >= write_end) {
+      next.push_back(segment);
+      continue;
+    }
+
+    if (segment_start < offset) {
+      BufferShadowSegment left;
+      left.offset = segment_start;
+      left.bytes.assign(segment.bytes.begin(),
+                        segment.bytes.begin() + (offset - segment_start));
+      next.push_back(std::move(left));
+    }
+    if (segment_end > write_end) {
+      BufferShadowSegment right;
+      right.offset = write_end;
+      const uint64_t right_from = write_end - segment_start;
+      right.bytes.assign(segment.bytes.begin() + right_from,
+                         segment.bytes.end());
+      next.push_back(std::move(right));
+    }
+  }
+  next.push_back(std::move(new_segment));
+
+  std::sort(next.begin(), next.end(),
+            [](const BufferShadowSegment &a, const BufferShadowSegment &b) {
+              return a.offset < b.offset;
+            });
+
+  std::vector<BufferShadowSegment> merged;
+  merged.reserve(next.size());
+  for (auto &segment : next) {
+    if (segment.bytes.empty())
+      continue;
+    if (merged.empty()) {
+      merged.push_back(std::move(segment));
+      continue;
+    }
+    auto &tail = merged.back();
+    const uint64_t tail_end = tail.offset + tail.bytes.size();
+    if (segment.offset == tail_end) {
+      tail.bytes.insert(tail.bytes.end(), segment.bytes.begin(),
+                        segment.bytes.end());
+    } else {
+      merged.push_back(std::move(segment));
+    }
+  }
+  m_buffer_shadow_segments = std::move(merged);
+
+  uint64_t total_shadow_bytes = 0;
+  for (const auto &segment : m_buffer_shadow_segments)
+    total_shadow_bytes += segment.bytes.size();
+  if (total_shadow_bytes > kMaxTotalShadowBytes) {
+    m_buffer_shadow_segments.clear();
+    BufferShadowSegment retained;
+    retained.offset = offset;
+    retained.bytes.assign(static_cast<const uint8_t *>(src),
+                          static_cast<const uint8_t *>(src) + bytes);
+    m_buffer_shadow_segments.push_back(std::move(retained));
+  }
+}
+
+void MTLD3D12Resource::CopyBufferShadowRangeTo(MTLD3D12Resource *dst,
+                                               uint64_t src_offset,
+                                               uint64_t dst_offset,
+                                               uint64_t bytes) const {
+  constexpr uint64_t kMaxChunkBytes = 16ull << 20;
+  if (!dst || m_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER ||
+      dst->m_desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER || !bytes)
+    return;
+  if (src_offset > m_desc.Width || bytes > m_desc.Width - src_offset ||
+      dst_offset > dst->m_desc.Width || bytes > dst->m_desc.Width - dst_offset)
+    return;
+
+  auto invalidate_destination = [&]() {
+    const uint64_t dst_end = dst_offset + bytes;
+    std::lock_guard<std::mutex> lock(dst->m_shadow_mutex);
+    std::vector<BufferShadowSegment> next;
+    next.reserve(dst->m_buffer_shadow_segments.size());
+    for (const auto &segment : dst->m_buffer_shadow_segments) {
+      if (segment.bytes.empty())
+        continue;
+      const uint64_t segment_start = segment.offset;
+      const uint64_t segment_end = segment.offset + segment.bytes.size();
+      if (segment_end <= dst_offset || segment_start >= dst_end) {
+        next.push_back(segment);
+        continue;
+      }
+      if (segment_start < dst_offset) {
+        BufferShadowSegment left;
+        left.offset = segment_start;
+        left.bytes.assign(segment.bytes.begin(),
+                          segment.bytes.begin() +
+                              (dst_offset - segment_start));
+        next.push_back(std::move(left));
+      }
+      if (segment_end > dst_end) {
+        BufferShadowSegment right;
+        right.offset = dst_end;
+        const uint64_t right_from = dst_end - segment_start;
+        right.bytes.assign(segment.bytes.begin() + right_from,
+                           segment.bytes.end());
+        next.push_back(std::move(right));
+      }
+    }
+    dst->m_buffer_shadow_segments = std::move(next);
+  };
+
+  if (m_cpu_addr) {
+    invalidate_destination();
+    uint64_t copied = 0;
+    while (copied < bytes) {
+      const uint64_t to_copy = std::min<uint64_t>(kMaxChunkBytes, bytes - copied);
+      dst->WriteBufferShadow(dst_offset + copied,
+                             static_cast<const uint8_t *>(m_cpu_addr) +
+                                 src_offset + copied,
+                             to_copy);
+      copied += to_copy;
+    }
+    return;
+  }
+
+  struct Chunk {
+    uint64_t src_offset = 0;
+    std::vector<uint8_t> bytes;
+  };
+  std::vector<Chunk> chunks;
+
+  {
+    std::lock_guard<std::mutex> lock(m_shadow_mutex);
+    const uint64_t src_end = src_offset + bytes;
+    for (const auto &segment : m_buffer_shadow_segments) {
+      const uint64_t segment_start = segment.offset;
+      const uint64_t segment_end = segment.offset + segment.bytes.size();
+      uint64_t overlap_start = std::max<uint64_t>(segment_start, src_offset);
+      const uint64_t overlap_end = std::min<uint64_t>(segment_end, src_end);
+      while (overlap_start < overlap_end) {
+        const uint64_t to_copy =
+            std::min<uint64_t>(kMaxChunkBytes, overlap_end - overlap_start);
+        Chunk chunk;
+        chunk.src_offset = overlap_start;
+        const uint64_t segment_delta = overlap_start - segment_start;
+        chunk.bytes.assign(segment.bytes.begin() + segment_delta,
+                           segment.bytes.begin() + segment_delta + to_copy);
+        chunks.push_back(std::move(chunk));
+        overlap_start += to_copy;
+      }
+    }
+  }
+
+  invalidate_destination();
+  for (const auto &chunk : chunks) {
+    dst->WriteBufferShadow(dst_offset + (chunk.src_offset - src_offset),
+                           chunk.bytes.data(), chunk.bytes.size());
+  }
 }
 
 MTLD3D12Resource::~MTLD3D12Resource() {
