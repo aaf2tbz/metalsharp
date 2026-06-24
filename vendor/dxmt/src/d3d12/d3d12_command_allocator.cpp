@@ -82,15 +82,8 @@ MTLD3D12CommandAllocator::GetDevice(REFIID riid, void **device) {
 bool MTLD3D12CommandAllocator::RetireIfCompletedLocked() {
   if (!m_in_flight)
     return true;
-  bool completed = false;
-  if (m_completion_fence &&
-      m_completion_fence->GetCompletedValue() >= m_completion_value)
-    completed = true;
-  if (!completed && m_completion_cmdbuf.handle) {
-    auto status = m_completion_cmdbuf.status();
-    completed = status > WMTCommandBufferStatusScheduled;
-  }
-  if (!completed)
+  if (!m_completion_fence ||
+      m_completion_fence->GetCompletedValue() < m_completion_value)
     return false;
   m_in_flight = false;
   m_completion_fence = nullptr;

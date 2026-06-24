@@ -10564,8 +10564,6 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
 
     auto status =
         sync_execute ? cmdbuf.status() : WMTCommandBufferStatusCommitted;
-    if (sync_execute && submitted_allocator)
-      submitted_allocator->MarkCompleted();
     QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld sync=%u "
            "queue_type=%u",
            (int)status, (long long)wait_ms, sync_execute ? 1u : 0u,
