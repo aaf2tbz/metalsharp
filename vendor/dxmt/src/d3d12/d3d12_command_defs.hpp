@@ -5,6 +5,8 @@
 
 namespace dxmt {
 
+static constexpr uint32_t kD3D12RootDescriptorTableSnapshotCount = 32;
+
 enum class CmdType : uint32_t {
   DrawInstanced,
   DrawIndexedInstanced,
@@ -147,10 +149,25 @@ struct CmdSetRootCBV {
   D3D12_GPU_VIRTUAL_ADDRESS address;
 };
 
+struct D3D12DescriptorSnapshot {
+  uint8_t valid = 0;
+  D3D12_DESCRIPTOR_HEAP_TYPE type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
+  D3D12_CONSTANT_BUFFER_VIEW_DESC cbv = {};
+  D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
+  D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
+  D3D12_RENDER_TARGET_VIEW_DESC rtv = {};
+  D3D12_DEPTH_STENCIL_VIEW_DESC dsv = {};
+  D3D12_SAMPLER_DESC sampler = {};
+  ID3D12Resource *resource = nullptr;
+  ID3D12Resource *resource_uav_counter = nullptr;
+};
+
 struct CmdSetRootDescriptorTable {
   CmdHeader header;
   uint32_t root_param_index;
+  uint32_t snapshot_count;
   D3D12_GPU_DESCRIPTOR_HANDLE base_descriptor;
+  D3D12DescriptorSnapshot snapshots[kD3D12RootDescriptorTableSnapshotCount];
 };
 
 struct CmdIASetPrimitiveTopology {
@@ -180,19 +197,6 @@ struct CmdRSSetScissorRects {
   CmdHeader header;
   uint32_t count;
   D3D12_RECT rects[1];
-};
-
-struct D3D12DescriptorSnapshot {
-  uint8_t valid = 0;
-  D3D12_DESCRIPTOR_HEAP_TYPE type = D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES;
-  D3D12_CONSTANT_BUFFER_VIEW_DESC cbv = {};
-  D3D12_SHADER_RESOURCE_VIEW_DESC srv = {};
-  D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
-  D3D12_RENDER_TARGET_VIEW_DESC rtv = {};
-  D3D12_DEPTH_STENCIL_VIEW_DESC dsv = {};
-  D3D12_SAMPLER_DESC sampler = {};
-  ID3D12Resource *resource = nullptr;
-  ID3D12Resource *resource_uav_counter = nullptr;
 };
 
 struct CmdOMSetRenderTargets {

@@ -1131,6 +1131,10 @@ struct ReplayState {
   D3D12_GPU_VIRTUAL_ADDRESS root_srvs[kRootParameterSlotCount] = {};
   D3D12_GPU_VIRTUAL_ADDRESS root_uavs[kRootParameterSlotCount] = {};
   D3D12_GPU_DESCRIPTOR_HANDLE root_tables[kRootParameterSlotCount] = {};
+  D3D12DescriptorSnapshot
+      root_table_snapshots[kRootParameterSlotCount]
+                          [kD3D12RootDescriptorTableSnapshotCount] = {};
+  uint32_t root_table_snapshot_counts[kRootParameterSlotCount] = {};
   uint8_t root_constants_buf[kRootParameterSlotCount * kRootConstantBytes] = {};
   uint32_t root_constant_offsets[kRootParameterSlotCount] = {};
   uint32_t root_constant_sizes[kRootParameterSlotCount] = {};
@@ -1174,6 +1178,51 @@ struct ReplayState {
     return snapshot.valid && snapshot.resource
                ? static_cast<MTLD3D12Resource *>(snapshot.resource)
                : nullptr;
+  }
+
+  D3D12Descriptor *MaterializeTableSnapshot(
+      const D3D12DescriptorSnapshot &snapshot,
+      D3D12_DESCRIPTOR_RANGE_TYPE range_type, D3D12Descriptor &storage) const {
+    if (!snapshot.valid)
+      return nullptr;
+    storage = {};
+    storage.type = snapshot.type;
+    switch (range_type) {
+    case D3D12_DESCRIPTOR_RANGE_TYPE_CBV:
+      storage.cbv = snapshot.cbv;
+      break;
+    case D3D12_DESCRIPTOR_RANGE_TYPE_SRV:
+      storage.srv = snapshot.srv;
+      break;
+    case D3D12_DESCRIPTOR_RANGE_TYPE_UAV:
+      storage.uav = snapshot.uav;
+      break;
+    case D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER:
+      storage.sampler = snapshot.sampler;
+      break;
+    }
+    storage.resource = snapshot.resource;
+    storage.resource_uav_counter = snapshot.resource_uav_counter;
+    return &storage;
+  }
+
+  D3D12Descriptor *TableSnapshotDescriptor(
+      bool compute, uint32_t root_idx, uint32_t descriptor_offset,
+      D3D12_DESCRIPTOR_RANGE_TYPE range_type, D3D12Descriptor &storage) const {
+    if (root_idx >= kRootParameterSlotCount ||
+        descriptor_offset >= kD3D12RootDescriptorTableSnapshotCount)
+      return nullptr;
+    if (compute && comp_table_set[root_idx] &&
+        descriptor_offset < comp_table_snapshot_counts[root_idx])
+      return MaterializeTableSnapshot(
+          comp_table_snapshots[root_idx][descriptor_offset], range_type,
+          storage);
+    if (root_table_set[root_idx] &&
+        descriptor_offset < root_table_snapshot_counts[root_idx])
+      return MaterializeTableSnapshot(
+          root_table_snapshots[root_idx][descriptor_offset], range_type,
+          storage);
+    return nullptr;
   }
 
   MTLD3D12Resource *SwapchainRenderTargetResource() const {
@@ -3037,6 +3086,10 @@ struct ReplayState {
   D3D12_GPU_VIRTUAL_ADDRESS comp_srvs[kRootParameterSlotCount] = {};
   D3D12_GPU_VIRTUAL_ADDRESS comp_uavs[kRootParameterSlotCount] = {};
   D3D12_GPU_DESCRIPTOR_HANDLE comp_tables[kRootParameterSlotCount] = {};
+  D3D12DescriptorSnapshot
+      comp_table_snapshots[kRootParameterSlotCount]
+                          [kD3D12RootDescriptorTableSnapshotCount] = {};
+  uint32_t comp_table_snapshot_counts[kRootParameterSlotCount] = {};
   uint8_t comp_constants_buf[kRootParameterSlotCount * kRootConstantBytes] = {};
   uint32_t comp_constant_offsets[kRootParameterSlotCount] = {};
   uint32_t comp_constant_sizes[kRootParameterSlotCount] = {};
@@ -3680,9 +3733,9 @@ struct ReplayState {
     for (auto &arg : args) {
       uint32_t root_idx = ~0u;
       uint32_t descriptor_offset = 0;
+      D3D12_DESCRIPTOR_RANGE_TYPE range_type =
+          D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
       if (dxmt_sig) {
-        D3D12_DESCRIPTOR_RANGE_TYPE range_type =
-            D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         bool table_arg = true;
         if (arg.Type == SM50BindingType::SRV) {
           range_type = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -3768,12 +3821,19 @@ struct ReplayState {
         continue;
       }
 
-      for (uint32_t h = 0; h < desc_heap_count; h++) {
-        auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
-        if (!heap)
-          continue;
-        auto *desc = heap->GetDescriptorFromGPUHandle(root_tables[root_idx],
-                                                      descriptor_offset);
+      D3D12Descriptor snapshot_desc_storage = {};
+      D3D12Descriptor *snapshot_desc = TableSnapshotDescriptor(
+          false, root_idx, descriptor_offset, range_type,
+          snapshot_desc_storage);
+      for (uint32_t h = 0; h < (snapshot_desc ? 1u : desc_heap_count); h++) {
+        D3D12Descriptor *desc = snapshot_desc;
+        if (!desc) {
+          auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+          if (!heap)
+            continue;
+          desc = heap->GetDescriptorFromGPUHandle(root_tables[root_idx],
+                                                  descriptor_offset);
+        }
         if (!desc)
           continue;
 
@@ -5196,12 +5256,19 @@ struct ReplayState {
       D3D12_GPU_DESCRIPTOR_HANDLE table_handle = comp_table_set[root_idx]
                                                      ? comp_tables[root_idx]
                                                      : root_tables[root_idx];
-      for (uint32_t h = 0; h < desc_heap_count; h++) {
-        auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
-        if (!heap)
-          continue;
-        auto *desc =
-            heap->GetDescriptorFromGPUHandle(table_handle, descriptor_offset);
+      D3D12Descriptor snapshot_desc_storage = {};
+      D3D12Descriptor *snapshot_desc = TableSnapshotDescriptor(
+          true, root_idx, descriptor_offset, range_type,
+          snapshot_desc_storage);
+      for (uint32_t h = 0; h < (snapshot_desc ? 1u : desc_heap_count); h++) {
+        D3D12Descriptor *desc = snapshot_desc;
+        if (!desc) {
+          auto *heap = static_cast<MTLD3D12DescriptorHeap *>(desc_heaps[h]);
+          if (!heap)
+            continue;
+          desc = heap->GetDescriptorFromGPUHandle(table_handle,
+                                                  descriptor_offset);
+        }
         if (!desc)
           continue;
 
@@ -10409,6 +10476,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         if (cmd->root_param_index < st.kRootParameterSlotCount) {
           st.root_tables[cmd->root_param_index] = cmd->base_descriptor;
           st.root_table_set[cmd->root_param_index] = true;
+          st.root_table_snapshot_counts[cmd->root_param_index] =
+              std::min<uint32_t>(cmd->snapshot_count,
+                                 kD3D12RootDescriptorTableSnapshotCount);
+          for (uint32_t i = 0;
+               i < st.root_table_snapshot_counts[cmd->root_param_index]; i++)
+            st.root_table_snapshots[cmd->root_param_index][i] =
+                cmd->snapshots[i];
         }
         break;
       }
@@ -10470,6 +10544,13 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         if (cmd->root_param_index < st.kRootParameterSlotCount) {
           st.comp_tables[cmd->root_param_index] = cmd->base_descriptor;
           st.comp_table_set[cmd->root_param_index] = true;
+          st.comp_table_snapshot_counts[cmd->root_param_index] =
+              std::min<uint32_t>(cmd->snapshot_count,
+                                 kD3D12RootDescriptorTableSnapshotCount);
+          for (uint32_t i = 0;
+               i < st.comp_table_snapshot_counts[cmd->root_param_index]; i++)
+            st.comp_table_snapshots[cmd->root_param_index][i] =
+                cmd->snapshots[i];
         }
         break;
       }

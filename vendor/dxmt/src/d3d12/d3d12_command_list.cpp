@@ -91,13 +91,9 @@ MTLD3D12GraphicsCommandList::~MTLD3D12GraphicsCommandList() {
   m_device->Release();
 }
 
-D3D12DescriptorSnapshot MTLD3D12GraphicsCommandList::SnapshotDescriptor(
-    D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+static D3D12DescriptorSnapshot SnapshotDescriptorObject(
+    const D3D12Descriptor *desc) {
   D3D12DescriptorSnapshot snapshot = {};
-  if (!handle.ptr)
-    return snapshot;
-
-  auto *desc = reinterpret_cast<const D3D12Descriptor *>(handle.ptr);
   if (!desc)
     return snapshot;
 
@@ -112,6 +108,28 @@ D3D12DescriptorSnapshot MTLD3D12GraphicsCommandList::SnapshotDescriptor(
   snapshot.resource = desc->resource;
   snapshot.resource_uav_counter = desc->resource_uav_counter;
   return snapshot;
+}
+
+D3D12DescriptorSnapshot MTLD3D12GraphicsCommandList::SnapshotDescriptor(
+    D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+  if (!handle.ptr)
+    return {};
+  return SnapshotDescriptorObject(
+      reinterpret_cast<const D3D12Descriptor *>(handle.ptr));
+}
+
+D3D12DescriptorSnapshot MTLD3D12GraphicsCommandList::SnapshotDescriptor(
+    D3D12_GPU_DESCRIPTOR_HANDLE handle, uint32_t offset) {
+  if (!handle.ptr)
+    return {};
+  for (uint32_t i = 0; i < m_record_desc_heap_count && i < 2; i++) {
+    auto *heap = static_cast<MTLD3D12DescriptorHeap *>(m_record_desc_heaps[i]);
+    if (!heap)
+      continue;
+    if (auto *desc = heap->GetDescriptorFromGPUHandle(handle, offset))
+      return SnapshotDescriptorObject(desc);
+  }
+  return {};
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -446,6 +464,12 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::ExecuteBundle(
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetDescriptorHeaps(
     UINT heap_count, ID3D12DescriptorHeap *const *heaps) {
+  m_record_desc_heap_count = heap_count > 2 ? 2 : heap_count;
+  for (uint32_t i = 0; i < m_record_desc_heap_count; i++)
+    m_record_desc_heaps[i] = heaps ? heaps[i] : nullptr;
+  for (uint32_t i = m_record_desc_heap_count; i < 2; i++)
+    m_record_desc_heaps[i] = nullptr;
+
   size_t extra = heap_count * sizeof(ID3D12DescriptorHeap *);
   auto total = sizeof(CmdSetDescriptorHeaps) - sizeof(ID3D12DescriptorHeap *) + extra;
   auto offset = m_cmds.size();
@@ -480,7 +504,10 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRootDescriptorTabl
   CmdSetRootDescriptorTable cmd = {};
   cmd.header = {CmdType::SetComputeRootDescriptorTable, sizeof(cmd)};
   cmd.root_param_index = root_parameter_index;
+  cmd.snapshot_count = kD3D12RootDescriptorTableSnapshotCount;
   cmd.base_descriptor = base_descriptor;
+  for (uint32_t i = 0; i < cmd.snapshot_count; i++)
+    cmd.snapshots[i] = SnapshotDescriptor(base_descriptor, i);
   Emit(cmd);
 }
 
@@ -490,7 +517,10 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRootDescriptorTab
   CmdSetRootDescriptorTable cmd = {};
   cmd.header = {CmdType::SetGraphicsRootDescriptorTable, sizeof(cmd)};
   cmd.root_param_index = root_parameter_index;
+  cmd.snapshot_count = kD3D12RootDescriptorTableSnapshotCount;
   cmd.base_descriptor = base_descriptor;
+  for (uint32_t i = 0; i < cmd.snapshot_count; i++)
+    cmd.snapshots[i] = SnapshotDescriptor(base_descriptor, i);
   Emit(cmd);
 }
 

@@ -271,6 +271,8 @@ public:
   bool IsClosed() const { return m_closed; }
   MTLD3D12CommandAllocator *GetAllocator() const { return m_allocator; }
   D3D12DescriptorSnapshot SnapshotDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE handle);
+  D3D12DescriptorSnapshot SnapshotDescriptor(D3D12_GPU_DESCRIPTOR_HANDLE handle,
+                                             uint32_t offset);
 
 private:
   template <typename T> void Emit(const T &cmd) {
@@ -290,6 +292,8 @@ private:
 
   MTLD3D12Device *m_device;
   MTLD3D12CommandAllocator *m_allocator;
+  ID3D12DescriptorHeap *m_record_desc_heaps[2] = {};
+  uint32_t m_record_desc_heap_count = 0;
   D3D12_COMMAND_LIST_TYPE m_type;
   bool m_closed = false;
   uint64_t m_debug_id = 0;
