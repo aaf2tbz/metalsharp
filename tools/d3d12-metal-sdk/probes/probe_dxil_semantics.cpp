@@ -387,7 +387,8 @@ static CaseResult run_case(ID3D12Device* device, const SemanticCase& semantic_ca
         if (SUCCEEDED(hr))
             hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&copy_allocator));
         if (SUCCEEDED(hr))
-            hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, copy_allocator, nullptr, IID_PPV_ARGS(&copy_list));
+            hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, copy_allocator, nullptr,
+                                           IID_PPV_ARGS(&copy_list));
         if (SUCCEEDED(hr)) {
             D3D12_RESOURCE_BARRIER uav_barrier = {};
             uav_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
