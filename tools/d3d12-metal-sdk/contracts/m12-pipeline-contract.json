@@ -9,8 +9,8 @@
   "required_env": [
     {
       "key": "WINEDLLOVERRIDES",
-      "value_contains": "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b",
-      "proves": "Wine loads the M12 DXMT D3D12/DXGI/WineMetal surface and D3D11 fallback from the staged runtime before builtin DLLs while leaving Steam overlay renderers disabled."
+      "value_contains": "winemetal,d3d12=n,b",
+      "proves": "Wine loads only the M12 DXMT D3D12 frontend and WineMetal PE bridge from the staged runtime before builtin DLLs while leaving Steam overlay renderers disabled. DXGI/D3D11/D3D10/GPU vendor stubs are not forced for the winemetal-backed D3D12 path."
     },
     {
       "key": "WINEDLLPATH",
@@ -20,7 +20,7 @@
     {
       "key": "DXMT_WINEMETAL_UNIXLIB",
       "value_contains": "winemetal.so",
-      "proves": "The PE winemetal.dll bridge opens the app-local Unix WineMetal sidecar by basename, matching the cube-proven launch method."
+      "proves": "The PE winemetal.dll bridge opens the updated PR-head WineMetal Unix sidecar by basename through Wine's unixlib route, matching the proven DXMT winemetal loading model."
     },
     {
       "key": "DXMT_LOG_PATH",

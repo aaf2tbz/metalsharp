@@ -2312,10 +2312,7 @@ fn apply_launch_env_overrides(
                     upsert_env("DXMT_D3D12_AC6_PRODUCER_DIAGNOSTIC", "0");
                     upsert_env("DXMT_D3D12_AC6_PRIME_FINAL_MASK", "0");
                     upsert_env("DXMT_D3D12_AC6_FORCE_PRODUCER_WHITE", "0");
-                    upsert_env(
-                        "WINEDLLOVERRIDES",
-                        "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                    );
+                    upsert_env("WINEDLLOVERRIDES", mtsp::engine::M12_WINE_OVERRIDES);
                     match normalized.as_str() {
                         "m12-binary-archive-collection" | "m12-ac6-phase9i6-archive-collection" => {
                             upsert_env("DXMT_D3D12_BINARY_ARCHIVE", "1");
@@ -2333,10 +2330,7 @@ fn apply_launch_env_overrides(
                             upsert_env("DXMT_D3D12_TRACE_MAX_MB", "16");
                         },
                         "m12-mscompatdb-experiment" => {
-                            upsert_env(
-                                "WINEDLLOVERRIDES",
-                                "mscompatdb,winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                            );
+                            upsert_env("WINEDLLOVERRIDES", mtsp::engine::M12_MSCOMPATDB_WINE_OVERRIDES);
                         },
                         _ => {},
                     }

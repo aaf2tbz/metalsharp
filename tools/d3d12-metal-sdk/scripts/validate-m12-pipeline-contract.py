@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -140,10 +141,56 @@ def validate_source_contract(data: dict[str, Any], errors: list[str]) -> None:
         "id: PipelineId::M12",
         "lib/dxmt_m12/x86_64-windows",
         "lib/dxmt_m12/x86_64-unix",
-        "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b",
+        "M12_WINE_OVERRIDES",
         'shader_cache_subdir: Some("m12")',
     ]:
         require(pattern in engine, f"engine missing `{pattern}`", errors)
+
+    m12_override_match = re.search(r'pub const M12_WINE_OVERRIDES:\s*&str\s*=\s*"([^"]+)";', engine, re.S)
+    require(m12_override_match is not None, "engine missing parseable M12_WINE_OVERRIDES constant", errors)
+    m12_overrides = m12_override_match.group(1) if m12_override_match else ""
+    native_group = m12_overrides.split(";", 1)[0]
+    if "=" in native_group:
+        native_modules, native_mode = native_group.split("=", 1)
+    else:
+        native_modules, native_mode = native_group, ""
+    native_tokens = {token.strip() for token in native_modules.split(",") if token.strip()}
+    required_native_tokens = {"winemetal", "d3d12"}
+    forbidden_native_tokens = {"dxgi", "dxgi_dxmt", "d3d11", "d3d10core", "d3d12core", "nvapi", "nvapi64", "nvngx"}
+    missing_native_tokens = sorted(required_native_tokens - native_tokens)
+    forbidden_present = sorted(forbidden_native_tokens & native_tokens)
+    require(not missing_native_tokens, f"M12_WINE_OVERRIDES missing native DLL overrides: {', '.join(missing_native_tokens)}", errors)
+    require(
+        not forbidden_present,
+        f"M12_WINE_OVERRIDES forces DLLs outside the narrow d3d12/winemetal shape: {', '.join(forbidden_present)}",
+        errors,
+    )
+    require(native_mode == "n,b", f"M12_WINE_OVERRIDES native group must use n,b mode, got `{native_mode}`", errors)
+    require(
+        "gameoverlayrenderer,gameoverlayrenderer64=d" in m12_overrides.split(";", 1)[1:],
+        "M12_WINE_OVERRIDES missing disabled Steam overlay renderer group",
+        errors,
+    )
+
+    contract_env = {
+        str(entry.get("key")): str(entry.get("value_contains"))
+        for entry in data.get("required_env", [])
+        if isinstance(entry, dict)
+    }
+    require(
+        contract_env.get("WINEDLLOVERRIDES", "") in m12_overrides,
+        "contract WINEDLLOVERRIDES value_contains does not match M12_WINE_OVERRIDES",
+        errors,
+    )
+    helper_start = launcher.find("fn dxmt_winemetal_unixlib_path")
+    helper_end = launcher.find("fn route_library_env_pairs", helper_start)
+    helper = launcher[helper_start:helper_end] if helper_start >= 0 and helper_end > helper_start else ""
+    require(helper, "launcher missing isolated dxmt_winemetal_unixlib_path helper", errors)
+    require(
+        '"winemetal.so".to_string()' in helper,
+        "launcher DXMT_WINEMETAL_UNIXLIB helper must use winemetal.so basename so Wine resolves the updated unixlib through its unix route",
+        errors,
+    )
 
     require("DXMT_LOG_PATH" in log_cpp, "DXMT logger missing `DXMT_LOG_PATH`", errors)
     require(

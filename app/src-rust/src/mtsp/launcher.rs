@@ -1,4 +1,4 @@
-use super::engine::{get_pipeline, PipelineId, PipelineNode};
+use super::engine::{get_pipeline, PipelineId, PipelineNode, M12_MSCOMPATDB_WINE_OVERRIDES};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -975,10 +975,7 @@ fn deploy_prefix_route_dlls(
         if !deploy.source_present {
             continue;
         }
-        if !matches!(
-            deploy.filename.as_str(),
-            "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll" | "winemetal.dll"
-        ) {
+        if !matches!(deploy.filename.as_str(), "d3d12.dll" | "winemetal.dll") {
             continue;
         }
         std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
@@ -1114,7 +1111,7 @@ pub fn launch_custom_with_options(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string());
-        cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root));
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root, node.id));
     }
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
     cmd.env("WINEMSYNC", "1");
@@ -1436,7 +1433,7 @@ fn launch_dxmt_metal_with_context(
     apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
     if node.backend == "dxmt" {
         cmd.env("DXMT_CONFIG_FILE", &dxmt_config_file);
-        cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root));
+        cmd.env("DXMT_WINEMETAL_UNIXLIB", dxmt_winemetal_unixlib_path(&ms_root, node.id));
     }
 
     cmd.env("MS_GRAPHICS_BACKEND", node.graphics_backend);
@@ -1984,7 +1981,7 @@ fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
     paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
 }
 
-fn dxmt_winemetal_unixlib_path(_ms_root: &Path) -> String {
+fn dxmt_winemetal_unixlib_path(_ms_root: &Path, _pipeline_id: PipelineId) -> String {
     "winemetal.so".to_string()
 }
 
@@ -2258,7 +2255,7 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     }
     if node.backend == "dxmt" {
         env.push(("DXMT_CONFIG_FILE".to_string(), ms_root.join("etc").join("dxmt.conf").to_string_lossy().to_string()));
-        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), dxmt_winemetal_unixlib_path(&ms_root)));
+        env.push(("DXMT_WINEMETAL_UNIXLIB".to_string(), dxmt_winemetal_unixlib_path(&ms_root, node.id)));
     }
     env.push(("MS_GRAPHICS_BACKEND".to_string(), node.graphics_backend.to_string()));
     env.push(("WINEMSYNC".to_string(), "1".to_string()));
@@ -2307,11 +2304,7 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
         env.push(("DXMT_D3D12_BINARY_ARCHIVE_QUEUE_CHECKPOINT_KIND".to_string(), "both".to_string()));
     }
     if profile_id == M12_PROFILE_MSCOMPATDB_EXPERIMENT {
-        env.push((
-            "WINEDLLOVERRIDES".to_string(),
-            "mscompatdb,winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
-                .to_string(),
-        ));
+        env.push(("WINEDLLOVERRIDES".to_string(), M12_MSCOMPATDB_WINE_OVERRIDES.to_string()));
     }
     if !matches!(appid, 1962700 | 1888160 | 1245620) {
         return env;
@@ -4633,25 +4626,19 @@ mod tests {
 
     #[test]
     fn m12_pipeline_deploy_list_includes_d3d12_and_uses_isolated_dxmt_m12_surface() {
-        // Phase 3 contract: M12 must deploy d3d12.dll (plus dxgi/d3d11/
-        // d3d10core/winemetal) from the isolated lib/dxmt_m12 surface.
+        // M12's production launch shape is the narrow DXMT winemetal path:
+        // d3d12.dll -> winemetal.dll -> winemetal.so.  DXGI/D3D11/D3D10/GPU
+        // stubs are not forced or deployed by the M12 pipeline node.
         let node = get_pipeline(PipelineId::M12);
         let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
-        for required in ["d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll"] {
-            assert!(filenames.contains(&required), "M12 deploy list must include {} (got {:?})", required, filenames);
-        }
+        assert_eq!(filenames, vec!["d3d12.dll", "winemetal.dll"], "unexpected M12 deploy list");
         for deploy in &node.deploy_dlls {
-            if matches!(
+            assert!(
+                deploy.source_subpath.starts_with("lib/dxmt_m12/"),
+                "M12 DLL {} must come from lib/dxmt_m12, got {}",
                 deploy.filename,
-                "d3d12.dll" | "d3d11.dll" | "dxgi.dll" | "d3d10core.dll" | "winemetal.dll" | "dxgi_dxmt.dll"
-            ) {
-                assert!(
-                    deploy.source_subpath.starts_with("lib/dxmt_m12/"),
-                    "M12 DLL {} must come from lib/dxmt_m12, got {}",
-                    deploy.filename,
-                    deploy.source_subpath
-                );
-            }
+                deploy.source_subpath
+            );
         }
     }
 

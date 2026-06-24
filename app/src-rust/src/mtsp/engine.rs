@@ -59,6 +59,9 @@ impl PipelineNode {
 static PIPELINES: OnceLock<Vec<PipelineNode>> = OnceLock::new();
 const DXMT_70_PERCENT_UPSCALE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60";
 const DXMT_M12_SAFE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60";
+pub const M12_WINE_OVERRIDES: &str = "winemetal,d3d12=n,b;gameoverlayrenderer,gameoverlayrenderer64=d";
+pub const M12_MSCOMPATDB_WINE_OVERRIDES: &str =
+    "mscompatdb,winemetal,d3d12=n,b;gameoverlayrenderer,gameoverlayrenderer64=d";
 
 pub fn pipelines() -> &'static Vec<PipelineNode> {
     PIPELINES.get_or_init(|| {
@@ -88,9 +91,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                ),
+                wine_overrides: Some(M12_WINE_OVERRIDES),
                 dyld_paths: vec!["lib/dxmt_m12/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt_m12/x86_64-windows"],
                 deploy_dlls: vec![
@@ -101,37 +102,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     },
                     DllDeploy {
                         source_subpath: "lib/dxmt_m12/x86_64-windows",
-                        filename: "d3d11.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/dxmt_m12/x86_64-windows",
-                        filename: "dxgi.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/dxmt_m12/x86_64-windows",
-                        filename: "dxgi_dxmt.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/dxmt_m12/x86_64-windows",
-                        filename: "d3d10core.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/dxmt_m12/x86_64-windows",
                         filename: "winemetal.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/dxmt_m12/x86_64-windows",
-                        filename: "nvapi64.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/dxmt_m12/x86_64-windows",
-                        filename: "nvngx.dll",
                         dest_filename: None,
                     },
                 ],
@@ -615,11 +586,18 @@ mod tests {
 
         let m12_dlls: std::collections::HashSet<_> =
             m12.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
-        for required in ["d3d12.dll", "d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"] {
+        for required in ["d3d12.dll", "winemetal.dll"] {
             assert!(
                 m12_dlls.contains(&("lib/dxmt_m12/x86_64-windows", required)),
                 "M12 missing isolated DXMT DLL {}",
                 required
+            );
+        }
+        for forbidden in ["d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "nvapi64.dll", "nvngx.dll"] {
+            assert!(
+                !m12.deploy_dlls.iter().any(|dll| dll.filename == forbidden),
+                "M12 narrow winemetal shape must not deploy {}",
+                forbidden
             );
         }
         assert!(!m12.deploy_dlls.iter().any(|dll| dll.source_subpath == "lib/dxmt/x86_64-windows"));
@@ -644,9 +622,12 @@ mod tests {
         assert_eq!(m12_env_values.get("DXMT_CONFIG"), Some(&DXMT_M12_SAFE_CONFIG));
 
         let m12_overrides = m12.wine_overrides.unwrap_or_default();
+        assert_eq!(m12_overrides, M12_WINE_OVERRIDES);
         assert!(m12_overrides.contains("winemetal"));
         assert!(m12_overrides.contains("d3d12"));
-        assert!(m12_overrides.contains("dxgi"));
+        for forbidden in ["dxgi", "d3d11", "d3d10core", "nvapi", "nvapi64", "nvngx"] {
+            assert!(!m12_overrides.contains(forbidden), "M12 override must not force {forbidden}");
+        }
         assert!(m12_overrides.contains("gameoverlayrenderer"));
         assert!(!m12_overrides.contains("mscompatdb"));
         assert!(m12.alternatives.contains(&PipelineId::M11));

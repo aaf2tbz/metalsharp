@@ -2681,14 +2681,22 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
     auto *o = (D3D12_FEATURE_DATA_D3D12_OPTIONS1 *)feature_data;
     if (feature_data_size < sizeof(*o))
       return E_INVALIDARG;
-    // Do not advertise WaveOps or 64-bit shader ops until the runtime shader
-    // correctness probes can prove execution, not just DXIL compile/PSO link.
-    o->WaveOps = FALSE;
-    o->WaveLaneCountMin = 0;
-    o->WaveLaneCountMax = 0;
-    o->TotalLaneCount = 0;
+    const bool ue_sm6_compat =
+        dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    // UE's SM6 support gate requires more than D3D12_FEATURE_SHADER_MODEL.
+    // When the title profile explicitly opts into UE SM6 compatibility, report
+    // wave/int64 shader capability so the D3D12 adapter is not downgraded to
+    // the SM5 path after device creation.  The shader lowering path owns the
+    // actual MSL compatibility work for these SM6 constructs.
+    o->WaveOps = ue_sm6_compat ? TRUE : FALSE;
+    o->WaveLaneCountMin = ue_sm6_compat ? 32 : 0;
+    o->WaveLaneCountMax = ue_sm6_compat ? 32 : 0;
+    o->TotalLaneCount = ue_sm6_compat ? 32 : 0;
     o->ExpandedComputeResourceStates = TRUE;
-    o->Int64ShaderOps = FALSE;
+    o->Int64ShaderOps = ue_sm6_compat ? TRUE : FALSE;
+    TRACE("  OPTIONS1: WaveOps=%d WaveLane=%u-%u TotalLane=%u Int64=%d ue_sm6_compat=%d",
+          o->WaveOps, o->WaveLaneCountMin, o->WaveLaneCountMax,
+          o->TotalLaneCount, o->Int64ShaderOps, ue_sm6_compat);
     return S_OK;
   }
   case D3D12_FEATURE_ROOT_SIGNATURE: {

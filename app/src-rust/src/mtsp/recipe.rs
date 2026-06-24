@@ -1362,7 +1362,7 @@ mod tests {
     }
 
     #[test]
-    fn m12_deploys_dlls_to_unreal_engine_binary_dir_too() {
+    fn m12_deploys_narrow_d3d12_winemetal_shape_to_unreal_engine_binary_dir_too() {
         let game_dir = test_dir("m12-ue-dll-dest");
         let exe_dir = game_dir.join("Subnautica2").join("Binaries").join("Win64");
         let engine_dir = game_dir.join("Engine").join("Binaries").join("Win64");
@@ -1379,13 +1379,20 @@ mod tests {
             &runtime,
         );
 
-        let dxgi_targets = dlls
-            .iter()
-            .filter(|dll| dll.filename == "dxgi.dll")
-            .map(|dll| dll.dest_path.parent().map(Path::to_path_buf))
-            .collect::<Vec<_>>();
-        assert!(dxgi_targets.contains(&Some(exe_dir)));
-        assert!(dxgi_targets.contains(&Some(engine_dir)));
+        let filenames: std::collections::HashSet<_> = dlls.iter().map(|dll| dll.filename.as_str()).collect();
+        assert_eq!(filenames, std::collections::HashSet::from(["d3d12.dll", "winemetal.dll"]));
+        for filename in ["d3d12.dll", "winemetal.dll"] {
+            let targets = dlls
+                .iter()
+                .filter(|dll| dll.filename == filename)
+                .map(|dll| dll.dest_path.parent().map(Path::to_path_buf))
+                .collect::<Vec<_>>();
+            assert!(targets.contains(&Some(exe_dir.clone())), "{filename} missing exe dir target: {targets:?}");
+            assert!(targets.contains(&Some(engine_dir.clone())), "{filename} missing engine dir target: {targets:?}");
+        }
+        for forbidden in ["dxgi.dll", "dxgi_dxmt.dll", "d3d11.dll", "d3d10core.dll", "nvapi64.dll", "nvngx.dll"] {
+            assert!(!dlls.iter().any(|dll| dll.filename == forbidden), "M12 must not deploy {forbidden}");
+        }
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }
