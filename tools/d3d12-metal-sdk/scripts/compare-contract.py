@@ -450,16 +450,19 @@ def field_to_options_value(options: dict[str, Any], field: str) -> Any:
 
 
 def field_to_options1_value(options1: dict[str, Any], field: str) -> Any:
+    missing = object()
     mapping = {
-        "WaveOps": options1.get("wave_ops"),
-        "WaveLaneCountMin": options1.get("wave_lane_count_min"),
-        "WaveLaneCountMax": options1.get("wave_lane_count_max"),
-        "Int64ShaderOps": options1.get("int64_shader_ops"),
+        "WaveOps": options1.get("wave_ops", missing),
+        "WaveLaneCountMin": options1.get("wave_lane_count_min", missing),
+        "WaveLaneCountMax": options1.get("wave_lane_count_max", missing),
+        "Int64ShaderOps": options1.get("int64_shader_ops", missing),
     }
-    value = mapping.get(field)
+    value = mapping.get(field, missing)
+    if value is missing:
+        return False
     if isinstance(value, bool):
-        return value
-    return value not in (None, 0, "")
+        return True
+    return value not in (None, "")
 
 
 def risky_status(target: str, results: dict[str, dict[str, Any]]) -> RiskStatus:
