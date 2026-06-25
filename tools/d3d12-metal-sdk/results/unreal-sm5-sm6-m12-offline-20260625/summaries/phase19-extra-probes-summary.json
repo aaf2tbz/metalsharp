@@ -1,0 +1,29 @@
+{
+  "probe-descriptor-table-indexing-metalsharp.json": {
+    "pass": true,
+    "keys": [
+      "compile",
+      "d3d12",
+      "decision",
+      "execution",
+      "pass",
+      "profile",
+      "readback",
+      "schema"
+    ]
+  },
+  "probe-nanite-transient-allocation-metalsharp.json": {
+    "pass": true,
+    "keys": [
+      "compute",
+      "decision",
+      "entrypoints",
+      "pass",
+      "profile",
+      "readback",
+      "resource_allocation",
+      "schema",
+      "target"
+    ]
+  }
+}

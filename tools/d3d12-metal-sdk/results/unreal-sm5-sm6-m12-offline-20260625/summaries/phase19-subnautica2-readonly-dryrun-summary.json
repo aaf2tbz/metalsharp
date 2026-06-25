@@ -1,0 +1,98 @@
+{
+  "schema": "metalsharp.m12.phase19.subnautica2.readonly-dryrun.v1",
+  "evidence_dir": "/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase19-subnautica2-readonly-dryrun-20260625-155418",
+  "no_live_launch_performed": true,
+  "backend_started_temporarily": true,
+  "m12_dry_run_ok": true,
+  "pipeline_dry_run_ok": true,
+  "runtime_doctor_ok": true,
+  "d3d12_runtime_doctor_ok": false,
+  "d3d12_runtime_doctor_exit": "timeout_or_error",
+  "runtime_doctor_summary": null,
+  "d3d12_runtime_doctor_summary": null,
+  "launch_shape": {
+    "WINEDLLOVERRIDES": null,
+    "WINEDLLPATH": null,
+    "DXMT_D3D12_UE_SM6_COMPAT": null,
+    "DXMT_D3D12_LIVE_PRESENT": null,
+    "DXMT_WINEMETAL_UNIXLIB": null,
+    "DXMT_SHADER_CACHE_PATH": null,
+    "DXMT_PIPELINE_CACHE_PATH": null
+  },
+  "deploy_dlls": [
+    {
+      "filename": "d3d12.dll",
+      "optional": false,
+      "present": true,
+      "sha256": "0512b37fe4af766fd2ea80beffc4f1424c2f305eed587c31d9480cc4a32b35e0",
+      "size_bytes": 58430822,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d12.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "d3d11.dll",
+      "optional": false,
+      "present": true,
+      "sha256": "c14dcca36e3aa0f48be9b794c04307736672999bc4003c683a8ec75ccb83f0dd",
+      "size_bytes": 72811083,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d11.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "dxgi.dll",
+      "optional": false,
+      "present": true,
+      "sha256": "e815291564c94703b08060eb48de2dece3a5454d5cf668a256b0ddcbde172351",
+      "size_bytes": 67527,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "dxgi_dxmt.dll",
+      "optional": false,
+      "present": true,
+      "sha256": "df801477f074a7dca8dbe86d1b77a24897221123d3e5ee1f0da124f11d5134c0",
+      "size_bytes": 20385157,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/dxgi_dxmt.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "d3d10core.dll",
+      "optional": false,
+      "present": true,
+      "sha256": "7903ea8c3af7e6134fdb1ce943412311d06c08f54d630b06dd734c53c6d900e9",
+      "size_bytes": 14612830,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/d3d10core.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "winemetal.dll",
+      "optional": false,
+      "present": true,
+      "sha256": "2d68a9cde162350f5fbaa9c421a80031daecba8207968738af9d2ba1a3c81acd",
+      "size_bytes": 341223,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/winemetal.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "nvapi64.dll",
+      "optional": true,
+      "present": true,
+      "sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841",
+      "size_bytes": 1738320,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/nvapi64.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    },
+    {
+      "filename": "nvngx.dll",
+      "optional": true,
+      "present": true,
+      "sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82",
+      "size_bytes": 1463952,
+      "source_path": "/Users/alexmondello/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/nvngx.dll",
+      "source_subpath": "lib/dxmt_m12/x86_64-windows"
+    }
+  ],
+  "duplicate_key_warnings": null,
+  "duplicate_warning_assessment": "non-blocking if effective_env_map has intended final conservative values"
+}

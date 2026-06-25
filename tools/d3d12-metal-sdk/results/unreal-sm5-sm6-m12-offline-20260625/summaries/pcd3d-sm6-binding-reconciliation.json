@@ -1,0 +1,900 @@
+{
+  "schema": "metalsharp.unreal-generated-dxil.binding-reconciliation.v1",
+  "source_unreal_debug_reflection": {
+    "count": 51,
+    "shader_types": {
+      "Fragment": 35,
+      "Vertex": 12,
+      "Compute": 4
+    },
+    "resource_count_hist": {
+      "0": 51
+    },
+    "top_level_argument_buffer_entry_hist": {
+      "6": 23,
+      "5": 26,
+      "4": 2
+    },
+    "cbv_slots": {
+      "space0_b0": 51,
+      "space0_b1": 51,
+      "space0_b2": 51,
+      "space0_b3": 49,
+      "space0_b4": 23
+    },
+    "srv_slots": {},
+    "uav_slots": {},
+    "sampler_slots": {},
+    "table_placeholder_entries": 51,
+    "max_cbv_slot": 4,
+    "examples": [
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/GPUSkinVFDefault/BPPSFCachPointIndLP/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_00010878_a7f6ce1d",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 40,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/GPUSkinVFDefault/BPPSFCachVolumeIndLP/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_00010934_d853c63c",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 40,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/GPUSkinVFDefault/BPPSFNoLMPol/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_0000fc84_1c0d327d",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/GPUSkinVFDefault/BPPSFPrecomputedVolumetricLMLP/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_00010458_c6944d8a",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/GPUSkinVFDefault/BPVSFPrecomputedVolumetricLMLP/0_914077a242f1c573/BasePassVertexShader.reflection.json",
+        "ShaderType": "Vertex",
+        "EntryPoint": "Main_0000b790_5b0a7d35",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/LocalVF/BPPSFCachPointIndLP/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_00010878_a7f6ce1d",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 40,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/LocalVF/BPPSFCachVolumeIndLP/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_00010934_d853c63c",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 40,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      },
+      {
+        "path": "06-results/completed/20260625-unreal-native-material-shader-debug-dump-smoke/captured-shader-debug/METAL_SM6/DefaultMaterial_9151ef6b0a19f4ca/Default/LocalVF/BPPSFNoLMPol/0_914077a242f1c573/BasePassPixelShader.reflection.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "Main_0000fc84_1c0d327d",
+        "ResourceCount": 0,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 8,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 8,
+            "Name": "",
+            "Size": 8,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 16,
+            "Name": "",
+            "Size": 8,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 8,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 32,
+            "Name": "",
+            "Size": 8,
+            "Slot": 4294967295,
+            "Space": 4294967295,
+            "Type": "Table"
+          }
+        ]
+      }
+    ]
+  },
+  "msc4_reflection": {
+    "count": 51,
+    "shader_types": {
+      "Fragment": 35,
+      "Vertex": 12,
+      "Compute": 4
+    },
+    "resource_count_hist": {
+      "5": 23,
+      "4": 26,
+      "3": 2
+    },
+    "top_level_argument_buffer_entry_hist": {
+      "5": 23,
+      "4": 26,
+      "3": 2
+    },
+    "cbv_slots": {
+      "space0_b0": 51,
+      "space0_b1": 51,
+      "space0_b2": 51,
+      "space0_b3": 49,
+      "space0_b4": 23
+    },
+    "srv_slots": {},
+    "uav_slots": {},
+    "sampler_slots": {},
+    "table_placeholder_entries": 0,
+    "max_cbv_slot": 4,
+    "examples": [
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/001_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_GPUSkinVFDefault_BPPSFCachPointIndLP_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 5,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 96,
+            "Name": "",
+            "Size": 24,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/002_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_GPUSkinVFDefault_BPPSFCachVolumeIndLP_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 5,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 96,
+            "Name": "",
+            "Size": 24,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/003_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_GPUSkinVFDefault_BPPSFNoLMPol_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 4,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/004_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_GPUSkinVFDefault_BPPSFPrecomputedVolumetricLMLP_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 4,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/005_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_GPUSkinVFDefault_BPVSFPrecomputedVolumetricLMLP_0_914077a242f1c573_BasePassVertexShader.json",
+        "ShaderType": "Vertex",
+        "EntryPoint": "Main",
+        "ResourceCount": 4,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/006_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_LocalVF_BPPSFCachPointIndLP_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 5,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 96,
+            "Name": "",
+            "Size": 24,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/007_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_LocalVF_BPPSFCachVolumeIndLP_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 5,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 96,
+            "Name": "",
+            "Size": 24,
+            "Slot": 4,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      },
+      {
+        "path": "06-results/in-progress/phase15-16-unreal-generated-dxil-msc-m12-replay-20260625-143503/corpus/008_METAL_SM6_DefaultMaterial_9151ef6b0a19f4ca_Default_LocalVF_BPPSFNoLMPol_0_914077a242f1c573_BasePassPixelShader.json",
+        "ShaderType": "Fragment",
+        "EntryPoint": "MainPS",
+        "ResourceCount": 4,
+        "TopLevelArgumentBuffer": [
+          {
+            "EltOffset": 0,
+            "Name": "",
+            "Size": 24,
+            "Slot": 0,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 24,
+            "Name": "",
+            "Size": 24,
+            "Slot": 1,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 48,
+            "Name": "",
+            "Size": 24,
+            "Slot": 2,
+            "Space": 0,
+            "Type": "CBV"
+          },
+          {
+            "EltOffset": 72,
+            "Name": "",
+            "Size": 24,
+            "Slot": 3,
+            "Space": 0,
+            "Type": "CBV"
+          }
+        ]
+      }
+    ]
+  },
+  "m12_root_binding_logs": [
+    {
+      "path": "06-results/in-progress/phase15-unreal-generated-dxil-replay-smoke-20260625-142222/wine-run/unreal_dxil_compute_pso_d3d12.log",
+      "entry_count": 8,
+      "unique_lines": [
+        "info:  M12_ROOT_SIGNATURE_CORE key=0xc8ef4997886b216b params=5 tables=0 ranges=0 root_desc=5 root_constants=0 static_samplers=0",
+        "info:  M12_ROOT_BINDING_PLAN key=0xcc80f74432409cee root_key=0xc8ef4997886b216b params=5 tables=0 ranges=0 resources=0 samplers=0 root_desc=5 root_constants=0 static_samplers=0 spaces=1 max_span=0 arg_resources=0 arg_samplers=0 arg_root_desc=5 arg_const_dwords=0 arg_visibility=0x1 lookup_checks=5 lookup_mismatches=0"
+      ]
+    },
+    {
+      "path": "06-results/in-progress/phase16-m12-unreal-generated-graphics-fix-fast-exit-20260625-151216/unreal_dxil_graphics_pso_fast_exit_d3d12.log",
+      "entry_count": 2,
+      "unique_lines": [
+        "info:  M12_ROOT_SIGNATURE_CORE key=0xabddefe02e9d87c9 params=5 tables=0 ranges=0 root_desc=5 root_constants=0 static_samplers=0",
+        "info:  M12_ROOT_BINDING_PLAN key=0xb5460098cb3f5a5b root_key=0xabddefe02e9d87c9 params=5 tables=0 ranges=0 resources=0 samplers=0 root_desc=5 root_constants=0 static_samplers=0 spaces=1 max_span=0 arg_resources=0 arg_samplers=0 arg_root_desc=5 arg_const_dwords=0 arg_visibility=0x1 lookup_checks=5 lookup_mismatches=0"
+      ]
+    }
+  ],
+  "harness_root_signature": "5 root CBV descriptors b0-b4, space0, all shader visibility; no descriptor tables/ranges/static samplers; graphics harness also supplies IA layout and 6 RTVs.",
+  "reconciliation": {
+    "cbv_coverage": "M12 harness root descriptors b0-b4 space0 cover all CBV slots observed in Unreal debug reflection and MSC4 reflection (max_cbv_slot <= 4).",
+    "srv_uav_sampler_coverage": "No SRV/UAV/sampler slots were present in this generated material fallback corpus; table placeholders have Slot/Space UINT_MAX and ResourceCount zero in Unreal debug reflection.",
+    "m12_binding_plan": "M12 logs report root_desc=5, lookup_checks=5, lookup_mismatches=0 for compute and graphics root signatures.",
+    "pso_results": "M12 compute PSO 4/4 and graphics PSO 35/35 after lowering fix."
+  },
+  "compute_pso_summary": {
+    "schema": "metalsharp.unreal-generated-dxil.compute-pso-smoke.v1",
+    "d3d12_loaded": true,
+    "create_device_hr": "0x00000000",
+    "cases": [
+      {
+        "path": "compute_01_RayTracingDynamicMesh.dxil",
+        "dxil_size": 41628,
+        "root_hr": "0x00000000",
+        "pso_hr": "0x00000000",
+        "ok": true
+      },
+      {
+        "path": "compute_02_RayTracingDynamicMesh.dxil",
+        "dxil_size": 43980,
+        "root_hr": "0x00000000",
+        "pso_hr": "0x00000000",
+        "ok": true
+      },
+      {
+        "path": "compute_03_RayTracingDynamicMesh.dxil",
+        "dxil_size": 47604,
+        "root_hr": "0x00000000",
+        "pso_hr": "0x00000000",
+        "ok": true
+      },
+      {
+        "path": "compute_04_RayTracingDynamicMesh.dxil",
+        "dxil_size": 42996,
+        "root_hr": "0x00000000",
+        "pso_hr": "0x00000000",
+        "ok": true
+      }
+    ],
+    "ok": true
+  },
+  "graphics_pso_summary": {
+    "ok": true,
+    "case_count": 35,
+    "ok_count": 35
+  },
+  "claim": "Binding/root-signature reconciliation is complete for the valid generated fallback corpus: all reflected CBV slots are covered, no reflected SRV/UAV/sampler gaps exist, and M12 binding plans show zero lookup mismatches."
+}

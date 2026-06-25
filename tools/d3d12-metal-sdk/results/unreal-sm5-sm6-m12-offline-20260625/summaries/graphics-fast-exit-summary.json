@@ -1,0 +1,12 @@
+{
+  "process": {
+    "returncode": 0,
+    "timed_out": false,
+    "stdout_bytes": 13463,
+    "stderr_bytes": 43187
+  },
+  "ok": true,
+  "case_count": 35,
+  "ok_count": 35,
+  "failure_count": 0
+}

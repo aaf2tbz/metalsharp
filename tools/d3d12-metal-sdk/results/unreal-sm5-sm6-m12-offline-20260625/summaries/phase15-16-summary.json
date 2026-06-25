@@ -1,0 +1,44 @@
+{
+  "schema": "metalsharp.unreal-generated-dxil.phase15_16.summary.v1",
+  "source": "Unreal-native METAL_SM6 material debug dump generated environment artifacts",
+  "pcd3d_commandlet_status": "blocked_on_mac_host_missing_win64_sdk_and_shaderformatd3d_modules_phase14",
+  "dxil_count": 51,
+  "msc4_ok": true,
+  "msc4_ok_count": 51,
+  "native_metal_pso_ok": true,
+  "native_metal_pipeline_count": 51,
+  "native_metal_failure_count": 0,
+  "m12_compute_pso_ok": true,
+  "m12_compute_case_count": 4,
+  "m12_compute_cases": [
+    {
+      "path": "compute_01_RayTracingDynamicMesh.dxil",
+      "dxil_size": 41628,
+      "root_hr": "0x00000000",
+      "pso_hr": "0x00000000",
+      "ok": true
+    },
+    {
+      "path": "compute_02_RayTracingDynamicMesh.dxil",
+      "dxil_size": 43980,
+      "root_hr": "0x00000000",
+      "pso_hr": "0x00000000",
+      "ok": true
+    },
+    {
+      "path": "compute_03_RayTracingDynamicMesh.dxil",
+      "dxil_size": 47604,
+      "root_hr": "0x00000000",
+      "pso_hr": "0x00000000",
+      "ok": true
+    },
+    {
+      "path": "compute_04_RayTracingDynamicMesh.dxil",
+      "dxil_size": 42996,
+      "root_hr": "0x00000000",
+      "pso_hr": "0x00000000",
+      "ok": true
+    }
+  ],
+  "claim": "source-backed Unreal-generated SM6 DXIL artifacts are replayed offline through MSC4/native Metal PSO creation; compute subset is also PSO-created through M12. This is fallback evidence, not universal PCD3D_SM6 completion."
+}

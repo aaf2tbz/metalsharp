@@ -1,0 +1,291 @@
+{
+  "feature_checks": [
+    {
+      "compliant": true,
+      "feature": "D3D12_FEATURE_FEATURE_LEVELS",
+      "observed": "12_1",
+      "state": "required",
+      "target": "12_1"
+    },
+    {
+      "compliant": true,
+      "dxil_path_proven": true,
+      "dxil_semantics_proven": true,
+      "dxil_to_msl_proven": true,
+      "feature": "D3D12_FEATURE_SHADER_MODEL",
+      "observed": "6_5",
+      "sm66_reportable": false,
+      "sm66_reported": false,
+      "state": "required",
+      "synthetic_shader_corpus_proven": true,
+      "target": "6_5"
+    },
+    {
+      "compliant": true,
+      "feature": "D3D12_FEATURE_D3D12_OPTIONS",
+      "missing_fields": [],
+      "state": "required"
+    },
+    {
+      "compliant": true,
+      "feature": "D3D12_FEATURE_D3D12_OPTIONS1",
+      "missing_fields": [],
+      "state": "required",
+      "waveops_reportable": false,
+      "waveops_reported": false
+    },
+    {
+      "compliant": true,
+      "descriptor_table_indexing_validated": true,
+      "feature": "D3D12_SHADER_REFLECTION_DESCRIPTOR_ABI",
+      "graphics_compute_same_descriptor_abi": true,
+      "negative_mismatch_failures_deterministic": true,
+      "reflected_bindings_match_root_signature": true,
+      "state": "required"
+    },
+    {
+      "compliant": true,
+      "feature": "D3D12_SYNTHETIC_SHADER_CORPUS",
+      "missing_fields": [],
+      "state": "required",
+      "title_captures_gating": false
+    },
+    {
+      "advertised": {
+        "atomic64_group_shared": false,
+        "atomic64_typed_resource": false
+      },
+      "compliant": true,
+      "feature": "D3D12_FEATURE_D3D12_OPTIONS9",
+      "state": "stub_safe"
+    },
+    {
+      "advertised": {
+        "atomic64_descriptor_heap_resource": false
+      },
+      "compliant": true,
+      "feature": "D3D12_FEATURE_D3D12_OPTIONS11",
+      "state": "stub_safe"
+    }
+  ],
+  "issues": [],
+  "native_metal_entries": [],
+  "pass": true,
+  "probe_summary": {
+    "optional": {
+      "probe-present-windowed": {
+        "pass": false,
+        "present": false
+      },
+      "probe-render-headless": {
+        "pass": false,
+        "present": false
+      }
+    },
+    "required": {
+      "probe-agility-ue5": {
+        "pass": true,
+        "present": true
+      },
+      "probe-barriers-render-pass": {
+        "pass": true,
+        "present": true
+      },
+      "probe-command-replay": {
+        "pass": true,
+        "present": true
+      },
+      "probe-compute-pso": {
+        "pass": true,
+        "present": true
+      },
+      "probe-descriptors": {
+        "pass": true,
+        "present": true
+      },
+      "probe-device-caps": {
+        "pass": true,
+        "present": true
+      },
+      "probe-dxgi-factory": {
+        "pass": true,
+        "present": true
+      },
+      "probe-dxil-semantics": {
+        "pass": true,
+        "present": true
+      },
+      "probe-graphics-pso": {
+        "pass": true,
+        "present": true
+      },
+      "probe-loader": {
+        "pass": true,
+        "present": true
+      },
+      "probe-queues": {
+        "pass": true,
+        "present": true
+      },
+      "probe-reflection-abi": {
+        "pass": true,
+        "present": true
+      },
+      "probe-resource-views-formats": {
+        "pass": true,
+        "present": true
+      },
+      "probe-resources": {
+        "pass": true,
+        "present": true
+      },
+      "probe-shader-corpus": {
+        "pass": true,
+        "present": true
+      },
+      "probe-shaders": {
+        "pass": true,
+        "present": true
+      },
+      "probe-sm66-capabilities": {
+        "pass": true,
+        "present": true
+      },
+      "probe-wave-ops": {
+        "pass": true,
+        "present": true
+      },
+      "winemetal-abi": {
+        "pass": true,
+        "present": true
+      }
+    }
+  },
+  "profile": "metalsharp",
+  "required_probe_passes": 19,
+  "required_probe_total": 19,
+  "risky_stub_checks": [
+    {
+      "api": "IDXGIFactory7 RegisterAdaptersChangedEvent",
+      "detail": "Probe verified the explicit safe rejection path.",
+      "evaluation": "covered",
+      "state": "stub_risky",
+      "waiver": null
+    }
+  ],
+  "runtime_manifest": {
+    "checked": true,
+    "placeholder": false
+  },
+  "schema": "metalsharp.d3d12-metal.contract-comparison.v1",
+  "unsupported_checks": [
+    {
+      "api": "D3D12 ray tracing tiers",
+      "compliant": true,
+      "observed": 0,
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 mesh shader tiers",
+      "compliant": true,
+      "observed": 0,
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 sampler feedback tier",
+      "compliant": true,
+      "observed": 0,
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 work graphs",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 video encode/decode/process APIs",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 protected resource sessions",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 DSR",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 state objects",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 amplification shader tiers",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 node shaders",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 stream output",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 sparse and reserved resources",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 geometry shaders outside proven emulation",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "limited_to_proven_probe"
+    },
+    {
+      "api": "D3D12 hull/domain tessellation shaders",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "unsupported"
+    },
+    {
+      "api": "D3D12 WaveOps feature report",
+      "compliant": true,
+      "observed": 0,
+      "state": "not_reported"
+    },
+    {
+      "api": "D3D12 Shader Model 6.6 feature report",
+      "compliant": true,
+      "detail": "Unsupported ledger entry is recorded, but the current device-caps probe has no comparable field yet.",
+      "observed": "not_checked_by_probe",
+      "state": "not_reported"
+    }
+  ]
+}

@@ -1,0 +1,281 @@
+{
+  "batches": [
+    {
+      "batch_id": 1,
+      "root": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847",
+      "shader_model": "6_0",
+      "batch_count": 100,
+      "attempts": 112,
+      "successful_attempts": 8,
+      "failed_attempts": 104,
+      "skipped_files": 53,
+      "file_status_counts": {
+        "include_header": 32,
+        "attempted_failed": 44,
+        "no_entrypoint": 21,
+        "success": 3
+      }
+    },
+    {
+      "batch_id": 2,
+      "root": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0002-smoke",
+      "shader_model": "6_6",
+      "batch_count": 100,
+      "attempts": 195,
+      "successful_attempts": 0,
+      "failed_attempts": 195,
+      "skipped_files": 38,
+      "file_status_counts": {
+        "attempted_failed": 62,
+        "include_header": 27,
+        "no_entrypoint": 11
+      }
+    },
+    {
+      "batch_id": 3,
+      "root": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0003-smoke",
+      "shader_model": "6_6",
+      "batch_count": 100,
+      "attempts": 101,
+      "successful_attempts": 0,
+      "failed_attempts": 101,
+      "skipped_files": 68,
+      "file_status_counts": {
+        "include_header": 40,
+        "attempted_failed": 32,
+        "no_entrypoint": 28
+      }
+    },
+    {
+      "batch_id": 4,
+      "root": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0004-smoke",
+      "shader_model": "6_6",
+      "batch_count": 100,
+      "attempts": 58,
+      "successful_attempts": 0,
+      "failed_attempts": 58,
+      "skipped_files": 71,
+      "file_status_counts": {
+        "attempted_failed": 29,
+        "include_header": 48,
+        "no_entrypoint": 23
+      }
+    },
+    {
+      "batch_id": 5,
+      "root": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0005-smoke",
+      "shader_model": "6_6",
+      "batch_count": 97,
+      "attempts": 68,
+      "successful_attempts": 1,
+      "failed_attempts": 67,
+      "skipped_files": 71,
+      "file_status_counts": {
+        "include_header": 33,
+        "attempted_failed": 25,
+        "success": 1,
+        "no_entrypoint": 38
+      }
+    }
+  ],
+  "totals": {
+    "batch_files": 497,
+    "attempts": 534,
+    "successful_attempts": 9,
+    "failed_attempts": 525,
+    "skipped_files": 301
+  },
+  "file_status_counts": {
+    "include_header": 180,
+    "attempted_failed": 192,
+    "no_entrypoint": 121,
+    "success": 4
+  },
+  "successes": [
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/Experimental/ProceduralVegetationEditor/Shaders/PVLightDetectionCS.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "MainCS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0013__Engine__Plugins__Experimental__ProceduralVegetationEditor__Shaders__PVLightDetectionCS.usf__MainCS__cs_6_0.dxil",
+      "dxil_sha256": "13bcf0eaf71fd3eba78f1717369670ad0e39828dee98c5c706979e056de072ce",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0013__Engine__Plugins__Experimental__ProceduralVegetationEditor__Shaders__PVLightDetectionCS.usf__MainCS__cs_6_0.metallib",
+      "metallib_sha256": "e129e04d152bf020378ade291e065b8bd7a32b8a09f53f3e317485e7722b233f",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0013__Engine__Plugins__Experimental__ProceduralVegetationEditor__Shaders__PVLightDetectionCS.usf__MainCS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/Experimental/ProceduralVegetationEditor/Shaders/PVLightVectorCalculationCS.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "MainCS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0014__Engine__Plugins__Experimental__ProceduralVegetationEditor__Shaders__PVLightVectorCalculationCS.usf__MainCS__cs_6_0.dxil",
+      "dxil_sha256": "300d450c36d5912b3be8fcae27a234c29eb770c92d5b9b63cb24e64fe8a625b8",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0014__Engine__Plugins__Experimental__ProceduralVegetationEditor__Shaders__PVLightVectorCalculationCS.usf__MainCS__cs_6_0.metallib",
+      "metallib_sha256": "1cb6d98fbfbda3b8ee08da4ec10cb1a63ea33d30849ac5135847e8976925a28c",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0014__Engine__Plugins__Experimental__ProceduralVegetationEditor__Shaders__PVLightVectorCalculationCS.usf__MainCS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/VirtualProduction/Rivermax/RivermaxCore/Shaders/Private/RivermaxShaders.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "RGB10BitToRGBACS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB10BitToRGBACS__cs_6_0.dxil",
+      "dxil_sha256": "b0a26f3a4db102e86ab4973a9a96308278ea837a3610a0d16571c0df51ba2b46",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB10BitToRGBACS__cs_6_0.metallib",
+      "metallib_sha256": "7761c15d0f43d57b24b89f9ded2d42299568c02dea8f50cace7fb2d10024f63b",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB10BitToRGBACS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/VirtualProduction/Rivermax/RivermaxCore/Shaders/Private/RivermaxShaders.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "RGB12BitToRGBACS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB12BitToRGBACS__cs_6_0.dxil",
+      "dxil_sha256": "1c94edae74727476762fa0913cf54ffb24c1814375ea73faa9ca80daed3b9f3e",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB12BitToRGBACS__cs_6_0.metallib",
+      "metallib_sha256": "0e8101630cade63c0f423a1fe938f219f63a0bc5888a4384640e943238990b0b",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB12BitToRGBACS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/VirtualProduction/Rivermax/RivermaxCore/Shaders/Private/RivermaxShaders.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "RGB16fBitToRGBACS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB16fBitToRGBACS__cs_6_0.dxil",
+      "dxil_sha256": "e41fcf53f73ce737231eee40c6c51fcea0a7ef64363e34c01a8b69efb1c4839d",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB16fBitToRGBACS__cs_6_0.metallib",
+      "metallib_sha256": "7363e6e9c26ef766e6d5945e9a37ae2857ac56a64dbe31c35877e1ab4e495743",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB16fBitToRGBACS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/VirtualProduction/Rivermax/RivermaxCore/Shaders/Private/RivermaxShaders.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "RGB8BitToRGBA8CS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB8BitToRGBA8CS__cs_6_0.dxil",
+      "dxil_sha256": "d4bf900e4755a335b0706b7229359c81eb6e20bb61a3accf09dbfbd3e4afe445",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB8BitToRGBA8CS__cs_6_0.metallib",
+      "metallib_sha256": "8520546641e5eac700973e0b1e291f8b7408e6ee728c11b101ed87b49cdb4e79",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGB8BitToRGBA8CS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/VirtualProduction/Rivermax/RivermaxCore/Shaders/Private/RivermaxShaders.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "RGBToRGB10BitCS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGBToRGB10BitCS__cs_6_0.dxil",
+      "dxil_sha256": "f804940a0fb5c2339d7d1d42a46af18f0efc3db29a170cbb2e29eb8ef39bdfe0",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGBToRGB10BitCS__cs_6_0.metallib",
+      "metallib_sha256": "d1482f089aea10cfa4f26370cb22da234827491aa5ea84c0fb145d60cdc8b239",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGBToRGB10BitCS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 1,
+      "path": "Engine/Plugins/VirtualProduction/Rivermax/RivermaxCore/Shaders/Private/RivermaxShaders.usf",
+      "features": [
+        "atomics"
+      ],
+      "entrypoint": "RGBToRGB12BitCS",
+      "profile": "cs_6_0",
+      "dxil": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/dxil/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGBToRGB12BitCS__cs_6_0.dxil",
+      "dxil_sha256": "2d09d27a91581344ab45919268053083cc4a32e24354909b11f9ff858bfe0589",
+      "metallib": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/metallib/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGBToRGB12BitCS__cs_6_0.metallib",
+      "metallib_sha256": "fc86f7872a6877d374b0c96832c258aa47cd31babbce48134371b60868faff5f",
+      "reflection": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/reflection/0061__Engine__Plugins__VirtualProduction__Rivermax__RivermaxCore__Shaders__Private__RivermaxShaders.usf__RGBToRGB12BitCS__cs_6_0.reflection.json",
+      "msc_status": "success"
+    },
+    {
+      "batch_id": 5,
+      "path": "Engine/Shaders/Private/UpdateDescriptorHandle.usf",
+      "features": [
+        "int64",
+        "atomics"
+      ],
+      "entrypoint": "MainCS",
+      "profile": "cs_6_6",
+      "dxil": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0005-smoke/dxil/0017__Engine__Shaders__Private__UpdateDescriptorHandle.usf__MainCS__cs_6_6.dxil",
+      "dxil_sha256": "7515405c89829c495d2021a2986b9736bb8e154931678a317c4eeb8df1a0ce71",
+      "metallib": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0005-smoke/metallib/0017__Engine__Shaders__Private__UpdateDescriptorHandle.usf__MainCS__cs_6_6.metallib",
+      "metallib_sha256": "447cbbbb13cf3ab57aeb28bd2a677fc99f7831fe01b1d9ec003f62b5071d3013",
+      "reflection": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0005-smoke/reflection/0017__Engine__Shaders__Private__UpdateDescriptorHandle.usf__MainCS__cs_6_6.reflection.json",
+      "msc_status": "success"
+    }
+  ],
+  "failure_classes": {
+    "other_compile_failure": 14,
+    "unreal_lwc_or_generated_define_missing": 1,
+    "missing_generated_uniform_buffers": 504,
+    "entrypoint_or_profile_guess_mismatch": 3,
+    "hlsl_vector_scalar_operator_mismatch": 3
+  },
+  "failure_examples": {
+    "other_compile_failure": {
+      "batch_id": 1,
+      "path": "Engine/Plugins/Experimental/GPULightmass/Shaders/Private/BrickAllocationManagement.usf",
+      "entrypoint": "ClearVolumeCS",
+      "profile": "cs_6_0",
+      "stderr": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/logs/0002__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__BrickAllocationManagement.usf__ClearVolumeCS__cs_6_0.stderr.txt",
+      "excerpt": "In file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/sources/0002__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__BrickAllocationManagement.usf.usf:7:\nIn file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Public/Platform.ush:76:\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Public/ShaderVersion.ush:6:9: warning: UESHADERMETADATA_VERSION DDA9A115-612F-4F64-8206-999DB9C8320D [-W#pragma-messages]\n#pragma message(\"UESHADERMETADATA_VERSION DDA9A115-612F-4F64-8206-999DB9C8320D\")\n        ^\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/sources/0002__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__BrickAllocationManagement.usf.usf:9:10: fatal error: '/Engine/Generated/UniformBuffers/VLMVoxelizationParams.ush' file not found\n#include \"/Engine/Generated/UniformBuffers/VLMVoxelizationParams.ush\"\n         ^\n"
+    },
+    "unreal_lwc_or_generated_define_missing": {
+      "batch_id": 1,
+      "path": "Engine/Plugins/Experimental/GPULightmass/Shaders/Private/FirstBounceRayGuidingCDFBuild.usf",
+      "entrypoint": "FirstBounceRayGuidingCDFBuildCS",
+      "profile": "cs_6_0",
+      "stderr": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/logs/0003__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__FirstBounceRayGuidingCDFBuild.usf__FirstBounceRayGuidingCDFBuildCS__cs_6_0.stderr.txt",
+      "excerpt": "In file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/sources/0003__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__FirstBounceRayGuidingCDFBuild.usf.usf:2:\nIn file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Public/Platform.ush:76:\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Public/ShaderVersion.ush:6:9: warning: UESHADERMETADATA_VERSION DDA9A115-612F-4F64-8206-999DB9C8320D [-W#pragma-messages]\n#pragma message(\"UESHADERMETADATA_VERSION DDA9A115-612F-4F64-8206-999DB9C8320D\")\n        ^\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/sources/0003__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__FirstBounceRayGuidingCDFBuild.usf.usf:38:91: error: use of undeclared identifier 'GPreviewLightmapPhysicalTileSize'\n                                Value += max(asfloat(RayGuidingLuminance[BatchedTiles[TileIndex].WorkingSetPosition / GPreviewLightmapPhysicalTileSize * CDF_TILE_SIZE + FinalPosition]) * ((dx != 0 || dy != 0) ? 0.125 : 1), 0.00001f);\n                                                                                                                      ^\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/sources/0003__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__FirstBounceRayGuidingCDFBuild.usf.usf:50:63: error: use of undeclared identifier 'GPreviewLightmapPhysicalTileSize'\n                RayGuidingCDFX[BatchedTiles[TileIndex].WorkingSetPosition / GPreviewLightmapPhysicalTileSize * CDF_TILE_SIZE + FinalPosition] = PrefixSum;\n                                                                            ^\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/sources/0003__Engine__Plugins__Experimental__GPULightmass__Shaders__Private__FirstBounceRayGuidingCDFBuild.usf.usf:65:64: error: use of undeclared identifier 'GPreviewLightmapPhysicalTileSize'\n                        RayGuidingCDFY[BatchedTiles[TileIndex].WorkingSetPosition / GPreviewLightmapPhysicalTileSize * CDF_TILE_SIZE / 4 + FinalPosition] = PrefixSum;\n                                                                                    ^\n"
+    },
+    "missing_generated_uniform_buffers": {
+      "batch_id": 1,
+      "path": "Engine/Plugins/Experimental/NFORDenoise/Shaders/NFORDenoise.usf",
+      "entrypoint": "AccumulateBufferToTextureCS",
+      "profile": "cs_6_0",
+      "stderr": "06-results/completed/20260625-metal-shader-converter-special-render-artifact-lanes/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/logs/0006__Engine__Plugins__Experimental__NFORDenoise__Shaders__NFORDenoise.usf__AccumulateBufferToTextureCS__cs_6_0.stderr.txt",
+      "excerpt": "In file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/GeneratedUniformBufferTypes.ush:15:\nIn file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Shared/LightSceneData.h:12:\nIn file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/LargeWorldCoordinates.ush:5:\nIn file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/DoubleFloat.ush:103:\nIn file included from Z:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/DoubleFloatVectorDefinition.ush:60:\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/DoubleFloatOperations.ush:532:30: error: operands for short-circuiting logical binary operator must be scalar, for non-scalar types use 'and'\n        return Lhs.High == Rhs.High && Lhs.Low == Rhs.Low;\n               ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~\n               and(Lhs.High == Rhs.High, Lhs.Low == Rhs.Low)\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/DoubleFloatOperations.ush:554:30: error: operands for short-circuiting logical binary operator must be scalar, for non-scalar types use 'or'\n        return Lhs.High != Rhs.High || Lhs.Low != Rhs.Low;\n               ~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~\n               or(Lhs.High != Rhs.High, Lhs.Low != Rhs.Low)\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0001-smoke-20260625-000847/materialized/virtual/Engine/Private/DoubleFloatOperations.ush:571:55: error: operands for short-circuiting logical binary operator must be scalar, for non-scalar types use 'and'\n                return Lhs.High > Rhs.High || (Lhs.High == Rhs.High && Lhs.Low > Rhs.Low);"
+    },
+    "entrypoint_or_profile_guess_mismatch": {
+      "batch_id": 2,
+      "path": "Engine/Shaders/Private/HairStrands/HairStrandsForwardCulling.usf",
+      "entrypoint": "CSMain",
+      "profile": "cs_6_6",
+      "stderr": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0002-smoke/logs/0017__Engine__Shaders__Private__HairStrands__HairStrandsForwardCulling.usf__CSMain__cs_6_6.stderr.txt",
+      "excerpt": "mscompatdb: not found\nmscompatdb: not found\nmscompatdb: not found\nmscompatdb: not found\nmscompatdb: not found\nerror: missing entry point definition\n"
+    },
+    "hlsl_vector_scalar_operator_mismatch": {
+      "batch_id": 5,
+      "path": "Engine/Source/ThirdParty/Intel/ISPCTexComp/ISPCTextureCompressor-14d998c/ISPC Texture Compressor/DirectXTex/DirectXTex/Shaders/BC6HEncode.hlsl",
+      "entrypoint": "EncodeBlockCS",
+      "profile": "cs_6_6",
+      "stderr": "06-results/completed/20260625-phase4-sm6-dxc-msc-batch0005-smoke/logs/0067__Engine__Source__ThirdParty__Intel__ISPCTexComp__ISPCTextureCompressor-14d998c__ISPC__Texture__Compressor__DirectXTex__DirectXTex__Shaders__BC6HEncode.hlsl__EncodeBlockCS__cs_6_6.stderr.txt",
+      "excerpt": "mscompatdb: not found\nmscompatdb: not found\nmscompatdb: not found\nmscompatdb: not found\nmscompatdb: not found\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0005-smoke-20260625-021541/materialized/sources/0067__Engine__Source__ThirdParty__Intel__ISPCTexComp__ISPCTextureCompressor-14d998c__ISPC__Texture__Compressor__DirectXTex__DirectXTex__Shaders__BC6HEncode.hlsl.hlsl:1040:63: error: condition for short-circuiting ternary operator must be scalar, for non-scalar types use 'select'\n        return ( pixel_h < 0x8000 ) ? ( ( pixel_h == 0x7bff ) ? 0x7fff : asint( ( pixel_h << 5 ) / 31 ) )// fixed a bug in v0.2\n                                        ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n                                        select((pixel_h == 31743), 32767, asint((pixel_h << 5) / 31))\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0005-smoke-20260625-021541/materialized/sources/0067__Engine__Source__ThirdParty__Intel__ISPCTexComp__ISPCTextureCompressor-14d998c__ISPC__Texture__Compressor__DirectXTex__DirectXTex__Shaders__BC6HEncode.hlsl.hlsl:1041:39: error: condition for short-circuiting ternary operator must be scalar, for non-scalar types use 'select'\n            : ( ( pixel_h == 0x7bff ) ? 0xffff8001 : -asint( ( ( 0x00007fff & pixel_h ) << 5 ) / 31 ) );// fixed a bug in v0.2\n                ~~~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n                select((pixel_h == 31743), 4294934529, -asint(((32767 & pixel_h) << 5) / 31))\nZ:/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/06-results/in-progress/phase4-sm6-dxc-msc-batch0005-smoke-20260625-021541/materialized/sources/0067__Engine__Source__ThirdParty__Intel__ISPCTexComp__ISPCTextureCompressor-14d998c__ISPC__Texture__Compressor__DirectXTex__DirectXTex__Shaders__BC6HEncode.hlsl.hlsl:1050:55: warning: ambiguous type for bit shift; use a type suffix on literal values, like 'L' or 'U', or a cast [-Wambig-lit-shift]\n            : ( ( endPoint == asint(0xFFFF) ) ? ( ( 1 << iprec ) - 1 )"
+    }
+  }
+}
