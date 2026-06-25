@@ -53,6 +53,15 @@ static bool dxmt_d3d12_env_enabled(const char *name) {
          value[0] == 't' || value[0] == 'T';
 }
 
+static bool dxmt_d3d12_sm66_runtime_caps_proven() {
+  // Unreal SM6 compatibility may request a shader-model-shaped adapter, but
+  // WaveOps, int64 shader ops, atomic64, and SM6.6 reporting are only honest
+  // after offline runtime readback probes prove the behavior.  The current
+  // roadmap has not proven those gates, so keep this false until the matching
+  // probes are implemented and archived.
+  return false;
+}
+
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
   if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
       ep->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
@@ -2667,14 +2676,18 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
       return E_INVALIDARG;
     const bool ue_sm6_compat =
         dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    const bool sm66_runtime_caps_proven =
+        dxmt_d3d12_sm66_runtime_caps_proven();
     const D3D_SHADER_MODEL max_shader_model =
-        ue_sm6_compat ? static_cast<D3D_SHADER_MODEL>(0x66)
-                      : static_cast<D3D_SHADER_MODEL>(0x65);
+        (ue_sm6_compat && sm66_runtime_caps_proven)
+            ? static_cast<D3D_SHADER_MODEL>(0x66)
+            : static_cast<D3D_SHADER_MODEL>(0x65);
     if (sm->HighestShaderModel == 0 ||
         sm->HighestShaderModel > max_shader_model)
       sm->HighestShaderModel = max_shader_model;
-    TRACE("  SHADER_MODEL: HighestSM=%u ue_sm6_compat=%d",
-          (unsigned)sm->HighestShaderModel, ue_sm6_compat);
+    TRACE("  SHADER_MODEL: HighestSM=%u ue_sm6_compat=%d sm66_runtime_caps_proven=%d",
+          (unsigned)sm->HighestShaderModel, ue_sm6_compat,
+          sm66_runtime_caps_proven);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS1: {
@@ -2683,20 +2696,18 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
       return E_INVALIDARG;
     const bool ue_sm6_compat =
         dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
-    // UE's SM6 support gate requires more than D3D12_FEATURE_SHADER_MODEL.
-    // When the title profile explicitly opts into UE SM6 compatibility, report
-    // wave/int64 shader capability so the D3D12 adapter is not downgraded to
-    // the SM5 path after device creation.  The shader lowering path owns the
-    // actual MSL compatibility work for these SM6 constructs.
-    o->WaveOps = ue_sm6_compat ? TRUE : FALSE;
-    o->WaveLaneCountMin = ue_sm6_compat ? 32 : 0;
-    o->WaveLaneCountMax = ue_sm6_compat ? 32 : 0;
-    o->TotalLaneCount = ue_sm6_compat ? 32 : 0;
+    const bool sm66_runtime_caps_proven =
+        dxmt_d3d12_sm66_runtime_caps_proven();
+    o->WaveOps = sm66_runtime_caps_proven ? TRUE : FALSE;
+    o->WaveLaneCountMin = sm66_runtime_caps_proven ? 32 : 0;
+    o->WaveLaneCountMax = sm66_runtime_caps_proven ? 32 : 0;
+    o->TotalLaneCount = sm66_runtime_caps_proven ? 32 : 0;
     o->ExpandedComputeResourceStates = TRUE;
-    o->Int64ShaderOps = ue_sm6_compat ? TRUE : FALSE;
-    TRACE("  OPTIONS1: WaveOps=%d WaveLane=%u-%u TotalLane=%u Int64=%d ue_sm6_compat=%d",
+    o->Int64ShaderOps = sm66_runtime_caps_proven ? TRUE : FALSE;
+    TRACE("  OPTIONS1: WaveOps=%d WaveLane=%u-%u TotalLane=%u Int64=%d ue_sm6_compat=%d sm66_runtime_caps_proven=%d",
           o->WaveOps, o->WaveLaneCountMin, o->WaveLaneCountMax,
-          o->TotalLaneCount, o->Int64ShaderOps, ue_sm6_compat);
+          o->TotalLaneCount, o->Int64ShaderOps, ue_sm6_compat,
+          sm66_runtime_caps_proven);
     return S_OK;
   }
   case D3D12_FEATURE_ROOT_SIGNATURE: {
@@ -2813,17 +2824,20 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
       return E_INVALIDARG;
     const bool ue_sm6_compat =
         dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    const bool sm66_runtime_caps_proven =
+        dxmt_d3d12_sm66_runtime_caps_proven();
     o->MeshShaderPipelineStatsSupported = FALSE;
     o->MeshShaderSupportsFullRangeRenderTargetArrayIndex = FALSE;
-    o->AtomicInt64OnTypedResourceSupported = ue_sm6_compat ? TRUE : FALSE;
-    o->AtomicInt64OnGroupSharedSupported = ue_sm6_compat ? TRUE : FALSE;
+    o->AtomicInt64OnTypedResourceSupported = sm66_runtime_caps_proven ? TRUE : FALSE;
+    o->AtomicInt64OnGroupSharedSupported = sm66_runtime_caps_proven ? TRUE : FALSE;
     o->DerivativesInMeshAndAmplificationShadersSupported = FALSE;
     TRACE("  OPTIONS9: MeshStats=%d FullRTArray=%d Atomic64Typed=%d "
-          "Atomic64GroupShared=%d ue_sm6_compat=%d",
+          "Atomic64GroupShared=%d ue_sm6_compat=%d sm66_runtime_caps_proven=%d",
           o->MeshShaderPipelineStatsSupported,
           o->MeshShaderSupportsFullRangeRenderTargetArrayIndex,
           o->AtomicInt64OnTypedResourceSupported,
-          o->AtomicInt64OnGroupSharedSupported, ue_sm6_compat);
+          o->AtomicInt64OnGroupSharedSupported, ue_sm6_compat,
+          sm66_runtime_caps_proven);
     return S_OK;
   }
   case D3D12_FEATURE_D3D12_OPTIONS10: {
@@ -2840,10 +2854,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CheckFeatureSupport(
       return E_INVALIDARG;
     const bool ue_sm6_compat =
         dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
+    const bool sm66_runtime_caps_proven =
+        dxmt_d3d12_sm66_runtime_caps_proven();
     o->AtomicInt64OnDescriptorHeapResourceSupported =
-        ue_sm6_compat ? TRUE : FALSE;
-    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d ue_sm6_compat=%d",
-          o->AtomicInt64OnDescriptorHeapResourceSupported, ue_sm6_compat);
+        sm66_runtime_caps_proven ? TRUE : FALSE;
+    TRACE("  OPTIONS11: Atomic64DescriptorHeap=%d ue_sm6_compat=%d sm66_runtime_caps_proven=%d",
+          o->AtomicInt64OnDescriptorHeapResourceSupported, ue_sm6_compat,
+          sm66_runtime_caps_proven);
     return S_OK;
   }
   case 41: { // D3D12_FEATURE_D3D12_OPTIONS12
