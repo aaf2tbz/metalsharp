@@ -1024,13 +1024,16 @@ static MSLType typeForResolvedExpression(const LowerContext &ctx, const std::str
     }
 
     if (value.find("reinterpret_cast<device float4&>") != std::string::npos ||
+        value.find("reinterpret_cast<device float4*>") != std::string::npos ||
         value.find(".read(") != std::string::npos ||
         value.find(".sample(") != std::string::npos ||
         value.find(".gather(") != std::string::npos)
         return {MSLTypeKind::Float4, 0, {}};
-    if (value.find("reinterpret_cast<device uint4&>") != std::string::npos)
+    if (value.find("reinterpret_cast<device uint4&>") != std::string::npos ||
+        value.find("reinterpret_cast<device uint4*>") != std::string::npos)
         return {MSLTypeKind::UInt4, 0, {}};
-    if (value.find("reinterpret_cast<device int4&>") != std::string::npos)
+    if (value.find("reinterpret_cast<device int4&>") != std::string::npos ||
+        value.find("reinterpret_cast<device int4*>") != std::string::npos)
         return {MSLTypeKind::Int4, 0, {}};
     if (value.find("reinterpret_cast<device float&>") != std::string::npos)
         return {MSLTypeKind::Float, 0, {}};
@@ -2388,8 +2391,14 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_TextureGatherRaw:
         return {MSLTypeKind::Float4, 0, {}};
     case DXOP_RawBufferLoad:
+        if (callee_name.find(".f32") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        return {MSLTypeKind::UInt4, 0, {}};
     case 303:
     case 1025:
+        if (callee_name.find(".f32") != std::string::npos)
+            return {MSLTypeKind::Float4, 0, {}};
+        return {MSLTypeKind::UInt4, 0, {}};
     case DXOP_GetDimensions:
         return {MSLTypeKind::UInt4, 0, {}};
     case DXOP_TextureSampleCmp:
@@ -2684,15 +2693,18 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         return "(reinterpret_cast<device float4&>(" + handle + "[(" + base + ")]))";
     }
     case DXOP_RawBufferLoad: case 303: case 1025: {
-        if (args.size() < 3) return "uint4(0)";
+        bool float_buffer = callee_name.find(".f32") != std::string::npos;
+        const char *zero_value = float_buffer ? "float4(0)" : "uint4(0)";
+        const char *load_type = float_buffer ? "float4" : "uint4";
+        if (args.size() < 3) return zero_value;
         auto handle = handleArg(0, "buf", "buf8");
         if (!startsWith(handle, "buf"))
-            return "uint4(0)";
+            return zero_value;
         ctx.last_buffer_handle = handle;
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
         std::string base = "(((int)(" + idx + ")) + ((int)(" + off + ")))";
-        return "(reinterpret_cast<device uint4*>(" + handle + " + (" + base + "))[0])";
+        return "(reinterpret_cast<device " + std::string(load_type) + "*>(" + handle + " + (" + base + "))[0])";
     }
     case DXOP_BufferStore: {
         if (args.size() < 4) return "";
@@ -3078,11 +3090,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return {MSLTypeKind::Sampler, 0, {}};
         if (exprLooksScalarMathCall(expr))
             return {MSLTypeKind::Float, 0, {}};
-        if (expr.find("reinterpret_cast<device float4&>") != std::string::npos)
+        if (expr.find("reinterpret_cast<device float4&>") != std::string::npos ||
+            expr.find("reinterpret_cast<device float4*>") != std::string::npos)
             return {MSLTypeKind::Float4, 0, {}};
-        if (expr.find("reinterpret_cast<device uint4&>") != std::string::npos)
+        if (expr.find("reinterpret_cast<device uint4&>") != std::string::npos ||
+            expr.find("reinterpret_cast<device uint4*>") != std::string::npos)
             return {MSLTypeKind::UInt4, 0, {}};
-        if (expr.find("reinterpret_cast<device int4&>") != std::string::npos)
+        if (expr.find("reinterpret_cast<device int4&>") != std::string::npos ||
+            expr.find("reinterpret_cast<device int4*>") != std::string::npos)
             return {MSLTypeKind::Int4, 0, {}};
         if (expr.find("reinterpret_cast<device float&>") != std::string::npos)
             return {MSLTypeKind::Float, 0, {}};

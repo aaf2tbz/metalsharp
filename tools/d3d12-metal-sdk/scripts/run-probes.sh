@@ -32,6 +32,7 @@ RUN_COMMAND_REPLAY=1
 RUN_BARRIERS_RENDER_PASS=1
 RUN_RESOURCE_VIEWS_FORMATS=1
 RUN_HEAP_ALIASING=1
+RUN_NANITE_TRANSIENT_ALLOCATION=0
 RUN_RENDER_HEADLESS=0
 RUN_MINI=1
 RUN_WINEMETAL_ABI=1
@@ -111,6 +112,10 @@ Options:
                         Run only the resource/view/format probe.
   --no-heap-aliasing    Skip probe_heap_aliasing.
   --heap-aliasing-only  Run only the heap/placed-resource aliasing probe.
+  --nanite-transient-allocation
+                        Run optional Nanite 128MiB / 64KiB transient allocation probe.
+  --nanite-transient-allocation-only
+                        Run only the Nanite transient allocation probe.
   --render-headless     Run optional probe_render_headless.
   --no-render-headless  Skip probe_render_headless.
   --no-winemetal-abi    Skip the WineMetal PE/Unix ABI export gate.
@@ -195,6 +200,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -224,6 +230,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -253,6 +260,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -302,6 +310,7 @@ while [[ $# -gt 0 ]]; do
       RUN_COMMAND_REPLAY=0
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
       shift
@@ -330,6 +339,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -359,6 +369,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -388,6 +399,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -417,6 +429,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -446,6 +459,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -475,6 +489,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -504,6 +519,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -533,6 +549,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=1
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -566,6 +583,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=1
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=0
@@ -591,8 +609,40 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=1
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
+      RUN_PRESENT_WINDOWED=0
+      shift
+      ;;
+    --nanite-transient-allocation)
+      RUN_NANITE_TRANSIENT_ALLOCATION=1
+      shift
+      ;;
+    --nanite-transient-allocation-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
+      RUN_SM66_CAPABILITIES=0
+      RUN_WAVE_OPS=0
+      RUN_REFLECTION_ABI=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=1
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_WINEMETAL_ABI=0
       RUN_PRESENT_WINDOWED=0
       shift
       ;;
@@ -628,6 +678,7 @@ while [[ $# -gt 0 ]]; do
       RUN_COMMAND_REPLAY=0
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_MINI=0
       RUN_WINEMETAL_ABI=1
       RUN_PRESENT_WINDOWED=0
@@ -657,6 +708,7 @@ while [[ $# -gt 0 ]]; do
       RUN_COMMAND_REPLAY=0
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_MINI=1
       RUN_PRESENT_WINDOWED=0
       shift
@@ -685,6 +737,7 @@ while [[ $# -gt 0 ]]; do
       RUN_BARRIERS_RENDER_PASS=0
       RUN_RESOURCE_VIEWS_FORMATS=0
       RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       RUN_RENDER_HEADLESS=0
       RUN_MINI=0
       RUN_PRESENT_WINDOWED=1
@@ -762,6 +815,7 @@ COMMAND_REPLAY_PROBE_EXE="$SDK_DIR/out/bin/probe_command_replay.exe"
 BARRIERS_RENDER_PASS_PROBE_EXE="$SDK_DIR/out/bin/probe_barriers_render_pass.exe"
 RESOURCE_VIEWS_FORMATS_PROBE_EXE="$SDK_DIR/out/bin/probe_resource_views_formats.exe"
 HEAP_ALIASING_PROBE_EXE="$SDK_DIR/out/bin/probe_heap_aliasing.exe"
+NANITE_TRANSIENT_ALLOCATION_PROBE_EXE="$SDK_DIR/out/bin/probe_nanite_transient_allocation.exe"
 RENDER_HEADLESS_PROBE_EXE="$SDK_DIR/out/bin/probe_render_headless.exe"
 PRESENT_WINDOWED_PROBE_EXE="$SDK_DIR/out/bin/probe_present_windowed.exe"
 
@@ -806,7 +860,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
 fi
 
 NEED_BUILD=0
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$SHADER_CORPUS_PROBE_EXE" || ! -f "$SM66_CAPABILITIES_PROBE_EXE" || ! -f "$WAVE_OPS_PROBE_EXE" || ! -f "$REFLECTION_ABI_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RESOURCE_VIEWS_FORMATS_PROBE_EXE" || ! -f "$HEAP_ALIASING_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/D3D12/d3d12SDKLayers.dll" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12StateObjectCompiler.dll" || ! -f "$SDK_DIR/out/bin/D3D12/dxil.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$SHADER_CORPUS_PROBE_EXE" || ! -f "$SM66_CAPABILITIES_PROBE_EXE" || ! -f "$WAVE_OPS_PROBE_EXE" || ! -f "$REFLECTION_ABI_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RESOURCE_VIEWS_FORMATS_PROBE_EXE" || ! -f "$HEAP_ALIASING_PROBE_EXE" || ! -f "$NANITE_TRANSIENT_ALLOCATION_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/D3D12/d3d12SDKLayers.dll" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12StateObjectCompiler.dll" || ! -f "$SDK_DIR/out/bin/D3D12/dxil.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   NEED_BUILD=1
 fi
 
@@ -888,6 +942,7 @@ COMMAND_REPLAY_RESULT_FILE="$RESULTS_DIR/probe-command-replay-${PROFILE}.json"
 BARRIERS_RENDER_PASS_RESULT_FILE="$RESULTS_DIR/probe-barriers-render-pass-${PROFILE}.json"
 RESOURCE_VIEWS_FORMATS_RESULT_FILE="$RESULTS_DIR/probe-resource-views-formats-${PROFILE}.json"
 HEAP_ALIASING_RESULT_FILE="$RESULTS_DIR/probe-heap-aliasing-${PROFILE}.json"
+NANITE_TRANSIENT_ALLOCATION_RESULT_FILE="$RESULTS_DIR/probe-nanite-transient-allocation-${PROFILE}.json"
 RENDER_HEADLESS_RESULT_FILE="$RESULTS_DIR/probe-render-headless-${PROFILE}.json"
 PRESENT_WINDOWED_RESULT_FILE="$RESULTS_DIR/probe-present-windowed-${PROFILE}.json"
 WINEMETAL_ABI_RESULT_FILE="$RESULTS_DIR/winemetal-abi-${PROFILE}.json"
@@ -1508,6 +1563,20 @@ if [[ "$RUN_HEAP_ALIASING" == "1" ]]; then
     "$WINE_BIN" "$HEAP_ALIASING_PROBE_EXE" > "$HEAP_ALIASING_RESULT_FILE"
   )
   echo "$HEAP_ALIASING_RESULT_FILE"
+fi
+
+if [[ "$RUN_NANITE_TRANSIENT_ALLOCATION" == "1" ]]; then
+  (
+    cd "$SDK_DIR/out/bin"
+    WINEPREFIX="$WINE_PREFIX" \
+    WINEDLLPATH="$WINDOWS_DIR" \
+    WINEDLLOVERRIDES="d3d12,dxgi,d3d11,d3d10core,winemetal=n,b" \
+    DYLD_LIBRARY_PATH="$DXMT_DYLD_LIBRARY_PATH" \
+    DXMT_WINEMETAL_UNIXLIB="$DXMT_WINEMETAL_UNIXLIB_NAME" \
+    D3D12_METAL_SDK_PROFILE="$PROFILE" \
+    "$WINE_BIN" "$NANITE_TRANSIENT_ALLOCATION_PROBE_EXE" > "$NANITE_TRANSIENT_ALLOCATION_RESULT_FILE"
+  )
+  echo "$NANITE_TRANSIENT_ALLOCATION_RESULT_FILE"
 fi
 
 if [[ "$RUN_RENDER_HEADLESS" == "1" ]]; then
