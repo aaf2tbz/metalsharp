@@ -115,6 +115,7 @@ int main() {
                                       : E_FAIL;
 
     const UINT64 bytes = 4096;
+    const UINT64 readback_bytes = bytes * 2;
     D3D12_RESOURCE_DESC desc = buffer_desc(bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     D3D12_RESOURCE_ALLOCATION_INFO alloc_info = {};
     if (device)
@@ -138,7 +139,7 @@ int main() {
                                                               IID_PPV_ARGS(&placed_b))
                                : E_FAIL;
 
-    D3D12_RESOURCE_DESC staging_desc = buffer_desc(bytes);
+    D3D12_RESOURCE_DESC staging_desc = buffer_desc(readback_bytes);
     D3D12_HEAP_PROPERTIES upload_props = heap_props(D3D12_HEAP_TYPE_UPLOAD);
     D3D12_HEAP_PROPERTIES readback_props = heap_props(D3D12_HEAP_TYPE_READBACK);
     ID3D12Resource* upload = nullptr;
@@ -154,9 +155,13 @@ int main() {
 
     uint8_t* upload_ptr = nullptr;
     HRESULT map_upload_hr = upload ? upload->Map(0, nullptr, reinterpret_cast<void**>(&upload_ptr)) : E_FAIL;
+    auto expected_a = [](UINT64 i) -> uint8_t { return static_cast<uint8_t>((i * 13u + 7u) & 0xffu); };
+    auto expected_b = [](UINT64 i) -> uint8_t { return static_cast<uint8_t>((i * 17u + 3u) & 0xffu); };
     if (SUCCEEDED(map_upload_hr) && upload_ptr) {
-        for (UINT64 i = 0; i < bytes; ++i)
-            upload_ptr[i] = static_cast<uint8_t>((i * 13u + 7u) & 0xffu);
+        for (UINT64 i = 0; i < bytes; ++i) {
+            upload_ptr[i] = expected_a(i);
+            upload_ptr[bytes + i] = expected_b(i);
+        }
         upload->Unmap(0, nullptr);
     }
 
@@ -191,11 +196,11 @@ int main() {
         list->ResourceBarrier(1, &alias);
         recorded_aliasing_barrier = true;
 
-        list->CopyBufferRegion(placed_b, 0, upload, 0, bytes);
+        list->CopyBufferRegion(placed_b, 0, upload, bytes, bytes);
         D3D12_RESOURCE_BARRIER b_to_copy_source =
             transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &b_to_copy_source);
-        list->CopyBufferRegion(readback, 0, placed_b, 0, bytes);
+        list->CopyBufferRegion(readback, bytes, placed_b, 0, bytes);
         recorded_copy_after_alias = true;
     }
     if (list)
@@ -221,11 +226,33 @@ int main() {
             wait_hr = S_OK;
     }
 
+    HRESULT map_readback_hr = E_FAIL;
+    bool readback_first_copy_ok = false;
+    bool readback_alias_copy_ok = false;
+    if (readback && completed_value >= 1) {
+        uint8_t* readback_ptr = nullptr;
+        D3D12_RANGE read_range = {0, static_cast<SIZE_T>(readback_bytes)};
+        map_readback_hr = readback->Map(0, &read_range, reinterpret_cast<void**>(&readback_ptr));
+        if (SUCCEEDED(map_readback_hr) && readback_ptr) {
+            readback_first_copy_ok = true;
+            readback_alias_copy_ok = true;
+            for (UINT64 i = 0; i < bytes; ++i) {
+                if (readback_ptr[i] != expected_a(i))
+                    readback_first_copy_ok = false;
+                if (readback_ptr[bytes + i] != expected_b(i))
+                    readback_alias_copy_ok = false;
+            }
+            D3D12_RANGE written_range = {0, 0};
+            readback->Unmap(0, &written_range);
+        }
+    }
+
     bool pass = SUCCEEDED(create_hr) && SUCCEEDED(create_heap_hr) && SUCCEEDED(placed_a_hr) && SUCCEEDED(placed_b_hr) &&
                 SUCCEEDED(upload_hr) && SUCCEEDED(readback_hr) && SUCCEEDED(map_upload_hr) && SUCCEEDED(queue_hr) &&
                 SUCCEEDED(allocator_hr) && SUCCEEDED(list_hr) && SUCCEEDED(fence_hr) && recorded_aliasing_barrier &&
                 recorded_copy_after_alias && SUCCEEDED(close_hr) && SUCCEEDED(execute_signal_hr) &&
-                SUCCEEDED(wait_hr) && completed_value >= 1;
+                SUCCEEDED(wait_hr) && completed_value >= 1 && SUCCEEDED(map_readback_hr) && readback_first_copy_ok &&
+                readback_alias_copy_ok;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-heap-aliasing.v1\",\n");
@@ -251,10 +278,17 @@ int main() {
     print_hr_field("wait_hr", wait_hr);
     std::printf("    \"completed_value\": %llu\n", static_cast<unsigned long long>(completed_value));
     std::printf("  },\n");
+    std::printf("  \"readback\": {\n");
+    print_hr_field("map_readback_hr", map_readback_hr);
+    std::printf("    \"first_copy_values_ok\": %s,\n", readback_first_copy_ok ? "true" : "false");
+    std::printf("    \"alias_copy_values_ok\": %s\n", readback_alias_copy_ok ? "true" : "false");
+    std::printf("  },\n");
     std::printf("  \"apple_phase35_mapping\": {\n");
     std::printf("    \"heap_aliasing\": true,\n");
     std::printf("    \"explicit_aliasing_barrier\": %s,\n", recorded_aliasing_barrier ? "true" : "false");
-    std::printf("    \"queue_fence_completion\": %s\n", completed_value >= 1 ? "true" : "false");
+    std::printf("    \"queue_fence_completion\": %s,\n", completed_value >= 1 ? "true" : "false");
+    std::printf("    \"readback_after_aliasing\": %s\n",
+                (readback_first_copy_ok && readback_alias_copy_ok) ? "true" : "false");
     std::printf("  }\n");
     std::printf("}\n");
     std::fflush(stdout);
