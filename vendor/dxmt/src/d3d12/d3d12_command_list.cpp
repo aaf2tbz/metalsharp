@@ -10,6 +10,8 @@
 #include "log/log.hpp"
 #include "util_string.hpp"
 
+#include <cstddef>
+
 #define CLTRACE(fmt, ...) DXMTD3D12Trace("CmdList", "CmdList::" fmt, ##__VA_ARGS__)
 
 namespace dxmt {
@@ -526,31 +528,20 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRootDescriptorTab
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstant(
     UINT root_parameter_index, UINT data, UINT dst_offset) {
-  CmdSetRoot32BitConstants cmd = {};
-  cmd.header = {CmdType::SetComputeRoot32BitConstants, sizeof(cmd)};
-  cmd.root_param_index = root_parameter_index;
-  cmd.count = 1;
-  cmd.dst_offset = dst_offset;
-  memcpy(cmd.data, &data, 4);
-  Emit(cmd);
+  SetComputeRoot32BitConstants(root_parameter_index, 1, &data, dst_offset);
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstant(
     UINT root_parameter_index, UINT data, UINT dst_offset) {
-  CmdSetRoot32BitConstants cmd = {};
-  cmd.header = {CmdType::SetGraphicsRoot32BitConstants, sizeof(cmd)};
-  cmd.root_param_index = root_parameter_index;
-  cmd.count = 1;
-  cmd.dst_offset = dst_offset;
-  memcpy(cmd.data, &data, 4);
-  Emit(cmd);
+  SetGraphicsRoot32BitConstants(root_parameter_index, 1, &data, dst_offset);
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstants(
     UINT root_parameter_index, UINT constant_count, const void *data,
     UINT dst_offset) {
   size_t extra = constant_count * 4;
-  auto total = sizeof(CmdSetRoot32BitConstants) - 1 + extra;
+  constexpr size_t header_size = offsetof(CmdSetRoot32BitConstants, data);
+  auto total = header_size + extra;
   auto offset = m_cmds.size();
   m_cmds.resize(offset + total);
   CmdSetRoot32BitConstants cmd = {};
@@ -558,15 +549,16 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstants
   cmd.root_param_index = root_parameter_index;
   cmd.count = constant_count;
   cmd.dst_offset = dst_offset;
-  memcpy(m_cmds.data() + offset, &cmd, sizeof(CmdSetRoot32BitConstants) - 1);
-  memcpy(m_cmds.data() + offset + sizeof(CmdSetRoot32BitConstants) - 1, data, extra);
+  memcpy(m_cmds.data() + offset, &cmd, header_size);
+  memcpy(m_cmds.data() + offset + header_size, data, extra);
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstants(
     UINT root_parameter_index, UINT constant_count, const void *data,
     UINT dst_offset) {
   size_t extra = constant_count * 4;
-  auto total = sizeof(CmdSetRoot32BitConstants) - 1 + extra;
+  constexpr size_t header_size = offsetof(CmdSetRoot32BitConstants, data);
+  auto total = header_size + extra;
   auto offset = m_cmds.size();
   m_cmds.resize(offset + total);
   CmdSetRoot32BitConstants cmd = {};
@@ -574,8 +566,8 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstant
   cmd.root_param_index = root_parameter_index;
   cmd.count = constant_count;
   cmd.dst_offset = dst_offset;
-  memcpy(m_cmds.data() + offset, &cmd, sizeof(CmdSetRoot32BitConstants) - 1);
-  memcpy(m_cmds.data() + offset + sizeof(CmdSetRoot32BitConstants) - 1, data, extra);
+  memcpy(m_cmds.data() + offset, &cmd, header_size);
+  memcpy(m_cmds.data() + offset + header_size, data, extra);
 }
 
 void STDMETHODCALLTYPE

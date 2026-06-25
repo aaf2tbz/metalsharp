@@ -20,6 +20,7 @@ RUN_DXGI=1
 RUN_RESOURCES=1
 RUN_QUEUES=1
 RUN_DESCRIPTORS=1
+RUN_DESCRIPTOR_TABLE_INDEXING=0
 RUN_SHADERS=1
 RUN_DXIL_SEMANTICS=1
 RUN_SHADER_CORPUS=1
@@ -81,6 +82,10 @@ Options:
   --no-resources        Skip probe_resources.
   --no-queues           Skip probe_queues.
   --no-descriptors      Skip probe_descriptors.
+  --descriptor-table-indexing
+                        Run optional dynamic descriptor table indexing probe.
+  --descriptor-table-indexing-only
+                        Run only the dynamic descriptor table indexing probe.
   --no-shaders          Skip probe_shaders.
   --no-dxil-semantics   Skip the DXIL semantic opcode-group probe.
   --dxil-semantics      Run the DXIL semantic opcode-group probe.
@@ -276,6 +281,38 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-descriptors)
       RUN_DESCRIPTORS=0
+      shift
+      ;;
+    --descriptor-table-indexing)
+      RUN_DESCRIPTOR_TABLE_INDEXING=1
+      shift
+      ;;
+    --descriptor-table-indexing-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_DESCRIPTOR_TABLE_INDEXING=1
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
+      RUN_SM66_CAPABILITIES=0
+      RUN_WAVE_OPS=0
+      RUN_REFLECTION_ABI=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_WINEMETAL_ABI=0
+      RUN_PRESENT_WINDOWED=0
       shift
       ;;
     --no-shaders)
@@ -803,6 +840,7 @@ DXGI_PROBE_EXE="$SDK_DIR/out/bin/probe_dxgi_factory.exe"
 RESOURCES_PROBE_EXE="$SDK_DIR/out/bin/probe_resources.exe"
 QUEUES_PROBE_EXE="$SDK_DIR/out/bin/probe_queues.exe"
 DESCRIPTORS_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptors.exe"
+DESCRIPTOR_TABLE_INDEXING_PROBE_EXE="$SDK_DIR/out/bin/probe_descriptor_table_indexing.exe"
 SHADERS_PROBE_EXE="$SDK_DIR/out/bin/probe_shaders.exe"
 DXIL_SEMANTICS_PROBE_EXE="$SDK_DIR/out/bin/probe_dxil_semantics.exe"
 SHADER_CORPUS_PROBE_EXE="$SDK_DIR/out/bin/probe_shader_corpus.exe"
@@ -860,7 +898,7 @@ if [[ "$WINDOWS_DIR" == *"/gptk/"* || "$WINDOWS_DIR" == *"/lib/gptk/"* ]]; then
 fi
 
 NEED_BUILD=0
-if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$SHADER_CORPUS_PROBE_EXE" || ! -f "$SM66_CAPABILITIES_PROBE_EXE" || ! -f "$WAVE_OPS_PROBE_EXE" || ! -f "$REFLECTION_ABI_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RESOURCE_VIEWS_FORMATS_PROBE_EXE" || ! -f "$HEAP_ALIASING_PROBE_EXE" || ! -f "$NANITE_TRANSIENT_ALLOCATION_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/D3D12/d3d12SDKLayers.dll" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12StateObjectCompiler.dll" || ! -f "$SDK_DIR/out/bin/D3D12/dxil.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
+if [[ ! -f "$PROBE_EXE" || ! -f "$AGILITY_PROBE_EXE" || ! -f "$CAPS_PROBE_EXE" || ! -f "$DXGI_PROBE_EXE" || ! -f "$RESOURCES_PROBE_EXE" || ! -f "$QUEUES_PROBE_EXE" || ! -f "$DESCRIPTORS_PROBE_EXE" || ! -f "$DESCRIPTOR_TABLE_INDEXING_PROBE_EXE" || ! -f "$SHADERS_PROBE_EXE" || ! -f "$DXIL_SEMANTICS_PROBE_EXE" || ! -f "$SHADER_CORPUS_PROBE_EXE" || ! -f "$SM66_CAPABILITIES_PROBE_EXE" || ! -f "$WAVE_OPS_PROBE_EXE" || ! -f "$REFLECTION_ABI_PROBE_EXE" || ! -f "$GRAPHICS_PSO_PROBE_EXE" || ! -f "$COMPUTE_PSO_PROBE_EXE" || ! -f "$COMMAND_REPLAY_PROBE_EXE" || ! -f "$BARRIERS_RENDER_PASS_PROBE_EXE" || ! -f "$RESOURCE_VIEWS_FORMATS_PROBE_EXE" || ! -f "$HEAP_ALIASING_PROBE_EXE" || ! -f "$NANITE_TRANSIENT_ALLOCATION_PROBE_EXE" || ! -f "$RENDER_HEADLESS_PROBE_EXE" || ! -f "$PRESENT_WINDOWED_PROBE_EXE" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12Core.dll" || ! -f "$SDK_DIR/out/bin/D3D12/d3d12SDKLayers.dll" || ! -f "$SDK_DIR/out/bin/D3D12/D3D12StateObjectCompiler.dll" || ! -f "$SDK_DIR/out/bin/D3D12/dxil.dll" || ! -f "$SDK_DIR/out/bin/dxc.exe" || ! -f "$SDK_DIR/out/bin/dxcompiler.dll" || ! -f "$SDK_DIR/out/bin/dxil.dll" ]]; then
   NEED_BUILD=1
 fi
 
@@ -924,6 +962,7 @@ DXGI_RESULT_FILE="$RESULTS_DIR/probe-dxgi-factory-${PROFILE}.json"
 RESOURCES_RESULT_FILE="$RESULTS_DIR/probe-resources-${PROFILE}.json"
 QUEUES_RESULT_FILE="$RESULTS_DIR/probe-queues-${PROFILE}.json"
 DESCRIPTORS_RESULT_FILE="$RESULTS_DIR/probe-descriptors-${PROFILE}.json"
+DESCRIPTOR_TABLE_INDEXING_RESULT_FILE="$RESULTS_DIR/probe-descriptor-table-indexing-${PROFILE}.json"
 SHADERS_RESULT_FILE="$RESULTS_DIR/probe-shaders-${PROFILE}.json"
 SHADERS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-shaders-warmup-${PROFILE}.json"
 DXIL_SEMANTICS_WARMUP_RESULT_FILE="$RESULTS_DIR/probe-dxil-semantics-warmup-${PROFILE}.json"
@@ -1310,6 +1349,10 @@ if [[ "$RUN_DESCRIPTORS" == "1" ]]; then
     "$WINE_BIN" "$DESCRIPTORS_PROBE_EXE" > "$DESCRIPTORS_RESULT_FILE"
   )
   echo "$DESCRIPTORS_RESULT_FILE"
+fi
+
+if [[ "$RUN_DESCRIPTOR_TABLE_INDEXING" == "1" ]]; then
+  run_probe_exe "$DESCRIPTOR_TABLE_INDEXING_PROBE_EXE" "$DESCRIPTOR_TABLE_INDEXING_RESULT_FILE"
 fi
 
 if [[ "$RUN_SHADERS" == "1" ]]; then

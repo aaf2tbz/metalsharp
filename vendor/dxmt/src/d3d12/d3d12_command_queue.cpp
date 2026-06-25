@@ -5760,20 +5760,33 @@ struct ReplayState {
     for (uint32_t i = 0; i < kRootParameterSlotCount; i++) {
       if (root_constant_set[i] && root_constant_sizes[i] > 0 &&
           root_constants_mtl_buf.handle) {
-        if (!stage_in_vertex_inputs) {
-          SetVertexBufferTracked(root_constants_mtl_buf,
-                                 root_constant_offsets[i], i);
+        uint32_t constant_slot = i;
+        if (graphics_root_sig &&
+            i < graphics_root_sig->GetParameters().size()) {
+          const auto &param = graphics_root_sig->GetParameters()[i];
+          if (param.type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+            constant_slot = D3D12M12DirectBufferBaseForRootParameter(
+                                D3D12_ROOT_PARAMETER_TYPE_CBV) +
+                            param.register_index;
         }
-        SetFragmentBufferTracked(root_constants_mtl_buf,
-                                 root_constant_offsets[i], i);
-        if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
-          render_enc.setObjectBuffer(root_constants_mtl_buf,
-                                     root_constant_offsets[i], i);
-          render_enc.setMeshBuffer(root_constants_mtl_buf,
-                                   root_constant_offsets[i], i);
+        if (constant_slot < 31) {
+          if (!stage_in_vertex_inputs) {
+            SetVertexBufferTracked(root_constants_mtl_buf,
+                                   root_constant_offsets[i], constant_slot);
+          }
+          SetFragmentBufferTracked(root_constants_mtl_buf,
+                                   root_constant_offsets[i], constant_slot);
+          if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
+            render_enc.setObjectBuffer(root_constants_mtl_buf,
+                                       root_constant_offsets[i], constant_slot);
+            render_enc.setMeshBuffer(root_constants_mtl_buf,
+                                     root_constant_offsets[i], constant_slot);
+          }
+          QTRACE("ApplyRootBindings: constants idx=%u slot=%u off=%u size=%u "
+                 "via buffer",
+                 i, constant_slot, root_constant_offsets[i],
+                 root_constant_sizes[i]);
         }
-        QTRACE("ApplyRootBindings: constants idx=%u off=%u size=%u via buffer",
-               i, root_constant_offsets[i], root_constant_sizes[i]);
       }
 
       auto root_register_and_vis = [&](D3D12_ROOT_PARAMETER_TYPE type,
@@ -7769,6 +7782,8 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     }
   }
 
+  uint8_t compute_root_constants_staging[sizeof(st.comp_constants_buf)] = {};
+  bool has_compute_root_constants = false;
   for (uint32_t i = 0; i < ReplayState::kRootParameterSlotCount; i++) {
     bool const_set = st.comp_constant_set[i] || st.root_constant_set[i];
     uint32_t const_size = st.comp_constant_set[i] ? st.comp_constant_sizes[i]
@@ -7777,6 +7792,31 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
                                                  : st.root_constant_offsets[i];
     uint8_t *const_buf =
         st.comp_constant_set[i] ? st.comp_constants_buf : st.root_constants_buf;
+    uint32_t dst_off = i * ReplayState::kRootConstantBytes;
+    if (const_set && const_size > 0 &&
+        const_off + const_size <= sizeof(st.comp_constants_buf) &&
+        dst_off + const_size <= sizeof(compute_root_constants_staging)) {
+      std::memcpy(compute_root_constants_staging + dst_off,
+                  const_buf + const_off, const_size);
+      has_compute_root_constants = true;
+    }
+  }
+  if (has_compute_root_constants) {
+    st.root_constants_mtl_buf =
+        st.MakeTransientBuffer(device, sizeof(compute_root_constants_staging));
+    if (st.root_constants_mtl_buf.handle) {
+      st.root_constants_mtl_buf.updateContents(
+          0, compute_root_constants_staging,
+          sizeof(compute_root_constants_staging));
+      append_compute_useresource(st.root_constants_mtl_buf.handle,
+                                 WMTResourceUsageRead);
+    }
+  }
+
+  for (uint32_t i = 0; i < ReplayState::kRootParameterSlotCount; i++) {
+    bool const_set = st.comp_constant_set[i] || st.root_constant_set[i];
+    uint32_t const_size = st.comp_constant_set[i] ? st.comp_constant_sizes[i]
+                                                  : st.root_constant_sizes[i];
 
     bool cbv_set = st.comp_cbv_set[i] || st.root_cbv_set[i];
     D3D12_GPU_VIRTUAL_ADDRESS cbv_addr =
@@ -7793,12 +7833,19 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         st.comp_table_set[i] ? st.comp_tables[i] : st.root_tables[i];
 
     if (const_set && const_size > 0) {
-      struct wmtcmd_compute_setbytes sb = {};
-      sb.type = WMTComputeCommandSetBytes;
-      sb.length = const_size;
-      sb.index = i;
-      sb.bytes.ptr = (void *)(const_buf + const_off);
-      append_cmd(&sb, sizeof(sb));
+      uint32_t constant_slot = i;
+      if (compute_sig && i < compute_sig->GetParameters().size()) {
+        const auto &param = compute_sig->GetParameters()[i];
+        if (param.type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+          constant_slot = D3D12M12DirectBufferBaseForRootParameter(
+                              D3D12_ROOT_PARAMETER_TYPE_CBV) +
+                          param.register_index;
+      }
+      if (constant_slot < 31 && st.root_constants_mtl_buf.handle) {
+        append_compute_setbuffer(st.root_constants_mtl_buf.handle,
+                                 i * ReplayState::kRootConstantBytes,
+                                 constant_slot);
+      }
     }
     auto compute_root_register = [&](D3D12_ROOT_PARAMETER_TYPE type) {
       uint32_t reg = i;

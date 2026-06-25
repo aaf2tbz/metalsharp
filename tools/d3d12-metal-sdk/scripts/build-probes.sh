@@ -109,6 +109,10 @@ build_probe \
   -o "$OUT_DIR/probe_descriptors.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_descriptor_table_indexing/probe_descriptor_table_indexing.cpp" \
+  -o "$OUT_DIR/probe_descriptor_table_indexing.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_shaders/probe_shaders.cpp" \
   -o "$OUT_DIR/probe_shaders.exe"
 
@@ -208,6 +212,7 @@ echo "$OUT_DIR/probe_dxgi_factory.exe"
 echo "$OUT_DIR/probe_resources.exe"
 echo "$OUT_DIR/probe_queues.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
+echo "$OUT_DIR/probe_descriptor_table_indexing.exe"
 echo "$OUT_DIR/probe_shaders.exe"
 echo "$OUT_DIR/probe_dxil_semantics.exe"
 echo "$OUT_DIR/probe_shader_corpus.exe"

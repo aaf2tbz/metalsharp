@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace dxmt::dxil {
 
@@ -61,9 +62,11 @@ enum DXIntrinsicOpcode {
   DXOP_WaveGetLaneCount = 112,
   DXOP_WaveAnyTrue = 113,
   DXOP_WaveAllTrue = 114,
+  DXOP_WaveActiveBallot = 116,
   DXOP_WaveReadLaneAt = 117,
   DXOP_WaveReadLaneFirst = 118,
   DXOP_WaveActiveOp = 119,
+  DXOP_WavePrefixOp = 121,
   DXOP_QuadReadLaneAt = 122,
   DXOP_QuadOp = 123,
   DXOP_TextureStoreSample = 225,
@@ -322,9 +325,11 @@ static bool isKnownDXIntrinsicOpcode(uint32_t opcode) {
     case DXOP_WaveGetLaneCount:
     case DXOP_WaveAnyTrue:
     case DXOP_WaveAllTrue:
+    case DXOP_WaveActiveBallot:
     case DXOP_WaveReadLaneAt:
     case DXOP_WaveReadLaneFirst:
     case DXOP_WaveActiveOp:
+    case DXOP_WavePrefixOp:
     case DXOP_QuadReadLaneAt:
     case DXOP_QuadOp:
     case DXOP_TextureStoreSample:
@@ -514,6 +519,7 @@ struct ResourceHandleRecord {
     uint32_t register_space = 0;
     uint32_t lower_bound = 0;
     uint32_t binding_index = 0;
+    std::string binding_index_expr;
     bool non_uniform = false;
 };
 
@@ -643,6 +649,17 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     auto &os = ctx.os;
     os << kMetalHeader;
     emitBindingManifest(ctx);
+
+    os << "static inline device char* m12_select_buffer31(uint index";
+    for (uint32_t i = 0; i < 31; i++)
+      os << ", device char* b" << i;
+    os << ") {\n";
+    os << "  switch (min(index, 30u)) {\n";
+    for (uint32_t i = 0; i < 30; i++)
+      os << "  case " << i << "u: return b" << i << ";\n";
+    os << "  default: return b30;\n";
+    os << "  }\n";
+    os << "}\n\n";
 
     os << "struct input_v {\n";
     os << "  float4 position [[position]];\n";
@@ -1520,8 +1537,9 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         (exprContainsRawResourceHandle(resolved) || exprContainsPointerSyntax(resolved)) &&
         resolved.find("reinterpret_cast<device ") == std::string::npos &&
         resolved.find("reinterpret_cast<thread ") == std::string::npos &&
-        resolved.find("reinterpret_cast<threadgroup ") == std::string::npos)
-        return defaultForType(target);
+        resolved.find("reinterpret_cast<threadgroup ") == std::string::npos &&
+        resolved.find("*((") == std::string::npos)
+      return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved) &&
         !exprLooksScalarMathCall(resolved) && !exprLooksScalarCast(resolved))
@@ -2190,9 +2208,24 @@ static std::string materializeHandleName(const LowerContext &ctx,
                                          const char *target_prefix = nullptr) {
     const char *prefix = target_prefix ? target_prefix : bindingPrefixForKind(handle.kind);
     uint32_t binding_index = handle.lower_bound + handle.binding_index;
-    if (std::strcmp(prefix, "buf") == 0)
-        binding_index += directBufferBaseForKind(handle.kind);
+    if (std::strcmp(prefix, "buf") == 0) {
+      binding_index += directBufferBaseForKind(handle.kind);
+      if (!handle.binding_index_expr.empty()) {
+        uint32_t base = directBufferBaseForKind(handle.kind) + handle.lower_bound;
+        std::ostringstream select;
+        select << "m12_select_buffer31((uint)(" << base << "u + (uint)(" << handle.binding_index_expr << "))";
+        for (uint32_t i = 0; i < ctx.binding_plan.direct_buffer_count; i++)
+          select << ", buf" << i;
+        select << ")";
+        return select.str();
+      }
+    }
     return std::string(prefix) + std::to_string(cappedBindingIndex(ctx, prefix, binding_index));
+}
+
+static bool
+isBufferHandleExpression(const std::string &handle) {
+  return startsWith(handle, "buf") || startsWith(handle, "m12_select_buffer31(");
 }
 
 static void recordDescriptorRange(BindingPlan &plan, DescriptorRangePlan range) {
@@ -2250,11 +2283,14 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
             } else if (intrinsic_id == DXOP_CreateHandleFromBinding && fn_args.size() >= 1) {
                 std::string binding = resolveValue(ctx, fn_args[0]);
                 auto parts = parseAggregateLiteral(binding);
-                uint32_t lower_bound = 0, count = 1, space = 0, resource_class = 0;
+                uint32_t lower_bound = 0, upper_bound = 0, count = 1, space = 0, resource_class = 0;
                 if (parts.size() > 0) parseUnsignedLiteral(parts[0], lower_bound);
-                if (parts.size() > 1) parseUnsignedLiteral(parts[1], count);
+                if (parts.size() > 1)
+                  parseUnsignedLiteral(parts[1], upper_bound);
                 if (parts.size() > 2) parseUnsignedLiteral(parts[2], space);
                 if (parts.size() > 3) parseUnsignedLiteral(parts[3], resource_class);
+                if (upper_bound >= lower_bound)
+                  count = upper_bound - lower_bound + 1;
                 recordDescriptorRange(plan, {descriptorKindForResourceClass(resource_class),
                                              space, lower_bound, count});
             } else if (intrinsic_id == DXOP_CreateHandleFromHeap && fn_args.size() >= 1) {
@@ -2375,7 +2411,9 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
         return {MSLTypeKind::Void, 0, {}};
     case DXOP_CBufferLoad:
     case DXOP_CBufferLoadLegacy:
-        return {MSLTypeKind::Float4, 0, {}};
+      if (callee_name.find(".i32") != std::string::npos || callee_name.find(".u32") != std::string::npos)
+        return {MSLTypeKind::UInt4, 0, {}};
+      return {MSLTypeKind::Float4, 0, {}};
     case DXOP_BufferLoad:
         if (callee_name.find(".i32") != std::string::npos ||
             callee_name.find(".u32") != std::string::npos)
@@ -2426,6 +2464,8 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_WaveGetLaneCount:
     case DXOP_LegacyF32ToF16:
         return {MSLTypeKind::UInt, 0, {}};
+    case DXOP_WaveActiveBallot:
+      return {MSLTypeKind::UInt4, 0, {}};
     case DXOP_DerivCoarseX:
     case DXOP_DerivCoarseY:
     case DXOP_DerivFineX:
@@ -2434,6 +2474,7 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_WaveReadLaneAt:
     case DXOP_WaveReadLaneFirst:
     case DXOP_WaveActiveOp:
+    case DXOP_WavePrefixOp:
     case DXOP_QuadReadLaneAt:
     case DXOP_QuadOp:
         return !args.empty() ? valueTypeOrUnknown(ctx, args[0]) : declared;
@@ -2569,18 +2610,29 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         return fallback;
     };
 
-    auto recordHandle = [&](DescriptorRangePlan::Kind kind, uint32_t resource_class,
-                            uint32_t lower_bound, uint32_t binding_index,
-                            uint32_t register_space = 0, bool non_uniform = false) -> std::string {
-        ResourceHandleRecord handle;
-        handle.kind = kind;
-        handle.resource_class = resource_class;
-        handle.register_space = register_space;
-        handle.lower_bound = lower_bound;
-        handle.binding_index = binding_index;
-        handle.non_uniform = non_uniform;
-        ctx.pending_handle = handle;
-        return materializeHandleName(ctx, handle);
+    auto recordHandle = [&](DescriptorRangePlan::Kind kind, uint32_t resource_class, uint32_t lower_bound,
+                            uint32_t binding_index, uint32_t register_space = 0, bool non_uniform = false,
+                            std::string binding_index_expr = {}) -> std::string {
+      ResourceHandleRecord handle;
+      handle.kind = kind;
+      handle.resource_class = resource_class;
+      handle.register_space = register_space;
+      handle.lower_bound = lower_bound;
+      handle.binding_index = binding_index;
+      handle.binding_index_expr = std::move(binding_index_expr);
+      handle.non_uniform = non_uniform;
+      ctx.pending_handle = handle;
+      return materializeHandleName(ctx, handle);
+    };
+
+    auto bindingIndexArg = [&](size_t arg, uint32_t fallback) -> std::pair<uint32_t, std::string> {
+      std::string text = valueArg(arg, "");
+      uint32_t literal = 0;
+      if (parseUnsignedLiteral(text, literal))
+        return {literal, {}};
+      if (text.empty())
+        return {fallback, {}};
+      return {fallback, ensureScalarIndex(text)};
     };
 
     auto literalArg = [&](size_t arg, uint32_t fallback, const char *label) -> uint32_t {
@@ -2606,12 +2658,13 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (args.size() < 4) return "0";
         uint32_t resource_class = literalArg(0, 0, "resource class");
         uint32_t range_id = literalArg(1, 0, "range id");
-        uint32_t index = literalArg(2, 0, "resource index");
+        auto index = bindingIndexArg(2, 0);
         bool non_uniform = args.size() >= 4 && literalArg(3, 0, "non uniform") != 0;
         ctx.next_binding++;
         (void)range_id;
-        return recordHandle(descriptorKindForResourceClass(resource_class),
-                            resource_class, 0, index, 0, non_uniform);
+        return recordHandle(
+            descriptorKindForResourceClass(resource_class), resource_class, 0, index.first, 0, non_uniform, index.second
+        );
     }
     case DXOP_CreateHandleForLib: case DXOP_AnnotateHandle: {
         if (!args.empty()) {
@@ -2629,24 +2682,27 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto binding = valueArg(0, "");
         auto bvals = parseAggregateLiteral(binding);
         uint32_t lower_bound = 0, resource_class = 0;
-        uint32_t count = 1, register_space = 0;
+        uint32_t upper_bound = 0, register_space = 0;
         if (bvals.size() > 0) parseUnsignedLiteral(bvals[0], lower_bound);
-        if (bvals.size() > 1) parseUnsignedLiteral(bvals[1], count);
+        if (bvals.size() > 1)
+          parseUnsignedLiteral(bvals[1], upper_bound);
         if (bvals.size() > 2) parseUnsignedLiteral(bvals[2], register_space);
         if (bvals.size() > 3) parseUnsignedLiteral(bvals[3], resource_class);
-        uint32_t index = args.size() >= 2 ? literalArg(1, 0, "idx") : 0;
-        if (count != 0)
-            index = std::min<uint32_t>(index, count - 1);
+        (void)upper_bound;
+        auto index = args.size() >= 2 ? bindingIndexArg(1, lower_bound) : std::make_pair(lower_bound, std::string{});
         bool non_uniform = args.size() >= 3 && literalArg(2, 0, "non uniform") != 0;
-        return recordHandle(descriptorKindForResourceClass(resource_class),
-                            resource_class, lower_bound, index, register_space, non_uniform);
+        return recordHandle(
+            descriptorKindForResourceClass(resource_class), resource_class, 0, index.first, register_space, non_uniform,
+            index.second
+        );
     }
     case DXOP_CreateHandleFromHeap: {
-        uint32_t heap_index = literalArg(0, 0, "heap");
-        bool sampler = args.size() >= 2 && literalArg(1, 0, "samp") != 0;
-        return recordHandle(sampler ? DescriptorRangePlan::Kind::Sampler
-                                    : DescriptorRangePlan::Kind::SRV,
-                            sampler ? 3 : 0, heap_index, 0);
+      auto heap_index = bindingIndexArg(0, 0);
+      bool sampler = args.size() >= 2 && literalArg(1, 0, "samp") != 0;
+      return recordHandle(
+          sampler ? DescriptorRangePlan::Kind::Sampler : DescriptorRangePlan::Kind::SRV, sampler ? 3 : 0,
+          heap_index.first, 0, 0, false, heap_index.second
+      );
     }
     case DXOP_ThreadId: {
         ctx.uses_thread_id = true;
@@ -2667,21 +2723,26 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         ctx.uses_group_thread_id = true; ctx.uses_group_size = true;
         return "(int)(gtid.x + gtid.y * gsz.x + gtid.z * gsz.x * gsz.y)";
     case DXOP_CBufferLoad: case DXOP_CBufferLoadLegacy: {
-        if (args.size() < 2) return "float4(0)";
-        auto handle = handleArg(0, "buf", "buf0");
-        if (!startsWith(handle, "buf"))
-            return "float4(0)";
-        ctx.last_buffer_handle = handle;
-        auto reg = ensureScalarIndex(numericArg(1, "0"));
-        return "(reinterpret_cast<device float4&>(" + handle + "[((int)(" + reg + "))*16]))";
+      bool integer_buffer =
+          callee_name.find(".i32") != std::string::npos || callee_name.find(".u32") != std::string::npos;
+      if (args.size() < 2)
+        return integer_buffer ? "uint4(0)" : "float4(0)";
+      auto handle = handleArg(0, "buf", "buf0");
+      if (!isBufferHandleExpression(handle))
+        return integer_buffer ? "uint4(0)" : "float4(0)";
+      ctx.last_buffer_handle = handle;
+      auto reg = ensureScalarIndex(numericArg(1, "0"));
+      if (integer_buffer)
+        return "(reinterpret_cast<device uint4*>(" + handle + " + (((int)(" + reg + "))*16))[0])";
+      return "(reinterpret_cast<device float4&>(" + handle + "[((int)(" + reg + "))*16]))";
     }
     case DXOP_BufferLoad: {
         bool integer_buffer = callee_name.find(".i32") != std::string::npos ||
                               callee_name.find(".u32") != std::string::npos;
         if (args.size() < 3) return integer_buffer ? "uint4(0)" : "float4(0)";
         auto handle = handleArg(0, "buf", "buf8");
-        if (!startsWith(handle, "buf"))
-            return integer_buffer ? "uint4(0)" : "float4(0)";
+        if (!isBufferHandleExpression(handle))
+          return integer_buffer ? "uint4(0)" : "float4(0)";
         ctx.last_buffer_handle = handle;
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
@@ -2698,8 +2759,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         const char *load_type = float_buffer ? "float4" : "uint4";
         if (args.size() < 3) return zero_value;
         auto handle = handleArg(0, "buf", "buf8");
-        if (!startsWith(handle, "buf"))
-            return zero_value;
+        if (!isBufferHandleExpression(handle))
+          return zero_value;
         ctx.last_buffer_handle = handle;
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
@@ -2712,8 +2773,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
                               callee_name.find(".u32") != std::string::npos;
         bool float_buffer = callee_name.find(".f32") != std::string::npos;
         auto handle = handleArg(0, "buf", "buf16");
-        if (!startsWith(handle, "buf"))
-            return "";
+        if (!isBufferHandleExpression(handle))
+          return "";
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
         std::string base = integer_buffer
@@ -2737,8 +2798,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case DXOP_RawBufferStore: case 1026: {
         if (args.size() < 4) return "";
         auto handle = handleArg(0, "buf", "buf16");
-        if (!startsWith(handle, "buf"))
-            return "";
+        if (!isBufferHandleExpression(handle))
+          return "";
         auto idx = ensureScalarIndex(numericArg(1, "0"));
         auto off = ensureScalarIndex(numericArg(2, "0"));
         std::string base = "(((int)(" + idx + ")) + ((int)(" + off + ")))";
@@ -2791,8 +2852,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         size_t vb = intrinsic_id == 225 ? 5 : 4;
         std::string value = "float4(" + numericArg(vb, "0.0") + ", " + numericArg(vb+1, "0.0") +
                             ", " + numericArg(vb+2, "0.0") + ", " + numericArg(vb+3, "0.0") + ")";
-        if (startsWith(handle, "buf"))
-            return "reinterpret_cast<device float4&>(" + handle + "[(((int)(" + cy + "))*4096 + ((int)(" + cx + "))*16)]) = " + value;
+        if (isBufferHandleExpression(handle))
+          return "reinterpret_cast<device float4&>(" + handle + "[(((int)(" + cy + "))*4096 + ((int)(" + cx +
+                 "))*16)]) = " + value;
         return handle + ".write(" + value + ", uint2((uint)(" + cx + "), (uint)(" + cy + ")))";
     }
     case DXOP_TextureSample: case DXOP_TextureSampleBias:
@@ -3016,6 +3078,32 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         case 3: return "simd_max(" + value + ")";
         default: ctx.unsupported_intrinsics++; return value;
         }
+    }
+    case DXOP_WaveActiveBallot: {
+      auto pred = numericArg(0, "false");
+      return "uint4("
+             "simd_sum((" +
+             pred +
+             ") && ((simd_tid >> 5u) == 0u) ? (1u << (simd_tid & 31u)) : 0u), "
+             "simd_sum((" +
+             pred +
+             ") && ((simd_tid >> 5u) == 1u) ? (1u << (simd_tid & 31u)) : 0u), "
+             "simd_sum((" +
+             pred +
+             ") && ((simd_tid >> 5u) == 2u) ? (1u << (simd_tid & 31u)) : 0u), "
+             "simd_sum((" +
+             pred + ") && ((simd_tid >> 5u) == 3u) ? (1u << (simd_tid & 31u)) : 0u))";
+    }
+    case DXOP_WavePrefixOp: {
+      auto value = numericArg(0, "0");
+      uint32_t op = args.size() > 1 ? literalArg(1, 0, "wave-prefix-op") : 0;
+      switch (op) {
+      case 0:
+        return "simd_prefix_exclusive_sum(" + value + ")";
+      default:
+        ctx.unsupported_intrinsics++;
+        return value;
+      }
     }
     case DXOP_WaveIsFirstLane: return "simd_is_first()";
     case DXOP_WaveGetLaneIndex: return "simd_tid";
@@ -3465,6 +3553,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
 
         if (DXILIRBuilder::isVectorType(op0)) result_type = op0;
         else if (DXILIRBuilder::isVectorType(op1)) result_type = op1;
+        else if (
+            result_type.kind == MSLTypeKind::Long || op0.kind == MSLTypeKind::Long || op1.kind == MSLTypeKind::Long
+        )
+          result_type = {MSLTypeKind::Long, 0, {}};
         else if (DXILIRBuilder::isFloatType(op0) || DXILIRBuilder::isFloatType(op1))
             result_type = {pointer_scalar == MSLTypeKind::Float ? MSLTypeKind::Float : MSLTypeKind::Float, 0, {}};
         else if (isUsableType(op0)) result_type = op0;
@@ -3701,8 +3793,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             result_type = integerTypeFor(result_type);
         if ((inst.opcode == LLVMInstruction::Shl || inst.opcode == LLVMInstruction::LShr ||
              inst.opcode == LLVMInstruction::AShr) &&
-            !DXILIRBuilder::isVectorType(result_type))
-            result_type = {MSLTypeKind::Int, 0, {}};
+            !DXILIRBuilder::isVectorType(result_type) && result_type.kind != MSLTypeKind::Long)
+          result_type = {MSLTypeKind::Int, 0, {}};
         bool is_shift = inst.opcode == LLVMInstruction::Shl ||
                         inst.opcode == LLVMInstruction::LShr ||
                         inst.opcode == LLVMInstruction::AShr;
@@ -3710,6 +3802,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                                    : coerceOperand(inst.operands[0], result_type);
         std::string rhs = is_shift ? coerceShiftOperand(inst.operands[1], result_type)
                                    : coerceOperand(inst.operands[1], result_type);
+        if (is_shift && result_type.kind == MSLTypeKind::Long) {
+          lhs = "static_cast<long>(" + lhs + ")";
+          rhs = "static_cast<uint>(" + rhs + ")";
+        }
         if (preserve_float_arithmetic &&
             (inst.opcode == LLVMInstruction::URem ||
              inst.opcode == LLVMInstruction::SRem) &&
@@ -4001,6 +4097,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                      (DXILIRBuilder::isFloatType(result_type) || DXILIRBuilder::isIntType(result_type)) &&
                      !DXILIRBuilder::isVectorType(result_type))
                 emitTypedLine(result_type, result, castExpr(componentAccess(val, 0, source_type), result_type));
+            else if (
+                inst.opcode == LLVMInstruction::ZExt && result_type.kind == MSLTypeKind::Long &&
+                (DXILIRBuilder::isIntType(source_type) || source_type.kind == MSLTypeKind::Unknown)
+            )
+              emitTypedLine(result_type, result, "static_cast<" + dst_name + ">(static_cast<uint>(" + val + "))");
             else
                 emitTypedLine(result_type, result, "static_cast<" + dst_name + ">(" + val + ")");
             ctx.value_table[value_counter] = result;
@@ -4192,20 +4293,29 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 result_type = {MSLTypeKind::UInt, 0, {}};
             std::string type_name = emitTypeName(result_type);
             std::string expr = defaultForType(result_type);
+            bool pointer_load = false;
             if (startsWith(ptr, "tex") || startsWith(ptr, "samp") ||
                 exprContainsRawResourceHandle(ptr) || exprLooksScalarLiteral(ptr) ||
                 exprLooksVectorValue(ptr) || DXILIRBuilder::isVectorType(ptr_name_type)) {
                 expr = defaultForType(result_type);
-            } else if (isPointerType(ptr_type)) {
-                if (std::strcmp(pointerAddressSpace(inst.operands[0]), "threadgroup") == 0 &&
-                    (result_type.kind == MSLTypeKind::UInt || result_type.kind == MSLTypeKind::Int)) {
-                    expr = "atomic_load_explicit((threadgroup atomic_uint*)(" + ptr + "), memory_order_relaxed)";
-                } else {
-                    expr = "*((" + std::string(pointerAddressSpace(inst.operands[0])) + " " +
-                           type_name + "*)(" + ptr + "))";
-                }
+            } else if (isPointerType(ptr_type) || exprContainsPointerSyntax(ptr)) {
+              pointer_load = true;
+              if (std::strcmp(pointerAddressSpace(inst.operands[0]), "threadgroup") == 0 &&
+                  (result_type.kind == MSLTypeKind::UInt || result_type.kind == MSLTypeKind::Int)) {
+                expr = "atomic_load_explicit((threadgroup atomic_uint*)(" + ptr + "), memory_order_relaxed)";
+              } else {
+                expr =
+                    "*((" + std::string(pointerAddressSpace(inst.operands[0])) + " " + type_name + "*)(" + ptr + "))";
+              }
             }
-            emitTypedLine(result_type, result, expr);
+            if (pointer_load && isUsableType(result_type)) {
+              if (ctx.predeclared_names.find(result) != ctx.predeclared_names.end())
+                os << "  " << result << " = " << expr << ";\n";
+              else
+                os << "  " << typedDecl(result, result_type) << " = " << expr << ";\n";
+            } else {
+              emitTypedLine(result_type, result, expr);
+            }
             ctx.value_table[value_counter] = result;
             ctx.value_types[value_counter] = result_type;
         }
@@ -4840,7 +4950,15 @@ std::optional<TypedMSLShader> MSLLowering::lower(
                 MSLType static_type;
                 if (produces_value) {
                     if (ctx.value_types.size() <= vc) ctx.value_types.resize(vc + 1);
-                    static_type = mergePredeclType(ctx.value_types[vc], resultTypeForPredecl(inst));
+                    MSLType inst_predecl_type = resultTypeForPredecl(inst);
+                    if (inst.opcode == LLVMInstruction::ZExt || inst.opcode == LLVMInstruction::SExt ||
+                        inst.opcode == LLVMInstruction::Trunc || inst.opcode == LLVMInstruction::FPToUI ||
+                        inst.opcode == LLVMInstruction::FPToSI || inst.opcode == LLVMInstruction::UIToFP ||
+                        inst.opcode == LLVMInstruction::SIToFP || inst.opcode == LLVMInstruction::FPTrunc ||
+                        inst.opcode == LLVMInstruction::FPExt)
+                      static_type = inst_predecl_type;
+                    else
+                      static_type = mergePredeclType(ctx.value_types[vc], inst_predecl_type);
                     ctx.value_types[vc] = static_type;
                 }
                 if (produces_value) {

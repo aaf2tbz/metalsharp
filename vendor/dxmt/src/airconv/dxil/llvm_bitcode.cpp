@@ -211,6 +211,7 @@ static constexpr uint32_t kConstantsCode_Aggregate = 7;
 static constexpr uint32_t kConstantsCode_String = 8;
 static constexpr uint32_t kConstantsCode_Cast = 11;
 static constexpr uint32_t kConstantsCode_GEP = 12;
+static constexpr uint32_t kConstantsCode_InBoundsGEP = 20;
 static constexpr uint32_t kConstantsCode_Data = 15;
 
 static int64_t decodeSignedVBR(uint64_t value) {
@@ -895,6 +896,25 @@ static bool parseConstantsBlock(ParseContext &ctx, std::vector<LLVMValue> &targe
       target.push_back(v);
       break;
     }
+    case kConstantsCode_Cast:
+    case kConstantsCode_GEP:
+    case kConstantsCode_InBoundsGEP: {
+      /*
+       * Constant expressions consume value IDs just like scalar constants. DXIL
+       * commonly emits an inbounds GEP constant for @dx.nothing loads; if we
+       * ignore it, the function instruction_start_value is one slot too low and
+       * every subsequent relative operand (including dx.op callees/constants)
+       * resolves to the wrong value. Preserve the value-numbering even when the
+       * expression itself is only needed as a harmless null/fallback pointer.
+       */
+      LLVMValue v;
+      v.kind = LLVMValue::Constant;
+      v.type_id = cur_type;
+      v.id = next_value_id++;
+      v.constant_data = "0";
+      target.push_back(v);
+      break;
+    }
     default:
       break;
     }
@@ -1217,9 +1237,9 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     case kFuncCode_InstCast: {
       if (cur_block < fn.blocks.size()) {
         LLVMInstruction inst;
-        inst.opcode = ops.size() > 4 ? decodeCast((uint32_t)ops[4])
-                                     : LLVMInstruction::BitCast;
-        if (ops.size() > 3) inst.type_id = (uint32_t)ops[3];
+        inst.opcode = ops.size() > 3 ? decodeCast((uint32_t)ops[3]) : LLVMInstruction::BitCast;
+        if (ops.size() > 2)
+          inst.type_id = (uint32_t)ops[2];
         if (ops.size() > 1)
           inst.operands.push_back(value(ops[1]));
         fn.blocks[cur_block].instructions.push_back(inst);

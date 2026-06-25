@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <d3d12.h>
+#include <dxgiformat.h>
 
 static const GUID IID_D3D12DeviceProbe = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
 
@@ -137,10 +138,228 @@ struct CaseResult {
     DWORD dxc_exit_code = 0xffffffffu;
     size_t dxil_size = 0;
     HRESULT pso_hr = E_FAIL;
+    HRESULT execute_hr = E_FAIL;
     bool compile_ok = false;
     bool dxil_blob = false;
     bool pso_created = false;
+    bool runtime_executed = false;
+    bool readback_ok = false;
+    bool values_ok = false;
+    std::vector<uint32_t> expected;
+    std::vector<uint32_t> actual;
+    std::string detail;
 };
+
+static D3D12_HEAP_PROPERTIES heap_props(D3D12_HEAP_TYPE type) {
+    D3D12_HEAP_PROPERTIES props = {};
+    props.Type = type;
+    props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+    props.CreationNodeMask = 1;
+    props.VisibleNodeMask = 1;
+    return props;
+}
+
+static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE) {
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    desc.Alignment = 0;
+    desc.Width = bytes;
+    desc.Height = 1;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_UNKNOWN;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    desc.Flags = flags;
+    return desc;
+}
+
+static D3D12_CPU_DESCRIPTOR_HANDLE offset_cpu(D3D12_CPU_DESCRIPTOR_HANDLE handle, UINT increment, UINT index) {
+    handle.ptr += static_cast<SIZE_T>(increment) * index;
+    return handle;
+}
+
+static D3D12_RESOURCE_BARRIER transition_barrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES before,
+                                                 D3D12_RESOURCE_STATES after) {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = resource;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.StateBefore = before;
+    barrier.Transition.StateAfter = after;
+    return barrier;
+}
+
+static D3D12_RESOURCE_BARRIER uav_barrier(ID3D12Resource* resource) {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = resource;
+    return barrier;
+}
+
+static HRESULT execute_and_wait(ID3D12Device* device, ID3D12CommandQueue* queue, ID3D12GraphicsCommandList* list,
+                                UINT timeout_ms, UINT64& completed_value) {
+    HRESULT hr = list ? list->Close() : E_FAIL;
+    if (FAILED(hr))
+        return hr;
+    ID3D12CommandList* lists[] = {list};
+    queue->ExecuteCommandLists(1, lists);
+    ID3D12Fence* fence = nullptr;
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+    if (FAILED(hr))
+        return hr;
+    hr = queue->Signal(fence, 1);
+    if (SUCCEEDED(hr)) {
+        HANDLE event_handle = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        if (!event_handle)
+            hr = HRESULT_FROM_WIN32(GetLastError());
+        if (SUCCEEDED(hr))
+            hr = fence->SetEventOnCompletion(1, event_handle);
+        if (SUCCEEDED(hr)) {
+            DWORD wait_result = WaitForSingleObject(event_handle, timeout_ms);
+            if (wait_result != WAIT_OBJECT_0)
+                hr = HRESULT_FROM_WIN32(wait_result);
+        }
+        if (event_handle)
+            CloseHandle(event_handle);
+    }
+    completed_value = fence->GetCompletedValue();
+    if (completed_value >= 1 && FAILED(hr))
+        hr = S_OK;
+    fence->Release();
+    return hr;
+}
+
+static std::string json_u32_array(const std::vector<uint32_t>& values) {
+    std::string out = "[";
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i)
+            out += ", ";
+        char buffer[32] = {};
+        std::snprintf(buffer, sizeof(buffer), "%u", values[i]);
+        out += buffer;
+    }
+    out += "]";
+    return out;
+}
+
+static std::vector<uint32_t> expected_for_case(const char* name) {
+    std::vector<uint32_t> expected(32, 0);
+    if (std::strcmp(name, "lane_index_count") == 0) {
+        for (uint32_t i = 0; i < 32; ++i)
+            expected[i] = i + 32u;
+    } else if (std::strcmp(name, "active_ballot") == 0) {
+        for (auto& value : expected)
+            value = 0x55555555u;
+    } else if (std::strcmp(name, "read_lane") == 0) {
+        for (auto& value : expected)
+            value = 18u;
+    } else if (std::strcmp(name, "active_any_all") == 0) {
+        for (auto& value : expected)
+            value = 3u;
+    } else if (std::strcmp(name, "active_sum_min_max") == 0) {
+        for (auto& value : expected)
+            value = 63u;
+    } else if (std::strcmp(name, "prefix") == 0) {
+        for (uint32_t i = 0; i < 32; ++i)
+            expected[i] = i;
+    }
+    return expected;
+}
+
+static bool execute_runtime_case(ID3D12Device* device, ID3D12RootSignature* root, ID3D12PipelineState* pso,
+                                 CaseResult& result) {
+    constexpr UINT64 kOutputBytes = 4096;
+    result.expected = expected_for_case(result.name);
+
+    ID3D12Resource* output = nullptr;
+    ID3D12Resource* readback = nullptr;
+    ID3D12DescriptorHeap* heap = nullptr;
+    ID3D12CommandQueue* queue = nullptr;
+    ID3D12CommandAllocator* allocator = nullptr;
+    ID3D12GraphicsCommandList* list = nullptr;
+
+    D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC output_desc = buffer_desc(kOutputBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    D3D12_RESOURCE_DESC readback_desc = buffer_desc(kOutputBytes);
+    HRESULT output_hr =
+        device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &output_desc,
+                                        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&output));
+    HRESULT readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback));
+
+    D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+    heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    heap_desc.NumDescriptors = 1;
+    heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    HRESULT heap_hr = device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&heap));
+    UINT inc = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    if (SUCCEEDED(heap_hr) && heap && output) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav = {};
+        uav.Format = DXGI_FORMAT_R32_TYPELESS;
+        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        uav.Buffer.NumElements = static_cast<UINT>(kOutputBytes / 4);
+        uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        device->CreateUnorderedAccessView(output, nullptr, &uav,
+                                          offset_cpu(heap->GetCPUDescriptorHandleForHeapStart(), inc, 0));
+    }
+
+    D3D12_COMMAND_QUEUE_DESC queue_desc = {};
+    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    HRESULT queue_hr = device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue));
+    HRESULT allocator_hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
+    HRESULT list_hr =
+        device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&list));
+
+    UINT64 completed_value = 0;
+    if (SUCCEEDED(output_hr) && SUCCEEDED(readback_hr) && SUCCEEDED(heap_hr) && SUCCEEDED(queue_hr) &&
+        SUCCEEDED(allocator_hr) && SUCCEEDED(list_hr) && output && readback && heap && queue && list) {
+        ID3D12DescriptorHeap* heaps[] = {heap};
+        list->SetDescriptorHeaps(1, heaps);
+        list->SetComputeRootSignature(root);
+        list->SetPipelineState(pso);
+        list->SetComputeRootDescriptorTable(0, heap->GetGPUDescriptorHandleForHeapStart());
+        list->Dispatch(1, 1, 1);
+        D3D12_RESOURCE_BARRIER barrier = uav_barrier(output);
+        list->ResourceBarrier(1, &barrier);
+        D3D12_RESOURCE_BARRIER to_copy =
+            transition_barrier(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &to_copy);
+        list->CopyBufferRegion(readback, 0, output, 0, kOutputBytes);
+        result.execute_hr = execute_and_wait(device, queue, list, 15000, completed_value);
+    }
+
+    if (readback && completed_value >= 1 && SUCCEEDED(result.execute_hr)) {
+        std::vector<uint32_t> values(result.expected.size());
+        void* mapped = nullptr;
+        D3D12_RANGE range = {0, values.size() * sizeof(uint32_t)};
+        HRESULT map_hr = readback->Map(0, &range, &mapped);
+        if (SUCCEEDED(map_hr) && mapped) {
+            std::memcpy(values.data(), mapped, values.size() * sizeof(uint32_t));
+            D3D12_RANGE no_write = {0, 0};
+            readback->Unmap(0, &no_write);
+            result.actual = values;
+            result.readback_ok = true;
+            result.values_ok = result.actual == result.expected;
+        }
+    }
+
+    safe_release(output);
+    safe_release(readback);
+    safe_release(heap);
+    safe_release(list);
+    safe_release(allocator);
+    safe_release(queue);
+
+    result.runtime_executed = SUCCEEDED(result.execute_hr) && completed_value >= 1 && result.readback_ok;
+    result.detail =
+        result.values_ok ? "validated expected UAV readback" : "runtime readback did not match expected values";
+    return result.values_ok;
+}
 
 static HRESULT create_root_signature(ID3D12Device* device, D3D12SerializeRootSignatureFn serialize,
                                      ID3D12RootSignature** root, std::string& errors) {
@@ -202,6 +421,8 @@ static CaseResult run_case(ID3D12Device* device, ID3D12RootSignature* root, cons
         ID3D12PipelineState* pso = nullptr;
         result.pso_hr = device->CreateComputePipelineState(&desc, IID_PPV_ARGS(&pso));
         result.pso_created = SUCCEEDED(result.pso_hr) && pso;
+        if (result.pso_created)
+            execute_runtime_case(device, root, pso, result);
         safe_release(pso);
     }
 
@@ -293,13 +514,15 @@ void cs_prefix(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
 
     bool compiler_acceptance_complete = results.size() == (sizeof(cases) / sizeof(cases[0]));
     bool pso_link_complete = compiler_acceptance_complete;
+    bool runtime_correctness_complete = compiler_acceptance_complete;
     for (const auto& result : results) {
         compiler_acceptance_complete = compiler_acceptance_complete && result.compile_ok && result.dxil_blob;
         pso_link_complete = pso_link_complete && result.pso_created;
+        runtime_correctness_complete = runtime_correctness_complete && result.runtime_executed && result.values_ok;
     }
 
-    bool runtime_correctness_complete = false;
-    bool waveops_reportable = compiler_acceptance_complete && pso_link_complete && runtime_correctness_complete;
+    bool waveops_reportable =
+        compiler_acceptance_complete && pso_link_complete && runtime_correctness_complete && waveops_reported;
     bool pass = d3d12 && dxcompiler && dxil && create_device && serialize && hlsl_written && SUCCEEDED(create_hr) &&
                 SUCCEEDED(options1_hr) && SUCCEEDED(root_hr) && compiler_acceptance_complete &&
                 (!waveops_reported || waveops_reportable);
@@ -330,10 +553,16 @@ void cs_prefix(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     for (size_t i = 0; i < results.size(); ++i) {
         const auto& result = results[i];
         std::printf("    {\"name\": \"%s\", \"compile_ok\": %s, \"dxil_blob\": %s, \"dxil_size\": %zu, "
-                    "\"pso_created\": %s, \"pso_hr\": \"%s\", \"dxc_exit_code\": %lu}%s\n",
+                    "\"pso_created\": %s, \"pso_hr\": \"%s\", \"dxc_exit_code\": %lu, "
+                    "\"runtime_executed\": %s, \"execute_hr\": \"%s\", \"readback_ok\": %s, "
+                    "\"values_ok\": %s, \"expected\": %s, \"actual\": %s, \"detail\": \"%s\"}%s\n",
                     result.name, result.compile_ok ? "true" : "false", result.dxil_blob ? "true" : "false",
                     result.dxil_size, result.pso_created ? "true" : "false", hr_hex(result.pso_hr).c_str(),
-                    static_cast<unsigned long>(result.dxc_exit_code), i + 1 == results.size() ? "" : ",");
+                    static_cast<unsigned long>(result.dxc_exit_code), result.runtime_executed ? "true" : "false",
+                    hr_hex(result.execute_hr).c_str(), result.readback_ok ? "true" : "false",
+                    result.values_ok ? "true" : "false", json_u32_array(result.expected).c_str(),
+                    json_u32_array(result.actual).c_str(), json_escape(result.detail).c_str(),
+                    i + 1 == results.size() ? "" : ",");
     }
     std::printf("  ],\n");
     std::printf("  \"summary\": {\n");
@@ -342,9 +571,12 @@ void cs_prefix(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     std::printf("    \"runtime_correctness_complete\": %s,\n", runtime_correctness_complete ? "true" : "false");
     std::printf("    \"waveops_reported\": %s,\n", waveops_reported ? "true" : "false");
     std::printf("    \"waveops_reportable\": %s,\n", waveops_reportable ? "true" : "false");
-    std::printf("    \"decision\": \"%s\"\n", waveops_reportable
-                                                  ? "WaveOps may be reported"
-                                                  : "WaveOps must not be reported until runtime cases execute");
+    const char* decision = waveops_reportable
+                               ? "WaveOps may be reported"
+                               : (runtime_correctness_complete
+                                      ? "Runtime WaveOps cases passed, but WaveOps caps remain denied by device report"
+                                      : "WaveOps must not be reported until runtime cases execute");
+    std::printf("    \"decision\": \"%s\"\n", decision);
     std::printf("  }\n");
     std::printf("}\n");
 
