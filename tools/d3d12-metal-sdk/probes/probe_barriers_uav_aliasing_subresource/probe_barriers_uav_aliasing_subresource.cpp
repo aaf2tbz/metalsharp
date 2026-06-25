@@ -130,7 +130,6 @@ static D3D12_RESOURCE_BARRIER transition_barrier(ID3D12Resource* resource, D3D12
     return barrier;
 }
 
-
 static D3D12_CPU_DESCRIPTOR_HANDLE offset_cpu_handle(D3D12_CPU_DESCRIPTOR_HANDLE start, UINT increment, UINT index) {
     start.ptr += static_cast<SIZE_T>(increment) * index;
     return start;
@@ -230,8 +229,8 @@ static HRESULT execute_and_wait(ID3D12Device* device, ID3D12CommandQueue* queue,
 
 static HRESULT compile_shader(const char* hlsl, const char* entry, ID3DBlob** out, std::string& errors) {
     ID3DBlob* err = nullptr;
-    HRESULT hr = g_compile ? g_compile(hlsl, std::strlen(hlsl), "probe_barriers_uav_aliasing_subresource.hlsl", nullptr, nullptr,
-                                       entry, "cs_5_0", 0, 0, out, &err)
+    HRESULT hr = g_compile ? g_compile(hlsl, std::strlen(hlsl), "probe_barriers_uav_aliasing_subresource.hlsl", nullptr,
+                                       nullptr, entry, "cs_5_0", 0, 0, out, &err)
                            : E_FAIL;
     if (err) {
         errors.assign(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize());
@@ -599,12 +598,11 @@ static CaseResult run_uav_visibility_case() {
     return result;
 }
 
-
 static HRESULT compile_shader_target(const char* hlsl, const char* entry, const char* target, ID3DBlob** out,
                                      std::string& errors) {
     ID3DBlob* err = nullptr;
-    HRESULT hr = g_compile ? g_compile(hlsl, std::strlen(hlsl), "probe_barriers_uav_aliasing_subresource.hlsl",
-                                       nullptr, nullptr, entry, target, 0, 0, out, &err)
+    HRESULT hr = g_compile ? g_compile(hlsl, std::strlen(hlsl), "probe_barriers_uav_aliasing_subresource.hlsl", nullptr,
+                                       nullptr, entry, target, 0, 0, out, &err)
                            : E_FAIL;
     if (err) {
         errors.assign(static_cast<const char*>(err->GetBufferPointer()), err->GetBufferSize());
@@ -619,7 +617,8 @@ static CaseResult run_compute_uav_to_graphics_srv_case() {
                           "[numthreads(1,1,1)] void main(uint3 id:SV_DispatchThreadID){outbuf[0]=uint4(12,34,56,255);}";
     const char* gfx_hlsl = "StructuredBuffer<uint4> inbuf:register(t0);"
                            "struct VSOut{float4 pos:SV_POSITION;};"
-                           "VSOut vs_main(uint id:SV_VertexID){float2 p[3]={float2(-1,-1),float2(-1,3),float2(3,-1)};VSOut o;o.pos=float4(p[id],0,1);return o;}"
+                           "VSOut vs_main(uint id:SV_VertexID){float2 "
+                           "p[3]={float2(-1,-1),float2(-1,3),float2(3,-1)};VSOut o;o.pos=float4(p[id],0,1);return o;}"
                            "float4 ps_main(VSOut i):SV_Target{uint4 v=inbuf[0];return float4(v)/255.0;}";
 
     ID3D12Device* device = nullptr;
@@ -670,7 +669,8 @@ static CaseResult run_compute_uav_to_graphics_srv_case() {
         hr = serialize_root_signature(root_desc, &root_blob, errors);
     }
     if (SUCCEEDED(hr))
-        hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(), IID_PPV_ARGS(&root));
+        hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                         IID_PPV_ARGS(&root));
     if (SUCCEEDED(hr)) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC cdesc = {};
         cdesc.pRootSignature = root;
@@ -717,7 +717,8 @@ static CaseResult run_compute_uav_to_graphics_srv_case() {
     if (SUCCEEDED(hr))
         hr = create_buffer(device, D3D12_HEAP_TYPE_DEFAULT, 16, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
                            D3D12_RESOURCE_STATE_UNORDERED_ACCESS, &buffer);
-    D3D12_RESOURCE_DESC rt_desc = texture_desc(64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    D3D12_RESOURCE_DESC rt_desc =
+        texture_desc(64, 64, DXGI_FORMAT_R8G8B8A8_UNORM, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
     UINT rows = 0;
     UINT64 row_bytes = 0;
@@ -755,17 +756,19 @@ static CaseResult run_compute_uav_to_graphics_srv_case() {
 
         ID3D12DescriptorHeap* heaps[] = {heap};
         D3D12_GPU_DESCRIPTOR_HANDLE gpu = heap->GetGPUDescriptorHandleForHeapStart();
-        D3D12_VIEWPORT vp = {0,0,64,64,0,1};
-        D3D12_RECT sc = {0,0,64,64};
+        D3D12_VIEWPORT vp = {0, 0, 64, 64, 0, 1};
+        D3D12_RECT sc = {0, 0, 64, 64};
         D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_heap->GetCPUDescriptorHandleForHeapStart();
-        const float black[4] = {0,0,0,1};
+        const float black[4] = {0, 0, 0, 1};
 
         list->SetDescriptorHeaps(1, heaps);
         list->SetComputeRootSignature(root);
         list->SetComputeRootDescriptorTable(0, offset_gpu_handle(gpu, inc, 0));
         list->SetPipelineState(compute_pso);
         list->Dispatch(1, 1, 1);
-        D3D12_RESOURCE_BARRIER barriers[2] = {uav_barrier(buffer), transition_barrier(buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+        D3D12_RESOURCE_BARRIER barriers[2] = {uav_barrier(buffer),
+                                              transition_barrier(buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                                                                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
         list->ResourceBarrier(2, barriers);
         list->SetGraphicsRootSignature(root);
         list->SetGraphicsRootDescriptorTable(1, offset_gpu_handle(gpu, inc, 1));
@@ -776,7 +779,8 @@ static CaseResult run_compute_uav_to_graphics_srv_case() {
         list->ClearRenderTargetView(rtv, black, 0, nullptr);
         list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         list->DrawInstanced(3, 1, 0, 0);
-        D3D12_RESOURCE_BARRIER to_copy = transition_barrier(target, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER to_copy =
+            transition_barrier(target, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &to_copy);
         D3D12_TEXTURE_COPY_LOCATION dst = {};
         dst.pResource = readback;
@@ -789,11 +793,13 @@ static CaseResult run_compute_uav_to_graphics_srv_case() {
         list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         hr = execute_and_wait(device, queue, list);
     }
-    bool verified = SUCCEEDED(hr) && read_texture_pixel(readback, footprint, &pixel) && pixel_eq(pixel, 12, 34, 56, 255);
+    bool verified =
+        SUCCEEDED(hr) && read_texture_pixel(readback, footprint, &pixel) && pixel_eq(pixel, 12, 34, 56, 255);
     result.pass = verified;
     result.hr = hr;
-    result.detail = verified ? "compute UAV writes became visible to graphics SRV read"
-                             : errors.empty() ? "compute-to-graphics UAV/SRV barrier mismatch" : errors;
+    result.detail = verified         ? "compute UAV writes became visible to graphics SRV read"
+                    : errors.empty() ? "compute-to-graphics UAV/SRV barrier mismatch"
+                                     : errors;
     char extra[128] = {};
     std::snprintf(extra, sizeof(extra), "\"pixel\":[%u,%u,%u,%u]", pixel.r, pixel.g, pixel.b, pixel.a);
     result.extra = extra;
@@ -901,7 +907,6 @@ static CaseResult run_present_transition_case() {
     return result;
 }
 
-
 static CaseResult run_subresource_mip_transition_case() {
     CaseResult result = {"subresource_mip_transition", false, E_FAIL, "", ""};
     ID3D12Device* device = nullptr;
@@ -950,13 +955,19 @@ static CaseResult run_subresource_mip_transition_case() {
         for (UINT y = 0; y < upload_fp[0].Footprint.Height; ++y) {
             uint8_t* row = data.data() + upload_fp[0].Offset + upload_fp[0].Footprint.RowPitch * y;
             for (UINT x = 0; x < upload_fp[0].Footprint.Width; ++x) {
-                row[x * 4 + 0] = 201; row[x * 4 + 1] = 0; row[x * 4 + 2] = 0; row[x * 4 + 3] = 255;
+                row[x * 4 + 0] = 201;
+                row[x * 4 + 1] = 0;
+                row[x * 4 + 2] = 0;
+                row[x * 4 + 3] = 255;
             }
         }
         for (UINT y = 0; y < upload_fp[1].Footprint.Height; ++y) {
             uint8_t* row = data.data() + upload_fp[1].Offset + upload_fp[1].Footprint.RowPitch * y;
             for (UINT x = 0; x < upload_fp[1].Footprint.Width; ++x) {
-                row[x * 4 + 0] = 0; row[x * 4 + 1] = 177; row[x * 4 + 2] = 0; row[x * 4 + 3] = 255;
+                row[x * 4 + 0] = 0;
+                row[x * 4 + 1] = 177;
+                row[x * 4 + 2] = 0;
+                row[x * 4 + 3] = 255;
             }
         }
         hr = create_upload_buffer(device, data.data(), data.size(), &upload);
@@ -1042,9 +1053,11 @@ static CaseResult run_aliasing_visibility_case() {
         hr = device->CreateHeap(&heap_desc, IID_PPV_ARGS(&heap));
     }
     if (SUCCEEDED(hr))
-        hr = device->CreatePlacedResource(heap, 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&placed_a));
+        hr = device->CreatePlacedResource(heap, 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                          IID_PPV_ARGS(&placed_a));
     if (SUCCEEDED(hr))
-        hr = device->CreatePlacedResource(heap, 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&placed_b));
+        hr = device->CreatePlacedResource(heap, 0, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                          IID_PPV_ARGS(&placed_b));
     uint32_t pattern[4] = {91, 92, 93, 94};
     if (SUCCEEDED(hr))
         hr = create_upload_buffer(device, pattern, sizeof(pattern), &upload);
@@ -1064,19 +1077,21 @@ static CaseResult run_aliasing_visibility_case() {
         alias.Aliasing.pResourceAfter = placed_b;
         list->ResourceBarrier(1, &alias);
         list->CopyBufferRegion(placed_b, 0, upload, 0, sizeof(pattern));
-        D3D12_RESOURCE_BARRIER to_copy = transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST,
-                                                            D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER to_copy =
+            transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &to_copy);
         list->CopyBufferRegion(readback, 0, placed_b, 0, sizeof(pattern));
         hr = execute_and_wait(device, queue, list);
     }
-    bool verified = SUCCEEDED(hr) && readback_u32(readback, got, 4) && got[0] == 91 && got[1] == 92 && got[2] == 93 && got[3] == 94;
+    bool verified =
+        SUCCEEDED(hr) && readback_u32(readback, got, 4) && got[0] == 91 && got[1] == 92 && got[2] == 93 && got[3] == 94;
     result.pass = verified || FAILED(hr);
     result.hr = hr;
     result.detail = verified ? "aliasing barrier allowed safe placed-resource reuse"
                              : "aliasing path explicitly unsupported or unavailable without corruption";
     char extra[192] = {};
-    std::snprintf(extra, sizeof(extra), "\"values\":[%u,%u,%u,%u],\"aliasing_supported\":%s", got[0], got[1], got[2], got[3], verified ? "true" : "false");
+    std::snprintf(extra, sizeof(extra), "\"values\":[%u,%u,%u,%u],\"aliasing_supported\":%s", got[0], got[1], got[2],
+                  got[3], verified ? "true" : "false");
     result.extra = extra;
 
     safe_release(list);

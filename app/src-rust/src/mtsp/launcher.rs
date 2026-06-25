@@ -5312,9 +5312,11 @@ mod tests {
         let prefix = root.join("prefix-steam");
         std::fs::create_dir_all(&source_dir).expect("create source dir");
 
-        let dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll"];
-        let recipe_dlls: Vec<recipe::RecipeDll> = dlls
+        let route_dlls = ["d3d12.dll", "winemetal.dll"];
+        let companion_dlls = ["dxgi.dll", "dxgi_dxmt.dll", "d3d11.dll", "d3d10core.dll"];
+        let recipe_dlls: Vec<recipe::RecipeDll> = route_dlls
             .iter()
+            .chain(companion_dlls.iter())
             .map(|dll| {
                 let source_path = source_dir.join(dll);
                 std::fs::write(&source_path, format!("m12-{dll}")).expect("write route dll");
@@ -5334,8 +5336,11 @@ mod tests {
         deploy_prefix_route_dlls(&recipe, &prefix).expect("stage M12 route DLLs");
 
         let system32 = prefix.join("drive_c").join("windows").join("system32");
-        for dll in dlls {
+        for dll in route_dlls {
             assert_eq!(std::fs::read_to_string(system32.join(dll)).unwrap(), format!("m12-{dll}"));
+        }
+        for dll in companion_dlls {
+            assert!(!system32.join(dll).exists(), "{dll} should stay game-local, not prefix-routed");
         }
 
         let _ = std::fs::remove_dir_all(root);

@@ -50,12 +50,24 @@ static std::string json_escape(const std::string& input) {
     out.reserve(input.size() + 8);
     for (char c : input) {
         switch (c) {
-        case '\\': out += "\\\\"; break;
-        case '"': out += "\\\""; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default: out += c; break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '"':
+            out += "\\\"";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            out += c;
+            break;
         }
     }
     return out;
@@ -187,20 +199,21 @@ int main() {
     ID3D12Resource* readback = nullptr;
     D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
-    HRESULT candidate_hr = device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &candidate_desc,
-                                                                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                                    IID_PPV_ARGS(&candidate))
-                                  : E_FAIL;
+    HRESULT candidate_hr =
+        device
+            ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &candidate_desc,
+                                              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&candidate))
+            : E_FAIL;
     D3D12_RESOURCE_DESC output_desc = buffer_desc(kOutputBytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
-    HRESULT output_hr = device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &output_desc,
-                                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-                                                                 IID_PPV_ARGS(&output))
-                               : E_FAIL;
+    HRESULT output_hr =
+        device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &output_desc,
+                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr, IID_PPV_ARGS(&output))
+               : E_FAIL;
     D3D12_RESOURCE_DESC input_desc = buffer_desc(kInputBytes);
-    HRESULT input_hr = device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &input_desc,
-                                                                D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                                IID_PPV_ARGS(&input))
-                              : E_FAIL;
+    HRESULT input_hr =
+        device ? device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &input_desc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&input))
+               : E_FAIL;
     D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
     HRESULT input_upload_hr = device ? device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &input_desc,
                                                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
@@ -226,10 +239,10 @@ int main() {
         }
     }
     D3D12_RESOURCE_DESC readback_desc = buffer_desc(kOutputBytes);
-    HRESULT readback_hr = device ? device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
-                                                                   D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                                                   IID_PPV_ARGS(&readback))
-                                 : E_FAIL;
+    HRESULT readback_hr =
+        device ? device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                                 D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback))
+               : E_FAIL;
 
     const char* hlsl = R"(
 ByteAddressBuffer InputSentinels : register(t0);
@@ -253,7 +266,7 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     ID3DBlob* shader = nullptr;
     ID3DBlob* compile_errors = nullptr;
     HRESULT compile_hr = compile ? compile(hlsl, std::strlen(hlsl), nullptr, nullptr, nullptr, "main", "cs_5_0", 0, 0,
-                                          &shader, &compile_errors)
+                                           &shader, &compile_errors)
                                  : HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
     std::string compile_error_text;
     if (compile_errors) {
@@ -294,7 +307,8 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         root_desc.pParameters = params;
         root_hr = serialize(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1_0, &root_blob, &root_errors);
         if (root_errors) {
-            root_error_text.assign(static_cast<const char*>(root_errors->GetBufferPointer()), root_errors->GetBufferSize());
+            root_error_text.assign(static_cast<const char*>(root_errors->GetBufferPointer()),
+                                   root_errors->GetBufferSize());
             root_errors->Release();
         }
         if (SUCCEEDED(root_hr))
@@ -342,13 +356,15 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         candidate_uav.Buffer.StructureByteStride = 0;
         candidate_uav.Buffer.CounterOffsetInBytes = 0;
         candidate_uav.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
-        device->CreateUnorderedAccessView(candidate, nullptr, &candidate_uav,
-                                          offset_cpu(heap->GetCPUDescriptorHandleForHeapStart(), descriptor_increment, 1));
+        device->CreateUnorderedAccessView(
+            candidate, nullptr, &candidate_uav,
+            offset_cpu(heap->GetCPUDescriptorHandleForHeapStart(), descriptor_increment, 1));
 
         D3D12_UNORDERED_ACCESS_VIEW_DESC output_uav = candidate_uav;
         output_uav.Buffer.NumElements = static_cast<UINT>(kOutputBytes / 4ull);
-        device->CreateUnorderedAccessView(output, nullptr, &output_uav,
-                                          offset_cpu(heap->GetCPUDescriptorHandleForHeapStart(), descriptor_increment, 2));
+        device->CreateUnorderedAccessView(
+            output, nullptr, &output_uav,
+            offset_cpu(heap->GetCPUDescriptorHandleForHeapStart(), descriptor_increment, 2));
     }
 
     ID3D12CommandQueue* queue = nullptr;
@@ -357,10 +373,11 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     D3D12_COMMAND_QUEUE_DESC queue_desc = {};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     HRESULT queue_hr = device ? device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&queue)) : E_FAIL;
-    HRESULT allocator_hr = device ? device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)) : E_FAIL;
-    HRESULT list_hr = device ? device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
-                                                         IID_PPV_ARGS(&list))
-                             : E_FAIL;
+    HRESULT allocator_hr =
+        device ? device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator)) : E_FAIL;
+    HRESULT list_hr =
+        device ? device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr, IID_PPV_ARGS(&list))
+               : E_FAIL;
 
     bool dispatch_recorded = false;
     bool copy_recorded = false;
@@ -368,8 +385,8 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     HRESULT execute_hr = E_FAIL;
     if (queue && list && heap && root && pso && candidate && output && input && input_upload && readback) {
         list->CopyBufferRegion(input, 0, input_upload, 0, 96);
-        D3D12_RESOURCE_BARRIER input_to_srv = transition_barrier(input, D3D12_RESOURCE_STATE_COPY_DEST,
-                                                                 D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        D3D12_RESOURCE_BARRIER input_to_srv =
+            transition_barrier(input, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         list->ResourceBarrier(1, &input_to_srv);
         ID3D12DescriptorHeap* heaps[] = {heap};
         list->SetDescriptorHeaps(1, heaps);
@@ -383,12 +400,12 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         dispatch_recorded = true;
         D3D12_RESOURCE_BARRIER barriers[2] = {uav_barrier(candidate), uav_barrier(output)};
         list->ResourceBarrier(2, barriers);
-        D3D12_RESOURCE_BARRIER output_to_copy = transition_barrier(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                                                                   D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER output_to_copy =
+            transition_barrier(output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &output_to_copy);
         list->CopyBufferRegion(readback, 0, output, 0, 128);
-        D3D12_RESOURCE_BARRIER candidate_to_copy = transition_barrier(candidate, D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                                                                      D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER candidate_to_copy =
+            transition_barrier(candidate, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
         list->ResourceBarrier(1, &candidate_to_copy);
         list->CopyBufferRegion(readback, kCandidateFirstReadbackOffset, candidate, 0, 48);
         list->CopyBufferRegion(readback, kCandidateTailReadbackOffset, candidate, kCandidateTailCopyOffset, 48);
@@ -415,15 +432,16 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
         uint32_t* slot = values + gi * 6;
         sentinels_ok = slot[0] == (0x10000000u + gi) && slot[1] == (0xabc00000u | gi) &&
                        slot[2] == (0x12340000u | gi) && slot[3] == (0xfeed0000u | gi) &&
-                       slot[4] == (0xbeef0000u | gi) && slot[5] == (0x10000000u + static_cast<uint32_t>(kCandidateRecordCount) - gi);
+                       slot[4] == (0xbeef0000u | gi) &&
+                       slot[5] == (0x10000000u + static_cast<uint32_t>(kCandidateRecordCount) - gi);
     }
     uint32_t* candidate_first = values + (kCandidateFirstReadbackOffset / sizeof(uint32_t));
     uint32_t* candidate_tail = values + (kCandidateTailReadbackOffset / sizeof(uint32_t));
     bool candidate_store_ok = readback_ok;
     for (uint32_t gi = 0; gi < 4 && candidate_store_ok; ++gi) {
         uint32_t* slot = candidate_first + gi * 3;
-        candidate_store_ok = slot[0] == (0x10000000u + gi) && slot[1] == (0xabc00000u | gi) &&
-                             slot[2] == (0x12340000u | gi);
+        candidate_store_ok =
+            slot[0] == (0x10000000u + gi) && slot[1] == (0xabc00000u | gi) && slot[2] == (0x12340000u | gi);
     }
     for (uint32_t gi = 0; gi < 4 && candidate_store_ok; ++gi) {
         uint32_t expected_gi = 3u - gi;
@@ -437,10 +455,10 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     bool pass = d3d12 && d3dcompiler && create_device && serialize && compile && SUCCEEDED(create_hr) &&
                 SUCCEEDED(candidate_hr) && candidate && candidate_alloc.SizeInBytes >= kCandidateBytes &&
                 allocation_alignment_ok && SUCCEEDED(output_hr) && SUCCEEDED(input_hr) && SUCCEEDED(input_upload_hr) &&
-                SUCCEEDED(readback_hr) && SUCCEEDED(compile_hr) &&
-                SUCCEEDED(root_hr) && SUCCEEDED(pso_hr) && SUCCEEDED(heap_hr) && SUCCEEDED(queue_hr) &&
-                SUCCEEDED(allocator_hr) && SUCCEEDED(list_hr) && dispatch_recorded && copy_recorded &&
-                SUCCEEDED(execute_hr) && completed_value >= 1 && readback_ok && sentinels_ok;
+                SUCCEEDED(readback_hr) && SUCCEEDED(compile_hr) && SUCCEEDED(root_hr) && SUCCEEDED(pso_hr) &&
+                SUCCEEDED(heap_hr) && SUCCEEDED(queue_hr) && SUCCEEDED(allocator_hr) && SUCCEEDED(list_hr) &&
+                dispatch_recorded && copy_recorded && SUCCEEDED(execute_hr) && completed_value >= 1 && readback_ok &&
+                sentinels_ok;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.d3d12-metal.probe-nanite-transient-allocation.v1\",\n");
@@ -464,8 +482,10 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     std::printf("  \"resource_allocation\": {\n");
     std::printf("    \"create_device_hr\": \"%s\",\n", hr_hex(create_hr).c_str());
     std::printf("    \"candidate_create_hr\": \"%s\",\n", hr_hex(candidate_hr).c_str());
-    std::printf("    \"candidate_allocation_size\": %llu,\n", static_cast<unsigned long long>(candidate_alloc.SizeInBytes));
-    std::printf("    \"candidate_allocation_alignment\": %llu,\n", static_cast<unsigned long long>(candidate_alloc.Alignment));
+    std::printf("    \"candidate_allocation_size\": %llu,\n",
+                static_cast<unsigned long long>(candidate_alloc.SizeInBytes));
+    std::printf("    \"candidate_allocation_alignment\": %llu,\n",
+                static_cast<unsigned long long>(candidate_alloc.Alignment));
     std::printf("    \"allocation_alignment_ok\": %s,\n", allocation_alignment_ok ? "true" : "false");
     std::printf("    \"output_create_hr\": \"%s\",\n", hr_hex(output_hr).c_str());
     std::printf("    \"input_create_hr\": \"%s\",\n", hr_hex(input_hr).c_str());
@@ -490,11 +510,15 @@ void main(uint3 id : SV_DispatchThreadID, uint gi : SV_GroupIndex) {
     std::printf("    \"candidate_store_ok\": %s,\n", candidate_store_ok ? "true" : "false");
     std::printf("    \"first_record\": [%u, %u, %u],\n", values[0], values[1], values[2]);
     std::printf("    \"first_reverse_record\": [%u, %u, %u],\n", values[3], values[4], values[5]);
-    std::printf("    \"candidate_first_record\": [%u, %u, %u],\n", candidate_first[0], candidate_first[1], candidate_first[2]);
-    std::printf("    \"candidate_tail_lowest_copied_record\": [%u, %u, %u]\n", candidate_tail[0], candidate_tail[1], candidate_tail[2]);
+    std::printf("    \"candidate_first_record\": [%u, %u, %u],\n", candidate_first[0], candidate_first[1],
+                candidate_first[2]);
+    std::printf("    \"candidate_tail_lowest_copied_record\": [%u, %u, %u]\n", candidate_tail[0], candidate_tail[1],
+                candidate_tail[2]);
     std::printf("  },\n");
-    std::printf("  \"decision\": \"%s\"\n", pass ? "Nanite candidate buffer allocation and raw UAV readback probe passed" :
-                                                "Nanite candidate buffer path is not proven; keep live launches paused and deny Nanite-adjacent readiness");
+    std::printf("  \"decision\": \"%s\"\n", pass
+                                                ? "Nanite candidate buffer allocation and raw UAV readback probe passed"
+                                                : "Nanite candidate buffer path is not proven; keep live launches "
+                                                  "paused and deny Nanite-adjacent readiness");
     std::printf("}\n");
     std::fflush(stdout);
 
