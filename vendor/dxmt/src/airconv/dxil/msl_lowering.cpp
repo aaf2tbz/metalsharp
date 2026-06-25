@@ -661,6 +661,15 @@ static void emitFunctionPrologue(LowerContext &ctx) {
     os << "  }\n";
     os << "}\n\n";
 
+    os << "static inline long m12_atomic_fetch_add_u64_split(device char* ptr, ulong value) {\n";
+    os << "  uint lo = static_cast<uint>(value & 0xfffffffful);\n";
+    os << "  uint hi = static_cast<uint>(value >> 32);\n";
+    os << "  uint old_lo = atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(ptr), lo, memory_order_relaxed);\n";
+    os << "  uint carry = ((old_lo + lo) < old_lo) ? 1u : 0u;\n";
+    os << "  uint old_hi = atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(ptr + 4), hi + carry, memory_order_relaxed);\n";
+    os << "  return static_cast<long>((static_cast<ulong>(old_hi) << 32) | static_cast<ulong>(old_lo));\n";
+    os << "}\n\n";
+
     os << "struct input_v {\n";
     os << "  float4 position [[position]];\n";
     os << "  float4 v0 [[user(locn0)]]; float4 v1 [[user(locn1)]];\n";
@@ -1096,7 +1105,7 @@ static bool exprLooksScalarMathCall(const std::string &value) {
         "atomic_load_explicit(", "atomic_exchange_explicit(",
         "atomic_fetch_add_explicit(", "atomic_fetch_sub_explicit(",
         "atomic_fetch_and_explicit(", "atomic_fetch_or_explicit(",
-        "atomic_fetch_xor_explicit("
+        "atomic_fetch_xor_explicit(", "m12_atomic_fetch_add_u64_split("
     };
     for (const char *call : math_calls)
         if (startsWith(stripped, call))
@@ -2458,11 +2467,14 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_ThreadIDInGroup:
     case DXOP_FlattenedThreadIDInGroup:
     case DXOP_BufferUpdateCounter:
-    case DXOP_AtomicBinOp:
     case DXOP_AtomicCompareExchange:
     case DXOP_WaveGetLaneIndex:
     case DXOP_WaveGetLaneCount:
     case DXOP_LegacyF32ToF16:
+        return {MSLTypeKind::UInt, 0, {}};
+    case DXOP_AtomicBinOp:
+        if (callee_name.find(".i64") != std::string::npos)
+            return {MSLTypeKind::Long, 0, {}};
         return {MSLTypeKind::UInt, 0, {}};
     case DXOP_WaveActiveBallot:
       return {MSLTypeKind::UInt4, 0, {}};
@@ -2914,8 +2926,9 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
                sampleCoordComponent(ctx, valueArg(3, "0.0"), 1) + "))";
     }
     case 78: {
-        if (args.size() < 4) return "0";
-        auto handle = handleArg(1, "buf", "buf0");
+        if (args.size() < 6) return "0";
+        auto handle = handleArg(0, "buf", "buf16");
+        uint32_t atomic_op = literalArg(1, 0, "atomic binop");
         auto off_raw = ensureScalarIndex(numericArg(2, "0"));
         MSLType off_type = typeForResolvedExpression(ctx, off_raw);
         if (DXILIRBuilder::isVectorType(off_type))
@@ -2923,8 +2936,15 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (typeLooksResourceHandle(off_type))
             off_raw = "0";
         auto off = "static_cast<int>(" + off_raw + ")";
-        auto val = ensureScalarIndex(numericArg(3, "0"));
-        return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + off + ")), (uint)(" + val + "), memory_order_relaxed)";
+        auto val = ensureScalarIndex(numericArg(5, "0"));
+        bool is_i64 = callee_name.find(".i64") != std::string::npos;
+        if (is_i64 && atomic_op == 0)
+            return "m12_atomic_fetch_add_u64_split(" + handle + " + (" + off + "), static_cast<ulong>(" + val + "))";
+        if (atomic_op == 0)
+            return "atomic_fetch_add_explicit(reinterpret_cast<device atomic_uint*>(" + handle + " + (" + off +
+                   ")), (uint)(" + val + "), memory_order_relaxed)";
+        ctx.unsupported_intrinsics++;
+        return is_i64 ? "0l" : "0";
     }
     case 79: {
         if (args.size() < 2) return "0";
@@ -3634,8 +3654,10 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 fn_args.assign(call_args.begin() + 1, call_args.end());
             else if (intrinsic_id == 13 || intrinsic_id == 14 || intrinsic_id == 15)
                 fn_args = call_args;
-            else
+            else if (!call_args.empty() && literalFromValue(ctx, call_args[0], UINT32_MAX) == intrinsic_id)
                 fn_args.assign(call_args.begin() + 1, call_args.end());
+            else
+                fn_args = call_args;
 
             std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args, callee_name);
             MSLType inst_declared_type = getTypeForInst(inst.type_id);
@@ -4696,15 +4718,16 @@ std::optional<TypedMSLShader> MSLLowering::lower(
                         intrinsic_id = opcode;
                 }
                 if (intrinsic_id != 0 && inst.operands.size() > 2) {
+                    std::vector<uint32_t> call_args(inst.operands.begin() + 2, inst.operands.end());
                     std::vector<uint32_t> fn_args;
-                    if (intrinsic_id == DXOP_Unary || intrinsic_id == DXOP_Binary ||
-                        intrinsic_id == DXOP_Tertiary)
-                        fn_args.assign(inst.operands.begin() + 2, inst.operands.end());
+                    if (intrinsic_id == DXOP_Unary || intrinsic_id == DXOP_Binary || intrinsic_id == DXOP_Tertiary)
+                        fn_args = call_args;
+                    else if (!call_args.empty() && literalFromValue(ctx, call_args[0], UINT32_MAX) == intrinsic_id)
+                        fn_args.assign(call_args.begin() + 1, call_args.end());
                     else
-                        fn_args.assign(inst.operands.begin() + 3, inst.operands.end());
+                        fn_args = call_args;
                     MSLType declared = DXILIRBuilder::resolveType(inst.type_id, module);
-                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared,
-                                                                  callee_name);
+                    MSLType inferred = inferDXIntrinsicResultType(ctx, intrinsic_id, fn_args, declared, callee_name);
                     if (inferred.kind != MSLTypeKind::Unknown && inferred.kind != MSLTypeKind::Void)
                         return inferred;
                 }

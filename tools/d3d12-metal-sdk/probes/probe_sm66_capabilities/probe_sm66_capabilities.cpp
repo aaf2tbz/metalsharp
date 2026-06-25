@@ -320,6 +320,10 @@ static bool expected_for_case(const char* name, std::vector<uint32_t>& expected)
         expected = {4u, 5u, 6u, 7u};
         return true;
     }
+    if (std::strcmp(name, "atomic64_raw_uav") == 0) {
+        expected = {15u, 0u, 5u, 0u};
+        return true;
+    }
     if (std::strcmp(name, "texture_sampler") == 0) {
         expected = {10u, 11u, 12u, 13u};
         return true;
@@ -700,6 +704,14 @@ void cs_texture_sampler(uint3 id : SV_DispatchThreadID) {
                (uint)(sample.b * 255.0 + 0.5) + (uint)(sample.a * 255.0 + 0.5);
   outbuf.Store(id.x * 4, total + id.x);
 }
+
+[numthreads(1, 1, 1)]
+void cs_atomic64_raw_uav(uint3 id : SV_DispatchThreadID) {
+  outbuf.Store2(0, uint2(5u, 0u));
+  uint64_t oldValue;
+  outbuf.InterlockedAdd64(0, (uint64_t)10u, oldValue);
+  outbuf.Store2(8, uint2((uint)(oldValue & 0xffffffffu), (uint)(oldValue >> 32)));
+}
 )";
 
     bool hlsl_written = write_text_file(hlsl_path, hlsl);
@@ -735,6 +747,7 @@ void cs_texture_sampler(uint3 id : SV_DispatchThreadID) {
         {"descriptor_indexing", "cs_descriptor_indexing", "descriptor_indexing", true},
         {"int64_arithmetic", "cs_int64_arithmetic", "64_bit_shader_arithmetic", true},
         {"atomics_barriers", "cs_atomics_barriers", "atomics_barriers", true},
+        {"atomic64_raw_uav", "cs_atomic64_raw_uav", "atomic64_raw_uav", true},
         {"texture_sampler", "cs_texture_sampler", "samplers_texture_paths", true},
     };
 
