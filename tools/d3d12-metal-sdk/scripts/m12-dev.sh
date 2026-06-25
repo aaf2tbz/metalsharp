@@ -110,6 +110,7 @@ run_probes() {
   "$SDK_DIR/scripts/run-probes.sh" \
     --profile "$PROFILE" \
     --results-dir "$RESULTS_DIR" \
+    --dxmt-runtime "$M12_RUNTIME_DIR" \
     "$@"
 }
 

@@ -1214,13 +1214,16 @@ static std::string vectorZeroForExpression(const std::string &value) {
             return zero.second;
     }
     if (stripped.find("reinterpret_cast<device float4&>") != std::string::npos ||
+        stripped.find("reinterpret_cast<device float4*>") != std::string::npos ||
         stripped.find(".read(") != std::string::npos ||
         stripped.find(".sample(") != std::string::npos ||
         stripped.find(".gather(") != std::string::npos)
         return "float4(0.0f)";
-    if (stripped.find("reinterpret_cast<device uint4&>") != std::string::npos)
+    if (stripped.find("reinterpret_cast<device uint4&>") != std::string::npos ||
+        stripped.find("reinterpret_cast<device uint4*>") != std::string::npos)
         return "uint4(0)";
-    if (stripped.find("reinterpret_cast<device int4&>") != std::string::npos)
+    if (stripped.find("reinterpret_cast<device int4&>") != std::string::npos ||
+        stripped.find("reinterpret_cast<device int4*>") != std::string::npos)
         return "int4(0)";
     for (const auto &zero : zeros) {
         if (stripped.find(zero.first) != std::string::npos)
@@ -1247,8 +1250,11 @@ static bool exprLooksVectorValue(const std::string &value) {
            value.find("uint3(") != std::string::npos ||
            value.find("uint4(") != std::string::npos ||
            value.find("reinterpret_cast<device float4&>") != std::string::npos ||
+           value.find("reinterpret_cast<device float4*>") != std::string::npos ||
            value.find("reinterpret_cast<device uint4&>") != std::string::npos ||
+           value.find("reinterpret_cast<device uint4*>") != std::string::npos ||
            value.find("reinterpret_cast<device int4&>") != std::string::npos ||
+           value.find("reinterpret_cast<device int4*>") != std::string::npos ||
            value.find(".read(") != std::string::npos ||
            value.find(".sample(") != std::string::npos ||
            value.find(".gather(") != std::string::npos;

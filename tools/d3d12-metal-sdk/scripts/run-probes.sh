@@ -841,7 +841,15 @@ if [[ "$PROFILE" == "metalsharp" ]]; then
     WINE_BIN="$HOME/.metalsharp/runtime/wine/bin/wine"
   fi
   WINE_PREFIX="${WINE_PREFIX:-$HOME/.metalsharp/prefix-steam}"
-  DXMT_RUNTIME="${DXMT_RUNTIME:-$HOME/.metalsharp/runtime/wine/lib/dxmt}"
+  if [[ -z "$DXMT_RUNTIME" ]]; then
+    if [[ -d "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12" ]]; then
+      DXMT_RUNTIME="$HOME/.metalsharp/runtime/wine/lib/dxmt_m12"
+    elif [[ -d "$HOME/.metalsharp/runtime/wine/lib/dxmt-m12" ]]; then
+      DXMT_RUNTIME="$HOME/.metalsharp/runtime/wine/lib/dxmt-m12"
+    else
+      DXMT_RUNTIME="$HOME/.metalsharp/runtime/wine/lib/dxmt"
+    fi
+  fi
 fi
 
 if [[ -z "$WINE_PREFIX" ]]; then
