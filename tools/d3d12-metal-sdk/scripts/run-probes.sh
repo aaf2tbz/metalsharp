@@ -82,6 +82,7 @@ Options:
   --no-resources        Skip probe_resources.
   --no-queues           Skip probe_queues.
   --no-descriptors      Skip probe_descriptors.
+  --descriptors-only    Run only the descriptor heap/root-signature probe.
   --descriptor-table-indexing
                         Run optional dynamic descriptor table indexing probe.
   --descriptor-table-indexing-only
@@ -119,6 +120,8 @@ Options:
   --heap-aliasing-only  Run only the heap/placed-resource aliasing probe.
   --nanite-transient-allocation
                         Run optional Nanite 128MiB / 64KiB transient allocation probe.
+  --no-nanite-transient-allocation
+                        Skip the optional Nanite transient allocation probe.
   --nanite-transient-allocation-only
                         Run only the Nanite transient allocation probe.
   --render-headless     Run optional probe_render_headless.
@@ -281,6 +284,34 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-descriptors)
       RUN_DESCRIPTORS=0
+      shift
+      ;;
+    --descriptors-only)
+      RUN_LOADER=0
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=1
+      RUN_DESCRIPTOR_TABLE_INDEXING=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
+      RUN_SM66_CAPABILITIES=0
+      RUN_WAVE_OPS=0
+      RUN_REFLECTION_ABI=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_HEAP_ALIASING=0
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
+      RUN_RENDER_HEADLESS=0
+      RUN_MINI=0
+      RUN_WINEMETAL_ABI=0
+      RUN_PRESENT_WINDOWED=0
       shift
       ;;
     --descriptor-table-indexing)
@@ -654,6 +685,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --nanite-transient-allocation)
       RUN_NANITE_TRANSIENT_ALLOCATION=1
+      shift
+      ;;
+    --no-nanite-transient-allocation)
+      RUN_NANITE_TRANSIENT_ALLOCATION=0
       shift
       ;;
     --nanite-transient-allocation-only)
