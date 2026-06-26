@@ -13,11 +13,15 @@ Build a fresh Windows `game.exe`-style proof harness that runs through MetalShar
 - `winemetal.so`
 - the selected Wine prefix and runtime layout used by normal games
 
-The harness must render an actual loading/game window and must prove, with structured logs and result JSON, that the D3D12/M12 pipeline is correct without hidden skips, fallbacks, stale caches, or incorrect DLL routing.
+The harness must render an actual loading/game window and must prove, with structured logs and result JSON, that the D3D12/M12 pipeline is correct without hidden skips, fallbacks, stale caches, or incorrect DLL routing. It must exercise hundreds of shaders and hundreds of textures when source material is available; one-shader/one-texture smoke coverage is not sufficient for final acceptance because the executable must behave like a real game workload.
 
 ## Forward-focused runtime policy
 
-This PR is not constrained by preserving current or old MetalSharp install behavior. If the fresh proof shows the runtime shape must change, the runtime will change. Compatibility gates should target the forward M12 architecture this work is creating, not stale behavior from old installs. Existing behavior may be documented as context, but it must not override correctness, exact runtime identity, exact bridge loading, or fresh-proof requirements.
+This PR is not constrained by preserving current or old MetalSharp install behavior. If the fresh proof shows the runtime shape must change, the runtime will change. Compatibility gates should target the forward M12 architecture this work is creating, not stale behavior from old installs. Existing behavior may be documented as context, but it must not override correctness, exact runtime identity, exact bridge loading, high-volume proof workload, or fresh-proof requirements.
+
+## Backend isolation policy
+
+Any backend used by this work must be built and run on port `9277`. Do not use or disturb the main MetalSharp backend on port `9274`. Any backend-driven proof command must record `METALSHARP_PORT=9277` or equivalent explicit port evidence in its result manifest.
 
 ## Fresh artifact policy
 
@@ -65,11 +69,12 @@ Required evidence:
 - Unreal Engine texture/resource payloads from the local Unreal repository or sample content that can be legally used as proof assets.
 - Microsoft texture/resource payloads from DirectX samples, DirectXTex/DirectXTK material, SDK sample assets, or local system SDK assets.
 - Unity shader and texture inputs if available from Unity sample projects, SRP/URP/HDRP shader libraries, official sample assets, or locally installed Unity material; if unavailable, the manifest must record the attempted sources and why they were unavailable.
-- At least one SM5/DXBC graphics path.
-- At least one SM6/DXIL graphics path.
-- At least one compute path.
-- At least one real texture/resource payload from each available source family: game, Unreal, Microsoft, and Unity when obtainable.
-- At least one PSO descriptor representative of Unreal-style runtime behavior and at least one representative of Unity-style runtime behavior if Unity inputs are obtainable.
+- Hundreds-scale shader input coverage where available, with a default target of at least 300 shader files and 300 texture/resource files across game, Unreal, Microsoft, and obtainable Unity sources before final game-harness acceptance.
+- Dozens to hundreds of SM5/DXBC graphics paths when available, not just one.
+- Dozens to hundreds of SM6/DXIL graphics paths when available, not just one.
+- Multiple compute paths from each available source family.
+- Hundreds of real texture/resource payloads when available, including game, Unreal, Microsoft, and Unity sources when obtainable.
+- Multiple PSO descriptors representative of Unreal-style runtime behavior and multiple representative of Unity-style runtime behavior if Unity inputs are obtainable.
 
 SDK acquisition requirements:
 
@@ -81,6 +86,7 @@ Exit criteria:
 
 - Fresh corpus manifest exists and includes game, Unreal, Microsoft, and attempted Unity sourcing.
 - SDK inventory manifest exists and maps every SDK/toolkit to the gates it exercises.
+- Manifest reports shader, texture/resource, PSO, SM5/DXBC, SM6/DXIL, and compute counts; if hundreds-scale targets are not met, it must explain which sources were unavailable and why.
 - No shader, texture, cache, SDK, or corpus file is accepted without hash/provenance.
 
 ## Phase 2 — Translation accuracy gates
@@ -107,6 +113,7 @@ Required evidence:
 Exit criteria:
 
 - Translation gate fails hard on skipped, fallback, stale, or unvalidated output.
+- Final translation proof covers hundreds of shader inputs when available, and any lower count must be justified by source availability/provenance constraints.
 
 ## Phase 3 — Runtime DLL and ABI bootstrap gates
 
@@ -172,6 +179,7 @@ Implement the actual proof executable:
 - A loading window.
 - A rendered cube or equivalent simple scene.
 - Real shaders/textures/PSOs from the fresh corpus.
+- A high-volume asset exercise mode that loads, binds, translates, caches, and renders or validates hundreds of shaders and textures when available.
 - Graphics render thread coverage.
 - GPU execution and CPU readback proof.
 - Screenshot/readback color verification.
@@ -182,6 +190,7 @@ Exit criteria:
 - The harness opens a real window under MetalSharp Wine.
 - It renders deterministically.
 - It uses fresh game, Unreal, Microsoft, and obtainable Unity shader/texture inputs rather than synthetic-only assets.
+- It reports exact loaded/translated/cached/rendered counts and must reach hundreds-scale shader/texture coverage when available.
 - It proves GPU computation/readback and draw/color correctness.
 
 ## Phase 7 — Engine compatibility simulation
@@ -214,5 +223,7 @@ Exit criteria:
 
 - All required JSON gates pass.
 - Human summary maps each goal requirement to fresh evidence.
+- Human summary includes high-volume corpus and game-harness counts proving hundreds of shaders/textures were exercised when available.
+- Any backend evidence was produced on port `9277`, not `9274`.
 - New PR contains only this branch's roadmap, harness, gates, and fixes.
 - No live game launch is performed without explicit user approval.
