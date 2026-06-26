@@ -248,9 +248,15 @@ static bool isFloatingBinopType(const LLVMModule &module, uint32_t type_id) {
   const auto &type = module.types[type_id];
   if (type.kind == LLVMType::Float || type.kind == LLVMType::Double)
     return true;
-  if (type.kind == LLVMType::Vector && !type.subtypes.empty())
-    return type.subtypes[0].kind == LLVMType::Float ||
-           type.subtypes[0].kind == LLVMType::Double;
+  if (type.kind == LLVMType::Vector) {
+    if (!type.type_refs.empty() && type.type_refs[0] < module.types.size()) {
+      const auto &element = module.types[type.type_refs[0]];
+      return element.kind == LLVMType::Float || element.kind == LLVMType::Double;
+    }
+    if (!type.subtypes.empty())
+      return type.subtypes[0].kind == LLVMType::Float ||
+             type.subtypes[0].kind == LLVMType::Double;
+  }
   return false;
 }
 

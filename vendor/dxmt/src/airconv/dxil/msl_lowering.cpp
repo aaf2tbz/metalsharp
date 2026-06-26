@@ -2768,10 +2768,10 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (bvals.size() > 2) parseUnsignedLiteral(bvals[2], register_space);
         if (bvals.size() > 3) parseUnsignedLiteral(bvals[3], resource_class);
         (void)upper_bound;
-        auto index = args.size() >= 2 ? bindingIndexArg(1, lower_bound) : std::make_pair(lower_bound, std::string{});
+        auto index = args.size() >= 2 ? bindingIndexArg(1, 0) : std::make_pair(0u, std::string{});
         bool non_uniform = args.size() >= 3 && literalArg(2, 0, "non uniform") != 0;
         return recordHandle(
-            descriptorKindForResourceClass(resource_class), resource_class, 0, index.first, register_space, non_uniform,
+            descriptorKindForResourceClass(resource_class), resource_class, lower_bound, index.first, register_space, non_uniform,
             index.second
         );
     }
