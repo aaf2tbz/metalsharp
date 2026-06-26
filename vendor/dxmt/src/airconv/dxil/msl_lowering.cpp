@@ -4894,6 +4894,14 @@ std::optional<TypedMSLShader> MSLLowering::lower(
                     value_operand = (oi % 2) == 0;
                 else if (inst.opcode == LLVMInstruction::Call)
                     value_operand = oi >= 2;
+                else if (inst.opcode == LLVMInstruction::ExtractValue)
+                    value_operand = oi == 0;
+                else if (inst.opcode == LLVMInstruction::InsertValue)
+                    value_operand = oi <= 1;
+                else if (inst.opcode == LLVMInstruction::ICmp || inst.opcode == LLVMInstruction::FCmp)
+                    value_operand = oi >= 1;
+                else if (inst.opcode == LLVMInstruction::AtomicRMW)
+                    value_operand = oi <= 1;
                 else if (inst.opcode == LLVMInstruction::Br)
                     value_operand = inst.operands.size() >= 3 && oi == 0;
                 else if (inst.opcode == LLVMInstruction::Switch)

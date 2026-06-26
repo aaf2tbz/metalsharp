@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <bitset>
+#include <unordered_set>
 
 static bool
 dxmt_dxil_trace_enabled() {
@@ -1142,12 +1143,43 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
   uint32_t cur_block = 0;
   uint32_t next_value = fn.instruction_start_value;
 
+  std::unordered_set<uint32_t> function_declaration_values;
+  for (const auto &dfn : ctx.module.functions)
+    if (dfn.is_declaration)
+      function_declaration_values.insert(dfn.value_id);
+
+  auto isFunctionDeclarationValue = [&](uint32_t value_id) {
+    return function_declaration_values.find(value_id) != function_declaration_values.end();
+  };
+
+  auto normalizeFunctionBodyValue = [&](uint32_t value_id, bool skip_declarations) {
+    /*
+     * DXIL function bodies encode ordinary operands in a body-local value
+     * namespace.  For entry points that are not module value 0, that namespace
+     * omits the current function's own module slot; map those operands back to
+     * the module value IDs used by declarations/constants.  Non-callee operands
+     * must also never resolve to dx.op declarations; if they do, the encoded
+     * value is referring to the following constant/value slot instead.
+     */
+    if (fn.value_id != 0 && value_id >= fn.value_id && value_id < fn.instruction_start_value)
+      value_id++;
+    if (skip_declarations) {
+      while (value_id < fn.instruction_start_value && isFunctionDeclarationValue(value_id))
+        value_id++;
+    }
+    return value_id;
+  };
+
   auto value = [&](uint64_t encoded) {
-    return decodeRelativeValue(encoded, next_value);
+    return normalizeFunctionBodyValue(decodeRelativeValue(encoded, next_value), true);
+  };
+
+  auto calleeValue = [&](uint64_t encoded) {
+    return normalizeFunctionBodyValue(decodeRelativeValue(encoded, next_value), false);
   };
 
   auto signedValue = [&](uint64_t encoded) {
-    return decodeSignedRelativeValue(encoded, next_value);
+    return normalizeFunctionBodyValue(decodeSignedRelativeValue(encoded, next_value), true);
   };
 
   auto inferValueType = [&](uint32_t value_id, size_t &slot,
@@ -1169,6 +1201,12 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
 
   auto valueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot, uint32_t &type_id) {
     uint32_t value_id = slot < record.size() ? value(record[slot++]) : 0;
+    inferValueType(value_id, slot, record, type_id);
+    return value_id;
+  };
+
+  auto calleeValueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot, uint32_t &type_id) {
+    uint32_t value_id = slot < record.size() ? calleeValue(record[slot++]) : 0;
     inferValueType(value_id, slot, record, type_id);
     return value_id;
   };
@@ -1288,7 +1326,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           function_type_id = (uint32_t)ops[slot++];
 
         uint32_t callee_type_id = 0;
-        uint32_t callee = valueTypePair(ops, slot, callee_type_id);
+        uint32_t callee = calleeValueTypePair(ops, slot, callee_type_id);
         uint64_t dxop_opcode = 0;
         bool has_dxop_opcode = slot < ops.size() &&
           getUnsignedConstantValue(ctx.module, fn, value(ops[slot]), dxop_opcode);
