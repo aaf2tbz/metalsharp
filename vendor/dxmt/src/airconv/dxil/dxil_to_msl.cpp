@@ -1314,6 +1314,11 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       ctx.value_type_ids.resize(needed + 1, 0);
   };
 
+  auto typeIdIsVoid = [&](uint32_t type_id) -> bool {
+    return type_id >= ctx.mod.types.size() ||
+           ctx.mod.types[type_id].kind == LLVMType::Void;
+  };
+
   auto pointerAddressSpace = [&](uint32_t idx) -> const char * {
     std::string value = getValue(idx);
     if (startsWith(value, "(threadgroup") || startsWith(value, "threadgroup"))
@@ -1358,6 +1363,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       callee_name = ctx.value_table[callee];
     }
     uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
+    bool call_produces_value = !typeIdIsVoid(inst.type_id);
 
     if (intrinsic_id != 0 && call_args.empty()) {
       ctx.unsupported_intrinsics++;
@@ -1375,7 +1381,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
 
       std::string translated = translateDXIntrinsic(ctx, intrinsic_id, fn_args);
 
-      if (inst.type_id == 0) {
+      if (!call_produces_value) {
         ensureValueTable(value_counter);
         if (!translated.empty()) {
           os << "  " << translated << ";\n";
@@ -1403,7 +1409,7 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       }
     } else {
       ensureValueTable(value_counter);
-      if (inst.type_id != 0) {
+      if (call_produces_value) {
         os << "  auto " << result << " = 0; // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
       } else {
         os << "  // call " << (callee_name.empty() ? getValue(callee) : callee_name) << "(";
@@ -1416,7 +1422,8 @@ void DXILToMSL::emitInstruction(EmitContext &ctx, const LLVMInstruction &inst, u
       ctx.value_table[value_counter] = result;
       ctx.value_type_ids[value_counter] = inst.type_id;
     }
-    value_counter++;
+    if (call_produces_value)
+      value_counter++;
     break;
   }
 
@@ -2098,13 +2105,18 @@ std::optional<MSLShader> DXILToMSL::convert(const LLVMModule &module,
           }
           phi_info_per_block[(uint32_t)bi].push_back(pi);
         }
-        // Advance value counter same as emitInstruction does
+        // Advance value counter same as emitInstruction does.
         switch (inst.opcode) {
         case LLVMInstruction::Ret:
         case LLVMInstruction::Br:
         case LLVMInstruction::Switch:
         case LLVMInstruction::Unreachable:
         case LLVMInstruction::Store:
+          break;
+        case LLVMInstruction::Call:
+          if (inst.type_id < module.types.size() &&
+              module.types[inst.type_id].kind != LLVMType::Void)
+            vc++;
           break;
         default:
           vc++;

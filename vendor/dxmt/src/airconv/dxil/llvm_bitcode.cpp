@@ -449,6 +449,13 @@ static bool dxilFunctionNameMatchesBase(const std::string &name, const char *bas
          (name.size() == base_len || name[base_len] == '.');
 }
 
+static uint32_t findVoidTypeId(const LLVMModule &module) {
+  for (uint32_t i = 0; i < module.types.size(); i++)
+    if (module.types[i].kind == LLVMType::Void)
+      return i;
+  return UINT32_MAX;
+}
+
 static bool dxilOpcodeMatchesFunctionName(uint64_t opcode, const std::string &name) {
   switch (opcode) {
   case 4: return dxilFunctionNameMatchesBase(name, "dx.op.loadInput");
@@ -514,6 +521,36 @@ static bool dxilOpcodeMatchesFunctionName(uint64_t opcode, const std::string &na
   case 225: return dxilFunctionNameMatchesBase(name, "dx.op.textureStoreSample");
   default: return false;
   }
+}
+
+static bool dxilFunctionNameIsVoidOp(const std::string &name) {
+  return name.find("Store") != std::string::npos ||
+         name.find("store") != std::string::npos ||
+         dxilFunctionNameMatchesBase(name, "dx.op.barrier") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.barrierByMemoryType") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.barrierByMemoryHandle") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.barrierByNodeRecordHandle") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.discard") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.emitStream") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.cutStream") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.emitThenCutStream") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.traceRay") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.callShader") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.dispatchMesh") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.setMeshOutputCounts") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.emitIndices") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.ignoreHit") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.acceptHitAndEndSearch") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.rayQuery_Abort") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.rayQuery_CommitNonOpaqueTriangleHit") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.rayQuery_CommitProceduralPrimitiveHit") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.rayQuery_TraceRayInline") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.writeSamplerFeedback") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.writeSamplerFeedbackBias") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.writeSamplerFeedbackGrad") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.writeSamplerFeedbackLevel") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.incrementOutputCount") ||
+         dxilFunctionNameMatchesBase(name, "dx.op.outputComplete");
 }
 
 static const LLVMGlobal *findGlobalById(const LLVMModule &module, uint32_t id) {
@@ -1252,13 +1289,13 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
 
         uint32_t callee_type_id = 0;
         uint32_t callee = valueTypePair(ops, slot, callee_type_id);
+        uint64_t dxop_opcode = 0;
+        bool has_dxop_opcode = slot < ops.size() &&
+          getUnsignedConstantValue(ctx.module, fn, value(ops[slot]), dxop_opcode);
         if (function_type_id) {
           const LLVMFunction *decoded_fn = nullptr;
           const LLVMFunction *typed_dxop_decl = nullptr;
           const LLVMFunction *opcode_dxop_decl = nullptr;
-          uint64_t dxop_opcode = 0;
-          bool has_dxop_opcode = slot < ops.size() &&
-            getUnsignedConstantValue(ctx.module, fn, value(ops[slot]), dxop_opcode);
           bool typed_dxop_ambiguous = false;
           bool opcode_dxop_ambiguous = false;
 
@@ -1336,19 +1373,23 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           }
         }
 
-        if (return_type_id >= ctx.module.types.size() ||
-            ctx.module.types[return_type_id].kind == LLVMType::Void) {
-          std::string callee_name;
-          for (const auto &dfn : ctx.module.functions) {
-            if (dfn.value_id == callee) {
-              callee_name = dfn.name;
-              break;
-            }
+        std::string callee_name;
+        for (const auto &dfn : ctx.module.functions) {
+          if (dfn.value_id == callee) {
+            callee_name = dfn.name;
+            break;
           }
-          if (callee_name.rfind("dx.op.", 0) == 0 &&
-              callee_name.find("barrier") == std::string::npos &&
-              callee_name.find("Store") == std::string::npos &&
-              callee_name.find("store") == std::string::npos) {
+        }
+
+        bool is_dxop = callee_name.rfind("dx.op.", 0) == 0;
+        bool dxop_is_void = is_dxop && dxilFunctionNameIsVoidOp(callee_name);
+        if (dxop_is_void) {
+          uint32_t void_type_id = findVoidTypeId(ctx.module);
+          if (void_type_id < ctx.module.types.size())
+            return_type_id = void_type_id;
+        } else if (return_type_id >= ctx.module.types.size() ||
+                   ctx.module.types[return_type_id].kind == LLVMType::Void) {
+          if (is_dxop) {
             uint32_t wanted_bits = callee_name.find(".i64") != std::string::npos ? 64u : 32u;
             for (uint32_t i = 0; i < ctx.module.types.size(); i++) {
               const auto &type = ctx.module.types[i];

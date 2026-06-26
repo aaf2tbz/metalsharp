@@ -4795,6 +4795,10 @@ std::optional<TypedMSLShader> MSLLowering::lower(
         }
 
         if (inst.opcode == LLVMInstruction::Call && !inst.operands.empty()) {
+            if (inst.type_id >= module.types.size() ||
+                module.types[inst.type_id].kind == LLVMType::Void)
+                return false;
+
             std::string call_name;
             uint32_t callee = inst.operands[0];
             auto decl_it = ctx.function_decls.find(callee);
