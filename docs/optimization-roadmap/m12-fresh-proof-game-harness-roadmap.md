@@ -15,6 +15,10 @@ Build a fresh Windows `game.exe`-style proof harness that runs through MetalShar
 
 The harness must render an actual loading/game window and must prove, with structured logs and result JSON, that the D3D12/M12 pipeline is correct without hidden skips, fallbacks, stale caches, or incorrect DLL routing.
 
+## Forward-focused runtime policy
+
+This PR is not constrained by preserving current or old MetalSharp install behavior. If the fresh proof shows the runtime shape must change, the runtime will change. Compatibility gates should target the forward M12 architecture this work is creating, not stale behavior from old installs. Existing behavior may be documented as context, but it must not override correctness, exact runtime identity, exact bridge loading, or fresh-proof requirements.
+
 ## Fresh artifact policy
 
 - Use a new branch and new PR only.
@@ -49,23 +53,35 @@ Exit criteria:
 - New PR can be opened from this branch.
 - No previous proof artifacts are referenced as pass evidence.
 
-## Phase 1 — Fresh corpus and shader provenance
+## Phase 1 — Fresh corpus, SDK, shader, and texture provenance
 
-Create a new compact corpus from genuine Elden Ring and Subnautica 2 shader/PSO/texture inputs.
+Create a new compact corpus from genuine Elden Ring and Subnautica 2 shader/PSO/texture inputs, plus fresh engine/vendor inputs gathered specifically for this PR.
 
 Required evidence:
 
-- Source manifest with file hashes and title labels.
+- Source manifest with file hashes, title/source labels, license/provenance notes, extraction time, and acquisition command.
+- Actual SM6 and SM5 shader material from the local Unreal Engine repository, including Unreal shader libraries and representative generated shader/debug material where available.
+- Real DXIL, DXBC, HLSL, D3D12, and DXGI sample shader inputs from Microsoft sources and/or the local Windows/DirectX SDK/tooling cache.
+- Unreal Engine texture/resource payloads from the local Unreal repository or sample content that can be legally used as proof assets.
+- Microsoft texture/resource payloads from DirectX samples, DirectXTex/DirectXTK material, SDK sample assets, or local system SDK assets.
+- Unity shader and texture inputs if available from Unity sample projects, SRP/URP/HDRP shader libraries, official sample assets, or locally installed Unity material; if unavailable, the manifest must record the attempted sources and why they were unavailable.
 - At least one SM5/DXBC graphics path.
 - At least one SM6/DXIL graphics path.
 - At least one compute path.
-- At least one real texture/resource payload.
-- At least one PSO descriptor representative of Unreal/Unity-style runtime behavior.
+- At least one real texture/resource payload from each available source family: game, Unreal, Microsoft, and Unity when obtainable.
+- At least one PSO descriptor representative of Unreal-style runtime behavior and at least one representative of Unity-style runtime behavior if Unity inputs are obtainable.
+
+SDK acquisition requirements:
+
+- Fetch or inventory as many relevant current SDKs/toolkits as are legally accessible and useful for this proof, including D3D12 Agility SDK versions, Windows/DirectX SDK samples, DirectXShaderCompiler/DXC, DirectXTex, DirectXTK/DirectXTK12, D3D12 Memory Allocator, PIX/WinPixEventRuntime headers/libs where usable, Microsoft DirectX samples, Apple Metal Shader Converter, and any locally installed Xcode/Metal toolchain pieces.
+- Record every SDK version, URL or local path, hash, and compatibility result in the fresh corpus/proof manifest.
+- Use SDK diversity to expand compatibility gates rather than preserving current runtime quirks.
 
 Exit criteria:
 
-- Fresh corpus manifest exists.
-- No shader cache or corpus file is accepted without hash/provenance.
+- Fresh corpus manifest exists and includes game, Unreal, Microsoft, and attempted Unity sourcing.
+- SDK inventory manifest exists and maps every SDK/toolkit to the gates it exercises.
+- No shader, texture, cache, SDK, or corpus file is accepted without hash/provenance.
 
 ## Phase 2 — Translation accuracy gates
 
@@ -165,15 +181,17 @@ Exit criteria:
 
 - The harness opens a real window under MetalSharp Wine.
 - It renders deterministically.
+- It uses fresh game, Unreal, Microsoft, and obtainable Unity shader/texture inputs rather than synthetic-only assets.
 - It proves GPU computation/readback and draw/color correctness.
 
 ## Phase 7 — Engine compatibility simulation
 
-Add Unity/Unreal compatibility scenarios:
+Add Unity/Unreal/Microsoft SDK compatibility scenarios:
 
-- Agility SDK loading path similar to Subnautica 2.
-- Unreal-style root signatures, descriptor tables, PSO creation order, render-thread submission, and resource barriers.
-- Unity-style texture/resource/descriptor lifecycle where available.
+- Agility SDK loading path similar to Subnautica 2, across multiple accessible Agility SDK versions where possible.
+- Unreal-style root signatures, descriptor tables, PSO creation order, render-thread submission, resource barriers, SM5/SM6 shader families, and Unreal texture/resource payloads.
+- Unity-style shader, texture, resource, descriptor, and render-loop lifecycle where Unity inputs are available.
+- Microsoft DirectX sample and SDK-style DXBC/DXIL/DXGI/D3D12 shader, texture, swapchain, and present paths.
 - DXGI swapchain/present/window lifetime and resize behavior.
 
 Exit criteria:
