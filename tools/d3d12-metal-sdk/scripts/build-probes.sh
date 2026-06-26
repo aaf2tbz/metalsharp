@@ -93,6 +93,12 @@ build_probe \
   -o "$OUT_DIR/probe_dxgi_factory.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_m12_runtime_identity/probe_m12_runtime_identity.cpp" \
+  -lole32 \
+  -luuid \
+  -o "$OUT_DIR/probe_m12_runtime_identity.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_resources/probe_resources.cpp" \
   -o "$OUT_DIR/probe_resources.exe"
 
@@ -192,6 +198,7 @@ echo "$OUT_DIR/probe_loader.exe"
 echo "$OUT_DIR/probe_agility_ue5.exe"
 echo "$OUT_DIR/probe_device_caps.exe"
 echo "$OUT_DIR/probe_dxgi_factory.exe"
+echo "$OUT_DIR/probe_m12_runtime_identity.exe"
 echo "$OUT_DIR/probe_resources.exe"
 echo "$OUT_DIR/probe_queues.exe"
 echo "$OUT_DIR/probe_descriptors.exe"
