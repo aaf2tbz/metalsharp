@@ -298,6 +298,19 @@ static uint32_t decodeRelativeValue(uint64_t encoded, uint32_t next_value) {
   return (uint32_t)encoded;
 }
 
+static uint32_t decodeSignRotatedValue(uint64_t encoded) {
+  if ((encoded & 1) == 0)
+    return (uint32_t)(encoded >> 1);
+  if (encoded != 1)
+    return (uint32_t)(~(encoded >> 1) + 1);
+  return (uint32_t)(1ull << 63);
+}
+
+static uint32_t decodeSignedRelativeValue(uint64_t encoded, uint32_t next_value) {
+  uint32_t decoded = decodeSignRotatedValue(encoded);
+  return next_value - decoded;
+}
+
 struct Abbrev {
   struct Op {
     bool literal = false;
@@ -1096,6 +1109,10 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     return decodeRelativeValue(encoded, next_value);
   };
 
+  auto signedValue = [&](uint64_t encoded) {
+    return decodeSignedRelativeValue(encoded, next_value);
+  };
+
   auto inferValueType = [&](uint32_t value_id, size_t &slot,
                             const std::vector<uint64_t> &record,
                             uint32_t &type_id) {
@@ -1592,7 +1609,7 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           if (ops.size() > 1)
             inst.type_id = (uint32_t)ops[1];
           for (size_t i = 2; i + 1 < ops.size(); i += 2) {
-            inst.operands.push_back(value(ops[i]));
+            inst.operands.push_back(signedValue(ops[i]));
             inst.operands.push_back((uint32_t)ops[i + 1]);
           }
         }
