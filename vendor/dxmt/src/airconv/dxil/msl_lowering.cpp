@@ -55,6 +55,7 @@ enum DXIntrinsicOpcode {
   DXOP_DerivFineX = 85,
   DXOP_DerivFineY = 86,
   DXOP_CalcLOD = 81,
+  DXOP_IsSpecialFloat = 1027,
   DXOP_LegacyF16ToF32 = 131,
   DXOP_LegacyF32ToF16 = 132,
   DXOP_WaveIsFirstLane = 110,
@@ -66,7 +67,9 @@ enum DXIntrinsicOpcode {
   DXOP_WaveReadLaneAt = 117,
   DXOP_WaveReadLaneFirst = 118,
   DXOP_WaveActiveOp = 119,
+  DXOP_WaveActiveBit = 120,
   DXOP_WavePrefixOp = 121,
+  DXOP_WaveAllBitCount = 135,
   DXOP_QuadReadLaneAt = 122,
   DXOP_QuadOp = 123,
   DXOP_TextureStoreSample = 225,
@@ -77,7 +80,7 @@ enum DXIntrinsicOpcode {
 
 enum DXILMathOpcode {
   DXILOP_FAbs = 6, DXILOP_Saturate = 7, DXILOP_IsNaN = 8, DXILOP_IsInf = 9,
-  DXILOP_IsFinite = 10, DXILOP_Cos = 12, DXILOP_Sin = 13, DXILOP_Tan = 14,
+  DXILOP_IsFinite = 10, DXILOP_IsNormal = 11, DXILOP_Cos = 12, DXILOP_Sin = 13, DXILOP_Tan = 14,
   DXILOP_Acos = 15, DXILOP_Asin = 16, DXILOP_Atan = 17,
   DXILOP_Exp = 21, DXILOP_Frc = 22, DXILOP_Log = 23,
   DXILOP_Sqrt = 24, DXILOP_Rsqrt = 25,
@@ -264,8 +267,13 @@ static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
     if (strncmp(s, "waveGetLaneCount", 16) == 0) return 112;
     if (strncmp(s, "waveAnyTrue", 11) == 0) return 113;
     if (strncmp(s, "waveAllTrue", 11) == 0) return 114;
+    if (strncmp(s, "waveActiveBallot", 16) == 0) return 116;
+    if (strncmp(s, "waveActiveOp", 12) == 0) return 119;
+    if (strncmp(s, "waveActiveBit", 13) == 0) return 120;
+    if (strncmp(s, "wavePrefixOp", 12) == 0) return 121;
+    if (strncmp(s, "waveAllOp", 9) == 0) return 135;
     if (strncmp(s, "quadReadLaneAt", 14) == 0) return 122;
-    if (strncmp(s, "isSpecialFloat", 14) == 0) return 0;
+    if (strncmp(s, "isSpecialFloat", 14) == 0) return DXOP_IsSpecialFloat;
     if (strncmp(s, "cycleCounterLegacy", 18) == 0) return 109;
     if (strncmp(s, "texture2DMSGetSamplePosition", 27) == 0) return 75;
     if (strncmp(s, "renderTargetGetSamplePosition", 29) == 0) return 76;
@@ -318,6 +326,7 @@ static bool isKnownDXIntrinsicOpcode(uint32_t opcode) {
     case DXOP_DerivFineX:
     case DXOP_DerivFineY:
     case DXOP_CalcLOD:
+    case DXOP_IsSpecialFloat:
     case DXOP_LegacyF16ToF32:
     case DXOP_LegacyF32ToF16:
     case DXOP_WaveIsFirstLane:
@@ -329,7 +338,9 @@ static bool isKnownDXIntrinsicOpcode(uint32_t opcode) {
     case DXOP_WaveReadLaneAt:
     case DXOP_WaveReadLaneFirst:
     case DXOP_WaveActiveOp:
+    case DXOP_WaveActiveBit:
     case DXOP_WavePrefixOp:
+    case DXOP_WaveAllBitCount:
     case DXOP_QuadReadLaneAt:
     case DXOP_QuadOp:
     case DXOP_TextureStoreSample:
@@ -1316,6 +1327,39 @@ static bool startsWithVectorConstructor(std::string value) {
     return false;
 }
 
+static bool exprDirectlyLooksVectorValue(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    if (exprEndsWithComponent(stripped))
+        return false;
+
+    if (startsWithVectorConstructor(stripped) ||
+        startsWith(stripped, "reinterpret_cast<device float4") ||
+        startsWith(stripped, "reinterpret_cast<device uint4") ||
+        startsWith(stripped, "reinterpret_cast<device int4"))
+        return true;
+
+    bool has_top_level_arithmetic = false;
+    int depth = 0;
+    for (size_t i = 0; i < stripped.size(); i++) {
+        char c = stripped[i];
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (depth > 0) depth--;
+        } else if (depth == 0 && (c == '+' || c == '*' || c == '/' ||
+                   (c == '-' && i > 0 && stripped[i - 1] != 'e' && stripped[i - 1] != 'E'))) {
+            has_top_level_arithmetic = true;
+            break;
+        }
+    }
+    if (has_top_level_arithmetic)
+        return false;
+
+    return stripped.find(".read(") != std::string::npos ||
+           stripped.find(".sample(") != std::string::npos ||
+           stripped.find(".gather(") != std::string::npos;
+}
+
 static std::string scalarizeNestedVectorConstructorArgs(const std::string &value,
                                                         const MSLType &target) {
     if (!DXILIRBuilder::isVectorType(target))
@@ -1434,11 +1478,13 @@ static std::string coerceVectorBoolExpressionForAssignment(const LowerContext &c
     if (!DXILIRBuilder::isVectorType(vector_type))
         vector_type = firstVectorTypedValueType(ctx, resolved);
     if (!DXILIRBuilder::isVectorType(vector_type) && exprLooksVectorValue(resolved)) {
-        if (exprHasTopLevelComparison(resolved))
-            return "any((" + resolved + "))";
-        std::string zero = vectorZeroForExpression(resolved);
-        if (!zero.empty())
-            return "any((" + resolved + ") != " + zero + ")";
+        if (exprDirectlyLooksVectorValue(resolved)) {
+            if (exprHasTopLevelComparison(resolved))
+                return "any((" + resolved + "))";
+            std::string zero = vectorZeroForExpression(resolved);
+            if (!zero.empty())
+                return "any((" + resolved + ") != " + zero + ")";
+        }
     }
     if (!DXILIRBuilder::isVectorType(vector_type))
         return "";
@@ -1497,7 +1543,7 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     if (target.kind == MSLTypeKind::Bool) {
         if (exprLooksResourceHandle(resolved) || exprLooksSideEffectOnly(resolved)) return "false";
         if (exprLooksBoolValue(resolved)) return resolved;
-        if (exprLooksVectorValue(resolved)) {
+        if (exprDirectlyLooksVectorValue(resolved)) {
             std::string zero = vectorZeroForExpression(resolved);
             if (!zero.empty())
                 return "any((" + resolved + ") != " + zero + ")";
@@ -1556,7 +1602,7 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
         resolved.find("*((") == std::string::npos)
       return defaultForType(target);
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
-        !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved) &&
+        !DXILIRBuilder::isVectorType(target) && exprDirectlyLooksVectorValue(resolved) &&
         !exprLooksScalarMathCall(resolved) && !exprLooksScalarCast(resolved))
         return "(" + resolved + ").x";
     if (DXILIRBuilder::isVectorType(target) && !exprLooksVectorValue(resolved)) {
@@ -1618,6 +1664,16 @@ static std::string dropInvalidScalarComponentAccess(const LowerContext &ctx,
         exprLooksScalarMathCall(base) ||
         exprLooksBoolValue(base) ||
         ternaryBranchesLookScalar(ctx, base))
+        return base;
+
+    std::string stripped_base = stripEnclosingParens(base);
+    bool contains_scalar_arithmetic = stripped_base.find("*") != std::string::npos ||
+        stripped_base.find("/") != std::string::npos ||
+        stripped_base.find("+") != std::string::npos ||
+        stripped_base.find(" - ") != std::string::npos;
+    if (!exprDirectlyLooksVectorValue(stripped_base) && contains_scalar_arithmetic &&
+        !DXILIRBuilder::isVectorType(base_type) &&
+        !exprContainsBareVectorTypedValue(ctx, stripped_base))
         return base;
 
     return value;
@@ -2463,6 +2519,8 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_Dot4:
     case DXOP_LegacyF16ToF32:
         return {MSLTypeKind::Float, 0, {}};
+    case DXOP_IsSpecialFloat:
+        return {MSLTypeKind::Bool, 0, {}};
     case DXOP_CheckAccessFullyMapped:
     case DXOP_WaveIsFirstLane:
     case DXOP_WaveAnyTrue:
@@ -2476,6 +2534,8 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_AtomicCompareExchange:
     case DXOP_WaveGetLaneIndex:
     case DXOP_WaveGetLaneCount:
+    case DXOP_WaveActiveBit:
+    case DXOP_WaveAllBitCount:
     case DXOP_LegacyF32ToF16:
         return {MSLTypeKind::UInt, 0, {}};
     case DXOP_AtomicBinOp:
@@ -2503,6 +2563,7 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
         case DXILOP_IsNaN:
         case DXILOP_IsInf:
         case DXILOP_IsFinite:
+        case DXILOP_IsNormal:
             return {MSLTypeKind::Bool, 0, {}};
         case DXILOP_Countbits:
         case DXILOP_FirstbitLo:
@@ -2968,6 +3029,18 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     case 77: return "1";
     case 109: return "0";
     case 80: return "threadgroup_barrier(mem_flags::mem_threadgroup)";
+    case DXOP_IsSpecialFloat: {
+        if (args.size() < 2) return "false";
+        uint32_t op = literalArg(0, 0xFFFFFFFFu, "special float");
+        auto fx = "static_cast<float>(" + numericArg(1, "0.0") + ")";
+        switch (op) {
+        case DXILOP_IsNaN: return "isnan(" + fx + ")";
+        case DXILOP_IsInf: return "isinf(" + fx + ")";
+        case DXILOP_IsFinite: return "isfinite(" + fx + ")";
+        case DXILOP_IsNormal: return "(isfinite(" + fx + ") && abs(" + fx + ") >= 1.17549435e-38f)";
+        default: ctx.unsupported_intrinsics++; return "false";
+        }
+    }
     case DXOP_Unary: {
         if (args.size() < 2) return "0";
         uint32_t op = literalArg(0, 0xFFFFFFFFu, "unary");
@@ -2982,6 +3055,7 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         case DXILOP_IsNaN: return "isnan(" + fx + ")";
         case DXILOP_IsInf: return "isinf(" + fx + ")";
         case DXILOP_IsFinite: return "isfinite(" + fx + ")";
+        case DXILOP_IsNormal: return "(isfinite(" + fx + ") && abs(" + fx + ") >= 1.17549435e-38f)";
         case DXILOP_Cos: return "cos(" + fx + ")";
         case DXILOP_Sin: return "sin(" + fx + ")";
         case DXILOP_Tan: return "tan(" + fx + ")";
@@ -3105,6 +3179,17 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         default: ctx.unsupported_intrinsics++; return value;
         }
     }
+    case DXOP_WaveActiveBit: {
+        if (args.empty()) return "0u";
+        auto value = "static_cast<uint>(" + numericArg(0, "0") + ")";
+        uint32_t op = args.size() > 1 ? literalArg(1, 0, "wave-active-bit") : 0;
+        switch (op) {
+        case 0: return "simd_and(" + value + ")";
+        case 1: return "simd_or(" + value + ")";
+        case 2: return "simd_xor(" + value + ")";
+        default: ctx.unsupported_intrinsics++; return value;
+        }
+    }
     case DXOP_WaveActiveBallot: {
       auto pred = numericArg(0, "false");
       return "uint4("
@@ -3121,15 +3206,25 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
              pred + ") && ((simd_tid >> 5u) == 3u) ? (1u << (simd_tid & 31u)) : 0u))";
     }
     case DXOP_WavePrefixOp: {
+      if (args.empty()) return "0";
       auto value = numericArg(0, "0");
       uint32_t op = args.size() > 1 ? literalArg(1, 0, "wave-prefix-op") : 0;
       switch (op) {
       case 0:
         return "simd_prefix_exclusive_sum(" + value + ")";
+      case 2:
+        return "simd_prefix_exclusive_min(" + value + ")";
+      case 3:
+        return "simd_prefix_exclusive_max(" + value + ")";
       default:
         ctx.unsupported_intrinsics++;
         return value;
       }
+    }
+    case DXOP_WaveAllBitCount: {
+      if (args.empty()) return "0u";
+      auto value = "popcount(static_cast<uint>(" + numericArg(0, "0") + "))";
+      return "simd_sum(" + value + ")";
     }
     case DXOP_WaveIsFirstLane: return "simd_is_first()";
     case DXOP_WaveGetLaneIndex: return "simd_tid";
@@ -3196,13 +3291,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
     };
 
     auto inferTypeFromExpr = [](const std::string &expr) -> MSLType {
-        if (startsWith(expr, "buf"))
+        std::string stripped = stripEnclosingParens(expr);
+        if (startsWith(stripped, "buf"))
             return {MSLTypeKind::DeviceCharPtr, 0, {}};
-        if (startsWith(expr, "tex"))
+        if (startsWith(stripped, "tex"))
             return {MSLTypeKind::RWTexture2D, 0, {}};
-        if (startsWith(expr, "samp"))
+        if (startsWith(stripped, "samp"))
             return {MSLTypeKind::Sampler, 0, {}};
-        if (exprLooksScalarMathCall(expr))
+        if (exprLooksScalarMathCall(stripped))
             return {MSLTypeKind::Float, 0, {}};
         if (expr.find("reinterpret_cast<device float4&>") != std::string::npos ||
             expr.find("reinterpret_cast<device float4*>") != std::string::npos)
@@ -3223,23 +3319,23 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return {MSLTypeKind::Float4, 0, {}};
         if (expr.find(".gather(") != std::string::npos)
             return {MSLTypeKind::Float4, 0, {}};
-        if (expr.find("float4(") == 0 || expr.find("(float4(") != std::string::npos)
+        if (startsWith(stripped, "float4("))
             return {MSLTypeKind::Float4, 0, {}};
-        if (expr.find("uint4(") == 0 || expr.find("(uint4(") != std::string::npos)
+        if (startsWith(stripped, "uint4("))
             return {MSLTypeKind::UInt4, 0, {}};
-        if (expr.find("uint3(") == 0 || expr.find("(uint3(") != std::string::npos)
+        if (startsWith(stripped, "uint3("))
             return {MSLTypeKind::UInt3, 0, {}};
-        if (expr.find("uint2(") == 0 || expr.find("(uint2(") != std::string::npos)
+        if (startsWith(stripped, "uint2("))
             return {MSLTypeKind::UInt2, 0, {}};
-        if (expr.find("int4(") == 0 || expr.find("(int4(") != std::string::npos)
+        if (startsWith(stripped, "int4("))
             return {MSLTypeKind::Int4, 0, {}};
-        if (expr.find("int3(") == 0 || expr.find("(int3(") != std::string::npos)
+        if (startsWith(stripped, "int3("))
             return {MSLTypeKind::Int3, 0, {}};
-        if (expr.find("int2(") == 0 || expr.find("(int2(") != std::string::npos)
+        if (startsWith(stripped, "int2("))
             return {MSLTypeKind::Int2, 0, {}};
-        if (expr.find("float2(") == 0)
+        if (startsWith(stripped, "float2("))
             return {MSLTypeKind::Float2, 0, {}};
-        if (expr.find("float3(") == 0)
+        if (startsWith(stripped, "float3("))
             return {MSLTypeKind::Float3, 0, {}};
         return {MSLTypeKind::Unknown, 0, {}};
     };
@@ -3882,7 +3978,14 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 emitTypedLine(result_type, result, agg);
             } else {
                 auto inferred = inferTypeFromExpr(agg);
-                if (DXILIRBuilder::isVectorType(inferred) && idx < 4) {
+                std::string stripped_agg = stripEnclosingParens(agg);
+                bool expression_is_vector_value = startsWith(stripped_agg, "float2(") || startsWith(stripped_agg, "float3(") ||
+                    startsWith(stripped_agg, "float4(") || startsWith(stripped_agg, "int2(") || startsWith(stripped_agg, "int3(") ||
+                    startsWith(stripped_agg, "int4(") || startsWith(stripped_agg, "uint2(") || startsWith(stripped_agg, "uint3(") ||
+                    startsWith(stripped_agg, "uint4(") || startsWith(stripped_agg, "reinterpret_cast<") ||
+                    stripped_agg.find(".read(") != std::string::npos || stripped_agg.find(".sample(") != std::string::npos ||
+                    stripped_agg.find(".gather(") != std::string::npos;
+                if (DXILIRBuilder::isVectorType(inferred) && expression_is_vector_value && idx < 4) {
                     std::string expr = componentAccess(agg, idx, inferred);
                     auto scalar = DXILIRBuilder::scalarType(inferred);
                     emitTypedLine(scalar, result, expr);
@@ -4222,6 +4325,15 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                     rhs = coerceVectorWidth(rhs, rhs_expr_type, compare_vector_type);
                 cmp_type = compare_vector_type;
             }
+            bool coerced_operands_are_vector = DXILIRBuilder::isVectorType(lhs_expr_type) ||
+                                               DXILIRBuilder::isVectorType(rhs_expr_type) ||
+                                               exprDirectlyLooksVectorValue(lhs) ||
+                                               exprDirectlyLooksVectorValue(rhs) ||
+                                               exprContainsBareVectorTypedValue(ctx, lhs) ||
+                                               exprContainsBareVectorTypedValue(ctx, rhs);
+            if (DXILIRBuilder::isVectorType(cmp_type) && !coerced_operands_are_vector)
+                cmp_type = inst.opcode == LLVMInstruction::FCmp ? MSLType{MSLTypeKind::Float, 0, {}}
+                                                                : MSLType{MSLTypeKind::Int, 0, {}};
             const char *cmp = "==";
             MSLType result_type = {MSLTypeKind::Bool, 0, {}};
             std::string cmp_result;
@@ -4252,8 +4364,8 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 else if (pred == 6 || pred == 13) cmp = "!=";
                 std::string cmp_expr = "(" + lhs + " " + cmp + " " + rhs + ")";
                 bool vector_cmp = DXILIRBuilder::isVectorType(cmp_type) ||
-                                  exprLooksVectorValue(lhs) ||
-                                  exprLooksVectorValue(rhs) ||
+                                  exprDirectlyLooksVectorValue(lhs) ||
+                                  exprDirectlyLooksVectorValue(rhs) ||
                                   exprContainsBareVectorTypedValue(ctx, lhs) ||
                                   exprContainsBareVectorTypedValue(ctx, rhs);
                 cmp_result = vector_cmp ? std::string("any((") + cmp_expr + "))" : cmp_expr;

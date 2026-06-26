@@ -461,6 +461,11 @@ static bool dxilOpcodeMatchesFunctionName(uint64_t opcode, const std::string &na
   switch (opcode) {
   case 4: return dxilFunctionNameMatchesBase(name, "dx.op.loadInput");
   case 5: return dxilFunctionNameMatchesBase(name, "dx.op.storeOutput");
+  case 8:
+  case 9:
+  case 10:
+  case 11:
+    return dxilFunctionNameMatchesBase(name, "dx.op.isSpecialFloat");
   case 13: return dxilFunctionNameMatchesBase(name, "dx.op.unary");
   case 14: return dxilFunctionNameMatchesBase(name, "dx.op.binary");
   case 15: return dxilFunctionNameMatchesBase(name, "dx.op.tertiary");
@@ -506,7 +511,9 @@ static bool dxilOpcodeMatchesFunctionName(uint64_t opcode, const std::string &na
   case 117: return dxilFunctionNameMatchesBase(name, "dx.op.waveReadLaneAt");
   case 118: return dxilFunctionNameMatchesBase(name, "dx.op.waveReadLaneFirst");
   case 119: return dxilFunctionNameMatchesBase(name, "dx.op.waveActiveOp");
+  case 120: return dxilFunctionNameMatchesBase(name, "dx.op.waveActiveBit");
   case 121: return dxilFunctionNameMatchesBase(name, "dx.op.wavePrefixOp");
+  case 135: return dxilFunctionNameMatchesBase(name, "dx.op.waveAllOp");
   case 122: return dxilFunctionNameMatchesBase(name, "dx.op.quadReadLaneAt");
   case 123: return dxilFunctionNameMatchesBase(name, "dx.op.quadOp");
   case 131: return dxilFunctionNameMatchesBase(name, "dx.op.legacyF16ToF32");
@@ -1159,7 +1166,9 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
      * omits the current function's own module slot; map those operands back to
      * the module value IDs used by declarations/constants.  Non-callee operands
      * must also never resolve to dx.op declarations; if they do, the encoded
-     * value is referring to the following constant/value slot instead.
+     * value is referring to the following constant/value slot instead. Call
+     * callees intentionally bypass this normalization; opcode/type recovery
+     * below preserves or recovers their declaration identity.
      */
     if (fn.value_id != 0 && value_id >= fn.value_id && value_id < fn.instruction_start_value)
       value_id++;
@@ -1174,7 +1183,11 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     return normalizeFunctionBodyValue(decodeRelativeValue(encoded, next_value), true);
   };
 
-  auto calleeValue = [&](uint64_t encoded) {
+  auto rawCalleeValue = [&](uint64_t encoded) {
+    return decodeRelativeValue(encoded, next_value);
+  };
+
+  auto normalizedCalleeValue = [&](uint64_t encoded) {
     return normalizeFunctionBodyValue(decodeRelativeValue(encoded, next_value), false);
   };
 
@@ -1205,9 +1218,26 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     return value_id;
   };
 
-  auto calleeValueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot, uint32_t &type_id) {
-    uint32_t value_id = slot < record.size() ? calleeValue(record[slot++]) : 0;
-    inferValueType(value_id, slot, record, type_id);
+  auto calleeValueTypePair = [&](const std::vector<uint64_t> &record, size_t &slot,
+                                 uint32_t &type_id, uint32_t &normalized_value_id,
+                                 uint32_t &normalized_type_id,
+                                 size_t &callee_operand_end_slot) {
+    if (slot >= record.size()) {
+      type_id = 0;
+      normalized_value_id = 0;
+      normalized_type_id = 0;
+      callee_operand_end_slot = slot;
+      return 0u;
+    }
+    uint64_t encoded = record[slot++];
+    callee_operand_end_slot = slot;
+    uint32_t value_id = rawCalleeValue(encoded);
+    normalized_value_id = normalizedCalleeValue(encoded);
+    size_t raw_slot = slot;
+    inferValueType(value_id, raw_slot, record, type_id);
+    size_t normalized_slot = slot;
+    inferValueType(normalized_value_id, normalized_slot, record, normalized_type_id);
+    slot = raw_slot;
     return value_id;
   };
 
@@ -1326,7 +1356,13 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           function_type_id = (uint32_t)ops[slot++];
 
         uint32_t callee_type_id = 0;
-        uint32_t callee = calleeValueTypePair(ops, slot, callee_type_id);
+        uint32_t normalized_callee = 0;
+        uint32_t normalized_callee_type_id = 0;
+        size_t callee_operand_end_slot = slot;
+        uint32_t callee = calleeValueTypePair(ops, slot, callee_type_id,
+                                              normalized_callee,
+                                              normalized_callee_type_id,
+                                              callee_operand_end_slot);
         uint64_t dxop_opcode = 0;
         bool has_dxop_opcode = slot < ops.size() &&
           getUnsignedConstantValue(ctx.module, fn, value(ops[slot]), dxop_opcode);
@@ -1376,6 +1412,10 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           } else if (!decoded_fn && callee == 0 && has_dxop_opcode && typed_dxop_decl) {
             recovered_fn = typed_dxop_decl;
             recovery_reason = "zero-callee explicit type";
+          } else if (!decoded_fn && typed_dxop_decl &&
+                     (callee >= fn.instruction_start_value || callee < fn.value_id)) {
+            recovered_fn = typed_dxop_decl;
+            recovery_reason = "non-function callee explicit type";
           }
 
           if (recovered_fn) {
@@ -1384,6 +1424,21 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
                     (unsigned long long)(has_dxop_opcode ? dxop_opcode : 0),
                     recovered_fn->value_id, recovered_fn->name.c_str());
             callee = recovered_fn->value_id;
+            slot = callee_operand_end_slot;
+          } else if (!decoded_fn && normalized_callee != callee) {
+            const LLVMFunction *normalized_fn = nullptr;
+            for (const auto &dfn : ctx.module.functions) {
+              if (dfn.value_id == normalized_callee) {
+                normalized_fn = &dfn;
+                break;
+              }
+            }
+            if (normalized_fn) {
+              DXTRACE("DXIL call using normalized non-dxop callee: raw_callee=%u normalized=%u name=%s",
+                      callee, normalized_callee, normalized_fn->name.c_str());
+              callee = normalized_callee;
+              callee_type_id = normalized_callee_type_id;
+            }
           }
         }
 
