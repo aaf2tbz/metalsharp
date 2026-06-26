@@ -928,6 +928,35 @@ if [[ ! -f "$UNIX_DIR/winemetal.so" ]]; then
   exit 2
 fi
 
+# Wine's builtin loader may resolve DXMT PE modules from either the selected
+# x86_64-windows directory or the DXMT runtime's x86_64-unix directory.  Keep
+# these mirrors byte-identical so probes cannot pass/fail against stale D3D12 or
+# DXGI bridge code.  The real DXMT DXGI module in this tree is dxgi_dxmt.dll.
+for dll in d3d12.dll dxgi.dll dxgi_dxmt.dll; do
+  runtime_windows_dll="$DXMT_RUNTIME/x86_64-windows/$dll"
+  unix_mirror_dll="$UNIX_DIR/$dll"
+  if [[ ! -f "$runtime_windows_dll" ]]; then
+    echo "Missing DXMT runtime Windows DLL: $runtime_windows_dll" >&2
+    exit 2
+  fi
+  if [[ ! -f "$unix_mirror_dll" ]]; then
+    echo "Missing DXMT Unix PE mirror DLL: $unix_mirror_dll" >&2
+    exit 2
+  fi
+  if ! cmp -s "$runtime_windows_dll" "$unix_mirror_dll"; then
+    echo "DXMT runtime Windows/Unix PE mirror mismatch: $dll" >&2
+    echo "  windows: $runtime_windows_dll" >&2
+    echo "  unix:    $unix_mirror_dll" >&2
+    exit 2
+  fi
+  if [[ -n "$GAME_DIR" ]] && ! cmp -s "$WINDOWS_DIR/$dll" "$runtime_windows_dll"; then
+    echo "Game-local DXMT DLL differs from selected runtime: $dll" >&2
+    echo "  game:    $WINDOWS_DIR/$dll" >&2
+    echo "  runtime: $runtime_windows_dll" >&2
+    exit 2
+  fi
+done
+
 for unix_dep in winemac.so ntdll.so; do
   if [[ ! -f "$WINE_UNIX_DIR/$unix_dep" ]]; then
     echo "Missing Wine Unix dependency for winemetal.so: $WINE_UNIX_DIR/$unix_dep" >&2

@@ -43,7 +43,15 @@ const DXMT_REQUIRED_PE: &[&str] = &[
     "nvngx.dll",
 ];
 const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so"];
-const DXMT_M12_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+const DXMT_M12_REQUIRED_UNIX: &[&str] = &[
+    "d3d12.dll",
+    "dxgi.dll",
+    "dxgi_dxmt.dll",
+    "winemetal.so",
+    "libc++.1.dylib",
+    "libc++abi.1.dylib",
+    "libunwind.1.dylib",
+];
 const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/wine/bin/metalsharp-wine",
     "runtime/metalsharp-backend",
@@ -62,6 +70,9 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-windows/nvapi64.dll",
     "Graphics/dll/dxmt/x86_64-windows/nvngx.dll",
     "Graphics/dll/dxmt/x86_64-windows/winemetal.dll",
+    "Graphics/dll/dxmt-m12/x86_64-unix/d3d12.dll",
+    "Graphics/dll/dxmt-m12/x86_64-unix/dxgi.dll",
+    "Graphics/dll/dxmt-m12/x86_64-unix/dxgi_dxmt.dll",
     "Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so",
     "Graphics/dll/dxmt-m12/x86_64-unix/libc++.1.dylib",
     "Graphics/dll/dxmt-m12/x86_64-unix/libc++abi.1.dylib",

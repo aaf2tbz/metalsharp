@@ -100,6 +100,42 @@ def binary_strings(path: Path) -> set[str]:
         return set()
 
 
+def inspect_mach_o_runtime_sidecars(path: Path) -> dict:
+    deps = mach_o_dependencies(path)
+    required_basenames = sorted(
+        {
+            Path(dep).name
+            for dep in deps
+            if dep.startswith("@rpath/")
+            and Path(dep).name in {"libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"}
+        }
+    )
+    sidecars = []
+    for name in required_basenames:
+        candidate = path.parent / name
+        sidecars.append(
+            {
+                "name": name,
+                "path": str(candidate),
+                "exists": candidate.exists(),
+                "size": candidate.stat().st_size if candidate.exists() else 0,
+                "sha256": sha256(candidate),
+                "ok": candidate.exists() and candidate.stat().st_size > 0 if candidate.exists() else False,
+            }
+        )
+    missing = [entry["name"] for entry in sidecars if not entry.get("ok")]
+    return {
+        "role": "unix_winemetal_mach_o_runtime_sidecars",
+        "path": str(path),
+        "exists": path.exists(),
+        "dependencies": deps,
+        "required_sidecars": required_basenames,
+        "sidecars": sidecars,
+        "missing_sidecars": missing,
+        "ok": path.exists() and not missing,
+    }
+
+
 def inspect_internal_m12core_winemetal(path: Path) -> dict:
     required_symbols = [
         "m12core_get_version",
@@ -166,6 +202,21 @@ def inspect_file(path: Path, required_exports: list[str], required_ordinals: lis
         "missing_exports": missing,
         "missing_ordinals": missing_ordinals,
         "ok": path.exists() and not missing and not missing_ordinals,
+    }
+
+
+def compare_files(role: str, expected: Path, actual: Path) -> dict:
+    expected_hash = sha256(expected)
+    actual_hash = sha256(actual)
+    return {
+        "role": role,
+        "expected_path": str(expected),
+        "actual_path": str(actual),
+        "expected_exists": expected.exists(),
+        "actual_exists": actual.exists(),
+        "expected_sha256": expected_hash,
+        "actual_sha256": actual_hash,
+        "ok": expected_hash is not None and expected_hash == actual_hash,
     }
 
 
@@ -252,6 +303,18 @@ def main() -> int:
         | {"role": "dxmt_windows_dxgi_real"}
     )
     entries.append(
+        inspect_file(dxmt_runtime / "x86_64-unix" / "d3d12.dll", D3D12_EXPORTS, [101])
+        | {"role": "dxmt_unix_d3d12_pe_mirror"}
+    )
+    entries.append(
+        inspect_file(dxmt_runtime / "x86_64-unix" / "dxgi.dll", DXGI_EXPORTS, [9, 10, 11])
+        | {"role": "dxmt_unix_dxgi_bootstrap_pe_mirror"}
+    )
+    entries.append(
+        inspect_file(dxmt_runtime / "x86_64-unix" / "dxgi_dxmt.dll", DXGI_EXPORTS, [9, 10, 11])
+        | {"role": "dxmt_unix_dxgi_real_pe_mirror"}
+    )
+    entries.append(
         inspect_file(dxmt_runtime / "x86_64-windows" / "winemetal.dll", DXMT_EXPORTS)
         | {"role": "dxmt_windows"}
     )
@@ -259,10 +322,17 @@ def main() -> int:
         inspect_file(wine_runtime / "lib" / "wine" / "x86_64-windows" / "winemetal.dll", LEGACY_EXPORTS)
         | {"role": "wine_builtin_windows"}
     )
-    entries.append(
-        inspect_file(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll", LEGACY_EXPORTS)
-        | {"role": "prefix_system32"}
-    )
+    prefix_system32_artifacts = [
+        ("d3d12.dll", D3D12_EXPORTS, [101]),
+        ("dxgi.dll", DXGI_EXPORTS, [9, 10, 11]),
+        ("dxgi_dxmt.dll", DXGI_EXPORTS, [9, 10, 11]),
+        ("winemetal.dll", DXMT_EXPORTS, []),
+    ]
+    for filename, exports, ordinals in prefix_system32_artifacts:
+        entries.append(
+            inspect_file(prefix / "drive_c" / "windows" / "system32" / filename, exports, ordinals)
+            | {"role": f"prefix_system32_{filename}"}
+        )
     entries.append(
         inspect_file(prefix / "drive_c" / "windows" / "syswow64" / "winemetal.dll", LEGACY_EXPORTS)
         | {"role": "prefix_syswow64"}
@@ -283,23 +353,67 @@ def main() -> int:
                 "ok": path.exists() and path.stat().st_size > 0 if path.exists() else False,
             }
         )
+        entries.append(inspect_mach_o_runtime_sidecars(path))
     entries.append(inspect_internal_m12core_winemetal(dxmt_runtime / "x86_64-unix" / "winemetal.so"))
 
-    if args.game_dir:
-        entries.append(
-            inspect_file(Path(args.game_dir) / "winemetal.dll", DXMT_EXPORTS)
-            | {"role": "game_local_winemetal"}
+    alignment_comparisons: list[dict] = []
+    for dll in ("d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll"):
+        alignment_comparisons.append(
+            compare_files(
+                f"runtime_windows_unix_pe_mirror_{dll}",
+                dxmt_runtime / "x86_64-windows" / dll,
+                dxmt_runtime / "x86_64-unix" / dll,
+            )
         )
+    alignment_comparisons.append(
+        compare_files(
+            "runtime_dxmt_m12_to_wine_unix_winemetal_so",
+            dxmt_runtime / "x86_64-unix" / "winemetal.so",
+            wine_runtime / "lib" / "wine" / "x86_64-unix" / "winemetal.so",
+        )
+    )
+    for filename, _, _ in prefix_system32_artifacts:
+        alignment_comparisons.append(
+            compare_files(
+                f"prefix_system32_matches_runtime_{filename}",
+                dxmt_runtime / "x86_64-windows" / filename,
+                prefix / "drive_c" / "windows" / "system32" / filename,
+            )
+        )
+
+    if args.game_dir:
+        game_dir = Path(args.game_dir)
+        game_artifacts = [
+            ("d3d12.dll", D3D12_EXPORTS, [101]),
+            ("dxgi.dll", DXGI_EXPORTS, [9, 10, 11]),
+            ("dxgi_dxmt.dll", DXGI_EXPORTS, [9, 10, 11]),
+            ("winemetal.dll", DXMT_EXPORTS, []),
+        ]
+        for filename, exports, ordinals in game_artifacts:
+            entries.append(
+                inspect_file(game_dir / filename, exports, ordinals)
+                | {"role": f"game_local_{filename}"}
+            )
+            alignment_comparisons.append(
+                compare_files(
+                    f"game_local_matches_runtime_{filename}",
+                    dxmt_runtime / "x86_64-windows" / filename,
+                    game_dir / filename,
+                )
+            )
 
     build_comparisons: list[dict] = []
     if args.build_dir:
         build_dir = Path(args.build_dir)
         comparison_pairs = [
             ("d3d12.dll", build_dir / "src/d3d12/d3d12.dll", dxmt_runtime / "x86_64-windows/d3d12.dll"),
+            ("d3d12.dll.unix_pe_mirror", build_dir / "src/d3d12/d3d12.dll", dxmt_runtime / "x86_64-unix/d3d12.dll"),
             ("d3d11.dll", build_dir / "src/d3d11/d3d11.dll", dxmt_runtime / "x86_64-windows/d3d11.dll"),
             ("d3d10core.dll", build_dir / "src/d3d10/d3d10core.dll", dxmt_runtime / "x86_64-windows/d3d10core.dll"),
             ("dxgi.dll", build_dir / "src/dxgi/dxgi.dll", dxmt_runtime / "x86_64-windows/dxgi.dll"),
+            ("dxgi.dll.unix_pe_mirror", build_dir / "src/dxgi/dxgi.dll", dxmt_runtime / "x86_64-unix/dxgi.dll"),
             ("dxgi_dxmt.dll", build_dir / "src/dxgi/dxgi_dxmt.dll", dxmt_runtime / "x86_64-windows/dxgi_dxmt.dll"),
+            ("dxgi_dxmt.dll.unix_pe_mirror", build_dir / "src/dxgi/dxgi_dxmt.dll", dxmt_runtime / "x86_64-unix/dxgi_dxmt.dll"),
             ("winemetal.dll", build_dir / "src/winemetal/winemetal.dll", dxmt_runtime / "x86_64-windows/winemetal.dll"),
             ("winemetal.so", build_dir / "src/winemetal/unix/winemetal.so", dxmt_runtime / "x86_64-unix/winemetal.so"),
         ]
@@ -320,12 +434,13 @@ def main() -> int:
             )
 
     failures = [entry for entry in entries if not entry.get("ok")]
+    alignment_failures = [entry for entry in alignment_comparisons if not entry.get("ok")]
     build_failures = [entry for entry in build_comparisons if not entry.get("ok")]
     result = {
         "schema": "metalsharp.d3d12-metal.runtime-preflight.v1",
         "profile": args.profile,
-        "ok": not failures and not build_failures and abi_status.returncode == 0,
-        "failure_count": len(failures) + len(build_failures),
+        "ok": not failures and not alignment_failures and not build_failures and abi_status.returncode == 0,
+        "failure_count": len(failures) + len(alignment_failures) + len(build_failures) + (0 if abi_status.returncode == 0 else 1),
         "winemetal_abi": {
             "ok": abi_status.returncode == 0,
             "result": str(abi_result_path),
@@ -333,6 +448,7 @@ def main() -> int:
             "stderr": abi_status.stderr.strip(),
         },
         "entries": entries,
+        "alignment_comparisons": alignment_comparisons,
         "build_comparisons": build_comparisons,
         "notes": [
             "DXMT d3d12.dll must expose D3D12CreateDevice by name and ordinal 101.",
@@ -340,6 +456,7 @@ def main() -> int:
             "Steam/global Wine Winemetal copies must preserve legacy wrapper exports.",
             "DXMT/game-local Winemetal copies must preserve legacy exports and expose new shader bridge exports.",
             "DXMT winemetal.so must contain internal m12core symbols and must not require a libm12core.dylib sidecar.",
+            "DXMT winemetal.so @rpath libc++/libunwind sidecars must be staged next to each unix winemetal.so so native airconv/m12core can load without DYLD_LIBRARY_PATH.",
             "Do not launch Steam or a game while this preflight is red.",
         ],
     }
@@ -347,7 +464,7 @@ def main() -> int:
     out_path = results_dir / f"runtime-preflight-{args.profile}.json"
     out_path.write_text(json.dumps(result, indent=2) + "\n")
     print(out_path)
-    if failures or build_failures or abi_status.returncode != 0:
+    if failures or alignment_failures or build_failures or abi_status.returncode != 0:
         if abi_status.stderr:
             print(abi_status.stderr, file=sys.stderr, end="")
         for failure in failures:
@@ -355,6 +472,12 @@ def main() -> int:
                 f"preflight failed: {failure.get('role')} {failure.get('path')} "
                 f"missing={failure.get('missing_exports', [])} "
                 f"missing_ordinals={failure.get('missing_ordinals', [])}",
+                file=sys.stderr,
+            )
+        for failure in alignment_failures:
+            print(
+                f"preflight failed: runtime alignment mismatch for {failure.get('role')} "
+                f"expected={failure.get('expected_path')} actual={failure.get('actual_path')}",
                 file=sys.stderr,
             )
         for failure in build_failures:

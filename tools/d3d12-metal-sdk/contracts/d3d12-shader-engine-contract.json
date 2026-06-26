@@ -138,6 +138,7 @@
   "runtime_artifacts": [
     "d3d12.dll",
     "dxgi.dll",
+    "dxgi_dxmt.dll",
     "winemetal.dll",
     "winemetal.so"
   ],

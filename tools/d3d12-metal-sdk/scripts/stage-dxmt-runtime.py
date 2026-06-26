@@ -21,10 +21,13 @@ LLVM_TOOLCHAIN_NAME = "clang+llvm-15.0.7-x86_64-apple-darwin21.0"
 
 ARTIFACTS = [
     ("src/d3d12/d3d12.dll", "x86_64-windows/d3d12.dll"),
+    ("src/d3d12/d3d12.dll", "x86_64-unix/d3d12.dll"),
     ("src/d3d11/d3d11.dll", "x86_64-windows/d3d11.dll"),
     ("src/d3d10/d3d10core.dll", "x86_64-windows/d3d10core.dll"),
     ("src/dxgi/dxgi.dll", "x86_64-windows/dxgi.dll"),
+    ("src/dxgi/dxgi.dll", "x86_64-unix/dxgi.dll"),
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
+    ("src/dxgi/dxgi_dxmt.dll", "x86_64-unix/dxgi_dxmt.dll"),
     ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
 ]
@@ -102,6 +105,9 @@ def main() -> int:
         [
             ("src/winemetal/winemetal.dll", str(wine_lib_dir / "x86_64-windows" / "winemetal.dll")),
             ("src/winemetal/unix/winemetal.so", str(wine_lib_dir / "x86_64-unix" / "winemetal.so")),
+            ("src/d3d12/d3d12.dll", str(prefix / "drive_c" / "windows" / "system32" / "d3d12.dll")),
+            ("src/dxgi/dxgi.dll", str(prefix / "drive_c" / "windows" / "system32" / "dxgi.dll")),
+            ("src/dxgi/dxgi_dxmt.dll", str(prefix / "drive_c" / "windows" / "system32" / "dxgi_dxmt.dll")),
             ("src/winemetal/winemetal.dll", str(prefix / "drive_c" / "windows" / "system32" / "winemetal.dll")),
         ]
     )

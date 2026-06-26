@@ -141,6 +141,10 @@ build_probe \
   -o "$OUT_DIR/probe_graphics_pso.exe"
 
 build_probe \
+  "$SDK_DIR/probes/probe_m12_runtime_alignment/probe_m12_runtime_alignment.cpp" \
+  -o "$OUT_DIR/probe_m12_runtime_alignment.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_compute_pso/probe_compute_pso.cpp" \
   -o "$OUT_DIR/probe_compute_pso.exe"
 
@@ -220,6 +224,7 @@ echo "$OUT_DIR/probe_sm66_capabilities.exe"
 echo "$OUT_DIR/probe_wave_ops.exe"
 echo "$OUT_DIR/probe_reflection_abi.exe"
 echo "$OUT_DIR/probe_graphics_pso.exe"
+echo "$OUT_DIR/probe_m12_runtime_alignment.exe"
 echo "$OUT_DIR/probe_compute_pso.exe"
 echo "$OUT_DIR/probe_command_replay.exe"
 echo "$OUT_DIR/probe_barriers_render_pass.exe"

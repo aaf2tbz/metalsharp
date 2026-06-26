@@ -14,7 +14,14 @@
 #include <cstring>
 #include <utility>
 #include <vector>
+#include <cerrno>
+#include <cstdlib>
+#include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
 
 /*
  * Native M12 core bootstrap
@@ -224,9 +231,10 @@ bool fileHasMTLBHeader(const char *path) {
 
 bool metallibFreshForSource(const char *metallib_path, const char *msl_path,
                             const struct stat &metallib_stat) {
+  (void)metallib_path;
   struct stat msl_stat;
   if (!regularFileStat(msl_path, &msl_stat))
-    return true;
+    return false;
   return metallib_stat.st_mtime >= msl_stat.st_mtime;
 }
 
@@ -236,6 +244,18 @@ bool metallibHasActiveError(const char *error_path,
   if (!regularFileStat(error_path, &error_stat))
     return false;
   return error_stat.st_mtime >= metallib_stat.st_mtime;
+}
+
+bool reflectionFreshForSource(const char *reflection_path,
+                              const char *msl_path,
+                              const struct stat &metallib_stat) {
+  struct stat reflection_stat;
+  struct stat msl_stat;
+  if (!regularFileStat(reflection_path, &reflection_stat) ||
+      !regularFileStat(msl_path, &msl_stat))
+    return false;
+  return reflection_stat.st_mtime >= msl_stat.st_mtime &&
+         reflection_stat.st_mtime <= metallib_stat.st_mtime;
 }
 
 void pipelineHashCombine(uint64_t &hash, uint64_t value) {
@@ -485,10 +505,292 @@ m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
        fileHasMTLBHeader(out_lookup->paths.metallib_path) &&
        metallibFreshForSource(out_lookup->paths.metallib_path, msl_path,
                               metallib_stat) &&
+       reflectionFreshForSource(out_lookup->paths.reflection_path, msl_path,
+                                metallib_stat) &&
        !metallibHasActiveError(out_lookup->paths.metallib_error_path,
                                metallib_stat))
           ? 1u
           : 0u;
+  return 0;
+}
+
+void setMaterializeResult(M12CoreMetallibMaterializeResult *out_result,
+                          uint32_t status, const char *message) {
+  if (!out_result)
+    return;
+  out_result->status = status;
+  if (message && message[0]) {
+    std::snprintf(out_result->diagnostic, sizeof(out_result->diagnostic),
+                  "%s", message);
+    out_result->diagnostic[sizeof(out_result->diagnostic) - 1] = '\0';
+  }
+}
+
+const char *materializeToolPath(const char *desc_path, const char *env_name) {
+  if (desc_path && desc_path[0])
+    return desc_path;
+  const char *env = std::getenv(env_name);
+  return (env && env[0]) ? env : nullptr;
+}
+
+std::atomic<uint64_t> g_materialize_temp_counter = {0};
+
+int materializeToolTimeoutSeconds() {
+  const char *env = std::getenv("DXMT_METALLIB_TOOL_TIMEOUT_SECONDS");
+  long value = env && env[0] ? std::strtol(env, nullptr, 10) : 120;
+  if (value < 1)
+    value = 1;
+  if (value > 600)
+    value = 600;
+  return (int)value;
+}
+
+uint64_t monotonicMilliseconds() {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+    return 0;
+  return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+void terminateMaterializeChild(pid_t pid) {
+  if (pid <= 0)
+    return;
+  kill(-pid, SIGTERM);
+  kill(pid, SIGTERM);
+  struct timespec wait_step = {0, 100000000};
+  int status = 0;
+  for (int i = 0; i < 20; i++) {
+    pid_t got = waitpid(pid, &status, WNOHANG);
+    if (got == pid)
+      return;
+    if (got < 0 && errno != EINTR)
+      return;
+    nanosleep(&wait_step, nullptr);
+  }
+  kill(-pid, SIGKILL);
+  kill(pid, SIGKILL);
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+  }
+}
+
+bool installedMetallibIsUsable(const char *metallib_path, const char *msl_path) {
+  struct stat metallib_stat;
+  if (!regularFileStat(metallib_path, &metallib_stat) ||
+      !fileHasMTLBHeader(metallib_path))
+    return false;
+  return metallibFreshForSource(metallib_path, msl_path, metallib_stat);
+}
+
+void publishMaterializeError(const char *temp_error_path,
+                             const char *active_error_path,
+                             const M12CoreMetallibMaterializeDesc *desc) {
+  if (!temp_error_path || !temp_error_path[0])
+    return;
+  if (desc && installedMetallibIsUsable(desc->metallib_path, desc->msl_path)) {
+    unlink(temp_error_path);
+    if (active_error_path && active_error_path[0])
+      unlink(active_error_path);
+    return;
+  }
+  if (active_error_path && active_error_path[0]) {
+    if (std::rename(temp_error_path, active_error_path) == 0)
+      return;
+  }
+  unlink(temp_error_path);
+}
+
+int runMaterializeTool(const char *const *argv, const char *error_path,
+                       bool truncate_error) {
+  int err_fd = -1;
+  if (error_path && error_path[0]) {
+    int flags = O_CREAT | O_WRONLY | (truncate_error ? O_TRUNC : O_APPEND);
+    err_fd = open(error_path, flags, 0644);
+  }
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    if (err_fd >= 0)
+      close(err_fd);
+    return -1;
+  }
+  if (pid == 0) {
+    setpgid(0, 0);
+    if (err_fd >= 0) {
+      dup2(err_fd, STDOUT_FILENO);
+      dup2(err_fd, STDERR_FILENO);
+      close(err_fd);
+    }
+    execv(argv[0], const_cast<char *const *>(argv));
+    _exit(127);
+  }
+
+  setpgid(pid, pid);
+  if (err_fd >= 0)
+    close(err_fd);
+
+  const uint64_t timeout_ms = (uint64_t)materializeToolTimeoutSeconds() * 1000ull;
+  const uint64_t start_ms = monotonicMilliseconds();
+  struct timespec wait_step = {0, 100000000};
+  int status = 0;
+  for (;;) {
+    pid_t got = waitpid(pid, &status, WNOHANG);
+    if (got == pid)
+      break;
+    if (got < 0) {
+      if (errno == EINTR)
+        continue;
+      return -1;
+    }
+    uint64_t now_ms = monotonicMilliseconds();
+    if (now_ms && start_ms && now_ms - start_ms >= timeout_ms) {
+      terminateMaterializeChild(pid);
+      return 124;
+    }
+    nanosleep(&wait_step, nullptr);
+  }
+  if (WIFEXITED(status))
+    return WEXITSTATUS(status);
+  if (WIFSIGNALED(status))
+    return 128 + WTERMSIG(status);
+  return -1;
+}
+
+extern "C" int m12core_materialize_msl_metallib(
+    const M12CoreMetallibMaterializeDesc *desc,
+    M12CoreMetallibMaterializeResult *out_result) {
+  if (!out_result)
+    return 1;
+  std::memset(out_result, 0, sizeof(*out_result));
+  out_result->abi_version = M12CORE_ABI_VERSION;
+  out_result->metal_exit_code = -1;
+  out_result->metallib_exit_code = -1;
+
+  if (!desc || desc->abi_version != M12CORE_ABI_VERSION ||
+      !desc->msl_path[0] || !desc->metallib_path[0]) {
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_INVALID,
+                         "invalid materialize request");
+    return 0;
+  }
+
+  if (!regularFileExists(desc->msl_path)) {
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_SOURCE_MISSING,
+                         "MSL source missing or empty");
+    return 0;
+  }
+
+  const char *metal_tool = materializeToolPath(desc->metal_tool_path,
+                                               "DXMT_METAL_TOOL");
+  const char *metallib_tool = materializeToolPath(desc->metallib_tool_path,
+                                                  "DXMT_METALLIB_TOOL");
+  if (!metal_tool || !metallib_tool || !regularFileExists(metal_tool) ||
+      !regularFileExists(metallib_tool)) {
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_TOOL_MISSING,
+                         "metal/metallib tool missing; set DXMT_METAL_TOOL and DXMT_METALLIB_TOOL");
+    return 0;
+  }
+
+  const char *error_path = desc->error_path[0] ? desc->error_path : nullptr;
+  char air_tmp[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char metallib_tmp[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char error_tmp[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  const char *tool_error_path = nullptr;
+  uint64_t temp_id = ++g_materialize_temp_counter;
+  int n = std::snprintf(air_tmp, sizeof(air_tmp), "%s.air.%d.%llu.tmp",
+                        desc->metallib_path, (int)getpid(),
+                        (unsigned long long)temp_id);
+  int m = std::snprintf(metallib_tmp, sizeof(metallib_tmp), "%s.%d.%llu.tmp",
+                        desc->metallib_path, (int)getpid(),
+                        (unsigned long long)temp_id);
+  int e = 0;
+  if (error_path) {
+    e = std::snprintf(error_tmp, sizeof(error_tmp), "%s.%d.%llu.tmp",
+                      error_path, (int)getpid(),
+                      (unsigned long long)temp_id);
+    if (e > 0 && (size_t)e < sizeof(error_tmp))
+      tool_error_path = error_tmp;
+  }
+  if (n <= 0 || (size_t)n >= sizeof(air_tmp) || m <= 0 ||
+      (size_t)m >= sizeof(metallib_tmp) || (error_path && !tool_error_path)) {
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_INVALID,
+                         "temporary materialize path too long");
+    return 0;
+  }
+
+  unlink(air_tmp);
+  unlink(metallib_tmp);
+  if (tool_error_path)
+    unlink(tool_error_path);
+
+  const char *metal_argv[] = {metal_tool, "-x", "metal", "-std=metal3.1",
+                              "-c", desc->msl_path, "-o", air_tmp, nullptr};
+  int metal_rc = runMaterializeTool(metal_argv, tool_error_path, true);
+  out_result->metal_exit_code = metal_rc;
+  if (metal_rc != 0 || !regularFileExists(air_tmp)) {
+    unlink(air_tmp);
+    unlink(metallib_tmp);
+    publishMaterializeError(tool_error_path, error_path, desc);
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_METAL_FAILED,
+                         metal_rc == 124 ? "metal source compile timed out" : "metal source compile failed");
+    return 0;
+  }
+
+  const char *metallib_argv[] = {metallib_tool, air_tmp, "-o", metallib_tmp,
+                                 nullptr};
+  int metallib_rc = runMaterializeTool(metallib_argv, tool_error_path, false);
+  out_result->metallib_exit_code = metallib_rc;
+  unlink(air_tmp);
+  if (metallib_rc != 0 || !regularFileExists(metallib_tmp)) {
+    unlink(metallib_tmp);
+    publishMaterializeError(tool_error_path, error_path, desc);
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_METALLIB_FAILED,
+                         metallib_rc == 124 ? "metallib link timed out" : "metallib link failed");
+    return 0;
+  }
+
+  struct stat tmp_stat;
+  if (!regularFileStat(metallib_tmp, &tmp_stat) ||
+      !fileHasMTLBHeader(metallib_tmp)) {
+    unlink(metallib_tmp);
+    publishMaterializeError(tool_error_path, error_path, desc);
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_OUTPUT_INVALID,
+                         "metallib output missing MTLB header");
+    return 0;
+  }
+
+  if (std::rename(metallib_tmp, desc->metallib_path) != 0) {
+    unlink(metallib_tmp);
+    publishMaterializeError(tool_error_path, error_path, desc);
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_OUTPUT_INVALID,
+                         "failed to install metallib output");
+    return 0;
+  }
+
+  struct stat final_stat;
+  if (!regularFileStat(desc->metallib_path, &final_stat) ||
+      !fileHasMTLBHeader(desc->metallib_path)) {
+    publishMaterializeError(tool_error_path, error_path, desc);
+    setMaterializeResult(out_result,
+                         M12CORE_METALLIB_MATERIALIZE_STATUS_OUTPUT_INVALID,
+                         "installed metallib failed validation");
+    return 0;
+  }
+
+  if (tool_error_path)
+    unlink(tool_error_path);
+  if (error_path && error_path[0])
+    unlink(error_path);
+  out_result->metallib_bytes = (uint64_t)final_stat.st_size;
+  setMaterializeResult(out_result,
+                       M12CORE_METALLIB_MATERIALIZE_STATUS_OK,
+                       "metallib materialized");
   return 0;
 }
 

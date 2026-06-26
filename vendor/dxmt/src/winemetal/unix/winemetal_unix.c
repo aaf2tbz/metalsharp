@@ -228,6 +228,9 @@ typedef int (*PFN_m12core_format_shader_cache_paths)(
 typedef int (*PFN_m12core_probe_shader_cache)(
     const char *cache_root, uint64_t shader_hash, uint32_t force_source_compile, M12CoreShaderCacheLookup *out_lookup
 );
+typedef int (*PFN_m12core_materialize_msl_metallib)(
+    const M12CoreMetallibMaterializeDesc *desc, M12CoreMetallibMaterializeResult *out_result
+);
 typedef int (*PFN_m12core_parse_shader_reflection)(
     const char *reflection_text, uint64_t reflection_text_size, M12CoreShaderReflectionSummary *out_summary
 );
@@ -328,6 +331,7 @@ static PFN_m12core_get_counters p_m12core_get_counters;
 static PFN_m12core_hash_shader_bytecode p_m12core_hash_shader_bytecode;
 static PFN_m12core_format_shader_cache_paths p_m12core_format_shader_cache_paths;
 static PFN_m12core_probe_shader_cache p_m12core_probe_shader_cache;
+static PFN_m12core_materialize_msl_metallib p_m12core_materialize_msl_metallib;
 static PFN_m12core_parse_shader_reflection p_m12core_parse_shader_reflection;
 static PFN_m12core_make_pipeline_cache_key p_m12core_make_pipeline_cache_key;
 static PFN_m12core_create_shader_function p_m12core_create_shader_function;
@@ -383,6 +387,7 @@ m12core_bind_internal(void) {
   p_m12core_hash_shader_bytecode = m12core_hash_shader_bytecode;
   p_m12core_format_shader_cache_paths = m12core_format_shader_cache_paths;
   p_m12core_probe_shader_cache = m12core_probe_shader_cache;
+  p_m12core_materialize_msl_metallib = m12core_materialize_msl_metallib;
   p_m12core_parse_shader_reflection = m12core_parse_shader_reflection;
   p_m12core_make_pipeline_cache_key = m12core_make_pipeline_cache_key;
   p_m12core_create_shader_function = m12core_create_shader_function;
@@ -502,6 +507,8 @@ m12core_try_load(void) {
   p_m12core_format_shader_cache_paths =
       (PFN_m12core_format_shader_cache_paths)dlsym(m12core_handle, "m12core_format_shader_cache_paths");
   p_m12core_probe_shader_cache = (PFN_m12core_probe_shader_cache)dlsym(m12core_handle, "m12core_probe_shader_cache");
+  p_m12core_materialize_msl_metallib =
+      (PFN_m12core_materialize_msl_metallib)dlsym(m12core_handle, "m12core_materialize_msl_metallib");
   p_m12core_parse_shader_reflection =
       (PFN_m12core_parse_shader_reflection)dlsym(m12core_handle, "m12core_parse_shader_reflection");
   p_m12core_make_pipeline_cache_key =
@@ -675,6 +682,16 @@ _WMTM12CoreProbeShaderCache(void *obj) {
       p_m12core_probe_shader_cache(
           params->cache_root.ptr, params->shader_hash, params->force_source_compile, &params->ret_lookup
       ) == 0;
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+_WMTM12CoreMaterializeMSLMetallib(void *obj) {
+  struct unixcall_m12core_materialize_msl_metallib *params = obj;
+  if (!params || !p_m12core_materialize_msl_metallib)
+    return STATUS_SUCCESS;
+
+  params->ret_success = p_m12core_materialize_msl_metallib(&params->desc, &params->ret_result) == 0;
   return STATUS_SUCCESS;
 }
 
@@ -5006,6 +5023,7 @@ const void *__wine_unix_call_funcs[] = {
     &_WMTM12CorePlanReplayCoverage,
     &_WMTM12CorePlanThinPECheckpoint,
     &_MTLCommandBuffer_addCompletedSignal,
+    &_WMTM12CoreMaterializeMSLMetallib,
 };
 
 #ifndef DXMT_NATIVE
@@ -5182,5 +5200,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_WMTM12CorePlanReplayCoverage,
     &_WMTM12CorePlanThinPECheckpoint,
     &_MTLCommandBuffer_addCompletedSignal,
+    &_WMTM12CoreMaterializeMSLMetallib,
 };
 #endif

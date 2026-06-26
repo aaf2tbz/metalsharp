@@ -9,8 +9,8 @@
   "required_env": [
     {
       "key": "WINEDLLOVERRIDES",
-      "value_contains": "winemetal,d3d12=n,b",
-      "proves": "Wine loads only the M12 DXMT D3D12 frontend and WineMetal PE bridge from the staged runtime before builtin DLLs while leaving Steam overlay renderers disabled. DXGI/D3D11/D3D10/GPU vendor stubs are not forced for the winemetal-backed D3D12 path."
+      "value_contains": "d3d12,dxgi,dxgi_dxmt,winemetal=n,b",
+      "proves": "Wine loads the aligned M12 DXMT D3D12 frontend, DXGI bootstrap/bridge, and WineMetal PE bridge from the staged runtime before builtin DLLs while leaving Steam overlay renderers disabled. D3D11/D3D10/GPU vendor stubs are not forced for the winemetal-backed D3D12 path."
     },
     {
       "key": "WINEDLLPATH",
@@ -42,7 +42,7 @@
     {
       "id": "recipe-and-route",
       "source": "app/src-rust/src/mtsp/engine.rs",
-      "flow": "M12 selects the DXMT D3D12 node, deploys D3D12/DXGI/Winemetal plus D3D11 fallback DLLs, and keeps M11/M10/M9 as fallbacks."
+      "flow": "M12 selects the DXMT D3D12 node, deploys d3d12.dll, dxgi.dll, dxgi_dxmt.dll, and winemetal.dll from the isolated dxmt_m12 Windows surface, validates matching Unix-side PE mirrors plus winemetal.so, and keeps M11/M10/M9 as fallbacks."
     },
     {
       "id": "launch-env",
@@ -89,7 +89,12 @@
     {
       "id": "runtime-layout",
       "command": "python3 tools/d3d12-metal-sdk/scripts/preflight-runtime-layout.py --profile local-m12-current --dxmt-runtime ~/.metalsharp/runtime/wine/lib/dxmt_m12 --wine-runtime ~/.metalsharp/runtime/wine --prefix ~/.metalsharp/prefix-steam",
-      "pinpoints": "Required DLLs, Unix sidecars, WineMetal ABI, prefix placement, and manifest drift."
+      "pinpoints": "Required D3D12/DXGI/Winemetal DLLs, Unix PE mirrors, WineMetal ABI, prefix placement, and manifest drift."
+    },
+    {
+      "id": "runtime-alignment-dry-run",
+      "command": "python3 tools/d3d12-metal-sdk/scripts/run-m12-runtime-alignment-dry-run.py --dxmt-runtime ~/.metalsharp/runtime/wine/lib/dxmt_m12 --wine-runtime ~/.metalsharp/runtime/wine --prefix ~/.metalsharp/prefix-steam",
+      "pinpoints": "Runs the purpose-built no-game mini probe that loads d3d12/dxgi/dxgi_dxmt/winemetal with M12 overrides and creates D3D12/DXGI objects."
     },
     {
       "id": "shader-engine",

@@ -1680,6 +1680,8 @@ static std::string dropInvalidScalarComponentAccess(const LowerContext &ctx,
 }
 
 static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::string &expr);
+static std::string scalarizeVectorConstructorsForScalar(const std::string &expr);
+static std::string scalarizeVectorExpressionForScalar(const LowerContext &ctx, const std::string &expr);
 static bool exprLooksScalarizedArithmetic(const std::string &value);
 
 static std::string coerceResolvedValue(const LowerContext &ctx, const std::string &value,
@@ -1689,6 +1691,13 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
         std::string coerced_bool = coerceVectorBoolExpressionForAssignment(ctx, sanitized_value);
         if (!coerced_bool.empty())
             return coerced_bool;
+    }
+
+    if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
+        !DXILIRBuilder::isVectorType(target)) {
+        std::string scalarized = scalarizeVectorExpressionForScalar(ctx, sanitized_value);
+        if (scalarized != sanitized_value)
+            return coerceResolvedValue(ctx, scalarized, target);
     }
 
     std::string component_base;
@@ -1763,6 +1772,77 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
         return sanitized_value;
 
     return coerceResolvedValue(sanitized_value, target);
+}
+
+static bool parseScalarDeclarationName(const std::string &trimmed, std::string &name) {
+    static const char *prefixes[] = {
+        "float ", "int ", "uint ", "bool ", "long ", "short ", "ushort ", "half "
+    };
+    for (const char *prefix : prefixes) {
+        if (!startsWith(trimmed, prefix))
+            continue;
+        size_t name_start = std::strlen(prefix);
+        size_t name_end = name_start;
+        while (name_end < trimmed.size() &&
+               (std::isalnum((unsigned char)trimmed[name_end]) || trimmed[name_end] == '_'))
+            name_end++;
+        if (name_end > name_start) {
+            name = trimmed.substr(name_start, name_end - name_start);
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string hardenGeneratedScalarVectorAssignments(const std::string &source) {
+    std::set<std::string> scalar_names;
+    std::vector<std::string> lines;
+    std::string line;
+    std::istringstream in(source);
+    while (std::getline(in, line)) {
+        std::string trimmed = line;
+        while (!trimmed.empty() && std::isspace((unsigned char)trimmed.front()))
+            trimmed.erase(trimmed.begin());
+        std::string name;
+        if (parseScalarDeclarationName(trimmed, name))
+            scalar_names.insert(name);
+        lines.push_back(line);
+    }
+
+    std::ostringstream out;
+    for (const auto &original : lines) {
+        std::string trimmed = original;
+        size_t leading = 0;
+        while (leading < trimmed.size() && std::isspace((unsigned char)trimmed[leading]))
+            leading++;
+        trimmed.erase(0, leading);
+
+        size_t eq = trimmed.find(" = ");
+        if (eq != std::string::npos) {
+            std::string name;
+            std::string decl_name;
+            if (parseScalarDeclarationName(trimmed, decl_name))
+                name = decl_name;
+            else
+                name = trimmed.substr(0, eq);
+            if (scalar_names.find(name) != scalar_names.end()) {
+                std::string rhs = trimmed.substr(eq + 3);
+                size_t semi = rhs.find(';');
+                if (semi != std::string::npos) {
+                    std::string suffix = rhs.substr(semi);
+                    rhs = rhs.substr(0, semi);
+                    std::string scalarized = scalarizeVectorConstructorsForScalar(rhs);
+                    if (scalarized != rhs) {
+                        out << original.substr(0, leading) << trimmed.substr(0, eq + 3)
+                            << scalarized << suffix << "\n";
+                        continue;
+                    }
+                }
+            }
+        }
+        out << original << "\n";
+    }
+    return out.str();
 }
 
 static std::string hardenGeneratedBoolVectorAssignments(const std::string &source) {
@@ -1996,6 +2076,120 @@ static std::string scalarizeVectorOperands(const LowerContext &ctx, const std::s
         }
         i = end;
     }
+    return out;
+}
+
+static bool isKnownVectorMemberToken(const std::string &expr, size_t pos,
+                                     std::string &token) {
+    static const char *tokens[] = {
+        "in.position", "out.position",
+        "in.v0", "in.v1", "in.v2", "in.v3", "in.v4", "in.v5", "in.v6", "in.v7",
+        "out.v0", "out.v1", "out.v2", "out.v3", "out.v4", "out.v5", "out.v6", "out.v7",
+    };
+    for (const char *candidate : tokens) {
+        size_t len = std::strlen(candidate);
+        if (pos + len > expr.size() || expr.compare(pos, len, candidate) != 0)
+            continue;
+        bool start_ok = pos == 0 ||
+            (!std::isalnum((unsigned char)expr[pos - 1]) && expr[pos - 1] != '_' && expr[pos - 1] != '.');
+        bool end_ok = pos + len >= expr.size() ||
+            (!std::isalnum((unsigned char)expr[pos + len]) && expr[pos + len] != '_' && expr[pos + len] != '.');
+        size_t lookahead = pos + len;
+        while (lookahead < expr.size() && std::isspace((unsigned char)expr[lookahead]))
+            lookahead++;
+        size_t wrapped = lookahead;
+        while (wrapped < expr.size() && expr[wrapped] == ')')
+            wrapped++;
+        while (wrapped < expr.size() && std::isspace((unsigned char)expr[wrapped]))
+            wrapped++;
+        bool already_component_accessed =
+            (lookahead < expr.size() && expr[lookahead] == '.') ||
+            (wrapped < expr.size() && expr[wrapped] == '.');
+        if (start_ok && end_ok && !already_component_accessed) {
+            token.assign(candidate, len);
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::string scalarizeKnownVectorMembersForScalar(const std::string &expr) {
+    std::string out;
+    for (size_t i = 0; i < expr.size();) {
+        std::string token;
+        if (isKnownVectorMemberToken(expr, i, token)) {
+            out += "(" + token + ").x";
+            i += token.size();
+            continue;
+        }
+        out += expr[i++];
+    }
+    return out;
+}
+
+static std::string scalarizeVectorConstructorsForScalar(const std::string &expr) {
+    static const char *constructors[] = {
+        "float2(", "float3(", "float4(",
+        "int2(", "int3(", "int4(",
+        "uint2(", "uint3(", "uint4("
+    };
+
+    std::string out;
+    for (size_t i = 0; i < expr.size();) {
+        const char *matched = nullptr;
+        for (const char *ctor : constructors) {
+            if (expr.compare(i, std::strlen(ctor), ctor) == 0) {
+                matched = ctor;
+                break;
+            }
+        }
+        if (!matched) {
+            out += expr[i++];
+            continue;
+        }
+
+        int depth = 0;
+        size_t end = i;
+        for (; end < expr.size(); end++) {
+            if (expr[end] == '(' || expr[end] == '[' || expr[end] == '{')
+                depth++;
+            else if (expr[end] == ')' || expr[end] == ']' || expr[end] == '}') {
+                if (depth > 0)
+                    depth--;
+                if (depth == 0) {
+                    end++;
+                    break;
+                }
+            }
+        }
+        if (depth != 0 || end <= i) {
+            out += expr[i++];
+            continue;
+        }
+
+        size_t lookahead = end;
+        while (lookahead < expr.size() && std::isspace((unsigned char)expr[lookahead]))
+            lookahead++;
+        size_t wrapped = lookahead;
+        while (wrapped < expr.size() && expr[wrapped] == ')')
+            wrapped++;
+        while (wrapped < expr.size() && std::isspace((unsigned char)expr[wrapped]))
+            wrapped++;
+        if ((lookahead < expr.size() && expr[lookahead] == '.') ||
+            (wrapped < expr.size() && expr[wrapped] == '.')) {
+            out += expr.substr(i, end - i);
+        } else {
+            out += "(" + expr.substr(i, end - i) + ").x";
+        }
+        i = end;
+    }
+    return out;
+}
+
+static std::string scalarizeVectorExpressionForScalar(const LowerContext &ctx, const std::string &expr) {
+    std::string out = scalarizeVectorOperands(ctx, expr);
+    out = scalarizeKnownVectorMembersForScalar(out);
+    out = scalarizeVectorConstructorsForScalar(out);
     return out;
 }
 
@@ -2982,8 +3176,8 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         auto handle = handleArg(0, "tex", "tex0");
         return "uint4(" + handle + ".get_width(), " + handle + ".get_height(), 1, 1)";
     }
-    case 83: case 85: return "dfdx(" + valueArg(0, "0.0") + ")";
-    case 84: case 86: return "dfdy(" + valueArg(0, "0.0") + ")";
+    case 83: case 85: return "dfdx(static_cast<float>(" + numericArg(0, "0.0f") + "))";
+    case 84: case 86: return "dfdy(static_cast<float>(" + numericArg(0, "0.0f") + "))";
     case 81: {
         if (args.size() < 4) return "0.0";
         auto handle = handleArg(0, "tex", "tex0");
@@ -3397,6 +3591,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 declared_type.kind == MSLTypeKind::RWTexture2D)
                 declared_type = {MSLTypeKind::Texture2D, 0, {}};
             std::string assigned = coerceResolvedValue(ctx, source_expr, declared_type);
+            if ((DXILIRBuilder::isFloatType(declared_type) || DXILIRBuilder::isIntType(declared_type)) &&
+                !DXILIRBuilder::isVectorType(declared_type)) {
+                std::string scalarized = scalarizeVectorExpressionForScalar(ctx, assigned);
+                if (scalarized != assigned)
+                    assigned = coerceResolvedValue(ctx, scalarized, declared_type);
+            }
             if (DXILIRBuilder::isVectorType(declared_type)) {
                 MSLType assigned_type = inferTypeFromExpr(assigned);
                 if (DXILIRBuilder::isVectorType(assigned_type) &&
@@ -3426,6 +3626,12 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return;
         }
         std::string assigned = coerceResolvedValue(ctx, source_expr, type);
+        if ((DXILIRBuilder::isFloatType(type) || DXILIRBuilder::isIntType(type)) &&
+            !DXILIRBuilder::isVectorType(type)) {
+            std::string scalarized = scalarizeVectorExpressionForScalar(ctx, assigned);
+            if (scalarized != assigned)
+                assigned = coerceResolvedValue(ctx, scalarized, type);
+        }
         if (DXILIRBuilder::isVectorType(type)) {
             MSLType assigned_type = inferTypeFromExpr(assigned);
             if (DXILIRBuilder::isVectorType(assigned_type) &&
@@ -3902,7 +4108,6 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                                            operandType(inst.operands[1]), MSLTypeKind::Int);
         auto pre_it = ctx.predeclared_types.find(result);
         if (pre_it != ctx.predeclared_types.end() &&
-            DXILIRBuilder::isVectorType(pre_it->second) &&
             (DXILIRBuilder::isFloatType(pre_it->second) || DXILIRBuilder::isIntType(pre_it->second)))
             result_type = pre_it->second;
         bool arithmetic_op = inst.opcode == LLVMInstruction::Add ||
@@ -3936,6 +4141,23 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             !DXILIRBuilder::isVectorType(result_type)) {
             lhs = castExpr(lhs, {MSLTypeKind::Float, 0, {}});
             rhs = castExpr(rhs, {MSLTypeKind::Float, 0, {}});
+        }
+        auto parenthesize_bitwise_compare_operand = [](const std::string &operand) -> std::string {
+            std::string stripped = stripEnclosingParens(operand);
+            if (stripped.find(" != ") != std::string::npos ||
+                stripped.find(" == ") != std::string::npos ||
+                stripped.find(" <= ") != std::string::npos ||
+                stripped.find(" >= ") != std::string::npos ||
+                stripped.find(" < ") != std::string::npos ||
+                stripped.find(" > ") != std::string::npos)
+                return "(" + operand + ")";
+            return operand;
+        };
+        if (inst.opcode == LLVMInstruction::And ||
+            inst.opcode == LLVMInstruction::Or ||
+            inst.opcode == LLVMInstruction::Xor) {
+            lhs = parenthesize_bitwise_compare_operand(lhs);
+            rhs = parenthesize_bitwise_compare_operand(rhs);
         }
         std::string expr = preserve_float_arithmetic &&
                            (inst.opcode == LLVMInstruction::URem ||
@@ -5220,7 +5442,8 @@ std::optional<TypedMSLShader> MSLLowering::lower(
     os << "}\n";
 
     TypedMSLShader result;
-    result.source = hardenGeneratedBoolVectorAssignments(os.str());
+    result.source = hardenGeneratedBoolVectorAssignments(
+        hardenGeneratedScalarVectorAssignments(os.str()));
     result.entry_point = shader.entry_point;
     result.tg_size[0] = module.num_threads[0];
     result.tg_size[1] = module.num_threads[1];

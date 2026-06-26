@@ -117,8 +117,9 @@ def validate_contract(data: dict[str, Any]) -> dict[str, Any]:
 
     artifact_names = data.get("runtime_artifacts")
     require(
-        isinstance(artifact_names, list) and {"d3d12.dll", "dxgi.dll", "winemetal.dll", "winemetal.so"}.issubset(set(artifact_names)),
-        "runtime_artifacts must include d3d12.dll, dxgi.dll, winemetal.dll, and winemetal.so",
+        isinstance(artifact_names, list)
+        and {"d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll", "winemetal.so"}.issubset(set(artifact_names)),
+        "runtime_artifacts must include d3d12.dll, dxgi.dll, dxgi_dxmt.dll, winemetal.dll, and winemetal.so",
         errors,
     )
 

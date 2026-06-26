@@ -155,14 +155,14 @@ def validate_source_contract(data: dict[str, Any], errors: list[str]) -> None:
     else:
         native_modules, native_mode = native_group, ""
     native_tokens = {token.strip() for token in native_modules.split(",") if token.strip()}
-    required_native_tokens = {"winemetal", "d3d12"}
-    forbidden_native_tokens = {"dxgi", "dxgi_dxmt", "d3d11", "d3d10core", "d3d12core", "nvapi", "nvapi64", "nvngx"}
+    required_native_tokens = {"d3d12", "dxgi", "dxgi_dxmt", "winemetal"}
+    forbidden_native_tokens = {"d3d11", "d3d10core", "d3d12core", "nvapi", "nvapi64", "nvngx"}
     missing_native_tokens = sorted(required_native_tokens - native_tokens)
     forbidden_present = sorted(forbidden_native_tokens & native_tokens)
     require(not missing_native_tokens, f"M12_WINE_OVERRIDES missing native DLL overrides: {', '.join(missing_native_tokens)}", errors)
     require(
         not forbidden_present,
-        f"M12_WINE_OVERRIDES forces DLLs outside the narrow d3d12/winemetal shape: {', '.join(forbidden_present)}",
+        f"M12_WINE_OVERRIDES forces DLLs outside the aligned d3d12/dxgi/winemetal shape: {', '.join(forbidden_present)}",
         errors,
     )
     require(native_mode == "n,b", f"M12_WINE_OVERRIDES native group must use n,b mode, got `{native_mode}`", errors)

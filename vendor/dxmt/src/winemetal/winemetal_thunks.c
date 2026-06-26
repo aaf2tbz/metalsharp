@@ -134,6 +134,8 @@ winemetal_unix_call_name(unsigned int code) {
     return "WMTM12CorePlanThinPECheckpoint";
   case 171:
     return "MTLCommandBuffer_addCompletedSignal";
+  case 172:
+    return "WMTM12CoreMaterializeMSLMetallib";
   default:
     return "unknown";
   }
@@ -341,6 +343,23 @@ WMTM12CoreProbeShaderCache(
     return false;
 
   *out_lookup = params.ret_lookup;
+  return true;
+}
+
+WINEMETAL_API bool
+WMTM12CoreMaterializeMSLMetallib(
+    const M12CoreMetallibMaterializeDesc *desc, M12CoreMetallibMaterializeResult *out_result
+) {
+  struct unixcall_m12core_materialize_msl_metallib params;
+  memset(&params, 0, sizeof(params));
+  if (!desc || !out_result)
+    return false;
+
+  params.desc = *desc;
+  if (!winemetal_unix_call_ok(172, &params) || !params.ret_success)
+    return false;
+
+  *out_result = params.ret_result;
   return true;
 }
 

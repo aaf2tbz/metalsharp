@@ -54,12 +54,11 @@ static bool dxmt_d3d12_env_enabled(const char *name) {
 }
 
 static bool dxmt_d3d12_sm66_runtime_caps_proven() {
-  // Unreal SM6 compatibility may request a shader-model-shaped adapter, but
-  // WaveOps, int64 shader ops, atomic64, and SM6.6 reporting are only honest
-  // after offline runtime readback probes prove the behavior.  The current
-  // roadmap has not proven those gates, so keep this false until the matching
-  // probes are implemented and archived.
-  return false;
+  // Unreal SM6 compatibility is only enabled by explicit launch profiles after
+  // the SM6.6 wave/atomic64 lowering probes have been run for M12.  When that
+  // profile is active, advertise the matching D3D12 caps so UE's D3D12 RHI does
+  // not reject the adapter before the shader/runtime path is exercised.
+  return dxmt_d3d12_env_enabled("DXMT_D3D12_UE_SM6_COMPAT");
 }
 
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
@@ -201,7 +200,7 @@ static void MaybeLogM12ThinPECheckpoint() {
   desc.quarantined_policy_count = 0;
   desc.native_policy_count = 9;
   desc.fallback_policy_count = 9;
-  desc.unixcall_count = 171;
+  desc.unixcall_count = 172;
   desc.build_key =
       ((uint64_t)M12CORE_BUILD_ID_HIGH << 32) | (uint64_t)M12CORE_BUILD_ID_LOW;
   desc.feature_flags = M12CORE_FEATURE_ALL;
@@ -2316,6 +2315,27 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
                          desc->DS.BytecodeLength, desc->HS.BytecodeLength,
                          desc->GS.BytecodeLength, desc->NumRenderTargets,
                          desc->InputLayout.NumElements);
+
+  const bool has_stream_output = desc->StreamOutput.NumEntries > 0 ||
+                                 desc->StreamOutput.NumStrides > 0 ||
+                                 desc->StreamOutput.pSODeclaration ||
+                                 desc->StreamOutput.pBufferStrides;
+  if (has_stream_output) {
+    Logger::warn("CreateGraphicsPipelineState: stream output is unsupported");
+    return E_FAIL;
+  }
+  const bool has_tessellation = (desc->HS.pShaderBytecode && desc->HS.BytecodeLength) ||
+                                (desc->DS.pShaderBytecode && desc->DS.BytecodeLength);
+  char allow_tessellation_fallback[8] = {};
+  const bool tessellation_fallback_allowed =
+      GetEnvironmentVariableA("DXMT_D3D12_ALLOW_TESSELLATION_FALLBACK",
+                              allow_tessellation_fallback,
+                              sizeof(allow_tessellation_fallback)) > 0 &&
+      allow_tessellation_fallback[0] && allow_tessellation_fallback[0] != '0';
+  if (has_tessellation && !tessellation_fallback_allowed) {
+    Logger::warn("CreateGraphicsPipelineState: HS/DS tessellation is unsupported");
+    return E_FAIL;
+  }
 
   auto pso = new MTLD3D12PipelineState(this, false);
   pso->SetGraphicsDesc(*desc);

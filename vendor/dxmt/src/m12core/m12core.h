@@ -173,6 +173,38 @@ typedef struct M12CoreShaderCacheLookup {
   M12CoreShaderCachePaths paths;
 } M12CoreShaderCacheLookup;
 
+typedef enum M12CoreMetallibMaterializeStatus {
+  M12CORE_METALLIB_MATERIALIZE_STATUS_OK = 0,
+  M12CORE_METALLIB_MATERIALIZE_STATUS_INVALID = 1,
+  M12CORE_METALLIB_MATERIALIZE_STATUS_SOURCE_MISSING = 2,
+  M12CORE_METALLIB_MATERIALIZE_STATUS_TOOL_MISSING = 3,
+  M12CORE_METALLIB_MATERIALIZE_STATUS_METAL_FAILED = 4,
+  M12CORE_METALLIB_MATERIALIZE_STATUS_METALLIB_FAILED = 5,
+  M12CORE_METALLIB_MATERIALIZE_STATUS_OUTPUT_INVALID = 6,
+} M12CoreMetallibMaterializeStatus;
+
+#define M12CORE_METALLIB_MATERIALIZE_DIAGNOSTIC_CAPACITY 512u
+
+typedef struct M12CoreMetallibMaterializeDesc {
+  uint32_t abi_version;
+  uint32_t flags;
+  uint64_t shader_hash;
+  char msl_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char metallib_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char error_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char metal_tool_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+  char metallib_tool_path[M12CORE_SHADER_CACHE_PATH_CAPACITY];
+} M12CoreMetallibMaterializeDesc;
+
+typedef struct M12CoreMetallibMaterializeResult {
+  uint32_t abi_version;
+  uint32_t status;
+  int32_t metal_exit_code;
+  int32_t metallib_exit_code;
+  uint64_t metallib_bytes;
+  char diagnostic[M12CORE_METALLIB_MATERIALIZE_DIAGNOSTIC_CAPACITY];
+} M12CoreMetallibMaterializeResult;
+
 #define M12CORE_SHADER_ENTRY_POINT_CAPACITY 256u
 
 typedef struct M12CoreShaderReflectionSummary {
@@ -1706,6 +1738,9 @@ int m12core_format_shader_cache_paths(const char *cache_root,
 int m12core_probe_shader_cache(const char *cache_root, uint64_t shader_hash,
                                uint32_t force_source_compile,
                                M12CoreShaderCacheLookup *out_lookup);
+int m12core_materialize_msl_metallib(
+    const M12CoreMetallibMaterializeDesc *desc,
+    M12CoreMetallibMaterializeResult *out_result);
 int m12core_parse_shader_reflection(
     const char *reflection_text, uint64_t reflection_text_size,
     M12CoreShaderReflectionSummary *out_summary);
