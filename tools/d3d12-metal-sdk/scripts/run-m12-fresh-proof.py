@@ -130,6 +130,41 @@ def build_identity_probe(repo: Path, cxx: str) -> dict[str, Any]:
     }
 
 
+def build_fresh_game(repo: Path, cxx: str) -> dict[str, Any]:
+    sdk = repo / "tools" / "d3d12-metal-sdk"
+    source = sdk / "probes" / "m12_fresh_game" / "m12_fresh_game.cpp"
+    out_bin = sdk / "out" / "bin"
+    exe = out_bin / "m12_fresh_game.exe"
+    out_bin.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        cxx,
+        "-std=c++17",
+        "-O2",
+        "-static",
+        "-static-libgcc",
+        "-static-libstdc++",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        str(source),
+        "-lole32",
+        "-luuid",
+        "-lgdi32",
+        "-o",
+        str(exe),
+    ]
+    proc = subprocess.run(cmd, cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return {
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "exe": str(exe),
+        "ok": proc.returncode == 0 and exe.exists(),
+        "exe_sha256": sha256(exe) if exe.exists() else None,
+    }
+
+
 def parse_loaddll(stderr: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     pattern = re.compile(r'Loaded L"([^"]+)" at ([^:]+):\s*(\w+)')
@@ -139,7 +174,14 @@ def parse_loaddll(stderr: str) -> list[dict[str, Any]]:
             continue
         path = match.group(1)
         leaf = path.replace("/", "\\").split("\\")[-1].lower()
-        if leaf in {"d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll", "probe_m12_runtime_identity.exe"}:
+        if leaf in {
+            "d3d12.dll",
+            "dxgi.dll",
+            "dxgi_dxmt.dll",
+            "winemetal.dll",
+            "probe_m12_runtime_identity.exe",
+            "m12_fresh_game.exe",
+        }:
             rows.append({"path": path, "address": match.group(2), "kind": match.group(3)})
     return rows
 
@@ -246,6 +288,282 @@ def validate_unix_bridge(
     }
 
 
+def validate_loaddll_staged(loaddll_rows: list[dict[str, Any]], staged_files: list[dict[str, Any]]) -> dict[str, Any]:
+    expected = {entry["name"].lower(): entry for entry in staged_files}
+    loaded_by_name: dict[str, dict[str, Any]] = {}
+    for row in loaddll_rows:
+        leaf = row["path"].replace("/", "\\").split("\\")[-1].lower()
+        loaded_by_name[leaf] = row
+    checks: list[dict[str, Any]] = []
+    for name, expected_entry in expected.items():
+        row = loaded_by_name.get(name, {})
+        host_path = wine_path_to_host(row.get("path", "")) if row else None
+        host_path_resolved = host_path.resolve() if host_path and host_path.exists() else host_path
+        destination = Path(expected_entry["destination"]).resolve()
+        path_match = bool(host_path_resolved and host_path_resolved == destination)
+        hash_value = sha256(host_path_resolved) if host_path_resolved and host_path_resolved.exists() else None
+        checks.append(
+            {
+                "name": name,
+                "loaded_kind": row.get("kind"),
+                "expected_kind": "native",
+                "host_path": str(host_path_resolved) if host_path_resolved else None,
+                "expected_destination": str(destination),
+                "path_match": path_match,
+                "sha256": hash_value,
+                "expected_sha256": expected_entry["destination_sha256"],
+                "hash_match": hash_value == expected_entry["destination_sha256"],
+                "kind_match": row.get("kind") == "native",
+            }
+        )
+    for check in checks:
+        check["ok"] = check["path_match"] and check["hash_match"] and check["kind_match"]
+    return {"ok": all(check["ok"] for check in checks), "checks": checks}
+
+
+def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, target_textures: int = 300) -> dict[str, Any]:
+    summary_path = corpus_tsv.parent / "fresh-corpus-summary.json"
+    manifest_path = corpus_tsv.parent / "fresh-corpus-manifest.json"
+    summary: dict[str, Any] = {}
+    manifest: dict[str, Any] = {}
+    summary_error = ""
+    manifest_error = ""
+    try:
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        summary_error = str(error)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        manifest_error = str(error)
+    summary_ok = bool(
+        summary
+        and summary.get("schema") == "metalsharp.m12.fresh.corpus-summary.v1"
+        and summary.get("ok") is True
+        and Path(summary.get("files_tsv", "")).expanduser().resolve() == corpus_tsv
+        and Path(summary.get("manifest", "")).expanduser().resolve() == manifest_path
+        and summary.get("target_status", {}).get("shader_ok") is True
+        and summary.get("target_status", {}).get("texture_ok") is True
+    )
+    manifest_ok = bool(
+        manifest
+        and manifest.get("schema") == "metalsharp.m12.fresh.corpus-manifest.v1"
+        and manifest.get("proof_root") == summary.get("proof_root")
+        and manifest.get("entry_count") == summary.get("entry_count")
+        and manifest.get("category_counts") == summary.get("category_counts")
+        and manifest.get("source_families") == summary.get("source_families")
+        and manifest.get("target_status", {}).get("shader_ok") is True
+        and manifest.get("target_status", {}).get("texture_ok") is True
+    )
+
+    rows_seen = 0
+    shader_hashes_checked = 0
+    texture_hashes_checked = 0
+    mismatches: list[dict[str, Any]] = []
+    missing: list[str] = []
+    with corpus_tsv.open("r", encoding="utf-8") as handle:
+        header = handle.readline().rstrip("\n").split("\t")
+        columns = {name: index for index, name in enumerate(header)}
+        required = {"category", "size", "sha256", "destination"}
+        if not required.issubset(columns):
+            return {
+                "ok": False,
+                "error": f"missing required columns: {sorted(required - set(columns))}",
+                "path": str(corpus_tsv),
+            }
+        for line in handle:
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < len(header):
+                continue
+            category = fields[columns["category"]]
+            if category == "shader":
+                if shader_hashes_checked >= target_shaders:
+                    continue
+            elif category == "texture":
+                if texture_hashes_checked >= target_textures:
+                    continue
+            else:
+                continue
+            rows_seen += 1
+            destination = Path(fields[columns["destination"]])
+            expected_sha256 = fields[columns["sha256"]].lower()
+            expected_size = int(fields[columns["size"]])
+            if not destination.exists():
+                missing.append(str(destination))
+            else:
+                actual_size = destination.stat().st_size
+                actual_sha256 = sha256(destination)
+                if actual_size != expected_size or actual_sha256 != expected_sha256:
+                    mismatches.append(
+                        {
+                            "path": str(destination),
+                            "expected_size": expected_size,
+                            "actual_size": actual_size,
+                            "expected_sha256": expected_sha256,
+                            "actual_sha256": actual_sha256,
+                        }
+                    )
+            if category == "shader":
+                shader_hashes_checked += 1
+            else:
+                texture_hashes_checked += 1
+            if shader_hashes_checked >= target_shaders and texture_hashes_checked >= target_textures:
+                break
+    return {
+        "ok": summary_ok
+        and manifest_ok
+        and not missing
+        and not mismatches
+        and shader_hashes_checked >= target_shaders
+        and texture_hashes_checked >= target_textures,
+        "path": str(corpus_tsv),
+        "summary_path": str(summary_path),
+        "summary_ok": summary_ok,
+        "summary_error": summary_error,
+        "summary_schema": summary.get("schema"),
+        "manifest_path": str(manifest_path),
+        "manifest_ok": manifest_ok,
+        "manifest_error": manifest_error,
+        "manifest_schema": manifest.get("schema"),
+        "summary_proof_root": summary.get("proof_root"),
+        "summary_source_families": summary.get("source_families", []),
+        "rows_seen": rows_seen,
+        "target_shaders": target_shaders,
+        "target_textures": target_textures,
+        "shader_hashes_checked": shader_hashes_checked,
+        "texture_hashes_checked": texture_hashes_checked,
+        "missing": missing[:20],
+        "missing_count": len(missing),
+        "mismatches": mismatches[:20],
+        "mismatch_count": len(mismatches),
+    }
+
+
+def run_fresh_game(
+    repo: Path,
+    proof_dir: Path,
+    wine: Path,
+    wine_runtime: Path,
+    prefix: Path,
+    runtime_root: Path,
+    staged_files: list[dict[str, Any]],
+    corpus_tsv: Path,
+    visible_frames: int,
+) -> dict[str, Any]:
+    sdk = repo / "tools" / "d3d12-metal-sdk"
+    out_bin = sdk / "out" / "bin"
+    exe = out_bin / "m12_fresh_game.exe"
+    run_dir = proof_dir / "phase1-visible-game"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    dyld_parts = [
+        str(runtime_root / "x86_64-unix"),
+        str(wine_runtime / "lib" / "wine" / "x86_64-unix"),
+    ]
+    if os.environ.get("DYLD_LIBRARY_PATH"):
+        dyld_parts.append(os.environ["DYLD_LIBRARY_PATH"])
+
+    corpus_hash_validation = validate_fresh_game_corpus_tsv(corpus_tsv)
+    corpus_input_dir = run_dir / "corpus-input"
+    corpus_input_dir.mkdir(parents=True, exist_ok=True)
+    copied_corpus_artifacts: list[dict[str, Any]] = []
+    for artifact in [corpus_tsv, corpus_tsv.parent / "fresh-corpus-summary.json", corpus_tsv.parent / "fresh-corpus-manifest.json"]:
+        if artifact.exists():
+            destination = corpus_input_dir / artifact.name
+            shutil.copy2(artifact, destination)
+            copied_corpus_artifacts.append(
+                {
+                    "source": str(artifact),
+                    "destination": str(destination),
+                    "sha256": sha256(destination),
+                    "size": destination.stat().st_size,
+                }
+            )
+
+    shader_cache_dir = run_dir / "shader-cache-fresh"
+    shader_cache_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("DXMT_"):
+            env.pop(key, None)
+    env.update(
+        {
+            "WINEPREFIX": str(prefix),
+            "WINEDLLPATH": str(runtime_root / "x86_64-windows"),
+            "WINEDLLOVERRIDES": "d3d12,dxgi,dxgi_dxmt,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+            "DYLD_LIBRARY_PATH": ":".join(dyld_parts),
+            "DXMT_WINEMETAL_UNIXLIB": "winemetal.so",
+            "DXMT_WINEMETAL_DEBUG": "1",
+            "DXMT_LOG_LEVEL": "info",
+            "DXMT_LOG_PATH": str(run_dir),
+            "DXMT_SHADER_CACHE_PATH": str(shader_cache_dir),
+            "D3D12_METAL_SDK_PROFILE": "m12-fresh-visible-game",
+            "DXMT_D3D12_PRESENT_LOG_INTERVAL": "1",
+            "M12_FRESH_CORPUS_TSV": str(corpus_tsv),
+            "M12_FRESH_VISIBLE_FRAMES": str(visible_frames),
+            "WINEDEBUG": "+loaddll",
+        }
+    )
+    cmd = [str(wine), exe.name]
+    proc = subprocess.run(cmd, cwd=out_bin, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout_path = run_dir / "m12_fresh_game.stdout.json"
+    stderr_path = run_dir / "m12_fresh_game.stderr.txt"
+    stdout_path.write_text(proc.stdout)
+    stderr_path.write_text(proc.stderr)
+
+    parsed: dict[str, Any] | None = None
+    parse_error = ""
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError as error:
+        parse_error = str(error)
+    loaddll_rows = parse_loaddll(proc.stderr)
+    runtime_match = validate_loaddll_staged(loaddll_rows, staged_files)
+    drawn_present_count = proc.stderr.count("classification=drawn")
+    draw_line_count = len(re.findall(r"draws=[1-9]", proc.stderr))
+    stderr_assertion = "std::__condvar" in proc.stderr or "Assertion" in proc.stderr
+    frames_presented = 0
+    if parsed:
+        frames_presented = int(parsed.get("d3d12_window", {}).get("frames_presented", 0) or 0)
+    game_json_ok = bool(
+        parsed
+        and parsed.get("pass") is True
+        and parsed.get("corpus", {}).get("ok") is True
+        and parsed.get("d3d12_window", {}).get("ok") is True
+        and parsed.get("d3d12_window", {}).get("visible_scene", {}).get("ok") is True
+        and parsed.get("d3d12_window", {}).get("gpu_textures", {}).get("ok") is True
+    )
+    result = {
+        "command": cmd,
+        "cwd": str(out_bin),
+        "returncode": proc.returncode,
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+        "json_parse_error": parse_error,
+        "game_json": parsed,
+        "loaddll": loaddll_rows,
+        "runtime_match": runtime_match,
+        "shader_cache_dir": str(shader_cache_dir),
+        "copied_corpus_artifacts": copied_corpus_artifacts,
+        "corpus_hash_validation": corpus_hash_validation,
+        "drawn_present_count": drawn_present_count,
+        "draw_line_count": draw_line_count,
+        "frames_presented": frames_presented,
+        "stderr_assertion": stderr_assertion,
+        "ok": proc.returncode == 0
+        and game_json_ok
+        and corpus_hash_validation["ok"]
+        and runtime_match["ok"]
+        and frames_presented == visible_frames
+        and drawn_present_count == frames_presented
+        and draw_line_count >= visible_frames
+        and not stderr_assertion,
+    }
+    write_json(run_dir / "phase1-visible-game-summary.json", result)
+    return result
+
+
 def run_identity_probe(
     repo: Path,
     proof_dir: Path,
@@ -331,6 +649,9 @@ def main() -> int:
     parser.add_argument("--prefix", default=os.path.expanduser("~/.metalsharp/prefix-steam"))
     parser.add_argument("--min-free-gib", type=int, default=50)
     parser.add_argument("--cxx", default=os.environ.get("CXX", "x86_64-w64-mingw32-g++"))
+    parser.add_argument("--corpus-tsv", default=os.environ.get("M12_FRESH_CORPUS_TSV", ""))
+    parser.add_argument("--visible-frames", type=int, default=300)
+    parser.add_argument("--skip-game", action="store_true", help="Skip the visible m12_fresh_game.exe phase.")
     parser.add_argument("--skip-run", action="store_true", help="Build and manifest only; do not execute Wine.")
     args = parser.parse_args()
 
@@ -409,6 +730,12 @@ def main() -> int:
         print(build["stderr"], file=sys.stderr)
         return 6
 
+    game_build = build_fresh_game(repo, args.cxx)
+    write_json(proof_root / "phase1-build-m12-fresh-game.json", game_build)
+    if not game_build["ok"]:
+        print(game_build["stderr"], file=sys.stderr)
+        return 9
+
     staged = copy_runtime_to_probe_dir(runtime_root, repo / "tools" / "d3d12-metal-sdk" / "out" / "bin")
     write_json(
         proof_root / "phase0-staged-runtime-hashes.json",
@@ -418,24 +745,56 @@ def main() -> int:
         return 7
 
     identity_result: dict[str, Any] | None = None
+    visible_game_result: dict[str, Any] | None = None
     if not args.skip_run:
         identity_result = run_identity_probe(repo, proof_root, wine, wine_runtime, prefix, runtime_root, staged)
+        if not args.skip_game:
+            if not args.corpus_tsv:
+                print("--corpus-tsv is required unless --skip-game or --skip-run is set", file=sys.stderr)
+                return 10
+            corpus_tsv = Path(args.corpus_tsv).expanduser().resolve()
+            if not corpus_tsv.exists():
+                print(f"missing corpus TSV: {corpus_tsv}", file=sys.stderr)
+                return 11
+            visible_game_result = run_fresh_game(
+                repo,
+                proof_root,
+                wine,
+                wine_runtime,
+                prefix,
+                runtime_root,
+                staged,
+                corpus_tsv,
+                args.visible_frames,
+            )
 
     summary = {
         "schema": "metalsharp.m12.fresh.phase0-summary.v1",
-        "ok": disk_guard["ok"] and not missing_runtime and build["ok"] and all(x["hash_match"] for x in staged)
-        and (args.skip_run or bool(identity_result and identity_result["ok"])),
+        "ok": disk_guard["ok"]
+        and not missing_runtime
+        and build["ok"]
+        and game_build["ok"]
+        and all(x["hash_match"] for x in staged)
+        and (args.skip_run or bool(identity_result and identity_result["ok"]))
+        and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"])),
         "proof_root": str(proof_root),
         "disk_guard": disk_guard,
         "build_ok": build["ok"],
+        "game_build_ok": game_build["ok"],
         "runtime_stage_ok": all(x["hash_match"] for x in staged),
         "identity_probe_ok": None if args.skip_run else bool(identity_result and identity_result["ok"]),
+        "visible_game_ok": None
+        if args.skip_run or args.skip_game
+        else bool(visible_game_result and visible_game_result["ok"]),
         "artifacts": {
             "manifest": str(proof_root / "proof-run-manifest.json"),
             "build": str(proof_root / "phase0-build-runtime-identity-probe.json"),
             "staged_hashes": str(proof_root / "phase0-staged-runtime-hashes.json"),
             "identity": str(proof_root / "phase0-runtime-identity" / "phase0-runtime-identity-summary.json")
             if not args.skip_run
+            else None,
+            "visible_game": str(proof_root / "phase1-visible-game" / "phase1-visible-game-summary.json")
+            if not args.skip_run and not args.skip_game
             else None,
         },
     }

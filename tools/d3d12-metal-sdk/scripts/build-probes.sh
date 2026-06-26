@@ -166,6 +166,13 @@ build_probe \
   -o "$OUT_DIR/probe_present_windowed.exe"
 
 build_probe \
+  "$SDK_DIR/probes/m12_fresh_game/m12_fresh_game.cpp" \
+  -lole32 \
+  -luuid \
+  -lgdi32 \
+  -o "$OUT_DIR/m12_fresh_game.exe"
+
+build_probe \
   "$SDK_DIR/probes/probe_subnautica_stress_game/probe_subnautica_stress_game.cpp" \
   -lole32 \
   -luuid \
@@ -215,6 +222,7 @@ echo "$OUT_DIR/probe_barriers_render_pass.exe"
 echo "$OUT_DIR/probe_resource_views_formats.exe"
 echo "$OUT_DIR/probe_render_headless.exe"
 echo "$OUT_DIR/probe_present_windowed.exe"
+echo "$OUT_DIR/m12_fresh_game.exe"
 echo "$OUT_DIR/probe_subnautica_stress_game.exe"
 echo "$OUT_DIR/probe_subnautica_full_stress.exe"
 echo "$OUT_DIR/probe_mini_create_device.exe"
