@@ -402,6 +402,107 @@ static const LLVMValue *findConstantById(const LLVMModule &module, uint32_t id) 
   return nullptr;
 }
 
+static const LLVMValue *findFunctionConstantById(const LLVMFunction &fn, uint32_t id) {
+  for (auto &constant : fn.constants) {
+    if (constant.id == id)
+      return &constant;
+  }
+  return nullptr;
+}
+
+static bool parseUnsignedConstant(const std::string &text, uint64_t &value) {
+  if (text.empty())
+    return false;
+  char *end = nullptr;
+  unsigned long long parsed = std::strtoull(text.c_str(), &end, 0);
+  if (!end || *end != '\0')
+    return false;
+  value = (uint64_t)parsed;
+  return true;
+}
+
+static bool getUnsignedConstantValue(const LLVMModule &module, const LLVMFunction &fn,
+                                     uint32_t id, uint64_t &value) {
+  if (auto constant = findFunctionConstantById(fn, id))
+    return parseUnsignedConstant(constant->constant_data, value);
+  if (auto constant = findConstantById(module, id))
+    return parseUnsignedConstant(constant->constant_data, value);
+  return false;
+}
+
+static bool dxilFunctionNameMatchesBase(const std::string &name, const char *base) {
+  size_t base_len = std::strlen(base);
+  return name.compare(0, base_len, base) == 0 &&
+         (name.size() == base_len || name[base_len] == '.');
+}
+
+static bool dxilOpcodeMatchesFunctionName(uint64_t opcode, const std::string &name) {
+  switch (opcode) {
+  case 4: return dxilFunctionNameMatchesBase(name, "dx.op.loadInput");
+  case 5: return dxilFunctionNameMatchesBase(name, "dx.op.storeOutput");
+  case 13: return dxilFunctionNameMatchesBase(name, "dx.op.unary");
+  case 14: return dxilFunctionNameMatchesBase(name, "dx.op.binary");
+  case 15: return dxilFunctionNameMatchesBase(name, "dx.op.tertiary");
+  case 54: return dxilFunctionNameMatchesBase(name, "dx.op.dot2");
+  case 55: return dxilFunctionNameMatchesBase(name, "dx.op.dot3");
+  case 56: return dxilFunctionNameMatchesBase(name, "dx.op.dot4");
+  case 57: return dxilFunctionNameMatchesBase(name, "dx.op.createHandle");
+  case 58: return dxilFunctionNameMatchesBase(name, "dx.op.cbufferLoad");
+  case 59: return dxilFunctionNameMatchesBase(name, "dx.op.cbufferLoadLegacy");
+  case 60: return dxilFunctionNameMatchesBase(name, "dx.op.sample") || dxilFunctionNameMatchesBase(name, "dx.op.textureSample");
+  case 61: return dxilFunctionNameMatchesBase(name, "dx.op.sampleBias") || dxilFunctionNameMatchesBase(name, "dx.op.textureSampleBias");
+  case 62: return dxilFunctionNameMatchesBase(name, "dx.op.sampleLevel") || dxilFunctionNameMatchesBase(name, "dx.op.textureSampleLevel");
+  case 63: return dxilFunctionNameMatchesBase(name, "dx.op.sampleGrad") || dxilFunctionNameMatchesBase(name, "dx.op.textureSampleGrad");
+  case 64: return dxilFunctionNameMatchesBase(name, "dx.op.sampleCmp") || dxilFunctionNameMatchesBase(name, "dx.op.textureSampleCmp");
+  case 65: return dxilFunctionNameMatchesBase(name, "dx.op.sampleCmpLevelZero") || dxilFunctionNameMatchesBase(name, "dx.op.textureSampleCmpLevelZero");
+  case 66: return dxilFunctionNameMatchesBase(name, "dx.op.textureLoad");
+  case 67: return dxilFunctionNameMatchesBase(name, "dx.op.textureStore");
+  case 68: return dxilFunctionNameMatchesBase(name, "dx.op.bufferLoad");
+  case 69: return dxilFunctionNameMatchesBase(name, "dx.op.bufferStore");
+  case 70: return dxilFunctionNameMatchesBase(name, "dx.op.bufferUpdateCounter");
+  case 71: return dxilFunctionNameMatchesBase(name, "dx.op.checkAccessFullyMapped");
+  case 72: return dxilFunctionNameMatchesBase(name, "dx.op.getDimensions");
+  case 73: return dxilFunctionNameMatchesBase(name, "dx.op.textureGather") || dxilFunctionNameMatchesBase(name, "dx.op.gather");
+  case 74: return dxilFunctionNameMatchesBase(name, "dx.op.textureGatherCmp") || dxilFunctionNameMatchesBase(name, "dx.op.gatherCmp");
+  case 78: return dxilFunctionNameMatchesBase(name, "dx.op.atomicBinOp");
+  case 79: return dxilFunctionNameMatchesBase(name, "dx.op.atomicCompareExchange");
+  case 80: return dxilFunctionNameMatchesBase(name, "dx.op.barrier");
+  case 81: return dxilFunctionNameMatchesBase(name, "dx.op.calculateLOD") || dxilFunctionNameMatchesBase(name, "dx.op.calcLOD");
+  case 83: return dxilFunctionNameMatchesBase(name, "dx.op.derivCoarseX");
+  case 84: return dxilFunctionNameMatchesBase(name, "dx.op.derivCoarseY");
+  case 85: return dxilFunctionNameMatchesBase(name, "dx.op.derivFineX");
+  case 86: return dxilFunctionNameMatchesBase(name, "dx.op.derivFineY");
+  case 93: return dxilFunctionNameMatchesBase(name, "dx.op.threadId");
+  case 94: return dxilFunctionNameMatchesBase(name, "dx.op.groupId");
+  case 95: return dxilFunctionNameMatchesBase(name, "dx.op.threadIdInGroup");
+  case 96: return dxilFunctionNameMatchesBase(name, "dx.op.flattenedThreadIdInGroup");
+  case 110: return dxilFunctionNameMatchesBase(name, "dx.op.waveIsFirstLane");
+  case 111: return dxilFunctionNameMatchesBase(name, "dx.op.waveGetLaneIndex");
+  case 112: return dxilFunctionNameMatchesBase(name, "dx.op.waveGetLaneCount");
+  case 113: return dxilFunctionNameMatchesBase(name, "dx.op.waveAnyTrue");
+  case 114: return dxilFunctionNameMatchesBase(name, "dx.op.waveAllTrue");
+  case 116: return dxilFunctionNameMatchesBase(name, "dx.op.waveActiveBallot");
+  case 117: return dxilFunctionNameMatchesBase(name, "dx.op.waveReadLaneAt");
+  case 118: return dxilFunctionNameMatchesBase(name, "dx.op.waveReadLaneFirst");
+  case 119: return dxilFunctionNameMatchesBase(name, "dx.op.waveActiveOp");
+  case 121: return dxilFunctionNameMatchesBase(name, "dx.op.wavePrefixOp");
+  case 122: return dxilFunctionNameMatchesBase(name, "dx.op.quadReadLaneAt");
+  case 123: return dxilFunctionNameMatchesBase(name, "dx.op.quadOp");
+  case 131: return dxilFunctionNameMatchesBase(name, "dx.op.legacyF16ToF32");
+  case 132: return dxilFunctionNameMatchesBase(name, "dx.op.legacyF32ToF16");
+  case 139: return dxilFunctionNameMatchesBase(name, "dx.op.rawBufferLoad");
+  case 140: return dxilFunctionNameMatchesBase(name, "dx.op.rawBufferStore");
+  case 160: return dxilFunctionNameMatchesBase(name, "dx.op.createHandleForLib");
+  case 216: return dxilFunctionNameMatchesBase(name, "dx.op.annotateHandle");
+  case 217: return dxilFunctionNameMatchesBase(name, "dx.op.createHandleFromBinding");
+  case 218: return dxilFunctionNameMatchesBase(name, "dx.op.createHandleFromHeap");
+  case 223: return dxilFunctionNameMatchesBase(name, "dx.op.textureGatherRaw") || dxilFunctionNameMatchesBase(name, "dx.op.gatherRaw");
+  case 224: return dxilFunctionNameMatchesBase(name, "dx.op.textureSampleCmpLevel") || dxilFunctionNameMatchesBase(name, "dx.op.sampleCmpLevel");
+  case 225: return dxilFunctionNameMatchesBase(name, "dx.op.textureStoreSample");
+  default: return false;
+  }
+}
+
 static const LLVMGlobal *findGlobalById(const LLVMModule &module, uint32_t id) {
   for (auto &global : module.globals) {
     if (global.value_id == id)
@@ -1133,11 +1234,65 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
           function_type_id = (uint32_t)ops[slot++];
 
         uint32_t callee_type_id = 0;
-        uint32_t callee = 0;
+        uint32_t callee = valueTypePair(ops, slot, callee_type_id);
         if (function_type_id) {
-          callee = popValue(ops, slot);
-        } else {
-          callee = valueTypePair(ops, slot, callee_type_id);
+          const LLVMFunction *decoded_fn = nullptr;
+          const LLVMFunction *typed_dxop_decl = nullptr;
+          const LLVMFunction *opcode_dxop_decl = nullptr;
+          uint64_t dxop_opcode = 0;
+          bool has_dxop_opcode = slot < ops.size() &&
+            getUnsignedConstantValue(ctx.module, fn, value(ops[slot]), dxop_opcode);
+          bool typed_dxop_ambiguous = false;
+          bool opcode_dxop_ambiguous = false;
+
+          for (const auto &dfn : ctx.module.functions) {
+            if (dfn.value_id == callee)
+              decoded_fn = &dfn;
+            if (dfn.is_declaration && dfn.type_id == function_type_id &&
+                dfn.name.rfind("dx.op.", 0) == 0) {
+              if (!typed_dxop_decl && !typed_dxop_ambiguous) {
+                typed_dxop_decl = &dfn;
+              } else {
+                typed_dxop_decl = nullptr;
+                typed_dxop_ambiguous = true;
+              }
+              if (has_dxop_opcode && dxilOpcodeMatchesFunctionName(dxop_opcode, dfn.name)) {
+                if (!opcode_dxop_decl && !opcode_dxop_ambiguous) {
+                  opcode_dxop_decl = &dfn;
+                } else {
+                  opcode_dxop_decl = nullptr;
+                  opcode_dxop_ambiguous = true;
+                }
+              }
+            }
+          }
+
+          bool decoded_is_dxop = decoded_fn && decoded_fn->is_declaration &&
+            decoded_fn->name.rfind("dx.op.", 0) == 0;
+          bool decoded_is_current_function = callee == fn.value_id ||
+            (decoded_fn && decoded_fn->value_id == fn.value_id);
+          const LLVMFunction *recovered_fn = nullptr;
+          const char *recovery_reason = nullptr;
+          if (opcode_dxop_decl &&
+              (!decoded_fn || decoded_is_current_function ||
+               (decoded_is_dxop && !dxilOpcodeMatchesFunctionName(dxop_opcode, decoded_fn->name)))) {
+            recovered_fn = opcode_dxop_decl;
+            recovery_reason = "explicit type/opcode";
+          } else if (decoded_is_current_function && typed_dxop_decl) {
+            recovered_fn = typed_dxop_decl;
+            recovery_reason = "self-callee explicit type";
+          } else if (!decoded_fn && callee == 0 && has_dxop_opcode && typed_dxop_decl) {
+            recovered_fn = typed_dxop_decl;
+            recovery_reason = "zero-callee explicit type";
+          }
+
+          if (recovered_fn) {
+            DXTRACE("DXIL call recovered callee by %s: raw_callee=%u fnty=%u opcode=%llu recovered=%u name=%s",
+                    recovery_reason, callee, function_type_id,
+                    (unsigned long long)(has_dxop_opcode ? dxop_opcode : 0),
+                    recovered_fn->value_id, recovered_fn->name.c_str());
+            callee = recovered_fn->value_id;
+          }
         }
 
         uint32_t return_type_id = 0;
@@ -1776,8 +1931,8 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
               (unsigned long long)ops[1]);
     } else if (rec_code == kModuleCode_Function) {
       size_t record_base = 1;
-      if (ops.size() > 5 && isFunctionTypeRef(module, (uint32_t)ops[3]) &&
-          ops[5] <= 1)
+      if (use_strtab_names && ops.size() > 5 &&
+          isFunctionTypeRef(module, (uint32_t)ops[3]) && ops[5] <= 1)
         record_base = 3;
       uint32_t fn_type = ops.size() > record_base ? (uint32_t)ops[record_base] : 0;
       bool is_declaration = ops.size() > record_base + 2
