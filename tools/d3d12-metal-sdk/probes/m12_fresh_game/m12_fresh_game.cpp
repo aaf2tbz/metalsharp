@@ -54,6 +54,15 @@ template <typename T> static void safe_release(T*& object) {
     }
 }
 
+static std::string narrow_wide(const wchar_t* input) {
+    std::string out;
+    if (!input)
+        return out;
+    for (const wchar_t* cursor = input; *cursor; ++cursor)
+        out.push_back((*cursor >= 32 && *cursor <= 126) ? static_cast<char>(*cursor) : '?');
+    return out;
+}
+
 static std::string json_escape(const std::string& input) {
     std::string out;
     out.reserve(input.size() + 8);
@@ -1052,6 +1061,8 @@ static GpuTextureExercise exercise_corpus_gpu_textures(ID3D12Device* device, ID3
 
 struct D3DRunStats {
     HRESULT create_factory_hr = E_FAIL;
+    HRESULT enum_adapter_hr = E_FAIL;
+    HRESULT adapter_desc_hr = E_FAIL;
     HRESULT create_device_hr = E_FAIL;
     HRESULT create_queue_hr = E_FAIL;
     HRESULT create_swapchain_hr = E_FAIL;
@@ -1065,6 +1076,17 @@ struct D3DRunStats {
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
     uint32_t frames_presented = 0;
+    uint32_t adapter_vendor_id = 0;
+    uint32_t adapter_device_id = 0;
+    uint64_t adapter_dedicated_video_memory = 0;
+    uint64_t adapter_shared_system_memory = 0;
+    LUID adapter_luid = {};
+    LUID device_luid = {};
+    std::string adapter_description;
+    bool adapter_luid_nonzero = false;
+    bool device_luid_nonzero = false;
+    bool adapter_luid_matches_device = false;
+    bool adapter_report_pass = false;
     bool hwnd_created = false;
     bool pass = false;
 };
@@ -1100,6 +1122,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         reinterpret_cast<void*>(d3d12 ? GetProcAddress(d3d12, "D3D12SerializeRootSignature") : nullptr));
 
     IDXGIFactory4* factory = nullptr;
+    IDXGIAdapter1* adapter = nullptr;
     ID3D12Device* device = nullptr;
     ID3D12CommandQueue* queue = nullptr;
     IDXGISwapChain1* swapchain1 = nullptr;
@@ -1112,9 +1135,31 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     UINT64 fence_value = 0;
 
     stats.create_factory_hr = create_factory2 ? create_factory2(0, IID_PPV_ARGS(&factory)) : E_FAIL;
-    stats.create_device_hr = create_device ? create_device(nullptr, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceFresh,
+    stats.enum_adapter_hr = factory ? factory->EnumAdapters1(0, &adapter) : E_FAIL;
+    DXGI_ADAPTER_DESC1 adapter_desc = {};
+    stats.adapter_desc_hr = adapter ? adapter->GetDesc1(&adapter_desc) : E_FAIL;
+    if (SUCCEEDED(stats.adapter_desc_hr)) {
+        stats.adapter_vendor_id = adapter_desc.VendorId;
+        stats.adapter_device_id = adapter_desc.DeviceId;
+        stats.adapter_dedicated_video_memory = adapter_desc.DedicatedVideoMemory;
+        stats.adapter_shared_system_memory = adapter_desc.SharedSystemMemory;
+        stats.adapter_luid = adapter_desc.AdapterLuid;
+        stats.adapter_description = narrow_wide(adapter_desc.Description);
+    }
+    stats.create_device_hr = create_device ? create_device(adapter, D3D_FEATURE_LEVEL_11_0, IID_D3D12DeviceFresh,
                                                            reinterpret_cast<void**>(&device))
                                            : E_FAIL;
+    stats.adapter_luid_nonzero = stats.adapter_luid.HighPart != 0 || stats.adapter_luid.LowPart != 0;
+    if (device) {
+        stats.device_luid = device->GetAdapterLuid();
+        stats.device_luid_nonzero = stats.device_luid.HighPart != 0 || stats.device_luid.LowPart != 0;
+        stats.adapter_luid_matches_device = stats.adapter_luid.HighPart == stats.device_luid.HighPart &&
+                                            stats.adapter_luid.LowPart == stats.device_luid.LowPart;
+    }
+    stats.adapter_report_pass =
+        SUCCEEDED(stats.enum_adapter_hr) && SUCCEEDED(stats.adapter_desc_hr) && stats.adapter_vendor_id != 0 &&
+        (stats.adapter_dedicated_video_memory + stats.adapter_shared_system_memory) > 0 && stats.adapter_luid_nonzero &&
+        stats.device_luid_nonzero && stats.adapter_luid_matches_device;
 
     D3D12_COMMAND_QUEUE_DESC queue_desc = {};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -1300,15 +1345,15 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                       stats.gpu_textures.present_samples_checked == visible_frame_target &&
                                       stats.gpu_textures.present_sample_matches == visible_frame_target;
 
-    stats.pass = stats.hwnd_created && SUCCEEDED(stats.create_factory_hr) && SUCCEEDED(stats.create_device_hr) &&
-                 SUCCEEDED(stats.create_queue_hr) && SUCCEEDED(stats.create_swapchain_hr) &&
-                 SUCCEEDED(stats.create_rtv_heap_hr) && SUCCEEDED(stats.create_allocator_hr) &&
-                 SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass &&
-                 stats.gpu_textures.present_pass && stats.visible_scene.pass &&
-                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
-                 stats.frames_presented == visible_frame_target;
+    stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
+                 SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
+                 SUCCEEDED(stats.create_swapchain_hr) && SUCCEEDED(stats.create_rtv_heap_hr) &&
+                 SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) &&
+                 SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass && stats.gpu_textures.present_pass &&
+                 stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
+                 stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
+                 stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
+                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -1325,6 +1370,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     safe_release(queue);
     destroy_visible_scene(visible_scene);
     safe_release(device);
+    safe_release(adapter);
     safe_release(factory);
     if (fence_event)
         CloseHandle(fence_event);
@@ -1376,6 +1422,25 @@ int main() {
     std::printf("  \"d3d12_window\": {\n");
     std::printf("    \"hwnd_created\": %s,\n", d3d.hwnd_created ? "true" : "false");
     std::printf("    \"CreateDXGIFactory2\": \"%s\",\n", hr_hex(d3d.create_factory_hr).c_str());
+    std::printf("    \"adapter_report\": {\n");
+    std::printf("      \"EnumAdapters1\": \"%s\",\n", hr_hex(d3d.enum_adapter_hr).c_str());
+    std::printf("      \"GetDesc1\": \"%s\",\n", hr_hex(d3d.adapter_desc_hr).c_str());
+    std::printf("      \"description\": \"%s\",\n", json_escape(d3d.adapter_description).c_str());
+    std::printf("      \"vendor_id\": %u,\n", d3d.adapter_vendor_id);
+    std::printf("      \"device_id\": %u,\n", d3d.adapter_device_id);
+    std::printf("      \"dedicated_video_memory\": %llu,\n",
+                static_cast<unsigned long long>(d3d.adapter_dedicated_video_memory));
+    std::printf("      \"shared_system_memory\": %llu,\n",
+                static_cast<unsigned long long>(d3d.adapter_shared_system_memory));
+    std::printf("      \"adapter_luid_high\": %ld,\n", static_cast<long>(d3d.adapter_luid.HighPart));
+    std::printf("      \"adapter_luid_low\": %lu,\n", static_cast<unsigned long>(d3d.adapter_luid.LowPart));
+    std::printf("      \"device_luid_high\": %ld,\n", static_cast<long>(d3d.device_luid.HighPart));
+    std::printf("      \"device_luid_low\": %lu,\n", static_cast<unsigned long>(d3d.device_luid.LowPart));
+    std::printf("      \"adapter_luid_nonzero\": %s,\n", d3d.adapter_luid_nonzero ? "true" : "false");
+    std::printf("      \"device_luid_nonzero\": %s,\n", d3d.device_luid_nonzero ? "true" : "false");
+    std::printf("      \"luid_matches_device\": %s,\n", d3d.adapter_luid_matches_device ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.adapter_report_pass ? "true" : "false");
+    std::printf("    },\n");
     std::printf("    \"D3D12CreateDevice\": \"%s\",\n", hr_hex(d3d.create_device_hr).c_str());
     std::printf("    \"CreateCommandQueue\": \"%s\",\n", hr_hex(d3d.create_queue_hr).c_str());
     std::printf("    \"CreateSwapChainForHwnd\": \"%s\",\n", hr_hex(d3d.create_swapchain_hr).c_str());

@@ -862,6 +862,7 @@ def run_fresh_game(
         frames_presented = int(parsed.get("d3d12_window", {}).get("frames_presented", 0) or 0)
     corpus_json = parsed.get("corpus", {}) if parsed else {}
     d3d12_json = parsed.get("d3d12_window", {}) if parsed else {}
+    adapter_json = d3d12_json.get("adapter_report", {}) if d3d12_json else {}
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
@@ -872,6 +873,14 @@ def run_fresh_game(
         and int(corpus_json.get("texture_payloads_captured", 0) or 0) >= 300
         and int(corpus_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
         and d3d12_json.get("ok") is True
+        and adapter_json.get("ok") is True
+        and adapter_json.get("EnumAdapters1") == "0x00000000"
+        and adapter_json.get("GetDesc1") == "0x00000000"
+        and int(adapter_json.get("vendor_id", 0) or 0) != 0
+        and (int(adapter_json.get("dedicated_video_memory", 0) or 0) + int(adapter_json.get("shared_system_memory", 0) or 0)) > 0
+        and adapter_json.get("adapter_luid_nonzero") is True
+        and adapter_json.get("device_luid_nonzero") is True
+        and adapter_json.get("luid_matches_device") is True
         and d3d12_json.get("visible_scene", {}).get("ok") is True
         and d3d12_json.get("visible_scene", {}).get("present_ok") is True
         and d3d12_json.get("visible_scene", {}).get("sm5_stamp_source") == "DXBC_SM5_DYNAMIC_STAMP_SENTINEL_OVERWRITE"
