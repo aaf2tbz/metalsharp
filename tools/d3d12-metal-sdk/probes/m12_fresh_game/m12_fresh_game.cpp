@@ -31,6 +31,11 @@ struct ColorVertex {
     float color[4];
 };
 
+struct TexVertex {
+    float position[3];
+    float uv[2];
+};
+
 constexpr UINT kBackbufferWidth = 960;
 constexpr UINT kBackbufferHeight = 540;
 constexpr UINT kFreshTextureWidth = 16;
@@ -47,6 +52,8 @@ constexpr UINT kRenderPassStampX = 152;
 constexpr UINT kRenderPassStampY = 24;
 constexpr UINT kCorpusShaderStampX = 184;
 constexpr UINT kCorpusShaderStampY = 24;
+constexpr UINT kSrvSampleStampX = 216;
+constexpr UINT kSrvSampleStampY = 24;
 constexpr UINT kSm5StampX = 96;
 constexpr UINT kSm5StampY = 96;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
@@ -56,6 +63,9 @@ struct TexturePayload {
     uint32_t bytes_from_file = 0;
     std::array<uint8_t, kFreshTexturePayloadBytes> rgba = {};
 };
+
+static bool fill_texture_upload(ID3D12Resource* upload, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
+                                const TexturePayload& payload, UINT width, UINT height);
 
 template <typename T> static void safe_release(T*& object) {
     if (object) {
@@ -831,6 +841,279 @@ static void destroy_corpus_shader_scene(CorpusShaderSceneResources& scene) {
     safe_release(scene.root_signature);
 }
 
+struct SrvSampleStats {
+    bool d3dcompiler_loaded = false;
+    HRESULT compile_vs_hr = E_FAIL;
+    HRESULT compile_ps_hr = E_FAIL;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_vertex_buffer_hr = E_FAIL;
+    HRESULT create_texture_hr = E_FAIL;
+    HRESULT create_upload_hr = E_FAIL;
+    HRESULT create_descriptor_heap_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    uint32_t srv_descriptors_created = 0;
+    uint32_t copy_texture_region_commands = 0;
+    uint32_t transition_barriers = 0;
+    uint32_t vertices_per_draw = 0;
+    uint32_t draw_calls = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t present_pixels_checked = 0;
+    uint32_t present_pixel_matches = 0;
+    uint8_t expected_rgba[4] = {16, 144, 224, 255};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool upload_filled = false;
+    bool fence_wait_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct SrvSampleSceneResources {
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12Resource* vertex_buffer = nullptr;
+    ID3D12Resource* texture = nullptr;
+    ID3D12Resource* upload = nullptr;
+    ID3D12DescriptorHeap* srv_heap = nullptr;
+    D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    SrvSampleStats stats;
+};
+
+static void srv_sample_expected_rgba(uint8_t out[4]) {
+    out[0] = 16;
+    out[1] = 144;
+    out[2] = 224;
+    out[3] = 255;
+}
+
+static void write_tex_quad(TexVertex* dst, float x0, float y0, float x1, float y1, float z) {
+    const TexVertex quad[6] = {
+        {{x0, y1, z}, {0.0f, 0.0f}}, {{x1, y1, z}, {1.0f, 0.0f}}, {{x0, y0, z}, {0.0f, 1.0f}},
+        {{x0, y0, z}, {0.0f, 1.0f}}, {{x1, y1, z}, {1.0f, 0.0f}}, {{x1, y0, z}, {1.0f, 1.0f}},
+    };
+    std::memcpy(dst, quad, sizeof(quad));
+}
+
+static SrvSampleSceneResources create_srv_sample_scene(ID3D12Device* device, D3DCompileFn compile,
+                                                       SerializeRootSignatureFn serialize, ID3D12CommandQueue* queue,
+                                                       ID3D12CommandAllocator* allocator,
+                                                       ID3D12GraphicsCommandList* list, ID3D12Fence* fence,
+                                                       HANDLE fence_event, UINT64& fence_value, UINT backbuffer_width,
+                                                       UINT backbuffer_height) {
+    SrvSampleSceneResources scene;
+    SrvSampleStats& stats = scene.stats;
+    stats.d3dcompiler_loaded = compile != nullptr;
+    srv_sample_expected_rgba(stats.expected_rgba);
+
+    static const char* kSrvSampleHlsl = R"HLSL(
+struct VSIn { float3 pos : POSITION; float2 uv : TEXCOORD0; };
+struct PSIn { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
+Texture2D gTexture : register(t0);
+SamplerState gSampler : register(s0);
+PSIn vs_main(VSIn input) {
+    PSIn output;
+    output.pos = float4(input.pos, 1.0f);
+    output.uv = input.uv;
+    return output;
+}
+float4 ps_main(PSIn input) : SV_Target {
+    return gTexture.Sample(gSampler, input.uv);
+}
+)HLSL";
+
+    ID3DBlob* vs = nullptr;
+    ID3DBlob* ps = nullptr;
+    stats.compile_vs_hr = compile_shader(compile, kSrvSampleHlsl, "vs_main", "vs_5_0", &vs);
+    stats.compile_ps_hr = compile_shader(compile, kSrvSampleHlsl, "ps_main", "ps_5_0", &ps);
+
+    D3D12_DESCRIPTOR_RANGE range = {};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = 1;
+    range.BaseShaderRegister = 0;
+    range.RegisterSpace = 0;
+    range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_ROOT_PARAMETER root_param = {};
+    root_param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    root_param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    root_param.DescriptorTable.NumDescriptorRanges = 1;
+    root_param.DescriptorTable.pDescriptorRanges = &range;
+    D3D12_STATIC_SAMPLER_DESC sampler = {};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.ShaderRegister = 0;
+    sampler.RegisterSpace = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = 1;
+    root_desc.pParameters = &root_param;
+    root_desc.NumStaticSamplers = 1;
+    root_desc.pStaticSamplers = &sampler;
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+    if (device && root_blob) {
+        stats.create_root_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                           IID_PPV_ARGS(&scene.root_signature));
+    }
+
+    if (device && scene.root_signature && vs && ps) {
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = scene.root_signature;
+        pso_desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso_desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso_desc.InputLayout = {input_elements, 2};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+    }
+
+    if (device) {
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(12u * sizeof(TexVertex));
+        stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
+                                                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                        IID_PPV_ARGS(&scene.vertex_buffer));
+        if (SUCCEEDED(stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
+            TexVertex* mapped = nullptr;
+            scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
+            if (mapped) {
+                const float draw_x0 = static_cast<float>(kSrvSampleStampX) - 1.0f;
+                const float draw_y0 = static_cast<float>(kSrvSampleStampY) - 1.0f;
+                const float draw_x1 = static_cast<float>(kSrvSampleStampX + kFreshTextureWidth) + 1.0f;
+                const float draw_y1 = static_cast<float>(kSrvSampleStampY + kFreshTextureHeight) + 1.0f;
+                const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
+                const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
+                const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
+                const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
+                write_tex_quad(mapped, x0, y0, x1, y1, 0.035f);
+                write_tex_quad(mapped + 6, x0, y0, x1, y1, 0.035f);
+                D3D12_RANGE written = {0, 12u * sizeof(TexVertex)};
+                scene.vertex_buffer->Unmap(0, &written);
+            }
+            scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
+            scene.vertex_view.SizeInBytes = 12u * sizeof(TexVertex);
+            scene.vertex_view.StrideInBytes = sizeof(TexVertex);
+            stats.vertices_per_draw = 12;
+        }
+    }
+
+    if (device) {
+        D3D12_RESOURCE_DESC tex_desc =
+            texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+        D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+        stats.create_texture_hr =
+            device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &tex_desc,
+                                            D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&scene.texture));
+        UINT rows = 0;
+        UINT64 row_bytes = 0;
+        UINT64 upload_bytes = 0;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+        device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &footprint, &rows, &row_bytes, &upload_bytes);
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        D3D12_RESOURCE_DESC upload_desc = buffer_desc(upload_bytes);
+        stats.create_upload_hr =
+            device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
+                                            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&scene.upload));
+        if (SUCCEEDED(stats.create_upload_hr) && scene.upload) {
+            TexturePayload payload;
+            for (size_t i = 0; i < payload.rgba.size(); i += 4) {
+                payload.rgba[i + 0] = stats.expected_rgba[0];
+                payload.rgba[i + 1] = stats.expected_rgba[1];
+                payload.rgba[i + 2] = stats.expected_rgba[2];
+                payload.rgba[i + 3] = stats.expected_rgba[3];
+            }
+            stats.upload_filled =
+                fill_texture_upload(scene.upload, footprint, payload, kFreshTextureWidth, kFreshTextureHeight);
+        }
+
+        D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+        heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap_desc.NumDescriptors = 1;
+        heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        stats.create_descriptor_heap_hr = device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&scene.srv_heap));
+        if (SUCCEEDED(stats.create_descriptor_heap_hr) && scene.srv_heap && scene.texture) {
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+            srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srv_desc.Texture2D.MipLevels = 1;
+            device->CreateShaderResourceView(scene.texture, &srv_desc,
+                                             scene.srv_heap->GetCPUDescriptorHandleForHeapStart());
+            stats.srv_descriptors_created = 1;
+        }
+
+        if (scene.texture && scene.upload && stats.upload_filled && allocator && list && queue && fence &&
+            fence_event && SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator, nullptr))) {
+            D3D12_TEXTURE_COPY_LOCATION dst = {};
+            dst.pResource = scene.texture;
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.SubresourceIndex = 0;
+            D3D12_TEXTURE_COPY_LOCATION src = {};
+            src.pResource = scene.upload;
+            src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            src.PlacedFootprint = footprint;
+            list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            stats.copy_texture_region_commands = 1;
+            D3D12_RESOURCE_BARRIER barrier = transition_barrier(scene.texture, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            list->ResourceBarrier(1, &barrier);
+            stats.transition_barriers = 1;
+            stats.close_hr = list->Close();
+            if (SUCCEEDED(stats.close_hr)) {
+                ID3D12CommandList* base = list;
+                queue->ExecuteCommandLists(1, &base);
+                fence_value++;
+                stats.signal_hr = queue->Signal(fence, fence_value);
+                stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+            }
+        }
+    }
+
+    stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
+                 SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
+                 SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
+                 SUCCEEDED(stats.create_texture_hr) && SUCCEEDED(stats.create_upload_hr) &&
+                 SUCCEEDED(stats.create_descriptor_heap_hr) && stats.srv_descriptors_created == 1 &&
+                 stats.upload_filled && stats.copy_texture_region_commands == 1 && stats.transition_barriers == 1 &&
+                 SUCCEEDED(stats.close_hr) && SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok &&
+                 scene.root_signature && scene.pipeline_state && scene.vertex_buffer && scene.texture &&
+                 scene.srv_heap && stats.vertices_per_draw == 12;
+
+    safe_release(vs);
+    safe_release(ps);
+    safe_release(root_blob);
+    return scene;
+}
+
+static void destroy_srv_sample_scene(SrvSampleSceneResources& scene) {
+    safe_release(scene.srv_heap);
+    safe_release(scene.upload);
+    safe_release(scene.texture);
+    safe_release(scene.vertex_buffer);
+    safe_release(scene.pipeline_state);
+    safe_release(scene.root_signature);
+}
+
 struct DxilSceneStats {
     std::string vs_path;
     std::string ps_path;
@@ -990,6 +1273,7 @@ static void uav_barrier_expected_rgba(UINT x, UINT y, uint8_t out[4]);
 static void rtv_format_expected_rgba(uint8_t out[4]);
 static void render_pass_expected_rgba(uint8_t out[4]);
 static void corpus_shader_expected_rgba(uint8_t out[4]);
+static void srv_sample_expected_rgba(uint8_t out[4]);
 
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
                                         const uint8_t* texture_expected_rgba, uint32_t frame) {
@@ -1059,6 +1343,18 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
             corpus_pixel[3] = static_cast<uint8_t>(corpus_shader_expected[3] ^ 0xffu);
         }
     }
+    uint8_t* srv_sample_stamp = readback_pixel(readback, mapped, kSrvSampleStampX, kSrvSampleStampY);
+    uint8_t srv_sample_expected[4] = {};
+    srv_sample_expected_rgba(srv_sample_expected);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            uint8_t* srv_pixel = readback_pixel(readback, mapped, kSrvSampleStampX + x, kSrvSampleStampY + y);
+            srv_pixel[0] = static_cast<uint8_t>(srv_sample_expected[0] ^ 0xffu);
+            srv_pixel[1] = static_cast<uint8_t>(srv_sample_expected[1] ^ 0xffu);
+            srv_pixel[2] = static_cast<uint8_t>(srv_sample_expected[2] ^ 0xffu);
+            srv_pixel[3] = static_cast<uint8_t>(srv_sample_expected[3] ^ 0xffu);
+        }
+    }
     uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
     uint8_t sm5_expected[4] = {};
     sm5_expected_stamp_rgba(frame, sm5_expected);
@@ -1097,17 +1393,21 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
         readback_pixel(readback, mapped, kCorpusShaderStampX + kFreshTextureWidth - 1u,
                        kCorpusShaderStampY + kFreshTextureHeight - 1u);
     const size_t corpus_shader_stamp_last_offset = static_cast<size_t>(corpus_shader_stamp_last - mapped);
+    const size_t srv_sample_stamp_offset = static_cast<size_t>(srv_sample_stamp - mapped);
+    const uint8_t* srv_sample_stamp_last = readback_pixel(readback, mapped, kSrvSampleStampX + kFreshTextureWidth - 1u,
+                                                          kSrvSampleStampY + kFreshTextureHeight - 1u);
+    const size_t srv_sample_stamp_last_offset = static_cast<size_t>(srv_sample_stamp_last - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
     D3D12_RANGE written = {
         std::min({center_offset, heap_alias_stamp_offset, uav_barrier_stamp_offset, uav_barrier_stamp_last_offset,
                   rtv_format_stamp_offset, rtv_format_stamp_last_offset, render_pass_stamp_offset,
                   render_pass_stamp_last_offset, corpus_shader_stamp_offset, corpus_shader_stamp_last_offset,
-                  sm5_stamp_offset, stamp_offset}),
+                  srv_sample_stamp_offset, srv_sample_stamp_last_offset, sm5_stamp_offset, stamp_offset}),
         std::max({center_offset, heap_alias_stamp_offset, uav_barrier_stamp_offset, uav_barrier_stamp_last_offset,
                   rtv_format_stamp_offset, rtv_format_stamp_last_offset, render_pass_stamp_offset,
                   render_pass_stamp_last_offset, corpus_shader_stamp_offset, corpus_shader_stamp_last_offset,
-                  sm5_stamp_offset, stamp_offset}) +
+                  srv_sample_stamp_offset, srv_sample_stamp_last_offset, sm5_stamp_offset, stamp_offset}) +
             4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
@@ -2200,6 +2500,39 @@ static bool inspect_corpus_shader_stamp(DxilReadbackResources& readback, CorpusS
     return matches;
 }
 
+static bool inspect_srv_sample_stamp(DxilReadbackResources& readback, SrvSampleStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* first = readback_pixel(readback, mapped, kSrvSampleStampX, kSrvSampleStampY);
+    std::memcpy(stats.present_rgba, first, sizeof(stats.present_rgba));
+    const uint8_t* last = readback_pixel(readback, mapped, kSrvSampleStampX + kFreshTextureWidth - 1u,
+                                         kSrvSampleStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
+    stats.present_samples_checked++;
+    uint32_t frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kSrvSampleStampX + x, kSrvSampleStampY + y);
+            stats.present_pixels_checked++;
+            if (pixel[0] == stats.expected_rgba[0] && pixel[1] == stats.expected_rgba[1] &&
+                pixel[2] == stats.expected_rgba[2] && pixel[3] == stats.expected_rgba[3]) {
+                stats.present_pixel_matches++;
+                frame_matches++;
+            }
+        }
+    }
+    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+    if (matches)
+        stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
 static bool channel_matches_expected(uint8_t actual, uint8_t expected) {
     return expected >= 128 ? actual >= 180 : actual <= 80;
 }
@@ -2390,6 +2723,7 @@ struct D3DRunStats {
     RtvFormatStats rtv_format;
     RenderPassStats render_pass;
     CorpusShaderStats corpus_shader;
+    SrvSampleStats srv_sample;
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
@@ -2552,10 +2886,14 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     RenderPassExercise render_pass =
         exercise_render_pass_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
     stats.render_pass = render_pass.stats;
+    SrvSampleSceneResources srv_sample =
+        create_srv_sample_scene(device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value,
+                                backbuffer_width, backbuffer_height);
+    stats.srv_sample = srv_sample.stats;
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
-        dxil_scene.stats.pass && corpus_shader.stats.pass) {
+        dxil_scene.stats.pass && corpus_shader.stats.pass && srv_sample.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -2593,6 +2931,15 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetVertexBuffers(0, 1, &corpus_shader.vertex_view);
             list->DrawInstanced(corpus_shader.stats.vertices_per_draw, 1, 0, 0);
             stats.corpus_shader.draw_calls++;
+            ID3D12DescriptorHeap* srv_heaps[] = {srv_sample.srv_heap};
+            list->SetDescriptorHeaps(1, srv_heaps);
+            list->SetGraphicsRootSignature(srv_sample.root_signature);
+            list->SetPipelineState(srv_sample.pipeline_state);
+            list->SetGraphicsRootDescriptorTable(0, srv_sample.srv_heap->GetGPUDescriptorHandleForHeapStart());
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &srv_sample.vertex_view);
+            list->DrawInstanced(srv_sample.stats.vertices_per_draw, 1, 0, 0);
+            stats.srv_sample.draw_calls++;
             D3D12_RESOURCE_STATES backbuffer_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
             if (gpu_textures.present_texture && gpu_textures.present_sentinel_upload) {
                 auto backbuffer_to_copy_dest =
@@ -2744,6 +3091,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_corpus_shader_stamp(dxil_readback, stats.corpus_shader))
                 break;
+            if (!inspect_srv_sample_stamp(dxil_readback, stats.srv_sample))
+                break;
             if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
@@ -2799,6 +3148,11 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.corpus_shader.present_sample_matches == visible_frame_target &&
         stats.corpus_shader.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.corpus_shader.present_pixel_matches == stats.corpus_shader.present_pixels_checked;
+    stats.srv_sample.present_pass =
+        stats.srv_sample.present_samples_checked == visible_frame_target &&
+        stats.srv_sample.present_sample_matches == visible_frame_target &&
+        stats.srv_sample.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.srv_sample.present_pixel_matches == stats.srv_sample.present_pixels_checked;
 
     stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
                  SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
@@ -2809,10 +3163,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                  stats.uav_barrier.present_pass && stats.rtv_format.pass && stats.rtv_format.present_pass &&
                  stats.render_pass.pass && stats.render_pass.present_pass && stats.corpus_shader.pass &&
                  stats.corpus_shader.present_pass && stats.corpus_shader.draw_calls == visible_frame_target &&
-                 stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
-                 stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
-                 stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
-                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
+                 stats.srv_sample.pass && stats.srv_sample.present_pass &&
+                 stats.srv_sample.draw_calls == visible_frame_target && stats.visible_scene.pass &&
+                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
+                 stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -2820,6 +3176,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     destroy_uav_barrier_exercise(uav_barrier);
     destroy_rtv_format_exercise(rtv_format);
     destroy_render_pass_exercise(render_pass);
+    destroy_srv_sample_scene(srv_sample);
     destroy_dxil_readback(dxil_readback);
     destroy_corpus_shader_scene(corpus_shader);
     destroy_dxil_scene(dxil_scene);
@@ -3156,6 +3513,43 @@ int main() {
                 d3d.corpus_shader.present_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.corpus_shader.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.corpus_shader.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"srv_sample\": {\n");
+    std::printf(
+        "      \"proof_scope\": \"shader_visible_srv_descriptor_table_texture2d_sample_presented_readback\",\n");
+    std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.srv_sample.d3dcompiler_loaded ? "true" : "false");
+    std::printf("      \"vs_5_0\": \"%s\",\n", hr_hex(d3d.srv_sample.compile_vs_hr).c_str());
+    std::printf("      \"ps_5_0_Texture2D_Sample\": \"%s\",\n", hr_hex(d3d.srv_sample.compile_ps_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature_descriptor_table_static_sampler\": \"%s\",\n",
+                hr_hex(d3d.srv_sample.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.srv_sample.create_root_hr).c_str());
+    std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n", hr_hex(d3d.srv_sample.create_pso_hr).c_str());
+    std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.srv_sample.create_vertex_buffer_hr).c_str());
+    std::printf("      \"CreateTexture2D_R8G8B8A8_UNORM\": \"%s\",\n",
+                hr_hex(d3d.srv_sample.create_texture_hr).c_str());
+    std::printf("      \"CreateUploadBuffer\": \"%s\",\n", hr_hex(d3d.srv_sample.create_upload_hr).c_str());
+    std::printf("      \"CreateDescriptorHeap_CBV_SRV_UAV_SHADER_VISIBLE\": \"%s\",\n",
+                hr_hex(d3d.srv_sample.create_descriptor_heap_hr).c_str());
+    std::printf("      \"CreateShaderResourceView_descriptors\": %u,\n", d3d.srv_sample.srv_descriptors_created);
+    std::printf("      \"CopyTextureRegion_commands\": %u,\n", d3d.srv_sample.copy_texture_region_commands);
+    std::printf("      \"transition_barriers\": %u,\n", d3d.srv_sample.transition_barriers);
+    std::printf("      \"upload_filled\": %s,\n", d3d.srv_sample.upload_filled ? "true" : "false");
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.srv_sample.fence_wait_ok ? "true" : "false");
+    std::printf("      \"draw_calls\": %u,\n", d3d.srv_sample.draw_calls);
+    std::printf("      \"vertices_per_draw\": %u,\n", d3d.srv_sample.vertices_per_draw);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.srv_sample.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.srv_sample.present_sample_matches);
+    std::printf("      \"present_pixels_checked\": %u,\n", d3d.srv_sample.present_pixels_checked);
+    std::printf("      \"present_pixel_matches\": %u,\n", d3d.srv_sample.present_pixel_matches);
+    std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.srv_sample.expected_rgba[0],
+                d3d.srv_sample.expected_rgba[1], d3d.srv_sample.expected_rgba[2], d3d.srv_sample.expected_rgba[3]);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.srv_sample.present_rgba[0],
+                d3d.srv_sample.present_rgba[1], d3d.srv_sample.present_rgba[2], d3d.srv_sample.present_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.srv_sample.present_last_rgba[0],
+                d3d.srv_sample.present_last_rgba[1], d3d.srv_sample.present_last_rgba[2],
+                d3d.srv_sample.present_last_rgba[3]);
+    std::printf("      \"present_ok\": %s,\n", d3d.srv_sample.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.srv_sample.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"visible_scene\": {\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.visible_scene.d3dcompiler_loaded ? "true" : "false");

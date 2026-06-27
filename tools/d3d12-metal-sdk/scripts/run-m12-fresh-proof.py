@@ -648,29 +648,39 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     visible_vertices = int(visible_scene.get("vertices_per_frame", 0) or 0)
     corpus_shader = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
     corpus_vertices = int(corpus_shader.get("vertices_per_draw", 0) or 0)
+    srv_sample = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
+    srv_vertices = int(srv_sample.get("vertices_per_draw", 0) or 0)
     dxil_draws = re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1 .*?vs=([0-9a-f]{16}) ps=([0-9a-f]{16})", stderr_text)
     sm5_pattern = rf"M12 swapchain DrawInstanced encoded v={visible_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     sm5_draws = re.findall(sm5_pattern, stderr_text) if visible_vertices else []
     corpus_pattern = rf"M12 swapchain DrawInstanced encoded v={corpus_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     corpus_draws = re.findall(corpus_pattern, stderr_text) if corpus_vertices else []
+    srv_pattern = rf"M12 swapchain DrawInstanced encoded v={srv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    srv_draws = re.findall(srv_pattern, stderr_text) if srv_vertices else []
     dxil_unique_draws = sorted(set(dxil_draws))
     sm5_unique_draws = sorted(set(sm5_draws))
     corpus_unique_draws = sorted(set(corpus_draws))
+    srv_unique_draws = sorted(set(srv_draws))
     if not dxil_draws:
         errors.append("missing_dxil_presented_draw_hashes")
     if not sm5_draws:
         errors.append("missing_sm5_presented_draw_hashes")
     if not corpus_draws:
         errors.append("missing_corpus_presented_draw_hashes")
+    if not srv_draws:
+        errors.append("missing_srv_sample_presented_draw_hashes")
     if len(dxil_unique_draws) > 1:
         errors.append("unexpected_multiple_dxil_presented_shader_pairs")
     if len(sm5_unique_draws) > 1:
         errors.append("unexpected_multiple_sm5_presented_shader_pairs")
     if len(corpus_unique_draws) > 1:
         errors.append("unexpected_multiple_corpus_presented_shader_pairs")
+    if len(srv_unique_draws) > 1:
+        errors.append("unexpected_multiple_srv_sample_presented_shader_pairs")
     dxil_vs, dxil_ps = dxil_unique_draws[0] if dxil_unique_draws else ("", "")
     sm5_vs, sm5_ps = sm5_unique_draws[0] if sm5_unique_draws else ("", "")
     corpus_vs, corpus_ps = corpus_unique_draws[0] if corpus_unique_draws else ("", "")
+    srv_vs, srv_ps = srv_unique_draws[0] if srv_unique_draws else ("", "")
 
     required_paths: list[Path] = []
     for shader_hash in [dxil_vs, dxil_ps]:
@@ -739,15 +749,25 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ),
         None,
     )
+    srv_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == srv_vs and p.get("d3d12", {}).get("ps_hash") == srv_ps
+        ),
+        None,
+    )
     if not dxil_pso:
         errors.append("missing_dxil_presented_pso_manifest")
     if not sm5_pso:
         errors.append("missing_sm5_presented_pso_manifest")
     if not corpus_pso:
         errors.append("missing_corpus_presented_pso_manifest")
+    if not srv_pso:
+        errors.append("missing_srv_sample_presented_pso_manifest")
     metallib_policy: dict[str, Any] = {}
     sm5_metallibs = [shader_cache_dir / "dxmt_sm50_vs_main.metallib", shader_cache_dir / "dxmt_sm50_ps_main.metallib"]
-    for name, pso in [("dxil", dxil_pso), ("sm5", sm5_pso), ("corpus", corpus_pso)]:
+    for name, pso in [("dxil", dxil_pso), ("sm5", sm5_pso), ("corpus", corpus_pso), ("srv_sample", srv_pso)]:
         if not pso:
             continue
         if pso.get("type") != "render":
@@ -780,7 +800,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
                 "referenced": referenced_records,
                 "required_msl_hashes": [dxil_vs, dxil_ps],
             }
-        elif name in ("sm5", "corpus") and all(path.exists() and path.stat().st_size > 0 for path in sm5_metallibs):
+        elif name in ("sm5", "corpus", "srv_sample") and all(path.exists() and path.stat().st_size > 0 for path in sm5_metallibs):
             metallib_policy[name] = {
                 "ok": True,
                 "policy": "runtime_sm5_metallib_files_present",
@@ -791,7 +811,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             metallib_policy[name] = {"ok": False, "policy": "unproven_metallib_source", "referenced": referenced_records}
             errors.append(f"{name}_metallib_policy_unproven")
 
-    presented_log_required = min(visible_frames, 12)
+    presented_log_required = min(visible_frames, 8)
     present_tie_ok = (
         len(dxil_draws) >= presented_log_required
         and len(sm5_draws) >= presented_log_required
@@ -799,6 +819,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and len(sm5_unique_draws) == 1
         and len(corpus_draws) >= presented_log_required
         and len(corpus_unique_draws) == 1
+        and len(srv_draws) >= presented_log_required
+        and len(srv_unique_draws) == 1
     )
     if not present_tie_ok:
         errors.append("insufficient_presented_shader_hash_logs")
@@ -826,6 +848,13 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "unique_pairs": [[vs, ps] for vs, ps in corpus_unique_draws],
             "vertices": corpus_vertices,
         },
+        "srv_sample_presented_hashes": {
+            "vs": srv_vs,
+            "ps": srv_ps,
+            "logged_draws": len(srv_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in srv_unique_draws],
+            "vertices": srv_vertices,
+        },
         "presented_log_required": presented_log_required,
         "present_tie_ok": present_tie_ok,
         "required_files": required_files,
@@ -833,6 +862,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         "dxil_pso_manifest": dxil_pso,
         "sm5_pso_manifest": sm5_pso,
         "corpus_pso_manifest": corpus_pso,
+        "srv_sample_pso_manifest": srv_pso,
         "msl_checks": msl_checks,
         "metallib_policy": metallib_policy,
         "errors": errors,
@@ -955,11 +985,13 @@ def run_fresh_game(
     rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
     render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
     corpus_shader_json = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
+    srv_sample_json = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
     render_pass_expected_rgba = [224, 80, 176, 255]
     corpus_shader_expected_rgba = [64, 192, 32, 255]
+    srv_sample_expected_rgba = [16, 144, 224, 255]
     game_json_ok = bool(
         parsed
         and parsed.get("pass") is True
@@ -1133,6 +1165,33 @@ def run_fresh_game(
         and corpus_shader_json.get("expected_rgba") == corpus_shader_expected_rgba
         and corpus_shader_json.get("present_rgba") == corpus_shader_expected_rgba
         and corpus_shader_json.get("present_last_rgba") == corpus_shader_expected_rgba
+        and srv_sample_json.get("ok") is True
+        and srv_sample_json.get("present_ok") is True
+        and srv_sample_json.get("proof_scope") == "shader_visible_srv_descriptor_table_texture2d_sample_presented_readback"
+        and srv_sample_json.get("D3DCompile_loaded") is True
+        and srv_sample_json.get("vs_5_0") == "0x00000000"
+        and srv_sample_json.get("ps_5_0_Texture2D_Sample") == "0x00000000"
+        and srv_sample_json.get("D3D12SerializeRootSignature_descriptor_table_static_sampler") == "0x00000000"
+        and srv_sample_json.get("CreateRootSignature") == "0x00000000"
+        and srv_sample_json.get("CreateGraphicsPipelineState") == "0x00000000"
+        and srv_sample_json.get("CreateVertexBuffer") == "0x00000000"
+        and srv_sample_json.get("CreateTexture2D_R8G8B8A8_UNORM") == "0x00000000"
+        and srv_sample_json.get("CreateUploadBuffer") == "0x00000000"
+        and srv_sample_json.get("CreateDescriptorHeap_CBV_SRV_UAV_SHADER_VISIBLE") == "0x00000000"
+        and int(srv_sample_json.get("CreateShaderResourceView_descriptors", 0) or 0) == 1
+        and int(srv_sample_json.get("CopyTextureRegion_commands", 0) or 0) == 1
+        and int(srv_sample_json.get("transition_barriers", 0) or 0) == 1
+        and srv_sample_json.get("upload_filled") is True
+        and srv_sample_json.get("fence_wait_ok") is True
+        and int(srv_sample_json.get("draw_calls", 0) or 0) == visible_frames
+        and int(srv_sample_json.get("vertices_per_draw", 0) or 0) == 12
+        and int(srv_sample_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(srv_sample_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(srv_sample_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(srv_sample_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and srv_sample_json.get("expected_rgba") == srv_sample_expected_rgba
+        and srv_sample_json.get("present_rgba") == srv_sample_expected_rgba
+        and srv_sample_json.get("present_last_rgba") == srv_sample_expected_rgba
     )
     result = {
         "command": cmd,
@@ -1153,10 +1212,10 @@ def run_fresh_game(
         "draw_line_count": draw_line_count,
         "present_draw_counts": present_draw_counts,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
-        "dxil_draw_encoded_required": min(frames_presented, 12),
-        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced encoded logs are a capped sample; with the extra corpus draw long runs additionally require every present to report draws>=3 and all JSON/readback lanes to pass.",
+        "dxil_draw_encoded_required": min(frames_presented, 8),
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced encoded logs are a capped sample; with the extra corpus and SRV draws long runs additionally require every present to report draws>=4 and all JSON/readback lanes to pass.",
         "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
-        "dxil_vertex_pull_snapshot_required": min(frames_presented, 8),
+        "dxil_vertex_pull_snapshot_required": min(frames_presented, 6),
         "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, bound_vbs=1, plus per-frame JSON/readback validation.",
         "dxil_draw_skipped": dxil_draw_skipped,
         "render_encoder_encode_failed": render_encoder_encode_failed,
@@ -1171,9 +1230,9 @@ def run_fresh_game(
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented
         and len(present_draw_counts) == frames_presented
-        and all(draws >= 3 for draws in present_draw_counts)
-        and dxil_draw_encoded_count >= min(frames_presented, 12)
-        and dxil_vertex_pull_snapshot_count >= min(frames_presented, 8)
+        and all(draws >= 4 for draws in present_draw_counts)
+        and dxil_draw_encoded_count >= min(frames_presented, 8)
+        and dxil_vertex_pull_snapshot_count >= min(frames_presented, 6)
         and not dxil_draw_skipped
         and not render_encoder_encode_failed
         and draw_line_count >= visible_frames
