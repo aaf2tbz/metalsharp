@@ -866,8 +866,10 @@ def run_fresh_game(
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
     heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
+    rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
+    rtv_format_expected_rgba = [32, 192, 96, 255]
     game_json_ok = bool(
         parsed
         and parsed.get("pass") is True
@@ -962,6 +964,31 @@ def run_fresh_game(
         and int(uav_barrier_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
         and int(uav_barrier_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
         and uav_barrier_json.get("present_rgba") == uav_barrier_json.get("present_expected_rgba")
+        and rtv_format_json.get("ok") is True
+        and rtv_format_json.get("present_ok") is True
+        and rtv_format_json.get("proof_scope") == "offscreen_r8g8b8a8_unorm_rtv_clear_presented_copy_readback"
+        and rtv_format_json.get("CreateTexture2D_R8G8B8A8_UNORM_ALLOW_RENDER_TARGET") == "0x00000000"
+        and rtv_format_json.get("CreateRtvDescriptorHeap") == "0x00000000"
+        and rtv_format_json.get("CreateReadback") == "0x00000000"
+        and int(rtv_format_json.get("CreateRenderTargetView_descriptors", 0) or 0) == 1
+        and int(rtv_format_json.get("ClearRenderTargetView_commands", 0) or 0) == 1
+        and int(rtv_format_json.get("transition_barriers", 0) or 0) == 1
+        and rtv_format_json.get("fixed_footprint_ok") is True
+        and int(rtv_format_json.get("row_pitch", 0) or 0) == 256
+        and int(rtv_format_json.get("footprint_bytes", 0) or 0) >= 4096
+        and rtv_format_json.get("offscreen_readback_ok") is True
+        and int(rtv_format_json.get("offscreen_pixels_checked", 0) or 0) == 256
+        and int(rtv_format_json.get("offscreen_pixel_matches", 0) or 0) == 256
+        and int(rtv_format_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(rtv_format_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(rtv_format_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(rtv_format_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(rtv_format_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and rtv_format_json.get("expected_rgba") == rtv_format_expected_rgba
+        and rtv_format_json.get("offscreen_first_rgba") == rtv_format_expected_rgba
+        and rtv_format_json.get("offscreen_last_rgba") == rtv_format_expected_rgba
+        and rtv_format_json.get("present_rgba") == rtv_format_expected_rgba
+        and rtv_format_json.get("present_last_rgba") == rtv_format_expected_rgba
     )
     result = {
         "command": cmd,
