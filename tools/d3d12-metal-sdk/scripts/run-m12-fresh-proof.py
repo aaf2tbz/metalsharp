@@ -696,6 +696,11 @@ def run_fresh_game(
         and int(corpus_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
         and d3d12_json.get("ok") is True
         and d3d12_json.get("visible_scene", {}).get("ok") is True
+        and d3d12_json.get("visible_scene", {}).get("present_ok") is True
+        and d3d12_json.get("visible_scene", {}).get("sm5_stamp_source") == "DXBC_SM5_DYNAMIC_STAMP_SENTINEL_OVERWRITE"
+        and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_quads_per_frame", 0) or 0) == 2
+        and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_samples_checked", 0) or 0) == visible_frames
+        and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_matches", 0) or 0) == visible_frames
         and d3d12_json.get("dxil_scene", {}).get("ok") is True
         and d3d12_json.get("dxil_scene", {}).get("CreateDxilVertexBuffer") == "0x00000000"
         and d3d12_json.get("dxil_scene", {}).get("vertex_source") == "POSITION_GREEN_SENTINEL_VERTEX_BUFFER_PS_MAGENTA_OVERLAY"

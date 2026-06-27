@@ -31,10 +31,14 @@ struct ColorVertex {
     float color[4];
 };
 
+constexpr UINT kBackbufferWidth = 960;
+constexpr UINT kBackbufferHeight = 540;
 constexpr UINT kFreshTextureWidth = 16;
 constexpr UINT kFreshTextureHeight = 16;
 constexpr UINT kTextureStampX = 24;
 constexpr UINT kTextureStampY = 24;
+constexpr UINT kSm5StampX = 96;
+constexpr UINT kSm5StampY = 96;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
 
 struct TexturePayload {
@@ -364,6 +368,12 @@ struct VisibleSceneStats {
     uint32_t draw_calls = 0;
     uint32_t quads_per_frame = 0;
     uint32_t vertices_per_frame = 0;
+    uint32_t sm5_stamp_quads_per_frame = 0;
+    uint32_t sm5_stamp_samples_checked = 0;
+    uint32_t sm5_stamp_matches = 0;
+    uint8_t sm5_stamp_expected_rgba[4] = {0, 0, 0, 0};
+    uint8_t sm5_stamp_rgba[4] = {0, 0, 0, 0};
+    bool sm5_stamp_present_pass = false;
     bool pass = false;
 };
 
@@ -376,6 +386,29 @@ struct VisibleSceneResources {
     uint32_t max_quads = 96;
     VisibleSceneStats stats;
 };
+
+static void sm5_expected_stamp_rgba(uint32_t frame, uint8_t out[4]) {
+    switch (frame % 3u) {
+    case 0:
+        out[0] = 0;
+        out[1] = 255;
+        out[2] = 255;
+        out[3] = 255;
+        break;
+    case 1:
+        out[0] = 255;
+        out[1] = 255;
+        out[2] = 0;
+        out[3] = 255;
+        break;
+    default:
+        out[0] = 255;
+        out[1] = 0;
+        out[2] = 64;
+        out[3] = 255;
+        break;
+    }
+}
 
 static const char* kVisibleLoadingHlsl = R"(
 struct VSIn {
@@ -455,6 +488,20 @@ static uint32_t populate_visible_loading_vertices(VisibleSceneResources& scene, 
     push(-0.16f, 0.18f, 0.16f, 0.50f, 0.12f, 0.90f, 0.96f, 1.0f, 1.0f);
     push(-0.28f, 0.05f, -0.04f, 0.29f, 0.10f, 0.20f + pulse, 0.50f, 1.0f, 1.0f);
     push(0.04f, 0.05f, 0.28f, 0.29f, 0.10f, 1.0f, 0.45f + pulse * 0.35f, 0.25f, 1.0f);
+
+    uint8_t sm5_expected[4] = {};
+    sm5_expected_stamp_rgba(frame, sm5_expected);
+    const float sm5_x0 = -0.86f;
+    const float sm5_y0 = 0.54f;
+    const float sm5_x1 = -0.70f;
+    const float sm5_y1 = 0.74f;
+    push(sm5_x0, sm5_y0, sm5_x1, sm5_y1, 0.08f, static_cast<float>(sm5_expected[0] ^ 0xffu) / 255.0f,
+         static_cast<float>(sm5_expected[1] ^ 0xffu) / 255.0f, static_cast<float>(sm5_expected[2] ^ 0xffu) / 255.0f,
+         static_cast<float>(sm5_expected[3] ^ 0xffu) / 255.0f);
+    push(sm5_x0, sm5_y0, sm5_x1, sm5_y1, 0.07f, static_cast<float>(sm5_expected[0]) / 255.0f,
+         static_cast<float>(sm5_expected[1]) / 255.0f, static_cast<float>(sm5_expected[2]) / 255.0f,
+         static_cast<float>(sm5_expected[3]) / 255.0f);
+    scene.stats.sm5_stamp_quads_per_frame = 2;
 
     scene.stats.quads_per_frame = quads;
     scene.stats.vertices_per_frame = quads * 6;
@@ -697,7 +744,7 @@ static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* 
 }
 
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
-                                        const uint8_t* texture_expected_rgba) {
+                                        const uint8_t* texture_expected_rgba, uint32_t frame) {
     if (!readback.buffer)
         return false;
     uint8_t* mapped = nullptr;
@@ -709,6 +756,13 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     center[1] = 255;
     center[2] = 0;
     center[3] = 255;
+    uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
+    uint8_t sm5_expected[4] = {};
+    sm5_expected_stamp_rgba(frame, sm5_expected);
+    sm5_stamp[0] = static_cast<uint8_t>(sm5_expected[0] ^ 0xffu);
+    sm5_stamp[1] = static_cast<uint8_t>(sm5_expected[1] ^ 0xffu);
+    sm5_stamp[2] = static_cast<uint8_t>(sm5_expected[2] ^ 0xffu);
+    sm5_stamp[3] = static_cast<uint8_t>(sm5_expected[3] ^ 0xffu);
     uint8_t* stamp = readback_pixel(readback, mapped, kTextureStampX, kTextureStampY);
     if (texture_expected_rgba) {
         stamp[0] = static_cast<uint8_t>(texture_expected_rgba[0] ^ 0xffu);
@@ -722,8 +776,10 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
         stamp[3] = 0xff;
     }
     const size_t center_offset = static_cast<size_t>(center - mapped);
+    const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
-    D3D12_RANGE written = {std::min(center_offset, stamp_offset), std::max(center_offset, stamp_offset) + 4u};
+    D3D12_RANGE written = {std::min({center_offset, sm5_stamp_offset, stamp_offset}),
+                           std::max({center_offset, sm5_stamp_offset, stamp_offset}) + 4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
     return true;
@@ -817,6 +873,33 @@ static bool inspect_texture_stamp(DxilReadbackResources& readback, GpuTextureSta
                                      sizeof(texture_stats.present_rgba)) == 0;
     if (matches)
         texture_stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
+static bool channel_matches_expected(uint8_t actual, uint8_t expected) {
+    return expected >= 128 ? actual >= 180 : actual <= 80;
+}
+
+static bool inspect_sm5_stamp(DxilReadbackResources& readback, VisibleSceneStats& visible_stats, uint32_t frame) {
+    if (!readback.buffer)
+        return false;
+    uint8_t expected[4] = {};
+    sm5_expected_stamp_rgba(frame, expected);
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* pixel = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
+    std::memcpy(visible_stats.sm5_stamp_expected_rgba, expected, sizeof(visible_stats.sm5_stamp_expected_rgba));
+    std::memcpy(visible_stats.sm5_stamp_rgba, pixel, sizeof(visible_stats.sm5_stamp_rgba));
+    visible_stats.sm5_stamp_samples_checked++;
+    const bool matches =
+        channel_matches_expected(pixel[0], expected[0]) && channel_matches_expected(pixel[1], expected[1]) &&
+        channel_matches_expected(pixel[2], expected[2]) && channel_matches_expected(pixel[3], expected[3]);
+    if (matches)
+        visible_stats.sm5_stamp_matches++;
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
     return matches;
@@ -1051,8 +1134,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     if (SUCCEEDED(stats.create_swapchain_hr) && swapchain1)
         swapchain1->QueryInterface(IID_PPV_ARGS(&swapchain));
 
-    constexpr UINT backbuffer_width = 960;
-    constexpr UINT backbuffer_height = 540;
+    constexpr UINT backbuffer_width = kBackbufferWidth;
+    constexpr UINT backbuffer_height = kBackbufferHeight;
 
     D3D12_DESCRIPTOR_HEAP_DESC rtv_desc = {};
     rtv_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -1161,7 +1244,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->ResourceBarrier(1, &to_copy);
             if (dxil_readback.buffer) {
                 if (!seed_dxil_readback_sentinel(dxil_readback, backbuffer_width, backbuffer_height,
-                                                 stats.gpu_textures.present_expected_rgba))
+                                                 stats.gpu_textures.present_expected_rgba, frame))
                     break;
                 D3D12_TEXTURE_COPY_LOCATION dst = {};
                 dst.pResource = dxil_readback.buffer;
@@ -1188,6 +1271,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (gpu_textures.present_texture && !inspect_texture_stamp(dxil_readback, stats.gpu_textures))
                 break;
+            if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
+                break;
             stats.present_hr = swapchain->Present(0, 0);
             if (FAILED(stats.present_hr))
                 break;
@@ -1198,6 +1283,11 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
 
     stats.visible_scene.quads_per_frame = visible_scene.stats.quads_per_frame;
     stats.visible_scene.vertices_per_frame = visible_scene.stats.vertices_per_frame;
+    stats.visible_scene.sm5_stamp_quads_per_frame = visible_scene.stats.sm5_stamp_quads_per_frame;
+    stats.visible_scene.sm5_stamp_present_pass =
+        stats.visible_scene.sm5_stamp_quads_per_frame == 2 &&
+        stats.visible_scene.sm5_stamp_samples_checked == visible_frame_target &&
+        stats.visible_scene.sm5_stamp_matches == visible_frame_target;
     dxil_readback.stats.pass = SUCCEEDED(dxil_readback.stats.create_readback_hr) &&
                                dxil_readback.stats.copy_commands == visible_frame_target &&
                                dxil_readback.stats.sentinel_writes == visible_frame_target &&
@@ -1215,9 +1305,10 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                  SUCCEEDED(stats.create_rtv_heap_hr) && SUCCEEDED(stats.create_allocator_hr) &&
                  SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass &&
                  stats.gpu_textures.present_pass && stats.visible_scene.pass &&
-                 stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
-                 stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
-                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
+                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
+                 stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -1337,6 +1428,17 @@ int main() {
     std::printf("      \"draw_calls\": %u,\n", d3d.visible_scene.draw_calls);
     std::printf("      \"quads_per_frame\": %u,\n", d3d.visible_scene.quads_per_frame);
     std::printf("      \"vertices_per_frame\": %u,\n", d3d.visible_scene.vertices_per_frame);
+    std::printf("      \"sm5_stamp_source\": \"DXBC_SM5_DYNAMIC_STAMP_SENTINEL_OVERWRITE\",\n");
+    std::printf("      \"sm5_stamp_quads_per_frame\": %u,\n", d3d.visible_scene.sm5_stamp_quads_per_frame);
+    std::printf("      \"sm5_stamp_samples_checked\": %u,\n", d3d.visible_scene.sm5_stamp_samples_checked);
+    std::printf("      \"sm5_stamp_matches\": %u,\n", d3d.visible_scene.sm5_stamp_matches);
+    std::printf("      \"sm5_stamp_expected_rgba\": [%u, %u, %u, %u],\n", d3d.visible_scene.sm5_stamp_expected_rgba[0],
+                d3d.visible_scene.sm5_stamp_expected_rgba[1], d3d.visible_scene.sm5_stamp_expected_rgba[2],
+                d3d.visible_scene.sm5_stamp_expected_rgba[3]);
+    std::printf("      \"sm5_stamp_rgba\": [%u, %u, %u, %u],\n", d3d.visible_scene.sm5_stamp_rgba[0],
+                d3d.visible_scene.sm5_stamp_rgba[1], d3d.visible_scene.sm5_stamp_rgba[2],
+                d3d.visible_scene.sm5_stamp_rgba[3]);
+    std::printf("      \"present_ok\": %s,\n", d3d.visible_scene.sm5_stamp_present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.visible_scene.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"dxil_scene\": {\n");
