@@ -30,6 +30,16 @@ struct ColorVertex {
     float color[4];
 };
 
+constexpr UINT kFreshTextureWidth = 16;
+constexpr UINT kFreshTextureHeight = 16;
+constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
+
+struct TexturePayload {
+    uint64_t fnv1a64 = 1469598103934665603ull;
+    uint32_t bytes_from_file = 0;
+    std::array<uint8_t, kFreshTexturePayloadBytes> rgba = {};
+};
+
 template <typename T> static void safe_release(T*& object) {
     if (object) {
         object->Release();
@@ -106,11 +116,17 @@ static uint64_t fnv1a_update(uint64_t hash, const uint8_t* data, size_t size) {
     return hash;
 }
 
-static bool read_file_hash(const std::string& path, uint64_t& aggregate_hash, uint64_t& bytes, uint64_t& file_hash) {
+static bool read_file_hash(const std::string& path, uint64_t& aggregate_hash, uint64_t& bytes, uint64_t& file_hash,
+                           TexturePayload* payload = nullptr) {
     std::ifstream file(wine_path(path), std::ios::binary);
     if (!file)
         return false;
     file_hash = 1469598103934665603ull;
+    if (payload) {
+        payload->fnv1a64 = file_hash;
+        payload->bytes_from_file = 0;
+        payload->rgba.fill(0);
+    }
     std::array<uint8_t, 64 * 1024> buffer{};
     while (file) {
         file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
@@ -119,8 +135,16 @@ static bool read_file_hash(const std::string& path, uint64_t& aggregate_hash, ui
             aggregate_hash = fnv1a_update(aggregate_hash, buffer.data(), static_cast<size_t>(count));
             file_hash = fnv1a_update(file_hash, buffer.data(), static_cast<size_t>(count));
             bytes += static_cast<uint64_t>(count);
+            if (payload && payload->bytes_from_file < payload->rgba.size()) {
+                const size_t dst_offset = payload->bytes_from_file;
+                const size_t copy_bytes = std::min<size_t>(static_cast<size_t>(count), payload->rgba.size() - dst_offset);
+                std::memcpy(payload->rgba.data() + dst_offset, buffer.data(), copy_bytes);
+                payload->bytes_from_file += static_cast<uint32_t>(copy_bytes);
+            }
         }
     }
+    if (payload)
+        payload->fnv1a64 = file_hash;
     return true;
 }
 
@@ -133,9 +157,11 @@ struct CorpusStats {
     uint32_t texture_files_loaded = 0;
     uint32_t failed_loads = 0;
     uint64_t bytes_loaded = 0;
+    uint64_t texture_payload_bytes_from_files = 0;
     uint64_t fnv1a64 = 1469598103934665603ull;
     std::vector<uint64_t> shader_hashes;
     std::vector<uint64_t> texture_hashes;
+    std::vector<TexturePayload> texture_payloads;
 };
 
 static std::vector<std::string> split_tsv(const std::string& line) {
@@ -183,9 +209,12 @@ static CorpusStats load_corpus_tsv(const std::string& path, uint32_t target_shad
             if (stats.texture_files_loaded >= target_textures)
                 continue;
             uint64_t file_hash = 0;
-            if (read_file_hash(destination, stats.fnv1a64, stats.bytes_loaded, file_hash)) {
+            TexturePayload payload;
+            if (read_file_hash(destination, stats.fnv1a64, stats.bytes_loaded, file_hash, &payload)) {
                 stats.texture_files_loaded++;
                 stats.texture_hashes.push_back(file_hash);
+                stats.texture_payloads.push_back(payload);
+                stats.texture_payload_bytes_from_files += payload.bytes_from_file;
             } else {
                 stats.failed_loads++;
             }
@@ -502,44 +531,41 @@ struct GpuTextureStats {
     uint32_t srv_descriptors_created = 0;
     uint32_t copy_texture_region_commands = 0;
     uint32_t transition_barriers = 0;
+    uint32_t texture_payloads_uploaded = 0;
     uint64_t upload_bytes = 0;
+    uint64_t texture_payload_bytes_from_files = 0;
+    uint64_t upload_payload_fnv1a64 = 1469598103934665603ull;
     bool fence_wait_ok = false;
     bool pass = false;
 };
 
-static void fill_texture_upload(ID3D12Resource* upload, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
-                                uint64_t seed, UINT width, UINT height) {
+static bool fill_texture_upload(ID3D12Resource* upload, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
+                                const TexturePayload& payload, UINT width, UINT height) {
     uint8_t* mapped = nullptr;
     if (FAILED(upload->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) || !mapped)
-        return;
+        return false;
     const size_t row_pitch = static_cast<size_t>(footprint.Footprint.RowPitch);
+    const size_t tight_row_pitch = static_cast<size_t>(width) * 4u;
     uint8_t* base = mapped + static_cast<size_t>(footprint.Offset);
     for (UINT y = 0; y < height; ++y) {
         uint8_t* row = base + static_cast<size_t>(y) * row_pitch;
-        for (UINT x = 0; x < width; ++x) {
-            const uint64_t mixed = seed ^ (static_cast<uint64_t>(x) * 0x9e3779b97f4a7c15ull) ^
-                                   (static_cast<uint64_t>(y) * 0xbf58476d1ce4e5b9ull);
-            row[x * 4 + 0] = static_cast<uint8_t>(mixed & 0xffu);
-            row[x * 4 + 1] = static_cast<uint8_t>((mixed >> 17) & 0xffu);
-            row[x * 4 + 2] = static_cast<uint8_t>((mixed >> 41) & 0xffu);
-            row[x * 4 + 3] = 0xffu;
-        }
+        const uint8_t* source = payload.rgba.data() + static_cast<size_t>(y) * tight_row_pitch;
+        std::memcpy(row, source, tight_row_pitch);
     }
     upload->Unmap(0, nullptr);
+    return true;
 }
 
 static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12CommandQueue* queue,
                                                     ID3D12CommandAllocator* allocator, ID3D12GraphicsCommandList* list,
                                                     ID3D12Fence* fence, HANDLE fence_event, UINT64& fence_value,
-                                                    const std::vector<uint64_t>& texture_hashes) {
+                                                    const std::vector<TexturePayload>& texture_payloads) {
     GpuTextureStats stats;
     if (!device || !queue || !allocator || !list || !fence || !fence_event)
         return stats;
 
-    constexpr UINT texture_width = 16;
-    constexpr UINT texture_height = 16;
     constexpr uint32_t max_textures = 300;
-    const uint32_t texture_count = std::min<uint32_t>(max_textures, static_cast<uint32_t>(texture_hashes.size()));
+    const uint32_t texture_count = std::min<uint32_t>(max_textures, static_cast<uint32_t>(texture_payloads.size()));
     stats.textures_requested = texture_count;
     if (!texture_count)
         return stats;
@@ -555,7 +581,7 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
 
     const UINT descriptor_increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu = srv_heap->GetCPUDescriptorHandleForHeapStart();
-    D3D12_RESOURCE_DESC tex_desc = texture_desc(texture_width, texture_height, DXGI_FORMAT_R8G8B8A8_UNORM);
+    D3D12_RESOURCE_DESC tex_desc = texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
     D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
     D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
 
@@ -587,7 +613,12 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
         }
         stats.upload_buffers_created++;
         stats.upload_bytes += upload_bytes;
-        fill_texture_upload(uploads[i], footprints[i], texture_hashes[i], texture_width, texture_height);
+        if (fill_texture_upload(uploads[i], footprints[i], texture_payloads[i], kFreshTextureWidth, kFreshTextureHeight)) {
+            stats.texture_payloads_uploaded++;
+            stats.texture_payload_bytes_from_files += texture_payloads[i].bytes_from_file;
+            stats.upload_payload_fnv1a64 = fnv1a_update(stats.upload_payload_fnv1a64, texture_payloads[i].rgba.data(),
+                                                        texture_payloads[i].rgba.size());
+        }
 
         D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
         srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -627,6 +658,8 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
 
     stats.pass = creation_ok && stats.textures_created == texture_count &&
                  stats.upload_buffers_created == texture_count && stats.srv_descriptors_created == texture_count &&
+                 stats.texture_payloads_uploaded == texture_count &&
+                 stats.texture_payload_bytes_from_files >= static_cast<uint64_t>(texture_count) * kFreshTexturePayloadBytes &&
                  stats.copy_texture_region_commands == texture_count && stats.transition_barriers == texture_count &&
                  SUCCEEDED(stats.close_hr) && SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok;
 
@@ -750,7 +783,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     stats.visible_scene = visible_scene.stats;
 
     stats.gpu_textures = exercise_corpus_gpu_textures(device, queue, allocator, list, fence, fence_event, fence_value,
-                                                      corpus.texture_hashes);
+                                                      corpus.texture_payloads);
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass) {
@@ -838,6 +871,9 @@ int main() {
     CorpusStats corpus = load_corpus_tsv(corpus_tsv, target_shaders, target_textures);
     D3DRunStats d3d = run_d3d_window(corpus);
     bool corpus_ok = corpus.shader_files_loaded >= target_shaders && corpus.texture_files_loaded >= target_textures &&
+                     corpus.texture_payloads.size() >= target_textures &&
+                     corpus.texture_payload_bytes_from_files >=
+                         static_cast<uint64_t>(target_textures) * kFreshTexturePayloadBytes &&
                      corpus.failed_loads == 0;
     bool pass = corpus_ok && d3d.pass;
 
@@ -855,6 +891,10 @@ int main() {
     std::printf("    \"target_textures\": %u,\n", target_textures);
     std::printf("    \"failed_loads\": %u,\n", corpus.failed_loads);
     std::printf("    \"bytes_loaded\": %llu,\n", static_cast<unsigned long long>(corpus.bytes_loaded));
+    std::printf("    \"texture_payload_bytes_from_files\": %llu,\n",
+                static_cast<unsigned long long>(corpus.texture_payload_bytes_from_files));
+    std::printf("    \"texture_payloads_captured\": %zu,\n", corpus.texture_payloads.size());
+    std::printf("    \"texture_payload_bytes_per_file\": %zu,\n", kFreshTexturePayloadBytes);
     std::printf("    \"fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(corpus.fnv1a64));
     std::printf("    \"ok\": %s\n", corpus_ok ? "true" : "false");
     std::printf("  },\n");
@@ -879,6 +919,11 @@ int main() {
     std::printf("      \"srv_descriptors_created\": %u,\n", d3d.gpu_textures.srv_descriptors_created);
     std::printf("      \"copy_texture_region_commands\": %u,\n", d3d.gpu_textures.copy_texture_region_commands);
     std::printf("      \"transition_barriers\": %u,\n", d3d.gpu_textures.transition_barriers);
+    std::printf("      \"texture_payloads_uploaded\": %u,\n", d3d.gpu_textures.texture_payloads_uploaded);
+    std::printf("      \"texture_payload_bytes_from_files\": %llu,\n",
+                static_cast<unsigned long long>(d3d.gpu_textures.texture_payload_bytes_from_files));
+    std::printf("      \"upload_payload_fnv1a64\": \"%016llx\",\n",
+                static_cast<unsigned long long>(d3d.gpu_textures.upload_payload_fnv1a64));
     std::printf("      \"upload_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.gpu_textures.upload_bytes));
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.gpu_textures.fence_wait_ok ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.gpu_textures.pass ? "true" : "false");

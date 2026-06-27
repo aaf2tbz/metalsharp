@@ -526,13 +526,21 @@ def run_fresh_game(
     frames_presented = 0
     if parsed:
         frames_presented = int(parsed.get("d3d12_window", {}).get("frames_presented", 0) or 0)
+    corpus_json = parsed.get("corpus", {}) if parsed else {}
+    d3d12_json = parsed.get("d3d12_window", {}) if parsed else {}
+    gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
+    texture_payload_bytes_required = 300 * 16 * 16 * 4
     game_json_ok = bool(
         parsed
         and parsed.get("pass") is True
-        and parsed.get("corpus", {}).get("ok") is True
-        and parsed.get("d3d12_window", {}).get("ok") is True
-        and parsed.get("d3d12_window", {}).get("visible_scene", {}).get("ok") is True
-        and parsed.get("d3d12_window", {}).get("gpu_textures", {}).get("ok") is True
+        and corpus_json.get("ok") is True
+        and int(corpus_json.get("texture_payloads_captured", 0) or 0) >= 300
+        and int(corpus_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
+        and d3d12_json.get("ok") is True
+        and d3d12_json.get("visible_scene", {}).get("ok") is True
+        and gpu_textures_json.get("ok") is True
+        and int(gpu_textures_json.get("texture_payloads_uploaded", 0) or 0) >= 300
+        and int(gpu_textures_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
     )
     result = {
         "command": cmd,
