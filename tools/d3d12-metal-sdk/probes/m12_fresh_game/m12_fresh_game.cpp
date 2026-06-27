@@ -45,6 +45,8 @@ constexpr UINT kRtvFormatStampX = 120;
 constexpr UINT kRtvFormatStampY = 24;
 constexpr UINT kRenderPassStampX = 152;
 constexpr UINT kRenderPassStampY = 24;
+constexpr UINT kCorpusShaderStampX = 184;
+constexpr UINT kCorpusShaderStampY = 24;
 constexpr UINT kSm5StampX = 96;
 constexpr UINT kSm5StampY = 96;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
@@ -204,6 +206,10 @@ struct CorpusStats {
     std::vector<uint64_t> shader_hashes;
     std::vector<uint64_t> texture_hashes;
     std::vector<TexturePayload> texture_payloads;
+    std::string position_color_vs_path;
+    std::string position_color_ps_path;
+    uint64_t position_color_vs_fnv1a64 = 0;
+    uint64_t position_color_ps_fnv1a64 = 0;
 };
 
 static std::vector<std::string> split_tsv(const std::string& line) {
@@ -237,12 +243,40 @@ static CorpusStats load_corpus_tsv(const std::string& path, uint32_t target_shad
         stats.rows++;
         if (category == "shader") {
             stats.shaders_seen++;
+            const bool is_position_color_vs = destination.find("D3D12StateObjectDatabase") != std::string::npos &&
+                                              destination.find("PositionColorVS.hlsl") != std::string::npos;
+            const bool is_position_color_ps = destination.find("D3D12StateObjectDatabase") != std::string::npos &&
+                                              destination.find("PositionColorPS.hlsl") != std::string::npos;
+            if ((is_position_color_vs && stats.position_color_vs_path.empty()) ||
+                (is_position_color_ps && stats.position_color_ps_path.empty())) {
+                uint64_t candidate_aggregate = 1469598103934665603ull;
+                uint64_t candidate_bytes = 0;
+                uint64_t candidate_hash = 0;
+                if (read_file_hash(destination, candidate_aggregate, candidate_bytes, candidate_hash)) {
+                    if (is_position_color_vs) {
+                        stats.position_color_vs_path = destination;
+                        stats.position_color_vs_fnv1a64 = candidate_hash;
+                    }
+                    if (is_position_color_ps) {
+                        stats.position_color_ps_path = destination;
+                        stats.position_color_ps_fnv1a64 = candidate_hash;
+                    }
+                }
+            }
             if (stats.shader_files_loaded >= target_shaders)
                 continue;
             uint64_t file_hash = 0;
             if (read_file_hash(destination, stats.fnv1a64, stats.bytes_loaded, file_hash)) {
                 stats.shader_files_loaded++;
                 stats.shader_hashes.push_back(file_hash);
+                if (is_position_color_vs) {
+                    stats.position_color_vs_path = destination;
+                    stats.position_color_vs_fnv1a64 = file_hash;
+                }
+                if (is_position_color_ps) {
+                    stats.position_color_ps_path = destination;
+                    stats.position_color_ps_fnv1a64 = file_hash;
+                }
             } else {
                 stats.failed_loads++;
             }
@@ -261,7 +295,8 @@ static CorpusStats load_corpus_tsv(const std::string& path, uint32_t target_shad
                 stats.failed_loads++;
             }
         }
-        if (stats.shader_files_loaded >= target_shaders && stats.texture_files_loaded >= target_textures)
+        if (stats.shader_files_loaded >= target_shaders && stats.texture_files_loaded >= target_textures &&
+            !stats.position_color_vs_path.empty() && !stats.position_color_ps_path.empty())
             break;
     }
     return stats;
@@ -373,6 +408,17 @@ static HRESULT compile_shader(D3DCompileFn compile, const char* source, const ch
     ID3DBlob* errors = nullptr;
     HRESULT hr = compile ? compile(source, std::strlen(source), "m12_fresh_game_loading.hlsl", nullptr, nullptr, entry,
                                    target, 0, 0, blob, &errors)
+                         : E_FAIL;
+    if (errors)
+        errors->Release();
+    return hr;
+}
+
+static HRESULT compile_shader_bytes(D3DCompileFn compile, const std::vector<uint8_t>& source, const char* source_name,
+                                    const char* entry, const char* target, ID3DBlob** blob) {
+    ID3DBlob* errors = nullptr;
+    HRESULT hr = compile ? compile(source.data(), source.size(), source_name, nullptr, nullptr, entry, target, 0, 0,
+                                   blob, &errors)
                          : E_FAIL;
     if (errors)
         errors->Release();
@@ -621,6 +667,170 @@ static void destroy_visible_scene(VisibleSceneResources& scene) {
     safe_release(scene.root_signature);
 }
 
+struct CorpusShaderStats {
+    std::string vs_path;
+    std::string ps_path;
+    bool vs_loaded = false;
+    bool ps_loaded = false;
+    uint64_t vs_bytes = 0;
+    uint64_t ps_bytes = 0;
+    uint64_t vs_fnv1a64 = 0;
+    uint64_t ps_fnv1a64 = 0;
+    bool d3dcompiler_loaded = false;
+    HRESULT compile_vs_hr = E_FAIL;
+    HRESULT compile_ps_hr = E_FAIL;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_vertex_buffer_hr = E_FAIL;
+    uint32_t draw_calls = 0;
+    uint32_t vertices_per_draw = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t present_pixels_checked = 0;
+    uint32_t present_pixel_matches = 0;
+    uint8_t expected_rgba[4] = {64, 192, 32, 255};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct CorpusShaderSceneResources {
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12Resource* vertex_buffer = nullptr;
+    D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    CorpusShaderStats stats;
+};
+
+static void corpus_shader_expected_rgba(uint8_t out[4]) {
+    out[0] = 64;
+    out[1] = 192;
+    out[2] = 32;
+    out[3] = 255;
+}
+
+static float ndc_x_from_pixel(float x, float width) {
+    return x * 2.0f / width - 1.0f;
+}
+
+static float ndc_y_from_pixel(float y, float height) {
+    return 1.0f - y * 2.0f / height;
+}
+
+static CorpusShaderSceneResources create_corpus_shader_scene(ID3D12Device* device, D3DCompileFn compile,
+                                                             SerializeRootSignatureFn serialize,
+                                                             const CorpusStats& corpus, UINT backbuffer_width,
+                                                             UINT backbuffer_height) {
+    CorpusShaderSceneResources scene;
+    scene.stats.vs_path = corpus.position_color_vs_path;
+    scene.stats.ps_path = corpus.position_color_ps_path;
+    scene.stats.d3dcompiler_loaded = compile != nullptr;
+    corpus_shader_expected_rgba(scene.stats.expected_rgba);
+
+    std::vector<uint8_t> vs_source;
+    std::vector<uint8_t> ps_source;
+    scene.stats.vs_loaded = read_file_bytes(scene.stats.vs_path, vs_source, scene.stats.vs_fnv1a64);
+    scene.stats.ps_loaded = read_file_bytes(scene.stats.ps_path, ps_source, scene.stats.ps_fnv1a64);
+    scene.stats.vs_bytes = static_cast<uint64_t>(vs_source.size());
+    scene.stats.ps_bytes = static_cast<uint64_t>(ps_source.size());
+
+    ID3DBlob* vs = nullptr;
+    ID3DBlob* ps = nullptr;
+    if (scene.stats.vs_loaded)
+        scene.stats.compile_vs_hr = compile_shader_bytes(compile, vs_source, "fresh_corpus_PositionColorVS.hlsl",
+                                                         "PositionColorVS", "vs_5_0", &vs);
+    if (scene.stats.ps_loaded)
+        scene.stats.compile_ps_hr = compile_shader_bytes(compile, ps_source, "fresh_corpus_PositionColorPS.hlsl",
+                                                         "PositionColorPS", "ps_5_0", &ps);
+
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    scene.stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+    if (device && root_blob) {
+        scene.stats.create_root_hr = device->CreateRootSignature(
+            0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(), IID_PPV_ARGS(&scene.root_signature));
+    }
+
+    if (device && scene.root_signature && vs && ps) {
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = scene.root_signature;
+        pso_desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso_desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso_desc.InputLayout = {input_elements, 2};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        scene.stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+    }
+
+    if (device) {
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(6u * sizeof(ColorVertex));
+        scene.stats.create_vertex_buffer_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.vertex_buffer));
+        if (SUCCEEDED(scene.stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
+            ColorVertex* mapped = nullptr;
+            scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
+            if (mapped) {
+                const float draw_x0 = static_cast<float>(kCorpusShaderStampX) - 2.0f;
+                const float draw_y0 = static_cast<float>(kCorpusShaderStampY) - 2.0f;
+                const float draw_x1 = static_cast<float>(kCorpusShaderStampX + kFreshTextureWidth) + 2.0f;
+                const float draw_y1 = static_cast<float>(kCorpusShaderStampY + kFreshTextureHeight) + 2.0f;
+                const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
+                const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
+                const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
+                const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
+                const float r = static_cast<float>(scene.stats.expected_rgba[0]) / 255.0f;
+                const float g = static_cast<float>(scene.stats.expected_rgba[1]) / 255.0f;
+                const float b = static_cast<float>(scene.stats.expected_rgba[2]) / 255.0f;
+                const float a = static_cast<float>(scene.stats.expected_rgba[3]) / 255.0f;
+                write_quad(mapped, x0, y0, x1, y1, 0.04f, r, g, b, a);
+                D3D12_RANGE written = {0, 6u * sizeof(ColorVertex)};
+                scene.vertex_buffer->Unmap(0, &written);
+            }
+            scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
+            scene.vertex_view.SizeInBytes = 6u * sizeof(ColorVertex);
+            scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
+            scene.stats.vertices_per_draw = 6;
+        }
+    }
+
+    scene.stats.pass = scene.stats.d3dcompiler_loaded && scene.stats.vs_loaded && scene.stats.ps_loaded &&
+                       corpus.position_color_vs_fnv1a64 == scene.stats.vs_fnv1a64 &&
+                       corpus.position_color_ps_fnv1a64 == scene.stats.ps_fnv1a64 && scene.stats.vs_bytes > 0 &&
+                       scene.stats.ps_bytes > 0 && SUCCEEDED(scene.stats.compile_vs_hr) &&
+                       SUCCEEDED(scene.stats.compile_ps_hr) && SUCCEEDED(scene.stats.serialize_root_hr) &&
+                       SUCCEEDED(scene.stats.create_root_hr) && SUCCEEDED(scene.stats.create_pso_hr) &&
+                       SUCCEEDED(scene.stats.create_vertex_buffer_hr) && scene.vertex_buffer != nullptr &&
+                       scene.stats.vertices_per_draw == 6;
+    safe_release(vs);
+    safe_release(ps);
+    safe_release(root_blob);
+    return scene;
+}
+
+static void destroy_corpus_shader_scene(CorpusShaderSceneResources& scene) {
+    safe_release(scene.vertex_buffer);
+    safe_release(scene.pipeline_state);
+    safe_release(scene.root_signature);
+}
+
 struct DxilSceneStats {
     std::string vs_path;
     std::string ps_path;
@@ -779,6 +989,7 @@ static void heap_alias_expected_rgba(uint8_t out[4]);
 static void uav_barrier_expected_rgba(UINT x, UINT y, uint8_t out[4]);
 static void rtv_format_expected_rgba(uint8_t out[4]);
 static void render_pass_expected_rgba(uint8_t out[4]);
+static void corpus_shader_expected_rgba(uint8_t out[4]);
 
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
                                         const uint8_t* texture_expected_rgba, uint32_t frame) {
@@ -836,6 +1047,18 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
             render_pass_pixel[3] = static_cast<uint8_t>(render_pass_expected[3] ^ 0xffu);
         }
     }
+    uint8_t* corpus_shader_stamp = readback_pixel(readback, mapped, kCorpusShaderStampX, kCorpusShaderStampY);
+    uint8_t corpus_shader_expected[4] = {};
+    corpus_shader_expected_rgba(corpus_shader_expected);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            uint8_t* corpus_pixel = readback_pixel(readback, mapped, kCorpusShaderStampX + x, kCorpusShaderStampY + y);
+            corpus_pixel[0] = static_cast<uint8_t>(corpus_shader_expected[0] ^ 0xffu);
+            corpus_pixel[1] = static_cast<uint8_t>(corpus_shader_expected[1] ^ 0xffu);
+            corpus_pixel[2] = static_cast<uint8_t>(corpus_shader_expected[2] ^ 0xffu);
+            corpus_pixel[3] = static_cast<uint8_t>(corpus_shader_expected[3] ^ 0xffu);
+        }
+    }
     uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
     uint8_t sm5_expected[4] = {};
     sm5_expected_stamp_rgba(frame, sm5_expected);
@@ -869,15 +1092,22 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     const uint8_t* render_pass_stamp_last = readback_pixel(
         readback, mapped, kRenderPassStampX + kFreshTextureWidth - 1u, kRenderPassStampY + kFreshTextureHeight - 1u);
     const size_t render_pass_stamp_last_offset = static_cast<size_t>(render_pass_stamp_last - mapped);
+    const size_t corpus_shader_stamp_offset = static_cast<size_t>(corpus_shader_stamp - mapped);
+    const uint8_t* corpus_shader_stamp_last =
+        readback_pixel(readback, mapped, kCorpusShaderStampX + kFreshTextureWidth - 1u,
+                       kCorpusShaderStampY + kFreshTextureHeight - 1u);
+    const size_t corpus_shader_stamp_last_offset = static_cast<size_t>(corpus_shader_stamp_last - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
     D3D12_RANGE written = {
         std::min({center_offset, heap_alias_stamp_offset, uav_barrier_stamp_offset, uav_barrier_stamp_last_offset,
                   rtv_format_stamp_offset, rtv_format_stamp_last_offset, render_pass_stamp_offset,
-                  render_pass_stamp_last_offset, sm5_stamp_offset, stamp_offset}),
+                  render_pass_stamp_last_offset, corpus_shader_stamp_offset, corpus_shader_stamp_last_offset,
+                  sm5_stamp_offset, stamp_offset}),
         std::max({center_offset, heap_alias_stamp_offset, uav_barrier_stamp_offset, uav_barrier_stamp_last_offset,
                   rtv_format_stamp_offset, rtv_format_stamp_last_offset, render_pass_stamp_offset,
-                  render_pass_stamp_last_offset, sm5_stamp_offset, stamp_offset}) +
+                  render_pass_stamp_last_offset, corpus_shader_stamp_offset, corpus_shader_stamp_last_offset,
+                  sm5_stamp_offset, stamp_offset}) +
             4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
@@ -1937,6 +2167,39 @@ static bool inspect_render_pass_stamp(DxilReadbackResources& readback, RenderPas
     return matches;
 }
 
+static bool inspect_corpus_shader_stamp(DxilReadbackResources& readback, CorpusShaderStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* first = readback_pixel(readback, mapped, kCorpusShaderStampX, kCorpusShaderStampY);
+    std::memcpy(stats.present_rgba, first, sizeof(stats.present_rgba));
+    const uint8_t* last = readback_pixel(readback, mapped, kCorpusShaderStampX + kFreshTextureWidth - 1u,
+                                         kCorpusShaderStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
+    stats.present_samples_checked++;
+    uint32_t frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kCorpusShaderStampX + x, kCorpusShaderStampY + y);
+            stats.present_pixels_checked++;
+            if (pixel[0] == stats.expected_rgba[0] && pixel[1] == stats.expected_rgba[1] &&
+                pixel[2] == stats.expected_rgba[2] && pixel[3] == stats.expected_rgba[3]) {
+                stats.present_pixel_matches++;
+                frame_matches++;
+            }
+        }
+    }
+    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+    if (matches)
+        stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
 static bool channel_matches_expected(uint8_t actual, uint8_t expected) {
     return expected >= 128 ? actual >= 180 : actual <= 80;
 }
@@ -2126,6 +2389,7 @@ struct D3DRunStats {
     UavBarrierStats uav_barrier;
     RtvFormatStats rtv_format;
     RenderPassStats render_pass;
+    CorpusShaderStats corpus_shader;
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
@@ -2267,6 +2531,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     DxilSceneResources dxil_scene =
         create_dxil_scene(device, serialize, getenv_string("M12_FRESH_DXIL_VS"), getenv_string("M12_FRESH_DXIL_PS"));
     stats.dxil_scene = dxil_scene.stats;
+    CorpusShaderSceneResources corpus_shader =
+        create_corpus_shader_scene(device, compile, serialize, corpus, backbuffer_width, backbuffer_height);
+    stats.corpus_shader = corpus_shader.stats;
     DxilReadbackResources dxil_readback = create_dxil_readback(device, backbuffer_width, backbuffer_height);
     stats.dxil_readback = dxil_readback.stats;
 
@@ -2288,7 +2555,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
-        dxil_scene.stats.pass) {
+        dxil_scene.stats.pass && corpus_shader.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -2320,6 +2587,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetVertexBuffers(0, 1, &dxil_scene.vertex_view);
             list->DrawInstanced(3, 1, 0, 0);
             stats.dxil_scene.draw_calls++;
+            list->SetGraphicsRootSignature(corpus_shader.root_signature);
+            list->SetPipelineState(corpus_shader.pipeline_state);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &corpus_shader.vertex_view);
+            list->DrawInstanced(corpus_shader.stats.vertices_per_draw, 1, 0, 0);
+            stats.corpus_shader.draw_calls++;
             D3D12_RESOURCE_STATES backbuffer_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
             if (gpu_textures.present_texture && gpu_textures.present_sentinel_upload) {
                 auto backbuffer_to_copy_dest =
@@ -2469,6 +2742,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             if (stats.render_pass.pass && render_pass.present_texture &&
                 !inspect_render_pass_stamp(dxil_readback, stats.render_pass))
                 break;
+            if (!inspect_corpus_shader_stamp(dxil_readback, stats.corpus_shader))
+                break;
             if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
@@ -2519,6 +2794,11 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.render_pass.present_sample_matches == visible_frame_target &&
         stats.render_pass.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.render_pass.present_pixel_matches == stats.render_pass.present_pixels_checked;
+    stats.corpus_shader.present_pass =
+        stats.corpus_shader.present_samples_checked == visible_frame_target &&
+        stats.corpus_shader.present_sample_matches == visible_frame_target &&
+        stats.corpus_shader.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.corpus_shader.present_pixel_matches == stats.corpus_shader.present_pixels_checked;
 
     stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
                  SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
@@ -2527,11 +2807,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                  SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass && stats.gpu_textures.present_pass &&
                  stats.heap_alias.pass && stats.heap_alias.present_pass && stats.uav_barrier.pass &&
                  stats.uav_barrier.present_pass && stats.rtv_format.pass && stats.rtv_format.present_pass &&
-                 stats.render_pass.pass && stats.render_pass.present_pass && stats.visible_scene.pass &&
-                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
-                 stats.frames_presented == visible_frame_target;
+                 stats.render_pass.pass && stats.render_pass.present_pass && stats.corpus_shader.pass &&
+                 stats.corpus_shader.present_pass && stats.corpus_shader.draw_calls == visible_frame_target &&
+                 stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
+                 stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
+                 stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
+                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -2540,6 +2821,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     destroy_rtv_format_exercise(rtv_format);
     destroy_render_pass_exercise(render_pass);
     destroy_dxil_readback(dxil_readback);
+    destroy_corpus_shader_scene(corpus_shader);
     destroy_dxil_scene(dxil_scene);
     for (auto*& buffer : buffers)
         safe_release(buffer);
@@ -2838,6 +3120,42 @@ int main() {
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.render_pass.fence_wait_ok ? "true" : "false");
     std::printf("      \"present_ok\": %s,\n", d3d.render_pass.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.render_pass.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"corpus_shader\": {\n");
+    std::printf("      \"proof_scope\": \"fresh_corpus_position_color_hlsl_graphics_pso_presented_readback\",\n");
+    std::printf("      \"vs_path\": \"%s\",\n", json_escape(d3d.corpus_shader.vs_path).c_str());
+    std::printf("      \"ps_path\": \"%s\",\n", json_escape(d3d.corpus_shader.ps_path).c_str());
+    std::printf("      \"vs_loaded\": %s,\n", d3d.corpus_shader.vs_loaded ? "true" : "false");
+    std::printf("      \"ps_loaded\": %s,\n", d3d.corpus_shader.ps_loaded ? "true" : "false");
+    std::printf("      \"vs_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.corpus_shader.vs_bytes));
+    std::printf("      \"ps_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.corpus_shader.ps_bytes));
+    std::printf("      \"vs_fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(d3d.corpus_shader.vs_fnv1a64));
+    std::printf("      \"ps_fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(d3d.corpus_shader.ps_fnv1a64));
+    std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.corpus_shader.d3dcompiler_loaded ? "true" : "false");
+    std::printf("      \"PositionColorVS_vs_5_0\": \"%s\",\n", hr_hex(d3d.corpus_shader.compile_vs_hr).c_str());
+    std::printf("      \"PositionColorPS_ps_5_0\": \"%s\",\n", hr_hex(d3d.corpus_shader.compile_ps_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature\": \"%s\",\n",
+                hr_hex(d3d.corpus_shader.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.corpus_shader.create_root_hr).c_str());
+    std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n", hr_hex(d3d.corpus_shader.create_pso_hr).c_str());
+    std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.corpus_shader.create_vertex_buffer_hr).c_str());
+    std::printf("      \"draw_calls\": %u,\n", d3d.corpus_shader.draw_calls);
+    std::printf("      \"vertices_per_draw\": %u,\n", d3d.corpus_shader.vertices_per_draw);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.corpus_shader.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.corpus_shader.present_sample_matches);
+    std::printf("      \"present_pixels_checked\": %u,\n", d3d.corpus_shader.present_pixels_checked);
+    std::printf("      \"present_pixel_matches\": %u,\n", d3d.corpus_shader.present_pixel_matches);
+    std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.corpus_shader.expected_rgba[0],
+                d3d.corpus_shader.expected_rgba[1], d3d.corpus_shader.expected_rgba[2],
+                d3d.corpus_shader.expected_rgba[3]);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.corpus_shader.present_rgba[0],
+                d3d.corpus_shader.present_rgba[1], d3d.corpus_shader.present_rgba[2],
+                d3d.corpus_shader.present_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.corpus_shader.present_last_rgba[0],
+                d3d.corpus_shader.present_last_rgba[1], d3d.corpus_shader.present_last_rgba[2],
+                d3d.corpus_shader.present_last_rgba[3]);
+    std::printf("      \"present_ok\": %s,\n", d3d.corpus_shader.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.corpus_shader.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"visible_scene\": {\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.visible_scene.d3dcompiler_loaded ? "true" : "false");

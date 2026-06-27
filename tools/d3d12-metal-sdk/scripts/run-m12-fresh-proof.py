@@ -366,6 +366,7 @@ def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, 
     texture_hashes_checked = 0
     mismatches: list[dict[str, Any]] = []
     missing: list[str] = []
+    selected_position_color: dict[str, dict[str, Any]] = {}
     with corpus_tsv.open("r", encoding="utf-8") as handle:
         header = handle.readline().rstrip("\n").split("\t")
         columns = {name: index for index, name in enumerate(header)}
@@ -381,8 +382,20 @@ def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, 
             if len(fields) < len(header):
                 continue
             category = fields[columns["category"]]
+            destination_text = fields[columns["destination"]]
+            is_position_color_vs = (
+                category == "shader"
+                and "D3D12StateObjectDatabase" in destination_text
+                and destination_text.endswith("PositionColorVS.hlsl")
+            )
+            is_position_color_ps = (
+                category == "shader"
+                and "D3D12StateObjectDatabase" in destination_text
+                and destination_text.endswith("PositionColorPS.hlsl")
+            )
+            is_selected_position_color = is_position_color_vs or is_position_color_ps
             if category == "shader":
-                if shader_hashes_checked >= target_shaders:
+                if shader_hashes_checked >= target_shaders and not is_selected_position_color:
                     continue
             elif category == "texture":
                 if texture_hashes_checked >= target_textures:
@@ -390,10 +403,13 @@ def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, 
             else:
                 continue
             rows_seen += 1
-            destination = Path(fields[columns["destination"]])
+            destination = Path(destination_text)
             expected_sha256 = fields[columns["sha256"]].lower()
             expected_size = int(fields[columns["size"]])
-            if not destination.exists():
+            actual_size = None
+            actual_sha256 = None
+            exists = destination.exists()
+            if not exists:
                 missing.append(str(destination))
             else:
                 actual_size = destination.stat().st_size
@@ -408,19 +424,57 @@ def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, 
                             "actual_sha256": actual_sha256,
                         }
                     )
-            if category == "shader":
+            if is_selected_position_color:
+                key = "vs" if is_position_color_vs else "ps"
+                selected_position_color[key] = {
+                    "family": fields[columns.get("family", -1)] if "family" in columns else "",
+                    "label": fields[columns.get("label", -1)] if "label" in columns else "",
+                    "category": category,
+                    "extension": fields[columns.get("extension", -1)] if "extension" in columns else "",
+                    "destination": str(destination),
+                    "source_path": fields[columns.get("source_path", -1)] if "source_path" in columns else "",
+                    "expected_size": expected_size,
+                    "actual_size": actual_size,
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": actual_sha256,
+                    "exists": exists,
+                    "hash_match": exists and actual_size == expected_size and actual_sha256 == expected_sha256,
+                }
+            if category == "shader" and shader_hashes_checked < target_shaders:
                 shader_hashes_checked += 1
-            else:
+            elif category == "texture" and texture_hashes_checked < target_textures:
                 texture_hashes_checked += 1
-            if shader_hashes_checked >= target_shaders and texture_hashes_checked >= target_textures:
+            if (
+                shader_hashes_checked >= target_shaders
+                and texture_hashes_checked >= target_textures
+                and "vs" in selected_position_color
+                and "ps" in selected_position_color
+            ):
                 break
+    selected_position_color_ok = bool(
+        selected_position_color.get("vs", {}).get("family") == "microsoft-sdk"
+        and selected_position_color.get("ps", {}).get("family") == "microsoft-sdk"
+        and selected_position_color.get("vs", {}).get("label") == "DirectX-Graphics-Samples"
+        and selected_position_color.get("ps", {}).get("label") == "DirectX-Graphics-Samples"
+        and selected_position_color.get("vs", {}).get("extension") == ".hlsl"
+        and selected_position_color.get("ps", {}).get("extension") == ".hlsl"
+        and str(selected_position_color.get("vs", {}).get("source_path", "")).endswith(
+            "D3D12StateObjectDatabase/src/PositionColorVS.hlsl"
+        )
+        and str(selected_position_color.get("ps", {}).get("source_path", "")).endswith(
+            "D3D12StateObjectDatabase/src/PositionColorPS.hlsl"
+        )
+        and selected_position_color.get("vs", {}).get("hash_match") is True
+        and selected_position_color.get("ps", {}).get("hash_match") is True
+    )
     return {
         "ok": summary_ok
         and manifest_ok
         and not missing
         and not mismatches
         and shader_hashes_checked >= target_shaders
-        and texture_hashes_checked >= target_textures,
+        and texture_hashes_checked >= target_textures
+        and selected_position_color_ok,
         "path": str(corpus_tsv),
         "summary_path": str(summary_path),
         "summary_ok": summary_ok,
@@ -441,6 +495,8 @@ def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, 
         "missing_count": len(missing),
         "mismatches": mismatches[:20],
         "mismatch_count": len(mismatches),
+        "selected_position_color": selected_position_color,
+        "selected_position_color_ok": selected_position_color_ok,
     }
 
 
@@ -590,21 +646,31 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     errors: list[str] = []
     visible_scene = d3d12_json.get("visible_scene", {}) if d3d12_json else {}
     visible_vertices = int(visible_scene.get("vertices_per_frame", 0) or 0)
+    corpus_shader = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
+    corpus_vertices = int(corpus_shader.get("vertices_per_draw", 0) or 0)
     dxil_draws = re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1 .*?vs=([0-9a-f]{16}) ps=([0-9a-f]{16})", stderr_text)
     sm5_pattern = rf"M12 swapchain DrawInstanced encoded v={visible_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     sm5_draws = re.findall(sm5_pattern, stderr_text) if visible_vertices else []
+    corpus_pattern = rf"M12 swapchain DrawInstanced encoded v={corpus_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    corpus_draws = re.findall(corpus_pattern, stderr_text) if corpus_vertices else []
     dxil_unique_draws = sorted(set(dxil_draws))
     sm5_unique_draws = sorted(set(sm5_draws))
+    corpus_unique_draws = sorted(set(corpus_draws))
     if not dxil_draws:
         errors.append("missing_dxil_presented_draw_hashes")
     if not sm5_draws:
         errors.append("missing_sm5_presented_draw_hashes")
+    if not corpus_draws:
+        errors.append("missing_corpus_presented_draw_hashes")
     if len(dxil_unique_draws) > 1:
         errors.append("unexpected_multiple_dxil_presented_shader_pairs")
     if len(sm5_unique_draws) > 1:
         errors.append("unexpected_multiple_sm5_presented_shader_pairs")
+    if len(corpus_unique_draws) > 1:
+        errors.append("unexpected_multiple_corpus_presented_shader_pairs")
     dxil_vs, dxil_ps = dxil_unique_draws[0] if dxil_unique_draws else ("", "")
     sm5_vs, sm5_ps = sm5_unique_draws[0] if sm5_unique_draws else ("", "")
+    corpus_vs, corpus_ps = corpus_unique_draws[0] if corpus_unique_draws else ("", "")
 
     required_paths: list[Path] = []
     for shader_hash in [dxil_vs, dxil_ps]:
@@ -665,13 +731,23 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ),
         None,
     )
+    corpus_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == corpus_vs and p.get("d3d12", {}).get("ps_hash") == corpus_ps
+        ),
+        None,
+    )
     if not dxil_pso:
         errors.append("missing_dxil_presented_pso_manifest")
     if not sm5_pso:
         errors.append("missing_sm5_presented_pso_manifest")
+    if not corpus_pso:
+        errors.append("missing_corpus_presented_pso_manifest")
     metallib_policy: dict[str, Any] = {}
     sm5_metallibs = [shader_cache_dir / "dxmt_sm50_vs_main.metallib", shader_cache_dir / "dxmt_sm50_ps_main.metallib"]
-    for name, pso in [("dxil", dxil_pso), ("sm5", sm5_pso)]:
+    for name, pso in [("dxil", dxil_pso), ("sm5", sm5_pso), ("corpus", corpus_pso)]:
         if not pso:
             continue
         if pso.get("type") != "render":
@@ -704,7 +780,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
                 "referenced": referenced_records,
                 "required_msl_hashes": [dxil_vs, dxil_ps],
             }
-        elif name == "sm5" and all(path.exists() and path.stat().st_size > 0 for path in sm5_metallibs):
+        elif name in ("sm5", "corpus") and all(path.exists() and path.stat().st_size > 0 for path in sm5_metallibs):
             metallib_policy[name] = {
                 "ok": True,
                 "policy": "runtime_sm5_metallib_files_present",
@@ -715,12 +791,14 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             metallib_policy[name] = {"ok": False, "policy": "unproven_metallib_source", "referenced": referenced_records}
             errors.append(f"{name}_metallib_policy_unproven")
 
-    presented_log_required = min(visible_frames, 16)
+    presented_log_required = min(visible_frames, 12)
     present_tie_ok = (
         len(dxil_draws) >= presented_log_required
         and len(sm5_draws) >= presented_log_required
         and len(dxil_unique_draws) == 1
         and len(sm5_unique_draws) == 1
+        and len(corpus_draws) >= presented_log_required
+        and len(corpus_unique_draws) == 1
     )
     if not present_tie_ok:
         errors.append("insufficient_presented_shader_hash_logs")
@@ -741,12 +819,20 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "unique_pairs": [[vs, ps] for vs, ps in sm5_unique_draws],
             "vertices": visible_vertices,
         },
+        "corpus_presented_hashes": {
+            "vs": corpus_vs,
+            "ps": corpus_ps,
+            "logged_draws": len(corpus_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in corpus_unique_draws],
+            "vertices": corpus_vertices,
+        },
         "presented_log_required": presented_log_required,
         "present_tie_ok": present_tie_ok,
         "required_files": required_files,
         "pso_manifests": pso_records,
         "dxil_pso_manifest": dxil_pso,
         "sm5_pso_manifest": sm5_pso,
+        "corpus_pso_manifest": corpus_pso,
         "msl_checks": msl_checks,
         "metallib_policy": metallib_policy,
         "errors": errors,
@@ -868,10 +954,12 @@ def run_fresh_game(
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
     rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
     render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
+    corpus_shader_json = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
     render_pass_expected_rgba = [224, 80, 176, 255]
+    corpus_shader_expected_rgba = [64, 192, 32, 255]
     game_json_ok = bool(
         parsed
         and parsed.get("pass") is True
@@ -1018,6 +1106,33 @@ def run_fresh_game(
         and render_pass_json.get("offscreen_last_rgba") == render_pass_expected_rgba
         and render_pass_json.get("present_rgba") == render_pass_expected_rgba
         and render_pass_json.get("present_last_rgba") == render_pass_expected_rgba
+        and corpus_shader_json.get("ok") is True
+        and corpus_shader_json.get("present_ok") is True
+        and corpus_shader_json.get("proof_scope") == "fresh_corpus_position_color_hlsl_graphics_pso_presented_readback"
+        and str(corpus_shader_json.get("vs_path", "")).endswith("D3D12StateObjectDatabase/src/PositionColorVS.hlsl")
+        and str(corpus_shader_json.get("ps_path", "")).endswith("D3D12StateObjectDatabase/src/PositionColorPS.hlsl")
+        and corpus_shader_json.get("vs_loaded") is True
+        and corpus_shader_json.get("ps_loaded") is True
+        and int(corpus_shader_json.get("vs_bytes", 0) or 0) > 0
+        and int(corpus_shader_json.get("ps_bytes", 0) or 0) > 0
+        and str(corpus_shader_json.get("vs_fnv1a64", "")) not in ("", "0000000000000000")
+        and str(corpus_shader_json.get("ps_fnv1a64", "")) not in ("", "0000000000000000")
+        and corpus_shader_json.get("D3DCompile_loaded") is True
+        and corpus_shader_json.get("PositionColorVS_vs_5_0") == "0x00000000"
+        and corpus_shader_json.get("PositionColorPS_ps_5_0") == "0x00000000"
+        and corpus_shader_json.get("D3D12SerializeRootSignature") == "0x00000000"
+        and corpus_shader_json.get("CreateRootSignature") == "0x00000000"
+        and corpus_shader_json.get("CreateGraphicsPipelineState") == "0x00000000"
+        and corpus_shader_json.get("CreateVertexBuffer") == "0x00000000"
+        and int(corpus_shader_json.get("draw_calls", 0) or 0) == visible_frames
+        and int(corpus_shader_json.get("vertices_per_draw", 0) or 0) == 6
+        and int(corpus_shader_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(corpus_shader_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(corpus_shader_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(corpus_shader_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and corpus_shader_json.get("expected_rgba") == corpus_shader_expected_rgba
+        and corpus_shader_json.get("present_rgba") == corpus_shader_expected_rgba
+        and corpus_shader_json.get("present_last_rgba") == corpus_shader_expected_rgba
     )
     result = {
         "command": cmd,
@@ -1038,11 +1153,11 @@ def run_fresh_game(
         "draw_line_count": draw_line_count,
         "present_draw_counts": present_draw_counts,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
-        "dxil_draw_encoded_required": min(frames_presented, 16),
-        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced encoded logs are a capped sample; long runs additionally require every present to report draws>=2.",
+        "dxil_draw_encoded_required": min(frames_presented, 12),
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced encoded logs are a capped sample; with the extra corpus draw long runs additionally require every present to report draws>=3 and all JSON/readback lanes to pass.",
         "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
-        "dxil_vertex_pull_snapshot_required": min(frames_presented, 12),
-        "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, and bound_vbs=1.",
+        "dxil_vertex_pull_snapshot_required": min(frames_presented, 8),
+        "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, bound_vbs=1, plus per-frame JSON/readback validation.",
         "dxil_draw_skipped": dxil_draw_skipped,
         "render_encoder_encode_failed": render_encoder_encode_failed,
         "frames_presented": frames_presented,
@@ -1056,9 +1171,9 @@ def run_fresh_game(
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented
         and len(present_draw_counts) == frames_presented
-        and all(draws >= 2 for draws in present_draw_counts)
-        and dxil_draw_encoded_count >= min(frames_presented, 16)
-        and dxil_vertex_pull_snapshot_count >= min(frames_presented, 12)
+        and all(draws >= 3 for draws in present_draw_counts)
+        and dxil_draw_encoded_count >= min(frames_presented, 12)
+        and dxil_vertex_pull_snapshot_count >= min(frames_presented, 8)
         and not dxil_draw_skipped
         and not render_encoder_encode_failed
         and draw_line_count >= visible_frames
