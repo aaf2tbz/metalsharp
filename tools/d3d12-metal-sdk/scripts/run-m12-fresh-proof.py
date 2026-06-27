@@ -867,9 +867,11 @@ def run_fresh_game(
     heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
     rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
+    render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
+    render_pass_expected_rgba = [224, 80, 176, 255]
     game_json_ok = bool(
         parsed
         and parsed.get("pass") is True
@@ -989,6 +991,33 @@ def run_fresh_game(
         and rtv_format_json.get("offscreen_last_rgba") == rtv_format_expected_rgba
         and rtv_format_json.get("present_rgba") == rtv_format_expected_rgba
         and rtv_format_json.get("present_last_rgba") == rtv_format_expected_rgba
+        and render_pass_json.get("ok") is True
+        and render_pass_json.get("present_ok") is True
+        and render_pass_json.get("proof_scope") == "offscreen_render_pass_clear_presented_copy_readback"
+        and render_pass_json.get("QueryInterface_ID3D12GraphicsCommandList4") == "0x00000000"
+        and render_pass_json.get("CreateTexture2D_R8G8B8A8_UNORM_ALLOW_RENDER_TARGET") == "0x00000000"
+        and render_pass_json.get("CreateRtvDescriptorHeap") == "0x00000000"
+        and render_pass_json.get("CreateReadback") == "0x00000000"
+        and int(render_pass_json.get("CreateRenderTargetView_descriptors", 0) or 0) == 1
+        and int(render_pass_json.get("BeginRenderPass_commands", 0) or 0) == 1
+        and int(render_pass_json.get("EndRenderPass_commands", 0) or 0) == 1
+        and int(render_pass_json.get("transition_barriers", 0) or 0) == 1
+        and render_pass_json.get("fixed_footprint_ok") is True
+        and int(render_pass_json.get("row_pitch", 0) or 0) == 256
+        and int(render_pass_json.get("footprint_bytes", 0) or 0) >= 4096
+        and render_pass_json.get("offscreen_readback_ok") is True
+        and int(render_pass_json.get("offscreen_pixels_checked", 0) or 0) == 256
+        and int(render_pass_json.get("offscreen_pixel_matches", 0) or 0) == 256
+        and int(render_pass_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(render_pass_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(render_pass_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(render_pass_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(render_pass_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and render_pass_json.get("expected_rgba") == render_pass_expected_rgba
+        and render_pass_json.get("offscreen_first_rgba") == render_pass_expected_rgba
+        and render_pass_json.get("offscreen_last_rgba") == render_pass_expected_rgba
+        and render_pass_json.get("present_rgba") == render_pass_expected_rgba
+        and render_pass_json.get("present_last_rgba") == render_pass_expected_rgba
     )
     result = {
         "command": cmd,
