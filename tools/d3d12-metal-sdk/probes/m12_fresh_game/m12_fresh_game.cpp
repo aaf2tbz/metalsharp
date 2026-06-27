@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -36,6 +37,11 @@ struct TexVertex {
     float uv[2];
 };
 
+struct Tex3DVertex {
+    float position[3];
+    float texface[4];
+};
+
 constexpr UINT kBackbufferWidth = 960;
 constexpr UINT kBackbufferHeight = 540;
 constexpr UINT kFreshTextureWidth = 16;
@@ -60,13 +66,24 @@ constexpr UINT kIndexedStampX = 280;
 constexpr UINT kIndexedStampY = 24;
 constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
+constexpr UINT kTextured3DFaceCount = 3;
+constexpr UINT kTextured3DVertexCount = 33;
+constexpr UINT kTextured3DDepthSampleX = 704;
+constexpr UINT kTextured3DDepthSampleY = 156;
 constexpr UINT kSm5StampX = 96;
 constexpr UINT kSm5StampY = 96;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
 
 struct TexturePayload {
     uint64_t fnv1a64 = 1469598103934665603ull;
+    uint64_t declared_size = 0;
     uint32_t bytes_from_file = 0;
+    std::string family;
+    std::string label;
+    std::string extension;
+    std::string destination;
+    std::string source_path;
+    std::string sha256;
     std::array<uint8_t, kFreshTexturePayloadBytes> rgba = {};
 };
 
@@ -243,6 +260,14 @@ static CorpusStats load_corpus_tsv(const std::string& path, uint32_t target_shad
     if (path.empty())
         return stats;
 
+    const auto has_texture_family = [&stats](const std::string& family) {
+        for (const TexturePayload& payload : stats.texture_payloads) {
+            if (payload.family == family)
+                return true;
+        }
+        return false;
+    };
+
     std::ifstream file(wine_path(path));
     std::string line;
     bool header = true;
@@ -298,11 +323,16 @@ static CorpusStats load_corpus_tsv(const std::string& path, uint32_t target_shad
             }
         } else if (category == "texture") {
             stats.textures_seen++;
-            if (stats.texture_files_loaded >= target_textures)
-                continue;
             uint64_t file_hash = 0;
             TexturePayload payload;
             if (read_file_hash(destination, stats.fnv1a64, stats.bytes_loaded, file_hash, &payload)) {
+                payload.family = fields[0];
+                payload.label = fields[1];
+                payload.extension = fields[3];
+                payload.declared_size = std::strtoull(fields[4].c_str(), nullptr, 10);
+                payload.sha256 = fields[5];
+                payload.destination = destination;
+                payload.source_path = fields[7];
                 stats.texture_files_loaded++;
                 stats.texture_hashes.push_back(file_hash);
                 stats.texture_payloads.push_back(payload);
@@ -311,8 +341,11 @@ static CorpusStats load_corpus_tsv(const std::string& path, uint32_t target_shad
                 stats.failed_loads++;
             }
         }
+        const bool textured_3d_families_ready =
+            has_texture_family("unreal") && has_texture_family("unity-sdk") && has_texture_family("microsoft-sdk");
         if (stats.shader_files_loaded >= target_shaders && stats.texture_files_loaded >= target_textures &&
-            !stats.position_color_vs_path.empty() && !stats.position_color_ps_path.empty())
+            textured_3d_families_ready && !stats.position_color_vs_path.empty() &&
+            !stats.position_color_ps_path.empty())
             break;
     }
     return stats;
@@ -885,6 +918,8 @@ struct SrvSampleSceneResources {
     ID3D12Resource* texture = nullptr;
     ID3D12Resource* upload = nullptr;
     ID3D12DescriptorHeap* srv_heap = nullptr;
+    ID3D12DescriptorHeap* dsv_heap = nullptr;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = {};
     D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
     SrvSampleStats stats;
 };
@@ -1115,6 +1150,560 @@ static void destroy_srv_sample_scene(SrvSampleSceneResources& scene) {
     safe_release(scene.srv_heap);
     safe_release(scene.upload);
     safe_release(scene.texture);
+    safe_release(scene.vertex_buffer);
+    safe_release(scene.pipeline_state);
+    safe_release(scene.root_signature);
+}
+
+struct Textured3DFaceStats {
+    std::string family;
+    std::string label;
+    std::string extension;
+    std::string destination;
+    std::string source_path;
+    std::string sha256;
+    uint64_t declared_size = 0;
+    uint64_t file_fnv1a64 = 0;
+    uint64_t upload_fnv1a64 = 1469598103934665603ull;
+    uint32_t bytes_from_file = 0;
+    UINT sample_x = 0;
+    UINT sample_y = 0;
+    uint8_t expected_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    uint32_t samples_checked = 0;
+    uint32_t sample_matches = 0;
+};
+
+struct Textured3DStats {
+    bool d3dcompiler_loaded = false;
+    HRESULT compile_vs_hr = E_FAIL;
+    HRESULT compile_ps_hr = E_FAIL;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_vertex_buffer_hr = E_FAIL;
+    HRESULT create_depth_texture_hr = E_FAIL;
+    HRESULT create_dsv_heap_hr = E_FAIL;
+    std::array<HRESULT, kTextured3DFaceCount> create_texture_hr = {E_FAIL, E_FAIL, E_FAIL};
+    std::array<HRESULT, kTextured3DFaceCount> create_upload_hr = {E_FAIL, E_FAIL, E_FAIL};
+    HRESULT create_descriptor_heap_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    uint32_t face_count = 0;
+    uint32_t unique_families = 0;
+    uint32_t textures_created = 0;
+    uint32_t upload_buffers_created = 0;
+    uint32_t uploads_filled = 0;
+    uint32_t srv_descriptors_created = 0;
+    uint32_t dsv_descriptors_created = 0;
+    uint32_t clear_depth_commands = 0;
+    uint32_t copy_texture_region_commands = 0;
+    uint32_t transition_barriers = 0;
+    uint32_t vertices_created = 0;
+    uint32_t vertices_per_draw = 0;
+    uint32_t vertex_buffer_updates = 0;
+    uint32_t root_constant_sets = 0;
+    uint32_t draw_calls = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t front_face = 0;
+    UINT depth_overlap_sample_x = kTextured3DDepthSampleX;
+    UINT depth_overlap_sample_y = kTextured3DDepthSampleY;
+    uint8_t depth_overlap_expected_rgba[4] = {48, 224, 96, 255};
+    uint8_t depth_overlap_present_rgba[4] = {0, 0, 0, 0};
+    uint32_t depth_overlap_samples_checked = 0;
+    uint32_t depth_overlap_sample_matches = 0;
+    bool fence_wait_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+    std::array<Textured3DFaceStats, kTextured3DFaceCount> faces;
+};
+
+struct Textured3DSceneResources {
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12Resource* vertex_buffer = nullptr;
+    ID3D12Resource* depth_texture = nullptr;
+    std::array<ID3D12Resource*, kTextured3DFaceCount> textures = {nullptr, nullptr, nullptr};
+    std::array<ID3D12Resource*, kTextured3DFaceCount> uploads = {nullptr, nullptr, nullptr};
+    ID3D12DescriptorHeap* srv_heap = nullptr;
+    ID3D12DescriptorHeap* dsv_heap = nullptr;
+    D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = {};
+    D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    Textured3DStats stats;
+};
+
+static void textured3d_expected_rgba(UINT face, uint8_t out[4]) {
+    static const uint8_t kColors[kTextured3DFaceCount][4] = {
+        {232, 48, 56, 255},
+        {48, 224, 96, 255},
+        {64, 120, 240, 255},
+    };
+    const UINT index = face < kTextured3DFaceCount ? face : 0;
+    std::memcpy(out, kColors[index], 4);
+}
+
+static const TexturePayload* find_texture_family(const std::vector<TexturePayload>& payloads, const char* family) {
+    for (const TexturePayload& payload : payloads) {
+        if (payload.family == family)
+            return &payload;
+    }
+    return nullptr;
+}
+
+static TexturePayload make_textured3d_upload_payload(const TexturePayload& source, UINT face, uint64_t& upload_hash) {
+    TexturePayload upload = source;
+    uint8_t base[4] = {};
+    textured3d_expected_rgba(face, base);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const size_t pixel = (static_cast<size_t>(y) * kFreshTextureWidth + x) * 4;
+            const bool center_proof_patch = x >= 3 && x <= 12 && y >= 3 && y <= 13;
+            if (center_proof_patch) {
+                upload.rgba[pixel + 0] = base[0];
+                upload.rgba[pixel + 1] = base[1];
+                upload.rgba[pixel + 2] = base[2];
+                upload.rgba[pixel + 3] = base[3];
+                continue;
+            }
+            const uint8_t source_byte = source.rgba[(pixel + face * 37u) % source.rgba.size()];
+            const uint8_t accent = static_cast<uint8_t>(source_byte & 31u);
+            upload.rgba[pixel + 0] = static_cast<uint8_t>(std::min<int>(255, base[0] / 2 + accent));
+            upload.rgba[pixel + 1] = static_cast<uint8_t>(std::min<int>(255, base[1] / 2 + accent));
+            upload.rgba[pixel + 2] = static_cast<uint8_t>(std::min<int>(255, base[2] / 2 + accent));
+            upload.rgba[pixel + 3] = 255;
+        }
+    }
+    upload_hash = fnv1a_update(1469598103934665603ull, upload.rgba.data(), upload.rgba.size());
+    return upload;
+}
+
+struct ProjectedPoint {
+    float ndc_x = 0.0f;
+    float ndc_y = 0.0f;
+    float view_z = 0.0f;
+};
+
+static ProjectedPoint project_textured3d_prism_point(float local_x, float local_y, float local_z, float angle) {
+    const float c = static_cast<float>(std::cos(angle));
+    const float s = static_cast<float>(std::sin(angle));
+    const float x = local_x * c + local_z * s;
+    const float z = -local_x * s + local_z * c;
+    const float perspective = 1.0f / (1.95f - z * 0.55f);
+    ProjectedPoint out;
+    out.ndc_x = x * perspective;
+    out.ndc_y = 0.42f + local_y * perspective;
+    out.view_z = z;
+    return out;
+}
+
+static UINT clamp_pixel_from_ndc_x(float ndc_x, UINT width) {
+    const float px = (ndc_x + 1.0f) * 0.5f * static_cast<float>(width);
+    return static_cast<UINT>(std::max<float>(0.0f, std::min<float>(static_cast<float>(width - 1u), px + 0.5f)));
+}
+
+static UINT clamp_pixel_from_ndc_y(float ndc_y, UINT height) {
+    const float py = (1.0f - ndc_y) * 0.5f * static_cast<float>(height);
+    return static_cast<UINT>(std::max<float>(0.0f, std::min<float>(static_cast<float>(height - 1u), py + 0.5f)));
+}
+
+static float depth_from_view_z(float view_z) {
+    return std::max<float>(0.05f, std::min<float>(0.95f, 0.48f - view_z * 0.34f));
+}
+
+static void write_textured3d_triangle(Tex3DVertex* dst, UINT face, const ProjectedPoint& apex,
+                                      const ProjectedPoint& base_a, const ProjectedPoint& base_b) {
+    const float f = static_cast<float>(face);
+    const Tex3DVertex tri[3] = {
+        {{apex.ndc_x, apex.ndc_y, depth_from_view_z(apex.view_z)}, {0.5f, 0.0f, f, 0.0f}},
+        {{base_a.ndc_x, base_a.ndc_y, depth_from_view_z(base_a.view_z)}, {0.0f, 1.0f, f, 0.0f}},
+        {{base_b.ndc_x, base_b.ndc_y, depth_from_view_z(base_b.view_z)}, {1.0f, 1.0f, f, 0.0f}},
+    };
+    std::memcpy(dst, tri, sizeof(tri));
+}
+
+static void write_textured3d_depth_overlap(Tex3DVertex* dst) {
+    const float cx =
+        ndc_x_from_pixel(static_cast<float>(kTextured3DDepthSampleX), static_cast<float>(kBackbufferWidth));
+    const float cy =
+        ndc_y_from_pixel(static_cast<float>(kTextured3DDepthSampleY), static_cast<float>(kBackbufferHeight));
+    constexpr float sx = 0.060f;
+    constexpr float sy = 0.085f;
+    const Tex3DVertex front_unity[3] = {
+        {{cx, cy + sy, 0.15f}, {0.5f, 0.0f, 1.0f, 0.0f}},
+        {{cx - sx, cy - sy, 0.15f}, {0.0f, 1.0f, 1.0f, 0.0f}},
+        {{cx + sx, cy - sy, 0.15f}, {1.0f, 1.0f, 1.0f, 0.0f}},
+    };
+    const Tex3DVertex back_unreal[3] = {
+        {{cx, cy + sy, 0.85f}, {0.5f, 0.0f, 0.0f, 0.0f}},
+        {{cx - sx, cy - sy, 0.85f}, {0.0f, 1.0f, 0.0f, 0.0f}},
+        {{cx + sx, cy - sy, 0.85f}, {1.0f, 1.0f, 0.0f, 0.0f}},
+    };
+    std::memcpy(dst, front_unity, sizeof(front_unity));
+    std::memcpy(dst + 3, back_unreal, sizeof(back_unreal));
+}
+
+static bool populate_textured3d_prism_vertices(Textured3DSceneResources& scene, Textured3DStats& stats, uint32_t frame,
+                                               UINT backbuffer_width, UINT backbuffer_height) {
+    if (!scene.vertex_buffer)
+        return false;
+    Tex3DVertex* mapped = nullptr;
+    if (FAILED(scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+
+    constexpr float kRadius = 0.52f;
+    constexpr float kApexY = 0.48f;
+    constexpr float kBaseY = -0.27f;
+    const float angle = static_cast<float>(frame) * 0.20943951f;
+    const float vertex_angle[3] = {1.570796327f, 3.665191429f, 5.759586532f};
+    const ProjectedPoint apex = project_textured3d_prism_point(0.0f, kApexY, 0.0f, angle);
+    ProjectedPoint base[3] = {};
+    for (UINT i = 0; i < 3; ++i) {
+        const float x = kRadius * static_cast<float>(std::cos(vertex_angle[i]));
+        const float z = kRadius * static_cast<float>(std::sin(vertex_angle[i]));
+        base[i] = project_textured3d_prism_point(x, kBaseY, z, angle);
+    }
+
+    static const UINT kFaceA[kTextured3DFaceCount] = {0, 1, 2};
+    static const UINT kFaceB[kTextured3DFaceCount] = {1, 2, 0};
+    std::array<float, kTextured3DFaceCount> face_depth = {};
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+        const UINT a = kFaceA[face];
+        const UINT b = kFaceB[face];
+        face_depth[face] = (apex.view_z + base[a].view_z + base[b].view_z) / 3.0f;
+        const float centroid_x = (apex.ndc_x + base[a].ndc_x + base[b].ndc_x) / 3.0f;
+        const float centroid_y = (apex.ndc_y + base[a].ndc_y + base[b].ndc_y) / 3.0f;
+        stats.faces[face].sample_x = clamp_pixel_from_ndc_x(centroid_x, backbuffer_width);
+        stats.faces[face].sample_y = clamp_pixel_from_ndc_y(centroid_y, backbuffer_height);
+    }
+    stats.front_face = 0;
+    for (UINT face = 1; face < kTextured3DFaceCount; ++face) {
+        if (face_depth[face] > face_depth[stats.front_face])
+            stats.front_face = face;
+    }
+
+    UINT cursor = 0;
+    for (UINT repeat = 0; repeat < 3; ++repeat) {
+        for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+            const UINT a = kFaceA[face];
+            const UINT b = kFaceB[face];
+            write_textured3d_triangle(mapped + cursor, face, apex, base[a], base[b]);
+            cursor += 3;
+        }
+    }
+
+    write_textured3d_depth_overlap(mapped + cursor);
+    cursor += 6;
+
+    D3D12_RANGE written = {0, kTextured3DVertexCount * sizeof(Tex3DVertex)};
+    scene.vertex_buffer->Unmap(0, &written);
+    stats.vertex_buffer_updates++;
+    return cursor == kTextured3DVertexCount;
+}
+
+static Textured3DSceneResources
+create_textured3d_scene(ID3D12Device* device, D3DCompileFn compile, SerializeRootSignatureFn serialize,
+                        ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator, ID3D12GraphicsCommandList* list,
+                        ID3D12Fence* fence, HANDLE fence_event, UINT64& fence_value, const CorpusStats& corpus,
+                        UINT backbuffer_width, UINT backbuffer_height) {
+    Textured3DSceneResources scene;
+    Textured3DStats& stats = scene.stats;
+    stats.d3dcompiler_loaded = compile != nullptr;
+
+    static const char* kTextured3DHlsl = R"HLSL(
+struct VSIn { float3 pos : POSITION; float4 texface : TEXCOORD0; };
+struct PSIn { float4 pos : SV_Position; float2 uv : TEXCOORD0; float face : TEXCOORD1; };
+Texture2D gUnrealTexture : register(t0);
+Texture2D gUnityTexture : register(t1);
+Texture2D gMicrosoftTexture : register(t2);
+SamplerState gSampler : register(s0);
+PSIn vs_main(VSIn input) {
+    PSIn output;
+    output.pos = float4(input.pos, 1.0f);
+    output.uv = input.texface.xy;
+    output.face = input.texface.z;
+    return output;
+}
+float4 ps_main(PSIn input) : SV_Target {
+    if (input.face < 0.5f)
+        return gUnrealTexture.Sample(gSampler, input.uv);
+    if (input.face < 1.5f)
+        return gUnityTexture.Sample(gSampler, input.uv);
+    return gMicrosoftTexture.Sample(gSampler, input.uv);
+}
+)HLSL";
+
+    ID3DBlob* vs = nullptr;
+    ID3DBlob* ps = nullptr;
+    stats.compile_vs_hr = compile_shader(compile, kTextured3DHlsl, "vs_main", "vs_5_0", &vs);
+    stats.compile_ps_hr = compile_shader(compile, kTextured3DHlsl, "ps_main", "ps_5_0", &ps);
+
+    D3D12_DESCRIPTOR_RANGE range = {};
+    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    range.NumDescriptors = kTextured3DFaceCount;
+    range.BaseShaderRegister = 0;
+    range.RegisterSpace = 0;
+    range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    std::array<D3D12_ROOT_PARAMETER, 1> root_params = {};
+    root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    root_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    root_params[0].DescriptorTable.NumDescriptorRanges = 1;
+    root_params[0].DescriptorTable.pDescriptorRanges = &range;
+    D3D12_STATIC_SAMPLER_DESC sampler = {};
+    sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+    sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.ShaderRegister = 0;
+    sampler.RegisterSpace = 0;
+    sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = static_cast<UINT>(root_params.size());
+    root_desc.pParameters = root_params.data();
+    root_desc.NumStaticSamplers = 1;
+    root_desc.pStaticSamplers = &sampler;
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+    if (device && root_blob) {
+        stats.create_root_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                           IID_PPV_ARGS(&scene.root_signature));
+    }
+
+    if (device && scene.root_signature && vs && ps) {
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = scene.root_signature;
+        pso_desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso_desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso_desc.InputLayout = {input_elements, 2};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = TRUE;
+        pso_desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        pso_desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        pso_desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+        stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+    }
+
+    const char* required_families[kTextured3DFaceCount] = {"unreal", "unity-sdk", "microsoft-sdk"};
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+        const TexturePayload* selected = find_texture_family(corpus.texture_payloads, required_families[face]);
+        if (!selected)
+            continue;
+        Textured3DFaceStats& face_stats = stats.faces[face];
+        face_stats.family = selected->family;
+        face_stats.label = selected->label;
+        face_stats.extension = selected->extension;
+        face_stats.destination = selected->destination;
+        face_stats.source_path = selected->source_path;
+        face_stats.sha256 = selected->sha256;
+        face_stats.declared_size = selected->declared_size;
+        face_stats.file_fnv1a64 = selected->fnv1a64;
+        face_stats.bytes_from_file = selected->bytes_from_file;
+        face_stats.sample_x = 0;
+        face_stats.sample_y = 0;
+        textured3d_expected_rgba(face, face_stats.expected_rgba);
+        stats.face_count++;
+    }
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+        bool first = !stats.faces[face].family.empty();
+        for (UINT prior = 0; prior < face && first; ++prior)
+            first = stats.faces[face].family != stats.faces[prior].family;
+        if (first)
+            stats.unique_families++;
+    }
+
+    if (device) {
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(kTextured3DVertexCount * sizeof(Tex3DVertex));
+        stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
+                                                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                        IID_PPV_ARGS(&scene.vertex_buffer));
+        if (SUCCEEDED(stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
+            Tex3DVertex* mapped = nullptr;
+            scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
+            if (mapped) {
+                std::memset(mapped, 0, kTextured3DVertexCount * sizeof(Tex3DVertex));
+                D3D12_RANGE written = {0, kTextured3DVertexCount * sizeof(Tex3DVertex)};
+                scene.vertex_buffer->Unmap(0, &written);
+            }
+            scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
+            scene.vertex_view.SizeInBytes = kTextured3DVertexCount * sizeof(Tex3DVertex);
+            scene.vertex_view.StrideInBytes = sizeof(Tex3DVertex);
+            stats.vertices_created = kTextured3DVertexCount;
+            stats.vertices_per_draw = kTextured3DVertexCount;
+        }
+    }
+
+    if (device) {
+        D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
+        heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        heap_desc.NumDescriptors = kTextured3DFaceCount;
+        heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        stats.create_descriptor_heap_hr = device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&scene.srv_heap));
+        const UINT descriptor_increment =
+            device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        const D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu =
+            scene.srv_heap ? scene.srv_heap->GetCPUDescriptorHandleForHeapStart() : D3D12_CPU_DESCRIPTOR_HANDLE{};
+        D3D12_RESOURCE_DESC tex_desc =
+            texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+        D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+            if (stats.faces[face].family.empty())
+                continue;
+            stats.create_texture_hr[face] = device->CreateCommittedResource(
+                &default_heap, D3D12_HEAP_FLAG_NONE, &tex_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                IID_PPV_ARGS(&scene.textures[face]));
+            if (SUCCEEDED(stats.create_texture_hr[face]))
+                stats.textures_created++;
+            UINT rows = 0;
+            UINT64 row_bytes = 0;
+            UINT64 upload_bytes = 0;
+            D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+            device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &footprint, &rows, &row_bytes, &upload_bytes);
+            D3D12_RESOURCE_DESC upload_desc = buffer_desc(upload_bytes);
+            stats.create_upload_hr[face] = device->CreateCommittedResource(
+                &upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                IID_PPV_ARGS(&scene.uploads[face]));
+            if (SUCCEEDED(stats.create_upload_hr[face]))
+                stats.upload_buffers_created++;
+            uint64_t upload_hash = 0;
+            TexturePayload source = corpus.texture_payloads.empty() ? TexturePayload{} : corpus.texture_payloads[0];
+            for (const TexturePayload& payload : corpus.texture_payloads) {
+                if (payload.destination == stats.faces[face].destination) {
+                    source = payload;
+                    break;
+                }
+            }
+            TexturePayload upload_payload = make_textured3d_upload_payload(source, face, upload_hash);
+            stats.faces[face].upload_fnv1a64 = upload_hash;
+            if (scene.uploads[face] && fill_texture_upload(scene.uploads[face], footprint, upload_payload,
+                                                           kFreshTextureWidth, kFreshTextureHeight)) {
+                stats.uploads_filled++;
+            }
+            if (scene.srv_heap && scene.textures[face]) {
+                D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc = {};
+                srv_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                srv_desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                srv_desc.Texture2D.MipLevels = 1;
+                device->CreateShaderResourceView(scene.textures[face], &srv_desc,
+                                                 offset_cpu(srv_cpu, descriptor_increment, face));
+                stats.srv_descriptors_created++;
+            }
+        }
+
+        if (allocator && list && queue && fence && fence_event && stats.textures_created == kTextured3DFaceCount &&
+            stats.uploads_filled == kTextured3DFaceCount && SUCCEEDED(allocator->Reset()) &&
+            SUCCEEDED(list->Reset(allocator, nullptr))) {
+            for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+                UINT rows = 0;
+                UINT64 row_bytes = 0;
+                UINT64 upload_bytes = 0;
+                D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+                device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &footprint, &rows, &row_bytes, &upload_bytes);
+                D3D12_TEXTURE_COPY_LOCATION dst = {};
+                dst.pResource = scene.textures[face];
+                dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                dst.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION src = {};
+                src.pResource = scene.uploads[face];
+                src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                src.PlacedFootprint = footprint;
+                list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+                stats.copy_texture_region_commands++;
+                D3D12_RESOURCE_BARRIER barrier = transition_barrier(
+                    scene.textures[face], D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                list->ResourceBarrier(1, &barrier);
+                stats.transition_barriers++;
+            }
+            stats.close_hr = list->Close();
+            if (SUCCEEDED(stats.close_hr)) {
+                ID3D12CommandList* base = list;
+                queue->ExecuteCommandLists(1, &base);
+                fence_value++;
+                stats.signal_hr = queue->Signal(fence, fence_value);
+                stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+            }
+        }
+    }
+
+    if (device) {
+        D3D12_RESOURCE_DESC depth_desc = {};
+        depth_desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        depth_desc.Alignment = 0;
+        depth_desc.Width = backbuffer_width;
+        depth_desc.Height = backbuffer_height;
+        depth_desc.DepthOrArraySize = 1;
+        depth_desc.MipLevels = 1;
+        depth_desc.Format = DXGI_FORMAT_D32_FLOAT;
+        depth_desc.SampleDesc.Count = 1;
+        depth_desc.SampleDesc.Quality = 0;
+        depth_desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        depth_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+        D3D12_CLEAR_VALUE clear_value = {};
+        clear_value.Format = DXGI_FORMAT_D32_FLOAT;
+        clear_value.DepthStencil.Depth = 1.0f;
+        clear_value.DepthStencil.Stencil = 0;
+        D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+        stats.create_depth_texture_hr = device->CreateCommittedResource(
+            &default_heap, D3D12_HEAP_FLAG_NONE, &depth_desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &clear_value,
+            IID_PPV_ARGS(&scene.depth_texture));
+        D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc = {};
+        dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dsv_heap_desc.NumDescriptors = 1;
+        stats.create_dsv_heap_hr = device->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(&scene.dsv_heap));
+        if (scene.depth_texture && scene.dsv_heap) {
+            scene.dsv_handle = scene.dsv_heap->GetCPUDescriptorHandleForHeapStart();
+            D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc = {};
+            dsv_desc.Format = DXGI_FORMAT_D32_FLOAT;
+            dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+            device->CreateDepthStencilView(scene.depth_texture, &dsv_desc, scene.dsv_handle);
+            stats.dsv_descriptors_created = 1;
+        }
+    }
+
+    stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
+                 SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
+                 SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
+                 SUCCEEDED(stats.create_depth_texture_hr) && SUCCEEDED(stats.create_dsv_heap_hr) &&
+                 stats.dsv_descriptors_created == 1 && stats.face_count == kTextured3DFaceCount &&
+                 stats.unique_families == kTextured3DFaceCount && stats.textures_created == kTextured3DFaceCount &&
+                 stats.upload_buffers_created == kTextured3DFaceCount && stats.uploads_filled == kTextured3DFaceCount &&
+                 stats.srv_descriptors_created == kTextured3DFaceCount &&
+                 stats.copy_texture_region_commands == kTextured3DFaceCount &&
+                 stats.transition_barriers == kTextured3DFaceCount && SUCCEEDED(stats.close_hr) &&
+                 SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok && scene.root_signature && scene.pipeline_state &&
+                 scene.vertex_buffer && scene.srv_heap && stats.vertices_per_draw == kTextured3DVertexCount;
+
+    safe_release(vs);
+    safe_release(ps);
+    safe_release(root_blob);
+    return scene;
+}
+
+static void destroy_textured3d_scene(Textured3DSceneResources& scene) {
+    safe_release(scene.dsv_heap);
+    safe_release(scene.depth_texture);
+    safe_release(scene.srv_heap);
+    for (ID3D12Resource*& upload : scene.uploads)
+        safe_release(upload);
+    for (ID3D12Resource*& texture : scene.textures)
+        safe_release(texture);
     safe_release(scene.vertex_buffer);
     safe_release(scene.pipeline_state);
     safe_release(scene.root_signature);
@@ -1856,7 +2445,8 @@ static void indexed_draw_expected_rgba(uint8_t out[4]);
 static void indirect_draw_expected_rgba(uint8_t out[4]);
 
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
-                                        const uint8_t* texture_expected_rgba, uint32_t frame) {
+                                        const uint8_t* texture_expected_rgba, uint32_t frame,
+                                        const Textured3DStats* textured_3d_stats) {
     if (!readback.buffer)
         return false;
     uint8_t* mapped = nullptr;
@@ -1990,6 +2580,32 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
         stamp[2] = 0x00;
         stamp[3] = 0xff;
     }
+    uint8_t* textured_3d_face_stamps[kTextured3DFaceCount] = {};
+    bool textured_3d_face_stamp_valid[kTextured3DFaceCount] = {};
+    if (textured_3d_stats && textured_3d_stats->face_count == kTextured3DFaceCount) {
+        for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+            const Textured3DFaceStats& face_stats = textured_3d_stats->faces[face];
+            textured_3d_face_stamps[face] = readback_pixel(readback, mapped, face_stats.sample_x, face_stats.sample_y);
+            textured_3d_face_stamps[face][0] = static_cast<uint8_t>(face_stats.expected_rgba[0] ^ 0xffu);
+            textured_3d_face_stamps[face][1] = static_cast<uint8_t>(face_stats.expected_rgba[1] ^ 0xffu);
+            textured_3d_face_stamps[face][2] = static_cast<uint8_t>(face_stats.expected_rgba[2] ^ 0xffu);
+            textured_3d_face_stamps[face][3] = static_cast<uint8_t>(face_stats.expected_rgba[3] ^ 0xffu);
+            textured_3d_face_stamp_valid[face] = true;
+        }
+    }
+    uint8_t* textured_3d_depth_overlap_stamp = nullptr;
+    if (textured_3d_stats) {
+        textured_3d_depth_overlap_stamp = readback_pixel(readback, mapped, textured_3d_stats->depth_overlap_sample_x,
+                                                         textured_3d_stats->depth_overlap_sample_y);
+        textured_3d_depth_overlap_stamp[0] =
+            static_cast<uint8_t>(textured_3d_stats->depth_overlap_expected_rgba[0] ^ 0xffu);
+        textured_3d_depth_overlap_stamp[1] =
+            static_cast<uint8_t>(textured_3d_stats->depth_overlap_expected_rgba[1] ^ 0xffu);
+        textured_3d_depth_overlap_stamp[2] =
+            static_cast<uint8_t>(textured_3d_stats->depth_overlap_expected_rgba[2] ^ 0xffu);
+        textured_3d_depth_overlap_stamp[3] =
+            static_cast<uint8_t>(textured_3d_stats->depth_overlap_expected_rgba[3] ^ 0xffu);
+    }
     const size_t center_offset = static_cast<size_t>(center - mapped);
     const size_t heap_alias_stamp_offset = static_cast<size_t>(heap_alias_stamp - mapped);
     const size_t uav_barrier_stamp_offset = static_cast<size_t>(uav_barrier_stamp - mapped);
@@ -2027,47 +2643,59 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     const size_t indirect_stamp_last_offset = static_cast<size_t>(indirect_stamp_last - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
-    D3D12_RANGE written = {std::min({center_offset,
-                                     heap_alias_stamp_offset,
-                                     uav_barrier_stamp_offset,
-                                     uav_barrier_stamp_last_offset,
-                                     rtv_format_stamp_offset,
-                                     rtv_format_stamp_last_offset,
-                                     render_pass_stamp_offset,
-                                     render_pass_stamp_last_offset,
-                                     corpus_shader_stamp_offset,
-                                     corpus_shader_stamp_last_offset,
-                                     srv_sample_stamp_offset,
-                                     srv_sample_stamp_last_offset,
-                                     cbv_stamp_offset,
-                                     cbv_stamp_last_offset,
-                                     indexed_stamp_offset,
-                                     indexed_stamp_last_offset,
-                                     indirect_stamp_offset,
-                                     indirect_stamp_last_offset,
-                                     sm5_stamp_offset,
-                                     stamp_offset}),
-                           std::max({center_offset,
-                                     heap_alias_stamp_offset,
-                                     uav_barrier_stamp_offset,
-                                     uav_barrier_stamp_last_offset,
-                                     rtv_format_stamp_offset,
-                                     rtv_format_stamp_last_offset,
-                                     render_pass_stamp_offset,
-                                     render_pass_stamp_last_offset,
-                                     corpus_shader_stamp_offset,
-                                     corpus_shader_stamp_last_offset,
-                                     srv_sample_stamp_offset,
-                                     srv_sample_stamp_last_offset,
-                                     cbv_stamp_offset,
-                                     cbv_stamp_last_offset,
-                                     indexed_stamp_offset,
-                                     indexed_stamp_last_offset,
-                                     indirect_stamp_offset,
-                                     indirect_stamp_last_offset,
-                                     sm5_stamp_offset,
-                                     stamp_offset}) +
-                               4u};
+    size_t min_written_offset = std::min({center_offset,
+                                          heap_alias_stamp_offset,
+                                          uav_barrier_stamp_offset,
+                                          uav_barrier_stamp_last_offset,
+                                          rtv_format_stamp_offset,
+                                          rtv_format_stamp_last_offset,
+                                          render_pass_stamp_offset,
+                                          render_pass_stamp_last_offset,
+                                          corpus_shader_stamp_offset,
+                                          corpus_shader_stamp_last_offset,
+                                          srv_sample_stamp_offset,
+                                          srv_sample_stamp_last_offset,
+                                          cbv_stamp_offset,
+                                          cbv_stamp_last_offset,
+                                          indexed_stamp_offset,
+                                          indexed_stamp_last_offset,
+                                          indirect_stamp_offset,
+                                          indirect_stamp_last_offset,
+                                          sm5_stamp_offset,
+                                          stamp_offset});
+    size_t max_written_offset = std::max({center_offset,
+                                          heap_alias_stamp_offset,
+                                          uav_barrier_stamp_offset,
+                                          uav_barrier_stamp_last_offset,
+                                          rtv_format_stamp_offset,
+                                          rtv_format_stamp_last_offset,
+                                          render_pass_stamp_offset,
+                                          render_pass_stamp_last_offset,
+                                          corpus_shader_stamp_offset,
+                                          corpus_shader_stamp_last_offset,
+                                          srv_sample_stamp_offset,
+                                          srv_sample_stamp_last_offset,
+                                          cbv_stamp_offset,
+                                          cbv_stamp_last_offset,
+                                          indexed_stamp_offset,
+                                          indexed_stamp_last_offset,
+                                          indirect_stamp_offset,
+                                          indirect_stamp_last_offset,
+                                          sm5_stamp_offset,
+                                          stamp_offset});
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+        if (!textured_3d_face_stamp_valid[face])
+            continue;
+        const size_t face_offset = static_cast<size_t>(textured_3d_face_stamps[face] - mapped);
+        min_written_offset = std::min(min_written_offset, face_offset);
+        max_written_offset = std::max(max_written_offset, face_offset);
+    }
+    if (textured_3d_depth_overlap_stamp) {
+        const size_t depth_overlap_offset = static_cast<size_t>(textured_3d_depth_overlap_stamp - mapped);
+        min_written_offset = std::min(min_written_offset, depth_overlap_offset);
+        max_written_offset = std::max(max_written_offset, depth_overlap_offset);
+    }
+    D3D12_RANGE written = {min_written_offset, max_written_offset + 4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
     return true;
@@ -3192,6 +3820,40 @@ static bool inspect_srv_sample_stamp(DxilReadbackResources& readback, SrvSampleS
     return matches;
 }
 
+static bool inspect_textured3d_faces(DxilReadbackResources& readback, Textured3DStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const UINT face = stats.front_face < kTextured3DFaceCount ? stats.front_face : 0;
+    Textured3DFaceStats& face_stats = stats.faces[face];
+    const uint8_t* pixel = readback_pixel(readback, mapped, face_stats.sample_x, face_stats.sample_y);
+    std::memcpy(face_stats.present_rgba, pixel, sizeof(face_stats.present_rgba));
+    face_stats.samples_checked++;
+    stats.present_samples_checked++;
+    const bool face_match = pixel[0] == face_stats.expected_rgba[0] && pixel[1] == face_stats.expected_rgba[1] &&
+                            pixel[2] == face_stats.expected_rgba[2] && pixel[3] == face_stats.expected_rgba[3];
+    if (face_match) {
+        face_stats.sample_matches++;
+        stats.present_sample_matches++;
+    }
+    const uint8_t* depth_pixel =
+        readback_pixel(readback, mapped, stats.depth_overlap_sample_x, stats.depth_overlap_sample_y);
+    std::memcpy(stats.depth_overlap_present_rgba, depth_pixel, sizeof(stats.depth_overlap_present_rgba));
+    stats.depth_overlap_samples_checked++;
+    const bool depth_match = depth_pixel[0] == stats.depth_overlap_expected_rgba[0] &&
+                             depth_pixel[1] == stats.depth_overlap_expected_rgba[1] &&
+                             depth_pixel[2] == stats.depth_overlap_expected_rgba[2] &&
+                             depth_pixel[3] == stats.depth_overlap_expected_rgba[3];
+    if (depth_match)
+        stats.depth_overlap_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return face_match && depth_match;
+}
+
 static bool inspect_cbv_sample_stamp(DxilReadbackResources& readback, CbvSampleStats& stats) {
     if (!readback.buffer)
         return false;
@@ -3482,6 +4144,7 @@ struct D3DRunStats {
     RenderPassStats render_pass;
     CorpusShaderStats corpus_shader;
     SrvSampleStats srv_sample;
+    Textured3DStats textured_3d;
     CbvSampleStats cbv_sample;
     IndexedDrawStats indexed_draw;
     IndirectDrawStats indirect_draw;
@@ -3651,6 +4314,10 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         create_srv_sample_scene(device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value,
                                 backbuffer_width, backbuffer_height);
     stats.srv_sample = srv_sample.stats;
+    Textured3DSceneResources textured_3d =
+        create_textured3d_scene(device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value,
+                                corpus, backbuffer_width, backbuffer_height);
+    stats.textured_3d = textured_3d.stats;
     CbvSampleSceneResources cbv_sample =
         create_cbv_sample_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.cbv_sample = cbv_sample.stats;
@@ -3663,8 +4330,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
-        dxil_scene.stats.pass && corpus_shader.stats.pass && srv_sample.stats.pass && cbv_sample.stats.pass &&
-        indexed_draw.stats.pass && indirect_draw.stats.pass) {
+        dxil_scene.stats.pass && corpus_shader.stats.pass && srv_sample.stats.pass && textured_3d.stats.pass &&
+        cbv_sample.stats.pass && indexed_draw.stats.pass && indirect_draw.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -3711,6 +4378,22 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetVertexBuffers(0, 1, &srv_sample.vertex_view);
             list->DrawInstanced(srv_sample.stats.vertices_per_draw, 1, 0, 0);
             stats.srv_sample.draw_calls++;
+            ID3D12DescriptorHeap* textured_3d_heaps[] = {textured_3d.srv_heap};
+            list->SetDescriptorHeaps(1, textured_3d_heaps);
+            list->OMSetRenderTargets(1, &rtv, FALSE, &textured_3d.dsv_handle);
+            list->ClearDepthStencilView(textured_3d.dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+            stats.textured_3d.clear_depth_commands++;
+            list->SetGraphicsRootSignature(textured_3d.root_signature);
+            list->SetPipelineState(textured_3d.pipeline_state);
+            list->SetGraphicsRootDescriptorTable(0, textured_3d.srv_heap->GetGPUDescriptorHandleForHeapStart());
+            if (!populate_textured3d_prism_vertices(textured_3d, stats.textured_3d, frame, backbuffer_width,
+                                                    backbuffer_height))
+                break;
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &textured_3d.vertex_view);
+            list->DrawInstanced(textured_3d.stats.vertices_per_draw, 1, 0, 0);
+            stats.textured_3d.draw_calls++;
+            list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
             ID3D12DescriptorHeap* cbv_heaps[] = {cbv_sample.cbv_heap};
             list->SetDescriptorHeaps(1, cbv_heaps);
             list->SetGraphicsRootSignature(cbv_sample.root_signature);
@@ -3846,7 +4529,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->ResourceBarrier(1, &to_copy);
             if (dxil_readback.buffer) {
                 if (!seed_dxil_readback_sentinel(dxil_readback, backbuffer_width, backbuffer_height,
-                                                 stats.gpu_textures.present_expected_rgba, frame))
+                                                 stats.gpu_textures.present_expected_rgba, frame, &stats.textured_3d))
                     break;
                 D3D12_TEXTURE_COPY_LOCATION dst = {};
                 dst.pResource = dxil_readback.buffer;
@@ -3886,6 +4569,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             if (!inspect_corpus_shader_stamp(dxil_readback, stats.corpus_shader))
                 break;
             if (!inspect_srv_sample_stamp(dxil_readback, stats.srv_sample))
+                break;
+            if (!inspect_textured3d_faces(dxil_readback, stats.textured_3d))
                 break;
             if (!inspect_cbv_sample_stamp(dxil_readback, stats.cbv_sample))
                 break;
@@ -3953,6 +4638,17 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.srv_sample.present_sample_matches == visible_frame_target &&
         stats.srv_sample.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.srv_sample.present_pixel_matches == stats.srv_sample.present_pixels_checked;
+    bool textured_3d_all_faces_sampled = true;
+    if (visible_frame_target >= kTextured3DFaceCount) {
+        for (UINT face = 0; face < kTextured3DFaceCount; ++face)
+            textured_3d_all_faces_sampled =
+                textured_3d_all_faces_sampled && stats.textured_3d.faces[face].sample_matches > 0;
+    }
+    stats.textured_3d.present_pass =
+        stats.textured_3d.present_samples_checked == visible_frame_target &&
+        stats.textured_3d.present_sample_matches == stats.textured_3d.present_samples_checked &&
+        stats.textured_3d.depth_overlap_samples_checked == visible_frame_target &&
+        stats.textured_3d.depth_overlap_sample_matches == visible_frame_target && textured_3d_all_faces_sampled;
     stats.cbv_sample.present_pass =
         stats.cbv_sample.present_samples_checked == visible_frame_target &&
         stats.cbv_sample.present_sample_matches == visible_frame_target &&
@@ -3969,25 +4665,29 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indirect_draw.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indirect_draw.present_pixel_matches == stats.indirect_draw.present_pixels_checked;
 
-    stats.pass =
-        stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
-        SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) && SUCCEEDED(stats.create_swapchain_hr) &&
-        SUCCEEDED(stats.create_rtv_heap_hr) && SUCCEEDED(stats.create_allocator_hr) &&
-        SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass &&
-        stats.gpu_textures.present_pass && stats.heap_alias.pass && stats.heap_alias.present_pass &&
-        stats.uav_barrier.pass && stats.uav_barrier.present_pass && stats.rtv_format.pass &&
-        stats.rtv_format.present_pass && stats.render_pass.pass && stats.render_pass.present_pass &&
-        stats.corpus_shader.pass && stats.corpus_shader.present_pass &&
-        stats.corpus_shader.draw_calls == visible_frame_target && stats.srv_sample.pass &&
-        stats.srv_sample.present_pass && stats.srv_sample.draw_calls == visible_frame_target && stats.cbv_sample.pass &&
-        stats.cbv_sample.present_pass && stats.cbv_sample.draw_calls == visible_frame_target &&
-        stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
-        stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.indirect_draw.pass &&
-        stats.indirect_draw.present_pass && stats.indirect_draw.execute_indirect_calls == visible_frame_target &&
-        stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
-        stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
-        stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
-        SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
+    stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
+                 SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
+                 SUCCEEDED(stats.create_swapchain_hr) && SUCCEEDED(stats.create_rtv_heap_hr) &&
+                 SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) &&
+                 SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass && stats.gpu_textures.present_pass &&
+                 stats.heap_alias.pass && stats.heap_alias.present_pass && stats.uav_barrier.pass &&
+                 stats.uav_barrier.present_pass && stats.rtv_format.pass && stats.rtv_format.present_pass &&
+                 stats.render_pass.pass && stats.render_pass.present_pass && stats.corpus_shader.pass &&
+                 stats.corpus_shader.present_pass && stats.corpus_shader.draw_calls == visible_frame_target &&
+                 stats.srv_sample.pass && stats.srv_sample.present_pass &&
+                 stats.srv_sample.draw_calls == visible_frame_target && stats.textured_3d.pass &&
+                 stats.textured_3d.present_pass && stats.textured_3d.draw_calls == visible_frame_target &&
+                 stats.textured_3d.vertex_buffer_updates == visible_frame_target &&
+                 stats.textured_3d.clear_depth_commands == visible_frame_target && stats.cbv_sample.pass &&
+                 stats.cbv_sample.present_pass && stats.cbv_sample.draw_calls == visible_frame_target &&
+                 stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
+                 stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.indirect_draw.pass &&
+                 stats.indirect_draw.present_pass &&
+                 stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.visible_scene.pass &&
+                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
+                 stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -3996,6 +4696,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     destroy_rtv_format_exercise(rtv_format);
     destroy_render_pass_exercise(render_pass);
     destroy_srv_sample_scene(srv_sample);
+    destroy_textured3d_scene(textured_3d);
     destroy_cbv_sample_scene(cbv_sample);
     destroy_indexed_draw_scene(indexed_draw);
     destroy_indirect_draw_scene(indirect_draw);
@@ -4372,6 +5073,92 @@ int main() {
                 d3d.srv_sample.present_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.srv_sample.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.srv_sample.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"textured_3d\": {\n");
+    std::printf("      \"proof_scope\": "
+                "\"rotating_rgb_triangular_pyramid_three_engine_texture_faces_depth_presented_readback\",\n");
+    std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.textured_3d.d3dcompiler_loaded ? "true" : "false");
+    std::printf("      \"vs_5_0_rotating_3d\": \"%s\",\n", hr_hex(d3d.textured_3d.compile_vs_hr).c_str());
+    std::printf("      \"ps_5_0_three_Texture2D_Sample\": \"%s\",\n", hr_hex(d3d.textured_3d.compile_ps_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature_three_srv_table_static_sampler\": \"%s\",\n",
+                hr_hex(d3d.textured_3d.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.textured_3d.create_root_hr).c_str());
+    std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n", hr_hex(d3d.textured_3d.create_pso_hr).c_str());
+    std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.textured_3d.create_vertex_buffer_hr).c_str());
+    std::printf("      \"CreateDepthTexture_D32_FLOAT_ALLOW_DEPTH_STENCIL\": \"%s\",\n",
+                hr_hex(d3d.textured_3d.create_depth_texture_hr).c_str());
+    std::printf("      \"CreateDescriptorHeap_DSV\": \"%s\",\n", hr_hex(d3d.textured_3d.create_dsv_heap_hr).c_str());
+    std::printf("      \"depth_stencil_policy\": \"D32_FLOAT_depth_only_stencil_invalid_expected\",\n");
+    std::printf("      \"CreateTexture2D_R8G8B8A8_UNORM\": [");
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face)
+        std::printf("%s\"%s\"", face ? ", " : "", hr_hex(d3d.textured_3d.create_texture_hr[face]).c_str());
+    std::printf("],\n");
+    std::printf("      \"CreateUploadBuffer\": [");
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face)
+        std::printf("%s\"%s\"", face ? ", " : "", hr_hex(d3d.textured_3d.create_upload_hr[face]).c_str());
+    std::printf("],\n");
+    std::printf("      \"CreateDescriptorHeap_CBV_SRV_UAV_SHADER_VISIBLE\": \"%s\",\n",
+                hr_hex(d3d.textured_3d.create_descriptor_heap_hr).c_str());
+    std::printf("      \"face_count\": %u,\n", d3d.textured_3d.face_count);
+    std::printf("      \"unique_families\": %u,\n", d3d.textured_3d.unique_families);
+    std::printf("      \"textures_created\": %u,\n", d3d.textured_3d.textures_created);
+    std::printf("      \"upload_buffers_created\": %u,\n", d3d.textured_3d.upload_buffers_created);
+    std::printf("      \"uploads_filled\": %u,\n", d3d.textured_3d.uploads_filled);
+    std::printf("      \"CreateShaderResourceView_descriptors\": %u,\n", d3d.textured_3d.srv_descriptors_created);
+    std::printf("      \"CreateDepthStencilView_descriptors\": %u,\n", d3d.textured_3d.dsv_descriptors_created);
+    std::printf("      \"ClearDepthStencilView_commands\": %u,\n", d3d.textured_3d.clear_depth_commands);
+    std::printf(
+        "      \"depth_overlap_policy\": \"front_unity_drawn_first_back_unreal_drawn_last_requires_D32_depth\",\n");
+    std::printf("      \"CopyTextureRegion_commands\": %u,\n", d3d.textured_3d.copy_texture_region_commands);
+    std::printf("      \"transition_barriers\": %u,\n", d3d.textured_3d.transition_barriers);
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.textured_3d.fence_wait_ok ? "true" : "false");
+    std::printf("      \"vertices_created\": %u,\n", d3d.textured_3d.vertices_created);
+    std::printf("      \"vertices_per_draw\": %u,\n", d3d.textured_3d.vertices_per_draw);
+    std::printf("      \"vertex_buffer_updates\": %u,\n", d3d.textured_3d.vertex_buffer_updates);
+    std::printf("      \"root_constant_sets\": %u,\n", d3d.textured_3d.root_constant_sets);
+    std::printf("      \"draw_calls\": %u,\n", d3d.textured_3d.draw_calls);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.textured_3d.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.textured_3d.present_sample_matches);
+    std::printf("      \"depth_overlap_sample_x\": %u,\n", d3d.textured_3d.depth_overlap_sample_x);
+    std::printf("      \"depth_overlap_sample_y\": %u,\n", d3d.textured_3d.depth_overlap_sample_y);
+    std::printf("      \"depth_overlap_expected_rgba\": [%u, %u, %u, %u],\n",
+                d3d.textured_3d.depth_overlap_expected_rgba[0], d3d.textured_3d.depth_overlap_expected_rgba[1],
+                d3d.textured_3d.depth_overlap_expected_rgba[2], d3d.textured_3d.depth_overlap_expected_rgba[3]);
+    std::printf("      \"depth_overlap_present_rgba\": [%u, %u, %u, %u],\n",
+                d3d.textured_3d.depth_overlap_present_rgba[0], d3d.textured_3d.depth_overlap_present_rgba[1],
+                d3d.textured_3d.depth_overlap_present_rgba[2], d3d.textured_3d.depth_overlap_present_rgba[3]);
+    std::printf("      \"depth_overlap_samples_checked\": %u,\n", d3d.textured_3d.depth_overlap_samples_checked);
+    std::printf("      \"depth_overlap_sample_matches\": %u,\n", d3d.textured_3d.depth_overlap_sample_matches);
+    std::printf("      \"faces\": [\n");
+    for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
+        const Textured3DFaceStats& face_stats = d3d.textured_3d.faces[face];
+        std::printf("        {\n");
+        std::printf("          \"index\": %u,\n", face);
+        std::printf("          \"family\": \"%s\",\n", json_escape(face_stats.family).c_str());
+        std::printf("          \"label\": \"%s\",\n", json_escape(face_stats.label).c_str());
+        std::printf("          \"extension\": \"%s\",\n", json_escape(face_stats.extension).c_str());
+        std::printf("          \"destination\": \"%s\",\n", json_escape(face_stats.destination).c_str());
+        std::printf("          \"source_path\": \"%s\",\n", json_escape(face_stats.source_path).c_str());
+        std::printf("          \"sha256\": \"%s\",\n", json_escape(face_stats.sha256).c_str());
+        std::printf("          \"declared_size\": %llu,\n", static_cast<unsigned long long>(face_stats.declared_size));
+        std::printf("          \"file_fnv1a64\": \"%016llx\",\n",
+                    static_cast<unsigned long long>(face_stats.file_fnv1a64));
+        std::printf("          \"upload_fnv1a64\": \"%016llx\",\n",
+                    static_cast<unsigned long long>(face_stats.upload_fnv1a64));
+        std::printf("          \"bytes_from_file\": %u,\n", face_stats.bytes_from_file);
+        std::printf("          \"sample_x\": %u,\n", face_stats.sample_x);
+        std::printf("          \"sample_y\": %u,\n", face_stats.sample_y);
+        std::printf("          \"expected_rgba\": [%u, %u, %u, %u],\n", face_stats.expected_rgba[0],
+                    face_stats.expected_rgba[1], face_stats.expected_rgba[2], face_stats.expected_rgba[3]);
+        std::printf("          \"present_rgba\": [%u, %u, %u, %u],\n", face_stats.present_rgba[0],
+                    face_stats.present_rgba[1], face_stats.present_rgba[2], face_stats.present_rgba[3]);
+        std::printf("          \"samples_checked\": %u,\n", face_stats.samples_checked);
+        std::printf("          \"sample_matches\": %u\n", face_stats.sample_matches);
+        std::printf("        }%s\n", face + 1u < kTextured3DFaceCount ? "," : "");
+    }
+    std::printf("      ],\n");
+    std::printf("      \"present_ok\": %s,\n", d3d.textured_3d.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.textured_3d.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"cbv_sample\": {\n");
     std::printf("      \"proof_scope\": \"shader_visible_cbv_descriptor_table_constant_buffer_presented_readback\",\n");

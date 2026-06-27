@@ -2208,7 +2208,7 @@ struct ReplayState {
 	  render_enc.useResource(null_vertex_arg_buf, WMTResourceUsageRead,
 	                         WMTRenderStageVertex);
 	  if (HasSwapchainRenderTarget() &&
-	      TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+	      TakeLogBudget(&g_swapchain_draw_logs, 384)) {
         Logger::info(str::format(
             "M12 non-stage-in filled missing vertex buffers count=", filled,
             " mask=0x", std::hex, bound_vertex_buffer_slots, std::dec, " pso=",
@@ -4381,7 +4381,7 @@ struct ReplayState {
       if (root_cbv_set[i]) {
         bind_root_buffer(root_cbvs[i], D3D12_ROOT_PARAMETER_TYPE_CBV, "CBV");
         if (stage_in_vertex_inputs && HasSwapchainRenderTarget() &&
-            TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+            TakeLogBudget(&g_swapchain_draw_logs, 384)) {
           D3D12_SHADER_VISIBILITY cbv_vis = D3D12_SHADER_VISIBILITY_ALL;
           uint32_t cbv_slot =
               root_register_and_vis(D3D12_ROOT_PARAMETER_TYPE_CBV, &cbv_vis);
@@ -5796,7 +5796,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           break;
         }
         if (st.ShouldSkipUnsafeMSCOffscreenPass()) {
-          if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+          if (TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::warn(str::format(
                 "M12 skipping unsafe MSC offscreen DrawInstanced reason=",
                 st.UnsafeMSCOffscreenPassReason(), " v=", cmd->vertex_count,
@@ -5822,7 +5822,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                     cmd->instance_count, cmd->start_vertex);
           st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
-              TakeLogBudget(&g_swapchain_draw_logs, 48)) {
+              TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::info(str::format(
                 "M12 swapchain GeometryDraw encoded v=", cmd->vertex_count,
                 " i=", cmd->instance_count, " pso=", (void *)st.pso, " ",
@@ -5861,7 +5861,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                   "draw_instanced"))
             st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
-              TakeLogBudget(&g_swapchain_draw_logs, 48)) {
+              TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::info(str::format(
                 "M12 swapchain DrawInstanced encoded v=", cmd->vertex_count,
                 " i=", cmd->instance_count, " start=", cmd->start_vertex,
@@ -5931,7 +5931,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 unsafe_stage_in_reason)) {
           __atomic_add_fetch(&g_quarantine_indexed_stage_in, 1,
                              __ATOMIC_RELAXED);
-          if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+          if (TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::warn(str::format(
                 "M12 skipping unsafe MSC indexed stage-in DrawIndexedInstanced "
                 "reason=",
@@ -5941,7 +5941,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           break;
         }
         if (st.ShouldSkipUnsafeMSCOffscreenPass()) {
-          if (TakeLogBudget(&g_swapchain_draw_logs, 96)) {
+          if (TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::warn(str::format(
                 "M12 skipping unsafe MSC offscreen DrawIndexedInstanced "
                 "reason=",
@@ -5963,7 +5963,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                     cmd->instance_count, cmd->start_index);
           st.MarkSwapchainWorkEncoded();
           if (st.HasSwapchainRenderTarget() &&
-              TakeLogBudget(&g_swapchain_draw_logs, 48)) {
+              TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::info(str::format(
                 "M12 swapchain GeometryDrawIndexed encoded idx=",
                 cmd->index_count, " inst=", cmd->instance_count,
@@ -6151,7 +6151,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             }
           }
           if (st.HasSwapchainRenderTarget() &&
-              TakeLogBudget(&g_swapchain_draw_logs, 48)) {
+              TakeLogBudget(&g_swapchain_draw_logs, 384)) {
             Logger::info(str::format(
                 "M12 swapchain DrawIndexedInstanced encoded idx=",
                 cmd->index_count, " inst=", cmd->instance_count,
@@ -6339,7 +6339,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                     "execute_indirect_draw")) {
               st.MarkSwapchainWorkEncoded();
               if (st.HasSwapchainRenderTarget() &&
-                  TakeLogBudget(&g_swapchain_indirect_draw_logs, 48)) {
+                  TakeLogBudget(&g_swapchain_indirect_draw_logs, 128)) {
                 Logger::info(str::format(
                     "M12 swapchain ExecuteIndirect DrawInstanced encoded v=",
                     args.VertexCountPerInstance, " i=", args.InstanceCount,

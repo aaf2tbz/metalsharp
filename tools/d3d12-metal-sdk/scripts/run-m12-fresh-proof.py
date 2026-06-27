@@ -642,6 +642,92 @@ def cache_file_record(path: Path) -> dict[str, Any]:
     }
 
 
+
+def validate_textured_3d_face_provenance(corpus_tsv: Path, faces: list[dict[str, Any]]) -> dict[str, Any]:
+    errors: list[str] = []
+    records: list[dict[str, Any]] = []
+    corpus_root = corpus_tsv.parent.resolve()
+    rows: dict[str, dict[str, str]] = {}
+    try:
+        for line_index, line in enumerate(corpus_tsv.read_text().splitlines()):
+            if line_index == 0:
+                continue
+            fields = line.split("\t")
+            if len(fields) < 8:
+                continue
+            family, label, category, extension, size, expected_sha256, destination, source_path = fields[:8]
+            if category == "texture":
+                rows[destination] = {
+                    "family": family,
+                    "label": label,
+                    "extension": extension,
+                    "size": size,
+                    "sha256": expected_sha256,
+                    "source_path": source_path,
+                }
+    except Exception as error:  # noqa: BLE001 - report malformed proof input.
+        errors.append(f"read_tsv_failed:{error}")
+    for face in faces:
+        face_index = face.get("index", -1)
+        record: dict[str, Any] = {"face": int(face_index if face_index is not None else -1)}
+        destination = str(face.get("destination", ""))
+        record["destination"] = destination
+        row = rows.get(destination)
+        if not row:
+            errors.append(f"missing_tsv_row:{destination}")
+            record["ok"] = False
+            records.append(record)
+            continue
+        path = Path(destination).resolve()
+        try:
+            inside_corpus = path == corpus_root or corpus_root in path.parents
+        except RuntimeError:
+            inside_corpus = False
+        actual_size = path.stat().st_size if path.exists() else -1
+        expected_size = int(row.get("size", "0") or 0)
+        declared_size = int(face.get("declared_size", -1) or -1)
+        actual_sha = sha256(path) if path.exists() else ""
+        record.update(
+            {
+                "exists": path.exists(),
+                "inside_corpus": inside_corpus,
+                "actual_size": actual_size,
+                "expected_size": expected_size,
+                "declared_size": declared_size,
+                "actual_sha256": actual_sha,
+                "expected_sha256": row.get("sha256", ""),
+                "family": face.get("family", ""),
+                "expected_family": row.get("family", ""),
+                "label": face.get("label", ""),
+                "expected_label": row.get("label", ""),
+                "extension": face.get("extension", ""),
+                "expected_extension": row.get("extension", ""),
+                "source_path": face.get("source_path", ""),
+                "expected_source_path": row.get("source_path", ""),
+            }
+        )
+        ok = (
+            path.exists()
+            and inside_corpus
+            and actual_size == expected_size
+            and declared_size == expected_size
+            and actual_sha == row.get("sha256", "")
+            and face.get("sha256") == row.get("sha256", "")
+            and face.get("family") == row.get("family", "")
+            and face.get("label") == row.get("label", "")
+            and face.get("extension") == row.get("extension", "")
+            and face.get("source_path") == row.get("source_path", "")
+        )
+        record["ok"] = ok
+        if not ok:
+            errors.append(f"invalid_face_provenance:{destination}")
+        records.append(record)
+    expected_families = {"unreal", "unity-sdk", "microsoft-sdk"}
+    actual_families = {str(face.get("family", "")) for face in faces}
+    if actual_families != expected_families:
+        errors.append(f"unexpected_face_families:{sorted(actual_families)}")
+    return {"ok": not errors, "records": records, "errors": errors}
+
 def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3d12_json: dict[str, Any], visible_frames: int) -> dict[str, Any]:
     errors: list[str] = []
     visible_scene = d3d12_json.get("visible_scene", {}) if d3d12_json else {}
@@ -650,6 +736,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     corpus_vertices = int(corpus_shader.get("vertices_per_draw", 0) or 0)
     srv_sample = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
     srv_vertices = int(srv_sample.get("vertices_per_draw", 0) or 0)
+    textured_3d = d3d12_json.get("textured_3d", {}) if d3d12_json else {}
+    textured_3d_vertices = int(textured_3d.get("vertices_per_draw", 0) or 0)
     cbv_sample = d3d12_json.get("cbv_sample", {}) if d3d12_json else {}
     cbv_vertices = int(cbv_sample.get("vertices_per_draw", 0) or 0)
     indexed_draw = d3d12_json.get("indexed_draw", {}) if d3d12_json else {}
@@ -663,6 +751,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     corpus_draws = re.findall(corpus_pattern, stderr_text) if corpus_vertices else []
     srv_pattern = rf"M12 swapchain DrawInstanced encoded v={srv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     srv_draws = re.findall(srv_pattern, stderr_text) if srv_vertices else []
+    textured_3d_pattern = rf"M12 swapchain DrawInstanced encoded v={textured_3d_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    textured_3d_draws = re.findall(textured_3d_pattern, stderr_text) if textured_3d_vertices else []
     cbv_pattern = rf"M12 swapchain DrawInstanced encoded v={cbv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     cbv_draws = re.findall(cbv_pattern, stderr_text) if cbv_vertices else []
     indexed_pattern = rf"M12 swapchain DrawIndexedInstanced encoded idx={indexed_count} inst=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
@@ -673,6 +763,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     sm5_unique_draws = sorted(set(sm5_draws))
     corpus_unique_draws = sorted(set(corpus_draws))
     srv_unique_draws = sorted(set(srv_draws))
+    textured_3d_unique_draws = sorted(set(textured_3d_draws))
     cbv_unique_draws = sorted(set(cbv_draws))
     indexed_unique_draws = sorted(set(indexed_draws))
     indirect_unique_draws = sorted(set(indirect_draws))
@@ -684,6 +775,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_corpus_presented_draw_hashes")
     if not srv_draws:
         errors.append("missing_srv_sample_presented_draw_hashes")
+    if not textured_3d_draws:
+        errors.append("missing_textured_3d_presented_draw_hashes")
     if not cbv_draws:
         errors.append("missing_cbv_sample_presented_draw_hashes")
     if not indexed_draws:
@@ -698,6 +791,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("unexpected_multiple_corpus_presented_shader_pairs")
     if len(srv_unique_draws) > 1:
         errors.append("unexpected_multiple_srv_sample_presented_shader_pairs")
+    if len(textured_3d_unique_draws) > 1:
+        errors.append("unexpected_multiple_textured_3d_presented_shader_pairs")
     if len(cbv_unique_draws) > 1:
         errors.append("unexpected_multiple_cbv_sample_presented_shader_pairs")
     if len(indexed_unique_draws) > 1:
@@ -708,11 +803,16 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     sm5_vs, sm5_ps = sm5_unique_draws[0] if sm5_unique_draws else ("", "")
     corpus_vs, corpus_ps = corpus_unique_draws[0] if corpus_unique_draws else ("", "")
     srv_vs, srv_ps = srv_unique_draws[0] if srv_unique_draws else ("", "")
+    textured_3d_vs, textured_3d_ps = textured_3d_unique_draws[0] if textured_3d_unique_draws else ("", "")
     cbv_vs, cbv_ps = cbv_unique_draws[0] if cbv_unique_draws else ("", "")
     indexed_vs, indexed_ps = indexed_unique_draws[0] if indexed_unique_draws else ("", "")
     indirect_vs, indirect_ps = indirect_unique_draws[0] if indirect_unique_draws else ("", "")
     if indexed_unique_draws and indirect_unique_draws and (indirect_vs, indirect_ps) == (indexed_vs, indexed_ps):
         errors.append("indirect_shader_pair_reused_indexed_pair")
+    if textured_3d_unique_draws and srv_unique_draws and (textured_3d_vs, textured_3d_ps) == (srv_vs, srv_ps):
+        errors.append("textured_3d_shader_pair_reused_srv_sample_pair")
+    if textured_3d_unique_draws and cbv_unique_draws and (textured_3d_vs, textured_3d_ps) == (cbv_vs, cbv_ps):
+        errors.append("textured_3d_shader_pair_reused_cbv_sample_pair")
 
     required_paths: list[Path] = []
     for shader_hash in [dxil_vs, dxil_ps]:
@@ -797,6 +897,14 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ),
         None,
     )
+    textured_3d_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == textured_3d_vs and p.get("d3d12", {}).get("ps_hash") == textured_3d_ps
+        ),
+        None,
+    )
     indexed_pso = next(
         (
             p
@@ -823,12 +931,23 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_srv_sample_presented_pso_manifest")
     if not cbv_pso:
         errors.append("missing_cbv_sample_presented_pso_manifest")
+    if not textured_3d_pso:
+        errors.append("missing_textured_3d_presented_pso_manifest")
     if not indexed_pso:
         errors.append("missing_indexed_presented_pso_manifest")
     if not indirect_pso:
         errors.append("missing_indirect_presented_pso_manifest")
     if indirect_pso and indexed_pso and indirect_pso.get("manifest") == indexed_pso.get("manifest"):
         errors.append("indirect_pso_manifest_reused_indexed_manifest")
+    if textured_3d_pso and srv_pso and textured_3d_pso.get("manifest") == srv_pso.get("manifest"):
+        errors.append("textured_3d_pso_manifest_reused_srv_sample_manifest")
+    if textured_3d_pso:
+        if textured_3d_pso.get("depth_format") != "depth32float":
+            errors.append("textured_3d_pso_missing_depth32float")
+        if textured_3d_pso.get("stencil_format") != "invalid":
+            errors.append("textured_3d_pso_unexpected_stencil_format")
+        if int(textured_3d_pso.get("d3d12", {}).get("dsv_format", 0) or 0) != 40:
+            errors.append("textured_3d_pso_missing_d32_dsv_format")
     metallib_policy: dict[str, Any] = {}
     sm5_metallibs = [shader_cache_dir / "dxmt_sm50_vs_main.metallib", shader_cache_dir / "dxmt_sm50_ps_main.metallib"]
     for name, pso in [
@@ -836,6 +955,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ("sm5", sm5_pso),
         ("corpus", corpus_pso),
         ("srv_sample", srv_pso),
+        ("textured_3d", textured_3d_pso),
         ("cbv_sample", cbv_pso),
         ("indexed_draw", indexed_pso),
         ("indirect_draw", indirect_pso),
@@ -872,7 +992,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
                 "referenced": referenced_records,
                 "required_msl_hashes": [dxil_vs, dxil_ps],
             }
-        elif name in ("sm5", "corpus", "srv_sample", "cbv_sample", "indexed_draw", "indirect_draw") and all(
+        elif name in ("sm5", "corpus", "srv_sample", "textured_3d", "cbv_sample", "indexed_draw", "indirect_draw") and all(
             path.exists() and path.stat().st_size > 0 for path in sm5_metallibs
         ):
             metallib_policy[name] = {
@@ -886,6 +1006,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             errors.append(f"{name}_metallib_policy_unproven")
 
     presented_log_required = min(visible_frames, 6)
+    textured_3d_presented_log_required = min(visible_frames, 4)
     present_tie_ok = (
         len(dxil_draws) >= presented_log_required
         and len(sm5_draws) >= presented_log_required
@@ -895,6 +1016,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and len(corpus_unique_draws) == 1
         and len(srv_draws) >= presented_log_required
         and len(srv_unique_draws) == 1
+        and len(textured_3d_draws) >= textured_3d_presented_log_required
+        and len(textured_3d_unique_draws) == 1
         and len(cbv_draws) >= presented_log_required
         and len(cbv_unique_draws) == 1
         and len(indexed_draws) >= presented_log_required
@@ -935,6 +1058,13 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "unique_pairs": [[vs, ps] for vs, ps in srv_unique_draws],
             "vertices": srv_vertices,
         },
+        "textured_3d_presented_hashes": {
+            "vs": textured_3d_vs,
+            "ps": textured_3d_ps,
+            "logged_draws": len(textured_3d_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in textured_3d_unique_draws],
+            "vertices": textured_3d_vertices,
+        },
         "cbv_sample_presented_hashes": {
             "vs": cbv_vs,
             "ps": cbv_ps,
@@ -957,6 +1087,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "vertices": indirect_vertices,
         },
         "presented_log_required": presented_log_required,
+        "textured_3d_presented_log_required": textured_3d_presented_log_required,
         "present_tie_ok": present_tie_ok,
         "required_files": required_files,
         "pso_manifests": pso_records,
@@ -964,6 +1095,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         "sm5_pso_manifest": sm5_pso,
         "corpus_pso_manifest": corpus_pso,
         "srv_sample_pso_manifest": srv_pso,
+        "textured_3d_pso_manifest": textured_3d_pso,
         "cbv_sample_pso_manifest": cbv_pso,
         "indexed_pso_manifest": indexed_pso,
         "indirect_pso_manifest": indirect_pso,
@@ -1091,6 +1223,10 @@ def run_fresh_game(
         re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=24\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=24\s+i=1", proc.stderr,
                   re.IGNORECASE)
     )
+    textured_3d_draw_skipped = bool(
+        re.search(r"M12 swapchain DrawInstanced skipped v=33\s+i=1|DrawInstanced\s+SKIPPED\s+v=33\s+i=1", proc.stderr,
+                  re.IGNORECASE)
+    )
     render_encoder_encode_failed = bool(re.search(r"M12 render encoder encode failed", proc.stderr, re.IGNORECASE))
     stderr_assertion = "std::__condvar" in proc.stderr or "Assertion" in proc.stderr
     frames_presented = 0
@@ -1106,6 +1242,7 @@ def run_fresh_game(
     render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
     corpus_shader_json = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
     srv_sample_json = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
+    textured_3d_json = d3d12_json.get("textured_3d", {}) if d3d12_json else {}
     cbv_sample_json = d3d12_json.get("cbv_sample", {}) if d3d12_json else {}
     indexed_draw_json = d3d12_json.get("indexed_draw", {}) if d3d12_json else {}
     indirect_draw_json = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
@@ -1118,6 +1255,67 @@ def run_fresh_game(
     cbv_sample_expected_rgba = [208, 48, 160, 255]
     indexed_draw_expected_rgba = [240, 200, 48, 255]
     indirect_draw_expected_rgba = [80, 224, 240, 255]
+    textured_3d_expected_rgba = [[232, 48, 56, 255], [48, 224, 96, 255], [64, 120, 240, 255]]
+    textured_3d_faces = textured_3d_json.get("faces", []) if isinstance(textured_3d_json, dict) else []
+    textured_3d_face_provenance = validate_textured_3d_face_provenance(corpus_tsv, textured_3d_faces)
+    textured_3d_ok = bool(
+        textured_3d_json.get("ok") is True
+        and textured_3d_json.get("present_ok") is True
+        and textured_3d_json.get("proof_scope") == "rotating_rgb_triangular_pyramid_three_engine_texture_faces_depth_presented_readback"
+        and textured_3d_json.get("D3DCompile_loaded") is True
+        and textured_3d_json.get("vs_5_0_rotating_3d") == "0x00000000"
+        and textured_3d_json.get("ps_5_0_three_Texture2D_Sample") == "0x00000000"
+        and textured_3d_json.get("D3D12SerializeRootSignature_three_srv_table_static_sampler") == "0x00000000"
+        and textured_3d_json.get("CreateRootSignature") == "0x00000000"
+        and textured_3d_json.get("CreateGraphicsPipelineState") == "0x00000000"
+        and textured_3d_json.get("CreateVertexBuffer") == "0x00000000"
+        and textured_3d_json.get("CreateDepthTexture_D32_FLOAT_ALLOW_DEPTH_STENCIL") == "0x00000000"
+        and textured_3d_json.get("CreateDescriptorHeap_DSV") == "0x00000000"
+        and textured_3d_json.get("depth_stencil_policy") == "D32_FLOAT_depth_only_stencil_invalid_expected"
+        and textured_3d_json.get("CreateTexture2D_R8G8B8A8_UNORM") == ["0x00000000"] * 3
+        and textured_3d_json.get("CreateUploadBuffer") == ["0x00000000"] * 3
+        and textured_3d_json.get("CreateDescriptorHeap_CBV_SRV_UAV_SHADER_VISIBLE") == "0x00000000"
+        and int(textured_3d_json.get("face_count", 0) or 0) == 3
+        and int(textured_3d_json.get("unique_families", 0) or 0) == 3
+        and int(textured_3d_json.get("textures_created", 0) or 0) == 3
+        and int(textured_3d_json.get("upload_buffers_created", 0) or 0) == 3
+        and int(textured_3d_json.get("uploads_filled", 0) or 0) == 3
+        and int(textured_3d_json.get("CreateShaderResourceView_descriptors", 0) or 0) == 3
+        and int(textured_3d_json.get("CreateDepthStencilView_descriptors", 0) or 0) == 1
+        and int(textured_3d_json.get("ClearDepthStencilView_commands", 0) or 0) == visible_frames
+        and textured_3d_json.get("depth_overlap_policy") == "front_unity_drawn_first_back_unreal_drawn_last_requires_D32_depth"
+        and int(textured_3d_json.get("CopyTextureRegion_commands", 0) or 0) == 3
+        and int(textured_3d_json.get("transition_barriers", 0) or 0) == 3
+        and textured_3d_json.get("fence_wait_ok") is True
+        and int(textured_3d_json.get("vertices_created", 0) or 0) == 33
+        and int(textured_3d_json.get("vertices_per_draw", 0) or 0) == 33
+        and int(textured_3d_json.get("vertex_buffer_updates", 0) or 0) == visible_frames
+        and int(textured_3d_json.get("root_constant_sets", 0) or 0) == 0
+        and int(textured_3d_json.get("draw_calls", 0) or 0) == visible_frames
+        and int(textured_3d_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(textured_3d_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(textured_3d_json.get("depth_overlap_sample_x", 0) or 0) == 704
+        and int(textured_3d_json.get("depth_overlap_sample_y", 0) or 0) == 156
+        and textured_3d_json.get("depth_overlap_expected_rgba") == [48, 224, 96, 255]
+        and textured_3d_json.get("depth_overlap_present_rgba") == [48, 224, 96, 255]
+        and int(textured_3d_json.get("depth_overlap_samples_checked", 0) or 0) == visible_frames
+        and int(textured_3d_json.get("depth_overlap_sample_matches", 0) or 0) == visible_frames
+        and len(textured_3d_faces) == 3
+        and [int(face.get("index", -1)) for face in textured_3d_faces] == [0, 1, 2]
+        and [face.get("family") for face in textured_3d_faces] == ["unreal", "unity-sdk", "microsoft-sdk"]
+        and textured_3d_face_provenance["ok"]
+        and all(str(face.get("sha256", "")) for face in textured_3d_faces)
+        and all(str(face.get("file_fnv1a64", "")) not in ("", "0000000000000000") for face in textured_3d_faces)
+        and all(str(face.get("upload_fnv1a64", "")) not in ("", "0000000000000000") for face in textured_3d_faces)
+        and all(int(face.get("declared_size", 0) or 0) > 0 for face in textured_3d_faces)
+        and all(int(face.get("bytes_from_file", 0) or 0) > 0 for face in textured_3d_faces)
+        and all(face.get("expected_rgba") == textured_3d_expected_rgba[int(face.get("index", -1))] for face in textured_3d_faces)
+        and all(face.get("present_rgba") == face.get("expected_rgba") for face in textured_3d_faces)
+        and sum(int(face.get("samples_checked", 0) or 0) for face in textured_3d_faces) == visible_frames
+        and sum(int(face.get("sample_matches", 0) or 0) for face in textured_3d_faces) == visible_frames
+        and all(int(face.get("samples_checked", 0) or 0) > 0 for face in textured_3d_faces)
+        and all(int(face.get("sample_matches", 0) or 0) > 0 for face in textured_3d_faces)
+    )
     game_json_ok = bool(
         parsed
         and parsed.get("pass") is True
@@ -1318,6 +1516,7 @@ def run_fresh_game(
         and srv_sample_json.get("expected_rgba") == srv_sample_expected_rgba
         and srv_sample_json.get("present_rgba") == srv_sample_expected_rgba
         and srv_sample_json.get("present_last_rgba") == srv_sample_expected_rgba
+        and textured_3d_ok
         and cbv_sample_json.get("ok") is True
         and cbv_sample_json.get("present_ok") is True
         and cbv_sample_json.get("proof_scope") == "shader_visible_cbv_descriptor_table_constant_buffer_presented_readback"
@@ -1415,13 +1614,16 @@ def run_fresh_game(
         "present_indirect_counts": present_indirect_counts,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
         "dxil_draw_encoded_required": min(frames_presented, 6),
-        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect encoded logs are capped samples; long runs additionally require every present to report draws>=5, indexed>=1, indirect>=1, and all JSON/readback lanes to pass.",
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect encoded logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=1, indirect>=1, and all JSON/readback lanes to pass.",
         "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
         "dxil_vertex_pull_snapshot_required": min(frames_presented, 4),
         "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, bound_vbs=1, plus per-frame JSON/readback validation.",
         "dxil_draw_skipped": dxil_draw_skipped,
         "indexed_draw_skipped": indexed_draw_skipped,
         "indirect_draw_skipped": indirect_draw_skipped,
+        "textured_3d_draw_skipped": textured_3d_draw_skipped,
+        "textured_3d_ok": textured_3d_ok,
+        "textured_3d_face_provenance": textured_3d_face_provenance,
         "render_encoder_encode_failed": render_encoder_encode_failed,
         "frames_presented": frames_presented,
         "stderr_assertion": stderr_assertion,
@@ -1436,7 +1638,7 @@ def run_fresh_game(
         and len(present_draw_counts) == frames_presented
         and len(present_indexed_counts) == frames_presented
         and len(present_indirect_counts) == frames_presented
-        and all(draws >= 5 for draws in present_draw_counts)
+        and all(draws >= 6 for draws in present_draw_counts)
         and all(indexed >= 1 for indexed in present_indexed_counts)
         and all(indirect >= 1 for indirect in present_indirect_counts)
         and dxil_draw_encoded_count >= min(frames_presented, 6)
@@ -1444,6 +1646,7 @@ def run_fresh_game(
         and not dxil_draw_skipped
         and not indexed_draw_skipped
         and not indirect_draw_skipped
+        and not textured_3d_draw_skipped
         and not render_encoder_encode_failed
         and draw_line_count >= visible_frames
         and not stderr_assertion,
