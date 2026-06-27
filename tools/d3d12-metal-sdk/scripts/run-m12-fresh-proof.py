@@ -577,6 +577,182 @@ float4 PSMain(PSIn input) : SV_TARGET {
     }
 
 
+def cache_file_record(path: Path) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "size": path.stat().st_size if path.exists() else 0,
+        "sha256": sha256(path) if path.exists() else "",
+    }
+
+
+def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3d12_json: dict[str, Any], visible_frames: int) -> dict[str, Any]:
+    errors: list[str] = []
+    visible_scene = d3d12_json.get("visible_scene", {}) if d3d12_json else {}
+    visible_vertices = int(visible_scene.get("vertices_per_frame", 0) or 0)
+    dxil_draws = re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1 .*?vs=([0-9a-f]{16}) ps=([0-9a-f]{16})", stderr_text)
+    sm5_pattern = rf"M12 swapchain DrawInstanced encoded v={visible_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    sm5_draws = re.findall(sm5_pattern, stderr_text) if visible_vertices else []
+    dxil_unique_draws = sorted(set(dxil_draws))
+    sm5_unique_draws = sorted(set(sm5_draws))
+    if not dxil_draws:
+        errors.append("missing_dxil_presented_draw_hashes")
+    if not sm5_draws:
+        errors.append("missing_sm5_presented_draw_hashes")
+    if len(dxil_unique_draws) > 1:
+        errors.append("unexpected_multiple_dxil_presented_shader_pairs")
+    if len(sm5_unique_draws) > 1:
+        errors.append("unexpected_multiple_sm5_presented_shader_pairs")
+    dxil_vs, dxil_ps = dxil_unique_draws[0] if dxil_unique_draws else ("", "")
+    sm5_vs, sm5_ps = sm5_unique_draws[0] if sm5_unique_draws else ("", "")
+
+    required_paths: list[Path] = []
+    for shader_hash in [dxil_vs, dxil_ps]:
+        if shader_hash:
+            required_paths.extend(
+                shader_cache_dir / f"{shader_hash}{suffix}"
+                for suffix in [".dxbc", ".module.txt", ".dxil_report.txt", ".msl"]
+            )
+    required_paths.extend([shader_cache_dir / "dxmt_sm50_vs_main.metallib", shader_cache_dir / "dxmt_sm50_ps_main.metallib"])
+    required_files = [cache_file_record(path) for path in required_paths]
+    for record in required_files:
+        if not record["exists"] or int(record["size"] or 0) <= 0:
+            errors.append(f"missing_or_empty_cache_file:{record['path']}")
+
+    msl_checks: dict[str, Any] = {}
+    if dxil_ps:
+        ps_msl = shader_cache_dir / f"{dxil_ps}.msl"
+        text = ps_msl.read_text(errors="replace") if ps_msl.exists() else ""
+        msl_checks["dxil_ps_magenta_constants"] = all(
+            token in text for token in ["result.x = 1.0f;", "result.y = 0;", "result.z = 1.0f;", "result.w = 1.0f;"]
+        )
+        if not msl_checks["dxil_ps_magenta_constants"]:
+            errors.append("dxil_ps_msl_missing_magenta_constants")
+    if dxil_vs:
+        vs_msl = shader_cache_dir / f"{dxil_vs}.msl"
+        text = vs_msl.read_text(errors="replace") if vs_msl.exists() else ""
+        msl_checks["dxil_vs_clip_w_one"] = "out.position.w = 1.0f;" in text
+        msl_checks["dxil_vs_vertex_pull"] = "m12_load_vertex_attr" in text
+        if not msl_checks["dxil_vs_clip_w_one"]:
+            errors.append("dxil_vs_msl_missing_clip_w_one")
+        if not msl_checks["dxil_vs_vertex_pull"]:
+            errors.append("dxil_vs_msl_missing_vertex_pull")
+
+    pso_files = sorted(shader_cache_dir.glob("pso-render-*.json"))
+    pso_records = [cache_file_record(path) for path in pso_files]
+    pipelines: list[dict[str, Any]] = []
+    for path in pso_files:
+        try:
+            for pipeline in json.loads(path.read_text()).get("pipelines", []):
+                copy = dict(pipeline)
+                copy["manifest"] = str(path)
+                pipelines.append(copy)
+        except Exception as error:  # noqa: BLE001 - report malformed cache evidence.
+            errors.append(f"invalid_pso_manifest:{path}:{error}")
+    dxil_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == dxil_vs and p.get("d3d12", {}).get("ps_hash") == dxil_ps
+        ),
+        None,
+    )
+    sm5_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == sm5_vs and p.get("d3d12", {}).get("ps_hash") == sm5_ps
+        ),
+        None,
+    )
+    if not dxil_pso:
+        errors.append("missing_dxil_presented_pso_manifest")
+    if not sm5_pso:
+        errors.append("missing_sm5_presented_pso_manifest")
+    metallib_policy: dict[str, Any] = {}
+    sm5_metallibs = [shader_cache_dir / "dxmt_sm50_vs_main.metallib", shader_cache_dir / "dxmt_sm50_ps_main.metallib"]
+    for name, pso in [("dxil", dxil_pso), ("sm5", sm5_pso)]:
+        if not pso:
+            continue
+        if pso.get("type") != "render":
+            errors.append(f"{name}_pso_not_render")
+        if pso.get("color_formats", [None])[0] != "rgba8unorm":
+            errors.append(f"{name}_pso_not_rgba8unorm")
+        if int(pso.get("d3d12", {}).get("input_elements", 0) or 0) != 2:
+            errors.append(f"{name}_pso_missing_two_input_elements")
+        if pso.get("metal", {}).get("rasterization_enabled") is not True:
+            errors.append(f"{name}_pso_rasterization_disabled")
+        if int(pso.get("metal", {}).get("vertex_function", 0) or 0) == 0:
+            errors.append(f"{name}_pso_missing_vertex_function")
+        if int(pso.get("metal", {}).get("fragment_function", 0) or 0) == 0:
+            errors.append(f"{name}_pso_missing_fragment_function")
+        referenced_metallibs = [
+            Path(str(pso.get(stage, {}).get("metallib", "")))
+            for stage in ["vertex", "fragment"]
+            if pso.get(stage, {}).get("metallib")
+        ]
+        referenced_records = [cache_file_record(path) for path in referenced_metallibs]
+        referenced_all_present = bool(referenced_records) and all(
+            record["exists"] and int(record["size"] or 0) > 0 for record in referenced_records
+        )
+        if referenced_all_present:
+            metallib_policy[name] = {"ok": True, "policy": "pso_referenced_metallibs_present", "referenced": referenced_records}
+        elif name == "dxil" and msl_checks.get("dxil_ps_magenta_constants") and msl_checks.get("dxil_vs_clip_w_one"):
+            metallib_policy[name] = {
+                "ok": True,
+                "policy": "runtime_source_compile_from_cached_msl_no_hash_metallib_file",
+                "referenced": referenced_records,
+                "required_msl_hashes": [dxil_vs, dxil_ps],
+            }
+        elif name == "sm5" and all(path.exists() and path.stat().st_size > 0 for path in sm5_metallibs):
+            metallib_policy[name] = {
+                "ok": True,
+                "policy": "runtime_sm5_metallib_files_present",
+                "referenced": referenced_records,
+                "metallibs": [cache_file_record(path) for path in sm5_metallibs],
+            }
+        else:
+            metallib_policy[name] = {"ok": False, "policy": "unproven_metallib_source", "referenced": referenced_records}
+            errors.append(f"{name}_metallib_policy_unproven")
+
+    presented_log_required = min(visible_frames, 16)
+    present_tie_ok = (
+        len(dxil_draws) >= presented_log_required
+        and len(sm5_draws) >= presented_log_required
+        and len(dxil_unique_draws) == 1
+        and len(sm5_unique_draws) == 1
+    )
+    if not present_tie_ok:
+        errors.append("insufficient_presented_shader_hash_logs")
+    ok = not errors
+    return {
+        "ok": ok,
+        "path": str(shader_cache_dir),
+        "dxil_presented_hashes": {
+            "vs": dxil_vs,
+            "ps": dxil_ps,
+            "logged_draws": len(dxil_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in dxil_unique_draws],
+        },
+        "sm5_presented_hashes": {
+            "vs": sm5_vs,
+            "ps": sm5_ps,
+            "logged_draws": len(sm5_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in sm5_unique_draws],
+            "vertices": visible_vertices,
+        },
+        "presented_log_required": presented_log_required,
+        "present_tie_ok": present_tie_ok,
+        "required_files": required_files,
+        "pso_manifests": pso_records,
+        "dxil_pso_manifest": dxil_pso,
+        "sm5_pso_manifest": sm5_pso,
+        "msl_checks": msl_checks,
+        "metallib_policy": metallib_policy,
+        "errors": errors,
+    }
+
+
 def run_fresh_game(
     repo: Path,
     proof_dir: Path,
@@ -687,6 +863,7 @@ def run_fresh_game(
     corpus_json = parsed.get("corpus", {}) if parsed else {}
     d3d12_json = parsed.get("d3d12_window", {}) if parsed else {}
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
+    shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     game_json_ok = bool(
         parsed
@@ -734,6 +911,7 @@ def run_fresh_game(
         "runtime_match": runtime_match,
         "dxil_artifacts": dxil_artifacts,
         "shader_cache_dir": str(shader_cache_dir),
+        "shader_cache_validation": shader_cache_validation,
         "copied_corpus_artifacts": copied_corpus_artifacts,
         "corpus_hash_validation": corpus_hash_validation,
         "drawn_present_count": drawn_present_count,
@@ -753,6 +931,7 @@ def run_fresh_game(
         and dxil_artifacts["ok"]
         and game_json_ok
         and corpus_hash_validation["ok"]
+        and shader_cache_validation["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented
