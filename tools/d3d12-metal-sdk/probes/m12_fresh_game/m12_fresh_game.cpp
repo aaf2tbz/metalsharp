@@ -39,6 +39,8 @@ constexpr UINT kTextureStampX = 24;
 constexpr UINT kTextureStampY = 24;
 constexpr UINT kHeapAliasStampX = 56;
 constexpr UINT kHeapAliasStampY = 24;
+constexpr UINT kUavBarrierStampX = 88;
+constexpr UINT kUavBarrierStampY = 24;
 constexpr UINT kSm5StampX = 96;
 constexpr UINT kSm5StampY = 96;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
@@ -271,7 +273,7 @@ static D3D12_HEAP_PROPERTIES heap_props(D3D12_HEAP_TYPE type) {
     return props;
 }
 
-static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes) {
+static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes, D3D12_RESOURCE_FLAGS flags = D3D12_RESOURCE_FLAG_NONE) {
     D3D12_RESOURCE_DESC desc = {};
     desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     desc.Alignment = 0;
@@ -283,7 +285,7 @@ static D3D12_RESOURCE_DESC buffer_desc(UINT64 bytes) {
     desc.SampleDesc.Count = 1;
     desc.SampleDesc.Quality = 0;
     desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+    desc.Flags = flags;
     return desc;
 }
 
@@ -319,6 +321,13 @@ static D3D12_RESOURCE_BARRIER aliasing_barrier(ID3D12Resource* before, ID3D12Res
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
     barrier.Aliasing.pResourceBefore = before;
     barrier.Aliasing.pResourceAfter = after;
+    return barrier;
+}
+
+static D3D12_RESOURCE_BARRIER uav_resource_barrier(ID3D12Resource* resource) {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+    barrier.UAV.pResource = resource;
     return barrier;
 }
 
@@ -763,6 +772,7 @@ static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* 
 }
 
 static void heap_alias_expected_rgba(uint8_t out[4]);
+static void uav_barrier_expected_rgba(UINT x, UINT y, uint8_t out[4]);
 
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
                                         const uint8_t* texture_expected_rgba, uint32_t frame) {
@@ -784,6 +794,18 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     heap_alias_stamp[1] = static_cast<uint8_t>(heap_alias_expected[1] ^ 0xffu);
     heap_alias_stamp[2] = static_cast<uint8_t>(heap_alias_expected[2] ^ 0xffu);
     heap_alias_stamp[3] = static_cast<uint8_t>(heap_alias_expected[3] ^ 0xffu);
+    uint8_t* uav_barrier_stamp = readback_pixel(readback, mapped, kUavBarrierStampX, kUavBarrierStampY);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            uint8_t* uav_pixel = readback_pixel(readback, mapped, kUavBarrierStampX + x, kUavBarrierStampY + y);
+            uint8_t uav_barrier_expected[4] = {};
+            uav_barrier_expected_rgba(x, y, uav_barrier_expected);
+            uav_pixel[0] = static_cast<uint8_t>(uav_barrier_expected[0] ^ 0xffu);
+            uav_pixel[1] = static_cast<uint8_t>(uav_barrier_expected[1] ^ 0xffu);
+            uav_pixel[2] = static_cast<uint8_t>(uav_barrier_expected[2] ^ 0xffu);
+            uav_pixel[3] = static_cast<uint8_t>(uav_barrier_expected[3] ^ 0xffu);
+        }
+    }
     uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
     uint8_t sm5_expected[4] = {};
     sm5_expected_stamp_rgba(frame, sm5_expected);
@@ -805,10 +827,17 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     }
     const size_t center_offset = static_cast<size_t>(center - mapped);
     const size_t heap_alias_stamp_offset = static_cast<size_t>(heap_alias_stamp - mapped);
+    const size_t uav_barrier_stamp_offset = static_cast<size_t>(uav_barrier_stamp - mapped);
+    const uint8_t* uav_barrier_stamp_last = readback_pixel(
+        readback, mapped, kUavBarrierStampX + kFreshTextureWidth - 1u, kUavBarrierStampY + kFreshTextureHeight - 1u);
+    const size_t uav_barrier_stamp_last_offset = static_cast<size_t>(uav_barrier_stamp_last - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
-    D3D12_RANGE written = {std::min({center_offset, heap_alias_stamp_offset, sm5_stamp_offset, stamp_offset}),
-                           std::max({center_offset, heap_alias_stamp_offset, sm5_stamp_offset, stamp_offset}) + 4u};
+    D3D12_RANGE written = {std::min({center_offset, heap_alias_stamp_offset, uav_barrier_stamp_offset,
+                                     uav_barrier_stamp_last_offset, sm5_stamp_offset, stamp_offset}),
+                           std::max({center_offset, heap_alias_stamp_offset, uav_barrier_stamp_offset,
+                                     uav_barrier_stamp_last_offset, sm5_stamp_offset, stamp_offset}) +
+                               4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
     return true;
@@ -1109,6 +1138,272 @@ static void destroy_heap_alias_exercise(HeapAliasExercise& exercise) {
     safe_release(exercise.heap);
 }
 
+struct UavBarrierStats {
+    bool d3dcompiler_loaded = false;
+    HRESULT compile_cs_hr = E_FAIL;
+    HRESULT compile_read_cs_hr = E_FAIL;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_read_pso_hr = E_FAIL;
+    HRESULT create_uav_buffer_hr = E_FAIL;
+    HRESULT create_readback_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    HRESULT map_readback_hr = E_FAIL;
+    UINT64 footprint_bytes = 0;
+    UINT row_pitch = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS uav_gpu_virtual_address = 0;
+    bool fixed_footprint_ok = false;
+    uint32_t root_uav_sets = 0;
+    uint32_t root_constant_sets = 0;
+    uint32_t dispatch_commands = 0;
+    uint32_t dispatch_write_commands = 0;
+    uint32_t dispatch_read_transform_commands = 0;
+    uint32_t dispatch_x = 0;
+    uint32_t dispatch_y = 0;
+    uint32_t uav_barriers = 0;
+    uint32_t transition_barriers = 0;
+    uint32_t compute_pixels_checked = 0;
+    uint32_t compute_pixel_matches = 0;
+    uint32_t present_copy_commands = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t present_pixels_checked = 0;
+    uint32_t present_pixel_matches = 0;
+    uint8_t compute_first_rgba[4] = {0, 0, 0, 0};
+    uint8_t compute_center_rgba[4] = {0, 0, 0, 0};
+    uint8_t compute_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_expected_rgba[4] = {48, 96, 160, 255};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_center_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool fence_wait_ok = false;
+    bool compute_readback_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct UavBarrierExercise {
+    UavBarrierStats stats;
+    ID3D12Resource* present_buffer = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+};
+
+static void uav_barrier_expected_rgba(UINT x, UINT y, uint8_t out[4]) {
+    out[0] = static_cast<uint8_t>(48u + x);
+    out[1] = static_cast<uint8_t>(96u + y);
+    out[2] = static_cast<uint8_t>(160u + (x ^ y));
+    out[3] = 255;
+}
+
+static const char* kUavBarrierHlsl = R"(
+RWStructuredBuffer<uint> OutBuffer : register(u0);
+[numthreads(1, 1, 1)]
+void CSWrite(uint3 tid : SV_DispatchThreadID) {
+  if (tid.x >= 16u || tid.y >= 16u) {
+    return;
+  }
+  uint index = tid.y * 64u + tid.x;
+  uint packed = tid.x | (tid.y << 8u) | ((tid.x ^ tid.y) << 16u) | (1u << 24u);
+  OutBuffer[index] = packed;
+}
+[numthreads(1, 1, 1)]
+void CSTransform(uint3 tid : SV_DispatchThreadID) {
+  if (tid.x >= 16u || tid.y >= 16u) {
+    return;
+  }
+  uint index = tid.y * 64u + tid.x;
+  uint intermediate = OutBuffer[index];
+  uint r = (intermediate & 0xffu) + 48u;
+  uint g = ((intermediate >> 8u) & 0xffu) + 96u;
+  uint b = ((intermediate >> 16u) & 0xffu) + 160u;
+  OutBuffer[index] = r | (g << 8u) | (b << 16u) | 0xff000000u;
+}
+)";
+
+static UavBarrierExercise exercise_uav_barrier_stamp(ID3D12Device* device, D3DCompileFn compile,
+                                                     SerializeRootSignatureFn serialize, ID3D12CommandQueue* queue,
+                                                     ID3D12CommandAllocator* allocator, ID3D12GraphicsCommandList* list,
+                                                     ID3D12Fence* fence, HANDLE fence_event, UINT64& fence_value) {
+    UavBarrierExercise exercise;
+    UavBarrierStats& stats = exercise.stats;
+    stats.d3dcompiler_loaded = compile != nullptr;
+    if (!device || !compile || !serialize || !queue || !allocator || !list || !fence || !fence_event)
+        return exercise;
+
+    D3D12_RESOURCE_DESC stamp_desc = texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+    UINT rows = 0;
+    UINT64 row_bytes = 0;
+    UINT64 total_bytes = 0;
+    device->GetCopyableFootprints(&stamp_desc, 0, 1, 0, &exercise.footprint, &rows, &row_bytes, &total_bytes);
+    stats.footprint_bytes = total_bytes;
+    stats.row_pitch = exercise.footprint.Footprint.RowPitch;
+    stats.fixed_footprint_ok =
+        stats.row_pitch == kFreshTextureWidth * 16u && total_bytes >= kFreshTextureHeight * stats.row_pitch;
+    stats.dispatch_x = kFreshTextureWidth;
+    stats.dispatch_y = kFreshTextureHeight;
+
+    ID3DBlob* cs = nullptr;
+    ID3DBlob* cs_read = nullptr;
+    ID3DBlob* root_blob = nullptr;
+    stats.compile_cs_hr = compile_shader(compile, kUavBarrierHlsl, "CSWrite", "cs_5_0", &cs);
+    stats.compile_read_cs_hr = compile_shader(compile, kUavBarrierHlsl, "CSTransform", "cs_5_0", &cs_read);
+
+    D3D12_ROOT_PARAMETER root_params[1] = {};
+    root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    root_params[0].Descriptor.ShaderRegister = 0;
+    root_params[0].Descriptor.RegisterSpace = 0;
+    root_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = 1;
+    root_desc.pParameters = root_params;
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12PipelineState* read_pipeline_state = nullptr;
+    if (root_blob) {
+        stats.create_root_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                           IID_PPV_ARGS(&root_signature));
+    }
+    if (root_signature && cs) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = root_signature;
+        pso_desc.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+        stats.create_pso_hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state));
+    }
+    if (root_signature && cs_read) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = root_signature;
+        pso_desc.CS = {cs_read->GetBufferPointer(), cs_read->GetBufferSize()};
+        stats.create_read_pso_hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&read_pipeline_state));
+    }
+
+    D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC uav_desc = buffer_desc(total_bytes, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    D3D12_RESOURCE_DESC readback_desc = buffer_desc(total_bytes);
+    ID3D12Resource* readback = nullptr;
+    stats.create_uav_buffer_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &uav_desc,
+                                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                                 IID_PPV_ARGS(&exercise.present_buffer));
+    stats.create_readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback));
+    if (exercise.present_buffer)
+        stats.uav_gpu_virtual_address = exercise.present_buffer->GetGPUVirtualAddress();
+
+    bool submitted_work = false;
+    if (stats.fixed_footprint_ok && pipeline_state && read_pipeline_state && root_signature &&
+        exercise.present_buffer && readback && SUCCEEDED(allocator->Reset()) &&
+        SUCCEEDED(list->Reset(allocator, nullptr))) {
+        list->SetPipelineState(pipeline_state);
+        list->SetComputeRootSignature(root_signature);
+        list->SetComputeRootUnorderedAccessView(0, exercise.present_buffer->GetGPUVirtualAddress());
+        stats.root_uav_sets++;
+        list->Dispatch(kFreshTextureWidth, kFreshTextureHeight, 1);
+        stats.dispatch_commands++;
+        stats.dispatch_write_commands++;
+        D3D12_RESOURCE_BARRIER uav = uav_resource_barrier(exercise.present_buffer);
+        list->ResourceBarrier(1, &uav);
+        stats.uav_barriers++;
+        list->SetPipelineState(read_pipeline_state);
+        list->SetComputeRootUnorderedAccessView(0, exercise.present_buffer->GetGPUVirtualAddress());
+        stats.root_uav_sets++;
+        list->Dispatch(kFreshTextureWidth, kFreshTextureHeight, 1);
+        stats.dispatch_commands++;
+        stats.dispatch_read_transform_commands++;
+        D3D12_RESOURCE_BARRIER uav_after_transform = uav_resource_barrier(exercise.present_buffer);
+        list->ResourceBarrier(1, &uav_after_transform);
+        stats.uav_barriers++;
+        D3D12_RESOURCE_BARRIER to_copy = transition_barrier(
+            exercise.present_buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &to_copy);
+        stats.transition_barriers++;
+        list->CopyBufferRegion(readback, 0, exercise.present_buffer, 0, total_bytes);
+        stats.close_hr = list->Close();
+        if (SUCCEEDED(stats.close_hr)) {
+            ID3D12CommandList* base = list;
+            queue->ExecuteCommandLists(1, &base);
+            submitted_work = true;
+            fence_value++;
+            stats.signal_hr = queue->Signal(fence, fence_value);
+            stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+        }
+    }
+    if (submitted_work && !stats.fence_wait_ok) {
+        std::fflush(stdout);
+        TerminateProcess(GetCurrentProcess(), 2u);
+    }
+
+    if (readback && stats.fence_wait_ok) {
+        uint8_t* mapped = nullptr;
+        D3D12_RANGE read_range = {0, static_cast<SIZE_T>(total_bytes)};
+        stats.map_readback_hr = readback->Map(0, &read_range, reinterpret_cast<void**>(&mapped));
+        if (SUCCEEDED(stats.map_readback_hr) && mapped) {
+            const uint8_t* base = mapped + static_cast<size_t>(exercise.footprint.Offset);
+            const uint8_t* first = base;
+            std::memcpy(stats.compute_first_rgba, first, sizeof(stats.compute_first_rgba));
+            const uint8_t* center =
+                base + static_cast<size_t>(kFreshTextureHeight / 2u) * exercise.footprint.Footprint.RowPitch +
+                static_cast<size_t>(kFreshTextureWidth / 2u) * 4u;
+            std::memcpy(stats.compute_center_rgba, center, sizeof(stats.compute_center_rgba));
+            const uint8_t* last =
+                base + static_cast<size_t>(kFreshTextureHeight - 1u) * exercise.footprint.Footprint.RowPitch +
+                static_cast<size_t>(kFreshTextureWidth - 1u) * 4u;
+            std::memcpy(stats.compute_last_rgba, last, sizeof(stats.compute_last_rgba));
+            for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+                const uint8_t* row = base + static_cast<size_t>(y) * exercise.footprint.Footprint.RowPitch;
+                for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+                    const uint8_t* pixel = row + static_cast<size_t>(x) * 4u;
+                    uint8_t expected[4] = {};
+                    uav_barrier_expected_rgba(x, y, expected);
+                    stats.compute_pixels_checked++;
+                    if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                        pixel[3] == expected[3]) {
+                        stats.compute_pixel_matches++;
+                    }
+                }
+            }
+            stats.compute_readback_ok = stats.compute_pixels_checked == kFreshTextureWidth * kFreshTextureHeight &&
+                                        stats.compute_pixel_matches == stats.compute_pixels_checked;
+            D3D12_RANGE written = {0, 0};
+            readback->Unmap(0, &written);
+        }
+    }
+
+    stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_cs_hr) && SUCCEEDED(stats.compile_read_cs_hr) &&
+                 SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
+                 SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_read_pso_hr) &&
+                 SUCCEEDED(stats.create_uav_buffer_hr) && SUCCEEDED(stats.create_readback_hr) &&
+                 stats.footprint_bytes > 0 && stats.fixed_footprint_ok && stats.uav_gpu_virtual_address != 0 &&
+                 stats.root_uav_sets == 2 && stats.root_constant_sets == 0 && stats.dispatch_commands == 2 &&
+                 stats.dispatch_write_commands == 1 && stats.dispatch_read_transform_commands == 1 &&
+                 stats.dispatch_x == kFreshTextureWidth && stats.dispatch_y == kFreshTextureHeight &&
+                 stats.uav_barriers == 2 && stats.transition_barriers == 1 && SUCCEEDED(stats.close_hr) &&
+                 SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok && SUCCEEDED(stats.map_readback_hr) &&
+                 stats.compute_readback_ok;
+    if (!stats.pass)
+        safe_release(exercise.present_buffer);
+    if (root_blob)
+        root_blob->Release();
+    if (cs)
+        cs->Release();
+    if (cs_read)
+        cs_read->Release();
+    safe_release(read_pipeline_state);
+    safe_release(pipeline_state);
+    safe_release(root_signature);
+    safe_release(readback);
+    return exercise;
+}
+
+static void destroy_uav_barrier_exercise(UavBarrierExercise& exercise) {
+    safe_release(exercise.present_buffer);
+}
+
 static bool inspect_texture_stamp(DxilReadbackResources& readback, GpuTextureStats& texture_stats) {
     if (!readback.buffer)
         return false;
@@ -1139,6 +1434,44 @@ static bool inspect_heap_alias_stamp(DxilReadbackResources& readback, HeapAliasS
     std::memcpy(stats.present_rgba, pixel, sizeof(stats.present_rgba));
     stats.present_samples_checked++;
     const bool matches = std::memcmp(stats.present_rgba, stats.present_expected_rgba, sizeof(stats.present_rgba)) == 0;
+    if (matches)
+        stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
+static bool inspect_uav_barrier_stamp(DxilReadbackResources& readback, UavBarrierStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* first = readback_pixel(readback, mapped, kUavBarrierStampX, kUavBarrierStampY);
+    std::memcpy(stats.present_rgba, first, sizeof(stats.present_rgba));
+    const uint8_t* center = readback_pixel(readback, mapped, kUavBarrierStampX + kFreshTextureWidth / 2u,
+                                           kUavBarrierStampY + kFreshTextureHeight / 2u);
+    std::memcpy(stats.present_center_rgba, center, sizeof(stats.present_center_rgba));
+    const uint8_t* last = readback_pixel(readback, mapped, kUavBarrierStampX + kFreshTextureWidth - 1u,
+                                         kUavBarrierStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
+    stats.present_samples_checked++;
+    uint32_t frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kUavBarrierStampX + x, kUavBarrierStampY + y);
+            uint8_t expected[4] = {};
+            uav_barrier_expected_rgba(x, y, expected);
+            stats.present_pixels_checked++;
+            if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                pixel[3] == expected[3]) {
+                stats.present_pixel_matches++;
+                frame_matches++;
+            }
+        }
+    }
+    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
     if (matches)
         stats.present_sample_matches++;
     D3D12_RANGE written = {0, 0};
@@ -1332,6 +1665,7 @@ struct D3DRunStats {
     HRESULT present_hr = E_FAIL;
     GpuTextureStats gpu_textures;
     HeapAliasStats heap_alias;
+    UavBarrierStats uav_barrier;
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
@@ -1482,6 +1816,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     HeapAliasExercise heap_alias =
         exercise_heap_alias_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
     stats.heap_alias = heap_alias.stats;
+    UavBarrierExercise uav_barrier =
+        exercise_uav_barrier_stamp(device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value);
+    stats.uav_barrier = uav_barrier.stats;
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
@@ -1567,6 +1904,25 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 list->CopyTextureRegion(&heap_dst, kHeapAliasStampX, kHeapAliasStampY, 0, &heap_src, &heap_box);
                 stats.heap_alias.present_copy_commands++;
             }
+            if (uav_barrier.present_buffer) {
+                if (backbuffer_state != D3D12_RESOURCE_STATE_COPY_DEST) {
+                    auto backbuffer_to_copy_dest =
+                        transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_DEST);
+                    list->ResourceBarrier(1, &backbuffer_to_copy_dest);
+                    backbuffer_state = D3D12_RESOURCE_STATE_COPY_DEST;
+                }
+                D3D12_TEXTURE_COPY_LOCATION uav_dst = {};
+                uav_dst.pResource = buffer;
+                uav_dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                uav_dst.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION uav_src = {};
+                uav_src.pResource = uav_barrier.present_buffer;
+                uav_src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                uav_src.PlacedFootprint = uav_barrier.footprint;
+                D3D12_BOX uav_box = {0, 0, 0, kFreshTextureWidth, kFreshTextureHeight, 1};
+                list->CopyTextureRegion(&uav_dst, kUavBarrierStampX, kUavBarrierStampY, 0, &uav_src, &uav_box);
+                stats.uav_barrier.present_copy_commands++;
+            }
             auto to_copy = transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_SOURCE);
             list->ResourceBarrier(1, &to_copy);
             if (dxil_readback.buffer) {
@@ -1600,6 +1956,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (heap_alias.present_buffer && !inspect_heap_alias_stamp(dxil_readback, stats.heap_alias))
                 break;
+            if (uav_barrier.present_buffer && !inspect_uav_barrier_stamp(dxil_readback, stats.uav_barrier))
+                break;
             if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
@@ -1632,21 +1990,28 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                     stats.heap_alias.present_copy_commands == visible_frame_target &&
                                     stats.heap_alias.present_samples_checked == visible_frame_target &&
                                     stats.heap_alias.present_sample_matches == visible_frame_target;
+    stats.uav_barrier.present_pass =
+        uav_barrier.present_buffer && stats.uav_barrier.present_copy_commands == visible_frame_target &&
+        stats.uav_barrier.present_samples_checked == visible_frame_target &&
+        stats.uav_barrier.present_sample_matches == visible_frame_target &&
+        stats.uav_barrier.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.uav_barrier.present_pixel_matches == stats.uav_barrier.present_pixels_checked;
 
-    stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
-                 SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
-                 SUCCEEDED(stats.create_swapchain_hr) && SUCCEEDED(stats.create_rtv_heap_hr) &&
-                 SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) &&
-                 SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass && stats.gpu_textures.present_pass &&
-                 stats.heap_alias.pass && stats.heap_alias.present_pass && stats.visible_scene.pass &&
-                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
-                 stats.frames_presented == visible_frame_target;
+    stats.pass =
+        stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
+        SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) && SUCCEEDED(stats.create_swapchain_hr) &&
+        SUCCEEDED(stats.create_rtv_heap_hr) && SUCCEEDED(stats.create_allocator_hr) &&
+        SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass &&
+        stats.gpu_textures.present_pass && stats.heap_alias.pass && stats.heap_alias.present_pass &&
+        stats.uav_barrier.pass && stats.uav_barrier.present_pass && stats.visible_scene.pass &&
+        stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
+        stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
+        SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
     destroy_heap_alias_exercise(heap_alias);
+    destroy_uav_barrier_exercise(uav_barrier);
     destroy_dxil_readback(dxil_readback);
     destroy_dxil_scene(dxil_scene);
     for (auto*& buffer : buffers)
@@ -1808,6 +2173,67 @@ int main() {
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.heap_alias.fence_wait_ok ? "true" : "false");
     std::printf("      \"present_ok\": %s,\n", d3d.heap_alias.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.heap_alias.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"uav_barrier\": {\n");
+    std::printf("      \"proof_scope\": \"dependent_uav_dispatch_visibility_with_explicit_uav_barriers\",\n");
+    std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.uav_barrier.d3dcompiler_loaded ? "true" : "false");
+    std::printf("      \"CSWrite_cs_5_0\": \"%s\",\n", hr_hex(d3d.uav_barrier.compile_cs_hr).c_str());
+    std::printf("      \"CSTransform_cs_5_0\": \"%s\",\n", hr_hex(d3d.uav_barrier.compile_read_cs_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature\": \"%s\",\n", hr_hex(d3d.uav_barrier.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.uav_barrier.create_root_hr).c_str());
+    std::printf("      \"CreateComputePipelineStateWrite\": \"%s\",\n", hr_hex(d3d.uav_barrier.create_pso_hr).c_str());
+    std::printf("      \"CreateComputePipelineStateTransform\": \"%s\",\n",
+                hr_hex(d3d.uav_barrier.create_read_pso_hr).c_str());
+    std::printf("      \"CreateUavBuffer\": \"%s\",\n", hr_hex(d3d.uav_barrier.create_uav_buffer_hr).c_str());
+    std::printf("      \"CreateReadback\": \"%s\",\n", hr_hex(d3d.uav_barrier.create_readback_hr).c_str());
+    std::printf("      \"CloseCommandList\": \"%s\",\n", hr_hex(d3d.uav_barrier.close_hr).c_str());
+    std::printf("      \"SignalFence\": \"%s\",\n", hr_hex(d3d.uav_barrier.signal_hr).c_str());
+    std::printf("      \"MapReadback\": \"%s\",\n", hr_hex(d3d.uav_barrier.map_readback_hr).c_str());
+    std::printf("      \"footprint_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.uav_barrier.footprint_bytes));
+    std::printf("      \"row_pitch\": %u,\n", d3d.uav_barrier.row_pitch);
+    std::printf("      \"fixed_footprint_ok\": %s,\n", d3d.uav_barrier.fixed_footprint_ok ? "true" : "false");
+    std::printf("      \"uav_gpu_virtual_address\": %llu,\n",
+                static_cast<unsigned long long>(d3d.uav_barrier.uav_gpu_virtual_address));
+    std::printf("      \"root_uav_sets\": %u,\n", d3d.uav_barrier.root_uav_sets);
+    std::printf("      \"root_constant_sets\": %u,\n", d3d.uav_barrier.root_constant_sets);
+    std::printf("      \"dispatch_commands\": %u,\n", d3d.uav_barrier.dispatch_commands);
+    std::printf("      \"dispatch_write_commands\": %u,\n", d3d.uav_barrier.dispatch_write_commands);
+    std::printf("      \"dispatch_read_transform_commands\": %u,\n", d3d.uav_barrier.dispatch_read_transform_commands);
+    std::printf("      \"dispatch_x\": %u,\n", d3d.uav_barrier.dispatch_x);
+    std::printf("      \"dispatch_y\": %u,\n", d3d.uav_barrier.dispatch_y);
+    std::printf("      \"uav_barriers\": %u,\n", d3d.uav_barrier.uav_barriers);
+    std::printf("      \"transition_barriers\": %u,\n", d3d.uav_barrier.transition_barriers);
+    std::printf("      \"compute_pixels_checked\": %u,\n", d3d.uav_barrier.compute_pixels_checked);
+    std::printf("      \"compute_pixel_matches\": %u,\n", d3d.uav_barrier.compute_pixel_matches);
+    std::printf("      \"compute_first_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.compute_first_rgba[0],
+                d3d.uav_barrier.compute_first_rgba[1], d3d.uav_barrier.compute_first_rgba[2],
+                d3d.uav_barrier.compute_first_rgba[3]);
+    std::printf("      \"compute_center_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.compute_center_rgba[0],
+                d3d.uav_barrier.compute_center_rgba[1], d3d.uav_barrier.compute_center_rgba[2],
+                d3d.uav_barrier.compute_center_rgba[3]);
+    std::printf("      \"compute_last_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.compute_last_rgba[0],
+                d3d.uav_barrier.compute_last_rgba[1], d3d.uav_barrier.compute_last_rgba[2],
+                d3d.uav_barrier.compute_last_rgba[3]);
+    std::printf("      \"compute_readback_ok\": %s,\n", d3d.uav_barrier.compute_readback_ok ? "true" : "false");
+    std::printf("      \"present_copy_commands\": %u,\n", d3d.uav_barrier.present_copy_commands);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.uav_barrier.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.uav_barrier.present_sample_matches);
+    std::printf("      \"present_pixels_checked\": %u,\n", d3d.uav_barrier.present_pixels_checked);
+    std::printf("      \"present_pixel_matches\": %u,\n", d3d.uav_barrier.present_pixel_matches);
+    std::printf("      \"present_expected_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.present_expected_rgba[0],
+                d3d.uav_barrier.present_expected_rgba[1], d3d.uav_barrier.present_expected_rgba[2],
+                d3d.uav_barrier.present_expected_rgba[3]);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.present_rgba[0],
+                d3d.uav_barrier.present_rgba[1], d3d.uav_barrier.present_rgba[2], d3d.uav_barrier.present_rgba[3]);
+    std::printf("      \"present_center_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.present_center_rgba[0],
+                d3d.uav_barrier.present_center_rgba[1], d3d.uav_barrier.present_center_rgba[2],
+                d3d.uav_barrier.present_center_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.uav_barrier.present_last_rgba[0],
+                d3d.uav_barrier.present_last_rgba[1], d3d.uav_barrier.present_last_rgba[2],
+                d3d.uav_barrier.present_last_rgba[3]);
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.uav_barrier.fence_wait_ok ? "true" : "false");
+    std::printf("      \"present_ok\": %s,\n", d3d.uav_barrier.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.uav_barrier.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"visible_scene\": {\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.visible_scene.d3dcompiler_loaded ? "true" : "false");

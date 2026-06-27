@@ -865,6 +865,7 @@ def run_fresh_game(
     adapter_json = d3d12_json.get("adapter_report", {}) if d3d12_json else {}
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
     heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
+    uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     game_json_ok = bool(
@@ -928,6 +929,39 @@ def run_fresh_game(
         and int(heap_alias_json.get("present_samples_checked", 0) or 0) == visible_frames
         and int(heap_alias_json.get("present_sample_matches", 0) or 0) == visible_frames
         and heap_alias_json.get("present_rgba") == heap_alias_json.get("present_expected_rgba")
+        and uav_barrier_json.get("ok") is True
+        and uav_barrier_json.get("present_ok") is True
+        and uav_barrier_json.get("proof_scope") == "dependent_uav_dispatch_visibility_with_explicit_uav_barriers"
+        and uav_barrier_json.get("D3DCompile_loaded") is True
+        and uav_barrier_json.get("CSWrite_cs_5_0") == "0x00000000"
+        and uav_barrier_json.get("CSTransform_cs_5_0") == "0x00000000"
+        and uav_barrier_json.get("D3D12SerializeRootSignature") == "0x00000000"
+        and uav_barrier_json.get("CreateRootSignature") == "0x00000000"
+        and uav_barrier_json.get("CreateComputePipelineStateWrite") == "0x00000000"
+        and uav_barrier_json.get("CreateComputePipelineStateTransform") == "0x00000000"
+        and uav_barrier_json.get("CreateUavBuffer") == "0x00000000"
+        and uav_barrier_json.get("fixed_footprint_ok") is True
+        and int(uav_barrier_json.get("row_pitch", 0) or 0) == 256
+        and int(uav_barrier_json.get("footprint_bytes", 0) or 0) >= 4096
+        and int(uav_barrier_json.get("uav_gpu_virtual_address", 0) or 0) != 0
+        and int(uav_barrier_json.get("root_uav_sets", 0) or 0) == 2
+        and int(uav_barrier_json.get("root_constant_sets", 0) or 0) == 0
+        and int(uav_barrier_json.get("dispatch_commands", 0) or 0) == 2
+        and int(uav_barrier_json.get("dispatch_write_commands", 0) or 0) == 1
+        and int(uav_barrier_json.get("dispatch_read_transform_commands", 0) or 0) == 1
+        and int(uav_barrier_json.get("dispatch_x", 0) or 0) == 16
+        and int(uav_barrier_json.get("dispatch_y", 0) or 0) == 16
+        and int(uav_barrier_json.get("uav_barriers", 0) or 0) == 2
+        and int(uav_barrier_json.get("transition_barriers", 0) or 0) == 1
+        and uav_barrier_json.get("compute_readback_ok") is True
+        and int(uav_barrier_json.get("compute_pixels_checked", 0) or 0) == 256
+        and int(uav_barrier_json.get("compute_pixel_matches", 0) or 0) == 256
+        and int(uav_barrier_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(uav_barrier_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(uav_barrier_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(uav_barrier_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(uav_barrier_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and uav_barrier_json.get("present_rgba") == uav_barrier_json.get("present_expected_rgba")
     )
     result = {
         "command": cmd,
