@@ -153,6 +153,8 @@ const char *TracePsoShaderSummary(MTLD3D12PipelineState *pso) {
 
 static uint32_t g_swapchain_encoder_logs = 0;
 static uint32_t g_swapchain_draw_logs = 0;
+static uint32_t g_swapchain_indirect_draw_logs = 0;
+static uint32_t g_swapchain_indirect_skip_logs = 0;
 static uint32_t g_swapchain_clear_logs = 0;
 static uint32_t g_swapchain_state_logs = 0;
 static uint32_t g_swapchain_argbuf_logs = 0;
@@ -6332,9 +6334,33 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             st.BindMissingNonStageInVertexBuffers(m_device);
             st.BindDirectFragmentCompleteness(m_device,
                                               "execute_indirect_draw");
-            st.EncodeRenderCommands(
-                reinterpret_cast<const wmtcmd_render_nop *>(&draw),
-                "execute_indirect_draw");
+            if (st.EncodeRenderCommands(
+                    reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+                    "execute_indirect_draw")) {
+              st.MarkSwapchainWorkEncoded();
+              if (st.HasSwapchainRenderTarget() &&
+                  TakeLogBudget(&g_swapchain_indirect_draw_logs, 48)) {
+                Logger::info(str::format(
+                    "M12 swapchain ExecuteIndirect DrawInstanced encoded v=",
+                    args.VertexCountPerInstance, " i=", args.InstanceCount,
+                    " start_v=", args.StartVertexLocation,
+                    " start_i=", args.StartInstanceLocation,
+                    " pso=", (void *)st.pso, " enc=",
+                    (unsigned long long)st.render_enc.handle, " ",
+                    TracePsoShaderSummary(st.pso)));
+              }
+            }
+          } else if (st.HasSwapchainRenderTarget() &&
+                     TakeLogBudget(&g_swapchain_indirect_skip_logs, 48)) {
+            Logger::info(str::format(
+                "M12 swapchain ExecuteIndirect DrawInstanced skipped v=",
+                args.VertexCountPerInstance, " i=", args.InstanceCount,
+                " start_v=", args.StartVertexLocation, " start_i=",
+                args.StartInstanceLocation, " enc_open=", st.render_enc_open,
+                " pso=", (void *)st.pso, " compiled=",
+                st.pso ? st.pso->IsCompiled() : 0, " stage=",
+                TraceCompileFailureStage(st.pso), " detail=",
+                TraceCompileFailureDetail(st.pso)));
           }
         };
 
