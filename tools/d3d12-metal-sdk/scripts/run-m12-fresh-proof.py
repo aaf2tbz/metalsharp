@@ -34,6 +34,26 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+
+def merge_primary_log_text(primary: str, *secondary_texts: str) -> str:
+    lines = primary.splitlines()
+    seen: set[str] = set(lines)
+    for text in secondary_texts:
+        for line in text.splitlines():
+            if line in seen:
+                continue
+            seen.add(line)
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def read_existing_text(path: Path) -> str:
+    try:
+        return path.read_text(errors="replace") if path.exists() else ""
+    except OSError:
+        return ""
+
 def wine_path_arg(path: Path) -> str:
     resolved = path.expanduser().resolve()
     return "Z:" + str(resolved).replace("/", "\\")
@@ -1166,6 +1186,11 @@ def run_fresh_game(
             "DXMT_LOG_LEVEL": "info",
             "DXMT_LOG_PATH": str(run_dir),
             "DXMT_SHADER_CACHE_PATH": str(shader_cache_dir),
+            "DXMT_ASYNC_PIPELINE_COMPILE": "1",
+            "DXMT_D3D12_PSO_WORKERS": "2",
+            "DXMT_D3D12_TRACE": "1",
+            "DXMT_D3D12_TRACE_STDERR": "1",
+            "DXMT_D3D12_TRACE_MAX_MB": "128",
             "D3D12_METAL_SDK_PROFILE": "m12-fresh-visible-game",
             "DXMT_D3D12_PRESENT_LOG_INTERVAL": "1",
             "M12_FRESH_CORPUS_TSV": str(corpus_tsv),
@@ -1181,6 +1206,19 @@ def run_fresh_game(
     stderr_path = run_dir / "m12_fresh_game.stderr.txt"
     stdout_path.write_text(proc.stdout)
     stderr_path.write_text(proc.stderr)
+    diagnostic_log_paths = sorted(
+        {
+            *run_dir.glob("*dxmt-d3d12-trace.log"),
+            *run_dir.glob("*dxmt-d3d12-pso.log"),
+            *run_dir.glob("*d3d12.log"),
+        }
+    )
+    diagnostic_log_records = [
+        {"path": str(path), "size": path.stat().st_size, "sha256": sha256(path)}
+        for path in diagnostic_log_paths
+        if path.exists()
+    ]
+    diagnostic_log_text = merge_primary_log_text(proc.stderr, *(read_existing_text(path) for path in diagnostic_log_paths))
 
     parsed: dict[str, Any] | None = None
     parse_error = ""
@@ -1204,30 +1242,30 @@ def run_fresh_game(
         int(match.group(1))
         for match in re.finditer(r"M12 present backbuffer work count=\d+ .*? indirect=(\d+).*?classification=drawn", proc.stderr)
     ]
-    dxil_draw_encoded_count = len(re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1", proc.stderr))
+    dxil_draw_encoded_count = len(re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1", diagnostic_log_text))
     dxil_vertex_pull_snapshot_count = len(
         re.findall(
             r"M12 vertex-pull snapshot draw=DrawInstanced v=3 i=1 .*?slot_mask=0x1.*?bound_vbs=1",
-            proc.stderr,
+            diagnostic_log_text,
         )
     )
     dxil_draw_skipped = bool(
-        re.search(r"M12 swapchain DrawInstanced skipped v=3\s+i=1|DrawInstanced\s+SKIPPED\s+v=3\s+i=1", proc.stderr,
+        re.search(r"M12 swapchain DrawInstanced skipped v=3\s+i=1|DrawInstanced\s+SKIPPED\s+v=3\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
     indexed_draw_skipped = bool(
-        re.search(r"M12 swapchain DrawIndexedInstanced skipped idx=6\s+inst=1|DrawIndexedInstanced\s+SKIPPED\s+idx=6\s+inst=1", proc.stderr,
+        re.search(r"M12 swapchain DrawIndexedInstanced skipped idx=6\s+inst=1|DrawIndexedInstanced\s+SKIPPED\s+idx=6\s+inst=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
     indirect_draw_skipped = bool(
-        re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=24\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=24\s+i=1", proc.stderr,
+        re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=24\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=24\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
     textured_3d_draw_skipped = bool(
-        re.search(r"M12 swapchain DrawInstanced skipped v=33\s+i=1|DrawInstanced\s+SKIPPED\s+v=33\s+i=1", proc.stderr,
+        re.search(r"M12 swapchain DrawInstanced skipped v=33\s+i=1|DrawInstanced\s+SKIPPED\s+v=33\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
-    render_encoder_encode_failed = bool(re.search(r"M12 render encoder encode failed", proc.stderr, re.IGNORECASE))
+    render_encoder_encode_failed = bool(re.search(r"M12 render encoder encode failed", diagnostic_log_text, re.IGNORECASE))
     stderr_assertion = "std::__condvar" in proc.stderr or "Assertion" in proc.stderr
     frames_presented = 0
     if parsed:
@@ -1246,7 +1284,7 @@ def run_fresh_game(
     cbv_sample_json = d3d12_json.get("cbv_sample", {}) if d3d12_json else {}
     indexed_draw_json = d3d12_json.get("indexed_draw", {}) if d3d12_json else {}
     indirect_draw_json = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
-    shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
+    shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, diagnostic_log_text, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
     render_pass_expected_rgba = [224, 80, 176, 255]
@@ -1592,12 +1630,52 @@ def run_fresh_game(
         and indirect_draw_json.get("present_rgba") == indirect_draw_expected_rgba
         and indirect_draw_json.get("present_last_rgba") == indirect_draw_expected_rgba
     )
+    pso_ptr_pattern = r"(?:0x)?[0-9a-fA-F]+"
+    async_scheduled_matches = re.findall(rf"PSO async compile scheduled pso=({pso_ptr_pattern}) compute=(\d)", diagnostic_log_text)
+    async_worker_begin_matches = re.findall(
+        rf"PSO async worker-owned compile begin worker=(\d+) pso=({pso_ptr_pattern}) compute=(\d)",
+        diagnostic_log_text,
+    )
+    async_worker_complete_matches = re.findall(
+        rf"PSO async worker-owned compile complete worker=(\d+) pso=({pso_ptr_pattern}) result=(\d+) state=(\d+) compute=(\d)",
+        diagnostic_log_text,
+    )
+    async_inline_claim_matches = re.findall(rf"PSO async pending compile claimed inline pso=({pso_ptr_pattern}) compute=(\d)", diagnostic_log_text)
+    async_worker_indices = sorted({int(worker) for worker, _pso, _compute in async_worker_begin_matches})
+    async_scheduled_psos = sorted({pso for pso, _compute in async_scheduled_matches})
+    async_worker_complete_success_psos = sorted(
+        {pso for _worker, pso, result, state, _compute in async_worker_complete_matches if result == "1" and state == "3"}
+    )
+    async_worker_proof = {
+        "ok": False,
+        "enabled_env": env.get("DXMT_ASYNC_PIPELINE_COMPILE") == "1",
+        "worker_env": env.get("DXMT_D3D12_PSO_WORKERS"),
+        "scheduled_count": len(async_scheduled_matches),
+        "scheduled_unique_psos": len(async_scheduled_psos),
+        "worker_begin_count": len(async_worker_begin_matches),
+        "worker_complete_count": len(async_worker_complete_matches),
+        "worker_complete_success_count": len(async_worker_complete_success_psos),
+        "worker_indices": async_worker_indices,
+        "inline_claim_count": len(async_inline_claim_matches),
+        "scheduled_psos": async_scheduled_psos[:24],
+        "worker_complete_success_psos": async_worker_complete_success_psos[:24],
+    }
+    async_worker_proof["ok"] = bool(
+        async_worker_proof["enabled_env"]
+        and async_worker_proof["scheduled_unique_psos"] >= 6
+        and async_worker_proof["worker_complete_success_count"] >= 6
+        and len(async_worker_indices) >= 1
+        and async_worker_proof["inline_claim_count"] == 0
+    )
+
     result = {
         "command": cmd,
         "cwd": str(out_bin),
         "returncode": proc.returncode,
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),
+        "diagnostic_logs": diagnostic_log_records,
+        "async_worker_proof": async_worker_proof,
         "json_parse_error": parse_error,
         "game_json": parsed,
         "loaddll": loaddll_rows,
@@ -1632,6 +1710,7 @@ def run_fresh_game(
         and game_json_ok
         and corpus_hash_validation["ok"]
         and shader_cache_validation["ok"]
+        and async_worker_proof["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented

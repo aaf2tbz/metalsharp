@@ -88,6 +88,9 @@ ToRuntimeMSLShader(dxmt::dxil::TypedMSLShader &&typed) {
   return shader;
 }
 
+thread_local bool g_async_pipeline_worker_thread = false;
+thread_local uint32_t g_async_pipeline_worker_index = 0;
+
 bool AsyncPipelineCompileEnabled() {
   char value[16] = {};
   DWORD len = GetEnvironmentVariableA("DXMT_ASYNC_PIPELINE_COMPILE", value,
@@ -148,7 +151,10 @@ private:
         continue;
       PSTRACE("PSO async worker[%u] compiling pso=%p", worker_index,
               (void *)pso);
+      g_async_pipeline_worker_thread = true;
+      g_async_pipeline_worker_index = worker_index;
       pso->RunAsyncCompile();
+      g_async_pipeline_worker_thread = false;
       pso->Release();
     }
   }
@@ -788,7 +794,13 @@ bool MTLD3D12PipelineState::TryCompilePendingInline() {
 }
 
 void MTLD3D12PipelineState::RunAsyncCompile() {
-  Compile();
+  PSTRACE("PSO async worker-owned compile begin worker=%u pso=%p compute=%d",
+          g_async_pipeline_worker_index, (void *)this, m_is_compute);
+  bool result = Compile();
+  PSTRACE(
+      "PSO async worker-owned compile complete worker=%u pso=%p result=%d state=%u compute=%d",
+      g_async_pipeline_worker_index, (void *)this, result,
+      (unsigned)m_compile_state.load(), m_is_compute);
 }
 
 WMTPixelFormat MTLD3D12PipelineState::DXGIToMTLPixelFormat(DXGI_FORMAT format) {
@@ -1477,17 +1489,24 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
 }
 
 bool MTLD3D12PipelineState::Compile() {
-  PTRACE("Compile() called state=%u is_compute=%d",
-         (unsigned)m_compile_state.load(), m_is_compute);
+  CompileState entry_state = m_compile_state.load();
+  PTRACE("Compile() called state=%u is_compute=%d async_worker=%d worker=%u",
+         (unsigned)entry_state, m_is_compute, g_async_pipeline_worker_thread,
+         g_async_pipeline_worker_index);
   std::unique_lock<std::mutex> lock(m_compile_mutex);
-  if (m_compile_state.load() == CompileState::Compiled)
+  CompileState locked_state = m_compile_state.load();
+  if (locked_state == CompileState::Compiled)
     return true;
-  if (m_compile_state.load() == CompileState::Compiling) {
+  if (locked_state == CompileState::Compiling) {
     m_compile_cv.wait(lock, [this]() {
       CompileState state = m_compile_state.load();
       return state != CompileState::Compiling && state != CompileState::Pending;
     });
     return m_compile_state.load() == CompileState::Compiled;
+  }
+  if (locked_state == CompileState::Pending && !g_async_pipeline_worker_thread) {
+    PSTRACE("PSO async pending compile claimed inline pso=%p compute=%d", (void *)this,
+            m_is_compute);
   }
   m_compile_state.store(CompileState::Compiling);
   ClearCompileFailure();
