@@ -864,6 +864,7 @@ def run_fresh_game(
     d3d12_json = parsed.get("d3d12_window", {}) if parsed else {}
     adapter_json = d3d12_json.get("adapter_report", {}) if d3d12_json else {}
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
+    heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, proc.stderr, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     game_json_ok = bool(
@@ -907,6 +908,26 @@ def run_fresh_game(
         and int(gpu_textures_json.get("present_samples_checked", 0) or 0) == visible_frames
         and int(gpu_textures_json.get("present_sample_matches", 0) or 0) == visible_frames
         and gpu_textures_json.get("present_rgba") == gpu_textures_json.get("present_expected_rgba")
+        and heap_alias_json.get("ok") is True
+        and heap_alias_json.get("present_ok") is True
+        and heap_alias_json.get("CreateHeap") == "0x00000000"
+        and heap_alias_json.get("CreatePlacedResourceA") == "0x00000000"
+        and heap_alias_json.get("CreatePlacedResourceB") == "0x00000000"
+        and int(heap_alias_json.get("gpu_virtual_address_a", 0) or 0) != 0
+        and int(heap_alias_json.get("gpu_virtual_address_b", 0) or 0) != 0
+        and heap_alias_json.get("gpu_virtual_addresses_match") is True
+        and int(heap_alias_json.get("copy_before_alias_commands", 0) or 0) == 1
+        and int(heap_alias_json.get("aliasing_barriers", 0) or 0) == 1
+        and int(heap_alias_json.get("copy_alias_overlap_commands", 0) or 0) == 1
+        and int(heap_alias_json.get("copy_after_alias_commands", 0) or 0) == 1
+        and int(heap_alias_json.get("transition_barriers", 0) or 0) == 4
+        and heap_alias_json.get("readback_before_alias_ok") is True
+        and heap_alias_json.get("readback_alias_overlap_ok") is True
+        and heap_alias_json.get("readback_after_alias_ok") is True
+        and int(heap_alias_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(heap_alias_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(heap_alias_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and heap_alias_json.get("present_rgba") == heap_alias_json.get("present_expected_rgba")
     )
     result = {
         "command": cmd,

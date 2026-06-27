@@ -37,6 +37,8 @@ constexpr UINT kFreshTextureWidth = 16;
 constexpr UINT kFreshTextureHeight = 16;
 constexpr UINT kTextureStampX = 24;
 constexpr UINT kTextureStampY = 24;
+constexpr UINT kHeapAliasStampX = 56;
+constexpr UINT kHeapAliasStampY = 24;
 constexpr UINT kSm5StampX = 96;
 constexpr UINT kSm5StampY = 96;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
@@ -309,6 +311,14 @@ static D3D12_RESOURCE_BARRIER transition_barrier(ID3D12Resource* resource, D3D12
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barrier.Transition.StateBefore = before;
     barrier.Transition.StateAfter = after;
+    return barrier;
+}
+
+static D3D12_RESOURCE_BARRIER aliasing_barrier(ID3D12Resource* before, ID3D12Resource* after) {
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+    barrier.Aliasing.pResourceBefore = before;
+    barrier.Aliasing.pResourceAfter = after;
     return barrier;
 }
 
@@ -752,6 +762,8 @@ static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* 
     return readback_pixel(readback, mapped, width / 2, height / 2);
 }
 
+static void heap_alias_expected_rgba(uint8_t out[4]);
+
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
                                         const uint8_t* texture_expected_rgba, uint32_t frame) {
     if (!readback.buffer)
@@ -765,6 +777,13 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     center[1] = 255;
     center[2] = 0;
     center[3] = 255;
+    uint8_t* heap_alias_stamp = readback_pixel(readback, mapped, kHeapAliasStampX, kHeapAliasStampY);
+    uint8_t heap_alias_expected[4] = {};
+    heap_alias_expected_rgba(heap_alias_expected);
+    heap_alias_stamp[0] = static_cast<uint8_t>(heap_alias_expected[0] ^ 0xffu);
+    heap_alias_stamp[1] = static_cast<uint8_t>(heap_alias_expected[1] ^ 0xffu);
+    heap_alias_stamp[2] = static_cast<uint8_t>(heap_alias_expected[2] ^ 0xffu);
+    heap_alias_stamp[3] = static_cast<uint8_t>(heap_alias_expected[3] ^ 0xffu);
     uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
     uint8_t sm5_expected[4] = {};
     sm5_expected_stamp_rgba(frame, sm5_expected);
@@ -785,10 +804,11 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
         stamp[3] = 0xff;
     }
     const size_t center_offset = static_cast<size_t>(center - mapped);
+    const size_t heap_alias_stamp_offset = static_cast<size_t>(heap_alias_stamp - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
-    D3D12_RANGE written = {std::min({center_offset, sm5_stamp_offset, stamp_offset}),
-                           std::max({center_offset, sm5_stamp_offset, stamp_offset}) + 4u};
+    D3D12_RANGE written = {std::min({center_offset, heap_alias_stamp_offset, sm5_stamp_offset, stamp_offset}),
+                           std::max({center_offset, heap_alias_stamp_offset, sm5_stamp_offset, stamp_offset}) + 4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
     return true;
@@ -868,6 +888,227 @@ struct GpuTextureExercise {
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT present_sentinel_footprint = {};
 };
 
+struct HeapAliasStats {
+    HRESULT create_heap_hr = E_FAIL;
+    HRESULT create_placed_a_hr = E_FAIL;
+    HRESULT create_placed_b_hr = E_FAIL;
+    HRESULT create_upload_hr = E_FAIL;
+    HRESULT create_readback_hr = E_FAIL;
+    HRESULT map_upload_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    HRESULT map_readback_hr = E_FAIL;
+    UINT64 heap_size = 0;
+    UINT64 alias_bytes = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS gpu_virtual_address_a = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS gpu_virtual_address_b = 0;
+    uint32_t copy_before_alias_commands = 0;
+    uint32_t aliasing_barriers = 0;
+    uint32_t copy_alias_overlap_commands = 0;
+    uint32_t copy_after_alias_commands = 0;
+    uint32_t transition_barriers = 0;
+    uint32_t present_copy_commands = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint8_t present_expected_rgba[4] = {64, 240, 128, 255};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    bool fence_wait_ok = false;
+    bool gpu_virtual_addresses_match = false;
+    bool readback_before_alias_ok = false;
+    bool readback_alias_overlap_ok = false;
+    bool readback_after_alias_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct HeapAliasExercise {
+    HeapAliasStats stats;
+    ID3D12Heap* heap = nullptr;
+    ID3D12Resource* present_buffer = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+};
+
+static void heap_alias_expected_rgba(uint8_t out[4]) {
+    out[0] = 64;
+    out[1] = 240;
+    out[2] = 128;
+    out[3] = 255;
+}
+
+static void fill_alias_upload_footprint(uint8_t* base, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
+                                        const uint8_t rgba[4]) {
+    for (UINT y = 0; y < footprint.Footprint.Height; ++y) {
+        uint8_t* row = base + static_cast<size_t>(y) * footprint.Footprint.RowPitch;
+        for (UINT x = 0; x < footprint.Footprint.Width; ++x) {
+            uint8_t* pixel = row + static_cast<size_t>(x) * 4u;
+            pixel[0] = rgba[0];
+            pixel[1] = rgba[1];
+            pixel[2] = rgba[2];
+            pixel[3] = rgba[3];
+        }
+    }
+}
+
+static bool verify_alias_footprint(const uint8_t* base, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint,
+                                   const uint8_t rgba[4]) {
+    for (UINT y = 0; y < footprint.Footprint.Height; ++y) {
+        const uint8_t* row = base + static_cast<size_t>(y) * footprint.Footprint.RowPitch;
+        for (UINT x = 0; x < footprint.Footprint.Width; ++x) {
+            const uint8_t* pixel = row + static_cast<size_t>(x) * 4u;
+            if (pixel[0] != rgba[0] || pixel[1] != rgba[1] || pixel[2] != rgba[2] || pixel[3] != rgba[3])
+                return false;
+        }
+    }
+    return true;
+}
+
+static HeapAliasExercise exercise_heap_alias_stamp(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                                   ID3D12CommandAllocator* allocator, ID3D12GraphicsCommandList* list,
+                                                   ID3D12Fence* fence, HANDLE fence_event, UINT64& fence_value) {
+    HeapAliasExercise exercise;
+    HeapAliasStats& stats = exercise.stats;
+    if (!device || !queue || !allocator || !list || !fence || !fence_event)
+        return exercise;
+
+    D3D12_RESOURCE_DESC stamp_desc = texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+    UINT rows = 0;
+    UINT64 row_bytes = 0;
+    UINT64 alias_bytes = 0;
+    device->GetCopyableFootprints(&stamp_desc, 0, 1, 0, &exercise.footprint, &rows, &row_bytes, &alias_bytes);
+    stats.alias_bytes = alias_bytes;
+    D3D12_RESOURCE_DESC buffer = buffer_desc(alias_bytes);
+    D3D12_RESOURCE_ALLOCATION_INFO alloc_info = device->GetResourceAllocationInfo(0, 1, &buffer);
+
+    D3D12_HEAP_DESC heap_desc = {};
+    heap_desc.SizeInBytes = alloc_info.SizeInBytes ? alloc_info.SizeInBytes : alias_bytes;
+    heap_desc.Properties = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    heap_desc.Alignment = alloc_info.Alignment;
+    heap_desc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS;
+    stats.heap_size = heap_desc.SizeInBytes;
+    stats.create_heap_hr = device->CreateHeap(&heap_desc, IID_PPV_ARGS(&exercise.heap));
+    ID3D12Resource* placed_a = nullptr;
+    ID3D12Resource* placed_b = nullptr;
+    stats.create_placed_a_hr =
+        exercise.heap ? device->CreatePlacedResource(exercise.heap, 0, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                     IID_PPV_ARGS(&placed_a))
+                      : E_FAIL;
+    stats.create_placed_b_hr =
+        exercise.heap ? device->CreatePlacedResource(exercise.heap, 0, &buffer, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                     IID_PPV_ARGS(&placed_b))
+                      : E_FAIL;
+
+    if (placed_a && placed_b) {
+        stats.gpu_virtual_address_a = placed_a->GetGPUVirtualAddress();
+        stats.gpu_virtual_address_b = placed_b->GetGPUVirtualAddress();
+        stats.gpu_virtual_addresses_match =
+            stats.gpu_virtual_address_a != 0 && stats.gpu_virtual_address_a == stats.gpu_virtual_address_b;
+    }
+
+    D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC upload_desc = buffer_desc(alias_bytes * 2u);
+    D3D12_RESOURCE_DESC readback_desc = buffer_desc(alias_bytes * 3u);
+    ID3D12Resource* upload = nullptr;
+    ID3D12Resource* readback = nullptr;
+    stats.create_upload_hr =
+        device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
+                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload));
+    stats.create_readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback));
+
+    uint8_t expected_a[4] = {12, 34, 56, 255};
+    uint8_t expected_b[4] = {};
+    heap_alias_expected_rgba(expected_b);
+    uint8_t* upload_ptr = nullptr;
+    stats.map_upload_hr = upload ? upload->Map(0, nullptr, reinterpret_cast<void**>(&upload_ptr)) : E_FAIL;
+    if (SUCCEEDED(stats.map_upload_hr) && upload_ptr) {
+        fill_alias_upload_footprint(upload_ptr, exercise.footprint, expected_a);
+        fill_alias_upload_footprint(upload_ptr + static_cast<size_t>(alias_bytes), exercise.footprint, expected_b);
+        upload->Unmap(0, nullptr);
+    }
+
+    if (placed_a && placed_b && upload && readback && SUCCEEDED(allocator->Reset()) &&
+        SUCCEEDED(list->Reset(allocator, nullptr))) {
+        list->CopyBufferRegion(placed_a, 0, upload, 0, alias_bytes);
+        stats.copy_before_alias_commands++;
+        D3D12_RESOURCE_BARRIER a_to_copy_source =
+            transition_barrier(placed_a, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &a_to_copy_source);
+        stats.transition_barriers++;
+        list->CopyBufferRegion(readback, 0, placed_a, 0, alias_bytes);
+
+        D3D12_RESOURCE_BARRIER alias = aliasing_barrier(placed_a, placed_b);
+        list->ResourceBarrier(1, &alias);
+        stats.aliasing_barriers++;
+
+        D3D12_RESOURCE_BARRIER b_overlap_to_copy_source =
+            transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &b_overlap_to_copy_source);
+        stats.transition_barriers++;
+        list->CopyBufferRegion(readback, alias_bytes, placed_b, 0, alias_bytes);
+        stats.copy_alias_overlap_commands++;
+        D3D12_RESOURCE_BARRIER b_overlap_to_copy_dest =
+            transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+        list->ResourceBarrier(1, &b_overlap_to_copy_dest);
+        stats.transition_barriers++;
+
+        list->CopyBufferRegion(placed_b, 0, upload, alias_bytes, alias_bytes);
+        stats.copy_after_alias_commands++;
+        D3D12_RESOURCE_BARRIER b_to_copy_source =
+            transition_barrier(placed_b, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &b_to_copy_source);
+        stats.transition_barriers++;
+        list->CopyBufferRegion(readback, alias_bytes * 2u, placed_b, 0, alias_bytes);
+        stats.close_hr = list->Close();
+        if (SUCCEEDED(stats.close_hr)) {
+            ID3D12CommandList* base = list;
+            queue->ExecuteCommandLists(1, &base);
+            fence_value++;
+            stats.signal_hr = queue->Signal(fence, fence_value);
+            stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+        }
+    }
+
+    if (readback && stats.fence_wait_ok) {
+        uint8_t* mapped = nullptr;
+        D3D12_RANGE read_range = {0, static_cast<SIZE_T>(alias_bytes * 3u)};
+        stats.map_readback_hr = readback->Map(0, &read_range, reinterpret_cast<void**>(&mapped));
+        if (SUCCEEDED(stats.map_readback_hr) && mapped) {
+            stats.readback_before_alias_ok = verify_alias_footprint(mapped, exercise.footprint, expected_a);
+            stats.readback_alias_overlap_ok =
+                verify_alias_footprint(mapped + static_cast<size_t>(alias_bytes), exercise.footprint, expected_a);
+            stats.readback_after_alias_ok =
+                verify_alias_footprint(mapped + static_cast<size_t>(alias_bytes * 2u), exercise.footprint, expected_b);
+            D3D12_RANGE written = {0, 0};
+            readback->Unmap(0, &written);
+        }
+    }
+
+    stats.pass = SUCCEEDED(stats.create_heap_hr) && SUCCEEDED(stats.create_placed_a_hr) &&
+                 SUCCEEDED(stats.create_placed_b_hr) && SUCCEEDED(stats.create_upload_hr) &&
+                 SUCCEEDED(stats.create_readback_hr) && SUCCEEDED(stats.map_upload_hr) && stats.alias_bytes > 0 &&
+                 stats.gpu_virtual_addresses_match && stats.copy_before_alias_commands == 1 &&
+                 stats.aliasing_barriers == 1 && stats.copy_alias_overlap_commands == 1 &&
+                 stats.copy_after_alias_commands == 1 && stats.transition_barriers == 4 && SUCCEEDED(stats.close_hr) &&
+                 SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok && SUCCEEDED(stats.map_readback_hr) &&
+                 stats.readback_before_alias_ok && stats.readback_alias_overlap_ok && stats.readback_after_alias_ok;
+    if (stats.pass) {
+        exercise.present_buffer = placed_b;
+        placed_b = nullptr;
+    }
+    safe_release(placed_a);
+    safe_release(placed_b);
+    safe_release(upload);
+    safe_release(readback);
+    return exercise;
+}
+
+static void destroy_heap_alias_exercise(HeapAliasExercise& exercise) {
+    safe_release(exercise.present_buffer);
+    safe_release(exercise.heap);
+}
+
 static bool inspect_texture_stamp(DxilReadbackResources& readback, GpuTextureStats& texture_stats) {
     if (!readback.buffer)
         return false;
@@ -882,6 +1123,24 @@ static bool inspect_texture_stamp(DxilReadbackResources& readback, GpuTextureSta
                                      sizeof(texture_stats.present_rgba)) == 0;
     if (matches)
         texture_stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
+static bool inspect_heap_alias_stamp(DxilReadbackResources& readback, HeapAliasStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* pixel = readback_pixel(readback, mapped, kHeapAliasStampX, kHeapAliasStampY);
+    std::memcpy(stats.present_rgba, pixel, sizeof(stats.present_rgba));
+    stats.present_samples_checked++;
+    const bool matches = std::memcmp(stats.present_rgba, stats.present_expected_rgba, sizeof(stats.present_rgba)) == 0;
+    if (matches)
+        stats.present_sample_matches++;
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
     return matches;
@@ -1072,6 +1331,7 @@ struct D3DRunStats {
     HRESULT create_fence_hr = E_FAIL;
     HRESULT present_hr = E_FAIL;
     GpuTextureStats gpu_textures;
+    HeapAliasStats heap_alias;
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
@@ -1219,6 +1479,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     GpuTextureExercise gpu_textures = exercise_corpus_gpu_textures(device, queue, allocator, list, fence, fence_event,
                                                                    fence_value, corpus.texture_payloads);
     stats.gpu_textures = gpu_textures.stats;
+    HeapAliasExercise heap_alias =
+        exercise_heap_alias_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
+    stats.heap_alias = heap_alias.stats;
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
@@ -1285,6 +1548,25 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 list->ResourceBarrier(1, &texture_to_srv);
                 backbuffer_state = D3D12_RESOURCE_STATE_COPY_DEST;
             }
+            if (heap_alias.present_buffer) {
+                if (backbuffer_state != D3D12_RESOURCE_STATE_COPY_DEST) {
+                    auto backbuffer_to_copy_dest =
+                        transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_DEST);
+                    list->ResourceBarrier(1, &backbuffer_to_copy_dest);
+                    backbuffer_state = D3D12_RESOURCE_STATE_COPY_DEST;
+                }
+                D3D12_TEXTURE_COPY_LOCATION heap_dst = {};
+                heap_dst.pResource = buffer;
+                heap_dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                heap_dst.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION heap_src = {};
+                heap_src.pResource = heap_alias.present_buffer;
+                heap_src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                heap_src.PlacedFootprint = heap_alias.footprint;
+                D3D12_BOX heap_box = {0, 0, 0, kFreshTextureWidth, kFreshTextureHeight, 1};
+                list->CopyTextureRegion(&heap_dst, kHeapAliasStampX, kHeapAliasStampY, 0, &heap_src, &heap_box);
+                stats.heap_alias.present_copy_commands++;
+            }
             auto to_copy = transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_SOURCE);
             list->ResourceBarrier(1, &to_copy);
             if (dxil_readback.buffer) {
@@ -1316,6 +1598,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (gpu_textures.present_texture && !inspect_texture_stamp(dxil_readback, stats.gpu_textures))
                 break;
+            if (heap_alias.present_buffer && !inspect_heap_alias_stamp(dxil_readback, stats.heap_alias))
+                break;
             if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
@@ -1344,19 +1628,25 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                       stats.gpu_textures.present_copy_commands == visible_frame_target &&
                                       stats.gpu_textures.present_samples_checked == visible_frame_target &&
                                       stats.gpu_textures.present_sample_matches == visible_frame_target;
+    stats.heap_alias.present_pass = heap_alias.present_buffer &&
+                                    stats.heap_alias.present_copy_commands == visible_frame_target &&
+                                    stats.heap_alias.present_samples_checked == visible_frame_target &&
+                                    stats.heap_alias.present_sample_matches == visible_frame_target;
 
     stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
                  SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
                  SUCCEEDED(stats.create_swapchain_hr) && SUCCEEDED(stats.create_rtv_heap_hr) &&
                  SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) &&
                  SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass && stats.gpu_textures.present_pass &&
-                 stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
-                 stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
-                 stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
-                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
+                 stats.heap_alias.pass && stats.heap_alias.present_pass && stats.visible_scene.pass &&
+                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
+                 stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
+    destroy_heap_alias_exercise(heap_alias);
     destroy_dxil_readback(dxil_readback);
     destroy_dxil_scene(dxil_scene);
     for (auto*& buffer : buffers)
@@ -1478,6 +1768,46 @@ int main() {
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.gpu_textures.fence_wait_ok ? "true" : "false");
     std::printf("      \"present_ok\": %s,\n", d3d.gpu_textures.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.gpu_textures.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"heap_alias\": {\n");
+    std::printf("      \"CreateHeap\": \"%s\",\n", hr_hex(d3d.heap_alias.create_heap_hr).c_str());
+    std::printf("      \"CreatePlacedResourceA\": \"%s\",\n", hr_hex(d3d.heap_alias.create_placed_a_hr).c_str());
+    std::printf("      \"CreatePlacedResourceB\": \"%s\",\n", hr_hex(d3d.heap_alias.create_placed_b_hr).c_str());
+    std::printf("      \"CreateUpload\": \"%s\",\n", hr_hex(d3d.heap_alias.create_upload_hr).c_str());
+    std::printf("      \"CreateReadback\": \"%s\",\n", hr_hex(d3d.heap_alias.create_readback_hr).c_str());
+    std::printf("      \"MapUpload\": \"%s\",\n", hr_hex(d3d.heap_alias.map_upload_hr).c_str());
+    std::printf("      \"CloseCommandList\": \"%s\",\n", hr_hex(d3d.heap_alias.close_hr).c_str());
+    std::printf("      \"SignalFence\": \"%s\",\n", hr_hex(d3d.heap_alias.signal_hr).c_str());
+    std::printf("      \"MapReadback\": \"%s\",\n", hr_hex(d3d.heap_alias.map_readback_hr).c_str());
+    std::printf("      \"heap_size\": %llu,\n", static_cast<unsigned long long>(d3d.heap_alias.heap_size));
+    std::printf("      \"alias_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.heap_alias.alias_bytes));
+    std::printf("      \"gpu_virtual_address_a\": %llu,\n",
+                static_cast<unsigned long long>(d3d.heap_alias.gpu_virtual_address_a));
+    std::printf("      \"gpu_virtual_address_b\": %llu,\n",
+                static_cast<unsigned long long>(d3d.heap_alias.gpu_virtual_address_b));
+    std::printf("      \"gpu_virtual_addresses_match\": %s,\n",
+                d3d.heap_alias.gpu_virtual_addresses_match ? "true" : "false");
+    std::printf("      \"copy_before_alias_commands\": %u,\n", d3d.heap_alias.copy_before_alias_commands);
+    std::printf("      \"aliasing_barriers\": %u,\n", d3d.heap_alias.aliasing_barriers);
+    std::printf("      \"copy_alias_overlap_commands\": %u,\n", d3d.heap_alias.copy_alias_overlap_commands);
+    std::printf("      \"copy_after_alias_commands\": %u,\n", d3d.heap_alias.copy_after_alias_commands);
+    std::printf("      \"transition_barriers\": %u,\n", d3d.heap_alias.transition_barriers);
+    std::printf("      \"readback_before_alias_ok\": %s,\n",
+                d3d.heap_alias.readback_before_alias_ok ? "true" : "false");
+    std::printf("      \"readback_alias_overlap_ok\": %s,\n",
+                d3d.heap_alias.readback_alias_overlap_ok ? "true" : "false");
+    std::printf("      \"readback_after_alias_ok\": %s,\n", d3d.heap_alias.readback_after_alias_ok ? "true" : "false");
+    std::printf("      \"present_copy_commands\": %u,\n", d3d.heap_alias.present_copy_commands);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.heap_alias.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.heap_alias.present_sample_matches);
+    std::printf("      \"present_expected_rgba\": [%u, %u, %u, %u],\n", d3d.heap_alias.present_expected_rgba[0],
+                d3d.heap_alias.present_expected_rgba[1], d3d.heap_alias.present_expected_rgba[2],
+                d3d.heap_alias.present_expected_rgba[3]);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.heap_alias.present_rgba[0],
+                d3d.heap_alias.present_rgba[1], d3d.heap_alias.present_rgba[2], d3d.heap_alias.present_rgba[3]);
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.heap_alias.fence_wait_ok ? "true" : "false");
+    std::printf("      \"present_ok\": %s,\n", d3d.heap_alias.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.heap_alias.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"visible_scene\": {\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.visible_scene.d3dcompiler_loaded ? "true" : "false");
