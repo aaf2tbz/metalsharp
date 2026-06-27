@@ -116,6 +116,23 @@ static uint64_t fnv1a_update(uint64_t hash, const uint8_t* data, size_t size) {
     return hash;
 }
 
+static bool read_file_bytes(const std::string& path, std::vector<uint8_t>& bytes, uint64_t& file_hash) {
+    std::ifstream file(wine_path(path), std::ios::binary);
+    if (!file)
+        return false;
+    file.seekg(0, std::ios::end);
+    std::streamoff size = file.tellg();
+    if (size <= 0)
+        return false;
+    file.seekg(0, std::ios::beg);
+    bytes.resize(static_cast<size_t>(size));
+    file.read(reinterpret_cast<char*>(bytes.data()), size);
+    if (file.gcount() != size)
+        return false;
+    file_hash = fnv1a_update(1469598103934665603ull, bytes.data(), bytes.size());
+    return true;
+}
+
 static bool read_file_hash(const std::string& path, uint64_t& aggregate_hash, uint64_t& bytes, uint64_t& file_hash,
                            TexturePayload* payload = nullptr) {
     std::ifstream file(wine_path(path), std::ios::binary);
@@ -137,7 +154,8 @@ static bool read_file_hash(const std::string& path, uint64_t& aggregate_hash, ui
             bytes += static_cast<uint64_t>(count);
             if (payload && payload->bytes_from_file < payload->rgba.size()) {
                 const size_t dst_offset = payload->bytes_from_file;
-                const size_t copy_bytes = std::min<size_t>(static_cast<size_t>(count), payload->rgba.size() - dst_offset);
+                const size_t copy_bytes =
+                    std::min<size_t>(static_cast<size_t>(count), payload->rgba.size() - dst_offset);
                 std::memcpy(payload->rgba.data() + dst_offset, buffer.data(), copy_bytes);
                 payload->bytes_from_file += static_cast<uint32_t>(copy_bytes);
             }
@@ -521,6 +539,202 @@ static void destroy_visible_scene(VisibleSceneResources& scene) {
     safe_release(scene.root_signature);
 }
 
+struct DxilSceneStats {
+    std::string vs_path;
+    std::string ps_path;
+    bool vs_loaded = false;
+    bool ps_loaded = false;
+    uint64_t vs_bytes = 0;
+    uint64_t ps_bytes = 0;
+    uint64_t vs_fnv1a64 = 1469598103934665603ull;
+    uint64_t ps_fnv1a64 = 1469598103934665603ull;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_vertex_buffer_hr = E_FAIL;
+    uint32_t draw_calls = 0;
+    uint32_t vertices_per_draw = 0;
+    bool pass = false;
+};
+
+struct DxilSceneResources {
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12Resource* vertex_buffer = nullptr;
+    D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    DxilSceneStats stats;
+};
+
+static DxilSceneResources create_dxil_scene(ID3D12Device* device, SerializeRootSignatureFn serialize,
+                                            const std::string& vs_path, const std::string& ps_path) {
+    DxilSceneResources scene;
+    scene.stats.vs_path = vs_path;
+    scene.stats.ps_path = ps_path;
+    std::vector<uint8_t> vs;
+    std::vector<uint8_t> ps;
+    scene.stats.vs_loaded = read_file_bytes(vs_path, vs, scene.stats.vs_fnv1a64);
+    scene.stats.ps_loaded = read_file_bytes(ps_path, ps, scene.stats.ps_fnv1a64);
+    scene.stats.vs_bytes = static_cast<uint64_t>(vs.size());
+    scene.stats.ps_bytes = static_cast<uint64_t>(ps.size());
+
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    scene.stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+    if (device && root_blob) {
+        scene.stats.create_root_hr = device->CreateRootSignature(
+            0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(), IID_PPV_ARGS(&scene.root_signature));
+    }
+
+    if (device && scene.root_signature && scene.stats.vs_loaded && scene.stats.ps_loaded) {
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = scene.root_signature;
+        pso_desc.VS = {vs.data(), vs.size()};
+        pso_desc.PS = {ps.data(), ps.size()};
+        pso_desc.InputLayout = {input_elements, 2};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        scene.stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+    }
+
+    if (device) {
+        const ColorVertex dxil_overlay_triangle[3] = {
+            {{-0.88f, -0.84f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+            {{0.00f, 0.88f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+            {{0.88f, -0.84f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+        };
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(sizeof(dxil_overlay_triangle));
+        scene.stats.create_vertex_buffer_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.vertex_buffer));
+        if (SUCCEEDED(scene.stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
+            void* mapped = nullptr;
+            if (SUCCEEDED(scene.vertex_buffer->Map(0, nullptr, &mapped)) && mapped) {
+                std::memcpy(mapped, dxil_overlay_triangle, sizeof(dxil_overlay_triangle));
+                scene.vertex_buffer->Unmap(0, nullptr);
+            }
+            scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
+            scene.vertex_view.SizeInBytes = sizeof(dxil_overlay_triangle);
+            scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
+            scene.stats.vertices_per_draw = 3;
+        }
+    }
+
+    if (root_blob)
+        root_blob->Release();
+    scene.stats.pass = scene.stats.vs_loaded && scene.stats.ps_loaded && scene.stats.vs_bytes > 0 &&
+                       scene.stats.ps_bytes > 0 && SUCCEEDED(scene.stats.serialize_root_hr) &&
+                       SUCCEEDED(scene.stats.create_root_hr) && SUCCEEDED(scene.stats.create_pso_hr) &&
+                       SUCCEEDED(scene.stats.create_vertex_buffer_hr) && scene.vertex_buffer != nullptr &&
+                       scene.stats.vertices_per_draw == 3;
+    return scene;
+}
+
+static void destroy_dxil_scene(DxilSceneResources& scene) {
+    safe_release(scene.vertex_buffer);
+    safe_release(scene.pipeline_state);
+    safe_release(scene.root_signature);
+}
+
+struct DxilReadbackStats {
+    HRESULT create_readback_hr = E_FAIL;
+    uint32_t copy_commands = 0;
+    uint32_t sentinel_writes = 0;
+    uint32_t samples_checked = 0;
+    uint32_t magenta_samples = 0;
+    uint8_t center_rgba[4] = {0, 0, 0, 0};
+    bool pass = false;
+};
+
+struct DxilReadbackResources {
+    ID3D12Resource* buffer = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT rows = 0;
+    UINT64 row_bytes = 0;
+    UINT64 total_bytes = 0;
+    DxilReadbackStats stats;
+};
+
+static DxilReadbackResources create_dxil_readback(ID3D12Device* device, UINT width, UINT height) {
+    DxilReadbackResources readback;
+    if (!device)
+        return readback;
+    D3D12_RESOURCE_DESC backbuffer_desc = texture_desc(width, height, DXGI_FORMAT_R8G8B8A8_UNORM);
+    device->GetCopyableFootprints(&backbuffer_desc, 0, 1, 0, &readback.footprint, &readback.rows, &readback.row_bytes,
+                                  &readback.total_bytes);
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC buffer = buffer_desc(readback.total_bytes);
+    readback.stats.create_readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &buffer, D3D12_RESOURCE_STATE_COPY_DEST,
+                                        nullptr, IID_PPV_ARGS(&readback.buffer));
+    return readback;
+}
+
+static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* mapped, UINT width, UINT height) {
+    const UINT x = width / 2;
+    const UINT y = height / 2;
+    return mapped + static_cast<size_t>(readback.footprint.Offset) +
+           static_cast<size_t>(y) * readback.footprint.Footprint.RowPitch + static_cast<size_t>(x) * 4u;
+}
+
+static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE read_range = {0, 0};
+    if (FAILED(readback.buffer->Map(0, &read_range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    uint8_t* pixel = readback_center_pixel(readback, mapped, width, height);
+    pixel[0] = 0;
+    pixel[1] = 255;
+    pixel[2] = 0;
+    pixel[3] = 255;
+    const size_t offset = static_cast<size_t>(pixel - mapped);
+    D3D12_RANGE written = {offset, offset + 4u};
+    readback.buffer->Unmap(0, &written);
+    readback.stats.sentinel_writes++;
+    return true;
+}
+
+static bool inspect_dxil_magenta_center(DxilReadbackResources& readback, UINT width, UINT height) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* pixel = readback_center_pixel(readback, mapped, width, height);
+    readback.stats.center_rgba[0] = pixel[0];
+    readback.stats.center_rgba[1] = pixel[1];
+    readback.stats.center_rgba[2] = pixel[2];
+    readback.stats.center_rgba[3] = pixel[3];
+    readback.stats.samples_checked++;
+    const bool magenta = pixel[0] >= 180 && pixel[1] <= 80 && pixel[2] >= 180 && pixel[3] >= 180;
+    if (magenta)
+        readback.stats.magenta_samples++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return magenta;
+}
+
+static void destroy_dxil_readback(DxilReadbackResources& readback) {
+    safe_release(readback.buffer);
+}
+
 struct GpuTextureStats {
     HRESULT create_descriptor_heap_hr = E_FAIL;
     HRESULT close_hr = E_FAIL;
@@ -613,7 +827,8 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
         }
         stats.upload_buffers_created++;
         stats.upload_bytes += upload_bytes;
-        if (fill_texture_upload(uploads[i], footprints[i], texture_payloads[i], kFreshTextureWidth, kFreshTextureHeight)) {
+        if (fill_texture_upload(uploads[i], footprints[i], texture_payloads[i], kFreshTextureWidth,
+                                kFreshTextureHeight)) {
             stats.texture_payloads_uploaded++;
             stats.texture_payload_bytes_from_files += texture_payloads[i].bytes_from_file;
             stats.upload_payload_fnv1a64 = fnv1a_update(stats.upload_payload_fnv1a64, texture_payloads[i].rgba.data(),
@@ -656,12 +871,12 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
         }
     }
 
-    stats.pass = creation_ok && stats.textures_created == texture_count &&
-                 stats.upload_buffers_created == texture_count && stats.srv_descriptors_created == texture_count &&
-                 stats.texture_payloads_uploaded == texture_count &&
-                 stats.texture_payload_bytes_from_files >= static_cast<uint64_t>(texture_count) * kFreshTexturePayloadBytes &&
-                 stats.copy_texture_region_commands == texture_count && stats.transition_barriers == texture_count &&
-                 SUCCEEDED(stats.close_hr) && SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok;
+    stats.pass =
+        creation_ok && stats.textures_created == texture_count && stats.upload_buffers_created == texture_count &&
+        stats.srv_descriptors_created == texture_count && stats.texture_payloads_uploaded == texture_count &&
+        stats.texture_payload_bytes_from_files >= static_cast<uint64_t>(texture_count) * kFreshTexturePayloadBytes &&
+        stats.copy_texture_region_commands == texture_count && stats.transition_barriers == texture_count &&
+        SUCCEEDED(stats.close_hr) && SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok;
 
     for (auto*& upload : uploads)
         safe_release(upload);
@@ -683,6 +898,8 @@ struct D3DRunStats {
     HRESULT present_hr = E_FAIL;
     GpuTextureStats gpu_textures;
     VisibleSceneStats visible_scene;
+    DxilSceneStats dxil_scene;
+    DxilReadbackStats dxil_readback;
     uint32_t frames_presented = 0;
     bool hwnd_created = false;
     bool pass = false;
@@ -753,6 +970,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     if (SUCCEEDED(stats.create_swapchain_hr) && swapchain1)
         swapchain1->QueryInterface(IID_PPV_ARGS(&swapchain));
 
+    constexpr UINT backbuffer_width = 960;
+    constexpr UINT backbuffer_height = 540;
+
     D3D12_DESCRIPTOR_HEAP_DESC rtv_desc = {};
     rtv_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtv_desc.NumDescriptors = 2;
@@ -778,15 +998,21 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         list->Close();
     stats.create_fence_hr = device ? device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)) : E_FAIL;
 
-    const uint32_t visible_frame_target = getenv_u32("M12_FRESH_VISIBLE_FRAMES", 300);
+    const uint32_t visible_frame_target = getenv_u32("M12_FRESH_VISIBLE_FRAMES", 600);
     VisibleSceneResources visible_scene = create_visible_scene(device, compile, serialize, visible_frame_target);
     stats.visible_scene = visible_scene.stats;
+    DxilSceneResources dxil_scene =
+        create_dxil_scene(device, serialize, getenv_string("M12_FRESH_DXIL_VS"), getenv_string("M12_FRESH_DXIL_PS"));
+    stats.dxil_scene = dxil_scene.stats;
+    DxilReadbackResources dxil_readback = create_dxil_readback(device, backbuffer_width, backbuffer_height);
+    stats.dxil_readback = dxil_readback.stats;
 
     stats.gpu_textures = exercise_corpus_gpu_textures(device, queue, allocator, list, fence, fence_event, fence_value,
                                                       corpus.texture_payloads);
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
-    if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass) {
+    if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
+        dxil_scene.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -800,8 +1026,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             auto rtv = offset_cpu(rtv_start, rtv_increment, index);
             list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
             list->ClearRenderTargetView(rtv, colors[frame % 3], 0, nullptr);
-            D3D12_VIEWPORT viewport = {0.0f, 0.0f, 960.0f, 540.0f, 0.0f, 1.0f};
-            D3D12_RECT scissor = {0, 0, 960, 540};
+            D3D12_VIEWPORT viewport = {
+                0.0f, 0.0f, static_cast<float>(backbuffer_width), static_cast<float>(backbuffer_height), 0.0f, 1.0f};
+            D3D12_RECT scissor = {0, 0, static_cast<LONG>(backbuffer_width), static_cast<LONG>(backbuffer_height)};
             const uint32_t visible_vertices = populate_visible_loading_vertices(visible_scene, frame, corpus);
             list->RSSetViewports(1, &viewport);
             list->RSSetScissorRects(1, &scissor);
@@ -811,8 +1038,31 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetVertexBuffers(0, 1, &visible_scene.vertex_view);
             list->DrawInstanced(visible_vertices, 1, 0, 0);
             stats.visible_scene.draw_calls++;
+            list->SetGraphicsRootSignature(dxil_scene.root_signature);
+            list->SetPipelineState(dxil_scene.pipeline_state);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &dxil_scene.vertex_view);
+            list->DrawInstanced(3, 1, 0, 0);
+            stats.dxil_scene.draw_calls++;
+            auto to_copy =
+                transition_barrier(buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            list->ResourceBarrier(1, &to_copy);
+            if (dxil_readback.buffer) {
+                if (!seed_dxil_readback_sentinel(dxil_readback, backbuffer_width, backbuffer_height))
+                    break;
+                D3D12_TEXTURE_COPY_LOCATION dst = {};
+                dst.pResource = dxil_readback.buffer;
+                dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                dst.PlacedFootprint = dxil_readback.footprint;
+                D3D12_TEXTURE_COPY_LOCATION src = {};
+                src.pResource = buffer;
+                src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                src.SubresourceIndex = 0;
+                list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+                dxil_readback.stats.copy_commands++;
+            }
             auto to_present =
-                transition_barrier(buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+                transition_barrier(buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
             list->ResourceBarrier(1, &to_present);
             if (FAILED(list->Close()))
                 break;
@@ -820,6 +1070,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             queue->ExecuteCommandLists(1, &base);
             fence_value++;
             if (FAILED(queue->Signal(fence, fence_value)) || !wait_for_fence(fence, fence_value, fence_event))
+                break;
+            if (!inspect_dxil_magenta_center(dxil_readback, backbuffer_width, backbuffer_height))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
             if (FAILED(stats.present_hr))
@@ -831,14 +1083,24 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
 
     stats.visible_scene.quads_per_frame = visible_scene.stats.quads_per_frame;
     stats.visible_scene.vertices_per_frame = visible_scene.stats.vertices_per_frame;
+    dxil_readback.stats.pass = SUCCEEDED(dxil_readback.stats.create_readback_hr) &&
+                               dxil_readback.stats.copy_commands == visible_frame_target &&
+                               dxil_readback.stats.sentinel_writes == visible_frame_target &&
+                               dxil_readback.stats.samples_checked == visible_frame_target &&
+                               dxil_readback.stats.magenta_samples == visible_frame_target;
+    stats.dxil_readback = dxil_readback.stats;
 
     stats.pass = stats.hwnd_created && SUCCEEDED(stats.create_factory_hr) && SUCCEEDED(stats.create_device_hr) &&
                  SUCCEEDED(stats.create_queue_hr) && SUCCEEDED(stats.create_swapchain_hr) &&
                  SUCCEEDED(stats.create_rtv_heap_hr) && SUCCEEDED(stats.create_allocator_hr) &&
                  SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass &&
                  stats.visible_scene.pass && stats.visible_scene.draw_calls == visible_frame_target &&
-                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
+                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
+                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
+                 stats.frames_presented == visible_frame_target;
 
+    destroy_dxil_readback(dxil_readback);
+    destroy_dxil_scene(dxil_scene);
     for (auto*& buffer : buffers)
         safe_release(buffer);
     safe_release(fence);
@@ -870,11 +1132,11 @@ int main() {
     uint32_t target_textures = 300;
     CorpusStats corpus = load_corpus_tsv(corpus_tsv, target_shaders, target_textures);
     D3DRunStats d3d = run_d3d_window(corpus);
-    bool corpus_ok = corpus.shader_files_loaded >= target_shaders && corpus.texture_files_loaded >= target_textures &&
-                     corpus.texture_payloads.size() >= target_textures &&
-                     corpus.texture_payload_bytes_from_files >=
-                         static_cast<uint64_t>(target_textures) * kFreshTexturePayloadBytes &&
-                     corpus.failed_loads == 0;
+    bool corpus_ok =
+        corpus.shader_files_loaded >= target_shaders && corpus.texture_files_loaded >= target_textures &&
+        corpus.texture_payloads.size() >= target_textures &&
+        corpus.texture_payload_bytes_from_files >= static_cast<uint64_t>(target_textures) * kFreshTexturePayloadBytes &&
+        corpus.failed_loads == 0;
     bool pass = corpus_ok && d3d.pass;
 
     std::printf("{\n");
@@ -943,6 +1205,35 @@ int main() {
     std::printf("      \"quads_per_frame\": %u,\n", d3d.visible_scene.quads_per_frame);
     std::printf("      \"vertices_per_frame\": %u,\n", d3d.visible_scene.vertices_per_frame);
     std::printf("      \"ok\": %s\n", d3d.visible_scene.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"dxil_scene\": {\n");
+    std::printf("      \"vs_path\": \"%s\",\n", json_escape(d3d.dxil_scene.vs_path).c_str());
+    std::printf("      \"ps_path\": \"%s\",\n", json_escape(d3d.dxil_scene.ps_path).c_str());
+    std::printf("      \"vs_loaded\": %s,\n", d3d.dxil_scene.vs_loaded ? "true" : "false");
+    std::printf("      \"ps_loaded\": %s,\n", d3d.dxil_scene.ps_loaded ? "true" : "false");
+    std::printf("      \"vs_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.dxil_scene.vs_bytes));
+    std::printf("      \"ps_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.dxil_scene.ps_bytes));
+    std::printf("      \"vs_fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(d3d.dxil_scene.vs_fnv1a64));
+    std::printf("      \"ps_fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(d3d.dxil_scene.ps_fnv1a64));
+    std::printf("      \"D3D12SerializeRootSignature\": \"%s\",\n", hr_hex(d3d.dxil_scene.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.dxil_scene.create_root_hr).c_str());
+    std::printf("      \"CreateGraphicsPipelineState_SM6_DXIL\": \"%s\",\n",
+                hr_hex(d3d.dxil_scene.create_pso_hr).c_str());
+    std::printf("      \"CreateDxilVertexBuffer\": \"%s\",\n", hr_hex(d3d.dxil_scene.create_vertex_buffer_hr).c_str());
+    std::printf("      \"vertex_source\": \"POSITION_GREEN_SENTINEL_VERTEX_BUFFER_PS_MAGENTA_OVERLAY\",\n");
+    std::printf("      \"draw_calls\": %u,\n", d3d.dxil_scene.draw_calls);
+    std::printf("      \"vertices_per_draw\": %u,\n", d3d.dxil_scene.vertices_per_draw);
+    std::printf("      \"ok\": %s\n", d3d.dxil_scene.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"dxil_readback\": {\n");
+    std::printf("      \"CreateReadbackBuffer\": \"%s\",\n", hr_hex(d3d.dxil_readback.create_readback_hr).c_str());
+    std::printf("      \"copy_commands\": %u,\n", d3d.dxil_readback.copy_commands);
+    std::printf("      \"sentinel_writes\": %u,\n", d3d.dxil_readback.sentinel_writes);
+    std::printf("      \"samples_checked\": %u,\n", d3d.dxil_readback.samples_checked);
+    std::printf("      \"magenta_samples\": %u,\n", d3d.dxil_readback.magenta_samples);
+    std::printf("      \"center_rgba\": [%u, %u, %u, %u],\n", d3d.dxil_readback.center_rgba[0],
+                d3d.dxil_readback.center_rgba[1], d3d.dxil_readback.center_rgba[2], d3d.dxil_readback.center_rgba[3]);
+    std::printf("      \"ok\": %s\n", d3d.dxil_readback.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"Present\": \"%s\",\n", hr_hex(d3d.present_hr).c_str());
     std::printf("    \"frames_presented\": %u,\n", d3d.frames_presented);

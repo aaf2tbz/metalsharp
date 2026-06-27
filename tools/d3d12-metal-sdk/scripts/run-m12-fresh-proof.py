@@ -34,6 +34,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def wine_path_arg(path: Path) -> str:
+    resolved = path.expanduser().resolve()
+    return "Z:" + str(resolved).replace("/", "\\")
+
+
 def git_text(repo: Path, *args: str) -> str:
     try:
         return subprocess.check_output(["git", *args], cwd=repo, text=True).strip()
@@ -439,6 +444,139 @@ def validate_fresh_game_corpus_tsv(corpus_tsv: Path, target_shaders: int = 300, 
     }
 
 
+def build_fresh_game_dxil(out_bin: Path, run_dir: Path, wine: Path, prefix: Path) -> dict[str, Any]:
+    dxil_dir = run_dir / "fresh-sm6-dxil"
+    dxil_dir.mkdir(parents=True, exist_ok=True)
+    hlsl_path = dxil_dir / "m12_fresh_sm6_scene.hlsl"
+    vs_path = dxil_dir / "m12_fresh_sm6_vs.dxil"
+    ps_path = dxil_dir / "m12_fresh_sm6_ps.dxil"
+
+    sdk_dir = out_bin.parent.parent
+    fetch_dxc = sdk_dir / "scripts" / "fetch-dxc.sh"
+    fetch_proc = subprocess.run([str(fetch_dxc)], cwd=sdk_dir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    dxc_stage: dict[str, Any] = {
+        "fetch_command": [str(fetch_dxc)],
+        "fetch_returncode": fetch_proc.returncode,
+        "fetch_stdout": fetch_proc.stdout,
+        "fetch_stderr": fetch_proc.stderr,
+        "files": [],
+        "ok": False,
+    }
+    if fetch_proc.returncode != 0:
+        return {
+            "ok": False,
+            "hlsl": str(hlsl_path),
+            "vs_path": str(vs_path),
+            "ps_path": str(ps_path),
+            "dxc_stage": dxc_stage,
+            "vs": {},
+            "ps": {},
+        }
+    dxc_bin_dir = Path(fetch_proc.stdout.strip().splitlines()[-1]).resolve()
+    out_bin.mkdir(parents=True, exist_ok=True)
+    staged_files = []
+    for filename in ["dxc.exe", "dxcompiler.dll", "dxil.dll"]:
+        source = dxc_bin_dir / filename
+        destination = out_bin / filename
+        shutil.copy2(source, destination)
+        staged_files.append(
+            {
+                "source": str(source),
+                "destination": str(destination),
+                "size": destination.stat().st_size,
+                "sha256": sha256(destination),
+            }
+        )
+    dxc_stage["files"] = staged_files
+    dxc_stage["ok"] = True
+
+    hlsl_path.write_text(
+        """
+struct VSIn {
+  float3 position : POSITION;
+  float4 color : COLOR0;
+};
+struct PSIn {
+  float4 position : SV_POSITION;
+  float4 color : COLOR0;
+};
+PSIn VSMain(VSIn input) {
+  PSIn output;
+  output.position = float4(input.position, 1.0);
+  output.color = input.color;
+  return output;
+}
+float4 PSMain(PSIn input) : SV_TARGET {
+  return float4(1.0, 0.0, 1.0, 1.0);
+}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("DXMT_"):
+            env.pop(key, None)
+    env.update({"WINEPREFIX": str(prefix), "WINEDEBUG": "-all"})
+
+    commands = {
+        "vs": [
+            str(wine),
+            "dxc.exe",
+            "-T",
+            "vs_6_0",
+            "-E",
+            "VSMain",
+            "-Qstrip_debug",
+            "-Fo",
+            wine_path_arg(vs_path),
+            wine_path_arg(hlsl_path),
+        ],
+        "ps": [
+            str(wine),
+            "dxc.exe",
+            "-T",
+            "ps_6_0",
+            "-E",
+            "PSMain",
+            "-Qstrip_debug",
+            "-Fo",
+            wine_path_arg(ps_path),
+            wine_path_arg(hlsl_path),
+        ],
+    }
+    results: dict[str, Any] = {}
+    ok = True
+    for name, cmd in commands.items():
+        proc = subprocess.run(cmd, cwd=out_bin, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout_path = dxil_dir / f"dxc-{name}.stdout.txt"
+        stderr_path = dxil_dir / f"dxc-{name}.stderr.txt"
+        stdout_path.write_text(proc.stdout)
+        stderr_path.write_text(proc.stderr)
+        output = vs_path if name == "vs" else ps_path
+        output_ok = proc.returncode == 0 and output.exists() and output.stat().st_size > 0
+        ok = ok and output_ok
+        results[name] = {
+            "command": cmd,
+            "returncode": proc.returncode,
+            "stdout": str(stdout_path),
+            "stderr": str(stderr_path),
+            "output": str(output),
+            "output_size": output.stat().st_size if output.exists() else 0,
+            "output_sha256": sha256(output) if output.exists() else "",
+            "ok": output_ok,
+        }
+    return {
+        "ok": ok,
+        "hlsl": str(hlsl_path),
+        "vs_path": str(vs_path),
+        "dxc_stage": dxc_stage,
+        "ps_path": str(ps_path),
+        "vs": results.get("vs", {}),
+        "ps": results.get("ps", {}),
+    }
+
+
 def run_fresh_game(
     repo: Path,
     proof_dir: Path,
@@ -480,6 +618,8 @@ def run_fresh_game(
                 }
             )
 
+    dxil_artifacts = build_fresh_game_dxil(out_bin, run_dir, wine, prefix)
+
     shader_cache_dir = run_dir / "shader-cache-fresh"
     shader_cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -501,6 +641,8 @@ def run_fresh_game(
             "D3D12_METAL_SDK_PROFILE": "m12-fresh-visible-game",
             "DXMT_D3D12_PRESENT_LOG_INTERVAL": "1",
             "M12_FRESH_CORPUS_TSV": str(corpus_tsv),
+            "M12_FRESH_DXIL_VS": dxil_artifacts["vs_path"],
+            "M12_FRESH_DXIL_PS": dxil_artifacts["ps_path"],
             "M12_FRESH_VISIBLE_FRAMES": str(visible_frames),
             "WINEDEBUG": "+loaddll",
         }
@@ -522,6 +664,22 @@ def run_fresh_game(
     runtime_match = validate_loaddll_staged(loaddll_rows, staged_files)
     drawn_present_count = proc.stderr.count("classification=drawn")
     draw_line_count = len(re.findall(r"draws=[1-9]", proc.stderr))
+    present_draw_counts = [
+        int(match.group(1))
+        for match in re.finditer(r"M12 present backbuffer work count=\d+ .*? draws=(\d+).*?classification=drawn", proc.stderr)
+    ]
+    dxil_draw_encoded_count = len(re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1", proc.stderr))
+    dxil_vertex_pull_snapshot_count = len(
+        re.findall(
+            r"M12 vertex-pull snapshot draw=DrawInstanced v=3 i=1 .*?slot_mask=0x1.*?bound_vbs=1",
+            proc.stderr,
+        )
+    )
+    dxil_draw_skipped = bool(
+        re.search(r"M12 swapchain DrawInstanced skipped v=3\s+i=1|DrawInstanced\s+SKIPPED\s+v=3\s+i=1", proc.stderr,
+                  re.IGNORECASE)
+    )
+    render_encoder_encode_failed = bool(re.search(r"M12 render encoder encode failed", proc.stderr, re.IGNORECASE))
     stderr_assertion = "std::__condvar" in proc.stderr or "Assertion" in proc.stderr
     frames_presented = 0
     if parsed:
@@ -538,6 +696,17 @@ def run_fresh_game(
         and int(corpus_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
         and d3d12_json.get("ok") is True
         and d3d12_json.get("visible_scene", {}).get("ok") is True
+        and d3d12_json.get("dxil_scene", {}).get("ok") is True
+        and d3d12_json.get("dxil_scene", {}).get("CreateDxilVertexBuffer") == "0x00000000"
+        and d3d12_json.get("dxil_scene", {}).get("vertex_source") == "POSITION_GREEN_SENTINEL_VERTEX_BUFFER_PS_MAGENTA_OVERLAY"
+        and int(d3d12_json.get("dxil_scene", {}).get("draw_calls", 0) or 0) == visible_frames
+        and int(d3d12_json.get("dxil_scene", {}).get("vertices_per_draw", 0) or 0) == 3
+        and d3d12_json.get("dxil_readback", {}).get("ok") is True
+        and d3d12_json.get("dxil_readback", {}).get("CreateReadbackBuffer") == "0x00000000"
+        and int(d3d12_json.get("dxil_readback", {}).get("copy_commands", 0) or 0) == visible_frames
+        and int(d3d12_json.get("dxil_readback", {}).get("sentinel_writes", 0) or 0) == visible_frames
+        and int(d3d12_json.get("dxil_readback", {}).get("samples_checked", 0) or 0) == visible_frames
+        and int(d3d12_json.get("dxil_readback", {}).get("magenta_samples", 0) or 0) == visible_frames
         and gpu_textures_json.get("ok") is True
         and int(gpu_textures_json.get("texture_payloads_uploaded", 0) or 0) >= 300
         and int(gpu_textures_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
@@ -552,19 +721,36 @@ def run_fresh_game(
         "game_json": parsed,
         "loaddll": loaddll_rows,
         "runtime_match": runtime_match,
+        "dxil_artifacts": dxil_artifacts,
         "shader_cache_dir": str(shader_cache_dir),
         "copied_corpus_artifacts": copied_corpus_artifacts,
         "corpus_hash_validation": corpus_hash_validation,
         "drawn_present_count": drawn_present_count,
         "draw_line_count": draw_line_count,
+        "present_draw_counts": present_draw_counts,
+        "dxil_draw_encoded_count": dxil_draw_encoded_count,
+        "dxil_draw_encoded_required": min(frames_presented, 16),
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced encoded logs are a capped sample; long runs additionally require every present to report draws>=2.",
+        "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
+        "dxil_vertex_pull_snapshot_required": min(frames_presented, 12),
+        "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, and bound_vbs=1.",
+        "dxil_draw_skipped": dxil_draw_skipped,
+        "render_encoder_encode_failed": render_encoder_encode_failed,
         "frames_presented": frames_presented,
         "stderr_assertion": stderr_assertion,
         "ok": proc.returncode == 0
+        and dxil_artifacts["ok"]
         and game_json_ok
         and corpus_hash_validation["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented
+        and len(present_draw_counts) == frames_presented
+        and all(draws >= 2 for draws in present_draw_counts)
+        and dxil_draw_encoded_count >= min(frames_presented, 16)
+        and dxil_vertex_pull_snapshot_count >= min(frames_presented, 12)
+        and not dxil_draw_skipped
+        and not render_encoder_encode_failed
         and draw_line_count >= visible_frames
         and not stderr_assertion,
     }
@@ -658,7 +844,7 @@ def main() -> int:
     parser.add_argument("--min-free-gib", type=int, default=50)
     parser.add_argument("--cxx", default=os.environ.get("CXX", "x86_64-w64-mingw32-g++"))
     parser.add_argument("--corpus-tsv", default=os.environ.get("M12_FRESH_CORPUS_TSV", ""))
-    parser.add_argument("--visible-frames", type=int, default=300)
+    parser.add_argument("--visible-frames", type=int, default=600)
     parser.add_argument("--skip-game", action="store_true", help="Skip the visible m12_fresh_game.exe phase.")
     parser.add_argument("--skip-run", action="store_true", help="Build and manifest only; do not execute Wine.")
     args = parser.parse_args()

@@ -2365,9 +2365,17 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t idx = args[arg];
         if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty()) {
             const auto &v = ctx.value_table[idx];
-            if (v.find('.') != std::string::npos) return fallback;
+            if (v.find('.') != std::string::npos && !exprLooksScalarLiteral(v))
+                return fallback;
             return v;
         }
+        for (auto &c : ctx.mod.constants)
+            if (c.id == idx && !c.constant_data.empty())
+                return c.constant_data;
+        if (ctx.current_fn)
+            for (auto &c : ctx.current_fn->constants)
+                if (c.id == idx && !c.constant_data.empty())
+                    return c.constant_data;
         return fallback;
     };
 
