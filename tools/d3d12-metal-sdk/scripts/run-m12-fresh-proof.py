@@ -708,8 +708,14 @@ def run_fresh_game(
         and int(d3d12_json.get("dxil_readback", {}).get("samples_checked", 0) or 0) == visible_frames
         and int(d3d12_json.get("dxil_readback", {}).get("magenta_samples", 0) or 0) == visible_frames
         and gpu_textures_json.get("ok") is True
+        and gpu_textures_json.get("present_ok") is True
         and int(gpu_textures_json.get("texture_payloads_uploaded", 0) or 0) >= 300
         and int(gpu_textures_json.get("texture_payload_bytes_from_files", 0) or 0) >= texture_payload_bytes_required
+        and int(gpu_textures_json.get("present_backbuffer_sentinel_copies", 0) or 0) == visible_frames
+        and int(gpu_textures_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(gpu_textures_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(gpu_textures_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and gpu_textures_json.get("present_rgba") == gpu_textures_json.get("present_expected_rgba")
     )
     result = {
         "command": cmd,

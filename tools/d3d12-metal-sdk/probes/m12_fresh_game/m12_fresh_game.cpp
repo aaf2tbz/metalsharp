@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 
 #include <algorithm>
@@ -32,6 +33,8 @@ struct ColorVertex {
 
 constexpr UINT kFreshTextureWidth = 16;
 constexpr UINT kFreshTextureHeight = 16;
+constexpr UINT kTextureStampX = 24;
+constexpr UINT kTextureStampY = 24;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
 
 struct TexturePayload {
@@ -684,27 +687,43 @@ static DxilReadbackResources create_dxil_readback(ID3D12Device* device, UINT wid
     return readback;
 }
 
-static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* mapped, UINT width, UINT height) {
-    const UINT x = width / 2;
-    const UINT y = height / 2;
+static uint8_t* readback_pixel(DxilReadbackResources& readback, uint8_t* mapped, UINT x, UINT y) {
     return mapped + static_cast<size_t>(readback.footprint.Offset) +
            static_cast<size_t>(y) * readback.footprint.Footprint.RowPitch + static_cast<size_t>(x) * 4u;
 }
 
-static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height) {
+static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* mapped, UINT width, UINT height) {
+    return readback_pixel(readback, mapped, width / 2, height / 2);
+}
+
+static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
+                                        const uint8_t* texture_expected_rgba) {
     if (!readback.buffer)
         return false;
     uint8_t* mapped = nullptr;
     D3D12_RANGE read_range = {0, 0};
     if (FAILED(readback.buffer->Map(0, &read_range, reinterpret_cast<void**>(&mapped))) || !mapped)
         return false;
-    uint8_t* pixel = readback_center_pixel(readback, mapped, width, height);
-    pixel[0] = 0;
-    pixel[1] = 255;
-    pixel[2] = 0;
-    pixel[3] = 255;
-    const size_t offset = static_cast<size_t>(pixel - mapped);
-    D3D12_RANGE written = {offset, offset + 4u};
+    uint8_t* center = readback_center_pixel(readback, mapped, width, height);
+    center[0] = 0;
+    center[1] = 255;
+    center[2] = 0;
+    center[3] = 255;
+    uint8_t* stamp = readback_pixel(readback, mapped, kTextureStampX, kTextureStampY);
+    if (texture_expected_rgba) {
+        stamp[0] = static_cast<uint8_t>(texture_expected_rgba[0] ^ 0xffu);
+        stamp[1] = static_cast<uint8_t>(texture_expected_rgba[1] ^ 0xffu);
+        stamp[2] = static_cast<uint8_t>(texture_expected_rgba[2] ^ 0xffu);
+        stamp[3] = static_cast<uint8_t>(texture_expected_rgba[3] ^ 0xffu);
+    } else {
+        stamp[0] = 0xaa;
+        stamp[1] = 0x55;
+        stamp[2] = 0x00;
+        stamp[3] = 0xff;
+    }
+    const size_t center_offset = static_cast<size_t>(center - mapped);
+    const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
+    D3D12_RANGE written = {std::min(center_offset, stamp_offset), std::max(center_offset, stamp_offset) + 4u};
     readback.buffer->Unmap(0, &written);
     readback.stats.sentinel_writes++;
     return true;
@@ -746,10 +765,17 @@ struct GpuTextureStats {
     uint32_t copy_texture_region_commands = 0;
     uint32_t transition_barriers = 0;
     uint32_t texture_payloads_uploaded = 0;
+    uint32_t present_backbuffer_sentinel_copies = 0;
+    uint32_t present_copy_commands = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint8_t present_expected_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
     uint64_t upload_bytes = 0;
     uint64_t texture_payload_bytes_from_files = 0;
     uint64_t upload_payload_fnv1a64 = 1469598103934665603ull;
     bool fence_wait_ok = false;
+    bool present_pass = false;
     bool pass = false;
 };
 
@@ -770,19 +796,48 @@ static bool fill_texture_upload(ID3D12Resource* upload, const D3D12_PLACED_SUBRE
     return true;
 }
 
-static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12CommandQueue* queue,
-                                                    ID3D12CommandAllocator* allocator, ID3D12GraphicsCommandList* list,
-                                                    ID3D12Fence* fence, HANDLE fence_event, UINT64& fence_value,
-                                                    const std::vector<TexturePayload>& texture_payloads) {
+struct GpuTextureExercise {
     GpuTextureStats stats;
+    ID3D12Resource* present_texture = nullptr;
+    ID3D12Resource* present_sentinel_upload = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT present_sentinel_footprint = {};
+};
+
+static bool inspect_texture_stamp(DxilReadbackResources& readback, GpuTextureStats& texture_stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* pixel = readback_pixel(readback, mapped, kTextureStampX, kTextureStampY);
+    std::memcpy(texture_stats.present_rgba, pixel, sizeof(texture_stats.present_rgba));
+    texture_stats.present_samples_checked++;
+    const bool matches = std::memcmp(texture_stats.present_rgba, texture_stats.present_expected_rgba,
+                                     sizeof(texture_stats.present_rgba)) == 0;
+    if (matches)
+        texture_stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
+static GpuTextureExercise exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                                       ID3D12CommandAllocator* allocator,
+                                                       ID3D12GraphicsCommandList* list, ID3D12Fence* fence,
+                                                       HANDLE fence_event, UINT64& fence_value,
+                                                       const std::vector<TexturePayload>& texture_payloads) {
+    GpuTextureExercise exercise;
+    GpuTextureStats& stats = exercise.stats;
     if (!device || !queue || !allocator || !list || !fence || !fence_event)
-        return stats;
+        return exercise;
 
     constexpr uint32_t max_textures = 300;
     const uint32_t texture_count = std::min<uint32_t>(max_textures, static_cast<uint32_t>(texture_payloads.size()));
     stats.textures_requested = texture_count;
     if (!texture_count)
-        return stats;
+        return exercise;
+    std::memcpy(stats.present_expected_rgba, texture_payloads[0].rgba.data(), sizeof(stats.present_expected_rgba));
 
     D3D12_DESCRIPTOR_HEAP_DESC heap_desc = {};
     heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -791,7 +846,7 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
     ID3D12DescriptorHeap* srv_heap = nullptr;
     stats.create_descriptor_heap_hr = device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&srv_heap));
     if (FAILED(stats.create_descriptor_heap_hr))
-        return stats;
+        return exercise;
 
     const UINT descriptor_increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu = srv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -803,7 +858,28 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
     std::vector<ID3D12Resource*> uploads(texture_count, nullptr);
     std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> footprints(texture_count);
 
-    bool creation_ok = true;
+    UINT sentinel_rows = 0;
+    UINT64 sentinel_row_bytes = 0;
+    UINT64 sentinel_upload_bytes = 0;
+    device->GetCopyableFootprints(&tex_desc, 0, 1, 0, &exercise.present_sentinel_footprint, &sentinel_rows,
+                                  &sentinel_row_bytes, &sentinel_upload_bytes);
+    D3D12_RESOURCE_DESC sentinel_upload_desc = buffer_desc(sentinel_upload_bytes);
+    HRESULT sentinel_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &sentinel_upload_desc,
+                                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                          IID_PPV_ARGS(&exercise.present_sentinel_upload));
+    if (SUCCEEDED(sentinel_hr) && exercise.present_sentinel_upload) {
+        TexturePayload sentinel_payload;
+        for (size_t i = 0; i < sentinel_payload.rgba.size(); i += 4) {
+            sentinel_payload.rgba[i + 0] = static_cast<uint8_t>(stats.present_expected_rgba[0] ^ 0xffu);
+            sentinel_payload.rgba[i + 1] = static_cast<uint8_t>(stats.present_expected_rgba[1] ^ 0xffu);
+            sentinel_payload.rgba[i + 2] = static_cast<uint8_t>(stats.present_expected_rgba[2] ^ 0xffu);
+            sentinel_payload.rgba[i + 3] = static_cast<uint8_t>(stats.present_expected_rgba[3] ^ 0xffu);
+        }
+        fill_texture_upload(exercise.present_sentinel_upload, exercise.present_sentinel_footprint, sentinel_payload,
+                            kFreshTextureWidth, kFreshTextureHeight);
+    }
+
+    bool creation_ok = SUCCEEDED(sentinel_hr) && exercise.present_sentinel_upload != nullptr;
     for (uint32_t i = 0; i < texture_count; ++i) {
         HRESULT hr =
             device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &tex_desc,
@@ -878,12 +954,17 @@ static GpuTextureStats exercise_corpus_gpu_textures(ID3D12Device* device, ID3D12
         stats.copy_texture_region_commands == texture_count && stats.transition_barriers == texture_count &&
         SUCCEEDED(stats.close_hr) && SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok;
 
+    if (stats.pass && !textures.empty()) {
+        exercise.present_texture = textures[0];
+        textures[0] = nullptr;
+    }
+
     for (auto*& upload : uploads)
         safe_release(upload);
     for (auto*& texture : textures)
         safe_release(texture);
     safe_release(srv_heap);
-    return stats;
+    return exercise;
 }
 
 struct D3DRunStats {
@@ -1007,8 +1088,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     DxilReadbackResources dxil_readback = create_dxil_readback(device, backbuffer_width, backbuffer_height);
     stats.dxil_readback = dxil_readback.stats;
 
-    stats.gpu_textures = exercise_corpus_gpu_textures(device, queue, allocator, list, fence, fence_event, fence_value,
-                                                      corpus.texture_payloads);
+    GpuTextureExercise gpu_textures = exercise_corpus_gpu_textures(device, queue, allocator, list, fence, fence_event,
+                                                                   fence_value, corpus.texture_payloads);
+    stats.gpu_textures = gpu_textures.stats;
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
@@ -1044,11 +1126,42 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetVertexBuffers(0, 1, &dxil_scene.vertex_view);
             list->DrawInstanced(3, 1, 0, 0);
             stats.dxil_scene.draw_calls++;
-            auto to_copy =
-                transition_barrier(buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+            D3D12_RESOURCE_STATES backbuffer_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            if (gpu_textures.present_texture && gpu_textures.present_sentinel_upload) {
+                auto backbuffer_to_copy_dest =
+                    transition_barrier(buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST);
+                list->ResourceBarrier(1, &backbuffer_to_copy_dest);
+                D3D12_TEXTURE_COPY_LOCATION stamp_dst = {};
+                stamp_dst.pResource = buffer;
+                stamp_dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                stamp_dst.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION sentinel_src = {};
+                sentinel_src.pResource = gpu_textures.present_sentinel_upload;
+                sentinel_src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+                sentinel_src.PlacedFootprint = gpu_textures.present_sentinel_footprint;
+                D3D12_BOX stamp_box = {0, 0, 0, kFreshTextureWidth, kFreshTextureHeight, 1};
+                list->CopyTextureRegion(&stamp_dst, kTextureStampX, kTextureStampY, 0, &sentinel_src, &stamp_box);
+                stats.gpu_textures.present_backbuffer_sentinel_copies++;
+                auto texture_to_copy =
+                    transition_barrier(gpu_textures.present_texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                                       D3D12_RESOURCE_STATE_COPY_SOURCE);
+                list->ResourceBarrier(1, &texture_to_copy);
+                D3D12_TEXTURE_COPY_LOCATION stamp_src = {};
+                stamp_src.pResource = gpu_textures.present_texture;
+                stamp_src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                stamp_src.SubresourceIndex = 0;
+                list->CopyTextureRegion(&stamp_dst, kTextureStampX, kTextureStampY, 0, &stamp_src, &stamp_box);
+                stats.gpu_textures.present_copy_commands++;
+                auto texture_to_srv = transition_barrier(gpu_textures.present_texture, D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                                         D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                list->ResourceBarrier(1, &texture_to_srv);
+                backbuffer_state = D3D12_RESOURCE_STATE_COPY_DEST;
+            }
+            auto to_copy = transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_SOURCE);
             list->ResourceBarrier(1, &to_copy);
             if (dxil_readback.buffer) {
-                if (!seed_dxil_readback_sentinel(dxil_readback, backbuffer_width, backbuffer_height))
+                if (!seed_dxil_readback_sentinel(dxil_readback, backbuffer_width, backbuffer_height,
+                                                 stats.gpu_textures.present_expected_rgba))
                     break;
                 D3D12_TEXTURE_COPY_LOCATION dst = {};
                 dst.pResource = dxil_readback.buffer;
@@ -1073,6 +1186,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_dxil_magenta_center(dxil_readback, backbuffer_width, backbuffer_height))
                 break;
+            if (gpu_textures.present_texture && !inspect_texture_stamp(dxil_readback, stats.gpu_textures))
+                break;
             stats.present_hr = swapchain->Present(0, 0);
             if (FAILED(stats.present_hr))
                 break;
@@ -1089,16 +1204,23 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                dxil_readback.stats.samples_checked == visible_frame_target &&
                                dxil_readback.stats.magenta_samples == visible_frame_target;
     stats.dxil_readback = dxil_readback.stats;
+    stats.gpu_textures.present_pass = gpu_textures.present_texture && gpu_textures.present_sentinel_upload &&
+                                      stats.gpu_textures.present_backbuffer_sentinel_copies == visible_frame_target &&
+                                      stats.gpu_textures.present_copy_commands == visible_frame_target &&
+                                      stats.gpu_textures.present_samples_checked == visible_frame_target &&
+                                      stats.gpu_textures.present_sample_matches == visible_frame_target;
 
     stats.pass = stats.hwnd_created && SUCCEEDED(stats.create_factory_hr) && SUCCEEDED(stats.create_device_hr) &&
                  SUCCEEDED(stats.create_queue_hr) && SUCCEEDED(stats.create_swapchain_hr) &&
                  SUCCEEDED(stats.create_rtv_heap_hr) && SUCCEEDED(stats.create_allocator_hr) &&
                  SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass &&
-                 stats.visible_scene.pass && stats.visible_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
-                 stats.frames_presented == visible_frame_target;
+                 stats.gpu_textures.present_pass && stats.visible_scene.pass &&
+                 stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
+                 stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
+                 SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
+    safe_release(gpu_textures.present_texture);
+    safe_release(gpu_textures.present_sentinel_upload);
     destroy_dxil_readback(dxil_readback);
     destroy_dxil_scene(dxil_scene);
     for (auto*& buffer : buffers)
@@ -1182,12 +1304,23 @@ int main() {
     std::printf("      \"copy_texture_region_commands\": %u,\n", d3d.gpu_textures.copy_texture_region_commands);
     std::printf("      \"transition_barriers\": %u,\n", d3d.gpu_textures.transition_barriers);
     std::printf("      \"texture_payloads_uploaded\": %u,\n", d3d.gpu_textures.texture_payloads_uploaded);
+    std::printf("      \"present_backbuffer_sentinel_copies\": %u,\n",
+                d3d.gpu_textures.present_backbuffer_sentinel_copies);
+    std::printf("      \"present_copy_commands\": %u,\n", d3d.gpu_textures.present_copy_commands);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.gpu_textures.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.gpu_textures.present_sample_matches);
+    std::printf("      \"present_expected_rgba\": [%u, %u, %u, %u],\n", d3d.gpu_textures.present_expected_rgba[0],
+                d3d.gpu_textures.present_expected_rgba[1], d3d.gpu_textures.present_expected_rgba[2],
+                d3d.gpu_textures.present_expected_rgba[3]);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.gpu_textures.present_rgba[0],
+                d3d.gpu_textures.present_rgba[1], d3d.gpu_textures.present_rgba[2], d3d.gpu_textures.present_rgba[3]);
     std::printf("      \"texture_payload_bytes_from_files\": %llu,\n",
                 static_cast<unsigned long long>(d3d.gpu_textures.texture_payload_bytes_from_files));
     std::printf("      \"upload_payload_fnv1a64\": \"%016llx\",\n",
                 static_cast<unsigned long long>(d3d.gpu_textures.upload_payload_fnv1a64));
     std::printf("      \"upload_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.gpu_textures.upload_bytes));
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.gpu_textures.fence_wait_ok ? "true" : "false");
+    std::printf("      \"present_ok\": %s,\n", d3d.gpu_textures.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.gpu_textures.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"visible_scene\": {\n");
