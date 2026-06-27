@@ -178,6 +178,8 @@ Implement the actual proof executable:
 
 - A loading window.
 - A rendered cube or equivalent simple scene.
+- A rotating RGB 3D triangle/triangular-prism lane in front of the magenta SM6 triangle, with each visible 3D face using a distinct color and a distinct sampled texture path so the proof demonstrates real textured 3D geometry rather than only 2D texture stamps.
+- The rotating 3D triangle lane must use per-face texture payloads from multiple engine/source families when available — Unreal-style, Unity-style if obtainable, Microsoft/DirectX sample, and VS/PS shader-texture paths — and must report exact provenance, hashes, face assignment, presented readback, shader cache, and PSO evidence for each face.
 - Real shaders/textures/PSOs from the fresh corpus.
 - A high-volume asset exercise mode that loads, binds, translates, caches, and renders or validates hundreds of shaders and textures when available.
 - Graphics render thread coverage.
@@ -189,6 +191,7 @@ Exit criteria:
 
 - The harness opens a real window under MetalSharp Wine.
 - It renders deterministically.
+- It proves a rotating textured 3D RGB triangle/triangular-prism in front of the magenta SM6 triangle, with distinct per-face colors and engine/source-family texture payloads validated by presented-frame readback.
 - It uses fresh game, Unreal, Microsoft, and obtainable Unity shader/texture inputs rather than synthetic-only assets.
 - It reports exact loaded/translated/cached/rendered counts and must reach hundreds-scale shader/texture coverage when available.
 - It proves GPU computation/readback and draw/color correctness.
@@ -200,6 +203,7 @@ Add Unity/Unreal/Microsoft SDK compatibility scenarios:
 - Agility SDK loading path similar to Subnautica 2, across multiple accessible Agility SDK versions where possible.
 - Unreal-style root signatures, descriptor tables, PSO creation order, render-thread submission, resource barriers, SM5/SM6 shader families, and Unreal texture/resource payloads.
 - Unity-style shader, texture, resource, descriptor, and render-loop lifecycle where Unity inputs are available.
+- A textured 3D face-assignment scenario where Unreal/Microsoft/Unity-or-attempted-Unity texture families are sampled on different rotating triangle faces with VS/PS texture-coordinate interpolation and presented readback validation.
 - Microsoft DirectX sample and SDK-style DXBC/DXIL/DXGI/D3D12 shader, texture, swapchain, and present paths.
 - DXGI swapchain/present/window lifetime and resize behavior.
 
