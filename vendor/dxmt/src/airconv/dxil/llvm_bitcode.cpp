@@ -196,12 +196,25 @@ static constexpr uint32_t kConstantsCode_SetType = 1;
 static constexpr uint32_t kConstantsCode_Null = 2;
 static constexpr uint32_t kConstantsCode_Undefined = 3;
 static constexpr uint32_t kConstantsCode_Integer = 4;
+static constexpr uint32_t kConstantsCode_WideInteger = 5;
 static constexpr uint32_t kConstantsCode_Float = 6;
 static constexpr uint32_t kConstantsCode_Aggregate = 7;
 static constexpr uint32_t kConstantsCode_String = 8;
+static constexpr uint32_t kConstantsCode_CString = 9;
+static constexpr uint32_t kConstantsCode_CE_Binop = 10;
 static constexpr uint32_t kConstantsCode_Cast = 11;
 static constexpr uint32_t kConstantsCode_GEP = 12;
-static constexpr uint32_t kConstantsCode_Data = 15;
+static constexpr uint32_t kConstantsCode_CE_Select = 13;
+static constexpr uint32_t kConstantsCode_CE_ExtractElement = 14;
+static constexpr uint32_t kConstantsCode_CE_InsertElement = 15;
+static constexpr uint32_t kConstantsCode_CE_ShuffleVector = 16;
+static constexpr uint32_t kConstantsCode_CE_Cmp = 17;
+static constexpr uint32_t kConstantsCode_InlineAsmOld = 18;
+static constexpr uint32_t kConstantsCode_CE_ShuffleVectorEx = 19;
+static constexpr uint32_t kConstantsCode_InBoundsGEP = 20;
+static constexpr uint32_t kConstantsCode_BlockAddress = 21;
+static constexpr uint32_t kConstantsCode_Data = 22;
+static constexpr uint32_t kConstantsCode_InlineAsm = 23;
 
 static int64_t decodeSignedVBR(uint64_t value) {
   if ((value & 1) == 0)
@@ -851,6 +864,70 @@ static bool parseConstantsBlock(ParseContext &ctx, std::vector<LLVMValue> &targe
       target.push_back(v);
       break;
     }
+    case kConstantsCode_WideInteger:
+    case kConstantsCode_String:
+    case kConstantsCode_CString:
+    case kConstantsCode_CE_Binop:
+    case kConstantsCode_Cast:
+    case kConstantsCode_GEP:
+    case kConstantsCode_CE_Select:
+    case kConstantsCode_CE_ExtractElement:
+    case kConstantsCode_CE_InsertElement:
+    case kConstantsCode_CE_ShuffleVector:
+    case kConstantsCode_CE_Cmp:
+    case kConstantsCode_InlineAsmOld:
+    case kConstantsCode_CE_ShuffleVectorEx:
+    case kConstantsCode_InBoundsGEP:
+    case kConstantsCode_BlockAddress:
+    case kConstantsCode_InlineAsm: {
+      LLVMValue v;
+      v.kind = LLVMValue::Constant;
+      v.type_id = cur_type;
+      v.id = next_value_id++;
+      v.constant_data = "0";
+      target.push_back(v);
+      break;
+    }
+    case kConstantsCode_Data: {
+      LLVMValue v;
+      v.kind = LLVMValue::Constant;
+      v.type_id = cur_type;
+      v.id = next_value_id++;
+      uint32_t element_type = cur_type;
+      if (cur_type < ctx.module.types.size()) {
+        const auto &type = ctx.module.types[cur_type];
+        if ((type.kind == LLVMType::Array || type.kind == LLVMType::Vector) &&
+            !type.type_refs.empty())
+          element_type = type.type_refs[0];
+      }
+      auto format_data_element = [&](uint64_t raw) -> std::string {
+        if (element_type < ctx.module.types.size()) {
+          const auto &type = ctx.module.types[element_type];
+          if (type.kind == LLVMType::Float) {
+            float f;
+            uint32_t bits = (uint32_t)raw;
+            memcpy(&f, &bits, sizeof(f));
+            return formatFloatConstant((double)f, true);
+          }
+          if (type.kind == LLVMType::Double) {
+            double d;
+            uint64_t bits = raw;
+            memcpy(&d, &bits, sizeof(d));
+            return formatFloatConstant(d, false);
+          }
+        }
+        return std::to_string(raw);
+      };
+      v.constant_data = "agg(";
+      for (size_t i = 1; i < ops.size(); i++) {
+        if (i > 1)
+          v.constant_data += ",";
+        v.constant_data += format_data_element(ops[i]);
+      }
+      v.constant_data += ")";
+      target.push_back(v);
+      break;
+    }
     case kConstantsCode_Aggregate: {
       LLVMValue v;
       v.kind = LLVMValue::Constant;
@@ -1033,8 +1110,6 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
       for (size_t i = 0; i < fn.blocks.size(); i++) {
         fn.block_value_ids[i] = (uint32_t)i;
       }
-      if (!fn.blocks.empty())
-        next_value++;
       fn.instruction_start_value = next_value;
       cur_block = 0;
       break;
@@ -1156,11 +1231,13 @@ static bool parseFunctionBlock(ParseContext &ctx, LLVMFunction &fn,
     case kFuncCode_InstCast: {
       if (cur_block < fn.blocks.size()) {
         LLVMInstruction inst;
-        inst.opcode = ops.size() > 4 ? decodeCast((uint32_t)ops[4])
-                                     : LLVMInstruction::BitCast;
-        if (ops.size() > 3) inst.type_id = (uint32_t)ops[3];
-        if (ops.size() > 1)
-          inst.operands.push_back(value(ops[1]));
+        size_t slot = 1;
+        uint32_t operand_type_id = 0;
+        uint32_t operand = valueTypePair(ops, slot, operand_type_id);
+        inst.type_id = slot < ops.size() ? (uint32_t)ops[slot++] : 0;
+        inst.opcode = slot < ops.size() ? decodeCast((uint32_t)ops[slot])
+                                        : LLVMInstruction::BitCast;
+        inst.operands.push_back(operand);
         fn.blocks[cur_block].instructions.push_back(inst);
         noteResult();
       }
@@ -1450,6 +1527,15 @@ static void resolveNumthreadsFromAttachment(
               module.num_threads[2]);
     }
   }
+}
+
+static void recoverNumthreadsFromEntryPointMetadata(
+    LLVMModule &module, const MetadataState &md_state) {
+  (void)module;
+  (void)md_state;
+  // Do not infer numthreads by scanning arbitrary three-value metadata nodes.
+  // Only explicit numthreads metadata attachments are authoritative here; D3D12
+  // PSO creation separately recovers threadgroup size from the DXBC PSV0 chunk.
 }
 
 static bool parseMetadataAttachmentBlock(
@@ -1757,6 +1843,8 @@ std::optional<LLVMModule> BitcodeReader::parse(const uint8_t *data, uint32_t siz
       reader.seek(header.end_bit);
     }
   }
+
+  recoverNumthreadsFromEntryPointMetadata(module, md_state);
 
   return module;
 }

@@ -268,6 +268,46 @@ static uint32_t intrinsicIdFromCalleeName(const std::string &name) {
     return 0;
 }
 
+static bool isOpcodePrefixedDXIntrinsic(uint32_t opcode) {
+    switch (opcode) {
+    case DXOP_LoadInput:
+    case DXOP_StoreOutput:
+    case DXOP_CreateHandle:
+    case DXOP_CreateHandleFromBinding:
+    case DXOP_CreateHandleFromHeap:
+    case DXOP_CreateHandleForLib:
+    case DXOP_AnnotateHandle:
+    case DXOP_CBufferLoad:
+    case DXOP_CBufferLoadLegacy:
+    case DXOP_ThreadId:
+    case DXOP_GroupId:
+    case DXOP_ThreadIDInGroup:
+    case DXOP_FlattenedThreadIDInGroup:
+    case DXOP_TextureSample:
+    case DXOP_TextureSampleBias:
+    case DXOP_TextureSampleLevel:
+    case DXOP_TextureSampleGrad:
+    case DXOP_TextureLoad:
+    case DXOP_TextureStore:
+    case DXOP_TextureGather:
+    case DXOP_TextureStoreSample:
+    case DXOP_BufferLoad:
+    case DXOP_BufferStore:
+    case DXOP_RawBufferLoad:
+    case DXOP_RawBufferStore:
+    case DXOP_WaveIsFirstLane:
+    case DXOP_WaveGetLaneIndex:
+    case DXOP_WaveGetLaneCount:
+    case DXOP_WaveAnyTrue:
+    case DXOP_WaveAllTrue:
+    case DXOP_WaveReadLaneAt:
+    case DXOP_WaveReadLaneFirst:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static std::string emitTypeName(const MSLType &t) {
     if (t.kind == MSLTypeKind::Struct || t.kind == MSLTypeKind::Unknown)
         return "auto";
@@ -476,6 +516,7 @@ struct LowerContext {
     std::set<uint32_t> vertex_input_ids;
     bool vertex_has_float_load_input = false;
     bool vertex_procedural_fullscreen_fallback = false;
+    bool compute_wave_shader = false;
 };
 
 static std::string vertexPullField(LowerContext &ctx, uint32_t sig_id) {
@@ -653,7 +694,9 @@ static void emitFunctionPrologue(LowerContext &ctx) {
         os << "  uint3 dtid [[thread_position_in_grid]],\n";
         os << "  uint3 gtid [[thread_position_in_threadgroup]],\n";
         os << "  uint3 ggid [[threadgroup_position_in_grid]],\n";
-        os << "  uint3 gsz [[threads_per_threadgroup]]\n) {\n";
+        os << "  uint3 gsz [[threads_per_threadgroup]],\n";
+        os << "  uint simd_lane [[thread_index_in_simdgroup]],\n";
+        os << "  uint simd_count [[threads_per_simdgroup]]\n) {\n";
     } else if (ctx.shader.kind == DxilShaderKind::Vertex) {
         os << "vertex output_v vs_main(\n";
         os << "  uint vid [[vertex_id]],\n";
@@ -2093,13 +2136,20 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
             if (inst.opcode != LLVMInstruction::Call || inst.operands.size() < 2)
                 continue;
 
-            uint32_t intrinsic_id = intrinsicIdFromCalleeName(calleeName(inst.operands[0]));
-            if (intrinsic_id == 0)
-                continue;
+            std::string callee_name = calleeName(inst.operands[0]);
+            uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
 
             std::vector<uint32_t> call_args;
             for (size_t i = 2; i < inst.operands.size(); i++)
                 call_args.push_back(inst.operands[i]);
+
+            if (!call_args.empty() && (callee_name.empty() || startsWith(callee_name, "dx.op."))) {
+                uint32_t opcode = literalFromValue(ctx, call_args[0], 0);
+                if (isOpcodePrefixedDXIntrinsic(opcode))
+                    intrinsic_id = opcode;
+            }
+            if (intrinsic_id == 0)
+                continue;
 
             std::vector<uint32_t> fn_args;
             if (intrinsic_id == DXOP_CreateHandle || intrinsic_id == DXOP_CreateHandleForLib ||
@@ -2112,6 +2162,9 @@ static void analyzeBindingPlan(LowerContext &ctx, const LLVMFunction &fn) {
             if (intrinsic_id == DXOP_CreateHandle && fn_args.size() >= 3) {
                 uint32_t resource_class = literalFromValue(ctx, fn_args[0], 0);
                 uint32_t index = literalFromValue(ctx, fn_args[2], 0);
+                uint32_t non_uniform_raw = fn_args.size() >= 4 ? literalFromValue(ctx, fn_args[3], 0) : 0;
+                if (non_uniform_raw > 1)
+                    index = 0;
                 recordDescriptorRange(plan, {descriptorKindForResourceClass(resource_class),
                                              0, index, 1});
             } else if (intrinsic_id == DXOP_CreateHandleFromBinding && fn_args.size() >= 1) {
@@ -2290,7 +2343,7 @@ static MSLType inferDXIntrinsicResultType(LowerContext &ctx, uint32_t intrinsic_
     case DXOP_WaveReadLaneAt:
     case DXOP_WaveReadLaneFirst:
     case DXOP_QuadReadLaneAt:
-        return args.size() > 1 ? valueTypeOrUnknown(ctx, args[1]) : declared;
+        return !args.empty() ? valueTypeOrUnknown(ctx, args[0]) : declared;
     case DXOP_Unary: {
         uint32_t op = args.empty() ? 0xFFFFFFFFu : literalFromValue(ctx, args[0], 0xFFFFFFFFu);
         MSLType operand = args.size() > 1 ? valueTypeOrUnknown(ctx, args[1]) : declared;
@@ -2444,15 +2497,13 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         if (arg >= args.size()) return fallback;
         uint32_t idx = args[arg];
         std::string text;
-        if (idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
-            text = ctx.value_table[idx];
-        else {
-            for (auto &c : ctx.mod.constants)
+        for (auto &c : ctx.mod.constants)
+            if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
+        if (text.empty() && ctx.current_fn)
+            for (auto &c : ctx.current_fn->constants)
                 if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
-            if (text.empty() && ctx.current_fn)
-                for (auto &c : ctx.current_fn->constants)
-                    if (c.id == idx && !c.constant_data.empty()) { text = c.constant_data; break; }
-        }
+        if (text.empty() && idx < ctx.value_table.size() && !ctx.value_table[idx].empty())
+            text = ctx.value_table[idx];
         uint32_t value = 0;
         if (parseUnsignedLiteral(text, value)) return value;
         return fallback;
@@ -2464,7 +2515,13 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
         uint32_t resource_class = literalArg(0, 0, "resource class");
         uint32_t range_id = literalArg(1, 0, "range id");
         uint32_t index = literalArg(2, 0, "resource index");
-        bool non_uniform = args.size() >= 4 && literalArg(3, 0, "non uniform") != 0;
+        uint32_t non_uniform_raw = args.size() >= 4 ? literalArg(3, 0, "non uniform") : 0;
+        if (non_uniform_raw > 1) {
+            range_id = 0;
+            index = 0;
+            non_uniform_raw = 0;
+        }
+        bool non_uniform = non_uniform_raw != 0;
         ctx.next_binding++;
         (void)range_id;
         return recordHandle(descriptorKindForResourceClass(resource_class),
@@ -2796,13 +2853,13 @@ static std::string translateDXIntrinsic(LowerContext &ctx, uint32_t intrinsic_id
     }
     case 131: return "static_cast<float>(half(" + numericArg(1, "0") + "))";
     case 132: return "static_cast<uint>(half(" + numericArg(1, "0.0") + "))";
-    case 118: return numericArg(1, "0");
-    case 117: return numericArg(1, "0");
-    case 110: return "true";
-    case 111: return "0";
-    case 112: return "1";
-    case 113: return "simd_any(" + numericArg(1, "0") + ") ? 1 : 0";
-    case 114: return "simd_all(" + numericArg(1, "0") + ") ? 1 : 0";
+    case DXOP_WaveReadLaneFirst: return "simd_broadcast_first(" + numericArg(0, "0") + ")";
+    case DXOP_WaveReadLaneAt: return "simd_broadcast(" + numericArg(0, "0") + ", (uint)(" + numericArg(1, "0") + "))";
+    case DXOP_WaveIsFirstLane: return "(simd_lane == 0u)";
+    case DXOP_WaveGetLaneIndex: return "simd_lane";
+    case DXOP_WaveGetLaneCount: return "simd_count";
+    case DXOP_WaveAnyTrue: return "simd_any(" + numericArg(0, "0") + ") ? 1 : 0";
+    case DXOP_WaveAllTrue: return "simd_all(" + numericArg(0, "0") + ") ? 1 : 0";
     case 122: return "quad_broadcast(" + numericArg(1, "0") + ", (uint)(" + numericArg(2, "0") + "))";
     default:
         ctx.unsupported_intrinsics++;
@@ -3260,15 +3317,11 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
         else if (callee < ctx.value_table.size()) callee_name = ctx.value_table[callee];
         uint32_t intrinsic_id = intrinsicIdFromCalleeName(callee_name);
         bool opcode_prefixed_intrinsic = false;
-        if (intrinsic_id == 0 && !call_args.empty()) {
+        if (!call_args.empty() && (callee_name.empty() || startsWith(callee_name, "dx.op."))) {
             uint32_t opcode = literalFromValue(ctx, call_args[0], 0);
-            switch (opcode) {
-            case DXOP_AnnotateHandle:
+            if (isOpcodePrefixedDXIntrinsic(opcode)) {
                 intrinsic_id = opcode;
                 opcode_prefixed_intrinsic = true;
-                break;
-            default:
-                break;
             }
         }
 
@@ -4011,6 +4064,16 @@ std::optional<TypedMSLShader> MSLLowering::lower(
 
     std::ostringstream os;
     LowerContext ctx{os, module, shader, options};
+    ctx.compute_wave_shader = shader.kind == DxilShaderKind::Compute;
+    if (ctx.compute_wave_shader) {
+        ctx.compute_wave_shader = false;
+        for (const auto &decl : module.functions) {
+            if (startsWith(decl.name, "dx.op.wave")) {
+                ctx.compute_wave_shader = true;
+                break;
+            }
+        }
+    }
 
     const LLVMFunction *entry_fn = nullptr;
     for (auto &fn : module.functions) {

@@ -59,6 +59,62 @@ void EnsureShaderCacheDir() {
   mkdir(dir.c_str());
 }
 
+static uint32_t ReadLe32(const uint8_t *data) {
+  return (uint32_t)data[0] | ((uint32_t)data[1] << 8) |
+         ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
+}
+
+bool ExtractPSV0ComputeThreadgroupSize(const void *bytecode, SIZE_T size,
+                                       uint32_t out[3]) {
+  if (!bytecode || size < 36)
+    return false;
+  const auto *bytes = static_cast<const uint8_t *>(bytecode);
+  if (std::memcmp(bytes, "DXBC", 4) != 0)
+    return false;
+
+  uint32_t chunk_count = ReadLe32(bytes + 28);
+  if (chunk_count > 128 || 32ull + (uint64_t)chunk_count * 4ull > size)
+    return false;
+
+  for (uint32_t i = 0; i < chunk_count; i++) {
+    uint32_t off = ReadLe32(bytes + 32 + i * 4);
+    if ((uint64_t)off + 8ull > size)
+      continue;
+    const uint8_t *chunk = bytes + off;
+    uint32_t chunk_size = ReadLe32(chunk + 4);
+    if (std::memcmp(chunk, "PSV0", 4) != 0 || (uint64_t)off + 8ull + chunk_size > size)
+      continue;
+
+    const uint8_t *psv = chunk + 8;
+    if (chunk_size < 4)
+      continue;
+    uint32_t runtime_info_size = ReadLe32(psv);
+    if (runtime_info_size < 48 || chunk_size < 4 + runtime_info_size)
+      continue;
+
+    const uint8_t *runtime_info = psv + 4;
+    constexpr uint32_t kPSVShaderKindCompute = 5;
+    constexpr uint32_t kPSVRuntimeInfo1ShaderStageOffset = 24;
+    constexpr uint32_t kPSVRuntimeInfo2NumThreadsXOffset = 36;
+    constexpr uint32_t kPSVRuntimeInfo2NumThreadsYOffset = 40;
+    constexpr uint32_t kPSVRuntimeInfo2NumThreadsZOffset = 44;
+    if (runtime_info[kPSVRuntimeInfo1ShaderStageOffset] != kPSVShaderKindCompute)
+      continue;
+
+    uint32_t x = ReadLe32(runtime_info + kPSVRuntimeInfo2NumThreadsXOffset);
+    uint32_t y = ReadLe32(runtime_info + kPSVRuntimeInfo2NumThreadsYOffset);
+    uint32_t z = ReadLe32(runtime_info + kPSVRuntimeInfo2NumThreadsZOffset);
+    uint64_t product = (uint64_t)x * (uint64_t)y * (uint64_t)z;
+    if (x == 0 || y == 0 || z == 0 || x > 1024 || y > 1024 || z > 64 || product == 0 || product > 1024)
+      return false;
+    out[0] = x;
+    out[1] = y;
+    out[2] = z;
+    return true;
+  }
+  return false;
+}
+
 std::string DescribeNSObject(obj_handle_t handle) {
   if (!handle)
     return "unknown";
@@ -1100,9 +1156,18 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                 m_vs_uses_stage_in = false;
 
               if (shader_info.kind == dxmt::dxil::DxilShaderKind::Compute) {
-                m_threadgroup_size.width = msl_result->tg_size[0];
-                m_threadgroup_size.height = msl_result->tg_size[1];
-                m_threadgroup_size.depth = msl_result->tg_size[2];
+                uint32_t psv_tg[3] = {0, 0, 0};
+                if (ExtractPSV0ComputeThreadgroupSize(bytecode, size, psv_tg)) {
+                  m_threadgroup_size.width = psv_tg[0];
+                  m_threadgroup_size.height = psv_tg[1];
+                  m_threadgroup_size.depth = psv_tg[2];
+                  PSTRACE("  threadgroup_size from PSV0: %ux%ux%u",
+                          psv_tg[0], psv_tg[1], psv_tg[2]);
+                } else {
+                  m_threadgroup_size.width = msl_result->tg_size[0];
+                  m_threadgroup_size.height = msl_result->tg_size[1];
+                  m_threadgroup_size.depth = msl_result->tg_size[2];
+                }
               }
               return true;
             } else {
@@ -1179,6 +1244,16 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
                     PSTRACE("  threadgroup_size from reflection: %dx%dx%d", tw, th, td);
                   }
                 }
+                if (type == ShaderType::Compute) {
+                  uint32_t psv_tg[3] = {0, 0, 0};
+                  if (ExtractPSV0ComputeThreadgroupSize(bytecode, size, psv_tg)) {
+                    m_threadgroup_size.width = psv_tg[0];
+                    m_threadgroup_size.height = psv_tg[1];
+                    m_threadgroup_size.depth = psv_tg[2];
+                    PSTRACE("  threadgroup_size from cached PSV0: %ux%ux%u",
+                            psv_tg[0], psv_tg[1], psv_tg[2]);
+                  }
+                }
                 return true;
               } else {
                 PSTRACE("  WMT newFunction returned null");
@@ -1234,14 +1309,16 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   common.flags = {};
 
   if (type == ShaderType::Compute) {
-    uint32_t tgx = reflection.ThreadgroupSize[0] ? reflection.ThreadgroupSize[0] : 1;
-    uint32_t tgy = reflection.ThreadgroupSize[1] ? reflection.ThreadgroupSize[1] : 1;
-    uint32_t tgz = reflection.ThreadgroupSize[2] ? reflection.ThreadgroupSize[2] : 1;
+    uint32_t psv_tg[3] = {0, 0, 0};
+    bool has_psv_tg = ExtractPSV0ComputeThreadgroupSize(bytecode, size, psv_tg);
+    uint32_t tgx = has_psv_tg ? psv_tg[0] : (reflection.ThreadgroupSize[0] ? reflection.ThreadgroupSize[0] : 1);
+    uint32_t tgy = has_psv_tg ? psv_tg[1] : (reflection.ThreadgroupSize[1] ? reflection.ThreadgroupSize[1] : 1);
+    uint32_t tgz = has_psv_tg ? psv_tg[2] : (reflection.ThreadgroupSize[2] ? reflection.ThreadgroupSize[2] : 1);
     m_threadgroup_size.width = tgx;
     m_threadgroup_size.height = tgy;
     m_threadgroup_size.depth = tgz;
-    PSTRACE("CompileShader: %s SM50 threadgroup_size=%ux%ux%u",
-            func_name, tgx, tgy, tgz);
+    PSTRACE("CompileShader: %s SM50 threadgroup_size=%ux%ux%u source=%s",
+            func_name, tgx, tgy, tgz, has_psv_tg ? "PSV0" : "reflection");
   }
 
   SM50_SHADER_IA_INPUT_LAYOUT_DATA ia_layout = {};

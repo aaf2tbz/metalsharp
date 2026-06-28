@@ -798,6 +798,91 @@ float4 PSMain(PSIn input) : SV_TARGET {
     }
 
 
+def build_fresh_game_waveops_dxil(out_bin: Path, run_dir: Path, wine: Path, prefix: Path) -> dict[str, Any]:
+    wave_dir = run_dir / "fresh-sm6-waveops"
+    wave_dir.mkdir(parents=True, exist_ok=True)
+    hlsl_path = wave_dir / "m12_fresh_waveops.hlsl"
+    cs_path = wave_dir / "m12_fresh_waveops_cs.dxil"
+    hlsl_path.write_text(
+        """
+RWTexture2D<float4> OutTexture : register(u0);
+[numthreads(32, 1, 1)]
+void CSMain(uint3 tid : SV_DispatchThreadID, uint group_index : SV_GroupIndex) {
+  // M12_WAVEOPS_RUNTIME_PRESENTED_PROOF: every channel is read back from a presented-frame stamp.
+  uint lane = WaveGetLaneIndex();
+  uint count = WaveGetLaneCount();
+  uint payload = lane + 5u;
+  uint first = WaveReadLaneFirst(payload);
+  uint from7 = WaveReadLaneAt(payload, 7u);
+  bool first_payload_lane = WaveIsFirstLane();
+  bool every_lane_active = (count >= lane);
+  uint any_edge = (uint)WaveActiveAnyTrue(first_payload_lane);
+  uint all_edge = (uint)WaveActiveAllTrue(first_payload_lane);
+  uint all_active = (uint)WaveActiveAllTrue(every_lane_active);
+  uint any_all = any_edge + all_edge + all_active;
+  uint row = tid.x / 16u;
+  uint col = tid.x % 16u;
+  OutTexture[uint2(col, row)] = float4(
+      (float)(lane & 0xffu) / 255.0,
+      (float)(count & 0xffu) / 255.0,
+      (float)(first & 0xffu) / 255.0,
+      (float)((from7 + any_all) & 0xffu) / 255.0);
+}
+""".lstrip(),
+        encoding="utf-8",
+    )
+    source_text = hlsl_path.read_text(encoding="utf-8")
+    semantic_markers = {
+        "proof_marker": "M12_WAVEOPS_RUNTIME_PRESENTED_PROOF" in source_text,
+        "wave_lane_index": "WaveGetLaneIndex" in source_text,
+        "wave_lane_count": "WaveGetLaneCount" in source_text,
+        "wave_is_first_lane": "WaveIsFirstLane" in source_text,
+        "wave_read_lane_first": "WaveReadLaneFirst" in source_text,
+        "wave_read_lane_at": "WaveReadLaneAt" in source_text and "7u" in source_text,
+        "wave_any_true": "WaveActiveAnyTrue" in source_text,
+        "wave_all_true": "WaveActiveAllTrue" in source_text,
+        "uav_texture_store": "OutTexture[uint2(col, row)]" in source_text,
+    }
+    semantic_source_ok = all(semantic_markers.values())
+    env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("DXMT_"):
+            env.pop(key, None)
+    env.update({"WINEPREFIX": str(prefix), "WINEDEBUG": "-all"})
+    cmd = [
+        str(wine),
+        "dxc.exe",
+        "-T",
+        "cs_6_0",
+        "-E",
+        "CSMain",
+        "-Qstrip_debug",
+        "-Fo",
+        wine_path_arg(cs_path),
+        wine_path_arg(hlsl_path),
+    ]
+    proc = subprocess.run(cmd, cwd=out_bin, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout_path = wave_dir / "dxc-waveops.stdout.txt"
+    stderr_path = wave_dir / "dxc-waveops.stderr.txt"
+    stdout_path.write_text(proc.stdout)
+    stderr_path.write_text(proc.stderr)
+    output_ok = proc.returncode == 0 and cs_path.exists() and cs_path.stat().st_size > 0
+    return {
+        "ok": output_ok and semantic_source_ok,
+        "hlsl": str(hlsl_path),
+        "cs_path": str(cs_path),
+        "semantic_scope": "sm6_dxil_waveops_compute_uav_presented_readback",
+        "semantic_markers": semantic_markers,
+        "semantic_source_ok": semantic_source_ok,
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+        "output_size": cs_path.stat().st_size if cs_path.exists() else 0,
+        "output_sha256": sha256(cs_path) if cs_path.exists() else "",
+    }
+
+
 def cache_file_record(path: Path) -> dict[str, Any]:
     return {
         "path": str(path),
@@ -909,6 +994,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     indexed_count = int(indexed_draw.get("indices_created", 0) or 0)
     indirect_draw = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
     indirect_vertices = int(indirect_draw.get("argument_vertex_count", 0) or 0)
+    wave_ops = d3d12_json.get("wave_ops", {}) if d3d12_json else {}
+    wave_cs_bytes = int(wave_ops.get("cs_bytes", 0) or 0)
     dxil_draws = re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1 .*?vs=([0-9a-f]{16}) ps=([0-9a-f]{16})", stderr_text)
     sm5_pattern = rf"M12 swapchain DrawInstanced encoded v={visible_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     sm5_draws = re.findall(sm5_pattern, stderr_text) if visible_vertices else []
@@ -1029,7 +1116,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         if not msl_checks["dxil_vs_vertex_pull"]:
             errors.append("dxil_vs_msl_missing_vertex_pull")
 
-    pso_files = sorted(shader_cache_dir.glob("pso-render-*.json"))
+    pso_files = sorted([*shader_cache_dir.glob("pso-render-*.json"), *shader_cache_dir.glob("pso-compute-*.json")])
     pso_records = [cache_file_record(path) for path in pso_files]
     pipelines: list[dict[str, Any]] = []
     for path in pso_files:
@@ -1040,6 +1127,45 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
                 pipelines.append(copy)
         except Exception as error:  # noqa: BLE001 - report malformed cache evidence.
             errors.append(f"invalid_pso_manifest:{path}:{error}")
+    waveops_compute_pso = next(
+        (
+            p
+            for p in pipelines
+            if wave_cs_bytes > 0
+            and p.get("type") == "compute"
+            and int(p.get("d3d12", {}).get("cs_bytes", 0) or 0) == wave_cs_bytes
+        ),
+        None,
+    )
+    waveops_cs_hash = str(waveops_compute_pso.get("d3d12", {}).get("cs_hash", "")) if waveops_compute_pso else ""
+    waveops_msl = shader_cache_dir / f"{waveops_cs_hash}.msl" if waveops_cs_hash else Path("")
+    waveops_metallib = Path(str(waveops_compute_pso.get("shader", {}).get("metallib", ""))) if waveops_compute_pso else Path("")
+    if not waveops_compute_pso:
+        errors.append("missing_waveops_compute_pso_manifest")
+    elif not waveops_cs_hash:
+        errors.append("missing_waveops_compute_cs_hash")
+    if waveops_cs_hash:
+        waveops_msl_text = waveops_msl.read_text(errors="replace") if waveops_msl.exists() else ""
+        msl_checks["waveops_msl_simd_intrinsics"] = all(
+            token in waveops_msl_text
+            for token in [
+                "simd_lane [[thread_index_in_simdgroup]]",
+                "simd_count [[threads_per_simdgroup]]",
+                "simd_broadcast_first(",
+                "simd_broadcast(",
+                "simd_any(",
+                "simd_all(",
+                "tex0.write(",
+            ]
+        )
+        if not waveops_msl.exists() or waveops_msl.stat().st_size <= 0:
+            errors.append("missing_waveops_msl")
+        if waveops_compute_pso.get("threadgroup_size") != [32, 1, 1]:
+            errors.append("waveops_compute_pso_missing_32x1x1_threadgroup_size")
+        if int(waveops_compute_pso.get("metal", {}).get("compute_function", 0) or 0) == 0:
+            errors.append("waveops_compute_pso_missing_compute_function")
+        if not msl_checks["waveops_msl_simd_intrinsics"]:
+            errors.append("waveops_msl_missing_simd_intrinsics")
     dxil_pso = next(
         (
             p
@@ -1282,6 +1408,15 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         "cbv_sample_pso_manifest": cbv_pso,
         "indexed_pso_manifest": indexed_pso,
         "indirect_pso_manifest": indirect_pso,
+        "waveops_compute_pso_manifest": waveops_compute_pso,
+        "waveops_compute_hash": waveops_cs_hash,
+        "waveops_msl": cache_file_record(waveops_msl) if waveops_cs_hash else {},
+        "waveops_metallib_manifest_reference": cache_file_record(waveops_metallib) if waveops_cs_hash else {},
+        "waveops_cache_policy": {
+            "ok": bool(waveops_cs_hash and msl_checks.get("waveops_msl_simd_intrinsics") and waveops_compute_pso),
+            "policy": "runtime_source_compile_from_cached_waveops_msl_with_compute_pso_manifest",
+            "requires_hash_metallib_file": False,
+        },
         "msl_checks": msl_checks,
         "metallib_policy": metallib_policy,
         "errors": errors,
@@ -1330,6 +1465,7 @@ def run_fresh_game(
             )
 
     dxil_artifacts = build_fresh_game_dxil(out_bin, run_dir, wine, prefix)
+    waveops_artifacts = build_fresh_game_waveops_dxil(out_bin, run_dir, wine, prefix)
 
     shader_cache_dir = run_dir / "shader-cache-fresh"
     shader_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1359,6 +1495,7 @@ def run_fresh_game(
             "M12_FRESH_CORPUS_TSV": str(corpus_tsv),
             "M12_FRESH_DXIL_VS": dxil_artifacts["vs_path"],
             "M12_FRESH_DXIL_PS": dxil_artifacts["ps_path"],
+            "M12_FRESH_WAVEOPS_CS": waveops_artifacts["cs_path"],
             "M12_FRESH_VISIBLE_FRAMES": str(visible_frames),
             "WINEDEBUG": "+loaddll",
         }
@@ -1440,6 +1577,7 @@ def run_fresh_game(
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
     heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
+    wave_ops_json = d3d12_json.get("wave_ops", {}) if d3d12_json else {}
     rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
     render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
     corpus_shader_json = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
@@ -1658,6 +1796,50 @@ def run_fresh_game(
         and int(uav_barrier_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
         and int(uav_barrier_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
         and uav_barrier_json.get("present_rgba") == uav_barrier_json.get("present_expected_rgba")
+        and wave_ops_json.get("ok") is True
+        and wave_ops_json.get("present_ok") is True
+        and wave_ops_json.get("proof_scope") == "sm6_dxil_waveops_compute_uav_presented_readback"
+        and wave_ops_json.get("cs_loaded") is True
+        and int(wave_ops_json.get("cs_bytes", 0) or 0) > 0
+        and str(wave_ops_json.get("cs_fnv1a64", "")) not in ("", "0000000000000000")
+        and wave_ops_json.get("CheckFeatureSupport_OPTIONS1") == "0x00000000"
+        and wave_ops_json.get("wave_ops_reported") is True
+        and int(wave_ops_json.get("wave_lane_count_min", 0) or 0) == 32
+        and int(wave_ops_json.get("wave_lane_count_max", 0) or 0) == 32
+        and wave_ops_json.get("D3D12SerializeRootSignature") == "0x00000000"
+        and wave_ops_json.get("CreateRootSignature") == "0x00000000"
+        and wave_ops_json.get("CreateComputePipelineStateWaveOps") == "0x00000000"
+        and wave_ops_json.get("CreateUavBuffer") == "0x00000000"
+        and wave_ops_json.get("CreateUavDescriptorHeap") == "0x00000000"
+        and int(wave_ops_json.get("CreateUnorderedAccessView_descriptors", 0) or 0) == 1
+        and wave_ops_json.get("CreateReadback") == "0x00000000"
+        and wave_ops_json.get("CloseCommandList") == "0x00000000"
+        and wave_ops_json.get("SignalFence") == "0x00000000"
+        and wave_ops_json.get("MapReadback") == "0x00000000"
+        and wave_ops_json.get("fixed_footprint_ok") is True
+        and int(wave_ops_json.get("row_pitch", 0) or 0) == 256
+        and int(wave_ops_json.get("footprint_bytes", 0) or 0) >= 4096
+        and int(wave_ops_json.get("uav_descriptor_gpu_handle", 0) or 0) != 0
+        and int(wave_ops_json.get("root_uav_sets", 0) or 0) == 1
+        and int(wave_ops_json.get("dispatch_commands", 0) or 0) == 1
+        and wave_ops_json.get("dispatch_groups") == [8, 1, 1]
+        and int(wave_ops_json.get("uav_barriers", 0) or 0) == 1
+        and int(wave_ops_json.get("transition_barriers", 0) or 0) == 1
+        and int(wave_ops_json.get("compute_pixels_checked", 0) or 0) == 256
+        and int(wave_ops_json.get("compute_pixel_matches", 0) or 0) == 256
+        and wave_ops_json.get("compute_first_rgba") == [0, 32, 5, 14]
+        and wave_ops_json.get("compute_center_rgba") == [8, 32, 5, 14]
+        and wave_ops_json.get("compute_last_rgba") == [31, 32, 5, 14]
+        and wave_ops_json.get("compute_readback_ok") is True
+        and int(wave_ops_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(wave_ops_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(wave_ops_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(wave_ops_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(wave_ops_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and wave_ops_json.get("present_first_rgba") == [0, 32, 5, 14]
+        and wave_ops_json.get("present_center_rgba") == [8, 32, 5, 14]
+        and wave_ops_json.get("present_last_rgba") == [31, 32, 5, 14]
+        and wave_ops_json.get("fence_wait_ok") is True
         and rtv_format_json.get("ok") is True
         and rtv_format_json.get("present_ok") is True
         and rtv_format_json.get("proof_scope") == "offscreen_r8g8b8a8_unorm_rtv_clear_presented_copy_readback"
@@ -1891,6 +2073,7 @@ def run_fresh_game(
         "loaddll": loaddll_rows,
         "runtime_match": runtime_match,
         "dxil_artifacts": dxil_artifacts,
+        "waveops_artifacts": waveops_artifacts,
         "shader_cache_dir": str(shader_cache_dir),
         "shader_cache_validation": shader_cache_validation,
         "copied_corpus_artifacts": copied_corpus_artifacts,
@@ -1918,6 +2101,7 @@ def run_fresh_game(
         "stderr_assertion": stderr_assertion,
         "ok": proc.returncode == 0
         and dxil_artifacts["ok"]
+        and waveops_artifacts["ok"]
         and game_json_ok
         and corpus_hash_validation["ok"]
         and shader_cache_validation["ok"]

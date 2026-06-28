@@ -67,6 +67,8 @@ constexpr UINT kIndexedStampX = 280;
 constexpr UINT kIndexedStampY = 24;
 constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
+constexpr UINT kWaveOpsStampX = 344;
+constexpr UINT kWaveOpsStampY = 24;
 constexpr UINT kTextured3DFaceCount = 3;
 constexpr UINT kTextured3DVertexCount = 33;
 constexpr UINT kTextured3DDepthSampleX = 704;
@@ -2642,6 +2644,7 @@ static void srv_sample_expected_rgba(uint8_t out[4]);
 static void cbv_sample_expected_rgba(uint8_t out[4]);
 static void indexed_draw_expected_rgba(uint8_t out[4]);
 static void indirect_draw_expected_rgba(uint8_t out[4]);
+static void wave_ops_expected_rgba(UINT x, UINT y, uint8_t out[4]);
 
 static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT width, UINT height,
                                         const uint8_t* texture_expected_rgba, uint32_t frame,
@@ -2674,6 +2677,18 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
             uav_pixel[1] = static_cast<uint8_t>(uav_barrier_expected[1] ^ 0xffu);
             uav_pixel[2] = static_cast<uint8_t>(uav_barrier_expected[2] ^ 0xffu);
             uav_pixel[3] = static_cast<uint8_t>(uav_barrier_expected[3] ^ 0xffu);
+        }
+    }
+    uint8_t* wave_ops_stamp = readback_pixel(readback, mapped, kWaveOpsStampX, kWaveOpsStampY);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            uint8_t* wave_pixel = readback_pixel(readback, mapped, kWaveOpsStampX + x, kWaveOpsStampY + y);
+            uint8_t wave_expected[4] = {};
+            wave_ops_expected_rgba(x, y, wave_expected);
+            wave_pixel[0] = static_cast<uint8_t>(wave_expected[0] ^ 0xffu);
+            wave_pixel[1] = static_cast<uint8_t>(wave_expected[1] ^ 0xffu);
+            wave_pixel[2] = static_cast<uint8_t>(wave_expected[2] ^ 0xffu);
+            wave_pixel[3] = static_cast<uint8_t>(wave_expected[3] ^ 0xffu);
         }
     }
     uint8_t* rtv_format_stamp = readback_pixel(readback, mapped, kRtvFormatStampX, kRtvFormatStampY);
@@ -2811,6 +2826,10 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     const uint8_t* uav_barrier_stamp_last = readback_pixel(
         readback, mapped, kUavBarrierStampX + kFreshTextureWidth - 1u, kUavBarrierStampY + kFreshTextureHeight - 1u);
     const size_t uav_barrier_stamp_last_offset = static_cast<size_t>(uav_barrier_stamp_last - mapped);
+    const size_t wave_ops_stamp_offset = static_cast<size_t>(wave_ops_stamp - mapped);
+    const uint8_t* wave_ops_stamp_last = readback_pixel(readback, mapped, kWaveOpsStampX + kFreshTextureWidth - 1u,
+                                                        kWaveOpsStampY + kFreshTextureHeight - 1u);
+    const size_t wave_ops_stamp_last_offset = static_cast<size_t>(wave_ops_stamp_last - mapped);
     const size_t rtv_format_stamp_offset = static_cast<size_t>(rtv_format_stamp - mapped);
     const uint8_t* rtv_format_stamp_last = readback_pixel(readback, mapped, kRtvFormatStampX + kFreshTextureWidth - 1u,
                                                           kRtvFormatStampY + kFreshTextureHeight - 1u);
@@ -2846,6 +2865,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
                                           heap_alias_stamp_offset,
                                           uav_barrier_stamp_offset,
                                           uav_barrier_stamp_last_offset,
+                                          wave_ops_stamp_offset,
+                                          wave_ops_stamp_last_offset,
                                           rtv_format_stamp_offset,
                                           rtv_format_stamp_last_offset,
                                           render_pass_stamp_offset,
@@ -2866,6 +2887,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
                                           heap_alias_stamp_offset,
                                           uav_barrier_stamp_offset,
                                           uav_barrier_stamp_last_offset,
+                                          wave_ops_stamp_offset,
+                                          wave_ops_stamp_last_offset,
                                           rtv_format_stamp_offset,
                                           rtv_format_stamp_last_offset,
                                           render_pass_stamp_offset,
@@ -3198,6 +3221,273 @@ static HeapAliasExercise exercise_heap_alias_stamp(ID3D12Device* device, ID3D12C
 static void destroy_heap_alias_exercise(HeapAliasExercise& exercise) {
     safe_release(exercise.present_buffer);
     safe_release(exercise.heap);
+}
+
+struct WaveOpsStats {
+    std::string cs_path;
+    bool cs_loaded = false;
+    uint64_t cs_bytes = 0;
+    uint64_t cs_fnv1a64 = 1469598103934665603ull;
+    HRESULT options1_hr = E_FAIL;
+    bool wave_ops_reported = false;
+    UINT wave_lane_count_min = 0;
+    UINT wave_lane_count_max = 0;
+    UINT total_lane_count = 0;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_uav_buffer_hr = E_FAIL;
+    HRESULT create_uav_descriptor_heap_hr = E_FAIL;
+    HRESULT create_readback_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    HRESULT map_readback_hr = E_FAIL;
+    UINT64 footprint_bytes = 0;
+    UINT row_pitch = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS uav_gpu_virtual_address = 0;
+    UINT64 uav_descriptor_gpu_handle = 0;
+    bool fixed_footprint_ok = false;
+    uint32_t root_uav_sets = 0;
+    uint32_t uav_descriptors_created = 0;
+    uint32_t dispatch_commands = 0;
+    uint32_t dispatch_groups_x = 0;
+    uint32_t dispatch_groups_y = 0;
+    uint32_t dispatch_groups_z = 0;
+    uint32_t uav_barriers = 0;
+    uint32_t transition_barriers = 0;
+    uint32_t compute_pixels_checked = 0;
+    uint32_t compute_pixel_matches = 0;
+    uint32_t present_copy_commands = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t present_pixels_checked = 0;
+    uint32_t present_pixel_matches = 0;
+    uint8_t compute_first_rgba[4] = {0, 0, 0, 0};
+    uint8_t compute_center_rgba[4] = {0, 0, 0, 0};
+    uint8_t compute_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_first_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_center_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool fence_wait_ok = false;
+    bool compute_readback_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct WaveOpsExercise {
+    WaveOpsStats stats;
+    ID3D12Resource* present_buffer = nullptr;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+};
+
+static void wave_ops_expected_rgba(UINT x, UINT y, uint8_t out[4]) {
+    const UINT lane = ((y & 1u) * kFreshTextureWidth) + x;
+    out[0] = static_cast<uint8_t>(lane); // WaveGetLaneIndex
+    out[1] = 32;                         // WaveGetLaneCount
+    out[2] = 5;                          // WaveReadLaneFirst(WaveGetLaneIndex + 5)
+    out[3] = 14;                         // WaveReadLaneAt(lane + 5, 7) + AnyTrue(first lane) + false/true AllTrue cases
+}
+
+static WaveOpsExercise exercise_wave_ops_stamp(ID3D12Device* device, SerializeRootSignatureFn serialize,
+                                               ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
+                                               ID3D12GraphicsCommandList* list, ID3D12Fence* fence, HANDLE fence_event,
+                                               UINT64& fence_value, const std::string& wave_cs_path) {
+    WaveOpsExercise exercise;
+    WaveOpsStats& stats = exercise.stats;
+    stats.cs_path = wave_cs_path;
+    if (!device || !serialize || !queue || !allocator || !list || !fence || !fence_event || wave_cs_path.empty())
+        return exercise;
+
+    std::vector<uint8_t> cs;
+    stats.cs_loaded = read_file_bytes(wave_cs_path, cs, stats.cs_fnv1a64);
+    stats.cs_bytes = static_cast<uint64_t>(cs.size());
+
+    D3D12_FEATURE_DATA_D3D12_OPTIONS1 options1 = {};
+    stats.options1_hr = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &options1, sizeof(options1));
+    if (SUCCEEDED(stats.options1_hr)) {
+        stats.wave_ops_reported = options1.WaveOps;
+        stats.wave_lane_count_min = options1.WaveLaneCountMin;
+        stats.wave_lane_count_max = options1.WaveLaneCountMax;
+        stats.total_lane_count = options1.TotalLaneCount;
+    }
+
+    D3D12_RESOURCE_DESC stamp_desc = texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+    UINT rows = 0;
+    UINT64 row_bytes = 0;
+    UINT64 total_bytes = 0;
+    device->GetCopyableFootprints(&stamp_desc, 0, 1, 0, &exercise.footprint, &rows, &row_bytes, &total_bytes);
+    stats.footprint_bytes = total_bytes;
+    stats.row_pitch = exercise.footprint.Footprint.RowPitch;
+    stats.fixed_footprint_ok =
+        stats.row_pitch == kFreshTextureWidth * 16u && total_bytes >= kFreshTextureHeight * stats.row_pitch;
+    stats.dispatch_groups_x = 8;
+    stats.dispatch_groups_y = 1;
+    stats.dispatch_groups_z = 1;
+
+    D3D12_DESCRIPTOR_RANGE uav_range = {};
+    uav_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    uav_range.NumDescriptors = 1;
+    uav_range.BaseShaderRegister = 0;
+    uav_range.RegisterSpace = 0;
+    uav_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_ROOT_PARAMETER root_params[1] = {};
+    root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    root_params[0].DescriptorTable.NumDescriptorRanges = 1;
+    root_params[0].DescriptorTable.pDescriptorRanges = &uav_range;
+    root_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = 1;
+    root_desc.pParameters = root_params;
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    ID3DBlob* root_blob = nullptr;
+    stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    if (root_blob) {
+        stats.create_root_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                           IID_PPV_ARGS(&root_signature));
+    }
+    if (root_signature && stats.cs_loaded && !cs.empty()) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = root_signature;
+        pso_desc.CS = {cs.data(), cs.size()};
+        stats.create_pso_hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&pipeline_state));
+    }
+
+    D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC uav_desc = stamp_desc;
+    uav_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    D3D12_RESOURCE_DESC readback_desc = buffer_desc(total_bytes);
+    ID3D12Resource* readback = nullptr;
+    ID3D12DescriptorHeap* uav_heap = nullptr;
+    stats.create_uav_buffer_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &uav_desc,
+                                                                 D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                                 IID_PPV_ARGS(&exercise.present_buffer));
+    D3D12_DESCRIPTOR_HEAP_DESC uav_heap_desc = {};
+    uav_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    uav_heap_desc.NumDescriptors = 1;
+    uav_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    stats.create_uav_descriptor_heap_hr = device->CreateDescriptorHeap(&uav_heap_desc, IID_PPV_ARGS(&uav_heap));
+    if (exercise.present_buffer && uav_heap) {
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav_view = {};
+        uav_view.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        uav_view.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        uav_view.Texture2D.MipSlice = 0;
+        uav_view.Texture2D.PlaneSlice = 0;
+        device->CreateUnorderedAccessView(exercise.present_buffer, nullptr, &uav_view,
+                                          uav_heap->GetCPUDescriptorHandleForHeapStart());
+        stats.uav_descriptors_created++;
+    }
+    stats.create_readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback));
+    if (uav_heap)
+        stats.uav_descriptor_gpu_handle = uav_heap->GetGPUDescriptorHandleForHeapStart().ptr;
+
+    bool submitted_work = false;
+    if (stats.fixed_footprint_ok && pipeline_state && root_signature && exercise.present_buffer && uav_heap &&
+        readback && SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator, nullptr))) {
+        list->SetPipelineState(pipeline_state);
+        list->SetComputeRootSignature(root_signature);
+        ID3D12DescriptorHeap* heaps[] = {uav_heap};
+        list->SetDescriptorHeaps(1, heaps);
+        list->SetComputeRootDescriptorTable(0, uav_heap->GetGPUDescriptorHandleForHeapStart());
+        stats.root_uav_sets++;
+        list->Dispatch(stats.dispatch_groups_x, stats.dispatch_groups_y, stats.dispatch_groups_z);
+        stats.dispatch_commands++;
+        D3D12_RESOURCE_BARRIER uav = uav_resource_barrier(exercise.present_buffer);
+        list->ResourceBarrier(1, &uav);
+        stats.uav_barriers++;
+        D3D12_RESOURCE_BARRIER to_copy = transition_barrier(
+            exercise.present_buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &to_copy);
+        stats.transition_barriers++;
+        D3D12_TEXTURE_COPY_LOCATION readback_dst = {};
+        readback_dst.pResource = readback;
+        readback_dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        readback_dst.PlacedFootprint = exercise.footprint;
+        D3D12_TEXTURE_COPY_LOCATION texture_src = {};
+        texture_src.pResource = exercise.present_buffer;
+        texture_src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        texture_src.SubresourceIndex = 0;
+        list->CopyTextureRegion(&readback_dst, 0, 0, 0, &texture_src, nullptr);
+        stats.close_hr = list->Close();
+        if (SUCCEEDED(stats.close_hr)) {
+            ID3D12CommandList* base = list;
+            queue->ExecuteCommandLists(1, &base);
+            submitted_work = true;
+            fence_value++;
+            stats.signal_hr = queue->Signal(fence, fence_value);
+            stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+        }
+    }
+    if (submitted_work && !stats.fence_wait_ok) {
+        std::fflush(stdout);
+        TerminateProcess(GetCurrentProcess(), 2u);
+    }
+
+    if (readback && stats.fence_wait_ok) {
+        uint8_t* mapped = nullptr;
+        D3D12_RANGE read_range = {0, static_cast<SIZE_T>(total_bytes)};
+        stats.map_readback_hr = readback->Map(0, &read_range, reinterpret_cast<void**>(&mapped));
+        if (SUCCEEDED(stats.map_readback_hr) && mapped) {
+            const uint8_t* base = mapped + static_cast<size_t>(exercise.footprint.Offset);
+            const uint8_t* first = base;
+            std::memcpy(stats.compute_first_rgba, first, sizeof(stats.compute_first_rgba));
+            const uint8_t* center =
+                base + static_cast<size_t>(kFreshTextureHeight / 2u) * exercise.footprint.Footprint.RowPitch +
+                static_cast<size_t>(kFreshTextureWidth / 2u) * 4u;
+            std::memcpy(stats.compute_center_rgba, center, sizeof(stats.compute_center_rgba));
+            const uint8_t* last =
+                base + static_cast<size_t>(kFreshTextureHeight - 1u) * exercise.footprint.Footprint.RowPitch +
+                static_cast<size_t>(kFreshTextureWidth - 1u) * 4u;
+            std::memcpy(stats.compute_last_rgba, last, sizeof(stats.compute_last_rgba));
+            for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+                const uint8_t* row = base + static_cast<size_t>(y) * exercise.footprint.Footprint.RowPitch;
+                for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+                    const uint8_t* pixel = row + static_cast<size_t>(x) * 4u;
+                    uint8_t expected[4] = {};
+                    wave_ops_expected_rgba(x, y, expected);
+                    stats.compute_pixels_checked++;
+                    if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                        pixel[3] == expected[3]) {
+                        stats.compute_pixel_matches++;
+                    }
+                }
+            }
+            stats.compute_readback_ok = stats.compute_pixels_checked == kFreshTextureWidth * kFreshTextureHeight &&
+                                        stats.compute_pixel_matches == stats.compute_pixels_checked;
+            D3D12_RANGE written = {0, 0};
+            readback->Unmap(0, &written);
+        }
+    }
+
+    stats.pass = stats.cs_loaded && stats.cs_bytes > 0 && SUCCEEDED(stats.options1_hr) && stats.wave_ops_reported &&
+                 stats.wave_lane_count_min == 32 && stats.wave_lane_count_max == 32 &&
+                 SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
+                 SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_uav_buffer_hr) &&
+                 SUCCEEDED(stats.create_uav_descriptor_heap_hr) && stats.uav_descriptors_created == 1 &&
+                 SUCCEEDED(stats.create_readback_hr) && stats.footprint_bytes > 0 && stats.fixed_footprint_ok &&
+                 stats.uav_descriptor_gpu_handle != 0 && stats.root_uav_sets == 1 && stats.dispatch_commands == 1 &&
+                 stats.dispatch_groups_x == 8 && stats.dispatch_groups_y == 1 && stats.dispatch_groups_z == 1 &&
+                 stats.uav_barriers == 1 && stats.transition_barriers == 1 && SUCCEEDED(stats.close_hr) &&
+                 SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok && SUCCEEDED(stats.map_readback_hr) &&
+                 stats.compute_readback_ok;
+    if (!stats.pass)
+        safe_release(exercise.present_buffer);
+    if (root_blob)
+        root_blob->Release();
+    safe_release(pipeline_state);
+    safe_release(root_signature);
+    safe_release(uav_heap);
+    safe_release(readback);
+    return exercise;
+}
+
+static void destroy_wave_ops_exercise(WaveOpsExercise& exercise) {
+    safe_release(exercise.present_buffer);
 }
 
 struct UavBarrierStats {
@@ -3892,6 +4182,44 @@ static bool inspect_uav_barrier_stamp(DxilReadbackResources& readback, UavBarrie
     return matches;
 }
 
+static bool inspect_wave_ops_stamp(DxilReadbackResources& readback, WaveOpsStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* first = readback_pixel(readback, mapped, kWaveOpsStampX, kWaveOpsStampY);
+    std::memcpy(stats.present_first_rgba, first, sizeof(stats.present_first_rgba));
+    const uint8_t* center = readback_pixel(readback, mapped, kWaveOpsStampX + kFreshTextureWidth / 2u,
+                                           kWaveOpsStampY + kFreshTextureHeight / 2u);
+    std::memcpy(stats.present_center_rgba, center, sizeof(stats.present_center_rgba));
+    const uint8_t* last = readback_pixel(readback, mapped, kWaveOpsStampX + kFreshTextureWidth - 1u,
+                                         kWaveOpsStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
+    uint32_t frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kWaveOpsStampX + x, kWaveOpsStampY + y);
+            uint8_t expected[4] = {};
+            wave_ops_expected_rgba(x, y, expected);
+            if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                pixel[3] == expected[3]) {
+                frame_matches++;
+            }
+        }
+    }
+    stats.present_pixels_checked += kFreshTextureWidth * kFreshTextureHeight;
+    stats.present_pixel_matches += frame_matches;
+    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+    stats.present_samples_checked++;
+    if (matches)
+        stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
 static bool inspect_rtv_format_stamp(DxilReadbackResources& readback, RtvFormatStats& stats) {
     if (!readback.buffer)
         return false;
@@ -4344,6 +4672,7 @@ struct D3DRunStats {
     GpuTextureStats gpu_textures;
     HeapAliasStats heap_alias;
     UavBarrierStats uav_barrier;
+    WaveOpsStats wave_ops;
     RtvFormatStats rtv_format;
     RenderPassStats render_pass;
     CorpusShaderStats corpus_shader;
@@ -4510,6 +4839,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     UavBarrierExercise uav_barrier =
         exercise_uav_barrier_stamp(device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value);
     stats.uav_barrier = uav_barrier.stats;
+    WaveOpsExercise wave_ops = exercise_wave_ops_stamp(device, serialize, queue, allocator, list, fence, fence_event,
+                                                       fence_value, getenv_string("M12_FRESH_WAVEOPS_CS"));
+    stats.wave_ops = wave_ops.stats;
     RtvFormatExercise rtv_format =
         exercise_rtv_format_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
     stats.rtv_format = rtv_format.stats;
@@ -4537,7 +4869,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
         dxil_scene.stats.pass && corpus_shader.stats.pass && srv_sample.stats.pass && textured_3d.stats.pass &&
-        cbv_sample.stats.pass && indexed_draw.stats.pass && indirect_draw.stats.pass) {
+        cbv_sample.stats.pass && indexed_draw.stats.pass && indirect_draw.stats.pass && wave_ops.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -4692,6 +5024,25 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 list->CopyTextureRegion(&uav_dst, kUavBarrierStampX, kUavBarrierStampY, 0, &uav_src, &uav_box);
                 stats.uav_barrier.present_copy_commands++;
             }
+            if (wave_ops.present_buffer) {
+                if (backbuffer_state != D3D12_RESOURCE_STATE_COPY_DEST) {
+                    auto backbuffer_to_copy_dest =
+                        transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_DEST);
+                    list->ResourceBarrier(1, &backbuffer_to_copy_dest);
+                    backbuffer_state = D3D12_RESOURCE_STATE_COPY_DEST;
+                }
+                D3D12_TEXTURE_COPY_LOCATION wave_dst = {};
+                wave_dst.pResource = buffer;
+                wave_dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                wave_dst.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION wave_src = {};
+                wave_src.pResource = wave_ops.present_buffer;
+                wave_src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                wave_src.SubresourceIndex = 0;
+                D3D12_BOX wave_box = {0, 0, 0, kFreshTextureWidth, kFreshTextureHeight, 1};
+                list->CopyTextureRegion(&wave_dst, kWaveOpsStampX, kWaveOpsStampY, 0, &wave_src, &wave_box);
+                stats.wave_ops.present_copy_commands++;
+            }
             if (stats.rtv_format.pass && rtv_format.present_texture) {
                 if (backbuffer_state != D3D12_RESOURCE_STATE_COPY_DEST) {
                     auto backbuffer_to_copy_dest =
@@ -4766,6 +5117,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (uav_barrier.present_buffer && !inspect_uav_barrier_stamp(dxil_readback, stats.uav_barrier))
                 break;
+            if (wave_ops.present_buffer && !inspect_wave_ops_stamp(dxil_readback, stats.wave_ops))
+                break;
             if (stats.rtv_format.pass && rtv_format.present_texture &&
                 !inspect_rtv_format_stamp(dxil_readback, stats.rtv_format))
                 break;
@@ -4822,6 +5175,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.uav_barrier.present_sample_matches == visible_frame_target &&
         stats.uav_barrier.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.uav_barrier.present_pixel_matches == stats.uav_barrier.present_pixels_checked;
+    stats.wave_ops.present_pass =
+        wave_ops.present_buffer && stats.wave_ops.present_copy_commands == visible_frame_target &&
+        stats.wave_ops.present_samples_checked == visible_frame_target &&
+        stats.wave_ops.present_sample_matches == visible_frame_target &&
+        stats.wave_ops.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.wave_ops.present_pixel_matches == stats.wave_ops.present_pixels_checked;
     stats.rtv_format.present_pass =
         rtv_format.present_texture && stats.rtv_format.present_copy_commands == visible_frame_target &&
         stats.rtv_format.present_samples_checked == visible_frame_target &&
@@ -4884,10 +5243,10 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) &&
         stats.gpu_textures.pass && stats.gpu_textures.present_pass && stats.heap_alias.pass &&
         stats.heap_alias.present_pass && stats.uav_barrier.pass && stats.uav_barrier.present_pass &&
-        stats.rtv_format.pass && stats.rtv_format.present_pass && stats.render_pass.pass &&
-        stats.render_pass.present_pass && stats.corpus_shader.pass && stats.corpus_shader.present_pass &&
-        stats.corpus_shader.draw_calls == visible_frame_target && stats.srv_sample.pass &&
-        stats.srv_sample.present_pass && stats.srv_sample.draw_calls == visible_frame_target &&
+        stats.wave_ops.pass && stats.wave_ops.present_pass && stats.rtv_format.pass && stats.rtv_format.present_pass &&
+        stats.render_pass.pass && stats.render_pass.present_pass && stats.corpus_shader.pass &&
+        stats.corpus_shader.present_pass && stats.corpus_shader.draw_calls == visible_frame_target &&
+        stats.srv_sample.pass && stats.srv_sample.present_pass && stats.srv_sample.draw_calls == visible_frame_target &&
         stats.textured_3d.pass && stats.textured_3d.present_pass &&
         stats.textured_3d.draw_calls == visible_frame_target &&
         stats.textured_3d.vertex_buffer_updates == visible_frame_target &&
@@ -4904,6 +5263,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
     destroy_heap_alias_exercise(heap_alias);
+    destroy_wave_ops_exercise(wave_ops);
     destroy_uav_barrier_exercise(uav_barrier);
     destroy_rtv_format_exercise(rtv_format);
     destroy_render_pass_exercise(render_pass);
@@ -5199,6 +5559,71 @@ int main() {
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.uav_barrier.fence_wait_ok ? "true" : "false");
     std::printf("      \"present_ok\": %s,\n", d3d.uav_barrier.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.uav_barrier.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"wave_ops\": {\n");
+    std::printf("      \"proof_scope\": \"sm6_dxil_waveops_compute_uav_presented_readback\",\n");
+    std::printf("      \"cs_path\": \"%s\",\n", json_escape(d3d.wave_ops.cs_path).c_str());
+    std::printf("      \"cs_loaded\": %s,\n", d3d.wave_ops.cs_loaded ? "true" : "false");
+    std::printf("      \"cs_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.wave_ops.cs_bytes));
+    std::printf("      \"cs_fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(d3d.wave_ops.cs_fnv1a64));
+    std::printf("      \"CheckFeatureSupport_OPTIONS1\": \"%s\",\n", hr_hex(d3d.wave_ops.options1_hr).c_str());
+    std::printf("      \"wave_ops_reported\": %s,\n", d3d.wave_ops.wave_ops_reported ? "true" : "false");
+    std::printf("      \"wave_lane_count_min\": %u,\n", d3d.wave_ops.wave_lane_count_min);
+    std::printf("      \"wave_lane_count_max\": %u,\n", d3d.wave_ops.wave_lane_count_max);
+    std::printf("      \"total_lane_count\": %u,\n", d3d.wave_ops.total_lane_count);
+    std::printf("      \"D3D12SerializeRootSignature\": \"%s\",\n", hr_hex(d3d.wave_ops.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.wave_ops.create_root_hr).c_str());
+    std::printf("      \"CreateComputePipelineStateWaveOps\": \"%s\",\n", hr_hex(d3d.wave_ops.create_pso_hr).c_str());
+    std::printf("      \"CreateUavBuffer\": \"%s\",\n", hr_hex(d3d.wave_ops.create_uav_buffer_hr).c_str());
+    std::printf("      \"CreateUavDescriptorHeap\": \"%s\",\n",
+                hr_hex(d3d.wave_ops.create_uav_descriptor_heap_hr).c_str());
+    std::printf("      \"CreateUnorderedAccessView_descriptors\": %u,\n", d3d.wave_ops.uav_descriptors_created);
+    std::printf("      \"CreateReadback\": \"%s\",\n", hr_hex(d3d.wave_ops.create_readback_hr).c_str());
+    std::printf("      \"CloseCommandList\": \"%s\",\n", hr_hex(d3d.wave_ops.close_hr).c_str());
+    std::printf("      \"SignalFence\": \"%s\",\n", hr_hex(d3d.wave_ops.signal_hr).c_str());
+    std::printf("      \"MapReadback\": \"%s\",\n", hr_hex(d3d.wave_ops.map_readback_hr).c_str());
+    std::printf("      \"footprint_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.wave_ops.footprint_bytes));
+    std::printf("      \"row_pitch\": %u,\n", d3d.wave_ops.row_pitch);
+    std::printf("      \"fixed_footprint_ok\": %s,\n", d3d.wave_ops.fixed_footprint_ok ? "true" : "false");
+    std::printf("      \"uav_gpu_virtual_address\": %llu,\n",
+                static_cast<unsigned long long>(d3d.wave_ops.uav_gpu_virtual_address));
+    std::printf("      \"uav_descriptor_gpu_handle\": %llu,\n",
+                static_cast<unsigned long long>(d3d.wave_ops.uav_descriptor_gpu_handle));
+    std::printf("      \"root_uav_sets\": %u,\n", d3d.wave_ops.root_uav_sets);
+    std::printf("      \"dispatch_commands\": %u,\n", d3d.wave_ops.dispatch_commands);
+    std::printf("      \"dispatch_groups\": [%u, %u, %u],\n", d3d.wave_ops.dispatch_groups_x,
+                d3d.wave_ops.dispatch_groups_y, d3d.wave_ops.dispatch_groups_z);
+    std::printf("      \"uav_barriers\": %u,\n", d3d.wave_ops.uav_barriers);
+    std::printf("      \"transition_barriers\": %u,\n", d3d.wave_ops.transition_barriers);
+    std::printf("      \"compute_pixels_checked\": %u,\n", d3d.wave_ops.compute_pixels_checked);
+    std::printf("      \"compute_pixel_matches\": %u,\n", d3d.wave_ops.compute_pixel_matches);
+    std::printf("      \"compute_first_rgba\": [%u, %u, %u, %u],\n", d3d.wave_ops.compute_first_rgba[0],
+                d3d.wave_ops.compute_first_rgba[1], d3d.wave_ops.compute_first_rgba[2],
+                d3d.wave_ops.compute_first_rgba[3]);
+    std::printf("      \"compute_center_rgba\": [%u, %u, %u, %u],\n", d3d.wave_ops.compute_center_rgba[0],
+                d3d.wave_ops.compute_center_rgba[1], d3d.wave_ops.compute_center_rgba[2],
+                d3d.wave_ops.compute_center_rgba[3]);
+    std::printf("      \"compute_last_rgba\": [%u, %u, %u, %u],\n", d3d.wave_ops.compute_last_rgba[0],
+                d3d.wave_ops.compute_last_rgba[1], d3d.wave_ops.compute_last_rgba[2],
+                d3d.wave_ops.compute_last_rgba[3]);
+    std::printf("      \"compute_readback_ok\": %s,\n", d3d.wave_ops.compute_readback_ok ? "true" : "false");
+    std::printf("      \"present_copy_commands\": %u,\n", d3d.wave_ops.present_copy_commands);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.wave_ops.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.wave_ops.present_sample_matches);
+    std::printf("      \"present_pixels_checked\": %u,\n", d3d.wave_ops.present_pixels_checked);
+    std::printf("      \"present_pixel_matches\": %u,\n", d3d.wave_ops.present_pixel_matches);
+    std::printf("      \"present_first_rgba\": [%u, %u, %u, %u],\n", d3d.wave_ops.present_first_rgba[0],
+                d3d.wave_ops.present_first_rgba[1], d3d.wave_ops.present_first_rgba[2],
+                d3d.wave_ops.present_first_rgba[3]);
+    std::printf("      \"present_center_rgba\": [%u, %u, %u, %u],\n", d3d.wave_ops.present_center_rgba[0],
+                d3d.wave_ops.present_center_rgba[1], d3d.wave_ops.present_center_rgba[2],
+                d3d.wave_ops.present_center_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.wave_ops.present_last_rgba[0],
+                d3d.wave_ops.present_last_rgba[1], d3d.wave_ops.present_last_rgba[2],
+                d3d.wave_ops.present_last_rgba[3]);
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.wave_ops.fence_wait_ok ? "true" : "false");
+    std::printf("      \"present_ok\": %s,\n", d3d.wave_ops.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.wave_ops.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"rtv_format\": {\n");
     std::printf("      \"proof_scope\": \"offscreen_r8g8b8a8_unorm_rtv_clear_presented_copy_readback\",\n");

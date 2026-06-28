@@ -135,6 +135,7 @@ Exit criteria:
 - Vulkan report validates the fresh runtime ICD, opens the x86_64 Vulkan loader, resolves `vkGetInstanceProcAddr`, creates a Vulkan instance, enumerates at least one MoltenVK physical device, and records device name/vendor/type without falling back to host-global stale assets.
 - GUID/COM ABI proof validates canonical Direct3D/DXGI interface UUIDs, QueryInterface success, non-null COM vtables, `GetDevice` identity on device-child objects, and `SetPrivateData`/`GetPrivateData` byte roundtrip semantics in both the runtime identity gate and the real presented swapchain game run.
 - SM6 DXIL scalar/vector proof makes the presented magenta overlay input-dependent through `dot`, scalar abs/min/max, vector swizzle, saturate, and channel writes; gates validate the source markers, generated MSL scalarized lowering markers, presented shader hashes, and presented-frame center readback.
+- SM6 DXIL waveops proof compiles a `cs_6_0` compute PSO, lowers `WaveGetLaneIndex`, `WaveGetLaneCount`, `WaveReadLaneFirst`, `WaveReadLaneAt`, `WaveActiveAnyTrue`, and `WaveActiveAllTrue` to Metal SIMD operations, writes the result through a shader-visible UAV descriptor table texture, validates GPU readback, and copies the stamped wave result into every presented swapchain frame.
 
 ## Phase 4 — Core D3D12 object correctness gates
 
