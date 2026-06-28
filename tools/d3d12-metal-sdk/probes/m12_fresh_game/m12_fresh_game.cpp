@@ -2551,9 +2551,9 @@ static DxilSceneResources create_dxil_scene(ID3D12Device* device, SerializeRootS
 
     if (device) {
         const ColorVertex dxil_overlay_triangle[3] = {
-            {{-0.88f, -0.84f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
-            {{0.00f, 0.88f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
-            {{0.88f, -0.84f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+            {{-0.88f, -0.84f, 0.0f}, {0.25f, 0.75f, 0.50f, 1.0f}},
+            {{0.00f, 0.88f, 0.0f}, {0.25f, 0.75f, 0.50f, 1.0f}},
+            {{0.88f, -0.84f, 0.0f}, {0.25f, 0.75f, 0.50f, 1.0f}},
         };
         D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
         D3D12_RESOURCE_DESC vb_desc = buffer_desc(sizeof(dxil_overlay_triangle));
@@ -2594,7 +2594,8 @@ struct DxilReadbackStats {
     uint32_t copy_commands = 0;
     uint32_t sentinel_writes = 0;
     uint32_t samples_checked = 0;
-    uint32_t magenta_samples = 0;
+    uint32_t semantic_samples = 0;
+    uint8_t expected_rgba[4] = {143, 128, 191, 191};
     uint8_t center_rgba[4] = {0, 0, 0, 0};
     bool pass = false;
 };
@@ -2899,7 +2900,7 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     return true;
 }
 
-static bool inspect_dxil_magenta_center(DxilReadbackResources& readback, UINT width, UINT height) {
+static bool inspect_dxil_scalar_vector_center(DxilReadbackResources& readback, UINT width, UINT height) {
     if (!readback.buffer)
         return false;
     uint8_t* mapped = nullptr;
@@ -2912,12 +2913,17 @@ static bool inspect_dxil_magenta_center(DxilReadbackResources& readback, UINT wi
     readback.stats.center_rgba[2] = pixel[2];
     readback.stats.center_rgba[3] = pixel[3];
     readback.stats.samples_checked++;
-    const bool magenta = pixel[0] >= 180 && pixel[1] <= 80 && pixel[2] >= 180 && pixel[3] >= 180;
-    if (magenta)
-        readback.stats.magenta_samples++;
+    bool semantic_match = true;
+    for (UINT channel = 0; channel < 4; ++channel) {
+        const int delta = static_cast<int>(pixel[channel]) - static_cast<int>(readback.stats.expected_rgba[channel]);
+        if (delta < -2 || delta > 2)
+            semantic_match = false;
+    }
+    if (semantic_match)
+        readback.stats.semantic_samples++;
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
-    return magenta;
+    return semantic_match;
 }
 
 static void destroy_dxil_readback(DxilReadbackResources& readback) {
@@ -4752,7 +4758,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             fence_value++;
             if (FAILED(queue->Signal(fence, fence_value)) || !wait_for_fence(fence, fence_value, fence_event))
                 break;
-            if (!inspect_dxil_magenta_center(dxil_readback, backbuffer_width, backbuffer_height))
+            if (!inspect_dxil_scalar_vector_center(dxil_readback, backbuffer_width, backbuffer_height))
                 break;
             if (gpu_textures.present_texture && !inspect_texture_stamp(dxil_readback, stats.gpu_textures))
                 break;
@@ -4799,7 +4805,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                dxil_readback.stats.copy_commands == visible_frame_target &&
                                dxil_readback.stats.sentinel_writes == visible_frame_target &&
                                dxil_readback.stats.samples_checked == visible_frame_target &&
-                               dxil_readback.stats.magenta_samples == visible_frame_target;
+                               dxil_readback.stats.semantic_samples == visible_frame_target;
     stats.dxil_readback = dxil_readback.stats;
     stats.gpu_textures.present_pass = gpu_textures.present_texture && gpu_textures.present_sentinel_upload &&
                                       stats.gpu_textures.present_backbuffer_sentinel_copies == visible_frame_target &&
@@ -5571,7 +5577,8 @@ int main() {
     std::printf("      \"CreateGraphicsPipelineState_SM6_DXIL\": \"%s\",\n",
                 hr_hex(d3d.dxil_scene.create_pso_hr).c_str());
     std::printf("      \"CreateDxilVertexBuffer\": \"%s\",\n", hr_hex(d3d.dxil_scene.create_vertex_buffer_hr).c_str());
-    std::printf("      \"vertex_source\": \"POSITION_GREEN_SENTINEL_VERTEX_BUFFER_PS_MAGENTA_OVERLAY\",\n");
+    std::printf(
+        "      \"vertex_source\": \"POSITION_NONDEGENERATE_COLOR_VERTEX_BUFFER_PS_SCALAR_VECTOR_SEMANTICS\",\n");
     std::printf("      \"draw_calls\": %u,\n", d3d.dxil_scene.draw_calls);
     std::printf("      \"vertices_per_draw\": %u,\n", d3d.dxil_scene.vertices_per_draw);
     std::printf("      \"ok\": %s\n", d3d.dxil_scene.pass ? "true" : "false");
@@ -5581,7 +5588,10 @@ int main() {
     std::printf("      \"copy_commands\": %u,\n", d3d.dxil_readback.copy_commands);
     std::printf("      \"sentinel_writes\": %u,\n", d3d.dxil_readback.sentinel_writes);
     std::printf("      \"samples_checked\": %u,\n", d3d.dxil_readback.samples_checked);
-    std::printf("      \"magenta_samples\": %u,\n", d3d.dxil_readback.magenta_samples);
+    std::printf("      \"semantic_samples\": %u,\n", d3d.dxil_readback.semantic_samples);
+    std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.dxil_readback.expected_rgba[0],
+                d3d.dxil_readback.expected_rgba[1], d3d.dxil_readback.expected_rgba[2],
+                d3d.dxil_readback.expected_rgba[3]);
     std::printf("      \"center_rgba\": [%u, %u, %u, %u],\n", d3d.dxil_readback.center_rgba[0],
                 d3d.dxil_readback.center_rgba[1], d3d.dxil_readback.center_rgba[2], d3d.dxil_readback.center_rgba[3]);
     std::printf("      \"ok\": %s\n", d3d.dxil_readback.pass ? "true" : "false");

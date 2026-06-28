@@ -703,7 +703,16 @@ PSIn VSMain(VSIn input) {
   return output;
 }
 float4 PSMain(PSIn input) : SV_TARGET {
-  return float4(1.0, 0.0, 1.0, 1.0);
+  // M12_SCALAR_VECTOR_SEMANTICS_PROOF: keep this input-dependent so DXIL/MSL lowering cannot collapse to a constant.
+  float scalar_dot = dot(input.color.rgb, float3(0.25, 0.50, 0.25));
+  float scalar_abs = abs(input.color.r - input.color.b);
+  float2 scalar_pair = float2(scalar_dot, scalar_abs);
+  float2 swizzled_pair = scalar_pair.yx;
+  float red = scalar_dot;
+  float green = 0.5 + 0.5 * saturate((scalar_abs - 0.5) * 8.0);
+  float blue = min(scalar_dot + scalar_abs, 0.75);
+  float alpha = max(swizzled_pair.x + 0.5, input.color.a - 0.5);
+  return float4(red, green, blue, alpha);
 }
 """.lstrip(),
         encoding="utf-8",
@@ -714,6 +723,19 @@ float4 PSMain(PSIn input) : SV_TARGET {
         if key.startswith("DXMT_"):
             env.pop(key, None)
     env.update({"WINEPREFIX": str(prefix), "WINEDEBUG": "-all"})
+
+    source_text = hlsl_path.read_text(encoding="utf-8")
+    semantic_markers = {
+        "proof_marker": "M12_SCALAR_VECTOR_SEMANTICS_PROOF" in source_text,
+        "dot_input_color": "dot(input.color.rgb" in source_text,
+        "scalar_pair_float2": "float2 scalar_pair" in source_text,
+        "swizzle_yx": "scalar_pair.yx" in source_text,
+        "saturate_before_arithmetic": "0.5 * saturate((scalar_abs - 0.5) * 8.0)" in source_text,
+        "min_scalar": "min(scalar_dot + scalar_abs, 0.75)" in source_text,
+        "max_swizzle_scalar": "max(swizzled_pair.x + 0.5, input.color.a - 0.5)" in source_text,
+        "returns_float4_semantic_color": "return float4(red, green, blue, alpha);" in source_text,
+    }
+    semantic_source_ok = all(semantic_markers.values())
 
     commands = {
         "vs": [
@@ -763,8 +785,11 @@ float4 PSMain(PSIn input) : SV_TARGET {
             "ok": output_ok,
         }
     return {
-        "ok": ok,
+        "ok": ok and semantic_source_ok,
         "hlsl": str(hlsl_path),
+        "semantic_scope": "presented_sm6_dxil_scalar_vector_semantics",
+        "semantic_markers": semantic_markers,
+        "semantic_source_ok": semantic_source_ok,
         "vs_path": str(vs_path),
         "dxc_stage": dxc_stage,
         "ps_path": str(ps_path),
@@ -971,11 +996,29 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     if dxil_ps:
         ps_msl = shader_cache_dir / f"{dxil_ps}.msl"
         text = ps_msl.read_text(errors="replace") if ps_msl.exists() else ""
-        msl_checks["dxil_ps_magenta_constants"] = all(
-            token in text for token in ["result.x = 1.0f;", "result.y = 0;", "result.z = 1.0f;", "result.w = 1.0f;"]
+        msl_checks["dxil_ps_semantic_result_channels"] = all(
+            token in text for token in ["result.x", "result.y", "result.z", "result.w"]
         )
-        if not msl_checks["dxil_ps_magenta_constants"]:
-            errors.append("dxil_ps_msl_missing_magenta_constants")
+        msl_checks["dxil_ps_scalar_vector_lowering"] = all(
+            token in text
+            for token in [
+                "in.v0.x",
+                "in.v0.y",
+                "in.v0.z",
+                "abs(",
+                "clamp(",
+                "min(",
+                "max(",
+                "result.x = v",
+                "result.y = v",
+                "result.z = v",
+                "result.w = v",
+            ]
+        )
+        if not msl_checks["dxil_ps_semantic_result_channels"]:
+            errors.append("dxil_ps_msl_missing_result_channel_writes")
+        if not msl_checks["dxil_ps_scalar_vector_lowering"]:
+            errors.append("dxil_ps_msl_missing_scalar_vector_lowering")
     if dxil_vs:
         vs_msl = shader_cache_dir / f"{dxil_vs}.msl"
         text = vs_msl.read_text(errors="replace") if vs_msl.exists() else ""
@@ -1125,7 +1168,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         )
         if referenced_all_present:
             metallib_policy[name] = {"ok": True, "policy": "pso_referenced_metallibs_present", "referenced": referenced_records}
-        elif name == "dxil" and msl_checks.get("dxil_ps_magenta_constants") and msl_checks.get("dxil_vs_clip_w_one"):
+        elif name == "dxil" and msl_checks.get("dxil_ps_scalar_vector_lowering") and msl_checks.get("dxil_vs_clip_w_one"):
             metallib_policy[name] = {
                 "ok": True,
                 "policy": "runtime_source_compile_from_cached_msl_no_hash_metallib_file",
@@ -1543,7 +1586,7 @@ def run_fresh_game(
         and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_matches", 0) or 0) == visible_frames
         and d3d12_json.get("dxil_scene", {}).get("ok") is True
         and d3d12_json.get("dxil_scene", {}).get("CreateDxilVertexBuffer") == "0x00000000"
-        and d3d12_json.get("dxil_scene", {}).get("vertex_source") == "POSITION_GREEN_SENTINEL_VERTEX_BUFFER_PS_MAGENTA_OVERLAY"
+        and d3d12_json.get("dxil_scene", {}).get("vertex_source") == "POSITION_NONDEGENERATE_COLOR_VERTEX_BUFFER_PS_SCALAR_VECTOR_SEMANTICS"
         and int(d3d12_json.get("dxil_scene", {}).get("draw_calls", 0) or 0) == visible_frames
         and int(d3d12_json.get("dxil_scene", {}).get("vertices_per_draw", 0) or 0) == 3
         and d3d12_json.get("dxil_readback", {}).get("ok") is True
@@ -1551,7 +1594,8 @@ def run_fresh_game(
         and int(d3d12_json.get("dxil_readback", {}).get("copy_commands", 0) or 0) == visible_frames
         and int(d3d12_json.get("dxil_readback", {}).get("sentinel_writes", 0) or 0) == visible_frames
         and int(d3d12_json.get("dxil_readback", {}).get("samples_checked", 0) or 0) == visible_frames
-        and int(d3d12_json.get("dxil_readback", {}).get("magenta_samples", 0) or 0) == visible_frames
+        and int(d3d12_json.get("dxil_readback", {}).get("semantic_samples", 0) or 0) == visible_frames
+        and d3d12_json.get("dxil_readback", {}).get("expected_rgba") == [143, 128, 191, 191]
         and gpu_textures_json.get("ok") is True
         and gpu_textures_json.get("present_ok") is True
         and int(gpu_textures_json.get("texture_payloads_uploaded", 0) or 0) >= 300
