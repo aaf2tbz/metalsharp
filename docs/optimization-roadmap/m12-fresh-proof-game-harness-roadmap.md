@@ -165,12 +165,14 @@ Build cold/warm PSO proof for graphics and compute:
 - PSO cached blob roundtrip or explicit documented unsupported policy if D3D12 semantics cannot be implemented.
 - Prewarm manifest generation and consumption.
 - Binary archive/cache population and load proof.
+- Native Metal archive/prewarm proof that consumes the fresh Wine-run PSO manifests, loads the same fresh shader-cache `.metallib` files, adds render and compute pipeline functions to an `MTLBinaryArchive`, serializes and reloads that archive, and creates render/compute pipeline states asynchronously with `MTLPipelineOptionFailOnBinaryArchiveMiss`.
 
 Exit criteria:
 
 - Cold run creates expected artifacts.
 - Warm run loads only validated fresh artifacts.
 - Stale, orphaned, missing-reflection, and wrong-hash cache files are rejected.
+- Archive/prewarm proof records manifest count, accepted per-hash `.metallib` paths/hashes/sizes under the fresh shader cache, explicit non-rewritten DXIL no-metallib exclusions, archive path/hash/size, add-render/add-compute counts, reload success, and async render/compute callback/success counts.
 
 ## Phase 6 — Fresh game.exe window harness
 

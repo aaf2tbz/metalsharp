@@ -1734,6 +1734,294 @@ def run_fresh_game(
     return result
 
 
+def build_metal_archive_probe(repo: Path, run_dir: Path) -> dict[str, Any]:
+    source = repo / "tools" / "d3d12-metal-sdk" / "probes" / "probe_m12_fresh_metal_archive" / "probe_m12_fresh_metal_archive.mm"
+    exe = run_dir / "probe_m12_fresh_metal_archive"
+    command = [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "clang++",
+        "-std=c++17",
+        "-fobjc-arc",
+        "-fblocks",
+        str(source),
+        "-framework",
+        "Foundation",
+        "-framework",
+        "Metal",
+        "-o",
+        str(exe),
+    ]
+    proc = subprocess.run(command, cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return {
+        "command": command,
+        "source": str(source),
+        "exe": str(exe),
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "ok": proc.returncode == 0 and exe.exists(),
+    }
+
+
+def metallib_path_is_fresh(path_text: str, shader_cache_dir: Path) -> bool:
+    if not path_text:
+        return False
+    try:
+        path = Path(path_text).resolve(strict=True)
+        root = shader_cache_dir.resolve(strict=True)
+    except FileNotFoundError:
+        return False
+    return str(path) == str(root) or str(path).startswith(str(root) + os.sep)
+
+
+def dxil_sidecars_for_hash(shader_cache_dir: Path, shader_hash: str) -> list[str]:
+    if not shader_hash:
+        return []
+    return [
+        str(path)
+        for path in [
+            shader_cache_dir / f"{shader_hash}.dxil_report.txt",
+            shader_cache_dir / f"{shader_hash}.module.txt",
+            shader_cache_dir / f"{shader_hash}.msl",
+        ]
+        if path.exists()
+    ]
+
+
+def archive_manifest_stage_entries(manifest_data: dict[str, Any]) -> list[tuple[int, str, str, dict[str, Any]]]:
+    entries: list[tuple[int, str, str, dict[str, Any]]] = []
+    pipelines = manifest_data.get("pipelines")
+    if not isinstance(pipelines, list):
+        return entries
+    for pipeline_index, pipeline in enumerate(pipelines):
+        if not isinstance(pipeline, dict):
+            continue
+        pipeline_name = str(pipeline.get("name", ""))
+        pipeline_type = pipeline.get("type")
+        stage_keys: list[tuple[str, str]] = []
+        if pipeline_type == "render":
+            stage_keys = [("vertex", "vertex"), ("fragment", "fragment")]
+        elif pipeline_type == "compute":
+            stage_keys = [("shader", "compute")]
+        for key, stage in stage_keys:
+            stage_manifest = pipeline.get(key)
+            if isinstance(stage_manifest, dict):
+                entries.append((pipeline_index, pipeline_name, stage, stage_manifest))
+    return entries
+
+
+def exclude_archive_manifest_reason(manifest_data: dict[str, Any], shader_cache_dir: Path) -> dict[str, Any] | None:
+    allowed_reason = "dxil_stage_has_fresh_sidecars_but_no_matching_per_hash_metallib_do_not_rewrite_to_sm50"
+    problems: list[dict[str, Any]] = []
+    for pipeline_index, pipeline_name, stage, stage_manifest in archive_manifest_stage_entries(manifest_data):
+        metallib = str(stage_manifest.get("metallib", ""))
+        shader_hash = str(stage_manifest.get("hash", ""))
+        sidecars = dxil_sidecars_for_hash(shader_cache_dir, shader_hash)
+        reason = ""
+        if not metallib or not Path(metallib).exists():
+            reason = "requested_per_hash_metallib_missing"
+            if sidecars:
+                reason = allowed_reason
+        elif not metallib_path_is_fresh(metallib, shader_cache_dir):
+            reason = "requested_metallib_exists_but_is_not_under_fresh_shader_cache"
+        if reason:
+            problems.append(
+                {
+                    "pipeline_index": pipeline_index,
+                    "pipeline": pipeline_name,
+                    "stage": stage,
+                    "shader_hash": shader_hash,
+                    "requested_metallib": metallib,
+                    "dxil_sidecars": sidecars,
+                    "reason": reason,
+                }
+            )
+    for problem in problems:
+        if problem["reason"] != allowed_reason:
+            return {**problem, "all_problem_stages": problems}
+    if problems:
+        return {**problems[0], "all_problem_stages": problems}
+    return None
+
+
+def archive_manifest_metallib_paths(manifest_data: dict[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for _, _, _, stage_manifest in archive_manifest_stage_entries(manifest_data):
+        metallib = str(stage_manifest.get("metallib", ""))
+        if metallib:
+            paths.append(metallib)
+    return paths
+
+
+def run_metal_archive_proof(repo: Path, proof_dir: Path, visible_game_result: dict[str, Any]) -> dict[str, Any]:
+    run_dir = proof_dir / "phase2-metal-archive-prewarm"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    shader_cache_dir = Path(str(visible_game_result.get("shader_cache_dir", "")))
+    manifests = sorted(shader_cache_dir.glob("pso-*.json")) if shader_cache_dir.exists() else []
+    copied_manifest_records = []
+    excluded_manifest_records = []
+    normalized_manifests: list[Path] = []
+    expected_metallib_paths: set[str] = set()
+    accepted_stage_records: list[dict[str, Any]] = []
+    manifest_copy_dir = run_dir / "manifest-copies"
+    manifest_copy_dir.mkdir(parents=True, exist_ok=True)
+    for manifest in manifests:
+        manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+        exclusion = exclude_archive_manifest_reason(manifest_data, shader_cache_dir)
+        if exclusion:
+            excluded_manifest_records.append(
+                {
+                    "source": str(manifest),
+                    "source_sha256": sha256(manifest),
+                    "source_size": manifest.stat().st_size,
+                    **exclusion,
+                }
+            )
+            continue
+        destination = manifest_copy_dir / manifest.name
+        for pipeline_index, pipeline_name, stage, stage_manifest in archive_manifest_stage_entries(manifest_data):
+            metallib_path = str(stage_manifest.get("metallib", ""))
+            shader_hash = str(stage_manifest.get("hash", ""))
+            resolved_metallib = Path(metallib_path).resolve(strict=True)
+            expected_metallib_paths.add(str(resolved_metallib))
+            accepted_stage_records.append(
+                {
+                    "manifest": str(manifest),
+                    "pipeline_index": pipeline_index,
+                    "pipeline": pipeline_name,
+                    "stage": stage,
+                    "shader_hash": shader_hash,
+                    "metallib": str(resolved_metallib),
+                    "metallib_name_matches_hash": resolved_metallib.name == f"{shader_hash}.metallib",
+                    "metallib_under_shader_cache": metallib_path_is_fresh(str(resolved_metallib), shader_cache_dir),
+                    "sha256": sha256(resolved_metallib),
+                    "size": resolved_metallib.stat().st_size,
+                }
+            )
+        write_json(destination, manifest_data)
+        normalized_manifests.append(destination)
+        copied_manifest_records.append(
+            {
+                "source": str(manifest),
+                "destination": str(destination),
+                "source_sha256": sha256(manifest),
+                "source_size": manifest.stat().st_size,
+                "normalized_sha256": sha256(destination),
+                "normalized_size": destination.stat().st_size,
+                "metallib_ref_rewrites": [],
+            }
+        )
+    manifest_list = run_dir / "fresh-pso-manifests.txt"
+    manifest_list.write_text("\n".join(str(path) for path in normalized_manifests) + ("\n" if normalized_manifests else ""))
+    build = build_metal_archive_probe(repo, run_dir)
+    write_json(run_dir / "build-probe.json", build)
+    stdout_path = run_dir / "probe_m12_fresh_metal_archive.stdout.json"
+    stderr_path = run_dir / "probe_m12_fresh_metal_archive.stderr.txt"
+    parsed: dict[str, Any] | None = None
+    parse_error = ""
+    proc_return = None
+    archive_path = run_dir / "fresh-pso-binary.archive"
+    if build["ok"]:
+        proc = subprocess.run(
+            [build["exe"], "--manifest-list", str(manifest_list), "--archive", str(archive_path)],
+            cwd=run_dir,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        proc_return = proc.returncode
+        stdout_path.write_text(proc.stdout)
+        stderr_path.write_text(proc.stderr)
+        try:
+            parsed = json.loads(proc.stdout)
+        except json.JSONDecodeError as error:
+            parse_error = str(error)
+    else:
+        stdout_path.write_text("")
+        stderr_path.write_text(build.get("stderr", ""))
+    parsed_ok = bool(parsed and parsed.get("ok") is True)
+    render_count = int(parsed.get("render_descriptor_count", 0) or 0) if parsed else 0
+    compute_count = int(parsed.get("compute_descriptor_count", 0) or 0) if parsed else 0
+    archive_size = int(parsed.get("archive_size", 0) or 0) if parsed else 0
+    manifest_records = parsed.get("manifest_records", []) if parsed else []
+    load_records = parsed.get("metallib_load_records", []) if parsed else []
+    loaded_metallib_paths = {
+        str(Path(str(record.get("metallib", ""))).resolve(strict=False)) for record in load_records if record.get("metallib")
+    }
+    loaded_metallib_records = [
+        {
+            "path": path,
+            "sha256": sha256(Path(path)) if Path(path).exists() else None,
+            "size": Path(path).stat().st_size if Path(path).exists() else 0,
+        }
+        for path in sorted(loaded_metallib_paths)
+    ]
+    manifest_records_ok = bool(manifest_records) and all(record.get("ok") is True for record in manifest_records)
+    load_records_exact = bool(load_records) and all(
+        record.get("requested_metallib") == record.get("metallib") for record in load_records
+    )
+    load_records_under_shader_cache = bool(load_records) and all(
+        metallib_path_is_fresh(str(record.get("metallib", "")), shader_cache_dir) for record in load_records
+    )
+    load_records_match_normalized_manifests = loaded_metallib_paths == expected_metallib_paths
+    accepted_stage_paths_are_fresh_per_hash = bool(accepted_stage_records) and all(
+        record["metallib_under_shader_cache"] and record["metallib_name_matches_hash"] for record in accepted_stage_records
+    )
+    allowed_exclusion_reason = "dxil_stage_has_fresh_sidecars_but_no_matching_per_hash_metallib_do_not_rewrite_to_sm50"
+    excluded_manifests_allowed = all(record.get("reason") == allowed_exclusion_reason for record in excluded_manifest_records)
+    parsed_manifest_count_matches = bool(parsed and int(parsed.get("manifest_count", -1)) == len(normalized_manifests))
+    result = {
+        "schema": "metalsharp.m12.fresh.phase2-metal-archive-prewarm.v1",
+        "build": build,
+        "shader_cache_dir": str(shader_cache_dir),
+        "manifest_list": str(manifest_list),
+        "source_manifest_count": len(manifests),
+        "manifest_count": len(normalized_manifests),
+        "copied_manifest_records": copied_manifest_records,
+        "excluded_manifest_records": excluded_manifest_records,
+        "excluded_manifests_allowed": excluded_manifests_allowed,
+        "accepted_stage_records": accepted_stage_records,
+        "accepted_stage_paths_are_fresh_per_hash": accepted_stage_paths_are_fresh_per_hash,
+        "expected_metallib_paths": sorted(expected_metallib_paths),
+        "loaded_metallib_records": loaded_metallib_records,
+        "manifest_records_ok": manifest_records_ok,
+        "load_records_exact": load_records_exact,
+        "load_records_under_shader_cache": load_records_under_shader_cache,
+        "load_records_match_normalized_manifests": load_records_match_normalized_manifests,
+        "parsed_manifest_count_matches": parsed_manifest_count_matches,
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+        "returncode": proc_return,
+        "json_parse_error": parse_error,
+        "archive_path": str(archive_path),
+        "archive_sha256": sha256(archive_path) if archive_path.exists() else None,
+        "archive_size": archive_path.stat().st_size if archive_path.exists() else 0,
+        "probe_json": parsed,
+        "ok": bool(
+            build["ok"]
+            and proc_return == 0
+            and parsed_ok
+            and len(normalized_manifests) >= 8
+            and parsed_manifest_count_matches
+            and excluded_manifests_allowed
+            and accepted_stage_paths_are_fresh_per_hash
+            and manifest_records_ok
+            and load_records_exact
+            and load_records_under_shader_cache
+            and load_records_match_normalized_manifests
+            and render_count >= 6
+            and compute_count >= 1
+            and archive_size > 0
+            and archive_path.exists()
+            and archive_path.stat().st_size == archive_size
+        ),
+    }
+    write_json(run_dir / "phase2-metal-archive-prewarm-summary.json", result)
+    return result
+
+
 def run_identity_probe(
     repo: Path,
     proof_dir: Path,
@@ -1916,6 +2204,7 @@ def main() -> int:
 
     identity_result: dict[str, Any] | None = None
     visible_game_result: dict[str, Any] | None = None
+    metal_archive_result: dict[str, Any] | None = None
     if not args.skip_run:
         identity_result = run_identity_probe(repo, proof_root, wine, wine_runtime, prefix, runtime_root, staged)
         if not args.skip_game:
@@ -1937,6 +2226,8 @@ def main() -> int:
                 corpus_tsv,
                 args.visible_frames,
             )
+            if visible_game_result["ok"]:
+                metal_archive_result = run_metal_archive_proof(repo, proof_root, visible_game_result)
 
     summary = {
         "schema": "metalsharp.m12.fresh.phase0-summary.v1",
@@ -1946,7 +2237,8 @@ def main() -> int:
         and game_build["ok"]
         and all(x["hash_match"] for x in staged)
         and (args.skip_run or bool(identity_result and identity_result["ok"]))
-        and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"])),
+        and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"]))
+        and (args.skip_run or args.skip_game or bool(metal_archive_result and metal_archive_result["ok"])),
         "proof_root": str(proof_root),
         "disk_guard": disk_guard,
         "build_ok": build["ok"],
@@ -1956,6 +2248,9 @@ def main() -> int:
         "visible_game_ok": None
         if args.skip_run or args.skip_game
         else bool(visible_game_result and visible_game_result["ok"]),
+        "metal_archive_prewarm_ok": None
+        if args.skip_run or args.skip_game
+        else bool(metal_archive_result and metal_archive_result["ok"]),
         "artifacts": {
             "manifest": str(proof_root / "proof-run-manifest.json"),
             "build": str(proof_root / "phase0-build-runtime-identity-probe.json"),
@@ -1964,6 +2259,11 @@ def main() -> int:
             if not args.skip_run
             else None,
             "visible_game": str(proof_root / "phase1-visible-game" / "phase1-visible-game-summary.json")
+            if not args.skip_run and not args.skip_game
+            else None,
+            "metal_archive_prewarm": str(
+                proof_root / "phase2-metal-archive-prewarm" / "phase2-metal-archive-prewarm-summary.json"
+            )
             if not args.skip_run and not args.skip_game
             else None,
         },

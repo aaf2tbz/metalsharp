@@ -1282,12 +1282,27 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
   SM50GetCompiledBitcode(compile_result, &bitcode);
 
   {
+    EnsureShaderCacheDir();
     char dump_path[1024];
+    char hash_metallib_path[1024];
     snprintf(dump_path, sizeof(dump_path), "%s/dxmt_sm50_%s.metallib",
              ShaderCacheDir().c_str(), func_name);
+    FormatShaderCachePath(hash_metallib_path, sizeof(hash_metallib_path),
+                          "%016zx.metallib", hash);
+    bool shared_written = false;
+    bool hash_written = false;
     FILE *df = fopen(dump_path, "wb");
-    if (df) { fwrite(bitcode.Data, 1, bitcode.Size, df); fclose(df); }
-    Logger::info(str::format("  SM50 dumped ", func_name, " to ", dump_path, " (", bitcode.Size, " bytes)"));
+    if (df) { shared_written = fwrite(bitcode.Data, 1, bitcode.Size, df) == bitcode.Size; fclose(df); }
+    FILE *hf = fopen(hash_metallib_path, "wb");
+    if (hf) { hash_written = fwrite(bitcode.Data, 1, bitcode.Size, hf) == bitcode.Size; fclose(hf); }
+    if (shared_written && hash_written)
+      Logger::info(str::format("  SM50 dumped ", func_name, " to ", dump_path,
+                               " and ", hash_metallib_path, " (", bitcode.Size,
+                               " bytes)"));
+    else
+      Logger::err(str::format("  SM50 metallib dump failed for ", func_name,
+                              ": shared=", shared_written, " hash=", hash_written,
+                              " paths=", dump_path, ", ", hash_metallib_path));
   }
 
   auto wmt_device = m_device->GetDXMTDevice().device();
