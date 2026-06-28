@@ -1766,19 +1766,18 @@ ULONG STDMETHODCALLTYPE MTLD3D12Device::Release() {
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::GetPrivateData(REFGUID guid,
                                                          UINT *data_size,
                                                          void *data) {
-  TRACE("GetPrivateData E_NOTIMPL");
-  return E_NOTIMPL;
+  return m_private_data.getData(guid, data_size, data);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetPrivateData(REFGUID guid,
                                                          UINT data_size,
                                                          const void *data) {
-  return S_OK;
+  return m_private_data.setData(guid, data_size, data);
 }
 
 HRESULT STDMETHODCALLTYPE
 MTLD3D12Device::SetPrivateDataInterface(REFGUID guid, const IUnknown *data) {
-  return S_OK;
+  return m_private_data.setInterface(guid, data);
 }
 
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetName(LPCWSTR name) { return S_OK; }

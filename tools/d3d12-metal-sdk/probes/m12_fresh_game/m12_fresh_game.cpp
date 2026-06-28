@@ -17,6 +17,7 @@
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <dxgi1_4.h>
+#include <initguid.h>
 
 static const GUID IID_D3D12DeviceFresh = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
 
@@ -450,6 +451,203 @@ static bool wait_for_fence(ID3D12Fence* fence, UINT64 value, HANDLE event_handle
     if (FAILED(fence->SetEventOnCompletion(value, event_handle)))
         return false;
     return WaitForSingleObject(event_handle, 5000) == WAIT_OBJECT_0;
+}
+
+static bool guid_equal(const GUID& a, const GUID& b) {
+    return std::memcmp(&a, &b, sizeof(GUID)) == 0;
+}
+
+static std::string guid_string(const GUID& guid) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                  static_cast<unsigned long>(guid.Data1), static_cast<unsigned>(guid.Data2),
+                  static_cast<unsigned>(guid.Data3), static_cast<unsigned>(guid.Data4[0]),
+                  static_cast<unsigned>(guid.Data4[1]), static_cast<unsigned>(guid.Data4[2]),
+                  static_cast<unsigned>(guid.Data4[3]), static_cast<unsigned>(guid.Data4[4]),
+                  static_cast<unsigned>(guid.Data4[5]), static_cast<unsigned>(guid.Data4[6]),
+                  static_cast<unsigned>(guid.Data4[7]));
+    return std::string(buf);
+}
+
+template <typename T> static bool com_vtable_nonnull(T* object) {
+    if (!object)
+        return false;
+    void** vtbl = *reinterpret_cast<void***>(object);
+    return vtbl && vtbl[0] && vtbl[1] && vtbl[2];
+}
+
+struct AbiSemanticStats {
+    HRESULT query_device_iunknown_hr = E_FAIL;
+    HRESULT query_device_self_hr = E_FAIL;
+    HRESULT query_factory_iunknown_hr = E_FAIL;
+    HRESULT query_adapter_iunknown_hr = E_FAIL;
+    HRESULT query_queue_self_hr = E_FAIL;
+    HRESULT query_queue_iunknown_hr = E_FAIL;
+    HRESULT query_allocator_self_hr = E_FAIL;
+    HRESULT query_list_self_hr = E_FAIL;
+    HRESULT query_fence_self_hr = E_FAIL;
+    HRESULT query_swapchain3_self_hr = E_FAIL;
+    HRESULT queue_get_device_hr = E_FAIL;
+    HRESULT allocator_get_device_hr = E_FAIL;
+    HRESULT list_get_device_hr = E_FAIL;
+    HRESULT fence_get_device_hr = E_FAIL;
+    HRESULT queue_device_iunknown_hr = E_FAIL;
+    HRESULT allocator_device_iunknown_hr = E_FAIL;
+    HRESULT list_device_iunknown_hr = E_FAIL;
+    HRESULT fence_device_iunknown_hr = E_FAIL;
+    HRESULT private_data_set_hr = E_FAIL;
+    HRESULT private_data_get_hr = E_FAIL;
+    UINT private_data_size = 0;
+    uint32_t validated_frames = 0;
+    bool guid_constants_ok = false;
+    bool query_interface_ok = false;
+    bool vtable_layout_ok = false;
+    bool device_child_get_device_ok = false;
+    bool device_child_identity_ok = false;
+    bool private_data_roundtrip_ok = false;
+    bool present_tie_ok = false;
+    bool pass = false;
+};
+
+static AbiSemanticStats exercise_abi_semantics(IDXGIFactory4* factory, IDXGIAdapter1* adapter, ID3D12Device* device,
+                                               ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
+                                               ID3D12GraphicsCommandList* list, ID3D12Fence* fence,
+                                               IDXGISwapChain3* swapchain) {
+    AbiSemanticStats stats;
+    const GUID expected_device = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
+    const GUID expected_factory4 = {0x1bc6ea02, 0xef36, 0x464f, {0xbf, 0x0c, 0x21, 0xca, 0x39, 0xe5, 0x16, 0x8a}};
+    const GUID expected_adapter1 = {0x29038f61, 0x3839, 0x4626, {0x91, 0xfd, 0x08, 0x68, 0x79, 0x01, 0x1a, 0x05}};
+    const GUID expected_queue = {0x0ec870a6, 0x5d7e, 0x4c22, {0x8c, 0xfc, 0x5b, 0xaa, 0xe0, 0x76, 0x16, 0xed}};
+    const GUID expected_allocator = {0x6102dee4, 0xaf59, 0x4b09, {0xb9, 0x99, 0xb4, 0x4d, 0x73, 0xf0, 0x9b, 0x24}};
+    const GUID expected_list = {0x5b160d0f, 0xac1b, 0x4185, {0x8b, 0xa8, 0xb3, 0xae, 0x42, 0xa5, 0xa4, 0x55}};
+    const GUID expected_fence = {0x0a753dcf, 0xc4d8, 0x4b91, {0xad, 0xf6, 0xbe, 0x5a, 0x60, 0xd9, 0x5a, 0x76}};
+    const GUID expected_swapchain3 = {0x94d99bdb, 0xf1f8, 0x4ab0, {0xb2, 0x36, 0x7d, 0xa0, 0x17, 0x0e, 0xda, 0xb1}};
+    stats.guid_constants_ok =
+        guid_equal(__uuidof(ID3D12Device), expected_device) && guid_equal(__uuidof(IDXGIFactory4), expected_factory4) &&
+        guid_equal(__uuidof(IDXGIAdapter1), expected_adapter1) &&
+        guid_equal(__uuidof(ID3D12CommandQueue), expected_queue) &&
+        guid_equal(__uuidof(ID3D12CommandAllocator), expected_allocator) &&
+        guid_equal(__uuidof(ID3D12GraphicsCommandList), expected_list) &&
+        guid_equal(__uuidof(ID3D12Fence), expected_fence) && guid_equal(__uuidof(IDXGISwapChain3), expected_swapchain3);
+
+    IUnknown* device_unknown = nullptr;
+    ID3D12Device* device_self = nullptr;
+    IUnknown* factory_unknown = nullptr;
+    IUnknown* adapter_unknown = nullptr;
+    ID3D12CommandQueue* queue_self = nullptr;
+    IUnknown* queue_unknown = nullptr;
+    ID3D12CommandAllocator* allocator_self = nullptr;
+    ID3D12GraphicsCommandList* list_self = nullptr;
+    ID3D12Fence* fence_self = nullptr;
+    IDXGISwapChain3* swapchain_self = nullptr;
+    ID3D12Device* queue_device = nullptr;
+    ID3D12Device* allocator_device = nullptr;
+    ID3D12Device* list_device = nullptr;
+    ID3D12Device* fence_device = nullptr;
+    IUnknown* queue_device_unknown = nullptr;
+    IUnknown* allocator_device_unknown = nullptr;
+    IUnknown* list_device_unknown = nullptr;
+    IUnknown* fence_device_unknown = nullptr;
+
+    stats.query_device_iunknown_hr =
+        device ? device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&device_unknown)) : E_FAIL;
+    stats.query_device_self_hr =
+        device ? device->QueryInterface(__uuidof(ID3D12Device), reinterpret_cast<void**>(&device_self)) : E_FAIL;
+    stats.query_factory_iunknown_hr =
+        factory ? factory->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&factory_unknown)) : E_FAIL;
+    stats.query_adapter_iunknown_hr =
+        adapter ? adapter->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&adapter_unknown)) : E_FAIL;
+    stats.query_queue_self_hr =
+        queue ? queue->QueryInterface(__uuidof(ID3D12CommandQueue), reinterpret_cast<void**>(&queue_self)) : E_FAIL;
+    stats.query_queue_iunknown_hr =
+        queue ? queue->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&queue_unknown)) : E_FAIL;
+    stats.query_allocator_self_hr = allocator ? allocator->QueryInterface(__uuidof(ID3D12CommandAllocator),
+                                                                          reinterpret_cast<void**>(&allocator_self))
+                                              : E_FAIL;
+    stats.query_list_self_hr =
+        list ? list->QueryInterface(__uuidof(ID3D12GraphicsCommandList), reinterpret_cast<void**>(&list_self)) : E_FAIL;
+    stats.query_fence_self_hr =
+        fence ? fence->QueryInterface(__uuidof(ID3D12Fence), reinterpret_cast<void**>(&fence_self)) : E_FAIL;
+    stats.query_swapchain3_self_hr =
+        swapchain ? swapchain->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void**>(&swapchain_self))
+                  : E_FAIL;
+    stats.queue_get_device_hr =
+        queue ? queue->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&queue_device)) : E_FAIL;
+    stats.allocator_get_device_hr =
+        allocator ? allocator->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&allocator_device)) : E_FAIL;
+    stats.list_get_device_hr =
+        list ? list->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&list_device)) : E_FAIL;
+    stats.fence_get_device_hr =
+        fence ? fence->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&fence_device)) : E_FAIL;
+    stats.queue_device_iunknown_hr =
+        queue_device ? queue_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&queue_device_unknown))
+                     : E_FAIL;
+    stats.allocator_device_iunknown_hr =
+        allocator_device
+            ? allocator_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&allocator_device_unknown))
+            : E_FAIL;
+    stats.list_device_iunknown_hr =
+        list_device ? list_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&list_device_unknown))
+                    : E_FAIL;
+    stats.fence_device_iunknown_hr =
+        fence_device ? fence_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&fence_device_unknown))
+                     : E_FAIL;
+
+    const GUID private_data_guid = {0x5ed3f4a0, 0x4f8f, 0x4e7a, {0x93, 0xa0, 0x9b, 0x51, 0xd3, 0x12, 0x60, 0x06}};
+    uint8_t payload[16] = {0x4d, 0x31, 0x32, 0x2d, 0x41, 0x42, 0x49, 0x2d,
+                           0x53, 0x45, 0x4d, 0x41, 0x4e, 0x54, 0x49, 0x43};
+    uint8_t expected_payload[16] = {};
+    std::memcpy(expected_payload, payload, sizeof(payload));
+    uint8_t readback[16] = {};
+    stats.private_data_set_hr = device ? device->SetPrivateData(private_data_guid, sizeof(payload), payload) : E_FAIL;
+    std::memset(payload, 0xa5, sizeof(payload));
+    stats.private_data_size = sizeof(readback);
+    stats.private_data_get_hr =
+        device ? device->GetPrivateData(private_data_guid, &stats.private_data_size, readback) : E_FAIL;
+    stats.private_data_roundtrip_ok = SUCCEEDED(stats.private_data_set_hr) && SUCCEEDED(stats.private_data_get_hr) &&
+                                      stats.private_data_size == sizeof(expected_payload) &&
+                                      std::memcmp(expected_payload, readback, sizeof(expected_payload)) == 0;
+
+    stats.query_interface_ok = SUCCEEDED(stats.query_device_iunknown_hr) && SUCCEEDED(stats.query_device_self_hr) &&
+                               SUCCEEDED(stats.query_factory_iunknown_hr) &&
+                               SUCCEEDED(stats.query_adapter_iunknown_hr) && SUCCEEDED(stats.query_queue_self_hr) &&
+                               SUCCEEDED(stats.query_queue_iunknown_hr) && SUCCEEDED(stats.query_allocator_self_hr) &&
+                               SUCCEEDED(stats.query_list_self_hr) && SUCCEEDED(stats.query_fence_self_hr) &&
+                               SUCCEEDED(stats.query_swapchain3_self_hr) && device_unknown && device_self &&
+                               factory_unknown && adapter_unknown && queue_self && queue_unknown && allocator_self &&
+                               list_self && fence_self && swapchain_self;
+    stats.vtable_layout_ok = com_vtable_nonnull(device) && com_vtable_nonnull(factory) && com_vtable_nonnull(adapter) &&
+                             com_vtable_nonnull(queue) && com_vtable_nonnull(allocator) && com_vtable_nonnull(list) &&
+                             com_vtable_nonnull(fence) && com_vtable_nonnull(swapchain);
+    stats.device_child_get_device_ok = SUCCEEDED(stats.queue_get_device_hr) &&
+                                       SUCCEEDED(stats.allocator_get_device_hr) &&
+                                       SUCCEEDED(stats.list_get_device_hr) && SUCCEEDED(stats.fence_get_device_hr) &&
+                                       queue_device && allocator_device && list_device && fence_device;
+    stats.device_child_identity_ok = stats.device_child_get_device_ok && device_unknown && queue_device_unknown &&
+                                     allocator_device_unknown && list_device_unknown && fence_device_unknown &&
+                                     queue_device_unknown == device_unknown &&
+                                     allocator_device_unknown == device_unknown &&
+                                     list_device_unknown == device_unknown && fence_device_unknown == device_unknown;
+
+    safe_release(device_unknown);
+    safe_release(device_self);
+    safe_release(factory_unknown);
+    safe_release(adapter_unknown);
+    safe_release(queue_self);
+    safe_release(queue_unknown);
+    safe_release(allocator_self);
+    safe_release(list_self);
+    safe_release(fence_self);
+    safe_release(swapchain_self);
+    safe_release(queue_device_unknown);
+    safe_release(allocator_device_unknown);
+    safe_release(list_device_unknown);
+    safe_release(fence_device_unknown);
+    safe_release(queue_device);
+    safe_release(allocator_device);
+    safe_release(list_device);
+    safe_release(fence_device);
+    return stats;
 }
 
 static HRESULT compile_shader(D3DCompileFn compile, const char* source, const char* entry, const char* target,
@@ -4151,6 +4349,7 @@ struct D3DRunStats {
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
+    AbiSemanticStats abi_semantics;
     uint32_t frames_presented = 0;
     uint32_t adapter_vendor_id = 0;
     uint32_t adapter_device_id = 0;
@@ -4282,6 +4481,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     if (SUCCEEDED(stats.create_list_hr) && list)
         list->Close();
     stats.create_fence_hr = device ? device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)) : E_FAIL;
+    stats.abi_semantics = exercise_abi_semantics(factory, adapter, device, queue, allocator, list, fence, swapchain);
 
     const uint32_t visible_frame_target = getenv_u32("M12_FRESH_VISIBLE_FRAMES", 600);
     VisibleSceneResources visible_scene = create_visible_scene(device, compile, serialize, visible_frame_target);
@@ -4664,30 +4864,36 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indirect_draw.present_sample_matches == visible_frame_target &&
         stats.indirect_draw.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indirect_draw.present_pixel_matches == stats.indirect_draw.present_pixels_checked;
+    stats.abi_semantics.validated_frames = stats.frames_presented;
+    stats.abi_semantics.present_tie_ok = stats.frames_presented == visible_frame_target;
+    stats.abi_semantics.pass = stats.abi_semantics.guid_constants_ok && stats.abi_semantics.query_interface_ok &&
+                               stats.abi_semantics.vtable_layout_ok && stats.abi_semantics.device_child_get_device_ok &&
+                               stats.abi_semantics.device_child_identity_ok &&
+                               stats.abi_semantics.private_data_roundtrip_ok && stats.abi_semantics.present_tie_ok;
 
-    stats.pass = stats.hwnd_created && stats.adapter_report_pass && SUCCEEDED(stats.create_factory_hr) &&
-                 SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
-                 SUCCEEDED(stats.create_swapchain_hr) && SUCCEEDED(stats.create_rtv_heap_hr) &&
-                 SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) &&
-                 SUCCEEDED(stats.create_fence_hr) && stats.gpu_textures.pass && stats.gpu_textures.present_pass &&
-                 stats.heap_alias.pass && stats.heap_alias.present_pass && stats.uav_barrier.pass &&
-                 stats.uav_barrier.present_pass && stats.rtv_format.pass && stats.rtv_format.present_pass &&
-                 stats.render_pass.pass && stats.render_pass.present_pass && stats.corpus_shader.pass &&
-                 stats.corpus_shader.present_pass && stats.corpus_shader.draw_calls == visible_frame_target &&
-                 stats.srv_sample.pass && stats.srv_sample.present_pass &&
-                 stats.srv_sample.draw_calls == visible_frame_target && stats.textured_3d.pass &&
-                 stats.textured_3d.present_pass && stats.textured_3d.draw_calls == visible_frame_target &&
-                 stats.textured_3d.vertex_buffer_updates == visible_frame_target &&
-                 stats.textured_3d.clear_depth_commands == visible_frame_target && stats.cbv_sample.pass &&
-                 stats.cbv_sample.present_pass && stats.cbv_sample.draw_calls == visible_frame_target &&
-                 stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
-                 stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.indirect_draw.pass &&
-                 stats.indirect_draw.present_pass &&
-                 stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.visible_scene.pass &&
-                 stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target &&
-                 stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) &&
-                 stats.frames_presented == visible_frame_target;
+    stats.pass =
+        stats.hwnd_created && stats.adapter_report_pass && stats.abi_semantics.pass &&
+        SUCCEEDED(stats.create_factory_hr) && SUCCEEDED(stats.create_device_hr) && SUCCEEDED(stats.create_queue_hr) &&
+        SUCCEEDED(stats.create_swapchain_hr) && SUCCEEDED(stats.create_rtv_heap_hr) &&
+        SUCCEEDED(stats.create_allocator_hr) && SUCCEEDED(stats.create_list_hr) && SUCCEEDED(stats.create_fence_hr) &&
+        stats.gpu_textures.pass && stats.gpu_textures.present_pass && stats.heap_alias.pass &&
+        stats.heap_alias.present_pass && stats.uav_barrier.pass && stats.uav_barrier.present_pass &&
+        stats.rtv_format.pass && stats.rtv_format.present_pass && stats.render_pass.pass &&
+        stats.render_pass.present_pass && stats.corpus_shader.pass && stats.corpus_shader.present_pass &&
+        stats.corpus_shader.draw_calls == visible_frame_target && stats.srv_sample.pass &&
+        stats.srv_sample.present_pass && stats.srv_sample.draw_calls == visible_frame_target &&
+        stats.textured_3d.pass && stats.textured_3d.present_pass &&
+        stats.textured_3d.draw_calls == visible_frame_target &&
+        stats.textured_3d.vertex_buffer_updates == visible_frame_target &&
+        stats.textured_3d.clear_depth_commands == visible_frame_target && stats.cbv_sample.pass &&
+        stats.cbv_sample.present_pass && stats.cbv_sample.draw_calls == visible_frame_target &&
+        stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
+        stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.indirect_draw.pass &&
+        stats.indirect_draw.present_pass && stats.indirect_draw.execute_indirect_calls == visible_frame_target &&
+        stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
+        stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
+        stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
+        SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -4792,6 +4998,70 @@ int main() {
     std::printf("    \"CreateCommandAllocator\": \"%s\",\n", hr_hex(d3d.create_allocator_hr).c_str());
     std::printf("    \"CreateCommandList\": \"%s\",\n", hr_hex(d3d.create_list_hr).c_str());
     std::printf("    \"CreateFence\": \"%s\",\n", hr_hex(d3d.create_fence_hr).c_str());
+    std::printf("    \"abi_semantics\": {\n");
+    std::printf(
+        "      \"proof_scope\": \"guid_com_abi_queryinterface_private_data_tied_to_presented_swapchain_run\",\n");
+    std::printf("      \"IID_ID3D12Device\": \"%s\",\n", guid_string(__uuidof(ID3D12Device)).c_str());
+    std::printf("      \"IID_IDXGIFactory4\": \"%s\",\n", guid_string(__uuidof(IDXGIFactory4)).c_str());
+    std::printf("      \"IID_IDXGIAdapter1\": \"%s\",\n", guid_string(__uuidof(IDXGIAdapter1)).c_str());
+    std::printf("      \"IID_ID3D12CommandQueue\": \"%s\",\n", guid_string(__uuidof(ID3D12CommandQueue)).c_str());
+    std::printf("      \"IID_ID3D12CommandAllocator\": \"%s\",\n",
+                guid_string(__uuidof(ID3D12CommandAllocator)).c_str());
+    std::printf("      \"IID_ID3D12GraphicsCommandList\": \"%s\",\n",
+                guid_string(__uuidof(ID3D12GraphicsCommandList)).c_str());
+    std::printf("      \"IID_ID3D12Fence\": \"%s\",\n", guid_string(__uuidof(ID3D12Fence)).c_str());
+    std::printf("      \"IID_IDXGISwapChain3\": \"%s\",\n", guid_string(__uuidof(IDXGISwapChain3)).c_str());
+    std::printf("      \"guid_constants_ok\": %s,\n", d3d.abi_semantics.guid_constants_ok ? "true" : "false");
+    std::printf("      \"QueryInterface_IUnknown_device\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_device_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_ID3D12Device\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_device_self_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_factory\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_factory_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_adapter\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_adapter_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_ID3D12CommandQueue\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_queue_self_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_queue\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_queue_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_ID3D12CommandAllocator\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_allocator_self_hr).c_str());
+    std::printf("      \"QueryInterface_ID3D12GraphicsCommandList\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_list_self_hr).c_str());
+    std::printf("      \"QueryInterface_ID3D12Fence\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_fence_self_hr).c_str());
+    std::printf("      \"QueryInterface_IDXGISwapChain3\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.query_swapchain3_self_hr).c_str());
+    std::printf("      \"GetDevice_from_queue\": \"%s\",\n", hr_hex(d3d.abi_semantics.queue_get_device_hr).c_str());
+    std::printf("      \"GetDevice_from_allocator\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.allocator_get_device_hr).c_str());
+    std::printf("      \"GetDevice_from_list\": \"%s\",\n", hr_hex(d3d.abi_semantics.list_get_device_hr).c_str());
+    std::printf("      \"GetDevice_from_fence\": \"%s\",\n", hr_hex(d3d.abi_semantics.fence_get_device_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_queue_device\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.queue_device_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_allocator_device\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.allocator_device_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_list_device\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.list_device_iunknown_hr).c_str());
+    std::printf("      \"QueryInterface_IUnknown_fence_device\": \"%s\",\n",
+                hr_hex(d3d.abi_semantics.fence_device_iunknown_hr).c_str());
+    std::printf("      \"SetPrivateData\": \"%s\",\n", hr_hex(d3d.abi_semantics.private_data_set_hr).c_str());
+    std::printf("      \"GetPrivateData\": \"%s\",\n", hr_hex(d3d.abi_semantics.private_data_get_hr).c_str());
+    std::printf("      \"private_data_size\": %u,\n", d3d.abi_semantics.private_data_size);
+    std::printf("      \"query_interface_ok\": %s,\n", d3d.abi_semantics.query_interface_ok ? "true" : "false");
+    std::printf("      \"vtable_layout_ok\": %s,\n", d3d.abi_semantics.vtable_layout_ok ? "true" : "false");
+    std::printf("      \"device_child_get_device_ok\": %s,\n",
+                d3d.abi_semantics.device_child_get_device_ok ? "true" : "false");
+    std::printf("      \"device_child_identity_ok\": %s,\n",
+                d3d.abi_semantics.device_child_identity_ok ? "true" : "false");
+    std::printf("      \"private_data_copy_semantics\": "
+                "\"caller_buffer_mutated_after_SetPrivateData_before_GetPrivateData\",\n");
+    std::printf("      \"private_data_roundtrip_ok\": %s,\n",
+                d3d.abi_semantics.private_data_roundtrip_ok ? "true" : "false");
+    std::printf("      \"validated_frames\": %u,\n", d3d.abi_semantics.validated_frames);
+    std::printf("      \"present_tie_ok\": %s,\n", d3d.abi_semantics.present_tie_ok ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.abi_semantics.pass ? "true" : "false");
+    std::printf("    },\n");
     std::printf("    \"gpu_textures\": {\n");
     std::printf("      \"CreateDescriptorHeap_CBV_SRV_UAV\": \"%s\",\n",
                 hr_hex(d3d.gpu_textures.create_descriptor_heap_hr).c_str());

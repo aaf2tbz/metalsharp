@@ -1393,6 +1393,7 @@ def run_fresh_game(
     corpus_json = parsed.get("corpus", {}) if parsed else {}
     d3d12_json = parsed.get("d3d12_window", {}) if parsed else {}
     adapter_json = d3d12_json.get("adapter_report", {}) if d3d12_json else {}
+    abi_semantics_json = d3d12_json.get("abi_semantics", {}) if d3d12_json else {}
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
     heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
@@ -1489,6 +1490,51 @@ def run_fresh_game(
         and adapter_json.get("adapter_luid_nonzero") is True
         and adapter_json.get("device_luid_nonzero") is True
         and adapter_json.get("luid_matches_device") is True
+        and abi_semantics_json.get("ok") is True
+        and abi_semantics_json.get("proof_scope") == "guid_com_abi_queryinterface_private_data_tied_to_presented_swapchain_run"
+        and abi_semantics_json.get("IID_ID3D12Device") == "189819f1-1db6-4b57-be54-1821339b85f7"
+        and abi_semantics_json.get("IID_IDXGIFactory4") == "1bc6ea02-ef36-464f-bf0c-21ca39e5168a"
+        and abi_semantics_json.get("IID_IDXGIAdapter1") == "29038f61-3839-4626-91fd-086879011a05"
+        and abi_semantics_json.get("IID_ID3D12CommandQueue") == "0ec870a6-5d7e-4c22-8cfc-5baae07616ed"
+        and abi_semantics_json.get("IID_ID3D12CommandAllocator") == "6102dee4-af59-4b09-b999-b44d73f09b24"
+        and abi_semantics_json.get("IID_ID3D12GraphicsCommandList") == "5b160d0f-ac1b-4185-8ba8-b3ae42a5a455"
+        and abi_semantics_json.get("IID_ID3D12Fence") == "0a753dcf-c4d8-4b91-adf6-be5a60d95a76"
+        and abi_semantics_json.get("IID_IDXGISwapChain3") == "94d99bdb-f1f8-4ab0-b236-7da0170edab1"
+        and abi_semantics_json.get("guid_constants_ok") is True
+        and abi_semantics_json.get("query_interface_ok") is True
+        and abi_semantics_json.get("vtable_layout_ok") is True
+        and abi_semantics_json.get("device_child_get_device_ok") is True
+        and abi_semantics_json.get("device_child_identity_ok") is True
+        and abi_semantics_json.get("private_data_copy_semantics") == "caller_buffer_mutated_after_SetPrivateData_before_GetPrivateData"
+        and abi_semantics_json.get("private_data_roundtrip_ok") is True
+        and abi_semantics_json.get("present_tie_ok") is True
+        and int(abi_semantics_json.get("validated_frames", 0) or 0) == visible_frames
+        and int(abi_semantics_json.get("private_data_size", 0) or 0) == 16
+        and all(
+            abi_semantics_json.get(key) == "0x00000000"
+            for key in [
+                "QueryInterface_IUnknown_device",
+                "QueryInterface_ID3D12Device",
+                "QueryInterface_IUnknown_factory",
+                "QueryInterface_IUnknown_adapter",
+                "QueryInterface_ID3D12CommandQueue",
+                "QueryInterface_IUnknown_queue",
+                "QueryInterface_ID3D12CommandAllocator",
+                "QueryInterface_ID3D12GraphicsCommandList",
+                "QueryInterface_ID3D12Fence",
+                "QueryInterface_IDXGISwapChain3",
+                "GetDevice_from_queue",
+                "GetDevice_from_allocator",
+                "GetDevice_from_list",
+                "GetDevice_from_fence",
+                "QueryInterface_IUnknown_queue_device",
+                "QueryInterface_IUnknown_allocator_device",
+                "QueryInterface_IUnknown_list_device",
+                "QueryInterface_IUnknown_fence_device",
+                "SetPrivateData",
+                "GetPrivateData",
+            ]
+        )
         and d3d12_json.get("visible_scene", {}).get("ok") is True
         and d3d12_json.get("visible_scene", {}).get("present_ok") is True
         and d3d12_json.get("visible_scene", {}).get("sm5_stamp_source") == "DXBC_SM5_DYNAMIC_STAMP_SENTINEL_OVERWRITE"
@@ -1822,6 +1868,7 @@ def run_fresh_game(
         "textured_3d_draw_skipped": textured_3d_draw_skipped,
         "textured_3d_ok": textured_3d_ok,
         "textured_3d_face_provenance": textured_3d_face_provenance,
+        "abi_semantics": abi_semantics_json,
         "render_encoder_encode_failed": render_encoder_encode_failed,
         "frames_presented": frames_presented,
         "stderr_assertion": stderr_assertion,
@@ -2394,6 +2441,54 @@ def run_identity_probe(
     loaddll_rows = parse_loaddll(proc.stderr)
     runtime_match = validate_loaded_runtime(parsed, loaddll_rows, staged_files)
     unix_bridge_match = validate_unix_bridge(parsed, runtime_root, wine_runtime, run_dir / "winemetal-pe-debug.log")
+    abi_semantics = parsed.get("abi_semantics", {}) if parsed else {}
+    abi_semantics_ok = bool(
+        abi_semantics.get("ok") is True
+        and abi_semantics.get("proof_scope") == "runtime_guid_com_abi_queryinterface_private_data_bootstrap"
+        and abi_semantics.get("IID_ID3D12Device") == "189819f1-1db6-4b57-be54-1821339b85f7"
+        and abi_semantics.get("IID_IDXGIFactory2") == "50c83a1c-e072-4c48-87b0-3630fa36a6d0"
+        and abi_semantics.get("IID_IDXGIAdapter1") == "29038f61-3839-4626-91fd-086879011a05"
+        and abi_semantics.get("IID_ID3D12CommandQueue") == "0ec870a6-5d7e-4c22-8cfc-5baae07616ed"
+        and abi_semantics.get("IID_ID3D12CommandAllocator") == "6102dee4-af59-4b09-b999-b44d73f09b24"
+        and abi_semantics.get("IID_ID3D12GraphicsCommandList") == "5b160d0f-ac1b-4185-8ba8-b3ae42a5a455"
+        and abi_semantics.get("IID_ID3D12Fence") == "0a753dcf-c4d8-4b91-adf6-be5a60d95a76"
+        and abi_semantics.get("guid_constants_ok") is True
+        and abi_semantics.get("create_objects_ok") is True
+        and abi_semantics.get("query_interface_ok") is True
+        and abi_semantics.get("vtable_layout_ok") is True
+        and abi_semantics.get("device_child_get_device_ok") is True
+        and abi_semantics.get("device_child_identity_ok") is True
+        and abi_semantics.get("private_data_copy_semantics") == "caller_buffer_mutated_after_SetPrivateData_before_GetPrivateData"
+        and abi_semantics.get("private_data_roundtrip_ok") is True
+        and int(abi_semantics.get("private_data_size", 0) or 0) == 16
+        and all(
+            abi_semantics.get(key) == "0x00000000"
+            for key in [
+                "CreateCommandQueue",
+                "CreateCommandAllocator",
+                "CreateCommandList",
+                "CreateFence",
+                "QueryInterface_IDXGIFactory2",
+                "QueryInterface_IDXGIAdapter1",
+                "QueryInterface_ID3D12Device",
+                "QueryInterface_IUnknown_device",
+                "QueryInterface_ID3D12CommandQueue",
+                "QueryInterface_ID3D12CommandAllocator",
+                "QueryInterface_ID3D12GraphicsCommandList",
+                "QueryInterface_ID3D12Fence",
+                "GetDevice_from_queue",
+                "GetDevice_from_allocator",
+                "GetDevice_from_list",
+                "GetDevice_from_fence",
+                "QueryInterface_IUnknown_queue_device",
+                "QueryInterface_IUnknown_allocator_device",
+                "QueryInterface_IUnknown_list_device",
+                "QueryInterface_IUnknown_fence_device",
+                "SetPrivateData",
+                "GetPrivateData",
+            ]
+        )
+    )
     result = {
         "command": cmd,
         "cwd": str(out_bin),
@@ -2405,8 +2500,10 @@ def run_identity_probe(
         "loaddll": loaddll_rows,
         "runtime_match": runtime_match,
         "unix_bridge_match": unix_bridge_match,
+        "abi_semantics_ok": abi_semantics_ok,
         "ok": proc.returncode == 0
         and bool(parsed and parsed.get("pass") is True)
+        and abi_semantics_ok
         and runtime_match["ok"]
         and unix_bridge_match["ok"],
     }

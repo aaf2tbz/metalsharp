@@ -1,4 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include <windows.h>
 
 #include <cstdint>
@@ -112,6 +113,225 @@ static uintptr_t rva(HMODULE module, FARPROC proc) {
     return reinterpret_cast<uintptr_t>(proc) - reinterpret_cast<uintptr_t>(module);
 }
 
+static bool guid_equal(const GUID& a, const GUID& b) {
+    return std::memcmp(&a, &b, sizeof(GUID)) == 0;
+}
+
+static std::string guid_string(const GUID& guid) {
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                  static_cast<unsigned long>(guid.Data1), static_cast<unsigned>(guid.Data2),
+                  static_cast<unsigned>(guid.Data3), static_cast<unsigned>(guid.Data4[0]),
+                  static_cast<unsigned>(guid.Data4[1]), static_cast<unsigned>(guid.Data4[2]),
+                  static_cast<unsigned>(guid.Data4[3]), static_cast<unsigned>(guid.Data4[4]),
+                  static_cast<unsigned>(guid.Data4[5]), static_cast<unsigned>(guid.Data4[6]),
+                  static_cast<unsigned>(guid.Data4[7]));
+    return std::string(buf);
+}
+
+template <typename T> static bool com_vtable_nonnull(T* object) {
+    if (!object)
+        return false;
+    void** vtbl = *reinterpret_cast<void***>(object);
+    return vtbl && vtbl[0] && vtbl[1] && vtbl[2];
+}
+
+template <typename T> static void safe_release(T*& object) {
+    if (object) {
+        object->Release();
+        object = nullptr;
+    }
+}
+
+struct AbiSemanticReport {
+    HRESULT create_queue_hr = E_FAIL;
+    HRESULT create_allocator_hr = E_FAIL;
+    HRESULT create_list_hr = E_FAIL;
+    HRESULT create_fence_hr = E_FAIL;
+    HRESULT query_factory_self_hr = E_FAIL;
+    HRESULT query_adapter_self_hr = E_FAIL;
+    HRESULT query_device_self_hr = E_FAIL;
+    HRESULT query_device_iunknown_hr = E_FAIL;
+    HRESULT query_queue_self_hr = E_FAIL;
+    HRESULT query_allocator_self_hr = E_FAIL;
+    HRESULT query_list_self_hr = E_FAIL;
+    HRESULT query_fence_self_hr = E_FAIL;
+    HRESULT queue_get_device_hr = E_FAIL;
+    HRESULT allocator_get_device_hr = E_FAIL;
+    HRESULT list_get_device_hr = E_FAIL;
+    HRESULT fence_get_device_hr = E_FAIL;
+    HRESULT queue_device_iunknown_hr = E_FAIL;
+    HRESULT allocator_device_iunknown_hr = E_FAIL;
+    HRESULT list_device_iunknown_hr = E_FAIL;
+    HRESULT fence_device_iunknown_hr = E_FAIL;
+    HRESULT private_data_set_hr = E_FAIL;
+    HRESULT private_data_get_hr = E_FAIL;
+    UINT private_data_size = 0;
+    bool guid_constants_ok = false;
+    bool create_objects_ok = false;
+    bool query_interface_ok = false;
+    bool vtable_layout_ok = false;
+    bool device_child_get_device_ok = false;
+    bool device_child_identity_ok = false;
+    bool private_data_roundtrip_ok = false;
+    bool ok = false;
+};
+
+static AbiSemanticReport exercise_abi_semantics(IDXGIFactory2* factory, IDXGIAdapter1* adapter, ID3D12Device* device) {
+    AbiSemanticReport report;
+    const GUID expected_device = {0x189819f1, 0x1db6, 0x4b57, {0xbe, 0x54, 0x18, 0x21, 0x33, 0x9b, 0x85, 0xf7}};
+    const GUID expected_factory2 = {0x50c83a1c, 0xe072, 0x4c48, {0x87, 0xb0, 0x36, 0x30, 0xfa, 0x36, 0xa6, 0xd0}};
+    const GUID expected_adapter1 = {0x29038f61, 0x3839, 0x4626, {0x91, 0xfd, 0x08, 0x68, 0x79, 0x01, 0x1a, 0x05}};
+    const GUID expected_queue = {0x0ec870a6, 0x5d7e, 0x4c22, {0x8c, 0xfc, 0x5b, 0xaa, 0xe0, 0x76, 0x16, 0xed}};
+    const GUID expected_allocator = {0x6102dee4, 0xaf59, 0x4b09, {0xb9, 0x99, 0xb4, 0x4d, 0x73, 0xf0, 0x9b, 0x24}};
+    const GUID expected_list = {0x5b160d0f, 0xac1b, 0x4185, {0x8b, 0xa8, 0xb3, 0xae, 0x42, 0xa5, 0xa4, 0x55}};
+    const GUID expected_fence = {0x0a753dcf, 0xc4d8, 0x4b91, {0xad, 0xf6, 0xbe, 0x5a, 0x60, 0xd9, 0x5a, 0x76}};
+    report.guid_constants_ok = guid_equal(__uuidof(ID3D12Device), expected_device) &&
+                               guid_equal(__uuidof(IDXGIFactory2), expected_factory2) &&
+                               guid_equal(__uuidof(IDXGIAdapter1), expected_adapter1) &&
+                               guid_equal(__uuidof(ID3D12CommandQueue), expected_queue) &&
+                               guid_equal(__uuidof(ID3D12CommandAllocator), expected_allocator) &&
+                               guid_equal(__uuidof(ID3D12GraphicsCommandList), expected_list) &&
+                               guid_equal(__uuidof(ID3D12Fence), expected_fence);
+    ID3D12CommandQueue* queue = nullptr;
+    ID3D12CommandAllocator* allocator = nullptr;
+    ID3D12GraphicsCommandList* list = nullptr;
+    ID3D12Fence* fence = nullptr;
+    D3D12_COMMAND_QUEUE_DESC queue_desc = {};
+    queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    report.create_queue_hr =
+        device ? device->CreateCommandQueue(&queue_desc, __uuidof(ID3D12CommandQueue), reinterpret_cast<void**>(&queue))
+               : E_FAIL;
+    report.create_allocator_hr =
+        device ? device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator),
+                                                reinterpret_cast<void**>(&allocator))
+               : E_FAIL;
+    report.create_list_hr =
+        device ? device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocator, nullptr,
+                                           __uuidof(ID3D12GraphicsCommandList), reinterpret_cast<void**>(&list))
+               : E_FAIL;
+    if (list)
+        list->Close();
+    report.create_fence_hr =
+        device ? device->CreateFence(0, D3D12_FENCE_FLAG_NONE, __uuidof(ID3D12Fence), reinterpret_cast<void**>(&fence))
+               : E_FAIL;
+    report.create_objects_ok = queue && allocator && list && fence && SUCCEEDED(report.create_queue_hr) &&
+                               SUCCEEDED(report.create_allocator_hr) && SUCCEEDED(report.create_list_hr) &&
+                               SUCCEEDED(report.create_fence_hr);
+
+    IDXGIFactory2* factory_self = nullptr;
+    IDXGIAdapter1* adapter_self = nullptr;
+    ID3D12Device* device_self = nullptr;
+    IUnknown* device_unknown = nullptr;
+    ID3D12CommandQueue* queue_self = nullptr;
+    ID3D12CommandAllocator* allocator_self = nullptr;
+    ID3D12GraphicsCommandList* list_self = nullptr;
+    ID3D12Fence* fence_self = nullptr;
+    ID3D12Device* queue_device = nullptr;
+    ID3D12Device* allocator_device = nullptr;
+    ID3D12Device* list_device = nullptr;
+    ID3D12Device* fence_device = nullptr;
+    IUnknown* queue_device_unknown = nullptr;
+    IUnknown* allocator_device_unknown = nullptr;
+    IUnknown* list_device_unknown = nullptr;
+    IUnknown* fence_device_unknown = nullptr;
+    report.query_factory_self_hr =
+        factory ? factory->QueryInterface(__uuidof(IDXGIFactory2), reinterpret_cast<void**>(&factory_self)) : E_FAIL;
+    report.query_adapter_self_hr =
+        adapter ? adapter->QueryInterface(__uuidof(IDXGIAdapter1), reinterpret_cast<void**>(&adapter_self)) : E_FAIL;
+    report.query_device_self_hr =
+        device ? device->QueryInterface(__uuidof(ID3D12Device), reinterpret_cast<void**>(&device_self)) : E_FAIL;
+    report.query_device_iunknown_hr =
+        device ? device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&device_unknown)) : E_FAIL;
+    report.query_queue_self_hr =
+        queue ? queue->QueryInterface(__uuidof(ID3D12CommandQueue), reinterpret_cast<void**>(&queue_self)) : E_FAIL;
+    report.query_allocator_self_hr = allocator ? allocator->QueryInterface(__uuidof(ID3D12CommandAllocator),
+                                                                           reinterpret_cast<void**>(&allocator_self))
+                                               : E_FAIL;
+    report.query_list_self_hr =
+        list ? list->QueryInterface(__uuidof(ID3D12GraphicsCommandList), reinterpret_cast<void**>(&list_self)) : E_FAIL;
+    report.query_fence_self_hr =
+        fence ? fence->QueryInterface(__uuidof(ID3D12Fence), reinterpret_cast<void**>(&fence_self)) : E_FAIL;
+    report.queue_get_device_hr =
+        queue ? queue->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&queue_device)) : E_FAIL;
+    report.allocator_get_device_hr =
+        allocator ? allocator->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&allocator_device)) : E_FAIL;
+    report.list_get_device_hr =
+        list ? list->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&list_device)) : E_FAIL;
+    report.fence_get_device_hr =
+        fence ? fence->GetDevice(__uuidof(ID3D12Device), reinterpret_cast<void**>(&fence_device)) : E_FAIL;
+    report.queue_device_iunknown_hr =
+        queue_device ? queue_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&queue_device_unknown))
+                     : E_FAIL;
+    report.allocator_device_iunknown_hr =
+        allocator_device
+            ? allocator_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&allocator_device_unknown))
+            : E_FAIL;
+    report.list_device_iunknown_hr =
+        list_device ? list_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&list_device_unknown))
+                    : E_FAIL;
+    report.fence_device_iunknown_hr =
+        fence_device ? fence_device->QueryInterface(IID_IUnknown, reinterpret_cast<void**>(&fence_device_unknown))
+                     : E_FAIL;
+
+    const GUID private_data_guid = {0x8840934a, 0x7a59, 0x4c73, {0xb2, 0x35, 0xec, 0x9a, 0x71, 0x65, 0x83, 0x12}};
+    uint8_t payload[16] = {0x46, 0x52, 0x45, 0x53, 0x48, 0x2d, 0x41, 0x42,
+                           0x49, 0x2d, 0x47, 0x55, 0x49, 0x44, 0x21, 0x00};
+    uint8_t expected_payload[16] = {};
+    std::memcpy(expected_payload, payload, sizeof(payload));
+    uint8_t readback[16] = {};
+    report.private_data_set_hr = device ? device->SetPrivateData(private_data_guid, sizeof(payload), payload) : E_FAIL;
+    std::memset(payload, 0xa5, sizeof(payload));
+    report.private_data_size = sizeof(readback);
+    report.private_data_get_hr =
+        device ? device->GetPrivateData(private_data_guid, &report.private_data_size, readback) : E_FAIL;
+    report.private_data_roundtrip_ok = SUCCEEDED(report.private_data_set_hr) && SUCCEEDED(report.private_data_get_hr) &&
+                                       report.private_data_size == sizeof(expected_payload) &&
+                                       std::memcmp(expected_payload, readback, sizeof(expected_payload)) == 0;
+    report.query_interface_ok = SUCCEEDED(report.query_factory_self_hr) && SUCCEEDED(report.query_adapter_self_hr) &&
+                                SUCCEEDED(report.query_device_self_hr) && SUCCEEDED(report.query_device_iunknown_hr) &&
+                                SUCCEEDED(report.query_queue_self_hr) && SUCCEEDED(report.query_allocator_self_hr) &&
+                                SUCCEEDED(report.query_list_self_hr) && SUCCEEDED(report.query_fence_self_hr) &&
+                                factory_self && adapter_self && device_self && device_unknown && queue_self &&
+                                allocator_self && list_self && fence_self;
+    report.vtable_layout_ok = com_vtable_nonnull(factory) && com_vtable_nonnull(adapter) &&
+                              com_vtable_nonnull(device) && com_vtable_nonnull(queue) &&
+                              com_vtable_nonnull(allocator) && com_vtable_nonnull(list) && com_vtable_nonnull(fence);
+    report.device_child_get_device_ok = SUCCEEDED(report.queue_get_device_hr) &&
+                                        SUCCEEDED(report.allocator_get_device_hr) &&
+                                        SUCCEEDED(report.list_get_device_hr) && SUCCEEDED(report.fence_get_device_hr) &&
+                                        queue_device && allocator_device && list_device && fence_device;
+    report.device_child_identity_ok = report.device_child_get_device_ok && device_unknown && queue_device_unknown &&
+                                      allocator_device_unknown && list_device_unknown && fence_device_unknown &&
+                                      queue_device_unknown == device_unknown &&
+                                      allocator_device_unknown == device_unknown &&
+                                      list_device_unknown == device_unknown && fence_device_unknown == device_unknown;
+    report.ok = report.guid_constants_ok && report.create_objects_ok && report.query_interface_ok &&
+                report.vtable_layout_ok && report.device_child_get_device_ok && report.device_child_identity_ok &&
+                report.private_data_roundtrip_ok;
+    safe_release(factory_self);
+    safe_release(adapter_self);
+    safe_release(device_self);
+    safe_release(device_unknown);
+    safe_release(queue_self);
+    safe_release(allocator_self);
+    safe_release(list_self);
+    safe_release(fence_self);
+    safe_release(queue_device_unknown);
+    safe_release(allocator_device_unknown);
+    safe_release(list_device_unknown);
+    safe_release(fence_device_unknown);
+    safe_release(queue_device);
+    safe_release(allocator_device);
+    safe_release(list_device);
+    safe_release(fence_device);
+    safe_release(fence);
+    safe_release(list);
+    safe_release(allocator);
+    safe_release(queue);
+    return report;
+}
+
 static ModuleProbe inspect_module(const char* name, std::vector<ExportProbe> exports) {
     ModuleProbe probe{name, nullptr, "", exports};
     probe.handle = LoadLibraryA(name);
@@ -215,6 +435,7 @@ int main() {
     levels.MaxSupportedFeatureLevel = D3D_FEATURE_LEVEL_11_0;
     HRESULT feature_levels_hr =
         device ? device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &levels, sizeof(levels)) : E_FAIL;
+    AbiSemanticReport abi_semantics = exercise_abi_semantics(factory, adapter, device);
 
     bool module_exports_ok = d3d12.handle && dxgi.handle && dxgi_dxmt.handle && winemetal.handle &&
                              d3d12.exports[0].symbol_proc && d3d12.exports[0].ordinal_proc &&
@@ -223,7 +444,7 @@ int main() {
     bool adapter_ok = SUCCEEDED(create_factory_hr) && SUCCEEDED(enum_adapter_hr) && SUCCEEDED(adapter_desc_hr) &&
                       adapter_desc.VendorId != 0;
     bool device_ok = SUCCEEDED(create_device_hr) && device != nullptr && SUCCEEDED(feature_levels_hr);
-    bool pass = module_exports_ok && adapter_ok && device_ok;
+    bool pass = module_exports_ok && adapter_ok && device_ok && abi_semantics.ok;
 
     std::printf("{\n");
     std::printf("  \"schema\": \"metalsharp.m12.fresh.runtime-identity.v1\",\n");
@@ -252,6 +473,58 @@ int main() {
                 static_cast<unsigned long long>(adapter_desc.DedicatedVideoMemory));
     std::printf("    \"shared_system_memory\": %llu\n",
                 static_cast<unsigned long long>(adapter_desc.SharedSystemMemory));
+    std::printf("  },\n");
+    std::printf("  \"abi_semantics\": {\n");
+    std::printf("    \"proof_scope\": \"runtime_guid_com_abi_queryinterface_private_data_bootstrap\",\n");
+    std::printf("    \"IID_ID3D12Device\": \"%s\",\n", guid_string(__uuidof(ID3D12Device)).c_str());
+    std::printf("    \"IID_IDXGIFactory2\": \"%s\",\n", guid_string(__uuidof(IDXGIFactory2)).c_str());
+    std::printf("    \"IID_IDXGIAdapter1\": \"%s\",\n", guid_string(__uuidof(IDXGIAdapter1)).c_str());
+    std::printf("    \"IID_ID3D12CommandQueue\": \"%s\",\n", guid_string(__uuidof(ID3D12CommandQueue)).c_str());
+    std::printf("    \"IID_ID3D12CommandAllocator\": \"%s\",\n", guid_string(__uuidof(ID3D12CommandAllocator)).c_str());
+    std::printf("    \"IID_ID3D12GraphicsCommandList\": \"%s\",\n",
+                guid_string(__uuidof(ID3D12GraphicsCommandList)).c_str());
+    std::printf("    \"IID_ID3D12Fence\": \"%s\",\n", guid_string(__uuidof(ID3D12Fence)).c_str());
+    std::printf("    \"CreateCommandQueue\": \"%s\",\n", hr_hex(abi_semantics.create_queue_hr).c_str());
+    std::printf("    \"CreateCommandAllocator\": \"%s\",\n", hr_hex(abi_semantics.create_allocator_hr).c_str());
+    std::printf("    \"CreateCommandList\": \"%s\",\n", hr_hex(abi_semantics.create_list_hr).c_str());
+    std::printf("    \"CreateFence\": \"%s\",\n", hr_hex(abi_semantics.create_fence_hr).c_str());
+    std::printf("    \"QueryInterface_IDXGIFactory2\": \"%s\",\n", hr_hex(abi_semantics.query_factory_self_hr).c_str());
+    std::printf("    \"QueryInterface_IDXGIAdapter1\": \"%s\",\n", hr_hex(abi_semantics.query_adapter_self_hr).c_str());
+    std::printf("    \"QueryInterface_ID3D12Device\": \"%s\",\n", hr_hex(abi_semantics.query_device_self_hr).c_str());
+    std::printf("    \"QueryInterface_IUnknown_device\": \"%s\",\n",
+                hr_hex(abi_semantics.query_device_iunknown_hr).c_str());
+    std::printf("    \"QueryInterface_ID3D12CommandQueue\": \"%s\",\n",
+                hr_hex(abi_semantics.query_queue_self_hr).c_str());
+    std::printf("    \"QueryInterface_ID3D12CommandAllocator\": \"%s\",\n",
+                hr_hex(abi_semantics.query_allocator_self_hr).c_str());
+    std::printf("    \"QueryInterface_ID3D12GraphicsCommandList\": \"%s\",\n",
+                hr_hex(abi_semantics.query_list_self_hr).c_str());
+    std::printf("    \"QueryInterface_ID3D12Fence\": \"%s\",\n", hr_hex(abi_semantics.query_fence_self_hr).c_str());
+    std::printf("    \"GetDevice_from_queue\": \"%s\",\n", hr_hex(abi_semantics.queue_get_device_hr).c_str());
+    std::printf("    \"GetDevice_from_allocator\": \"%s\",\n", hr_hex(abi_semantics.allocator_get_device_hr).c_str());
+    std::printf("    \"GetDevice_from_list\": \"%s\",\n", hr_hex(abi_semantics.list_get_device_hr).c_str());
+    std::printf("    \"GetDevice_from_fence\": \"%s\",\n", hr_hex(abi_semantics.fence_get_device_hr).c_str());
+    std::printf("    \"QueryInterface_IUnknown_queue_device\": \"%s\",\n",
+                hr_hex(abi_semantics.queue_device_iunknown_hr).c_str());
+    std::printf("    \"QueryInterface_IUnknown_allocator_device\": \"%s\",\n",
+                hr_hex(abi_semantics.allocator_device_iunknown_hr).c_str());
+    std::printf("    \"QueryInterface_IUnknown_list_device\": \"%s\",\n",
+                hr_hex(abi_semantics.list_device_iunknown_hr).c_str());
+    std::printf("    \"QueryInterface_IUnknown_fence_device\": \"%s\",\n",
+                hr_hex(abi_semantics.fence_device_iunknown_hr).c_str());
+    std::printf("    \"SetPrivateData\": \"%s\",\n", hr_hex(abi_semantics.private_data_set_hr).c_str());
+    std::printf("    \"GetPrivateData\": \"%s\",\n", hr_hex(abi_semantics.private_data_get_hr).c_str());
+    std::printf("    \"private_data_size\": %u,\n", abi_semantics.private_data_size);
+    std::printf("    \"guid_constants_ok\": %s,\n", bool_json(abi_semantics.guid_constants_ok));
+    std::printf("    \"create_objects_ok\": %s,\n", bool_json(abi_semantics.create_objects_ok));
+    std::printf("    \"query_interface_ok\": %s,\n", bool_json(abi_semantics.query_interface_ok));
+    std::printf("    \"vtable_layout_ok\": %s,\n", bool_json(abi_semantics.vtable_layout_ok));
+    std::printf("    \"device_child_get_device_ok\": %s,\n", bool_json(abi_semantics.device_child_get_device_ok));
+    std::printf("    \"device_child_identity_ok\": %s,\n", bool_json(abi_semantics.device_child_identity_ok));
+    std::printf("    \"private_data_copy_semantics\": "
+                "\"caller_buffer_mutated_after_SetPrivateData_before_GetPrivateData\",\n");
+    std::printf("    \"private_data_roundtrip_ok\": %s,\n", bool_json(abi_semantics.private_data_roundtrip_ok));
+    std::printf("    \"ok\": %s\n", bool_json(abi_semantics.ok));
     std::printf("  },\n");
     std::printf("  \"d3d12\": {\n");
     std::printf("    \"D3D12CreateDevice\": \"%s\",\n", hr_hex(create_device_hr).c_str());
