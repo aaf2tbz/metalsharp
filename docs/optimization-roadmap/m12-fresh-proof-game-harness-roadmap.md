@@ -126,12 +126,13 @@ Create a fresh runtime bootstrap executable/gate that proves:
 - DXGI/DXGI_DXMT bootstrap behavior.
 - GUID, COM ABI, vtable, and interface querying correctness.
 - MetalSharp Wine 11.5 execution path.
-- MKVulkan device reporting/loading status.
+- MKVulkan/MoltenVK device reporting/loading status through the Wine runtime's x86_64 Vulkan loader, ICD JSON, `libMoltenVK.dylib`, `winevulkan.so`, and PE `vulkan-1.dll`/`winevulkan.dll` assets.
 
 Exit criteria:
 
 - JSON identifies every loaded runtime module and rejects wrong modules.
 - Adapter/device data is reported and validated.
+- Vulkan report validates the fresh runtime ICD, opens the x86_64 Vulkan loader, resolves `vkGetInstanceProcAddr`, creates a Vulkan instance, enumerates at least one MoltenVK physical device, and records device name/vendor/type without falling back to host-global stale assets.
 
 ## Phase 4 — Core D3D12 object correctness gates
 

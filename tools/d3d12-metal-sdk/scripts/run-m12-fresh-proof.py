@@ -34,6 +34,126 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def macho_x86_64_ok(path: Path) -> bool:
+    try:
+        data = path.read_bytes()[:4096]
+    except OSError:
+        return False
+    if len(data) < 8:
+        return False
+    if int.from_bytes(data[0:4], "little") in (0xFEEDFACF, 0xFEEDFACE):
+        return int.from_bytes(data[4:8], "little") == 0x01000007
+    if int.from_bytes(data[0:4], "big") == 0xCAFEBABE and len(data) >= 8:
+        nfat = int.from_bytes(data[4:8], "big")
+        offset = 8
+        for _ in range(min(nfat, 32)):
+            if offset + 20 > len(data):
+                break
+            if int.from_bytes(data[offset : offset + 4], "big") == 0x01000007:
+                return True
+            offset += 20
+    return False
+
+
+def pe_x86_64_ok(path: Path) -> bool:
+    try:
+        data = path.read_bytes()[:1024]
+    except OSError:
+        return False
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return False
+    pe_offset = int.from_bytes(data[0x3C:0x40], "little")
+    if pe_offset < 0 or pe_offset + 6 > len(data):
+        return False
+    return data[pe_offset : pe_offset + 4] == b"PE\0\0" and int.from_bytes(data[pe_offset + 4 : pe_offset + 6], "little") == 0x8664
+
+
+def path_resolves_under(path: Path, root: Path) -> bool:
+    try:
+        resolved = path.resolve(strict=True)
+        resolved_root = root.resolve(strict=True)
+    except FileNotFoundError:
+        return False
+    return str(resolved) == str(resolved_root) or str(resolved).startswith(str(resolved_root) + os.sep)
+
+
+def pe_export_names(path: Path, max_names: int = 2048) -> list[str]:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return []
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return []
+    pe_offset = int.from_bytes(data[0x3C:0x40], "little")
+    if pe_offset + 24 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+        return []
+    coff = pe_offset + 4
+    section_count = int.from_bytes(data[coff + 2 : coff + 4], "little")
+    optional_size = int.from_bytes(data[coff + 16 : coff + 18], "little")
+    optional = coff + 20
+    if optional + optional_size > len(data) or optional_size < 112:
+        return []
+    magic = int.from_bytes(data[optional : optional + 2], "little")
+    data_directory = optional + (112 if magic == 0x20B else 96)
+    if data_directory + 8 > len(data):
+        return []
+    export_rva = int.from_bytes(data[data_directory : data_directory + 4], "little")
+    export_size = int.from_bytes(data[data_directory + 4 : data_directory + 8], "little")
+    if export_rva == 0 or export_size == 0:
+        return []
+    sections = []
+    section_offset = optional + optional_size
+    for i in range(section_count):
+        off = section_offset + i * 40
+        if off + 40 > len(data):
+            break
+        virtual_size = int.from_bytes(data[off + 8 : off + 12], "little")
+        virtual_address = int.from_bytes(data[off + 12 : off + 16], "little")
+        raw_size = int.from_bytes(data[off + 16 : off + 20], "little")
+        raw_pointer = int.from_bytes(data[off + 20 : off + 24], "little")
+        sections.append((virtual_address, max(virtual_size, raw_size), raw_pointer, raw_size))
+
+    def rva_to_offset(rva: int) -> int | None:
+        for virtual_address, virtual_span, raw_pointer, raw_size in sections:
+            if virtual_address <= rva < virtual_address + virtual_span:
+                offset = raw_pointer + (rva - virtual_address)
+                if offset < raw_pointer + raw_size and offset < len(data):
+                    return offset
+        return None
+
+    export_offset = rva_to_offset(export_rva)
+    if export_offset is None or export_offset + 40 > len(data):
+        return []
+    number_of_names = min(int.from_bytes(data[export_offset + 24 : export_offset + 28], "little"), max_names)
+    names_rva = int.from_bytes(data[export_offset + 32 : export_offset + 36], "little")
+    names_offset = rva_to_offset(names_rva)
+    if names_offset is None or names_offset + number_of_names * 4 > len(data):
+        return []
+    names: list[str] = []
+    for index in range(number_of_names):
+        name_rva = int.from_bytes(data[names_offset + index * 4 : names_offset + index * 4 + 4], "little")
+        name_offset = rva_to_offset(name_rva)
+        if name_offset is None or name_offset >= len(data):
+            continue
+        end = data.find(b"\0", name_offset, min(len(data), name_offset + 512))
+        if end == -1:
+            continue
+        try:
+            names.append(data[name_offset:end].decode("ascii"))
+        except UnicodeDecodeError:
+            continue
+    return sorted(set(names))
+
+
+def sanitized_vulkan_probe_env(icd: Path, runtime_unix_dir: Path) -> dict[str, str]:
+    deny_prefixes = ("VK_", "VULKAN_", "DYLD_")
+    env = {key: value for key, value in os.environ.items() if not key.startswith(deny_prefixes)}
+    env["VK_ICD_FILENAMES"] = str(icd)
+    env["VK_DRIVER_FILES"] = str(icd)
+    env["DYLD_LIBRARY_PATH"] = str(runtime_unix_dir)
+    return env
+
+
 
 
 def merge_primary_log_text(primary: str, *secondary_texts: str) -> str:
@@ -1734,6 +1854,204 @@ def run_fresh_game(
     return result
 
 
+def build_vulkan_report_probe(repo: Path, run_dir: Path) -> dict[str, Any]:
+    source = repo / "tools" / "d3d12-metal-sdk" / "probes" / "probe_m12_vulkan_report" / "probe_m12_vulkan_report.cpp"
+    exe = run_dir / "probe_m12_vulkan_report"
+    command = [
+        "xcrun",
+        "--sdk",
+        "macosx",
+        "clang++",
+        "-std=c++17",
+        "-arch",
+        "x86_64",
+        str(source),
+        "-ldl",
+        "-o",
+        str(exe),
+    ]
+    proc = subprocess.run(command, cwd=repo, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return {
+        "command": command,
+        "source": str(source),
+        "exe": str(exe),
+        "returncode": proc.returncode,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "ok": proc.returncode == 0 and exe.exists(),
+    }
+
+
+def run_vulkan_report_probe(repo: Path, proof_dir: Path, wine_runtime: Path) -> dict[str, Any]:
+    run_dir = proof_dir / "phase3-vulkan-report"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    unix_dir = wine_runtime / "lib" / "wine" / "x86_64-unix"
+    win_dir = wine_runtime / "lib" / "wine" / "x86_64-windows"
+    paths = {
+        "loader": unix_dir / "libvulkan.dylib",
+        "icd": wine_runtime / "etc" / "vulkan" / "icd.d" / "MoltenVK_icd.json",
+        "moltenvk": unix_dir / "libMoltenVK.dylib",
+        "winevulkan_so": unix_dir / "winevulkan.so",
+        "vulkan_dll": win_dir / "vulkan-1.dll",
+        "winevulkan_dll": win_dir / "winevulkan.dll",
+    }
+    expected_formats = {
+        "loader": "macho-x86_64",
+        "icd": "json",
+        "moltenvk": "macho-x86_64",
+        "winevulkan_so": "macho-x86_64",
+        "vulkan_dll": "pe-x86_64",
+        "winevulkan_dll": "pe-x86_64",
+    }
+    path_records = {}
+    required_pe_exports = {"vkCreateInstance", "vkEnumerateInstanceExtensionProperties", "vkGetInstanceProcAddr"}
+    for name, path in paths.items():
+        expected_format = expected_formats[name]
+        arch_ok = True
+        pe_exports: list[str] = []
+        pe_required_exports_ok = True
+        if expected_format == "macho-x86_64":
+            arch_ok = macho_x86_64_ok(path)
+        elif expected_format == "pe-x86_64":
+            arch_ok = pe_x86_64_ok(path)
+            pe_exports = pe_export_names(path)
+            pe_required_exports_ok = required_pe_exports.issubset(set(pe_exports))
+        resolved_path = str(path.resolve(strict=True)) if path.exists() else ""
+        path_records[name] = {
+            "path": str(path),
+            "resolved_path": resolved_path,
+            "exists": path.exists(),
+            "size": path.stat().st_size if path.exists() else 0,
+            "sha256": sha256(path) if path.exists() and path.is_file() else None,
+            "expected_format": expected_format,
+            "arch_ok": arch_ok,
+            "resolved_under_wine_runtime": path_resolves_under(path, wine_runtime),
+            "pe_required_exports_ok": pe_required_exports_ok,
+            "pe_export_count": len(pe_exports),
+            "pe_required_exports": sorted(required_pe_exports) if expected_format == "pe-x86_64" else [],
+        }
+    icd_data: dict[str, Any] = {}
+    icd_parse_error = ""
+    if paths["icd"].exists():
+        try:
+            icd_data = json.loads(paths["icd"].read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            icd_parse_error = str(error)
+    icd_section = icd_data.get("ICD", {}) if isinstance(icd_data, dict) else {}
+    icd_library_path = Path(str(icd_section.get("library_path", ""))).expanduser() if isinstance(icd_section, dict) else Path("")
+    icd_validation = {
+        "parse_ok": bool(icd_data) and not icd_parse_error,
+        "file_format_version": icd_data.get("file_format_version") if isinstance(icd_data, dict) else None,
+        "api_version": icd_section.get("api_version") if isinstance(icd_section, dict) else None,
+        "is_portability_driver": icd_section.get("is_portability_driver") if isinstance(icd_section, dict) else None,
+        "library_path": str(icd_library_path) if str(icd_library_path) else "",
+        "library_path_matches_moltenvk": bool(
+            str(icd_library_path) and paths["moltenvk"].exists() and icd_library_path.resolve() == paths["moltenvk"].resolve()
+        ),
+        "parse_error": icd_parse_error,
+    }
+    build = build_vulkan_report_probe(repo, run_dir)
+    write_json(run_dir / "build-probe.json", build)
+    stdout_path = run_dir / "probe_m12_vulkan_report.stdout.json"
+    stderr_path = run_dir / "probe_m12_vulkan_report.stderr.txt"
+    parsed: dict[str, Any] | None = None
+    parse_error = ""
+    proc_return = None
+    if build["ok"]:
+        probe_env = sanitized_vulkan_probe_env(paths["icd"], unix_dir)
+        proc = subprocess.run(
+            [
+                build["exe"],
+                "--loader",
+                str(paths["loader"]),
+                "--icd",
+                str(paths["icd"]),
+                "--moltenvk",
+                str(paths["moltenvk"]),
+                "--winevulkan-so",
+                str(paths["winevulkan_so"]),
+                "--vulkan-dll",
+                str(paths["vulkan_dll"]),
+                "--winevulkan-dll",
+                str(paths["winevulkan_dll"]),
+            ],
+            cwd=run_dir,
+            env=probe_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        proc_return = proc.returncode
+        stdout_path.write_text(proc.stdout)
+        stderr_path.write_text(proc.stderr)
+        try:
+            parsed = json.loads(proc.stdout)
+        except json.JSONDecodeError as error:
+            parse_error = str(error)
+    else:
+        stdout_path.write_text("")
+        stderr_path.write_text(build.get("stderr", ""))
+    devices = parsed.get("physical_devices", []) if parsed else []
+    physical_device_count = int(parsed.get("physical_device_count", 0) or 0) if parsed else 0
+    physical_devices_report_ok = bool(devices) and len(devices) == physical_device_count and all(
+        str(device.get("name", ""))
+        and int(device.get("vendor_id", 0) or 0) != 0
+        and str(device.get("device_type_name", "")) in {"integrated_gpu", "discrete_gpu", "virtual_gpu", "cpu", "other"}
+        for device in devices
+    )
+    expected_probe_env = {
+        "VK_ICD_FILENAMES": str(paths["icd"]),
+        "VK_DRIVER_FILES": str(paths["icd"]),
+        "DYLD_LIBRARY_PATH": str(unix_dir),
+    }
+    probe_env_ok = bool(parsed) and parsed.get("vk_icd_filenames") == str(paths["icd"]) and parsed.get("vk_driver_files") == str(paths["icd"])
+    path_records_ok = all(
+        record["exists"]
+        and record["size"] > 0
+        and record["arch_ok"]
+        and record["resolved_under_wine_runtime"]
+        and record["pe_required_exports_ok"]
+        for record in path_records.values()
+    )
+    winevulkan_so_probe_ok = bool(parsed) and parsed.get("winevulkan_so_open_ok") is True and parsed.get("winevulkan_unix_call_funcs_ok") is True and parsed.get("winevulkan_unix_call_wow64_funcs_ok") is True
+    result = {
+        "schema": "metalsharp.m12.fresh.phase3-vulkan-report.v1",
+        "build": build,
+        "paths": path_records,
+        "icd_validation": icd_validation,
+        "expected_probe_env": expected_probe_env,
+        "probe_env_ok": probe_env_ok,
+        "physical_devices_report_ok": physical_devices_report_ok,
+        "path_records_ok": path_records_ok,
+        "winevulkan_so_probe_ok": winevulkan_so_probe_ok,
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+        "returncode": proc_return,
+        "json_parse_error": parse_error,
+        "probe_json": parsed,
+        "ok": bool(
+            path_records_ok
+            and winevulkan_so_probe_ok
+            and probe_env_ok
+            and icd_validation["parse_ok"]
+            and icd_validation["is_portability_driver"] is True
+            and icd_validation["library_path_matches_moltenvk"]
+            and build["ok"]
+            and proc_return == 0
+            and parsed
+            and parsed.get("ok") is True
+            and parsed.get("process_arch") == "x86_64"
+            and parsed.get("loader_open_ok") is True
+            and parsed.get("vk_get_instance_proc_addr_ok") is True
+            and parsed.get("moltenvk_extension_supported") is True
+            and physical_device_count >= 1
+            and physical_devices_report_ok
+        ),
+    }
+    write_json(run_dir / "phase3-vulkan-report-summary.json", result)
+    return result
+
+
 def build_metal_archive_probe(repo: Path, run_dir: Path) -> dict[str, Any]:
     source = repo / "tools" / "d3d12-metal-sdk" / "probes" / "probe_m12_fresh_metal_archive" / "probe_m12_fresh_metal_archive.mm"
     exe = run_dir / "probe_m12_fresh_metal_archive"
@@ -2205,8 +2523,10 @@ def main() -> int:
     identity_result: dict[str, Any] | None = None
     visible_game_result: dict[str, Any] | None = None
     metal_archive_result: dict[str, Any] | None = None
+    vulkan_report_result: dict[str, Any] | None = None
     if not args.skip_run:
         identity_result = run_identity_probe(repo, proof_root, wine, wine_runtime, prefix, runtime_root, staged)
+        vulkan_report_result = run_vulkan_report_probe(repo, proof_root, wine_runtime)
         if not args.skip_game:
             if not args.corpus_tsv:
                 print("--corpus-tsv is required unless --skip-game or --skip-run is set", file=sys.stderr)
@@ -2237,6 +2557,7 @@ def main() -> int:
         and game_build["ok"]
         and all(x["hash_match"] for x in staged)
         and (args.skip_run or bool(identity_result and identity_result["ok"]))
+        and (args.skip_run or bool(vulkan_report_result and vulkan_report_result["ok"]))
         and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"]))
         and (args.skip_run or args.skip_game or bool(metal_archive_result and metal_archive_result["ok"])),
         "proof_root": str(proof_root),
@@ -2245,6 +2566,7 @@ def main() -> int:
         "game_build_ok": game_build["ok"],
         "runtime_stage_ok": all(x["hash_match"] for x in staged),
         "identity_probe_ok": None if args.skip_run else bool(identity_result and identity_result["ok"]),
+        "vulkan_report_ok": None if args.skip_run else bool(vulkan_report_result and vulkan_report_result["ok"]),
         "visible_game_ok": None
         if args.skip_run or args.skip_game
         else bool(visible_game_result and visible_game_result["ok"]),
@@ -2256,6 +2578,9 @@ def main() -> int:
             "build": str(proof_root / "phase0-build-runtime-identity-probe.json"),
             "staged_hashes": str(proof_root / "phase0-staged-runtime-hashes.json"),
             "identity": str(proof_root / "phase0-runtime-identity" / "phase0-runtime-identity-summary.json")
+            if not args.skip_run
+            else None,
+            "vulkan_report": str(proof_root / "phase3-vulkan-report" / "phase3-vulkan-report-summary.json")
             if not args.skip_run
             else None,
             "visible_game": str(proof_root / "phase1-visible-game" / "phase1-visible-game-summary.json")
