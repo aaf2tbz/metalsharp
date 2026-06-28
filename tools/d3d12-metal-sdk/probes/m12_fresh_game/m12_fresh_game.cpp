@@ -71,6 +71,8 @@ constexpr UINT kWaveOpsStampX = 344;
 constexpr UINT kWaveOpsStampY = 24;
 constexpr UINT kNaniteClusterStampX = 376;
 constexpr UINT kNaniteClusterStampY = 24;
+constexpr UINT kSubresourceViewStampX = 408;
+constexpr UINT kSubresourceViewStampY = 24;
 constexpr UINT kTextured3DFaceCount = 3;
 constexpr UINT kTextured3DVertexCount = 33;
 constexpr UINT kTextured3DDepthSampleX = 704;
@@ -2977,6 +2979,7 @@ static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* 
 static void heap_alias_expected_rgba(uint8_t out[4]);
 static void uav_barrier_expected_rgba(UINT x, UINT y, uint8_t out[4]);
 static void nanite_cluster_expected_rgba(uint8_t out[4]);
+static void subresource_view_expected_rgba(UINT slice, uint8_t out[4]);
 static void rtv_format_expected_rgba(uint8_t out[4]);
 static void render_pass_expected_rgba(uint8_t out[4]);
 static void corpus_shader_expected_rgba(uint8_t out[4]);
@@ -3128,6 +3131,19 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
             nanite_pixel[3] = static_cast<uint8_t>(nanite_expected[3] ^ 0xffu);
         }
     }
+    uint8_t* subresource_view_stamp = readback_pixel(readback, mapped, kSubresourceViewStampX, kSubresourceViewStampY);
+    uint8_t subresource_view_expected[4] = {};
+    subresource_view_expected_rgba(1, subresource_view_expected);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            uint8_t* subresource_pixel =
+                readback_pixel(readback, mapped, kSubresourceViewStampX + x, kSubresourceViewStampY + y);
+            subresource_pixel[0] = static_cast<uint8_t>(subresource_view_expected[0] ^ 0xffu);
+            subresource_pixel[1] = static_cast<uint8_t>(subresource_view_expected[1] ^ 0xffu);
+            subresource_pixel[2] = static_cast<uint8_t>(subresource_view_expected[2] ^ 0xffu);
+            subresource_pixel[3] = static_cast<uint8_t>(subresource_view_expected[3] ^ 0xffu);
+        }
+    }
     uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
     uint8_t sm5_expected[4] = {};
     sm5_expected_stamp_rgba(frame, sm5_expected);
@@ -3216,6 +3232,11 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     const uint8_t* nanite_stamp_last = readback_pixel(readback, mapped, kNaniteClusterStampX + kFreshTextureWidth - 1u,
                                                       kNaniteClusterStampY + kFreshTextureHeight - 1u);
     const size_t nanite_stamp_last_offset = static_cast<size_t>(nanite_stamp_last - mapped);
+    const size_t subresource_view_stamp_offset = static_cast<size_t>(subresource_view_stamp - mapped);
+    const uint8_t* subresource_view_stamp_last =
+        readback_pixel(readback, mapped, kSubresourceViewStampX + kFreshTextureWidth - 1u,
+                       kSubresourceViewStampY + kFreshTextureHeight - 1u);
+    const size_t subresource_view_stamp_last_offset = static_cast<size_t>(subresource_view_stamp_last - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
     size_t min_written_offset = std::min({center_offset,
@@ -3240,6 +3261,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
                                           indirect_stamp_last_offset,
                                           nanite_stamp_offset,
                                           nanite_stamp_last_offset,
+                                          subresource_view_stamp_offset,
+                                          subresource_view_stamp_last_offset,
                                           sm5_stamp_offset,
                                           stamp_offset});
     size_t max_written_offset = std::max({center_offset,
@@ -3264,6 +3287,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
                                           indirect_stamp_last_offset,
                                           nanite_stamp_offset,
                                           nanite_stamp_last_offset,
+                                          subresource_view_stamp_offset,
+                                          subresource_view_stamp_last_offset,
                                           sm5_stamp_offset,
                                           stamp_offset});
     for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
@@ -4284,6 +4309,301 @@ static void destroy_rtv_format_exercise(RtvFormatExercise& exercise) {
     safe_release(exercise.present_texture);
 }
 
+struct SubresourceViewStats {
+    HRESULT create_texture_array_hr = E_FAIL;
+    HRESULT create_upload_hr = E_FAIL;
+    HRESULT create_readback_hr = E_FAIL;
+    HRESULT create_descriptor_heap_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    HRESULT map_upload_hr = E_FAIL;
+    HRESULT map_readback_hr = E_FAIL;
+    UINT64 footprint_bytes = 0;
+    UINT64 slice_offsets[2] = {0, 0};
+    UINT row_pitch[2] = {0, 0};
+    uint32_t slice_count = 2;
+    uint32_t srv_descriptors_created = 0;
+    uint32_t upload_subresources_filled = 0;
+    uint32_t readback_sentinel_fills = 0;
+    uint32_t copy_upload_subresources = 0;
+    uint32_t copy_readback_subresources = 0;
+    uint32_t transition_barriers = 0;
+    uint32_t subresource_pixels_checked = 0;
+    uint32_t subresource_pixel_matches = 0;
+    uint32_t present_copy_commands = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t present_pixels_checked = 0;
+    uint32_t present_pixel_matches = 0;
+    uint8_t expected_slice0_rgba[4] = {64, 48, 208, 255};
+    uint8_t expected_slice1_rgba[4] = {208, 144, 64, 255};
+    uint8_t slice0_first_rgba[4] = {0, 0, 0, 0};
+    uint8_t slice0_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t slice1_first_rgba[4] = {0, 0, 0, 0};
+    uint8_t slice1_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool fixed_footprints_ok = false;
+    bool fence_wait_ok = false;
+    bool subresource_readback_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct SubresourceViewExercise {
+    SubresourceViewStats stats;
+    ID3D12Resource* present_texture = nullptr;
+};
+
+static void subresource_view_expected_rgba(UINT slice, uint8_t out[4]) {
+    if (slice == 0) {
+        out[0] = 64;
+        out[1] = 48;
+        out[2] = 208;
+        out[3] = 255;
+    } else {
+        out[0] = 208;
+        out[1] = 144;
+        out[2] = 64;
+        out[3] = 255;
+    }
+}
+
+static TexturePayload make_subresource_view_payload(UINT slice) {
+    TexturePayload payload;
+    uint8_t rgba[4] = {};
+    subresource_view_expected_rgba(slice, rgba);
+    for (size_t i = 0; i < payload.rgba.size(); i += 4) {
+        payload.rgba[i + 0] = rgba[0];
+        payload.rgba[i + 1] = rgba[1];
+        payload.rgba[i + 2] = rgba[2];
+        payload.rgba[i + 3] = rgba[3];
+    }
+    payload.family = "generated-subresource-view";
+    payload.label = slice == 0 ? "texture2darray-slice0" : "texture2darray-slice1";
+    payload.bytes_from_file = static_cast<uint32_t>(payload.rgba.size());
+    payload.declared_size = payload.rgba.size();
+    return payload;
+}
+
+static SubresourceViewExercise exercise_subresource_view_stamp(ID3D12Device* device, ID3D12CommandQueue* queue,
+                                                               ID3D12CommandAllocator* allocator,
+                                                               ID3D12GraphicsCommandList* list, ID3D12Fence* fence,
+                                                               HANDLE fence_event, UINT64& fence_value) {
+    SubresourceViewExercise exercise;
+    SubresourceViewStats& stats = exercise.stats;
+    subresource_view_expected_rgba(0, stats.expected_slice0_rgba);
+    subresource_view_expected_rgba(1, stats.expected_slice1_rgba);
+    if (!device || !queue || !allocator || !list || !fence || !fence_event)
+        return exercise;
+
+    D3D12_RESOURCE_DESC texture = texture_desc(kFreshTextureWidth, kFreshTextureHeight, DXGI_FORMAT_R8G8B8A8_UNORM);
+    texture.DepthOrArraySize = 2;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprints[2] = {};
+    UINT rows[2] = {};
+    UINT64 row_bytes[2] = {};
+    UINT64 total_bytes = 0;
+    device->GetCopyableFootprints(&texture, 0, 2, 0, footprints, rows, row_bytes, &total_bytes);
+    stats.footprint_bytes = total_bytes;
+    stats.slice_offsets[0] = footprints[0].Offset;
+    stats.slice_offsets[1] = footprints[1].Offset;
+    stats.row_pitch[0] = footprints[0].Footprint.RowPitch;
+    stats.row_pitch[1] = footprints[1].Footprint.RowPitch;
+    stats.fixed_footprints_ok =
+        footprints[0].Footprint.Format == DXGI_FORMAT_R8G8B8A8_UNORM &&
+        footprints[1].Footprint.Format == DXGI_FORMAT_R8G8B8A8_UNORM &&
+        footprints[0].Footprint.Width == kFreshTextureWidth && footprints[1].Footprint.Width == kFreshTextureWidth &&
+        footprints[0].Footprint.Height == kFreshTextureHeight &&
+        footprints[1].Footprint.Height == kFreshTextureHeight && footprints[0].Footprint.Depth == 1 &&
+        footprints[1].Footprint.Depth == 1 && footprints[0].Footprint.RowPitch == 256 &&
+        footprints[1].Footprint.RowPitch == 256 && rows[0] == kFreshTextureHeight && rows[1] == kFreshTextureHeight &&
+        footprints[1].Offset >=
+            footprints[0].Offset + static_cast<UINT64>(kFreshTextureHeight) * footprints[0].Footprint.RowPitch &&
+        total_bytes >=
+            footprints[1].Offset + static_cast<UINT64>(kFreshTextureHeight) * footprints[1].Footprint.RowPitch;
+
+    D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    stats.create_texture_array_hr =
+        device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &texture, D3D12_RESOURCE_STATE_COPY_DEST,
+                                        nullptr, IID_PPV_ARGS(&exercise.present_texture));
+
+    D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+    D3D12_RESOURCE_DESC upload_desc = buffer_desc(total_bytes);
+    ID3D12Resource* upload = nullptr;
+    stats.create_upload_hr =
+        device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &upload_desc,
+                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&upload));
+    if (upload && stats.fixed_footprints_ok) {
+        for (UINT slice = 0; slice < 2; ++slice) {
+            TexturePayload payload = make_subresource_view_payload(slice);
+            if (fill_texture_upload(upload, footprints[slice], payload, kFreshTextureWidth, kFreshTextureHeight))
+                stats.upload_subresources_filled++;
+        }
+        stats.map_upload_hr = stats.upload_subresources_filled == 2 ? S_OK : E_FAIL;
+    }
+
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC readback_desc = buffer_desc(total_bytes);
+    ID3D12Resource* readback = nullptr;
+    stats.create_readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback));
+    if (readback && stats.fixed_footprints_ok) {
+        uint8_t* mapped = nullptr;
+        D3D12_RANGE read_range = {0, 0};
+        if (SUCCEEDED(readback->Map(0, &read_range, reinterpret_cast<void**>(&mapped))) && mapped) {
+            for (UINT slice = 0; slice < 2; ++slice) {
+                uint8_t expected[4] = {};
+                subresource_view_expected_rgba(slice, expected);
+                uint8_t* base = mapped + static_cast<size_t>(footprints[slice].Offset);
+                for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+                    uint8_t* row = base + static_cast<size_t>(y) * footprints[slice].Footprint.RowPitch;
+                    for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+                        uint8_t* pixel = row + static_cast<size_t>(x) * 4u;
+                        pixel[0] = static_cast<uint8_t>(expected[0] ^ 0xffu);
+                        pixel[1] = static_cast<uint8_t>(expected[1] ^ 0xffu);
+                        pixel[2] = static_cast<uint8_t>(expected[2] ^ 0xffu);
+                        pixel[3] = static_cast<uint8_t>(expected[3] ^ 0xffu);
+                    }
+                }
+                stats.readback_sentinel_fills++;
+            }
+            D3D12_RANGE written = {0, static_cast<SIZE_T>(total_bytes)};
+            readback->Unmap(0, &written);
+        }
+    }
+
+    D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
+    srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    srv_heap_desc.NumDescriptors = 2;
+    ID3D12DescriptorHeap* srv_heap = nullptr;
+    stats.create_descriptor_heap_hr = device->CreateDescriptorHeap(&srv_heap_desc, IID_PPV_ARGS(&srv_heap));
+    if (srv_heap && exercise.present_texture) {
+        UINT descriptor_increment = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        D3D12_CPU_DESCRIPTOR_HANDLE srv_cpu = srv_heap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_SHADER_RESOURCE_VIEW_DESC array_srv = {};
+        array_srv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        array_srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+        array_srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        array_srv.Texture2DArray.MostDetailedMip = 0;
+        array_srv.Texture2DArray.MipLevels = 1;
+        array_srv.Texture2DArray.FirstArraySlice = 0;
+        array_srv.Texture2DArray.ArraySize = 2;
+        device->CreateShaderResourceView(exercise.present_texture, &array_srv,
+                                         offset_cpu(srv_cpu, descriptor_increment, 0));
+        stats.srv_descriptors_created++;
+        D3D12_SHADER_RESOURCE_VIEW_DESC slice_srv = array_srv;
+        slice_srv.Texture2DArray.FirstArraySlice = 1;
+        slice_srv.Texture2DArray.ArraySize = 1;
+        device->CreateShaderResourceView(exercise.present_texture, &slice_srv,
+                                         offset_cpu(srv_cpu, descriptor_increment, 1));
+        stats.srv_descriptors_created++;
+    }
+
+    bool submitted_work = false;
+    if (stats.fixed_footprints_ok && exercise.present_texture && upload && readback &&
+        stats.upload_subresources_filled == 2 && SUCCEEDED(allocator->Reset()) &&
+        SUCCEEDED(list->Reset(allocator, nullptr))) {
+        for (UINT slice = 0; slice < 2; ++slice) {
+            D3D12_TEXTURE_COPY_LOCATION dst = {};
+            dst.pResource = exercise.present_texture;
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.SubresourceIndex = slice;
+            D3D12_TEXTURE_COPY_LOCATION src = {};
+            src.pResource = upload;
+            src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            src.PlacedFootprint = footprints[slice];
+            list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            stats.copy_upload_subresources++;
+        }
+        D3D12_RESOURCE_BARRIER to_copy_source = transition_barrier(
+            exercise.present_texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &to_copy_source);
+        stats.transition_barriers++;
+        for (UINT slice = 0; slice < 2; ++slice) {
+            D3D12_TEXTURE_COPY_LOCATION dst = {};
+            dst.pResource = readback;
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            dst.PlacedFootprint = footprints[slice];
+            D3D12_TEXTURE_COPY_LOCATION src = {};
+            src.pResource = exercise.present_texture;
+            src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            src.SubresourceIndex = slice;
+            list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+            stats.copy_readback_subresources++;
+        }
+        stats.close_hr = list->Close();
+        if (SUCCEEDED(stats.close_hr)) {
+            ID3D12CommandList* base = list;
+            queue->ExecuteCommandLists(1, &base);
+            submitted_work = true;
+            fence_value++;
+            stats.signal_hr = queue->Signal(fence, fence_value);
+            stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+        }
+    }
+    if (submitted_work && !stats.fence_wait_ok) {
+        std::fflush(stdout);
+        TerminateProcess(GetCurrentProcess(), 2u);
+    }
+
+    if (stats.fixed_footprints_ok && readback && stats.fence_wait_ok) {
+        uint8_t* mapped = nullptr;
+        D3D12_RANGE read_range = {0, static_cast<SIZE_T>(total_bytes)};
+        stats.map_readback_hr = readback->Map(0, &read_range, reinterpret_cast<void**>(&mapped));
+        if (SUCCEEDED(stats.map_readback_hr) && mapped) {
+            for (UINT slice = 0; slice < 2; ++slice) {
+                uint8_t expected[4] = {};
+                subresource_view_expected_rgba(slice, expected);
+                const uint8_t* base = mapped + static_cast<size_t>(footprints[slice].Offset);
+                const uint8_t* last =
+                    base + static_cast<size_t>(kFreshTextureHeight - 1u) * footprints[slice].Footprint.RowPitch +
+                    static_cast<size_t>(kFreshTextureWidth - 1u) * 4u;
+                if (slice == 0) {
+                    std::memcpy(stats.slice0_first_rgba, base, sizeof(stats.slice0_first_rgba));
+                    std::memcpy(stats.slice0_last_rgba, last, sizeof(stats.slice0_last_rgba));
+                } else {
+                    std::memcpy(stats.slice1_first_rgba, base, sizeof(stats.slice1_first_rgba));
+                    std::memcpy(stats.slice1_last_rgba, last, sizeof(stats.slice1_last_rgba));
+                }
+                for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+                    const uint8_t* row = base + static_cast<size_t>(y) * footprints[slice].Footprint.RowPitch;
+                    for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+                        const uint8_t* pixel = row + static_cast<size_t>(x) * 4u;
+                        stats.subresource_pixels_checked++;
+                        if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                            pixel[3] == expected[3]) {
+                            stats.subresource_pixel_matches++;
+                        }
+                    }
+                }
+            }
+            stats.subresource_readback_ok =
+                stats.subresource_pixels_checked == 2u * kFreshTextureWidth * kFreshTextureHeight &&
+                stats.subresource_pixel_matches == stats.subresource_pixels_checked;
+            D3D12_RANGE written = {0, 0};
+            readback->Unmap(0, &written);
+        }
+    }
+
+    stats.pass = SUCCEEDED(stats.create_texture_array_hr) && SUCCEEDED(stats.create_upload_hr) &&
+                 SUCCEEDED(stats.create_readback_hr) && SUCCEEDED(stats.create_descriptor_heap_hr) &&
+                 stats.fixed_footprints_ok && stats.srv_descriptors_created == 2 &&
+                 stats.upload_subresources_filled == 2 && stats.readback_sentinel_fills == 2 &&
+                 stats.copy_upload_subresources == 2 && stats.copy_readback_subresources == 2 &&
+                 stats.transition_barriers == 1 && stats.fence_wait_ok && stats.subresource_readback_ok;
+    if (!stats.pass)
+        safe_release(exercise.present_texture);
+    safe_release(srv_heap);
+    safe_release(readback);
+    safe_release(upload);
+    return exercise;
+}
+
+static void destroy_subresource_view_exercise(SubresourceViewExercise& exercise) {
+    safe_release(exercise.present_texture);
+}
+
 struct RenderPassStats {
     HRESULT query_list4_hr = E_FAIL;
     HRESULT create_texture_hr = E_FAIL;
@@ -4634,6 +4954,40 @@ static bool inspect_rtv_format_stamp(DxilReadbackResources& readback, RtvFormatS
             stats.present_pixels_checked++;
             if (pixel[0] == stats.expected_rgba[0] && pixel[1] == stats.expected_rgba[1] &&
                 pixel[2] == stats.expected_rgba[2] && pixel[3] == stats.expected_rgba[3]) {
+                stats.present_pixel_matches++;
+                frame_matches++;
+            }
+        }
+    }
+    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+    if (matches)
+        stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
+static bool inspect_subresource_view_stamp(DxilReadbackResources& readback, SubresourceViewStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* first = readback_pixel(readback, mapped, kSubresourceViewStampX, kSubresourceViewStampY);
+    std::memcpy(stats.present_rgba, first, sizeof(stats.present_rgba));
+    const uint8_t* last = readback_pixel(readback, mapped, kSubresourceViewStampX + kFreshTextureWidth - 1u,
+                                         kSubresourceViewStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
+    stats.present_samples_checked++;
+    uint32_t frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel =
+                readback_pixel(readback, mapped, kSubresourceViewStampX + x, kSubresourceViewStampY + y);
+            stats.present_pixels_checked++;
+            if (pixel[0] == stats.expected_slice1_rgba[0] && pixel[1] == stats.expected_slice1_rgba[1] &&
+                pixel[2] == stats.expected_slice1_rgba[2] && pixel[3] == stats.expected_slice1_rgba[3]) {
                 stats.present_pixel_matches++;
                 frame_matches++;
             }
@@ -5068,6 +5422,7 @@ struct D3DRunStats {
     UavBarrierStats uav_barrier;
     WaveOpsStats wave_ops;
     RtvFormatStats rtv_format;
+    SubresourceViewStats subresource_views;
     RenderPassStats render_pass;
     CorpusShaderStats corpus_shader;
     SrvSampleStats srv_sample;
@@ -5240,6 +5595,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     RtvFormatExercise rtv_format =
         exercise_rtv_format_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
     stats.rtv_format = rtv_format.stats;
+    SubresourceViewExercise subresource_views =
+        exercise_subresource_view_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
+    stats.subresource_views = subresource_views.stats;
     RenderPassExercise render_pass =
         exercise_render_pass_stamp(device, queue, allocator, list, fence, fence_event, fence_value);
     stats.render_pass = render_pass.stats;
@@ -5469,6 +5827,26 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 list->CopyTextureRegion(&rtv_dst, kRtvFormatStampX, kRtvFormatStampY, 0, &rtv_src, &rtv_box);
                 stats.rtv_format.present_copy_commands++;
             }
+            if (stats.subresource_views.pass && subresource_views.present_texture) {
+                if (backbuffer_state != D3D12_RESOURCE_STATE_COPY_DEST) {
+                    auto backbuffer_to_copy_dest =
+                        transition_barrier(buffer, backbuffer_state, D3D12_RESOURCE_STATE_COPY_DEST);
+                    list->ResourceBarrier(1, &backbuffer_to_copy_dest);
+                    backbuffer_state = D3D12_RESOURCE_STATE_COPY_DEST;
+                }
+                D3D12_TEXTURE_COPY_LOCATION subresource_dst = {};
+                subresource_dst.pResource = buffer;
+                subresource_dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                subresource_dst.SubresourceIndex = 0;
+                D3D12_TEXTURE_COPY_LOCATION subresource_src = {};
+                subresource_src.pResource = subresource_views.present_texture;
+                subresource_src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+                subresource_src.SubresourceIndex = 1;
+                D3D12_BOX subresource_box = {0, 0, 0, kFreshTextureWidth, kFreshTextureHeight, 1};
+                list->CopyTextureRegion(&subresource_dst, kSubresourceViewStampX, kSubresourceViewStampY, 0,
+                                        &subresource_src, &subresource_box);
+                stats.subresource_views.present_copy_commands++;
+            }
             if (stats.render_pass.pass && render_pass.present_texture) {
                 if (backbuffer_state != D3D12_RESOURCE_STATE_COPY_DEST) {
                     auto backbuffer_to_copy_dest =
@@ -5528,6 +5906,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (stats.rtv_format.pass && rtv_format.present_texture &&
                 !inspect_rtv_format_stamp(dxil_readback, stats.rtv_format))
+                break;
+            if (stats.subresource_views.pass && subresource_views.present_texture &&
+                !inspect_subresource_view_stamp(dxil_readback, stats.subresource_views))
                 break;
             if (stats.render_pass.pass && render_pass.present_texture &&
                 !inspect_render_pass_stamp(dxil_readback, stats.render_pass))
@@ -5596,6 +5977,13 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.rtv_format.present_sample_matches == visible_frame_target &&
         stats.rtv_format.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.rtv_format.present_pixel_matches == stats.rtv_format.present_pixels_checked;
+    stats.subresource_views.present_pass =
+        subresource_views.present_texture && stats.subresource_views.present_copy_commands == visible_frame_target &&
+        stats.subresource_views.present_samples_checked == visible_frame_target &&
+        stats.subresource_views.present_sample_matches == visible_frame_target &&
+        stats.subresource_views.present_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.subresource_views.present_pixel_matches == stats.subresource_views.present_pixels_checked;
     stats.render_pass.present_pass =
         render_pass.present_texture && stats.render_pass.present_copy_commands == visible_frame_target &&
         stats.render_pass.present_samples_checked == visible_frame_target &&
@@ -5659,9 +6047,10 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.gpu_textures.pass && stats.gpu_textures.present_pass && stats.heap_alias.pass &&
         stats.heap_alias.present_pass && stats.uav_barrier.pass && stats.uav_barrier.present_pass &&
         stats.wave_ops.pass && stats.wave_ops.present_pass && stats.rtv_format.pass && stats.rtv_format.present_pass &&
-        stats.render_pass.pass && stats.render_pass.present_pass && stats.corpus_shader.pass &&
-        stats.corpus_shader.present_pass && stats.corpus_shader.draw_calls == visible_frame_target &&
-        stats.srv_sample.pass && stats.srv_sample.present_pass && stats.srv_sample.draw_calls == visible_frame_target &&
+        stats.subresource_views.pass && stats.subresource_views.present_pass && stats.render_pass.pass &&
+        stats.render_pass.present_pass && stats.corpus_shader.pass && stats.corpus_shader.present_pass &&
+        stats.corpus_shader.draw_calls == visible_frame_target && stats.srv_sample.pass &&
+        stats.srv_sample.present_pass && stats.srv_sample.draw_calls == visible_frame_target &&
         stats.textured_3d.pass && stats.textured_3d.present_pass &&
         stats.textured_3d.draw_calls == visible_frame_target &&
         stats.textured_3d.vertex_buffer_updates == visible_frame_target &&
@@ -5682,6 +6071,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     destroy_wave_ops_exercise(wave_ops);
     destroy_uav_barrier_exercise(uav_barrier);
     destroy_rtv_format_exercise(rtv_format);
+    destroy_subresource_view_exercise(subresource_views);
     destroy_render_pass_exercise(render_pass);
     destroy_srv_sample_scene(srv_sample);
     destroy_textured3d_scene(textured_3d);
@@ -6078,6 +6468,71 @@ int main() {
     std::printf("      \"fence_wait_ok\": %s,\n", d3d.rtv_format.fence_wait_ok ? "true" : "false");
     std::printf("      \"present_ok\": %s,\n", d3d.rtv_format.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.rtv_format.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"texture_array_subresources\": {\n");
+    std::printf("      \"proof_scope\": \"texture2darray_subresource_upload_readback_slice1_presented_copy\",\n");
+    std::printf("      \"CreateTexture2DArray_R8G8B8A8_UNORM\": \"%s\",\n",
+                hr_hex(d3d.subresource_views.create_texture_array_hr).c_str());
+    std::printf("      \"CreateUploadBuffer\": \"%s\",\n", hr_hex(d3d.subresource_views.create_upload_hr).c_str());
+    std::printf("      \"CreateReadback\": \"%s\",\n", hr_hex(d3d.subresource_views.create_readback_hr).c_str());
+    std::printf("      \"CreateDescriptorHeap_CBV_SRV_UAV\": \"%s\",\n",
+                hr_hex(d3d.subresource_views.create_descriptor_heap_hr).c_str());
+    std::printf("      \"MapUpload\": \"%s\",\n", hr_hex(d3d.subresource_views.map_upload_hr).c_str());
+    std::printf("      \"CloseCommandList\": \"%s\",\n", hr_hex(d3d.subresource_views.close_hr).c_str());
+    std::printf("      \"SignalFence\": \"%s\",\n", hr_hex(d3d.subresource_views.signal_hr).c_str());
+    std::printf("      \"MapReadback\": \"%s\",\n", hr_hex(d3d.subresource_views.map_readback_hr).c_str());
+    std::printf("      \"slice_count\": %u,\n", d3d.subresource_views.slice_count);
+    std::printf("      \"footprint_bytes\": %llu,\n",
+                static_cast<unsigned long long>(d3d.subresource_views.footprint_bytes));
+    std::printf("      \"slice_offsets\": [%llu, %llu],\n",
+                static_cast<unsigned long long>(d3d.subresource_views.slice_offsets[0]),
+                static_cast<unsigned long long>(d3d.subresource_views.slice_offsets[1]));
+    std::printf("      \"row_pitch\": [%u, %u],\n", d3d.subresource_views.row_pitch[0],
+                d3d.subresource_views.row_pitch[1]);
+    std::printf("      \"fixed_footprints_ok\": %s,\n", d3d.subresource_views.fixed_footprints_ok ? "true" : "false");
+    std::printf("      \"CreateShaderResourceView_descriptors_inventory_only\": %u,\n",
+                d3d.subresource_views.srv_descriptors_created);
+    std::printf("      \"upload_subresources_filled\": %u,\n", d3d.subresource_views.upload_subresources_filled);
+    std::printf("      \"readback_sentinel_fills\": %u,\n", d3d.subresource_views.readback_sentinel_fills);
+    std::printf("      \"copy_upload_subresources\": %u,\n", d3d.subresource_views.copy_upload_subresources);
+    std::printf("      \"copy_readback_subresources\": %u,\n", d3d.subresource_views.copy_readback_subresources);
+    std::printf("      \"transition_barriers\": %u,\n", d3d.subresource_views.transition_barriers);
+    std::printf("      \"subresource_pixels_checked\": %u,\n", d3d.subresource_views.subresource_pixels_checked);
+    std::printf("      \"subresource_pixel_matches\": %u,\n", d3d.subresource_views.subresource_pixel_matches);
+    std::printf("      \"expected_slice0_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.expected_slice0_rgba[0],
+                d3d.subresource_views.expected_slice0_rgba[1], d3d.subresource_views.expected_slice0_rgba[2],
+                d3d.subresource_views.expected_slice0_rgba[3]);
+    std::printf("      \"expected_slice1_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.expected_slice1_rgba[0],
+                d3d.subresource_views.expected_slice1_rgba[1], d3d.subresource_views.expected_slice1_rgba[2],
+                d3d.subresource_views.expected_slice1_rgba[3]);
+    std::printf("      \"slice0_first_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.slice0_first_rgba[0],
+                d3d.subresource_views.slice0_first_rgba[1], d3d.subresource_views.slice0_first_rgba[2],
+                d3d.subresource_views.slice0_first_rgba[3]);
+    std::printf("      \"slice0_last_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.slice0_last_rgba[0],
+                d3d.subresource_views.slice0_last_rgba[1], d3d.subresource_views.slice0_last_rgba[2],
+                d3d.subresource_views.slice0_last_rgba[3]);
+    std::printf("      \"slice1_first_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.slice1_first_rgba[0],
+                d3d.subresource_views.slice1_first_rgba[1], d3d.subresource_views.slice1_first_rgba[2],
+                d3d.subresource_views.slice1_first_rgba[3]);
+    std::printf("      \"slice1_last_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.slice1_last_rgba[0],
+                d3d.subresource_views.slice1_last_rgba[1], d3d.subresource_views.slice1_last_rgba[2],
+                d3d.subresource_views.slice1_last_rgba[3]);
+    std::printf("      \"subresource_readback_ok\": %s,\n",
+                d3d.subresource_views.subresource_readback_ok ? "true" : "false");
+    std::printf("      \"present_copy_commands\": %u,\n", d3d.subresource_views.present_copy_commands);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.subresource_views.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.subresource_views.present_sample_matches);
+    std::printf("      \"present_pixels_checked\": %u,\n", d3d.subresource_views.present_pixels_checked);
+    std::printf("      \"present_pixel_matches\": %u,\n", d3d.subresource_views.present_pixel_matches);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.present_rgba[0],
+                d3d.subresource_views.present_rgba[1], d3d.subresource_views.present_rgba[2],
+                d3d.subresource_views.present_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.subresource_views.present_last_rgba[0],
+                d3d.subresource_views.present_last_rgba[1], d3d.subresource_views.present_last_rgba[2],
+                d3d.subresource_views.present_last_rgba[3]);
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.subresource_views.fence_wait_ok ? "true" : "false");
+    std::printf("      \"present_ok\": %s,\n", d3d.subresource_views.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.subresource_views.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"render_pass\": {\n");
     std::printf("      \"proof_scope\": \"offscreen_render_pass_clear_presented_copy_readback\",\n");

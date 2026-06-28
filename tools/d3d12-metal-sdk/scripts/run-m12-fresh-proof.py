@@ -1627,6 +1627,7 @@ def run_fresh_game(
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
     wave_ops_json = d3d12_json.get("wave_ops", {}) if d3d12_json else {}
     rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
+    texture_array_subresources_json = d3d12_json.get("texture_array_subresources", {}) if d3d12_json else {}
     render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
     corpus_shader_json = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
     srv_sample_json = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
@@ -1638,6 +1639,8 @@ def run_fresh_game(
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, diagnostic_log_text, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
+    subresource_view_expected_slice0_rgba = [64, 48, 208, 255]
+    subresource_view_expected_slice1_rgba = [208, 144, 64, 255]
     render_pass_expected_rgba = [224, 80, 176, 255]
     corpus_shader_expected_rgba = [64, 192, 32, 255]
     srv_sample_expected_rgba = [16, 144, 224, 255]
@@ -1915,6 +1918,49 @@ def run_fresh_game(
         and rtv_format_json.get("offscreen_last_rgba") == rtv_format_expected_rgba
         and rtv_format_json.get("present_rgba") == rtv_format_expected_rgba
         and rtv_format_json.get("present_last_rgba") == rtv_format_expected_rgba
+        and texture_array_subresources_json.get("ok") is True
+        and texture_array_subresources_json.get("present_ok") is True
+        and texture_array_subresources_json.get("proof_scope")
+        == "texture2darray_subresource_upload_readback_slice1_presented_copy"
+        and texture_array_subresources_json.get("CreateTexture2DArray_R8G8B8A8_UNORM") == "0x00000000"
+        and texture_array_subresources_json.get("CreateUploadBuffer") == "0x00000000"
+        and texture_array_subresources_json.get("CreateReadback") == "0x00000000"
+        and texture_array_subresources_json.get("CreateDescriptorHeap_CBV_SRV_UAV") == "0x00000000"
+        and texture_array_subresources_json.get("MapUpload") == "0x00000000"
+        and texture_array_subresources_json.get("CloseCommandList") == "0x00000000"
+        and texture_array_subresources_json.get("SignalFence") == "0x00000000"
+        and texture_array_subresources_json.get("MapReadback") == "0x00000000"
+        and int(texture_array_subresources_json.get("slice_count", 0) or 0) == 2
+        and int(texture_array_subresources_json.get("footprint_bytes", 0) or 0) >= 8192
+        and texture_array_subresources_json.get("row_pitch") == [256, 256]
+        and isinstance(texture_array_subresources_json.get("slice_offsets"), list)
+        and len(texture_array_subresources_json.get("slice_offsets", [])) == 2
+        and int(texture_array_subresources_json.get("slice_offsets", [0, 0])[1] or 0)
+        > int(texture_array_subresources_json.get("slice_offsets", [0, 0])[0] or 0)
+        and texture_array_subresources_json.get("fixed_footprints_ok") is True
+        and int(texture_array_subresources_json.get("CreateShaderResourceView_descriptors_inventory_only", 0) or 0)
+        == 2
+        and int(texture_array_subresources_json.get("upload_subresources_filled", 0) or 0) == 2
+        and int(texture_array_subresources_json.get("readback_sentinel_fills", 0) or 0) == 2
+        and int(texture_array_subresources_json.get("copy_upload_subresources", 0) or 0) == 2
+        and int(texture_array_subresources_json.get("copy_readback_subresources", 0) or 0) == 2
+        and int(texture_array_subresources_json.get("transition_barriers", 0) or 0) == 1
+        and texture_array_subresources_json.get("subresource_readback_ok") is True
+        and int(texture_array_subresources_json.get("subresource_pixels_checked", 0) or 0) == 512
+        and int(texture_array_subresources_json.get("subresource_pixel_matches", 0) or 0) == 512
+        and texture_array_subresources_json.get("expected_slice0_rgba") == subresource_view_expected_slice0_rgba
+        and texture_array_subresources_json.get("expected_slice1_rgba") == subresource_view_expected_slice1_rgba
+        and texture_array_subresources_json.get("slice0_first_rgba") == subresource_view_expected_slice0_rgba
+        and texture_array_subresources_json.get("slice0_last_rgba") == subresource_view_expected_slice0_rgba
+        and texture_array_subresources_json.get("slice1_first_rgba") == subresource_view_expected_slice1_rgba
+        and texture_array_subresources_json.get("slice1_last_rgba") == subresource_view_expected_slice1_rgba
+        and int(texture_array_subresources_json.get("present_copy_commands", 0) or 0) == visible_frames
+        and int(texture_array_subresources_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(texture_array_subresources_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(texture_array_subresources_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(texture_array_subresources_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and texture_array_subresources_json.get("present_rgba") == subresource_view_expected_slice1_rgba
+        and texture_array_subresources_json.get("present_last_rgba") == subresource_view_expected_slice1_rgba
         and render_pass_json.get("ok") is True
         and render_pass_json.get("present_ok") is True
         and render_pass_json.get("proof_scope") == "offscreen_render_pass_clear_presented_copy_readback"

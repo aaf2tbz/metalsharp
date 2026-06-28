@@ -137,6 +137,7 @@ Exit criteria:
 - SM6 DXIL scalar/vector proof makes the presented magenta overlay input-dependent through `dot`, scalar abs/min/max, vector swizzle, saturate, and channel writes; gates validate the source markers, generated MSL scalarized lowering markers, presented shader hashes, and presented-frame center readback.
 - SM6 DXIL waveops proof compiles a `cs_6_0` compute PSO, lowers `WaveGetLaneIndex`, `WaveGetLaneCount`, `WaveReadLaneFirst`, `WaveReadLaneAt`, `WaveActiveAnyTrue`, and `WaveActiveAllTrue` to Metal SIMD operations, writes the result through a shader-visible UAV descriptor table texture, validates GPU readback, and copies the stamped wave result into every presented swapchain frame.
 - Nanite-style cluster proof dispatches a compute culling pass that writes `D3D12_DRAW_ARGUMENTS` through a UAV, validates the computed args by GPU readback, mirrors the verified args into the CPU-decoded upload indirect-argument buffer used by the current DXMT `ExecuteIndirect` replay path, consumes that buffer with `ExecuteIndirect`, and validates the resulting cluster stamp from presented swapchain-frame readback.
+- Texture subresource proof creates a two-slice `Texture2DArray`, uploads distinct RGBA payloads to both subresources, records SRV array/slice descriptor creation as inventory-only metadata, validates both slices by GPU readback, then copies slice 1 into every presented swapchain frame and validates the stamped pixels by presented-frame readback.
 
 ## Phase 4 — Core D3D12 object correctness gates
 
