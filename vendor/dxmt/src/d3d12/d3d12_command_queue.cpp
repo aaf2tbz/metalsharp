@@ -1718,7 +1718,7 @@ struct ReplayState {
     if (!device || !pso || pso->UsesStageInVertexDescriptor() ||
         !HasSwapchainRenderTarget())
       return;
-    if (!TakeLogBudget(&g_swapchain_vertex_sample_logs, 24))
+    if (!TakeLogBudget(&g_swapchain_vertex_sample_logs, 64))
       return;
 
     const auto &inputs = pso->GetIAInputElements();

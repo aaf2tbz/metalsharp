@@ -986,6 +986,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     corpus_vertices = int(corpus_shader.get("vertices_per_draw", 0) or 0)
     srv_sample = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
     srv_vertices = int(srv_sample.get("vertices_per_draw", 0) or 0)
+    texture_array_srv_sample = d3d12_json.get("texture_array_srv_sample", {}) if d3d12_json else {}
+    texture_array_srv_vertices = int(texture_array_srv_sample.get("vertices_per_draw", 0) or 0)
     textured_3d = d3d12_json.get("textured_3d", {}) if d3d12_json else {}
     textured_3d_vertices = int(textured_3d.get("vertices_per_draw", 0) or 0)
     cbv_sample = d3d12_json.get("cbv_sample", {}) if d3d12_json else {}
@@ -1005,6 +1007,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     corpus_draws = re.findall(corpus_pattern, stderr_text) if corpus_vertices else []
     srv_pattern = rf"M12 swapchain DrawInstanced encoded v={srv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     srv_draws = re.findall(srv_pattern, stderr_text) if srv_vertices else []
+    texture_array_srv_pattern = rf"M12 swapchain DrawInstanced encoded v={texture_array_srv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    texture_array_srv_draws = re.findall(texture_array_srv_pattern, stderr_text) if texture_array_srv_vertices else []
     textured_3d_pattern = rf"M12 swapchain DrawInstanced encoded v={textured_3d_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     textured_3d_draws = re.findall(textured_3d_pattern, stderr_text) if textured_3d_vertices else []
     cbv_pattern = rf"M12 swapchain DrawInstanced encoded v={cbv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
@@ -1019,6 +1023,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     sm5_unique_draws = sorted(set(sm5_draws))
     corpus_unique_draws = sorted(set(corpus_draws))
     srv_unique_draws = sorted(set(srv_draws))
+    texture_array_srv_unique_draws = sorted(set(texture_array_srv_draws))
     textured_3d_unique_draws = sorted(set(textured_3d_draws))
     cbv_unique_draws = sorted(set(cbv_draws))
     indexed_unique_draws = sorted(set(indexed_draws))
@@ -1032,6 +1037,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_corpus_presented_draw_hashes")
     if not srv_draws:
         errors.append("missing_srv_sample_presented_draw_hashes")
+    if not texture_array_srv_draws:
+        errors.append("missing_texture_array_srv_sample_presented_draw_hashes")
     if not textured_3d_draws:
         errors.append("missing_textured_3d_presented_draw_hashes")
     if not cbv_draws:
@@ -1050,6 +1057,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("unexpected_multiple_corpus_presented_shader_pairs")
     if len(srv_unique_draws) > 1:
         errors.append("unexpected_multiple_srv_sample_presented_shader_pairs")
+    if len(texture_array_srv_unique_draws) > 1:
+        errors.append("unexpected_multiple_texture_array_srv_sample_presented_shader_pairs")
     if len(textured_3d_unique_draws) > 1:
         errors.append("unexpected_multiple_textured_3d_presented_shader_pairs")
     if len(cbv_unique_draws) > 1:
@@ -1064,6 +1073,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     sm5_vs, sm5_ps = sm5_unique_draws[0] if sm5_unique_draws else ("", "")
     corpus_vs, corpus_ps = corpus_unique_draws[0] if corpus_unique_draws else ("", "")
     srv_vs, srv_ps = srv_unique_draws[0] if srv_unique_draws else ("", "")
+    texture_array_srv_vs, texture_array_srv_ps = texture_array_srv_unique_draws[0] if texture_array_srv_unique_draws else ("", "")
     textured_3d_vs, textured_3d_ps = textured_3d_unique_draws[0] if textured_3d_unique_draws else ("", "")
     cbv_vs, cbv_ps = cbv_unique_draws[0] if cbv_unique_draws else ("", "")
     indexed_vs, indexed_ps = indexed_unique_draws[0] if indexed_unique_draws else ("", "")
@@ -1071,8 +1081,12 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     nanite_vs, nanite_ps = nanite_unique_draws[0] if nanite_unique_draws else ("", "")
     if indexed_unique_draws and indirect_unique_draws and (indirect_vs, indirect_ps) == (indexed_vs, indexed_ps):
         errors.append("indirect_shader_pair_reused_indexed_pair")
+    if texture_array_srv_unique_draws and srv_unique_draws and (texture_array_srv_vs, texture_array_srv_ps) == (srv_vs, srv_ps):
+        errors.append("texture_array_srv_shader_pair_reused_srv_sample_pair")
     if textured_3d_unique_draws and srv_unique_draws and (textured_3d_vs, textured_3d_ps) == (srv_vs, srv_ps):
         errors.append("textured_3d_shader_pair_reused_srv_sample_pair")
+    if textured_3d_unique_draws and texture_array_srv_unique_draws and (textured_3d_vs, textured_3d_ps) == (texture_array_srv_vs, texture_array_srv_ps):
+        errors.append("textured_3d_shader_pair_reused_texture_array_srv_pair")
     if textured_3d_unique_draws and cbv_unique_draws and (textured_3d_vs, textured_3d_ps) == (cbv_vs, cbv_ps):
         errors.append("textured_3d_shader_pair_reused_cbv_sample_pair")
     if nanite_unique_draws and indirect_unique_draws and (nanite_vs, nanite_ps) == (indirect_vs, indirect_ps):
@@ -1212,6 +1226,15 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ),
         None,
     )
+    texture_array_srv_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == texture_array_srv_vs
+            and p.get("d3d12", {}).get("ps_hash") == texture_array_srv_ps
+        ),
+        None,
+    )
     cbv_pso = next(
         (
             p
@@ -1260,6 +1283,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_corpus_presented_pso_manifest")
     if not srv_pso:
         errors.append("missing_srv_sample_presented_pso_manifest")
+    if not texture_array_srv_pso:
+        errors.append("missing_texture_array_srv_sample_presented_pso_manifest")
     if not cbv_pso:
         errors.append("missing_cbv_sample_presented_pso_manifest")
     if not textured_3d_pso:
@@ -1272,8 +1297,12 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_nanite_cluster_presented_pso_manifest")
     if indirect_pso and indexed_pso and indirect_pso.get("manifest") == indexed_pso.get("manifest"):
         errors.append("indirect_pso_manifest_reused_indexed_manifest")
+    if texture_array_srv_pso and srv_pso and texture_array_srv_pso.get("manifest") == srv_pso.get("manifest"):
+        errors.append("texture_array_srv_pso_manifest_reused_srv_sample_manifest")
     if textured_3d_pso and srv_pso and textured_3d_pso.get("manifest") == srv_pso.get("manifest"):
         errors.append("textured_3d_pso_manifest_reused_srv_sample_manifest")
+    if textured_3d_pso and texture_array_srv_pso and textured_3d_pso.get("manifest") == texture_array_srv_pso.get("manifest"):
+        errors.append("textured_3d_pso_manifest_reused_texture_array_srv_manifest")
     if nanite_pso and indirect_pso and nanite_pso.get("manifest") == indirect_pso.get("manifest"):
         errors.append("nanite_cluster_pso_manifest_reused_indirect_manifest")
     if textured_3d_pso:
@@ -1290,6 +1319,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ("sm5", sm5_pso),
         ("corpus", corpus_pso),
         ("srv_sample", srv_pso),
+        ("texture_array_srv_sample", texture_array_srv_pso),
         ("textured_3d", textured_3d_pso),
         ("cbv_sample", cbv_pso),
         ("indexed_draw", indexed_pso),
@@ -1332,6 +1362,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "sm5",
             "corpus",
             "srv_sample",
+            "texture_array_srv_sample",
             "textured_3d",
             "cbv_sample",
             "indexed_draw",
@@ -1359,6 +1390,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and len(corpus_unique_draws) == 1
         and len(srv_draws) >= presented_log_required
         and len(srv_unique_draws) == 1
+        and len(texture_array_srv_draws) >= presented_log_required
+        and len(texture_array_srv_unique_draws) == 1
         and len(textured_3d_draws) >= textured_3d_presented_log_required
         and len(textured_3d_unique_draws) == 1
         and len(cbv_draws) >= presented_log_required
@@ -1402,6 +1435,13 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "logged_draws": len(srv_draws),
             "unique_pairs": [[vs, ps] for vs, ps in srv_unique_draws],
             "vertices": srv_vertices,
+        },
+        "texture_array_srv_sample_presented_hashes": {
+            "vs": texture_array_srv_vs,
+            "ps": texture_array_srv_ps,
+            "logged_draws": len(texture_array_srv_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in texture_array_srv_unique_draws],
+            "vertices": texture_array_srv_vertices,
         },
         "textured_3d_presented_hashes": {
             "vs": textured_3d_vs,
@@ -1447,6 +1487,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         "sm5_pso_manifest": sm5_pso,
         "corpus_pso_manifest": corpus_pso,
         "srv_sample_pso_manifest": srv_pso,
+        "texture_array_srv_sample_pso_manifest": texture_array_srv_pso,
         "textured_3d_pso_manifest": textured_3d_pso,
         "cbv_sample_pso_manifest": cbv_pso,
         "indexed_pso_manifest": indexed_pso,
@@ -1609,6 +1650,13 @@ def run_fresh_game(
         re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=6\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=6\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
+    texture_array_srv_draw_skipped = bool(
+        re.search(
+            r"M12 swapchain DrawInstanced skipped v=30\s+i=1|DrawInstanced\s+SKIPPED\s+v=30\s+i=1",
+            diagnostic_log_text,
+            re.IGNORECASE,
+        )
+    )
     textured_3d_draw_skipped = bool(
         re.search(r"M12 swapchain DrawInstanced skipped v=33\s+i=1|DrawInstanced\s+SKIPPED\s+v=33\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
@@ -1628,6 +1676,7 @@ def run_fresh_game(
     wave_ops_json = d3d12_json.get("wave_ops", {}) if d3d12_json else {}
     rtv_format_json = d3d12_json.get("rtv_format", {}) if d3d12_json else {}
     texture_array_subresources_json = d3d12_json.get("texture_array_subresources", {}) if d3d12_json else {}
+    texture_array_srv_sample_json = d3d12_json.get("texture_array_srv_sample", {}) if d3d12_json else {}
     render_pass_json = d3d12_json.get("render_pass", {}) if d3d12_json else {}
     corpus_shader_json = d3d12_json.get("corpus_shader", {}) if d3d12_json else {}
     srv_sample_json = d3d12_json.get("srv_sample", {}) if d3d12_json else {}
@@ -1641,6 +1690,8 @@ def run_fresh_game(
     rtv_format_expected_rgba = [32, 192, 96, 255]
     subresource_view_expected_slice0_rgba = [64, 48, 208, 255]
     subresource_view_expected_slice1_rgba = [208, 144, 64, 255]
+    texture_array_srv_expected_slice0_rgba = [24, 96, 216, 255]
+    texture_array_srv_expected_slice1_rgba = [216, 88, 40, 255]
     render_pass_expected_rgba = [224, 80, 176, 255]
     corpus_shader_expected_rgba = [64, 192, 32, 255]
     srv_sample_expected_rgba = [16, 144, 224, 255]
@@ -1961,6 +2012,45 @@ def run_fresh_game(
         and int(texture_array_subresources_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
         and texture_array_subresources_json.get("present_rgba") == subresource_view_expected_slice1_rgba
         and texture_array_subresources_json.get("present_last_rgba") == subresource_view_expected_slice1_rgba
+        and texture_array_srv_sample_json.get("ok") is True
+        and texture_array_srv_sample_json.get("present_ok") is True
+        and texture_array_srv_sample_json.get("proof_scope")
+        == "texture2darray_srv_descriptor_table_slice1_sample_presented_readback"
+        and texture_array_srv_sample_json.get("D3DCompile_loaded") is True
+        and texture_array_srv_sample_json.get("vs_5_0") == "0x00000000"
+        and texture_array_srv_sample_json.get("ps_5_0_Texture2DArray_Sample") == "0x00000000"
+        and texture_array_srv_sample_json.get("D3D12SerializeRootSignature_descriptor_table_static_sampler")
+        == "0x00000000"
+        and texture_array_srv_sample_json.get("CreateRootSignature") == "0x00000000"
+        and texture_array_srv_sample_json.get("CreateGraphicsPipelineState") == "0x00000000"
+        and texture_array_srv_sample_json.get("CreateVertexBuffer") == "0x00000000"
+        and texture_array_srv_sample_json.get("CreateTexture2DArray_R8G8B8A8_UNORM") == "0x00000000"
+        and texture_array_srv_sample_json.get("CreateUploadBuffer") == "0x00000000"
+        and texture_array_srv_sample_json.get("CreateDescriptorHeap_CBV_SRV_UAV_SHADER_VISIBLE") == "0x00000000"
+        and int(texture_array_srv_sample_json.get("slice_count", 0) or 0) == 2
+        and int(texture_array_srv_sample_json.get("footprint_bytes", 0) or 0) >= 8192
+        and texture_array_srv_sample_json.get("row_pitch") == [256, 256]
+        and isinstance(texture_array_srv_sample_json.get("slice_offsets"), list)
+        and len(texture_array_srv_sample_json.get("slice_offsets", [])) == 2
+        and int(texture_array_srv_sample_json.get("slice_offsets", [0, 0])[1] or 0)
+        > int(texture_array_srv_sample_json.get("slice_offsets", [0, 0])[0] or 0)
+        and texture_array_srv_sample_json.get("fixed_footprints_ok") is True
+        and int(texture_array_srv_sample_json.get("CreateShaderResourceView_Texture2DArray_descriptors", 0) or 0)
+        == 1
+        and int(texture_array_srv_sample_json.get("upload_subresources_filled", 0) or 0) == 2
+        and int(texture_array_srv_sample_json.get("CopyTextureRegion_commands", 0) or 0) == 2
+        and int(texture_array_srv_sample_json.get("transition_barriers", 0) or 0) == 1
+        and texture_array_srv_sample_json.get("fence_wait_ok") is True
+        and int(texture_array_srv_sample_json.get("draw_calls", 0) or 0) == visible_frames
+        and int(texture_array_srv_sample_json.get("vertices_per_draw", 0) or 0) == 30
+        and int(texture_array_srv_sample_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(texture_array_srv_sample_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(texture_array_srv_sample_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(texture_array_srv_sample_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and texture_array_srv_sample_json.get("expected_slice0_rgba") == texture_array_srv_expected_slice0_rgba
+        and texture_array_srv_sample_json.get("expected_slice1_rgba") == texture_array_srv_expected_slice1_rgba
+        and texture_array_srv_sample_json.get("present_rgba") == texture_array_srv_expected_slice1_rgba
+        and texture_array_srv_sample_json.get("present_last_rgba") == texture_array_srv_expected_slice1_rgba
         and render_pass_json.get("ok") is True
         and render_pass_json.get("present_ok") is True
         and render_pass_json.get("proof_scope") == "offscreen_render_pass_clear_presented_copy_readback"
@@ -2233,6 +2323,7 @@ def run_fresh_game(
         "indexed_draw_skipped": indexed_draw_skipped,
         "indirect_draw_skipped": indirect_draw_skipped,
         "nanite_cluster_draw_skipped": nanite_cluster_draw_skipped,
+        "texture_array_srv_draw_skipped": texture_array_srv_draw_skipped,
         "textured_3d_draw_skipped": textured_3d_draw_skipped,
         "textured_3d_ok": textured_3d_ok,
         "textured_3d_face_provenance": textured_3d_face_provenance,
@@ -2262,6 +2353,7 @@ def run_fresh_game(
         and not indexed_draw_skipped
         and not indirect_draw_skipped
         and not nanite_cluster_draw_skipped
+        and not texture_array_srv_draw_skipped
         and not textured_3d_draw_skipped
         and not render_encoder_encode_failed
         and draw_line_count >= visible_frames
