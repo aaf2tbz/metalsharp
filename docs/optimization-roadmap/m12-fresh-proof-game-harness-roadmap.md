@@ -136,6 +136,7 @@ Exit criteria:
 - GUID/COM ABI proof validates canonical Direct3D/DXGI interface UUIDs, QueryInterface success, non-null COM vtables, `GetDevice` identity on device-child objects, and `SetPrivateData`/`GetPrivateData` byte roundtrip semantics in both the runtime identity gate and the real presented swapchain game run.
 - SM6 DXIL scalar/vector proof makes the presented magenta overlay input-dependent through `dot`, scalar abs/min/max, vector swizzle, saturate, and channel writes; gates validate the source markers, generated MSL scalarized lowering markers, presented shader hashes, and presented-frame center readback.
 - SM6 DXIL waveops proof compiles a `cs_6_0` compute PSO, lowers `WaveGetLaneIndex`, `WaveGetLaneCount`, `WaveReadLaneFirst`, `WaveReadLaneAt`, `WaveActiveAnyTrue`, and `WaveActiveAllTrue` to Metal SIMD operations, writes the result through a shader-visible UAV descriptor table texture, validates GPU readback, and copies the stamped wave result into every presented swapchain frame.
+- Nanite-style cluster proof dispatches a compute culling pass that writes `D3D12_DRAW_ARGUMENTS` through a UAV, validates the computed args by GPU readback, mirrors the verified args into the CPU-decoded upload indirect-argument buffer used by the current DXMT `ExecuteIndirect` replay path, consumes that buffer with `ExecuteIndirect`, and validates the resulting cluster stamp from presented swapchain-frame readback.
 
 ## Phase 4 — Core D3D12 object correctness gates
 

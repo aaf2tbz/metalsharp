@@ -994,6 +994,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     indexed_count = int(indexed_draw.get("indices_created", 0) or 0)
     indirect_draw = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
     indirect_vertices = int(indirect_draw.get("argument_vertex_count", 0) or 0)
+    nanite_cluster = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
+    nanite_vertices = int((nanite_cluster.get("computed_draw_args") or [0])[0] or 0) if nanite_cluster else 0
     wave_ops = d3d12_json.get("wave_ops", {}) if d3d12_json else {}
     wave_cs_bytes = int(wave_ops.get("cs_bytes", 0) or 0)
     dxil_draws = re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1 .*?vs=([0-9a-f]{16}) ps=([0-9a-f]{16})", stderr_text)
@@ -1011,6 +1013,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     indexed_draws = re.findall(indexed_pattern, stderr_text) if indexed_count else []
     indirect_pattern = rf"M12 swapchain ExecuteIndirect DrawInstanced encoded v={indirect_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     indirect_draws = re.findall(indirect_pattern, stderr_text) if indirect_vertices else []
+    nanite_pattern = rf"M12 swapchain ExecuteIndirect DrawInstanced encoded v={nanite_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    nanite_draws = re.findall(nanite_pattern, stderr_text) if nanite_vertices else []
     dxil_unique_draws = sorted(set(dxil_draws))
     sm5_unique_draws = sorted(set(sm5_draws))
     corpus_unique_draws = sorted(set(corpus_draws))
@@ -1019,6 +1023,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     cbv_unique_draws = sorted(set(cbv_draws))
     indexed_unique_draws = sorted(set(indexed_draws))
     indirect_unique_draws = sorted(set(indirect_draws))
+    nanite_unique_draws = sorted(set(nanite_draws))
     if not dxil_draws:
         errors.append("missing_dxil_presented_draw_hashes")
     if not sm5_draws:
@@ -1035,6 +1040,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_indexed_presented_draw_hashes")
     if not indirect_draws:
         errors.append("missing_indirect_presented_draw_hashes")
+    if not nanite_draws:
+        errors.append("missing_nanite_cluster_presented_draw_hashes")
     if len(dxil_unique_draws) > 1:
         errors.append("unexpected_multiple_dxil_presented_shader_pairs")
     if len(sm5_unique_draws) > 1:
@@ -1051,6 +1058,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("unexpected_multiple_indexed_presented_shader_pairs")
     if len(indirect_unique_draws) > 1:
         errors.append("unexpected_multiple_indirect_presented_shader_pairs")
+    if len(nanite_unique_draws) > 1:
+        errors.append("unexpected_multiple_nanite_cluster_presented_shader_pairs")
     dxil_vs, dxil_ps = dxil_unique_draws[0] if dxil_unique_draws else ("", "")
     sm5_vs, sm5_ps = sm5_unique_draws[0] if sm5_unique_draws else ("", "")
     corpus_vs, corpus_ps = corpus_unique_draws[0] if corpus_unique_draws else ("", "")
@@ -1059,12 +1068,17 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     cbv_vs, cbv_ps = cbv_unique_draws[0] if cbv_unique_draws else ("", "")
     indexed_vs, indexed_ps = indexed_unique_draws[0] if indexed_unique_draws else ("", "")
     indirect_vs, indirect_ps = indirect_unique_draws[0] if indirect_unique_draws else ("", "")
+    nanite_vs, nanite_ps = nanite_unique_draws[0] if nanite_unique_draws else ("", "")
     if indexed_unique_draws and indirect_unique_draws and (indirect_vs, indirect_ps) == (indexed_vs, indexed_ps):
         errors.append("indirect_shader_pair_reused_indexed_pair")
     if textured_3d_unique_draws and srv_unique_draws and (textured_3d_vs, textured_3d_ps) == (srv_vs, srv_ps):
         errors.append("textured_3d_shader_pair_reused_srv_sample_pair")
     if textured_3d_unique_draws and cbv_unique_draws and (textured_3d_vs, textured_3d_ps) == (cbv_vs, cbv_ps):
         errors.append("textured_3d_shader_pair_reused_cbv_sample_pair")
+    if nanite_unique_draws and indirect_unique_draws and (nanite_vs, nanite_ps) == (indirect_vs, indirect_ps):
+        errors.append("nanite_cluster_shader_pair_reused_indirect_pair")
+    if nanite_unique_draws and indexed_unique_draws and (nanite_vs, nanite_ps) == (indexed_vs, indexed_ps):
+        errors.append("nanite_cluster_shader_pair_reused_indexed_pair")
 
     required_paths: list[Path] = []
     for shader_hash in [dxil_vs, dxil_ps]:
@@ -1230,6 +1244,14 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ),
         None,
     )
+    nanite_pso = next(
+        (
+            p
+            for p in pipelines
+            if p.get("d3d12", {}).get("vs_hash") == nanite_vs and p.get("d3d12", {}).get("ps_hash") == nanite_ps
+        ),
+        None,
+    )
     if not dxil_pso:
         errors.append("missing_dxil_presented_pso_manifest")
     if not sm5_pso:
@@ -1246,10 +1268,14 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_indexed_presented_pso_manifest")
     if not indirect_pso:
         errors.append("missing_indirect_presented_pso_manifest")
+    if not nanite_pso:
+        errors.append("missing_nanite_cluster_presented_pso_manifest")
     if indirect_pso and indexed_pso and indirect_pso.get("manifest") == indexed_pso.get("manifest"):
         errors.append("indirect_pso_manifest_reused_indexed_manifest")
     if textured_3d_pso and srv_pso and textured_3d_pso.get("manifest") == srv_pso.get("manifest"):
         errors.append("textured_3d_pso_manifest_reused_srv_sample_manifest")
+    if nanite_pso and indirect_pso and nanite_pso.get("manifest") == indirect_pso.get("manifest"):
+        errors.append("nanite_cluster_pso_manifest_reused_indirect_manifest")
     if textured_3d_pso:
         if textured_3d_pso.get("depth_format") != "depth32float":
             errors.append("textured_3d_pso_missing_depth32float")
@@ -1268,6 +1294,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ("cbv_sample", cbv_pso),
         ("indexed_draw", indexed_pso),
         ("indirect_draw", indirect_pso),
+        ("nanite_cluster", nanite_pso),
     ]:
         if not pso:
             continue
@@ -1301,9 +1328,16 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
                 "referenced": referenced_records,
                 "required_msl_hashes": [dxil_vs, dxil_ps],
             }
-        elif name in ("sm5", "corpus", "srv_sample", "textured_3d", "cbv_sample", "indexed_draw", "indirect_draw") and all(
-            path.exists() and path.stat().st_size > 0 for path in sm5_metallibs
-        ):
+        elif name in (
+            "sm5",
+            "corpus",
+            "srv_sample",
+            "textured_3d",
+            "cbv_sample",
+            "indexed_draw",
+            "indirect_draw",
+            "nanite_cluster",
+        ) and all(path.exists() and path.stat().st_size > 0 for path in sm5_metallibs):
             metallib_policy[name] = {
                 "ok": True,
                 "policy": "runtime_sm5_metallib_files_present",
@@ -1333,6 +1367,8 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and len(indexed_unique_draws) == 1
         and len(indirect_draws) >= presented_log_required
         and len(indirect_unique_draws) == 1
+        and len(nanite_draws) >= presented_log_required
+        and len(nanite_unique_draws) == 1
     )
     if not present_tie_ok:
         errors.append("insufficient_presented_shader_hash_logs")
@@ -1395,6 +1431,13 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "unique_pairs": [[vs, ps] for vs, ps in indirect_unique_draws],
             "vertices": indirect_vertices,
         },
+        "nanite_cluster_presented_hashes": {
+            "vs": nanite_vs,
+            "ps": nanite_ps,
+            "logged_draws": len(nanite_draws),
+            "unique_pairs": [[vs, ps] for vs, ps in nanite_unique_draws],
+            "vertices": nanite_vertices,
+        },
         "presented_log_required": presented_log_required,
         "textured_3d_presented_log_required": textured_3d_presented_log_required,
         "present_tie_ok": present_tie_ok,
@@ -1408,6 +1451,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         "cbv_sample_pso_manifest": cbv_pso,
         "indexed_pso_manifest": indexed_pso,
         "indirect_pso_manifest": indirect_pso,
+        "nanite_cluster_pso_manifest": nanite_pso,
         "waveops_compute_pso_manifest": waveops_compute_pso,
         "waveops_compute_hash": waveops_cs_hash,
         "waveops_msl": cache_file_record(waveops_msl) if waveops_cs_hash else {},
@@ -1561,6 +1605,10 @@ def run_fresh_game(
         re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=24\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=24\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
+    nanite_cluster_draw_skipped = bool(
+        re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=6\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=6\s+i=1", diagnostic_log_text,
+                  re.IGNORECASE)
+    )
     textured_3d_draw_skipped = bool(
         re.search(r"M12 swapchain DrawInstanced skipped v=33\s+i=1|DrawInstanced\s+SKIPPED\s+v=33\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
@@ -1586,6 +1634,7 @@ def run_fresh_game(
     cbv_sample_json = d3d12_json.get("cbv_sample", {}) if d3d12_json else {}
     indexed_draw_json = d3d12_json.get("indexed_draw", {}) if d3d12_json else {}
     indirect_draw_json = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
+    nanite_cluster_json = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, diagnostic_log_text, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
@@ -1595,6 +1644,7 @@ def run_fresh_game(
     cbv_sample_expected_rgba = [208, 48, 160, 255]
     indexed_draw_expected_rgba = [240, 200, 48, 255]
     indirect_draw_expected_rgba = [80, 224, 240, 255]
+    nanite_cluster_expected_rgba = [176, 112, 232, 255]
     textured_3d_expected_rgba = [[232, 48, 56, 255], [48, 224, 96, 255], [64, 120, 240, 255]]
     textured_3d_faces = textured_3d_json.get("faces", []) if isinstance(textured_3d_json, dict) else []
     textured_3d_face_provenance = validate_textured_3d_face_provenance(corpus_tsv, textured_3d_faces)
@@ -2021,6 +2071,50 @@ def run_fresh_game(
         and indirect_draw_json.get("expected_rgba") == indirect_draw_expected_rgba
         and indirect_draw_json.get("present_rgba") == indirect_draw_expected_rgba
         and indirect_draw_json.get("present_last_rgba") == indirect_draw_expected_rgba
+        and nanite_cluster_json.get("ok") is True
+        and nanite_cluster_json.get("present_ok") is True
+        and nanite_cluster_json.get("proof_scope") == "nanite_style_compute_generated_args_readback_mirrored_execute_indirect_presented"
+        and nanite_cluster_json.get("D3DCompile_loaded") is True
+        and nanite_cluster_json.get("nanite_cull_cs_cs_5_0") == "0x00000000"
+        and nanite_cluster_json.get("nanite_vs_vs_5_0") == "0x00000000"
+        and nanite_cluster_json.get("nanite_ps_ps_5_0") == "0x00000000"
+        and nanite_cluster_json.get("D3D12SerializeRootSignature_compute_uav") == "0x00000000"
+        and nanite_cluster_json.get("D3D12SerializeRootSignature_graphics") == "0x00000000"
+        and nanite_cluster_json.get("CreateComputeRootSignature") == "0x00000000"
+        and nanite_cluster_json.get("CreateGraphicsRootSignature") == "0x00000000"
+        and nanite_cluster_json.get("CreateComputePipelineState") == "0x00000000"
+        and nanite_cluster_json.get("CreateGraphicsPipelineState") == "0x00000000"
+        and nanite_cluster_json.get("CreateVertexBuffer") == "0x00000000"
+        and nanite_cluster_json.get("CreateArgumentBuffer_UAV") == "0x00000000"
+        and nanite_cluster_json.get("CreateArgumentReadback") == "0x00000000"
+        and nanite_cluster_json.get("CreateIndirectArgumentUpload") == "0x00000000"
+        and nanite_cluster_json.get("CreateCommandSignature") == "0x00000000"
+        and nanite_cluster_json.get("CloseCommandList") == "0x00000000"
+        and nanite_cluster_json.get("SignalFence") == "0x00000000"
+        and nanite_cluster_json.get("MapReadback") == "0x00000000"
+        and int(nanite_cluster_json.get("argument_gpu_virtual_address", 0) or 0) != 0
+        and int(nanite_cluster_json.get("indirect_argument_gpu_virtual_address", 0) or 0) != 0
+        and int(nanite_cluster_json.get("vertices_created", 0) or 0) == 6
+        and int(nanite_cluster_json.get("argument_byte_stride", 0) or 0) == 16
+        and int(nanite_cluster_json.get("command_signature_arguments", 0) or 0) == 1
+        and int(nanite_cluster_json.get("max_command_count", 0) or 0) == 1
+        and int(nanite_cluster_json.get("dispatch_commands", 0) or 0) == 1
+        and int(nanite_cluster_json.get("uav_barriers", 0) or 0) == 1
+        and int(nanite_cluster_json.get("copy_argument_readback_commands", 0) or 0) == 1
+        and int(nanite_cluster_json.get("transition_to_copy_barriers", 0) or 0) == 1
+        and int(nanite_cluster_json.get("transition_to_indirect_barriers", 0) or 0) == 1
+        and nanite_cluster_json.get("computed_draw_args") == [6, 1, 0, 0]
+        and nanite_cluster_json.get("argument_readback_ok") is True
+        and nanite_cluster_json.get("indirect_argument_upload_filled") is True
+        and int(nanite_cluster_json.get("execute_indirect_calls", 0) or 0) == visible_frames
+        and int(nanite_cluster_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(nanite_cluster_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(nanite_cluster_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(nanite_cluster_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and nanite_cluster_json.get("expected_rgba") == nanite_cluster_expected_rgba
+        and nanite_cluster_json.get("present_rgba") == nanite_cluster_expected_rgba
+        and nanite_cluster_json.get("present_last_rgba") == nanite_cluster_expected_rgba
+        and nanite_cluster_json.get("fence_wait_ok") is True
     )
     pso_ptr_pattern = r"(?:0x)?[0-9a-fA-F]+"
     async_scheduled_matches = re.findall(rf"PSO async compile scheduled pso=({pso_ptr_pattern}) compute=(\d)", diagnostic_log_text)
@@ -2085,13 +2179,14 @@ def run_fresh_game(
         "present_indirect_counts": present_indirect_counts,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
         "dxil_draw_encoded_required": min(frames_presented, 6),
-        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect encoded logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=1, indirect>=1, and all JSON/readback lanes to pass.",
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect encoded logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=1, indirect>=2, and all JSON/readback lanes to pass.",
         "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
         "dxil_vertex_pull_snapshot_required": min(frames_presented, 4),
         "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, bound_vbs=1, plus per-frame JSON/readback validation.",
         "dxil_draw_skipped": dxil_draw_skipped,
         "indexed_draw_skipped": indexed_draw_skipped,
         "indirect_draw_skipped": indirect_draw_skipped,
+        "nanite_cluster_draw_skipped": nanite_cluster_draw_skipped,
         "textured_3d_draw_skipped": textured_3d_draw_skipped,
         "textured_3d_ok": textured_3d_ok,
         "textured_3d_face_provenance": textured_3d_face_provenance,
@@ -2114,12 +2209,13 @@ def run_fresh_game(
         and len(present_indirect_counts) == frames_presented
         and all(draws >= 6 for draws in present_draw_counts)
         and all(indexed >= 1 for indexed in present_indexed_counts)
-        and all(indirect >= 1 for indirect in present_indirect_counts)
+        and all(indirect >= 2 for indirect in present_indirect_counts)
         and dxil_draw_encoded_count >= min(frames_presented, 6)
         and dxil_vertex_pull_snapshot_count >= min(frames_presented, 4)
         and not dxil_draw_skipped
         and not indexed_draw_skipped
         and not indirect_draw_skipped
+        and not nanite_cluster_draw_skipped
         and not textured_3d_draw_skipped
         and not render_encoder_encode_failed
         and draw_line_count >= visible_frames

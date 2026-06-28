@@ -69,6 +69,8 @@ constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
 constexpr UINT kWaveOpsStampX = 344;
 constexpr UINT kWaveOpsStampY = 24;
+constexpr UINT kNaniteClusterStampX = 376;
+constexpr UINT kNaniteClusterStampY = 24;
 constexpr UINT kTextured3DFaceCount = 3;
 constexpr UINT kTextured3DVertexCount = 33;
 constexpr UINT kTextured3DDepthSampleX = 704;
@@ -2480,6 +2482,342 @@ static void destroy_indirect_draw_scene(IndirectDrawSceneResources& scene) {
     safe_release(scene.root_signature);
 }
 
+struct NaniteClusterStats {
+    bool d3dcompiler_loaded = false;
+    HRESULT compile_cs_hr = E_FAIL;
+    HRESULT compile_vs_hr = E_FAIL;
+    HRESULT compile_ps_hr = E_FAIL;
+    HRESULT serialize_compute_root_hr = E_FAIL;
+    HRESULT serialize_graphics_root_hr = E_FAIL;
+    HRESULT create_compute_root_hr = E_FAIL;
+    HRESULT create_graphics_root_hr = E_FAIL;
+    HRESULT create_compute_pso_hr = E_FAIL;
+    HRESULT create_graphics_pso_hr = E_FAIL;
+    HRESULT create_vertex_buffer_hr = E_FAIL;
+    HRESULT create_argument_buffer_hr = E_FAIL;
+    HRESULT create_argument_readback_hr = E_FAIL;
+    HRESULT create_indirect_argument_upload_hr = E_FAIL;
+    HRESULT create_command_signature_hr = E_FAIL;
+    HRESULT close_hr = E_FAIL;
+    HRESULT signal_hr = E_FAIL;
+    HRESULT map_readback_hr = E_FAIL;
+    D3D12_GPU_VIRTUAL_ADDRESS argument_gpu_virtual_address = 0;
+    D3D12_GPU_VIRTUAL_ADDRESS indirect_argument_gpu_virtual_address = 0;
+    uint32_t vertices_created = 0;
+    uint32_t argument_byte_stride = sizeof(D3D12_DRAW_ARGUMENTS);
+    uint32_t command_signature_arguments = 1;
+    uint32_t max_command_count = 1;
+    uint32_t dispatch_commands = 0;
+    uint32_t uav_barriers = 0;
+    uint32_t copy_argument_readback_commands = 0;
+    uint32_t transition_to_copy_barriers = 0;
+    uint32_t transition_to_indirect_barriers = 0;
+    uint32_t computed_vertex_count = 0;
+    uint32_t computed_instance_count = 0;
+    uint32_t computed_start_vertex = 0xffffffffu;
+    uint32_t computed_start_instance = 0xffffffffu;
+    uint32_t execute_indirect_calls = 0;
+    uint32_t present_samples_checked = 0;
+    uint32_t present_sample_matches = 0;
+    uint32_t present_pixels_checked = 0;
+    uint32_t present_pixel_matches = 0;
+    uint8_t expected_rgba[4] = {176, 112, 232, 255};
+    uint8_t present_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool argument_readback_ok = false;
+    bool indirect_argument_upload_filled = false;
+    bool fence_wait_ok = false;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct NaniteClusterSceneResources {
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12Resource* vertex_buffer = nullptr;
+    ID3D12Resource* argument_buffer = nullptr;
+    ID3D12Resource* indirect_argument_buffer = nullptr;
+    ID3D12CommandSignature* command_signature = nullptr;
+    D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    NaniteClusterStats stats;
+};
+
+static void nanite_cluster_expected_rgba(uint8_t out[4]) {
+    out[0] = 176;
+    out[1] = 112;
+    out[2] = 232;
+    out[3] = 255;
+}
+
+static NaniteClusterSceneResources
+create_nanite_cluster_scene(ID3D12Device* device, D3DCompileFn compile, SerializeRootSignatureFn serialize,
+                            ID3D12CommandQueue* queue, ID3D12CommandAllocator* allocator,
+                            ID3D12GraphicsCommandList* list, ID3D12Fence* fence, HANDLE fence_event,
+                            UINT64& fence_value, UINT backbuffer_width, UINT backbuffer_height) {
+    NaniteClusterSceneResources scene;
+    NaniteClusterStats& stats = scene.stats;
+    stats.d3dcompiler_loaded = compile != nullptr;
+    nanite_cluster_expected_rgba(stats.expected_rgba);
+    if (!device || !compile || !serialize || !queue || !allocator || !list || !fence || !fence_event)
+        return scene;
+
+    static const char* kNaniteClusterHlsl = R"HLSL(
+RWStructuredBuffer<uint> DrawArgs : register(u0);
+[numthreads(1, 1, 1)]
+void nanite_cull_cs(uint3 tid : SV_DispatchThreadID) {
+    DrawArgs[0] = 6u;
+    DrawArgs[1] = 1u;
+    DrawArgs[2] = 0u;
+    DrawArgs[3] = 0u;
+}
+struct VSIn { float3 pos : POSITION; float4 color : COLOR0; };
+struct PSIn { float4 pos : SV_Position; float4 color : COLOR0; };
+PSIn nanite_vs(VSIn input) {
+    PSIn output;
+    output.pos = float4(input.pos, 1.0f);
+    output.color = input.color;
+    return output;
+}
+float4 nanite_ps(PSIn input) : SV_Target {
+    float guard = input.pos.w < 0.0f ? (1.0f / 255.0f) : 0.0f;
+    return saturate(input.color + float4(guard, 0.0f, 0.0f, 0.0f));
+}
+)HLSL";
+
+    ID3DBlob* cs = nullptr;
+    ID3DBlob* vs = nullptr;
+    ID3DBlob* ps = nullptr;
+    stats.compile_cs_hr = compile_shader(compile, kNaniteClusterHlsl, "nanite_cull_cs", "cs_5_0", &cs);
+    stats.compile_vs_hr = compile_shader(compile, kNaniteClusterHlsl, "nanite_vs", "vs_5_0", &vs);
+    stats.compile_ps_hr = compile_shader(compile, kNaniteClusterHlsl, "nanite_ps", "ps_5_0", &ps);
+
+    D3D12_ROOT_PARAMETER compute_root_params[1] = {};
+    compute_root_params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV;
+    compute_root_params[0].Descriptor.ShaderRegister = 0;
+    compute_root_params[0].Descriptor.RegisterSpace = 0;
+    compute_root_params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    D3D12_ROOT_SIGNATURE_DESC compute_root_desc = {};
+    compute_root_desc.NumParameters = 1;
+    compute_root_desc.pParameters = compute_root_params;
+    compute_root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    ID3DBlob* compute_root_blob = nullptr;
+    stats.serialize_compute_root_hr = serialize_root_signature(serialize, compute_root_desc, &compute_root_blob);
+
+    D3D12_ROOT_SIGNATURE_DESC graphics_root_desc = {};
+    graphics_root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* graphics_root_blob = nullptr;
+    stats.serialize_graphics_root_hr = serialize_root_signature(serialize, graphics_root_desc, &graphics_root_blob);
+
+    ID3D12RootSignature* compute_root_signature = nullptr;
+    ID3D12PipelineState* compute_pipeline_state = nullptr;
+    if (compute_root_blob) {
+        stats.create_compute_root_hr = device->CreateRootSignature(
+            0, compute_root_blob->GetBufferPointer(), compute_root_blob->GetBufferSize(),
+            IID_PPV_ARGS(&compute_root_signature));
+    }
+    if (graphics_root_blob) {
+        stats.create_graphics_root_hr = device->CreateRootSignature(
+            0, graphics_root_blob->GetBufferPointer(), graphics_root_blob->GetBufferSize(),
+            IID_PPV_ARGS(&scene.root_signature));
+    }
+    if (compute_root_signature && cs) {
+        D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = compute_root_signature;
+        pso_desc.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
+        stats.create_compute_pso_hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&compute_pipeline_state));
+    }
+    if (scene.root_signature && vs && ps) {
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = scene.root_signature;
+        pso_desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso_desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso_desc.InputLayout = {input_elements, 2};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        stats.create_graphics_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+    }
+
+    D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+    D3D12_RESOURCE_DESC vb_desc = buffer_desc(6u * sizeof(ColorVertex));
+    stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
+                                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                    IID_PPV_ARGS(&scene.vertex_buffer));
+    if (SUCCEEDED(stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
+        ColorVertex* mapped = nullptr;
+        if (SUCCEEDED(scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
+            const float draw_x0 = static_cast<float>(kNaniteClusterStampX) - 1.0f;
+            const float draw_y0 = static_cast<float>(kNaniteClusterStampY) - 1.0f;
+            const float draw_x1 = static_cast<float>(kNaniteClusterStampX + kFreshTextureWidth) + 1.0f;
+            const float draw_y1 = static_cast<float>(kNaniteClusterStampY + kFreshTextureHeight) + 1.0f;
+            const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
+            const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
+            const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
+            const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
+            const float r = static_cast<float>(stats.expected_rgba[0]) / 255.0f;
+            const float g = static_cast<float>(stats.expected_rgba[1]) / 255.0f;
+            const float b = static_cast<float>(stats.expected_rgba[2]) / 255.0f;
+            const float a = static_cast<float>(stats.expected_rgba[3]) / 255.0f;
+            const ColorVertex quad[6] = {
+                {{x0, y1, 0.02f}, {r, g, b, a}}, {{x1, y1, 0.02f}, {r, g, b, a}},
+                {{x0, y0, 0.02f}, {r, g, b, a}}, {{x0, y0, 0.02f}, {r, g, b, a}},
+                {{x1, y1, 0.02f}, {r, g, b, a}}, {{x1, y0, 0.02f}, {r, g, b, a}}};
+            std::memcpy(mapped, quad, sizeof(quad));
+            D3D12_RANGE written = {0, sizeof(quad)};
+            scene.vertex_buffer->Unmap(0, &written);
+            stats.vertices_created = 6;
+        }
+        scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
+        scene.vertex_view.SizeInBytes = 6u * sizeof(ColorVertex);
+        scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
+    }
+
+    D3D12_HEAP_PROPERTIES default_heap = heap_props(D3D12_HEAP_TYPE_DEFAULT);
+    D3D12_HEAP_PROPERTIES readback_heap = heap_props(D3D12_HEAP_TYPE_READBACK);
+    D3D12_RESOURCE_DESC arg_desc = buffer_desc(256u, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+    D3D12_RESOURCE_DESC readback_desc = buffer_desc(256u);
+    D3D12_RESOURCE_DESC indirect_upload_desc = buffer_desc(sizeof(D3D12_DRAW_ARGUMENTS));
+    ID3D12Resource* argument_readback = nullptr;
+    stats.create_argument_buffer_hr = device->CreateCommittedResource(
+        &default_heap, D3D12_HEAP_FLAG_NONE, &arg_desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+        IID_PPV_ARGS(&scene.argument_buffer));
+    stats.create_argument_readback_hr = device->CreateCommittedResource(
+        &readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+        IID_PPV_ARGS(&argument_readback));
+    stats.create_indirect_argument_upload_hr = device->CreateCommittedResource(
+        &upload_heap, D3D12_HEAP_FLAG_NONE, &indirect_upload_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+        IID_PPV_ARGS(&scene.indirect_argument_buffer));
+    if (scene.argument_buffer)
+        stats.argument_gpu_virtual_address = scene.argument_buffer->GetGPUVirtualAddress();
+    if (scene.indirect_argument_buffer)
+        stats.indirect_argument_gpu_virtual_address = scene.indirect_argument_buffer->GetGPUVirtualAddress();
+
+    D3D12_INDIRECT_ARGUMENT_DESC indirect_arg = {};
+    indirect_arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW;
+    D3D12_COMMAND_SIGNATURE_DESC signature_desc = {};
+    signature_desc.ByteStride = sizeof(D3D12_DRAW_ARGUMENTS);
+    signature_desc.NumArgumentDescs = 1;
+    signature_desc.pArgumentDescs = &indirect_arg;
+    stats.create_command_signature_hr =
+        device->CreateCommandSignature(&signature_desc, nullptr, IID_PPV_ARGS(&scene.command_signature));
+
+    bool submitted_work = false;
+    if (compute_pipeline_state && compute_root_signature && scene.argument_buffer && argument_readback &&
+        SUCCEEDED(allocator->Reset()) && SUCCEEDED(list->Reset(allocator, nullptr))) {
+        list->SetComputeRootSignature(compute_root_signature);
+        list->SetPipelineState(compute_pipeline_state);
+        list->SetComputeRootUnorderedAccessView(0, scene.argument_buffer->GetGPUVirtualAddress());
+        list->Dispatch(1, 1, 1);
+        stats.dispatch_commands++;
+        D3D12_RESOURCE_BARRIER uav = uav_resource_barrier(scene.argument_buffer);
+        list->ResourceBarrier(1, &uav);
+        stats.uav_barriers++;
+        D3D12_RESOURCE_BARRIER to_copy = transition_barrier(
+            scene.argument_buffer, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &to_copy);
+        stats.transition_to_copy_barriers++;
+        list->CopyBufferRegion(argument_readback, 0, scene.argument_buffer, 0, sizeof(D3D12_DRAW_ARGUMENTS));
+        stats.copy_argument_readback_commands++;
+        D3D12_RESOURCE_BARRIER to_indirect = transition_barrier(
+            scene.argument_buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+        list->ResourceBarrier(1, &to_indirect);
+        stats.transition_to_indirect_barriers++;
+        stats.close_hr = list->Close();
+        if (SUCCEEDED(stats.close_hr)) {
+            ID3D12CommandList* base = list;
+            queue->ExecuteCommandLists(1, &base);
+            submitted_work = true;
+            fence_value++;
+            stats.signal_hr = queue->Signal(fence, fence_value);
+            stats.fence_wait_ok = SUCCEEDED(stats.signal_hr) && wait_for_fence(fence, fence_value, fence_event);
+        }
+    }
+    if (submitted_work && !stats.fence_wait_ok) {
+        std::fflush(stdout);
+        TerminateProcess(GetCurrentProcess(), 2u);
+    }
+
+    if (argument_readback && stats.fence_wait_ok) {
+        uint32_t* mapped = nullptr;
+        D3D12_RANGE read_range = {0, sizeof(D3D12_DRAW_ARGUMENTS)};
+        stats.map_readback_hr = argument_readback->Map(0, &read_range, reinterpret_cast<void**>(&mapped));
+        if (SUCCEEDED(stats.map_readback_hr) && mapped) {
+            stats.computed_vertex_count = mapped[0];
+            stats.computed_instance_count = mapped[1];
+            stats.computed_start_vertex = mapped[2];
+            stats.computed_start_instance = mapped[3];
+            stats.argument_readback_ok = stats.computed_vertex_count == 6u && stats.computed_instance_count == 1u &&
+                                         stats.computed_start_vertex == 0u && stats.computed_start_instance == 0u;
+            D3D12_RANGE written = {0, 0};
+            argument_readback->Unmap(0, &written);
+        }
+    }
+    if (stats.argument_readback_ok && scene.indirect_argument_buffer) {
+        D3D12_DRAW_ARGUMENTS* mapped = nullptr;
+        if (SUCCEEDED(scene.indirect_argument_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
+            mapped->VertexCountPerInstance = stats.computed_vertex_count;
+            mapped->InstanceCount = stats.computed_instance_count;
+            mapped->StartVertexLocation = stats.computed_start_vertex;
+            mapped->StartInstanceLocation = stats.computed_start_instance;
+            D3D12_RANGE written = {0, sizeof(D3D12_DRAW_ARGUMENTS)};
+            scene.indirect_argument_buffer->Unmap(0, &written);
+            stats.indirect_argument_upload_filled = true;
+        }
+    }
+
+    stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_cs_hr) && SUCCEEDED(stats.compile_vs_hr) &&
+                 SUCCEEDED(stats.compile_ps_hr) && SUCCEEDED(stats.serialize_compute_root_hr) &&
+                 SUCCEEDED(stats.serialize_graphics_root_hr) && SUCCEEDED(stats.create_compute_root_hr) &&
+                 SUCCEEDED(stats.create_graphics_root_hr) && SUCCEEDED(stats.create_compute_pso_hr) &&
+                 SUCCEEDED(stats.create_graphics_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
+                 SUCCEEDED(stats.create_argument_buffer_hr) && SUCCEEDED(stats.create_argument_readback_hr) &&
+                 SUCCEEDED(stats.create_indirect_argument_upload_hr) && SUCCEEDED(stats.create_command_signature_hr) &&
+                 stats.argument_gpu_virtual_address != 0 && stats.indirect_argument_gpu_virtual_address != 0 &&
+                 stats.vertices_created == 6 && stats.argument_byte_stride == 16 &&
+                 stats.command_signature_arguments == 1 && stats.max_command_count == 1 &&
+                 stats.dispatch_commands == 1 && stats.uav_barriers == 1 &&
+                 stats.copy_argument_readback_commands == 1 && stats.transition_to_copy_barriers == 1 &&
+                 stats.transition_to_indirect_barriers == 1 && SUCCEEDED(stats.close_hr) &&
+                 SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok && SUCCEEDED(stats.map_readback_hr) &&
+                 stats.argument_readback_ok && stats.indirect_argument_upload_filled && scene.root_signature &&
+                 scene.pipeline_state && scene.vertex_buffer && scene.argument_buffer && scene.indirect_argument_buffer &&
+                 scene.command_signature && scene.vertex_view.BufferLocation != 0;
+    if (!stats.pass) {
+        safe_release(scene.indirect_argument_buffer);
+        safe_release(scene.argument_buffer);
+    }
+    safe_release(argument_readback);
+    safe_release(compute_pipeline_state);
+    safe_release(compute_root_signature);
+    safe_release(cs);
+    safe_release(vs);
+    safe_release(ps);
+    safe_release(compute_root_blob);
+    safe_release(graphics_root_blob);
+    return scene;
+}
+
+static void destroy_nanite_cluster_scene(NaniteClusterSceneResources& scene) {
+    safe_release(scene.command_signature);
+    safe_release(scene.indirect_argument_buffer);
+    safe_release(scene.argument_buffer);
+    safe_release(scene.vertex_buffer);
+    safe_release(scene.pipeline_state);
+    safe_release(scene.root_signature);
+}
+
 struct DxilSceneStats {
     std::string vs_path;
     std::string ps_path;
@@ -2637,6 +2975,7 @@ static uint8_t* readback_center_pixel(DxilReadbackResources& readback, uint8_t* 
 
 static void heap_alias_expected_rgba(uint8_t out[4]);
 static void uav_barrier_expected_rgba(UINT x, UINT y, uint8_t out[4]);
+static void nanite_cluster_expected_rgba(uint8_t out[4]);
 static void rtv_format_expected_rgba(uint8_t out[4]);
 static void render_pass_expected_rgba(uint8_t out[4]);
 static void corpus_shader_expected_rgba(uint8_t out[4]);
@@ -2775,6 +3114,18 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
             indirect_pixel[3] = static_cast<uint8_t>(indirect_expected[3] ^ 0xffu);
         }
     }
+    uint8_t* nanite_stamp = readback_pixel(readback, mapped, kNaniteClusterStampX, kNaniteClusterStampY);
+    uint8_t nanite_expected[4] = {};
+    nanite_cluster_expected_rgba(nanite_expected);
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            uint8_t* nanite_pixel = readback_pixel(readback, mapped, kNaniteClusterStampX + x, kNaniteClusterStampY + y);
+            nanite_pixel[0] = static_cast<uint8_t>(nanite_expected[0] ^ 0xffu);
+            nanite_pixel[1] = static_cast<uint8_t>(nanite_expected[1] ^ 0xffu);
+            nanite_pixel[2] = static_cast<uint8_t>(nanite_expected[2] ^ 0xffu);
+            nanite_pixel[3] = static_cast<uint8_t>(nanite_expected[3] ^ 0xffu);
+        }
+    }
     uint8_t* sm5_stamp = readback_pixel(readback, mapped, kSm5StampX, kSm5StampY);
     uint8_t sm5_expected[4] = {};
     sm5_expected_stamp_rgba(frame, sm5_expected);
@@ -2859,6 +3210,10 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     const uint8_t* indirect_stamp_last = readback_pixel(readback, mapped, kIndirectStampX + kFreshTextureWidth - 1u,
                                                         kIndirectStampY + kFreshTextureHeight - 1u);
     const size_t indirect_stamp_last_offset = static_cast<size_t>(indirect_stamp_last - mapped);
+    const size_t nanite_stamp_offset = static_cast<size_t>(nanite_stamp - mapped);
+    const uint8_t* nanite_stamp_last = readback_pixel(readback, mapped, kNaniteClusterStampX + kFreshTextureWidth - 1u,
+                                                      kNaniteClusterStampY + kFreshTextureHeight - 1u);
+    const size_t nanite_stamp_last_offset = static_cast<size_t>(nanite_stamp_last - mapped);
     const size_t sm5_stamp_offset = static_cast<size_t>(sm5_stamp - mapped);
     const size_t stamp_offset = static_cast<size_t>(stamp - mapped);
     size_t min_written_offset = std::min({center_offset,
@@ -2881,6 +3236,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
                                           indexed_stamp_last_offset,
                                           indirect_stamp_offset,
                                           indirect_stamp_last_offset,
+                                          nanite_stamp_offset,
+                                          nanite_stamp_last_offset,
                                           sm5_stamp_offset,
                                           stamp_offset});
     size_t max_written_offset = std::max({center_offset,
@@ -2903,6 +3260,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
                                           indexed_stamp_last_offset,
                                           indirect_stamp_offset,
                                           indirect_stamp_last_offset,
+                                          nanite_stamp_offset,
+                                          nanite_stamp_last_offset,
                                           sm5_stamp_offset,
                                           stamp_offset});
     for (UINT face = 0; face < kTextured3DFaceCount; ++face) {
@@ -4220,6 +4579,39 @@ static bool inspect_wave_ops_stamp(DxilReadbackResources& readback, WaveOpsStats
     return matches;
 }
 
+static bool inspect_nanite_cluster_stamp(DxilReadbackResources& readback, NaniteClusterStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+    const uint8_t* first = readback_pixel(readback, mapped, kNaniteClusterStampX, kNaniteClusterStampY);
+    std::memcpy(stats.present_rgba, first, sizeof(stats.present_rgba));
+    const uint8_t* last = readback_pixel(readback, mapped, kNaniteClusterStampX + kFreshTextureWidth - 1u,
+                                         kNaniteClusterStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
+    stats.present_samples_checked++;
+    uint32_t frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kNaniteClusterStampX + x, kNaniteClusterStampY + y);
+            stats.present_pixels_checked++;
+            if (pixel[0] == stats.expected_rgba[0] && pixel[1] == stats.expected_rgba[1] &&
+                pixel[2] == stats.expected_rgba[2] && pixel[3] == stats.expected_rgba[3]) {
+                stats.present_pixel_matches++;
+                frame_matches++;
+            }
+        }
+    }
+    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+    if (matches)
+        stats.present_sample_matches++;
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return matches;
+}
+
 static bool inspect_rtv_format_stamp(DxilReadbackResources& readback, RtvFormatStats& stats) {
     if (!readback.buffer)
         return false;
@@ -4681,6 +5073,7 @@ struct D3DRunStats {
     CbvSampleStats cbv_sample;
     IndexedDrawStats indexed_draw;
     IndirectDrawStats indirect_draw;
+    NaniteClusterStats nanite_cluster;
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
     DxilReadbackStats dxil_readback;
@@ -4865,11 +5258,16 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     IndirectDrawSceneResources indirect_draw =
         create_indirect_draw_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.indirect_draw = indirect_draw.stats;
+    NaniteClusterSceneResources nanite_cluster = create_nanite_cluster_scene(
+        device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value, backbuffer_width,
+        backbuffer_height);
+    stats.nanite_cluster = nanite_cluster.stats;
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
         dxil_scene.stats.pass && corpus_shader.stats.pass && srv_sample.stats.pass && textured_3d.stats.pass &&
-        cbv_sample.stats.pass && indexed_draw.stats.pass && indirect_draw.stats.pass && wave_ops.stats.pass) {
+        cbv_sample.stats.pass && indexed_draw.stats.pass && indirect_draw.stats.pass && nanite_cluster.stats.pass &&
+        wave_ops.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -4955,6 +5353,13 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->ExecuteIndirect(indirect_draw.command_signature, indirect_draw.stats.max_command_count,
                                   indirect_draw.argument_buffer, 0, nullptr, 0);
             stats.indirect_draw.execute_indirect_calls++;
+            list->SetGraphicsRootSignature(nanite_cluster.root_signature);
+            list->SetPipelineState(nanite_cluster.pipeline_state);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &nanite_cluster.vertex_view);
+            list->ExecuteIndirect(nanite_cluster.command_signature, nanite_cluster.stats.max_command_count,
+                                  nanite_cluster.indirect_argument_buffer, 0, nullptr, 0);
+            stats.nanite_cluster.execute_indirect_calls++;
             D3D12_RESOURCE_STATES backbuffer_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
             if (gpu_textures.present_texture && gpu_textures.present_sentinel_upload) {
                 auto backbuffer_to_copy_dest =
@@ -5137,6 +5542,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_indirect_draw_stamp(dxil_readback, stats.indirect_draw))
                 break;
+            if (!inspect_nanite_cluster_stamp(dxil_readback, stats.nanite_cluster))
+                break;
             if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
@@ -5229,6 +5636,11 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indirect_draw.present_sample_matches == visible_frame_target &&
         stats.indirect_draw.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indirect_draw.present_pixel_matches == stats.indirect_draw.present_pixels_checked;
+    stats.nanite_cluster.present_pass =
+        stats.nanite_cluster.present_samples_checked == visible_frame_target &&
+        stats.nanite_cluster.present_sample_matches == visible_frame_target &&
+        stats.nanite_cluster.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.nanite_cluster.present_pixel_matches == stats.nanite_cluster.present_pixels_checked;
     stats.abi_semantics.validated_frames = stats.frames_presented;
     stats.abi_semantics.present_tie_ok = stats.frames_presented == visible_frame_target;
     stats.abi_semantics.pass = stats.abi_semantics.guid_constants_ok && stats.abi_semantics.query_interface_ok &&
@@ -5255,7 +5667,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
         stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.indirect_draw.pass &&
         stats.indirect_draw.present_pass && stats.indirect_draw.execute_indirect_calls == visible_frame_target &&
-        stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
+        stats.nanite_cluster.pass && stats.nanite_cluster.present_pass &&
+        stats.nanite_cluster.execute_indirect_calls == visible_frame_target && stats.visible_scene.pass &&
+        stats.visible_scene.sm5_stamp_present_pass &&
         stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
         stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
         SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
@@ -5272,6 +5686,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     destroy_cbv_sample_scene(cbv_sample);
     destroy_indexed_draw_scene(indexed_draw);
     destroy_indirect_draw_scene(indirect_draw);
+    destroy_nanite_cluster_scene(nanite_cluster);
     destroy_dxil_readback(dxil_readback);
     destroy_corpus_shader_scene(corpus_shader);
     destroy_dxil_scene(dxil_scene);
@@ -5960,6 +6375,74 @@ int main() {
                 d3d.indirect_draw.present_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.indirect_draw.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.indirect_draw.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"nanite_cluster\": {\n");
+    std::printf("      \"proof_scope\": \"nanite_style_compute_generated_args_readback_mirrored_execute_indirect_presented\",\n");
+    std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.nanite_cluster.d3dcompiler_loaded ? "true" : "false");
+    std::printf("      \"nanite_cull_cs_cs_5_0\": \"%s\",\n", hr_hex(d3d.nanite_cluster.compile_cs_hr).c_str());
+    std::printf("      \"nanite_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.nanite_cluster.compile_vs_hr).c_str());
+    std::printf("      \"nanite_ps_ps_5_0\": \"%s\",\n", hr_hex(d3d.nanite_cluster.compile_ps_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature_compute_uav\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.serialize_compute_root_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature_graphics\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.serialize_graphics_root_hr).c_str());
+    std::printf("      \"CreateComputeRootSignature\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_compute_root_hr).c_str());
+    std::printf("      \"CreateGraphicsRootSignature\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_graphics_root_hr).c_str());
+    std::printf("      \"CreateComputePipelineState\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_compute_pso_hr).c_str());
+    std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_graphics_pso_hr).c_str());
+    std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.nanite_cluster.create_vertex_buffer_hr).c_str());
+    std::printf("      \"CreateArgumentBuffer_UAV\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_argument_buffer_hr).c_str());
+    std::printf("      \"CreateArgumentReadback\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_argument_readback_hr).c_str());
+    std::printf("      \"CreateIndirectArgumentUpload\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_indirect_argument_upload_hr).c_str());
+    std::printf("      \"CreateCommandSignature\": \"%s\",\n",
+                hr_hex(d3d.nanite_cluster.create_command_signature_hr).c_str());
+    std::printf("      \"CloseCommandList\": \"%s\",\n", hr_hex(d3d.nanite_cluster.close_hr).c_str());
+    std::printf("      \"SignalFence\": \"%s\",\n", hr_hex(d3d.nanite_cluster.signal_hr).c_str());
+    std::printf("      \"MapReadback\": \"%s\",\n", hr_hex(d3d.nanite_cluster.map_readback_hr).c_str());
+    std::printf("      \"argument_gpu_virtual_address\": %llu,\n",
+                static_cast<unsigned long long>(d3d.nanite_cluster.argument_gpu_virtual_address));
+    std::printf("      \"indirect_argument_gpu_virtual_address\": %llu,\n",
+                static_cast<unsigned long long>(d3d.nanite_cluster.indirect_argument_gpu_virtual_address));
+    std::printf("      \"vertices_created\": %u,\n", d3d.nanite_cluster.vertices_created);
+    std::printf("      \"argument_byte_stride\": %u,\n", d3d.nanite_cluster.argument_byte_stride);
+    std::printf("      \"command_signature_arguments\": %u,\n", d3d.nanite_cluster.command_signature_arguments);
+    std::printf("      \"max_command_count\": %u,\n", d3d.nanite_cluster.max_command_count);
+    std::printf("      \"dispatch_commands\": %u,\n", d3d.nanite_cluster.dispatch_commands);
+    std::printf("      \"uav_barriers\": %u,\n", d3d.nanite_cluster.uav_barriers);
+    std::printf("      \"copy_argument_readback_commands\": %u,\n", d3d.nanite_cluster.copy_argument_readback_commands);
+    std::printf("      \"transition_to_copy_barriers\": %u,\n", d3d.nanite_cluster.transition_to_copy_barriers);
+    std::printf("      \"transition_to_indirect_barriers\": %u,\n", d3d.nanite_cluster.transition_to_indirect_barriers);
+    std::printf("      \"computed_draw_args\": [%u, %u, %u, %u],\n", d3d.nanite_cluster.computed_vertex_count,
+                d3d.nanite_cluster.computed_instance_count, d3d.nanite_cluster.computed_start_vertex,
+                d3d.nanite_cluster.computed_start_instance);
+    std::printf("      \"argument_readback_ok\": %s,\n",
+                d3d.nanite_cluster.argument_readback_ok ? "true" : "false");
+    std::printf("      \"indirect_argument_upload_filled\": %s,\n",
+                d3d.nanite_cluster.indirect_argument_upload_filled ? "true" : "false");
+    std::printf("      \"execute_indirect_calls\": %u,\n", d3d.nanite_cluster.execute_indirect_calls);
+    std::printf("      \"present_samples_checked\": %u,\n", d3d.nanite_cluster.present_samples_checked);
+    std::printf("      \"present_sample_matches\": %u,\n", d3d.nanite_cluster.present_sample_matches);
+    std::printf("      \"present_pixels_checked\": %u,\n", d3d.nanite_cluster.present_pixels_checked);
+    std::printf("      \"present_pixel_matches\": %u,\n", d3d.nanite_cluster.present_pixel_matches);
+    std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.nanite_cluster.expected_rgba[0],
+                d3d.nanite_cluster.expected_rgba[1], d3d.nanite_cluster.expected_rgba[2],
+                d3d.nanite_cluster.expected_rgba[3]);
+    std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.nanite_cluster.present_rgba[0],
+                d3d.nanite_cluster.present_rgba[1], d3d.nanite_cluster.present_rgba[2],
+                d3d.nanite_cluster.present_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.nanite_cluster.present_last_rgba[0],
+                d3d.nanite_cluster.present_last_rgba[1], d3d.nanite_cluster.present_last_rgba[2],
+                d3d.nanite_cluster.present_last_rgba[3]);
+    std::printf("      \"fence_wait_ok\": %s,\n", d3d.nanite_cluster.fence_wait_ok ? "true" : "false");
+    std::printf("      \"present_ok\": %s,\n", d3d.nanite_cluster.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.nanite_cluster.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"visible_scene\": {\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.visible_scene.d3dcompiler_loaded ? "true" : "false");
