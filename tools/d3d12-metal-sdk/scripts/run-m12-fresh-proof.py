@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +199,492 @@ def timestamp() -> str:
 def write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+LOCAL_GAME_SNAPSHOT_SOURCES: list[dict[str, Any]] = [
+    {
+        "title": "elden-ring",
+        "appid": "1245620",
+        "min_render_pso_manifests": 1000,
+        "min_compute_pso_manifests": 0,
+        "min_dxbc": 1000,
+        "min_msl": 1000,
+        "min_metallib": 1000,
+        "min_core_sidecar_refs": 1000,
+        "paths": [
+            DEFAULT_LAB_ROOT
+            / "04-corpus"
+            / "visible-window-no-render-cache-and-logs-20260626-050752"
+            / "elden-ring-1245620"
+            / "shader-cache",
+            Path.home() / ".metalsharp" / "shader-cache" / "m12" / "1245620",
+        ],
+    },
+    {
+        "title": "subnautica2",
+        "appid": "1962700",
+        "min_render_pso_manifests": 1,
+        "min_compute_pso_manifests": 100,
+        "min_dxbc": 100,
+        "min_msl": 100,
+        "min_metallib": 100,
+        "min_core_sidecar_refs": 100,
+        "paths": [
+            DEFAULT_LAB_ROOT
+            / "04-corpus"
+            / "visible-window-no-render-cache-and-logs-20260626-050752"
+            / "subnautica2-1962700"
+            / "shader-cache",
+            Path.home() / ".metalsharp" / "shader-cache" / "m12" / "1962700",
+            DEFAULT_LAB_ROOT
+            / "04-corpus"
+            / "subnautica2-m12-live-corpus-20260625-172628"
+            / "source-snapshots"
+            / "shader-cache-m12-1962700",
+        ],
+    },
+]
+
+
+SIDECAR_SUFFIXES = [".dxbc", ".msl", ".metallib", ".module.txt", ".dxil_report.txt"]
+CORE_SIDECAR_SUFFIXES = [".dxbc", ".msl", ".module.txt", ".dxil_report.txt"]
+
+
+def file_suffix_key(path: Path) -> str:
+    name = path.name.lower()
+    for suffix in [".module.txt", ".dxil_report.txt"]:
+        if name.endswith(suffix):
+            return suffix
+    return path.suffix.lower() if path.suffix else "[noext]"
+
+
+def nonzero_shader_hash(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text or set(text) <= {"0"}:
+        return ""
+    if not re.fullmatch(r"[0-9a-f]{16}", text):
+        return ""
+    return text
+
+
+def sha256_cached(path: Path, cache: dict[Path, str]) -> str:
+    key = path.resolve(strict=False)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    digest = sha256(path)
+    cache[key] = digest
+    return digest
+
+
+def parse_local_game_snapshot_overrides(values: list[str]) -> dict[str, list[Path]]:
+    overrides: dict[str, list[Path]] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"expected TITLE=PATH for --local-game-snapshot-root, got: {value}")
+        title, raw_path = value.split("=", 1)
+        title = title.strip()
+        if not title:
+            raise ValueError(f"missing title in --local-game-snapshot-root: {value}")
+        overrides.setdefault(title, []).append(Path(raw_path).expanduser())
+    return overrides
+
+
+def quick_snapshot_counts(root: Path) -> dict[str, Any]:
+    counts: Counter[str] = Counter()
+    total_files = 0
+    newest_mtime = 0.0
+    total_bytes = 0
+    if root.is_dir():
+        for path in root.rglob("*"):
+            if not path.is_file() or path.is_symlink() or not path_resolves_under(path, root):
+                continue
+            stat = path.stat()
+            total_files += 1
+            total_bytes += stat.st_size
+            newest_mtime = max(newest_mtime, stat.st_mtime)
+            counts[file_suffix_key(path)] += 1
+    return {
+        "path": str(root),
+        "exists": root.is_dir(),
+        "total_files": total_files,
+        "total_bytes": total_bytes,
+        "newest_mtime": newest_mtime,
+        "extension_counts": dict(sorted(counts.items())),
+    }
+
+
+def sidecar_record(root: Path, shader_hash: str, hash_cache: dict[Path, str]) -> dict[str, Any]:
+    paths = {suffix: root / f"{shader_hash}{suffix}" for suffix in SIDECAR_SUFFIXES}
+    exists = {
+        suffix: path.exists()
+        and path.is_file()
+        and not path.is_symlink()
+        and path.stat().st_size > 0
+        and path_resolves_under(path, root)
+        for suffix, path in paths.items()
+    }
+    return {
+        "hash": shader_hash,
+        "exists": exists,
+        "core_complete": all(exists[suffix] for suffix in CORE_SIDECAR_SUFFIXES),
+        "metallib_complete": bool(exists[".metallib"]),
+        "all_complete": all(exists.values()),
+        "sizes": {suffix: paths[suffix].stat().st_size if exists[suffix] else 0 for suffix in SIDECAR_SUFFIXES},
+        "sha256": {suffix: sha256_cached(paths[suffix], hash_cache) if exists[suffix] else None for suffix in SIDECAR_SUFFIXES},
+    }
+
+
+def run_local_game_snapshot_inventory(
+    proof_root: Path, local_snapshot_overrides: dict[str, list[Path]] | None = None
+) -> dict[str, Any]:
+    """Inventory local Elden/Subnautica shader-cache snapshots without launching games.
+
+    This phase is deliberately report/inventory-only. It proves that fresh PR evidence
+    was derived from local commercial-game shader/PSO/material snapshots by checking
+    PSO manifests against real DXBC/MSL/module/report/metallib sidecars. It does not
+    claim presented-frame execution for these captured game PSOs.
+    """
+
+    phase_dir = proof_root / "phase4-local-game-snapshot-inventory"
+    phase_dir.mkdir(parents=True, exist_ok=True)
+    local_snapshot_overrides = local_snapshot_overrides or {}
+    errors: list[str] = []
+    title_results: list[dict[str, Any]] = []
+
+    for source in LOCAL_GAME_SNAPSHOT_SOURCES:
+        title = str(source["title"])
+        appid = str(source["appid"])
+        override_paths = local_snapshot_overrides.get(title) or local_snapshot_overrides.get(appid)
+        candidate_paths = [Path(path).expanduser() for path in (override_paths if override_paths else source["paths"])]
+        candidate_summaries = [quick_snapshot_counts(path) for path in candidate_paths]
+        existing_paths = [path for path in candidate_paths if path.is_dir()]
+        title_errors: list[str] = []
+        title_warnings: list[str] = []
+        if not existing_paths:
+            primary = candidate_paths[0]
+            title_errors.append(f"missing_snapshot_root:{title}:{primary}")
+        else:
+            def root_score(path: Path) -> tuple[int, int, int, int, int, float]:
+                counts = next((item["extension_counts"] for item in candidate_summaries if item["path"] == str(path)), {})
+                newest = next((float(item["newest_mtime"] or 0.0) for item in candidate_summaries if item["path"] == str(path)), 0.0)
+                return (
+                    int(counts.get(".metallib", 0) or 0),
+                    int(counts.get(".json", 0) or 0),
+                    int(counts.get(".dxbc", 0) or 0),
+                    int(counts.get(".msl", 0) or 0),
+                    int(counts.get(".module.txt", 0) or 0),
+                    newest,
+                )
+
+            primary = max(existing_paths, key=root_score)
+        path_selection = "explicit_cli_override_scored" if override_paths else "default_candidates_scored_by_material_counts"
+
+        files = (
+            sorted(
+                path
+                for path in primary.rglob("*")
+                if path.is_file() and not path.is_symlink() and path_resolves_under(path, primary)
+            )
+            if primary.is_dir()
+            else []
+        )
+        hash_cache: dict[Path, str] = {}
+        extension_counts = Counter(file_suffix_key(path) for path in files)
+        extension_bytes = Counter({})
+        for path in files:
+            extension_bytes[file_suffix_key(path)] += path.stat().st_size
+
+        inventory_tsv = phase_dir / f"{title}-{appid}-file-inventory.tsv"
+        with inventory_tsv.open("w", encoding="utf-8") as handle:
+            handle.write("title\tappid\troot\trelative_path\textension\tsize\tsha256\n")
+            for path in files:
+                rel = path.relative_to(primary).as_posix() if primary.is_dir() else path.name
+                handle.write(
+                    f"{title}\t{appid}\t{primary}\t{rel}\t{file_suffix_key(path)}\t{path.stat().st_size}\t{sha256_cached(path, hash_cache)}\n"
+                )
+
+        pso_paths = sorted(
+            path
+            for path in files
+            if path.name.startswith(("pso-render-", "pso-compute-")) and path.suffix == ".json"
+        )
+        pso_manifest_type_counts = Counter()
+        pso_type_counts = Counter()
+        color_format_counts = Counter()
+        depth_format_counts = Counter()
+        input_element_counts = Counter()
+        shader_ref_counts = Counter()
+        pso_samples: list[dict[str, Any]] = []
+        missing_sidecar_samples: list[dict[str, Any]] = []
+        missing_metallib_samples: list[dict[str, Any]] = []
+        malformed_manifests: list[dict[str, Any]] = []
+        shader_hashes: set[str] = set()
+        pipeline_count = 0
+
+        for pso_path in pso_paths:
+            filename_match = re.fullmatch(r"pso-(render|compute)-([0-9a-f]{16})\.json", pso_path.name.lower())
+            if not filename_match:
+                malformed_manifests.append({"path": str(pso_path), "error": "invalid_pso_manifest_filename"})
+                continue
+            filename_type = filename_match.group(1)
+            filename_hash = filename_match.group(2)
+            try:
+                manifest = json.loads(pso_path.read_text(errors="replace"))
+            except Exception as error:  # noqa: BLE001 - report malformed local evidence.
+                malformed_manifests.append({"path": str(pso_path), "error": str(error)})
+                continue
+            if not isinstance(manifest, dict):
+                malformed_manifests.append({"path": str(pso_path), "error": "manifest_is_not_json_object"})
+                continue
+            pipelines_json = manifest.get("pipelines")
+            if not isinstance(pipelines_json, list) or not pipelines_json:
+                malformed_manifests.append({"path": str(pso_path), "error": "missing_or_empty_pipelines_list"})
+                continue
+            manifest_validated_types: set[str] = set()
+
+            for pipeline_index, pipeline in enumerate(pipelines_json):
+                if not isinstance(pipeline, dict):
+                    malformed_manifests.append(
+                        {"path": str(pso_path), "error": f"pipeline_{pipeline_index}_is_not_json_object"}
+                    )
+                    continue
+                pipeline_count += 1
+                ptype = str(pipeline.get("type") or "unknown")
+                if ptype != filename_type:
+                    malformed_manifests.append(
+                        {
+                            "path": str(pso_path),
+                            "error": f"filename_type_mismatch:{filename_type}:pipeline_{pipeline_index}:{ptype}",
+                        }
+                    )
+                    continue
+                expected_pipeline_name = f"{ptype}-{filename_hash}"
+                if str(pipeline.get("name") or "") != expected_pipeline_name:
+                    malformed_manifests.append(
+                        {
+                            "path": str(pso_path),
+                            "error": f"pipeline_name_mismatch:{pipeline_index}:{pipeline.get('name')}:{expected_pipeline_name}",
+                        }
+                    )
+                    continue
+                pso_type_counts[ptype] += 1
+                for fmt in pipeline.get("color_formats", []) or []:
+                    color_format_counts[str(fmt)] += 1
+                depth_format_counts[str(pipeline.get("depth_format") or "")] += 1
+                d3d12 = pipeline.get("d3d12", {}) if isinstance(pipeline.get("d3d12"), dict) else {}
+                input_element_counts[str(d3d12.get("input_elements", ""))] += 1
+
+                stages = ["vs_hash", "ps_hash", "gs_hash", "cs_hash"]
+                sidecars_for_sample: list[dict[str, Any]] = []
+                pipeline_stage_records: dict[str, dict[str, Any]] = {}
+                for stage in stages:
+                    raw_shader_hash = str(d3d12.get(stage) or "").strip()
+                    shader_hash = nonzero_shader_hash(raw_shader_hash)
+                    if raw_shader_hash and not set(raw_shader_hash.lower()) <= {"0"} and not shader_hash:
+                        malformed_manifests.append(
+                            {
+                                "path": str(pso_path),
+                                "error": f"invalid_shader_hash:{stage}:{raw_shader_hash}",
+                            }
+                        )
+                        continue
+                    if not shader_hash:
+                        continue
+                    shader_hashes.add(shader_hash)
+                    artifact_root = pso_path.parent
+                    record = sidecar_record(artifact_root, shader_hash, hash_cache)
+                    sidecars_for_sample.append({"stage": stage, "artifact_root": str(artifact_root), **record})
+                    pipeline_stage_records[stage] = record
+                    shader_ref_counts["references"] += 1
+                    for suffix, exists in record["exists"].items():
+                        if exists:
+                            shader_ref_counts[f"with{suffix}"] += 1
+                    if record["core_complete"]:
+                        shader_ref_counts["core_complete"] += 1
+                    if record["metallib_complete"]:
+                        shader_ref_counts["metallib_complete"] += 1
+                    if record["all_complete"]:
+                        shader_ref_counts["all_complete"] += 1
+                    if not record["core_complete"] and len(missing_sidecar_samples) < 25:
+                        missing_sidecar_samples.append(
+                            {
+                                "manifest": str(pso_path),
+                                "artifact_root": str(artifact_root),
+                                "pipeline": str(pipeline.get("name") or ""),
+                                "stage": stage,
+                                "hash": shader_hash,
+                                "missing_core_sidecars": [
+                                    suffix for suffix in CORE_SIDECAR_SUFFIXES if not record["exists"][suffix]
+                                ],
+                            }
+                        )
+                    if not record["metallib_complete"] and len(missing_metallib_samples) < 25:
+                        missing_metallib_samples.append(
+                            {
+                                "manifest": str(pso_path),
+                                "artifact_root": str(artifact_root),
+                                "pipeline": str(pipeline.get("name") or ""),
+                                "stage": stage,
+                                "hash": shader_hash,
+                                "missing_metallib": True,
+                            }
+                        )
+
+                if ptype == "render":
+                    required_stages = ["vs_hash"]
+                    if nonzero_shader_hash(d3d12.get("ps_hash")):
+                        required_stages.append("ps_hash")
+                    elif isinstance(pipeline.get("fragment"), dict):
+                        malformed_manifests.append(
+                            {
+                                "path": str(pso_path),
+                                "error": f"zero_ps_hash_with_fragment_object:{pipeline_index}",
+                            }
+                        )
+                        continue
+                else:
+                    required_stages = ["cs_hash"] if ptype == "compute" else []
+                stage_object_names = {"vs_hash": "vertex", "ps_hash": "fragment", "cs_hash": "shader"}
+                stage_bindings_ok = True
+                for required_stage in required_stages:
+                    expected_hash = pipeline_stage_records.get(required_stage, {}).get("hash", "")
+                    stage_object_name = stage_object_names[required_stage]
+                    stage_object = pipeline.get(stage_object_name)
+                    if not expected_hash or not isinstance(stage_object, dict):
+                        malformed_manifests.append(
+                            {
+                                "path": str(pso_path),
+                                "error": f"missing_stage_object:{pipeline_index}:{stage_object_name}",
+                            }
+                        )
+                        stage_bindings_ok = False
+                        continue
+                    stage_hash = nonzero_shader_hash(stage_object.get("hash"))
+                    metallib_name = Path(str(stage_object.get("metallib") or "").replace("\\", "/")).name
+                    if stage_hash != expected_hash or metallib_name != f"{expected_hash}.metallib":
+                        malformed_manifests.append(
+                            {
+                                "path": str(pso_path),
+                                "error": (
+                                    f"stage_object_mismatch:{pipeline_index}:{stage_object_name}:"
+                                    f"hash={stage_hash}:expected={expected_hash}:metallib={metallib_name}"
+                                ),
+                            }
+                        )
+                        stage_bindings_ok = False
+
+                if (
+                    required_stages
+                    and stage_bindings_ok
+                    and all(
+                        stage in pipeline_stage_records and pipeline_stage_records[stage]["all_complete"]
+                        for stage in required_stages
+                    )
+                ):
+                    manifest_validated_types.add(ptype)
+
+                if len(pso_samples) < 25:
+                    pso_samples.append(
+                        {
+                            "manifest": str(pso_path),
+                            "manifest_sha256": sha256_cached(pso_path, hash_cache),
+                            "pipeline": str(pipeline.get("name") or ""),
+                            "type": ptype,
+                            "d3d12": d3d12,
+                            "color_formats": pipeline.get("color_formats", []),
+                            "depth_format": pipeline.get("depth_format"),
+                            "sidecars": sidecars_for_sample,
+                        }
+                    )
+
+            for manifest_validated_type in manifest_validated_types:
+                pso_manifest_type_counts[manifest_validated_type] += 1
+
+        if int(extension_counts.get(".dxbc", 0)) < int(source["min_dxbc"]):
+            title_errors.append(f"insufficient_dxbc:{extension_counts.get('.dxbc', 0)}")
+        if int(extension_counts.get(".msl", 0)) < int(source["min_msl"]):
+            title_errors.append(f"insufficient_msl:{extension_counts.get('.msl', 0)}")
+        if int(extension_counts.get(".metallib", 0)) < int(source["min_metallib"]):
+            title_errors.append(f"insufficient_metallib:{extension_counts.get('.metallib', 0)}")
+        required_pso_manifest_count = int(source["min_render_pso_manifests"]) + int(source["min_compute_pso_manifests"])
+        if len(pso_paths) < required_pso_manifest_count:
+            title_errors.append(f"insufficient_pso_manifest_files:{len(pso_paths)}")
+        if int(pso_manifest_type_counts.get("render", 0)) < int(source["min_render_pso_manifests"]):
+            title_errors.append(f"insufficient_render_pso_manifest_files:{pso_manifest_type_counts.get('render', 0)}")
+        if int(pso_manifest_type_counts.get("compute", 0)) < int(source["min_compute_pso_manifests"]):
+            title_errors.append(f"insufficient_compute_pso_manifest_files:{pso_manifest_type_counts.get('compute', 0)}")
+        if int(shader_ref_counts.get("core_complete", 0)) < int(source["min_core_sidecar_refs"]):
+            title_errors.append(f"insufficient_core_sidecar_refs:{shader_ref_counts.get('core_complete', 0)}")
+        if int(shader_ref_counts.get("metallib_complete", 0)) < int(source["min_core_sidecar_refs"]):
+            title_errors.append(f"insufficient_referenced_metallib_sidecars:{shader_ref_counts.get('metallib_complete', 0)}")
+        if malformed_manifests:
+            title_errors.append(f"malformed_pso_manifests:{len(malformed_manifests)}")
+        reference_count = int(shader_ref_counts.get("references", 0))
+        max_incomplete_refs = max(10, reference_count // 100)
+        incomplete_core_refs = reference_count - int(shader_ref_counts.get("core_complete", 0))
+        incomplete_metallib_refs = reference_count - int(shader_ref_counts.get("metallib_complete", 0))
+        if incomplete_core_refs > max_incomplete_refs:
+            title_errors.append(f"excessive_missing_core_sidecars:{incomplete_core_refs}")
+        elif incomplete_core_refs > 0:
+            title_warnings.append(f"minor_missing_core_sidecars:{incomplete_core_refs}")
+        if incomplete_metallib_refs > max_incomplete_refs:
+            title_errors.append(f"excessive_missing_referenced_metallibs:{incomplete_metallib_refs}")
+        elif incomplete_metallib_refs > 0:
+            title_warnings.append(f"minor_missing_referenced_metallibs:{incomplete_metallib_refs}")
+
+        title_record = {
+            "title": title,
+            "appid": appid,
+            "scope": "local_game_snapshot_inventory_only_no_live_launch_no_presented_frame_claim",
+            "candidate_paths": [str(path) for path in candidate_paths],
+            "candidate_summaries": candidate_summaries,
+            "existing_paths": [str(path) for path in existing_paths],
+            "path_selection": path_selection,
+            "primary_path": str(primary),
+            "file_inventory_tsv": str(inventory_tsv),
+            "file_inventory_tsv_sha256": sha256(inventory_tsv),
+            "total_files": len(files),
+            "total_bytes": sum(path.stat().st_size for path in files),
+            "extension_counts": dict(sorted(extension_counts.items())),
+            "extension_bytes": dict(sorted(extension_bytes.items())),
+            "pso_manifest_count": len(pso_paths),
+            "pso_manifest_type_counts": dict(sorted(pso_manifest_type_counts.items())),
+            "pipeline_count": pipeline_count,
+            "pipeline_type_counts": dict(sorted(pso_type_counts.items())),
+            "unique_shader_hashes": len(shader_hashes),
+            "shader_sidecar_counts": dict(sorted(shader_ref_counts.items())),
+            "color_format_counts": dict(sorted(color_format_counts.items())),
+            "depth_format_counts": dict(sorted(depth_format_counts.items())),
+            "input_element_counts": dict(sorted(input_element_counts.items())),
+            "pso_samples": pso_samples,
+            "missing_sidecar_samples": missing_sidecar_samples,
+            "missing_metallib_samples": missing_metallib_samples,
+            "malformed_manifest_samples": malformed_manifests[:10],
+            "warnings": title_warnings,
+            "errors": title_errors,
+            "ok": not title_errors,
+        }
+        write_json(phase_dir / f"{title}-{appid}-snapshot-summary.json", title_record)
+        title_results.append(title_record)
+        errors.extend(title_errors)
+
+    result = {
+        "schema": "metalsharp.m12.fresh.local-game-snapshot-inventory.v1",
+        "scope": "report_inventory_only_no_live_commercial_game_launch_no_presented_frame_claim",
+        "policy": {
+            "live_game_launched": False,
+            "uses_local_captured_snapshots": True,
+            "fresh_inventory_generated_for_this_proof_run": True,
+            "presented_frame_claim": False,
+        },
+        "titles": title_results,
+        "title_count": len(title_results),
+        "errors": errors,
+        "ok": not errors and len(title_results) == len(LOCAL_GAME_SNAPSHOT_SOURCES),
+    }
+    write_json(phase_dir / "phase4-local-game-snapshot-inventory-summary.json", result)
+    return result
 
 
 def inspect_runtime(runtime_root: Path) -> tuple[list[dict[str, Any]], list[str]]:
@@ -2987,6 +3474,18 @@ def main() -> int:
     parser.add_argument("--corpus-tsv", default=os.environ.get("M12_FRESH_CORPUS_TSV", ""))
     parser.add_argument("--visible-frames", type=int, default=600)
     parser.add_argument("--skip-game", action="store_true", help="Skip the visible m12_fresh_game.exe phase.")
+    parser.add_argument(
+        "--local-game-snapshot-root",
+        action="append",
+        default=[],
+        metavar="TITLE=PATH",
+        help="Override local game snapshot root for a title/appid, e.g. elden-ring=/path/to/shader-cache.",
+    )
+    parser.add_argument(
+        "--skip-local-game-inventory",
+        action="store_true",
+        help="Skip the file-only Elden Ring/Subnautica 2 local snapshot inventory phase.",
+    )
     parser.add_argument("--skip-run", action="store_true", help="Build and manifest only; do not execute Wine.")
     args = parser.parse_args()
 
@@ -2996,6 +3495,26 @@ def main() -> int:
     wine_runtime = Path(args.wine_runtime).expanduser()
     wine = Path(args.wine).expanduser()
     prefix = Path(args.prefix).expanduser()
+    try:
+        local_snapshot_overrides = parse_local_game_snapshot_overrides(args.local_game_snapshot_root)
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    known_snapshot_keys = {
+        key
+        for source in LOCAL_GAME_SNAPSHOT_SOURCES
+        for key in (str(source["title"]), str(source["appid"]))
+    }
+    unknown_snapshot_keys = sorted(set(local_snapshot_overrides) - known_snapshot_keys)
+    if unknown_snapshot_keys:
+        print(
+            "unknown --local-game-snapshot-root key(s): "
+            + ", ".join(unknown_snapshot_keys)
+            + "; expected one of "
+            + ", ".join(sorted(known_snapshot_keys)),
+            file=sys.stderr,
+        )
+        return 2
     proof_root = Path(args.proof_root).expanduser() if args.proof_root else (
         lab_root / "06-results" / "in-progress" / f"m12-fresh-proof-game-harness-{timestamp()}"
     )
@@ -3083,9 +3602,12 @@ def main() -> int:
     visible_game_result: dict[str, Any] | None = None
     metal_archive_result: dict[str, Any] | None = None
     vulkan_report_result: dict[str, Any] | None = None
+    local_game_inventory_result: dict[str, Any] | None = None
     if not args.skip_run:
         identity_result = run_identity_probe(repo, proof_root, wine, wine_runtime, prefix, runtime_root, staged)
         vulkan_report_result = run_vulkan_report_probe(repo, proof_root, wine_runtime)
+        if not args.skip_local_game_inventory:
+            local_game_inventory_result = run_local_game_snapshot_inventory(proof_root, local_snapshot_overrides)
         if not args.skip_game:
             if not args.corpus_tsv:
                 print("--corpus-tsv is required unless --skip-game or --skip-run is set", file=sys.stderr)
@@ -3118,6 +3640,7 @@ def main() -> int:
         and (args.skip_run or bool(identity_result and identity_result["ok"]))
         and (args.skip_run or bool(vulkan_report_result and vulkan_report_result["ok"]))
         and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"]))
+        and (args.skip_run or args.skip_local_game_inventory or bool(local_game_inventory_result and local_game_inventory_result["ok"]))
         and (args.skip_run or args.skip_game or bool(metal_archive_result and metal_archive_result["ok"])),
         "proof_root": str(proof_root),
         "disk_guard": disk_guard,
@@ -3132,6 +3655,9 @@ def main() -> int:
         "metal_archive_prewarm_ok": None
         if args.skip_run or args.skip_game
         else bool(metal_archive_result and metal_archive_result["ok"]),
+        "local_game_snapshot_inventory_ok": None
+        if args.skip_run or args.skip_local_game_inventory
+        else bool(local_game_inventory_result and local_game_inventory_result["ok"]),
         "artifacts": {
             "manifest": str(proof_root / "proof-run-manifest.json"),
             "build": str(proof_root / "phase0-build-runtime-identity-probe.json"),
@@ -3149,6 +3675,13 @@ def main() -> int:
                 proof_root / "phase2-metal-archive-prewarm" / "phase2-metal-archive-prewarm-summary.json"
             )
             if not args.skip_run and not args.skip_game
+            else None,
+            "local_game_snapshot_inventory": str(
+                proof_root
+                / "phase4-local-game-snapshot-inventory"
+                / "phase4-local-game-snapshot-inventory-summary.json"
+            )
+            if not args.skip_run and not args.skip_local_game_inventory
             else None,
         },
     }

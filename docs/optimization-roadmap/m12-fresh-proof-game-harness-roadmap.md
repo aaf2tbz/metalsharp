@@ -64,6 +64,7 @@ Create a new compact corpus from genuine Elden Ring and Subnautica 2 shader/PSO/
 Required evidence:
 
 - Source manifest with file hashes, title/source labels, license/provenance notes, extraction time, and acquisition command.
+- Local Elden Ring/Subnautica 2 snapshot inventory gate generated during the proof run without launching commercial games. This gate is report/inventory-only unless a later lane binds selected material to presented-frame readback; it must validate captured PSO manifests against real DXBC/MSL/module/report/metallib sidecars and preserve residual missing-sidecar samples without overclaiming runtime execution.
 - Actual SM6 and SM5 shader material from the local Unreal Engine repository, including Unreal shader libraries and representative generated shader/debug material where available.
 - Real DXIL, DXBC, HLSL, D3D12, and DXGI sample shader inputs from Microsoft sources and/or the local Windows/DirectX SDK/tooling cache.
 - Unreal Engine texture/resource payloads from the local Unreal repository or sample content that can be legally used as proof assets.
@@ -86,7 +87,7 @@ Exit criteria:
 
 - Fresh corpus manifest exists and includes game, Unreal, Microsoft, and attempted Unity sourcing.
 - SDK inventory manifest exists and maps every SDK/toolkit to the gates it exercises.
-- Manifest reports shader, texture/resource, PSO, SM5/DXBC, SM6/DXIL, and compute counts; if hundreds-scale targets are not met, it must explain which sources were unavailable and why.
+- Manifest reports shader, texture/resource, PSO, SM5/DXBC, SM6/DXIL, compute counts, and local game snapshot PSO/sidecar counts; if hundreds-scale targets are not met, it must explain which sources were unavailable and why.
 - No shader, texture, cache, SDK, or corpus file is accepted without hash/provenance.
 
 ## Phase 2 — Translation accuracy gates
