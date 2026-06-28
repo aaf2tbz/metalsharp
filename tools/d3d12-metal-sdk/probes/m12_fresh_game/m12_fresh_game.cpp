@@ -2611,20 +2611,21 @@ float4 nanite_ps(PSIn input) : SV_Target {
     ID3D12RootSignature* compute_root_signature = nullptr;
     ID3D12PipelineState* compute_pipeline_state = nullptr;
     if (compute_root_blob) {
-        stats.create_compute_root_hr = device->CreateRootSignature(
-            0, compute_root_blob->GetBufferPointer(), compute_root_blob->GetBufferSize(),
-            IID_PPV_ARGS(&compute_root_signature));
+        stats.create_compute_root_hr =
+            device->CreateRootSignature(0, compute_root_blob->GetBufferPointer(), compute_root_blob->GetBufferSize(),
+                                        IID_PPV_ARGS(&compute_root_signature));
     }
     if (graphics_root_blob) {
-        stats.create_graphics_root_hr = device->CreateRootSignature(
-            0, graphics_root_blob->GetBufferPointer(), graphics_root_blob->GetBufferSize(),
-            IID_PPV_ARGS(&scene.root_signature));
+        stats.create_graphics_root_hr =
+            device->CreateRootSignature(0, graphics_root_blob->GetBufferPointer(), graphics_root_blob->GetBufferSize(),
+                                        IID_PPV_ARGS(&scene.root_signature));
     }
     if (compute_root_signature && cs) {
         D3D12_COMPUTE_PIPELINE_STATE_DESC pso_desc = {};
         pso_desc.pRootSignature = compute_root_signature;
         pso_desc.CS = {cs->GetBufferPointer(), cs->GetBufferSize()};
-        stats.create_compute_pso_hr = device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&compute_pipeline_state));
+        stats.create_compute_pso_hr =
+            device->CreateComputePipelineState(&pso_desc, IID_PPV_ARGS(&compute_pipeline_state));
     }
     if (scene.root_signature && vs && ps) {
         D3D12_INPUT_ELEMENT_DESC input_elements[] = {
@@ -2647,14 +2648,15 @@ float4 nanite_ps(PSIn input) : SV_Target {
         pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
         pso_desc.DepthStencilState.DepthEnable = FALSE;
         pso_desc.DepthStencilState.StencilEnable = FALSE;
-        stats.create_graphics_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+        stats.create_graphics_pso_hr =
+            device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
     }
 
     D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
     D3D12_RESOURCE_DESC vb_desc = buffer_desc(6u * sizeof(ColorVertex));
-    stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
-                                                                    D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
-                                                                    IID_PPV_ARGS(&scene.vertex_buffer));
+    stats.create_vertex_buffer_hr =
+        device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+                                        nullptr, IID_PPV_ARGS(&scene.vertex_buffer));
     if (SUCCEEDED(stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
         ColorVertex* mapped = nullptr;
         if (SUCCEEDED(scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
@@ -2670,10 +2672,9 @@ float4 nanite_ps(PSIn input) : SV_Target {
             const float g = static_cast<float>(stats.expected_rgba[1]) / 255.0f;
             const float b = static_cast<float>(stats.expected_rgba[2]) / 255.0f;
             const float a = static_cast<float>(stats.expected_rgba[3]) / 255.0f;
-            const ColorVertex quad[6] = {
-                {{x0, y1, 0.02f}, {r, g, b, a}}, {{x1, y1, 0.02f}, {r, g, b, a}},
-                {{x0, y0, 0.02f}, {r, g, b, a}}, {{x0, y0, 0.02f}, {r, g, b, a}},
-                {{x1, y1, 0.02f}, {r, g, b, a}}, {{x1, y0, 0.02f}, {r, g, b, a}}};
+            const ColorVertex quad[6] = {{{x0, y1, 0.02f}, {r, g, b, a}}, {{x1, y1, 0.02f}, {r, g, b, a}},
+                                         {{x0, y0, 0.02f}, {r, g, b, a}}, {{x0, y0, 0.02f}, {r, g, b, a}},
+                                         {{x1, y1, 0.02f}, {r, g, b, a}}, {{x1, y0, 0.02f}, {r, g, b, a}}};
             std::memcpy(mapped, quad, sizeof(quad));
             D3D12_RANGE written = {0, sizeof(quad)};
             scene.vertex_buffer->Unmap(0, &written);
@@ -2690,12 +2691,12 @@ float4 nanite_ps(PSIn input) : SV_Target {
     D3D12_RESOURCE_DESC readback_desc = buffer_desc(256u);
     D3D12_RESOURCE_DESC indirect_upload_desc = buffer_desc(sizeof(D3D12_DRAW_ARGUMENTS));
     ID3D12Resource* argument_readback = nullptr;
-    stats.create_argument_buffer_hr = device->CreateCommittedResource(
-        &default_heap, D3D12_HEAP_FLAG_NONE, &arg_desc, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
-        IID_PPV_ARGS(&scene.argument_buffer));
-    stats.create_argument_readback_hr = device->CreateCommittedResource(
-        &readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-        IID_PPV_ARGS(&argument_readback));
+    stats.create_argument_buffer_hr = device->CreateCommittedResource(&default_heap, D3D12_HEAP_FLAG_NONE, &arg_desc,
+                                                                      D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                                      IID_PPV_ARGS(&scene.argument_buffer));
+    stats.create_argument_readback_hr =
+        device->CreateCommittedResource(&readback_heap, D3D12_HEAP_FLAG_NONE, &readback_desc,
+                                        D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&argument_readback));
     stats.create_indirect_argument_upload_hr = device->CreateCommittedResource(
         &upload_heap, D3D12_HEAP_FLAG_NONE, &indirect_upload_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
         IID_PPV_ARGS(&scene.indirect_argument_buffer));
@@ -2730,8 +2731,8 @@ float4 nanite_ps(PSIn input) : SV_Target {
         stats.transition_to_copy_barriers++;
         list->CopyBufferRegion(argument_readback, 0, scene.argument_buffer, 0, sizeof(D3D12_DRAW_ARGUMENTS));
         stats.copy_argument_readback_commands++;
-        D3D12_RESOURCE_BARRIER to_indirect = transition_barrier(
-            scene.argument_buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+        D3D12_RESOURCE_BARRIER to_indirect = transition_barrier(scene.argument_buffer, D3D12_RESOURCE_STATE_COPY_SOURCE,
+                                                                D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
         list->ResourceBarrier(1, &to_indirect);
         stats.transition_to_indirect_barriers++;
         stats.close_hr = list->Close();
@@ -2792,8 +2793,8 @@ float4 nanite_ps(PSIn input) : SV_Target {
                  stats.transition_to_indirect_barriers == 1 && SUCCEEDED(stats.close_hr) &&
                  SUCCEEDED(stats.signal_hr) && stats.fence_wait_ok && SUCCEEDED(stats.map_readback_hr) &&
                  stats.argument_readback_ok && stats.indirect_argument_upload_filled && scene.root_signature &&
-                 scene.pipeline_state && scene.vertex_buffer && scene.argument_buffer && scene.indirect_argument_buffer &&
-                 scene.command_signature && scene.vertex_view.BufferLocation != 0;
+                 scene.pipeline_state && scene.vertex_buffer && scene.argument_buffer &&
+                 scene.indirect_argument_buffer && scene.command_signature && scene.vertex_view.BufferLocation != 0;
     if (!stats.pass) {
         safe_release(scene.indirect_argument_buffer);
         safe_release(scene.argument_buffer);
@@ -3119,7 +3120,8 @@ static bool seed_dxil_readback_sentinel(DxilReadbackResources& readback, UINT wi
     nanite_cluster_expected_rgba(nanite_expected);
     for (UINT y = 0; y < kFreshTextureHeight; ++y) {
         for (UINT x = 0; x < kFreshTextureWidth; ++x) {
-            uint8_t* nanite_pixel = readback_pixel(readback, mapped, kNaniteClusterStampX + x, kNaniteClusterStampY + y);
+            uint8_t* nanite_pixel =
+                readback_pixel(readback, mapped, kNaniteClusterStampX + x, kNaniteClusterStampY + y);
             nanite_pixel[0] = static_cast<uint8_t>(nanite_expected[0] ^ 0xffu);
             nanite_pixel[1] = static_cast<uint8_t>(nanite_expected[1] ^ 0xffu);
             nanite_pixel[2] = static_cast<uint8_t>(nanite_expected[2] ^ 0xffu);
@@ -5258,9 +5260,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     IndirectDrawSceneResources indirect_draw =
         create_indirect_draw_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.indirect_draw = indirect_draw.stats;
-    NaniteClusterSceneResources nanite_cluster = create_nanite_cluster_scene(
-        device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value, backbuffer_width,
-        backbuffer_height);
+    NaniteClusterSceneResources nanite_cluster =
+        create_nanite_cluster_scene(device, compile, serialize, queue, allocator, list, fence, fence_event, fence_value,
+                                    backbuffer_width, backbuffer_height);
     stats.nanite_cluster = nanite_cluster.stats;
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
@@ -5639,7 +5641,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     stats.nanite_cluster.present_pass =
         stats.nanite_cluster.present_samples_checked == visible_frame_target &&
         stats.nanite_cluster.present_sample_matches == visible_frame_target &&
-        stats.nanite_cluster.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.nanite_cluster.present_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.nanite_cluster.present_pixel_matches == stats.nanite_cluster.present_pixels_checked;
     stats.abi_semantics.validated_frames = stats.frames_presented;
     stats.abi_semantics.present_tie_ok = stats.frames_presented == visible_frame_target;
@@ -5669,9 +5672,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indirect_draw.present_pass && stats.indirect_draw.execute_indirect_calls == visible_frame_target &&
         stats.nanite_cluster.pass && stats.nanite_cluster.present_pass &&
         stats.nanite_cluster.execute_indirect_calls == visible_frame_target && stats.visible_scene.pass &&
-        stats.visible_scene.sm5_stamp_present_pass &&
-        stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
-        stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
+        stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
+        stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
         SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
@@ -6377,7 +6379,8 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.indirect_draw.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"nanite_cluster\": {\n");
-    std::printf("      \"proof_scope\": \"nanite_style_compute_generated_args_readback_mirrored_execute_indirect_presented\",\n");
+    std::printf("      \"proof_scope\": "
+                "\"nanite_style_compute_generated_args_readback_mirrored_execute_indirect_presented\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.nanite_cluster.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"nanite_cull_cs_cs_5_0\": \"%s\",\n", hr_hex(d3d.nanite_cluster.compile_cs_hr).c_str());
     std::printf("      \"nanite_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.nanite_cluster.compile_vs_hr).c_str());
@@ -6422,8 +6425,7 @@ int main() {
     std::printf("      \"computed_draw_args\": [%u, %u, %u, %u],\n", d3d.nanite_cluster.computed_vertex_count,
                 d3d.nanite_cluster.computed_instance_count, d3d.nanite_cluster.computed_start_vertex,
                 d3d.nanite_cluster.computed_start_instance);
-    std::printf("      \"argument_readback_ok\": %s,\n",
-                d3d.nanite_cluster.argument_readback_ok ? "true" : "false");
+    std::printf("      \"argument_readback_ok\": %s,\n", d3d.nanite_cluster.argument_readback_ok ? "true" : "false");
     std::printf("      \"indirect_argument_upload_filled\": %s,\n",
                 d3d.nanite_cluster.indirect_argument_upload_filled ? "true" : "false");
     std::printf("      \"execute_indirect_calls\": %u,\n", d3d.nanite_cluster.execute_indirect_calls);
