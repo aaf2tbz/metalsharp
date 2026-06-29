@@ -69,6 +69,8 @@ constexpr UINT kIndexedR32StampX = 280;
 constexpr UINT kIndexedR32StampY = 56;
 constexpr UINT kIndexedNegativeBaseStampX = 280;
 constexpr UINT kIndexedNegativeBaseStampY = 88;
+constexpr UINT kIndexedDynamicStrideStampX = 280;
+constexpr UINT kIndexedDynamicStrideStampY = 120;
 constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
 constexpr UINT kWaveOpsStampX = 344;
@@ -2130,6 +2132,7 @@ struct IndexedDrawStats {
     HRESULT create_root_hr = E_FAIL;
     HRESULT create_pso_hr = E_FAIL;
     HRESULT create_vertex_buffer_hr = E_FAIL;
+    HRESULT create_dynamic_stride_vertex_buffer_hr = E_FAIL;
     HRESULT create_index_buffer_hr = E_FAIL;
     HRESULT create_index_buffer_r32_hr = E_FAIL;
     HRESULT create_index_buffer_negative_base_hr = E_FAIL;
@@ -2138,6 +2141,9 @@ struct IndexedDrawStats {
     uint32_t vertices_created = 0;
     uint32_t vertex_buffer_size = 0;
     uint32_t vertex_view_byte_offset = 0;
+    uint32_t dynamic_stride_vertices_created = 0;
+    uint32_t dynamic_stride_vertex_buffer_size = 0;
+    uint32_t dynamic_stride = 32;
     uint32_t indices_created = 0;
     uint32_t index_format = DXGI_FORMAT_R16_UINT;
     uint32_t index_buffer_size = 0;
@@ -2157,6 +2163,7 @@ struct IndexedDrawStats {
     uint32_t draw_indexed_calls = 0;
     uint32_t draw_indexed_r32_calls = 0;
     uint32_t draw_indexed_negative_base_calls = 0;
+    uint32_t draw_indexed_dynamic_stride_calls = 0;
     uint32_t present_samples_checked = 0;
     uint32_t present_sample_matches = 0;
     uint32_t present_pixels_checked = 0;
@@ -2164,6 +2171,7 @@ struct IndexedDrawStats {
     uint8_t expected_rgba[4] = {240, 200, 48, 255};
     uint8_t expected_r32_rgba[4] = {64, 220, 240, 255};
     uint8_t expected_negative_base_rgba[4] = {200, 80, 240, 255};
+    uint8_t expected_dynamic_stride_rgba[4] = {96, 240, 120, 255};
     uint8_t present_rgba[4] = {0, 0, 0, 0};
     uint8_t present_last_rgba[4] = {0, 0, 0, 0};
     uint8_t present_r32_rgba[4] = {0, 0, 0, 0};
@@ -2178,6 +2186,12 @@ struct IndexedDrawStats {
     uint32_t present_negative_base_sample_matches = 0;
     uint32_t present_negative_base_pixels_checked = 0;
     uint32_t present_negative_base_pixel_matches = 0;
+    uint8_t present_dynamic_stride_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_dynamic_stride_last_rgba[4] = {0, 0, 0, 0};
+    uint32_t present_dynamic_stride_samples_checked = 0;
+    uint32_t present_dynamic_stride_sample_matches = 0;
+    uint32_t present_dynamic_stride_pixels_checked = 0;
+    uint32_t present_dynamic_stride_pixel_matches = 0;
     bool present_pass = false;
     bool pass = false;
 };
@@ -2186,10 +2200,12 @@ struct IndexedDrawSceneResources {
     ID3D12RootSignature* root_signature = nullptr;
     ID3D12PipelineState* pipeline_state = nullptr;
     ID3D12Resource* vertex_buffer = nullptr;
+    ID3D12Resource* vertex_buffer_dynamic_stride = nullptr;
     ID3D12Resource* index_buffer = nullptr;
     ID3D12Resource* index_buffer_r32 = nullptr;
     ID3D12Resource* index_buffer_negative_base = nullptr;
     D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    D3D12_VERTEX_BUFFER_VIEW vertex_view_dynamic_stride = {};
     D3D12_INDEX_BUFFER_VIEW index_view = {};
     D3D12_INDEX_BUFFER_VIEW index_view_r32 = {};
     D3D12_INDEX_BUFFER_VIEW index_view_negative_base = {};
@@ -2309,6 +2325,46 @@ float4 indexed_ps(PSIn input) : SV_Target {
             scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
         }
 
+        struct DynamicStrideVertex {
+            float position[3];
+            float color[4];
+            float padding;
+        };
+        D3D12_RESOURCE_DESC dynamic_vb_desc = buffer_desc(4u * sizeof(DynamicStrideVertex));
+        stats.create_dynamic_stride_vertex_buffer_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &dynamic_vb_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.vertex_buffer_dynamic_stride));
+        if (SUCCEEDED(stats.create_dynamic_stride_vertex_buffer_hr) && scene.vertex_buffer_dynamic_stride) {
+            DynamicStrideVertex* mapped = nullptr;
+            if (SUCCEEDED(scene.vertex_buffer_dynamic_stride->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) &&
+                mapped) {
+                const float draw_x0 = static_cast<float>(kIndexedDynamicStrideStampX) - 1.0f;
+                const float draw_y0 = static_cast<float>(kIndexedDynamicStrideStampY) - 1.0f;
+                const float draw_x1 = static_cast<float>(kIndexedDynamicStrideStampX + kFreshTextureWidth) + 1.0f;
+                const float draw_y1 = static_cast<float>(kIndexedDynamicStrideStampY + kFreshTextureHeight) + 1.0f;
+                const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
+                const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
+                const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
+                const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
+                const float r = static_cast<float>(stats.expected_dynamic_stride_rgba[0]) / 255.0f;
+                const float g = static_cast<float>(stats.expected_dynamic_stride_rgba[1]) / 255.0f;
+                const float b = static_cast<float>(stats.expected_dynamic_stride_rgba[2]) / 255.0f;
+                const float a = static_cast<float>(stats.expected_dynamic_stride_rgba[3]) / 255.0f;
+                mapped[0] = {{x0, y1, 0.025f}, {r, g, b, a}, 0.0f};
+                mapped[1] = {{x1, y1, 0.025f}, {r, g, b, a}, 0.0f};
+                mapped[2] = {{x0, y0, 0.025f}, {r, g, b, a}, 0.0f};
+                mapped[3] = {{x1, y0, 0.025f}, {r, g, b, a}, 0.0f};
+                D3D12_RANGE written = {0, 4u * sizeof(DynamicStrideVertex)};
+                scene.vertex_buffer_dynamic_stride->Unmap(0, &written);
+                stats.dynamic_stride_vertices_created = 4;
+                stats.dynamic_stride_vertex_buffer_size = 4u * sizeof(DynamicStrideVertex);
+                stats.dynamic_stride = sizeof(DynamicStrideVertex);
+            }
+            scene.vertex_view_dynamic_stride.BufferLocation = scene.vertex_buffer_dynamic_stride->GetGPUVirtualAddress();
+            scene.vertex_view_dynamic_stride.SizeInBytes = stats.dynamic_stride_vertex_buffer_size;
+            scene.vertex_view_dynamic_stride.StrideInBytes = stats.dynamic_stride;
+        }
+
         D3D12_RESOURCE_DESC ib_desc = buffer_desc(10u * sizeof(uint16_t));
         stats.create_index_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &ib_desc,
                                                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
@@ -2377,9 +2433,11 @@ float4 indexed_ps(PSIn input) : SV_Target {
     stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
                  SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
-                 SUCCEEDED(stats.create_index_buffer_hr) && SUCCEEDED(stats.create_index_buffer_r32_hr) &&
-                 stats.append_aligned_element && stats.append_aligned_color_expected_offset == 12 &&
-                 stats.vertices_created == 12 && stats.vertex_buffer_size == 336 &&
+                 SUCCEEDED(stats.create_dynamic_stride_vertex_buffer_hr) && SUCCEEDED(stats.create_index_buffer_hr) &&
+                 SUCCEEDED(stats.create_index_buffer_r32_hr) && stats.append_aligned_element &&
+                 stats.append_aligned_color_expected_offset == 12 && stats.vertices_created == 12 &&
+                 stats.vertex_buffer_size == 336 && stats.dynamic_stride_vertices_created == 4 &&
+                 stats.dynamic_stride_vertex_buffer_size == 128 && stats.dynamic_stride == 32 &&
                  stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
                  stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
                  stats.index_view_byte_offset == 4 && stats.start_index_location == 2 &&
@@ -2390,10 +2448,10 @@ float4 indexed_ps(PSIn input) : SV_Target {
                  stats.negative_base_index_format == DXGI_FORMAT_R32_UINT &&
                  stats.negative_base_index_buffer_size == 24 && stats.negative_base_start_index_location == 0 &&
                  stats.negative_base_vertex_location == -4 && scene.root_signature && scene.pipeline_state &&
-                 scene.vertex_buffer && scene.index_buffer && scene.index_buffer_r32 &&
-                 scene.index_buffer_negative_base && scene.vertex_view.BufferLocation != 0 &&
-                 scene.index_view.BufferLocation != 0 && scene.index_view_r32.BufferLocation != 0 &&
-                 scene.index_view_negative_base.BufferLocation != 0;
+                 scene.vertex_buffer && scene.vertex_buffer_dynamic_stride && scene.index_buffer &&
+                 scene.index_buffer_r32 && scene.index_buffer_negative_base && scene.vertex_view.BufferLocation != 0 &&
+                 scene.vertex_view_dynamic_stride.BufferLocation != 0 && scene.index_view.BufferLocation != 0 &&
+                 scene.index_view_r32.BufferLocation != 0 && scene.index_view_negative_base.BufferLocation != 0;
 
     safe_release(vs);
     safe_release(ps);
@@ -2405,6 +2463,7 @@ static void destroy_indexed_draw_scene(IndexedDrawSceneResources& scene) {
     safe_release(scene.index_buffer_negative_base);
     safe_release(scene.index_buffer_r32);
     safe_release(scene.index_buffer);
+    safe_release(scene.vertex_buffer_dynamic_stride);
     safe_release(scene.vertex_buffer);
     safe_release(scene.pipeline_state);
     safe_release(scene.root_signature);
@@ -6037,10 +6096,15 @@ static bool inspect_indexed_draw_stamp(DxilReadbackResources& readback, IndexedD
         stats.present_negative_base_rgba, stats.present_negative_base_last_rgba,
         stats.present_negative_base_samples_checked, stats.present_negative_base_sample_matches,
         stats.present_negative_base_pixels_checked, stats.present_negative_base_pixel_matches);
+    const bool dynamic_stride_matches = inspect_stamp(
+        kIndexedDynamicStrideStampX, kIndexedDynamicStrideStampY, stats.expected_dynamic_stride_rgba,
+        stats.present_dynamic_stride_rgba, stats.present_dynamic_stride_last_rgba,
+        stats.present_dynamic_stride_samples_checked, stats.present_dynamic_stride_sample_matches,
+        stats.present_dynamic_stride_pixels_checked, stats.present_dynamic_stride_pixel_matches);
 
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
-    return r16_matches && r32_matches && negative_base_matches;
+    return r16_matches && r32_matches && negative_base_matches && dynamic_stride_matches;
 }
 
 static bool inspect_tessellation_fallback_stamp(DxilReadbackResources& readback, TessellationFallbackStats& stats) {
@@ -6623,6 +6687,11 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                        indexed_draw.stats.negative_base_start_index_location,
                                        indexed_draw.stats.negative_base_vertex_location, 0);
             stats.indexed_draw.draw_indexed_negative_base_calls++;
+            list->IASetVertexBuffers(0, 1, &indexed_draw.vertex_view_dynamic_stride);
+            list->IASetIndexBuffer(&indexed_draw.index_view);
+            list->DrawIndexedInstanced(indexed_draw.stats.indices_created, 1,
+                                       indexed_draw.stats.start_index_location, 0, 0);
+            stats.indexed_draw.draw_indexed_dynamic_stride_calls++;
             if (tessellation_fallback.pipeline_state) {
                 list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
                 list->SetPipelineState(tessellation_fallback.pipeline_state);
@@ -6972,7 +7041,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.present_negative_base_pixels_checked ==
             visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indexed_draw.present_negative_base_pixel_matches ==
-            stats.indexed_draw.present_negative_base_pixels_checked;
+            stats.indexed_draw.present_negative_base_pixels_checked &&
+        stats.indexed_draw.present_dynamic_stride_samples_checked == visible_frame_target &&
+        stats.indexed_draw.present_dynamic_stride_sample_matches == visible_frame_target &&
+        stats.indexed_draw.present_dynamic_stride_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.indexed_draw.present_dynamic_stride_pixel_matches == stats.indexed_draw.present_dynamic_stride_pixels_checked;
     stats.tessellation_fallback.present_pass =
         stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded
             ? stats.tessellation_fallback.draw_calls == 0
@@ -7021,6 +7095,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.draw_indexed_calls == visible_frame_target &&
         stats.indexed_draw.draw_indexed_r32_calls == visible_frame_target &&
         stats.indexed_draw.draw_indexed_negative_base_calls == visible_frame_target &&
+        stats.indexed_draw.draw_indexed_dynamic_stride_calls == visible_frame_target &&
         stats.tessellation_fallback.pass &&
         stats.tessellation_fallback.present_pass && stats.tessellation_fallback.blocked_expected &&
         !stats.tessellation_fallback.fallback_draw_encoded && stats.tessellation_fallback.draw_calls == 0 &&
@@ -7794,7 +7869,7 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.cbv_sample.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"indexed_draw\": {\n");
-    std::printf("      \"proof_scope\": \"r16_r32_subrange_positive_negative_base_append_aligned_presented_readback\",\n");
+    std::printf("      \"proof_scope\": \"r16_r32_subrange_base_append_dynamic_stride_presented_readback\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.indexed_draw.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"indexed_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_vs_hr).c_str());
     std::printf("      \"indexed_ps_ps_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_ps_hr).c_str());
@@ -7802,6 +7877,8 @@ int main() {
     std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_root_hr).c_str());
     std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_pso_hr).c_str());
     std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_vertex_buffer_hr).c_str());
+    std::printf("      \"CreateDynamicStrideVertexBuffer\": \"%s\",\n",
+                hr_hex(d3d.indexed_draw.create_dynamic_stride_vertex_buffer_hr).c_str());
     std::printf("      \"CreateIndexBuffer\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_index_buffer_hr).c_str());
     std::printf("      \"CreateIndexBufferR32\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_index_buffer_r32_hr).c_str());
     std::printf("      \"CreateIndexBufferNegativeBase\": \"%s\",\n",
@@ -7813,6 +7890,11 @@ int main() {
     std::printf("      \"vertices_created\": %u,\n", d3d.indexed_draw.vertices_created);
     std::printf("      \"vertex_buffer_size\": %u,\n", d3d.indexed_draw.vertex_buffer_size);
     std::printf("      \"vertex_view_byte_offset\": %u,\n", d3d.indexed_draw.vertex_view_byte_offset);
+    std::printf("      \"dynamic_stride_vertices_created\": %u,\n",
+                d3d.indexed_draw.dynamic_stride_vertices_created);
+    std::printf("      \"dynamic_stride_vertex_buffer_size\": %u,\n",
+                d3d.indexed_draw.dynamic_stride_vertex_buffer_size);
+    std::printf("      \"dynamic_stride\": %u,\n", d3d.indexed_draw.dynamic_stride);
     std::printf("      \"indices_created\": %u,\n", d3d.indexed_draw.indices_created);
     std::printf("      \"index_format\": %u,\n", d3d.indexed_draw.index_format);
     std::printf("      \"index_buffer_size\": %u,\n", d3d.indexed_draw.index_buffer_size);
@@ -7834,6 +7916,8 @@ int main() {
     std::printf("      \"draw_indexed_r32_calls\": %u,\n", d3d.indexed_draw.draw_indexed_r32_calls);
     std::printf("      \"draw_indexed_negative_base_calls\": %u,\n",
                 d3d.indexed_draw.draw_indexed_negative_base_calls);
+    std::printf("      \"draw_indexed_dynamic_stride_calls\": %u,\n",
+                d3d.indexed_draw.draw_indexed_dynamic_stride_calls);
     std::printf("      \"present_samples_checked\": %u,\n", d3d.indexed_draw.present_samples_checked);
     std::printf("      \"present_sample_matches\": %u,\n", d3d.indexed_draw.present_sample_matches);
     std::printf("      \"present_pixels_checked\": %u,\n", d3d.indexed_draw.present_pixels_checked);
@@ -7850,6 +7934,14 @@ int main() {
                 d3d.indexed_draw.present_negative_base_pixels_checked);
     std::printf("      \"present_negative_base_pixel_matches\": %u,\n",
                 d3d.indexed_draw.present_negative_base_pixel_matches);
+    std::printf("      \"present_dynamic_stride_samples_checked\": %u,\n",
+                d3d.indexed_draw.present_dynamic_stride_samples_checked);
+    std::printf("      \"present_dynamic_stride_sample_matches\": %u,\n",
+                d3d.indexed_draw.present_dynamic_stride_sample_matches);
+    std::printf("      \"present_dynamic_stride_pixels_checked\": %u,\n",
+                d3d.indexed_draw.present_dynamic_stride_pixels_checked);
+    std::printf("      \"present_dynamic_stride_pixel_matches\": %u,\n",
+                d3d.indexed_draw.present_dynamic_stride_pixel_matches);
     std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.expected_rgba[0],
                 d3d.indexed_draw.expected_rgba[1], d3d.indexed_draw.expected_rgba[2],
                 d3d.indexed_draw.expected_rgba[3]);
@@ -7882,6 +7974,21 @@ int main() {
                 d3d.indexed_draw.present_negative_base_last_rgba[1],
                 d3d.indexed_draw.present_negative_base_last_rgba[2],
                 d3d.indexed_draw.present_negative_base_last_rgba[3]);
+    std::printf("      \"expected_dynamic_stride_rgba\": [%u, %u, %u, %u],\n",
+                d3d.indexed_draw.expected_dynamic_stride_rgba[0],
+                d3d.indexed_draw.expected_dynamic_stride_rgba[1],
+                d3d.indexed_draw.expected_dynamic_stride_rgba[2],
+                d3d.indexed_draw.expected_dynamic_stride_rgba[3]);
+    std::printf("      \"present_dynamic_stride_rgba\": [%u, %u, %u, %u],\n",
+                d3d.indexed_draw.present_dynamic_stride_rgba[0],
+                d3d.indexed_draw.present_dynamic_stride_rgba[1],
+                d3d.indexed_draw.present_dynamic_stride_rgba[2],
+                d3d.indexed_draw.present_dynamic_stride_rgba[3]);
+    std::printf("      \"present_dynamic_stride_last_rgba\": [%u, %u, %u, %u],\n",
+                d3d.indexed_draw.present_dynamic_stride_last_rgba[0],
+                d3d.indexed_draw.present_dynamic_stride_last_rgba[1],
+                d3d.indexed_draw.present_dynamic_stride_last_rgba[2],
+                d3d.indexed_draw.present_dynamic_stride_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.indexed_draw.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.indexed_draw.pass ? "true" : "false");
     std::printf("    },\n");
