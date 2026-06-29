@@ -2128,6 +2128,8 @@ struct IndexedDrawStats {
     HRESULT create_vertex_buffer_hr = E_FAIL;
     HRESULT create_index_buffer_hr = E_FAIL;
     uint32_t vertices_created = 0;
+    uint32_t vertex_buffer_size = 0;
+    uint32_t vertex_view_byte_offset = 0;
     uint32_t indices_created = 0;
     uint32_t index_format = DXGI_FORMAT_R16_UINT;
     uint32_t index_buffer_size = 0;
@@ -2224,7 +2226,7 @@ float4 indexed_ps(PSIn input) : SV_Target {
 
     if (device) {
         D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
-        D3D12_RESOURCE_DESC vb_desc = buffer_desc(4u * sizeof(ColorVertex));
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(5u * sizeof(ColorVertex));
         stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
                                                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                                         IID_PPV_ARGS(&scene.vertex_buffer));
@@ -2244,17 +2246,21 @@ float4 indexed_ps(PSIn input) : SV_Target {
                 const float g = static_cast<float>(stats.expected_rgba[1]) / 255.0f;
                 const float b = static_cast<float>(stats.expected_rgba[2]) / 255.0f;
                 const float a = static_cast<float>(stats.expected_rgba[3]) / 255.0f;
+                const ColorVertex poison = {{-1.0f, -1.0f, 0.025f}, {0.0f, 0.0f, 0.0f, 0.0f}};
                 const ColorVertex vertices[4] = {{{x0, y1, 0.025f}, {r, g, b, a}},
                                                  {{x1, y1, 0.025f}, {r, g, b, a}},
                                                  {{x0, y0, 0.025f}, {r, g, b, a}},
                                                  {{x1, y0, 0.025f}, {r, g, b, a}}};
-                std::memcpy(mapped, vertices, sizeof(vertices));
-                D3D12_RANGE written = {0, sizeof(vertices)};
+                mapped[0] = poison;
+                std::memcpy(mapped + 1, vertices, sizeof(vertices));
+                D3D12_RANGE written = {0, 5u * sizeof(ColorVertex)};
                 scene.vertex_buffer->Unmap(0, &written);
                 stats.vertices_created = 4;
+                stats.vertex_view_byte_offset = sizeof(ColorVertex);
+                stats.vertex_buffer_size = 4u * sizeof(ColorVertex);
             }
-            scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
-            scene.vertex_view.SizeInBytes = 4u * sizeof(ColorVertex);
+            scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress() + stats.vertex_view_byte_offset;
+            scene.vertex_view.SizeInBytes = stats.vertex_buffer_size;
             scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
         }
 
@@ -2283,7 +2289,8 @@ float4 indexed_ps(PSIn input) : SV_Target {
     stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
                  SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
-                 SUCCEEDED(stats.create_index_buffer_hr) && stats.vertices_created == 4 && stats.indices_created == 6 &&
+                 SUCCEEDED(stats.create_index_buffer_hr) && stats.vertices_created == 4 &&
+                 stats.vertex_buffer_size == 112 && stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
                  stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
                  stats.index_view_byte_offset == 4 && stats.start_index_location == 2 && scene.root_signature &&
                  scene.pipeline_state && scene.vertex_buffer && scene.index_buffer &&
@@ -7651,6 +7658,8 @@ int main() {
     std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_vertex_buffer_hr).c_str());
     std::printf("      \"CreateIndexBuffer\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_index_buffer_hr).c_str());
     std::printf("      \"vertices_created\": %u,\n", d3d.indexed_draw.vertices_created);
+    std::printf("      \"vertex_buffer_size\": %u,\n", d3d.indexed_draw.vertex_buffer_size);
+    std::printf("      \"vertex_view_byte_offset\": %u,\n", d3d.indexed_draw.vertex_view_byte_offset);
     std::printf("      \"indices_created\": %u,\n", d3d.indexed_draw.indices_created);
     std::printf("      \"index_format\": %u,\n", d3d.indexed_draw.index_format);
     std::printf("      \"index_buffer_size\": %u,\n", d3d.indexed_draw.index_buffer_size);

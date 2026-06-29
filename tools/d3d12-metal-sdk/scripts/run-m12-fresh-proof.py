@@ -3040,6 +3040,8 @@ def run_fresh_game(
         and indexed_draw_json.get("CreateVertexBuffer") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBuffer") == "0x00000000"
         and int(indexed_draw_json.get("vertices_created", 0) or 0) == 4
+        and int(indexed_draw_json.get("vertex_buffer_size", 0) or 0) == 112
+        and int(indexed_draw_json.get("vertex_view_byte_offset", 0) or 0) == 28
         and int(indexed_draw_json.get("indices_created", 0) or 0) == 6
         and int(indexed_draw_json.get("index_format", 0) or 0) == 57
         and int(indexed_draw_json.get("index_buffer_size", 0) or 0) == 16
