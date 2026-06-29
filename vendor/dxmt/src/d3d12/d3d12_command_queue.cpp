@@ -1249,6 +1249,7 @@ struct ReplayState {
         safe_input.aligned_byte_offset = input.aligned_byte_offset;
         safe_input.dxgi_format = input.dxgi_format;
         safe_input.metal_format = input.metal_format;
+        safe_input.bytes_per_element = input.bytes_per_element;
         safe_input.input_slot_class =
             input.per_instance ? D3D12VertexInputSlotClass::PerInstance
                                : D3D12VertexInputSlotClass::PerVertex;

@@ -204,6 +204,70 @@ def read_existing_text(path: Path) -> str:
     except OSError:
         return ""
 
+
+HARD_FAIL_PATTERNS: list[tuple[str, str]] = [
+    ("vertex_range_oob", r"vertex_range_oob"),
+    ("d3d12_tessellation_fallback", r"D3D12 tessellation fallback|M12 tessellation fallback draw"),
+    ("compute_encoder_encode_failed", r"M12 compute encoder encode failed"),
+    ("render_encoder_encode_failed", r"M12 render encoder encode failed"),
+    ("metal_command_buffer_error", r"MTLCommandBufferErrorDomain"),
+    ("windowserver_watchdog_reboot", r"WindowServer|watchdog|userspace_watchdog|IOGPU|AGX|panic|reboot"),
+]
+
+
+def active_msl_err_sidecars(shader_cache_dir: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not shader_cache_dir.exists():
+        return records
+    for err_path in sorted(shader_cache_dir.rglob("*.msl.err.txt")):
+        paired_msl = err_path.with_suffix("").with_suffix("")
+        try:
+            err_mtime = err_path.stat().st_mtime
+        except OSError:
+            continue
+        msl_exists = paired_msl.exists()
+        msl_mtime = paired_msl.stat().st_mtime if msl_exists else 0.0
+        active = (not msl_exists) or err_mtime >= msl_mtime
+        if active:
+            records.append(
+                {
+                    "err_path": str(err_path),
+                    "paired_msl": str(paired_msl),
+                    "paired_msl_exists": msl_exists,
+                    "err_mtime": err_mtime,
+                    "paired_msl_mtime": msl_mtime,
+                }
+            )
+    return records
+
+
+def hard_fail_scan(text: str, shader_cache_dir: Path) -> dict[str, Any]:
+    counters = {key: len(re.findall(pattern, text, re.IGNORECASE)) for key, pattern in HARD_FAIL_PATTERNS}
+    active_sidecars = active_msl_err_sidecars(shader_cache_dir)
+    counters["active_msl_err_sidecars"] = len(active_sidecars)
+    no_fallback_pass = (
+        counters["vertex_range_oob"] == 0
+        and counters["d3d12_tessellation_fallback"] == 0
+        and counters["active_msl_err_sidecars"] == 0
+    )
+    native_runtime_pass = (
+        no_fallback_pass
+        and counters["compute_encoder_encode_failed"] == 0
+        and counters["render_encoder_encode_failed"] == 0
+        and counters["metal_command_buffer_error"] == 0
+        and counters["windowserver_watchdog_reboot"] == 0
+    )
+    return {
+        "schema": "metalsharp.m12.fresh.hard-fail-scan.v1",
+        "counters": counters,
+        "active_msl_err_sidecars": active_sidecars[:50],
+        "active_msl_err_sidecars_truncated": len(active_sidecars) > 50,
+        "no_fallback_pass": no_fallback_pass,
+        "native_runtime_pass": native_runtime_pass,
+        "hard_fail_patterns": {key: pattern for key, pattern in HARD_FAIL_PATTERNS},
+    }
+
+
 def wine_path_arg(path: Path) -> str:
     resolved = path.expanduser().resolve()
     return "Z:" + str(resolved).replace("/", "\\")
@@ -1656,6 +1720,12 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     indexed_count = int(indexed_draw.get("indices_created", 0) or 0)
     tessellation_fallback = d3d12_json.get("tessellation_fallback", {}) if d3d12_json else {}
     tessellation_vertices = int(tessellation_fallback.get("vertices_per_draw", 0) or 0)
+    tessellation_blocked_expected = bool(
+        tessellation_fallback.get("native_tessellation_required") is True
+        and tessellation_fallback.get("blocked_expected") is True
+        and tessellation_fallback.get("fallback_draw_encoded") is False
+        and int(tessellation_fallback.get("draw_calls", 0) or 0) == 0
+    )
     indirect_draw = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
     indirect_vertices = int(indirect_draw.get("argument_vertex_count", 0) or 0)
     nanite_cluster = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
@@ -1712,10 +1782,12 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_cbv_sample_presented_draw_hashes")
     if not indexed_draws:
         errors.append("missing_indexed_presented_draw_hashes")
-    if not tessellation_draws:
+    if not tessellation_blocked_expected and not tessellation_draws:
         errors.append("missing_tessellation_fallback_presented_draw_hashes")
-    if not tessellation_fallback_traces:
+    if not tessellation_blocked_expected and not tessellation_fallback_traces:
         errors.append("missing_tessellation_fallback_trace")
+    if tessellation_blocked_expected and (tessellation_draws or tessellation_fallback_traces):
+        errors.append("tessellation_blocked_expected_but_fallback_was_encoded")
     if not indirect_draws:
         errors.append("missing_indirect_presented_draw_hashes")
     if not nanite_draws:
@@ -2034,8 +2106,10 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_textured_3d_presented_pso_manifest")
     if not indexed_pso:
         errors.append("missing_indexed_presented_pso_manifest")
-    if not tessellation_pso:
+    if not tessellation_blocked_expected and not tessellation_pso:
         errors.append("missing_tessellation_fallback_presented_pso_manifest")
+    if tessellation_blocked_expected and tessellation_pso:
+        errors.append("tessellation_blocked_expected_but_render_pso_manifest_exists")
     if not indirect_pso:
         errors.append("missing_indirect_presented_pso_manifest")
     if not nanite_pso:
@@ -2149,9 +2223,14 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and len(cbv_unique_draws) == 1
         and len(indexed_draws) >= presented_log_required
         and len(indexed_unique_draws) == 1
-        and len(tessellation_draws) >= presented_log_required
-        and len(tessellation_unique_draws) == 1
-        and len(tessellation_fallback_traces) >= presented_log_required
+        and (
+            tessellation_blocked_expected
+            or (
+                len(tessellation_draws) >= presented_log_required
+                and len(tessellation_unique_draws) == 1
+                and len(tessellation_fallback_traces) >= presented_log_required
+            )
+        )
         and len(indirect_draws) >= presented_log_required
         and len(indirect_unique_draws) == 1
         and len(nanite_draws) >= presented_log_required
@@ -2225,6 +2304,9 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "fallback_trace_count": len(tessellation_fallback_traces),
             "unique_pairs": [[vs, ps] for vs, ps in tessellation_unique_draws],
             "vertices": tessellation_vertices,
+            "native_tessellation_required": tessellation_fallback.get("native_tessellation_required") is True,
+            "blocked_expected": tessellation_blocked_expected,
+            "fallback_draw_encoded": tessellation_fallback.get("fallback_draw_encoded") is True,
         },
         "indirect_presented_hashes": {
             "vs": indirect_vs,
@@ -2459,6 +2541,7 @@ def run_fresh_game(
     nanite_cluster_json = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
     dxil_hazard_replay_json = d3d12_json.get("dxil_hazard_replay", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, diagnostic_log_text, d3d12_json, visible_frames)
+    hard_fail_gates = hard_fail_scan(diagnostic_log_text, shader_cache_dir)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
     subresource_view_expected_slice0_rgba = [64, 48, 208, 255]
@@ -2970,7 +3053,8 @@ def run_fresh_game(
         and indexed_draw_json.get("present_last_rgba") == indexed_draw_expected_rgba
         and tessellation_fallback_json.get("ok") is True
         and tessellation_fallback_json.get("present_ok") is True
-        and tessellation_fallback_json.get("proof_scope") == "hs_ds_patch_topology_runtime_fallback_presented_readback"
+        and tessellation_fallback_json.get("proof_scope")
+        == "hs_ds_patch_topology_native_tessellation_required_fail_closed"
         and tessellation_fallback_json.get("D3DCompile_loaded") is True
         and tessellation_fallback_json.get("tess_vs_vs_5_0") == "0x00000000"
         and tessellation_fallback_json.get("tess_hs_hs_5_0") == "0x00000000"
@@ -2978,21 +3062,16 @@ def run_fresh_game(
         and tessellation_fallback_json.get("tess_ps_ps_5_0") == "0x00000000"
         and tessellation_fallback_json.get("D3D12SerializeRootSignature") == "0x00000000"
         and tessellation_fallback_json.get("CreateRootSignature") == "0x00000000"
-        and tessellation_fallback_json.get("CreateGraphicsPipelineState_PATCH_HS_DS") == "0x00000000"
-        and tessellation_fallback_json.get("CreateVertexBuffer") == "0x00000000"
+        and tessellation_fallback_json.get("CreateGraphicsPipelineState_PATCH_HS_DS") != "0x00000000"
+        and tessellation_fallback_json.get("native_tessellation_required") is True
+        and tessellation_fallback_json.get("blocked_expected") is True
+        and tessellation_fallback_json.get("fallback_draw_encoded") is False
         and int(tessellation_fallback_json.get("patch_control_points", 0) or 0) == 3
-        and int(tessellation_fallback_json.get("vertices_created", 0) or 0) == 42
-        and int(tessellation_fallback_json.get("vertices_per_draw", 0) or 0) == 42
-        and int(tessellation_fallback_json.get("draw_calls", 0) or 0) == visible_frames
-        and int(tessellation_fallback_json.get("present_samples_checked", 0) or 0) == visible_frames
-        and int(tessellation_fallback_json.get("present_sample_matches", 0) or 0) == visible_frames
-        and int(tessellation_fallback_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
-        and int(tessellation_fallback_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
-        and tessellation_fallback_json.get("expected_rgba") == tessellation_fallback_expected_rgba
-        and tessellation_fallback_json.get("present_rgba") == tessellation_fallback_expected_rgba
-        and tessellation_fallback_json.get("present_last_rgba") == tessellation_fallback_expected_rgba
-        and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("fallback_trace_count", 0)
-        >= min(visible_frames, 6)
+        and int(tessellation_fallback_json.get("draw_calls", 0) or 0) == 0
+        and int(tessellation_fallback_json.get("present_samples_checked", 0) or 0) == 0
+        and int(tessellation_fallback_json.get("present_sample_matches", 0) or 0) == 0
+        and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("blocked_expected") is True
+        and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("fallback_trace_count", 0) == 0
         and indirect_draw_json.get("ok") is True
         and indirect_draw_json.get("present_ok") is True
         and indirect_draw_json.get("proof_scope") == "command_signature_execute_indirect_draw_presented_readback"
@@ -3121,6 +3200,9 @@ def run_fresh_game(
         "waveops_artifacts": waveops_artifacts,
         "shader_cache_dir": str(shader_cache_dir),
         "shader_cache_validation": shader_cache_validation,
+        "hard_fail_gates": hard_fail_gates,
+        "no_fallback_pass": hard_fail_gates["no_fallback_pass"],
+        "native_runtime_pass": hard_fail_gates["native_runtime_pass"],
         "copied_corpus_artifacts": copied_corpus_artifacts,
         "corpus_hash_validation": corpus_hash_validation,
         "drawn_present_count": drawn_present_count,
@@ -3153,6 +3235,7 @@ def run_fresh_game(
         and game_json_ok
         and corpus_hash_validation["ok"]
         and shader_cache_validation["ok"]
+        and hard_fail_gates["native_runtime_pass"]
         and async_worker_proof["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
@@ -3982,6 +4065,15 @@ def main() -> int:
         "visible_game_ok": None
         if args.skip_run or args.skip_game
         else bool(visible_game_result and visible_game_result["ok"]),
+        "hard_fail_gates": None
+        if args.skip_run or args.skip_game or not visible_game_result
+        else visible_game_result.get("hard_fail_gates"),
+        "no_fallback_pass": None
+        if args.skip_run or args.skip_game or not visible_game_result
+        else visible_game_result.get("no_fallback_pass"),
+        "native_runtime_pass": None
+        if args.skip_run or args.skip_game or not visible_game_result
+        else visible_game_result.get("native_runtime_pass"),
         "metal_archive_prewarm_ok": None
         if args.skip_run or args.skip_game
         else bool(metal_archive_result and metal_archive_result["ok"]),

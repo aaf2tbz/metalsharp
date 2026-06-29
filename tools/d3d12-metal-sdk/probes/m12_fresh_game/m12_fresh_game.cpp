@@ -2319,6 +2319,9 @@ struct TessellationFallbackStats {
     uint8_t expected_rgba[4] = {248, 96, 176, 255};
     uint8_t present_rgba[4] = {0, 0, 0, 0};
     uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    bool native_tessellation_required = false;
+    bool fallback_draw_encoded = false;
+    bool blocked_expected = false;
     bool present_pass = false;
     bool pass = false;
 };
@@ -2430,6 +2433,9 @@ float4 tess_ps(TessCP input) : SV_Target {
         pso_desc.DepthStencilState.DepthEnable = FALSE;
         pso_desc.DepthStencilState.StencilEnable = FALSE;
         stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+        stats.native_tessellation_required = FAILED(stats.create_pso_hr) && scene.pipeline_state == nullptr;
+        stats.blocked_expected = stats.native_tessellation_required;
+        stats.fallback_draw_encoded = scene.pipeline_state != nullptr;
     }
 
     if (device) {
@@ -2470,10 +2476,7 @@ float4 tess_ps(TessCP input) : SV_Target {
     stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_hs_hr) &&
                  SUCCEEDED(stats.compile_ds_hr) && SUCCEEDED(stats.compile_ps_hr) &&
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
-                 SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
-                 stats.patch_control_points == 3 && stats.vertices_created == kTessellationFallbackVertexCount &&
-                 stats.vertices_per_draw == kTessellationFallbackVertexCount && scene.root_signature &&
-                 scene.pipeline_state && scene.vertex_buffer && scene.vertex_view.BufferLocation != 0;
+                 stats.native_tessellation_required && stats.blocked_expected && !stats.fallback_draw_encoded;
 
     safe_release(vs);
     safe_release(hs);
@@ -6476,12 +6479,19 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetIndexBuffer(&indexed_draw.index_view);
             list->DrawIndexedInstanced(indexed_draw.stats.indices_created, 1, 0, 0, 0);
             stats.indexed_draw.draw_indexed_calls++;
-            list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
-            list->SetPipelineState(tessellation_fallback.pipeline_state);
-            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
-            list->IASetVertexBuffers(0, 1, &tessellation_fallback.vertex_view);
-            list->DrawInstanced(tessellation_fallback.stats.vertices_per_draw, 1, 0, 0);
-            stats.tessellation_fallback.draw_calls++;
+            if (tessellation_fallback.pipeline_state) {
+                list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
+                list->SetPipelineState(tessellation_fallback.pipeline_state);
+                list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
+                list->IASetVertexBuffers(0, 1, &tessellation_fallback.vertex_view);
+                list->DrawInstanced(tessellation_fallback.stats.vertices_per_draw, 1, 0, 0);
+                stats.tessellation_fallback.draw_calls++;
+                stats.tessellation_fallback.fallback_draw_encoded = true;
+            } else {
+                stats.tessellation_fallback.native_tessellation_required = true;
+                stats.tessellation_fallback.blocked_expected = true;
+                stats.tessellation_fallback.fallback_draw_encoded = false;
+            }
             list->SetGraphicsRootSignature(indirect_draw.root_signature);
             list->SetPipelineState(indirect_draw.pipeline_state);
             list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -6701,7 +6711,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_indexed_draw_stamp(dxil_readback, stats.indexed_draw))
                 break;
-            if (!inspect_tessellation_fallback_stamp(dxil_readback, stats.tessellation_fallback))
+            if (stats.tessellation_fallback.fallback_draw_encoded &&
+                !inspect_tessellation_fallback_stamp(dxil_readback, stats.tessellation_fallback))
                 break;
             if (!inspect_indirect_draw_stamp(dxil_readback, stats.indirect_draw))
                 break;
@@ -6808,11 +6819,13 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indexed_draw.present_pixel_matches == stats.indexed_draw.present_pixels_checked;
     stats.tessellation_fallback.present_pass =
-        stats.tessellation_fallback.present_samples_checked == visible_frame_target &&
-        stats.tessellation_fallback.present_sample_matches == visible_frame_target &&
-        stats.tessellation_fallback.present_pixels_checked ==
-            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
-        stats.tessellation_fallback.present_pixel_matches == stats.tessellation_fallback.present_pixels_checked;
+        stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded
+            ? stats.tessellation_fallback.draw_calls == 0
+            : (stats.tessellation_fallback.present_samples_checked == visible_frame_target &&
+               stats.tessellation_fallback.present_sample_matches == visible_frame_target &&
+               stats.tessellation_fallback.present_pixels_checked ==
+                   visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+               stats.tessellation_fallback.present_pixel_matches == stats.tessellation_fallback.present_pixels_checked);
     stats.indirect_draw.present_pass =
         stats.indirect_draw.present_samples_checked == visible_frame_target &&
         stats.indirect_draw.present_sample_matches == visible_frame_target &&
@@ -6851,7 +6864,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.cbv_sample.present_pass && stats.cbv_sample.draw_calls == visible_frame_target &&
         stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
         stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.tessellation_fallback.pass &&
-        stats.tessellation_fallback.present_pass && stats.tessellation_fallback.draw_calls == visible_frame_target &&
+        stats.tessellation_fallback.present_pass && stats.tessellation_fallback.blocked_expected &&
+        !stats.tessellation_fallback.fallback_draw_encoded && stats.tessellation_fallback.draw_calls == 0 &&
         stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
         stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.nanite_cluster.pass &&
         stats.nanite_cluster.present_pass && stats.nanite_cluster.execute_indirect_calls == visible_frame_target &&
@@ -7652,7 +7666,7 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.indexed_draw.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"tessellation_fallback\": {\n");
-    std::printf("      \"proof_scope\": \"hs_ds_patch_topology_runtime_fallback_presented_readback\",\n");
+    std::printf("      \"proof_scope\": \"hs_ds_patch_topology_native_tessellation_required_fail_closed\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.tessellation_fallback.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"tess_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.tessellation_fallback.compile_vs_hr).c_str());
     std::printf("      \"tess_hs_hs_5_0\": \"%s\",\n", hr_hex(d3d.tessellation_fallback.compile_hs_hr).c_str());
@@ -7673,6 +7687,12 @@ int main() {
     std::printf("      \"present_sample_matches\": %u,\n", d3d.tessellation_fallback.present_sample_matches);
     std::printf("      \"present_pixels_checked\": %u,\n", d3d.tessellation_fallback.present_pixels_checked);
     std::printf("      \"present_pixel_matches\": %u,\n", d3d.tessellation_fallback.present_pixel_matches);
+    std::printf("      \"native_tessellation_required\": %s,\n",
+                d3d.tessellation_fallback.native_tessellation_required ? "true" : "false");
+    std::printf("      \"blocked_expected\": %s,\n",
+                d3d.tessellation_fallback.blocked_expected ? "true" : "false");
+    std::printf("      \"fallback_draw_encoded\": %s,\n",
+                d3d.tessellation_fallback.fallback_draw_encoded ? "true" : "false");
     std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.tessellation_fallback.expected_rgba[0],
                 d3d.tessellation_fallback.expected_rgba[1], d3d.tessellation_fallback.expected_rgba[2],
                 d3d.tessellation_fallback.expected_rgba[3]);

@@ -1859,6 +1859,18 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
                          desc->GS.BytecodeLength, desc->NumRenderTargets,
                          desc->InputLayout.NumElements);
 
+  if (desc->HS.BytecodeLength > 0 || desc->DS.BytecodeLength > 0) {
+    Logger::warn(str::format(
+        "M12 native_tessellation_required: failing HS/DS graphics PSO "
+        "HS bytes=",
+        desc->HS.BytecodeLength, " DS bytes=", desc->DS.BytecodeLength,
+        " topology=", (unsigned)desc->PrimitiveTopologyType));
+    TRACE("CreateGraphicsPSO native_tessellation_required hs=%zu ds=%zu topo=%u",
+          desc->HS.BytecodeLength, desc->DS.BytecodeLength,
+          (unsigned)desc->PrimitiveTopologyType);
+    return E_FAIL;
+  }
+
   auto pso = new MTLD3D12PipelineState(this, false);
   pso->SetGraphicsDesc(*desc);
   bool compiled = pso->RequestCompile(true);

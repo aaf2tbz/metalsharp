@@ -1635,6 +1635,7 @@ void MTLD3D12PipelineState::BuildIAInputLayout(
     info.aligned_byte_offset = resolved.aligned_byte_offset;
     info.dxgi_format = static_cast<DXGI_FORMAT>(resolved.dxgi_format);
     info.metal_format = static_cast<WMTAttributeFormat>(resolved.metal_format);
+    info.bytes_per_element = resolved.bytes_per_element;
     info.input_slot_class =
         resolved.input_slot_class == D3D12VertexInputSlotClass::PerInstance
             ? D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA
@@ -1797,16 +1798,14 @@ bool MTLD3D12PipelineState::Compile() {
                        : ComputeShaderCacheHash(m_gs.data(), m_gs.size(),
                                                 ShaderType::Geometry, nullptr);
 
-  const bool tessellation_fallback = !m_hs.empty() || !m_ds.empty();
-  m_uses_tessellation_fallback = tessellation_fallback;
-  if (tessellation_fallback) {
-    Logger::warn(str::format(
-        "D3D12 tessellation fallback: compiling VS/PS-only render PSO "
-        "HS bytes=",
-        m_hs.size(), " DS bytes=", m_ds.size(),
-        " topology=", (unsigned)m_topology));
-    PSTRACE("D3D12 tessellation fallback pso=%p hs=%zu ds=%zu topo=%u",
-            (void *)this, m_hs.size(), m_ds.size(), (unsigned)m_topology);
+  const bool native_tessellation_required = !m_hs.empty() || !m_ds.empty();
+  m_uses_tessellation_fallback = false;
+  if (native_tessellation_required) {
+    return RecordCompileFailure(
+        "pso/unsupported_native_tessellation",
+        str::format("native_tessellation_required HS bytes=", m_hs.size(),
+                    " DS bytes=", m_ds.size(),
+                    " topology=", (unsigned)m_topology));
   }
 
   if (!m_gs.empty()) {
