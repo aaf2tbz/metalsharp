@@ -2133,6 +2133,8 @@ struct IndexedDrawStats {
     HRESULT create_index_buffer_hr = E_FAIL;
     HRESULT create_index_buffer_r32_hr = E_FAIL;
     HRESULT create_index_buffer_negative_base_hr = E_FAIL;
+    bool append_aligned_element = true;
+    uint32_t append_aligned_color_expected_offset = 12;
     uint32_t vertices_created = 0;
     uint32_t vertex_buffer_size = 0;
     uint32_t vertex_view_byte_offset = 0;
@@ -2240,7 +2242,8 @@ float4 indexed_ps(PSIn input) : SV_Target {
     if (device && scene.root_signature && vs && ps) {
         D3D12_INPUT_ELEMENT_DESC input_elements[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D12_APPEND_ALIGNED_ELEMENT,
+             D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
         D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
         pso_desc.pRootSignature = scene.root_signature;
@@ -2375,6 +2378,7 @@ float4 indexed_ps(PSIn input) : SV_Target {
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
                  SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
                  SUCCEEDED(stats.create_index_buffer_hr) && SUCCEEDED(stats.create_index_buffer_r32_hr) &&
+                 stats.append_aligned_element && stats.append_aligned_color_expected_offset == 12 &&
                  stats.vertices_created == 12 && stats.vertex_buffer_size == 336 &&
                  stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
                  stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
@@ -7790,7 +7794,7 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.cbv_sample.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"indexed_draw\": {\n");
-    std::printf("      \"proof_scope\": \"r16_r32_subrange_positive_and_negative_base_vertex_presented_readback\",\n");
+    std::printf("      \"proof_scope\": \"r16_r32_subrange_positive_negative_base_append_aligned_presented_readback\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.indexed_draw.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"indexed_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_vs_hr).c_str());
     std::printf("      \"indexed_ps_ps_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_ps_hr).c_str());
@@ -7802,6 +7806,10 @@ int main() {
     std::printf("      \"CreateIndexBufferR32\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_index_buffer_r32_hr).c_str());
     std::printf("      \"CreateIndexBufferNegativeBase\": \"%s\",\n",
                 hr_hex(d3d.indexed_draw.create_index_buffer_negative_base_hr).c_str());
+    std::printf("      \"append_aligned_element\": %s,\n",
+                d3d.indexed_draw.append_aligned_element ? "true" : "false");
+    std::printf("      \"append_aligned_color_expected_offset\": %u,\n",
+                d3d.indexed_draw.append_aligned_color_expected_offset);
     std::printf("      \"vertices_created\": %u,\n", d3d.indexed_draw.vertices_created);
     std::printf("      \"vertex_buffer_size\": %u,\n", d3d.indexed_draw.vertex_buffer_size);
     std::printf("      \"vertex_view_byte_offset\": %u,\n", d3d.indexed_draw.vertex_view_byte_offset);

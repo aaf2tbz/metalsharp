@@ -3034,7 +3034,7 @@ def run_fresh_game(
         and cbv_sample_json.get("present_last_rgba") == cbv_sample_expected_rgba
         and indexed_draw_json.get("ok") is True
         and indexed_draw_json.get("present_ok") is True
-        and indexed_draw_json.get("proof_scope") == "r16_r32_subrange_positive_and_negative_base_vertex_presented_readback"
+        and indexed_draw_json.get("proof_scope") == "r16_r32_subrange_positive_negative_base_append_aligned_presented_readback"
         and indexed_draw_json.get("D3DCompile_loaded") is True
         and indexed_draw_json.get("indexed_vs_vs_5_0") == "0x00000000"
         and indexed_draw_json.get("indexed_ps_ps_5_0") == "0x00000000"
@@ -3045,6 +3045,8 @@ def run_fresh_game(
         and indexed_draw_json.get("CreateIndexBuffer") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBufferR32") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBufferNegativeBase") == "0x00000000"
+        and indexed_draw_json.get("append_aligned_element") is True
+        and int(indexed_draw_json.get("append_aligned_color_expected_offset", 0) or 0) == 12
         and int(indexed_draw_json.get("vertices_created", 0) or 0) == 12
         and int(indexed_draw_json.get("vertex_buffer_size", 0) or 0) == 336
         and int(indexed_draw_json.get("vertex_view_byte_offset", 0) or 0) == 28
