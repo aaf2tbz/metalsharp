@@ -557,8 +557,10 @@ Code changes:
   - backpressure proof
   - shader replay proof
   - `/mtsp/prepare` runtime identity proof
+  - PR CI status for the latest pushed commit
   - hard-fail string scan
 - Add launch monitor config with immediate abort triggers for all hard-fail strings.
+- After every push to the PR branch, query GitHub PR checks for the pushed commit and record pass/fail/pending status. Treat failing PR CI as a blocker to readiness, even when local offline proof passes.
 
 Mini-game/probe proof:
 
@@ -570,14 +572,15 @@ Mini-game/probe proof:
 Validity artifacts:
 
 - One final readiness directory under `06-results/in-progress` or `06-results/completed`.
-- `READINESS.md` with exact counters and links to logs.
+- `READINESS.md` with exact counters, PR CI check results for the latest push, and links to logs.
 - Runtime hash proof that the PR runtime is the one staged.
 
 Acceptance:
 
 - Every hard gate is green.
+- Latest pushed PR commit has passing PR CI, or any pending/failing check is explicitly listed as a blocker with log evidence.
 - Any unsupported native tessellation shape is clearly listed as blocked and not fallback-rendered.
-- User approval is requested only after local proof is complete.
+- User approval is requested only after local proof and PR CI accounting are complete.
 
 ## Phase summary table
 
