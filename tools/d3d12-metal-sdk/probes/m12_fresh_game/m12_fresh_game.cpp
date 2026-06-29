@@ -73,6 +73,10 @@ constexpr UINT kIndexedDynamicStrideStampX = 280;
 constexpr UINT kIndexedDynamicStrideStampY = 120;
 constexpr UINT kIndexedExecuteIndirectStampX = 280;
 constexpr UINT kIndexedExecuteIndirectStampY = 152;
+constexpr UINT kMultiSlotInstanceRootStampAX = 312;
+constexpr UINT kMultiSlotInstanceRootStampAY = 56;
+constexpr UINT kMultiSlotInstanceRootStampBX = 312;
+constexpr UINT kMultiSlotInstanceRootStampBY = 88;
 constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
 constexpr UINT kWaveOpsStampX = 344;
@@ -2659,6 +2663,260 @@ static void destroy_indexed_draw_scene(IndexedDrawSceneResources& scene) {
     safe_release(scene.index_buffer);
     safe_release(scene.vertex_buffer_dynamic_stride);
     safe_release(scene.vertex_buffer);
+    safe_release(scene.pipeline_state);
+    safe_release(scene.root_signature);
+}
+
+struct MultiSlotPositionVertex {
+    float pos[3];
+};
+
+struct MultiSlotInstanceVertex {
+    float color[4];
+    float offset[2];
+};
+
+struct MultiSlotInstanceRootStats {
+    bool d3dcompiler_loaded = false;
+    HRESULT compile_vs_hr = E_FAIL;
+    HRESULT compile_ps_hr = E_FAIL;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    HRESULT create_pso_hr = E_FAIL;
+    HRESULT create_position_buffer_hr = E_FAIL;
+    HRESULT create_instance_buffer_hr = E_FAIL;
+    uint32_t input_slots = 2;
+    uint32_t position_vertices_created = 0;
+    uint32_t instance_records_created = 0;
+    uint32_t selected_instance_record = 5;
+    uint32_t per_instance_step_rate = 2;
+    uint32_t start_instance_location = 4;
+    uint32_t vertex_count_per_draw = 6;
+    uint32_t instance_count_per_draw = 3;
+    uint32_t slot0_stride = sizeof(MultiSlotPositionVertex);
+    uint32_t slot1_stride = sizeof(MultiSlotInstanceVertex);
+    uint32_t root_constant_float_count = 8;
+    uint32_t root_constant_sets = 0;
+    uint32_t draw_calls = 0;
+    uint32_t first_draw_calls = 0;
+    uint32_t second_draw_calls = 0;
+    uint8_t root_first_rgba[4] = {208, 96, 40, 255};
+    uint8_t root_second_rgba[4] = {72, 208, 240, 255};
+    uint8_t expected_first_rgba[4] = {104, 96, 20, 255};
+    uint8_t expected_second_rgba[4] = {36, 208, 120, 255};
+    uint8_t present_first_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_first_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_second_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_second_last_rgba[4] = {0, 0, 0, 0};
+    uint32_t present_first_samples_checked = 0;
+    uint32_t present_first_sample_matches = 0;
+    uint32_t present_first_pixels_checked = 0;
+    uint32_t present_first_pixel_matches = 0;
+    uint32_t present_second_samples_checked = 0;
+    uint32_t present_second_sample_matches = 0;
+    uint32_t present_second_pixels_checked = 0;
+    uint32_t present_second_pixel_matches = 0;
+    bool present_pass = false;
+    bool pass = false;
+};
+
+struct MultiSlotInstanceRootSceneResources {
+    ID3D12RootSignature* root_signature = nullptr;
+    ID3D12PipelineState* pipeline_state = nullptr;
+    ID3D12Resource* position_buffer = nullptr;
+    ID3D12Resource* instance_buffer = nullptr;
+    D3D12_VERTEX_BUFFER_VIEW vertex_views[2] = {};
+    D3D12_VERTEX_BUFFER_VIEW second_vertex_views[2] = {};
+    float root_constants_first[8] = {};
+    float root_constants_second[8] = {};
+    MultiSlotInstanceRootStats stats;
+};
+
+static void fill_multi_slot_root_constants(float constants[8], const uint8_t rgba[4]) {
+    constants[0] = static_cast<float>(rgba[0]) / 255.0f;
+    constants[1] = static_cast<float>(rgba[1]) / 255.0f;
+    constants[2] = static_cast<float>(rgba[2]) / 255.0f;
+    constants[3] = static_cast<float>(rgba[3]) / 255.0f;
+    constants[4] = 0.0f;
+    constants[5] = 0.0f;
+    constants[6] = 0.0f;
+    constants[7] = 0.0f;
+}
+
+static void fill_multi_slot_position_quad(MultiSlotPositionVertex* out, UINT stamp_x, UINT stamp_y,
+                                          UINT backbuffer_width, UINT backbuffer_height) {
+    const float center_x = ndc_x_from_pixel(static_cast<float>(stamp_x) + static_cast<float>(kFreshTextureWidth) * 0.5f,
+                                            static_cast<float>(backbuffer_width));
+    const float center_y =
+        ndc_y_from_pixel(static_cast<float>(stamp_y) + static_cast<float>(kFreshTextureHeight) * 0.5f,
+                         static_cast<float>(backbuffer_height));
+    const float half_x =
+        (static_cast<float>(kFreshTextureWidth) * 0.5f + 1.0f) * 2.0f / static_cast<float>(backbuffer_width);
+    const float half_y =
+        (static_cast<float>(kFreshTextureHeight) * 0.5f + 1.0f) * 2.0f / static_cast<float>(backbuffer_height);
+    const MultiSlotPositionVertex quad[6] = {
+        {{center_x - half_x, center_y + half_y, 0.02f}}, {{center_x + half_x, center_y + half_y, 0.02f}},
+        {{center_x - half_x, center_y - half_y, 0.02f}}, {{center_x - half_x, center_y - half_y, 0.02f}},
+        {{center_x + half_x, center_y + half_y, 0.02f}}, {{center_x + half_x, center_y - half_y, 0.02f}}};
+    std::memcpy(out, quad, sizeof(quad));
+}
+
+static MultiSlotInstanceRootSceneResources
+create_multi_slot_instance_root_scene(ID3D12Device* device, D3DCompileFn compile, SerializeRootSignatureFn serialize,
+                                      UINT backbuffer_width, UINT backbuffer_height) {
+    MultiSlotInstanceRootSceneResources scene;
+    MultiSlotInstanceRootStats& stats = scene.stats;
+    stats.d3dcompiler_loaded = compile != nullptr;
+    fill_multi_slot_root_constants(scene.root_constants_first, stats.root_first_rgba);
+    fill_multi_slot_root_constants(scene.root_constants_second, stats.root_second_rgba);
+
+    static const char* kMultiSlotHlsl = R"HLSL(
+cbuffer RootConstants : register(b0) {
+    float4 rootColor;
+    float4 rootUnused;
+};
+struct VSIn {
+    float3 pos : POSITION;
+    float4 instColor : COLOR0;
+    float2 instOffset : TEXCOORD0;
+};
+struct PSIn { float4 pos : SV_Position; float4 color : COLOR0; };
+PSIn multi_slot_vs(VSIn input) {
+    PSIn output;
+    output.pos = float4(input.pos.xy + input.instOffset, input.pos.z, 1.0f);
+    output.color = saturate(input.instColor);
+    return output;
+}
+float4 multi_slot_ps(PSIn input) : SV_Target {
+    return saturate(input.color * rootColor);
+}
+)HLSL";
+
+    ID3DBlob* vs = nullptr;
+    ID3DBlob* ps = nullptr;
+    stats.compile_vs_hr = compile_shader(compile, kMultiSlotHlsl, "multi_slot_vs", "vs_5_0", &vs);
+    stats.compile_ps_hr = compile_shader(compile, kMultiSlotHlsl, "multi_slot_ps", "ps_5_0", &ps);
+
+    D3D12_ROOT_PARAMETER root_param = {};
+    root_param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    root_param.Constants.ShaderRegister = 0;
+    root_param.Constants.RegisterSpace = 0;
+    root_param.Constants.Num32BitValues = stats.root_constant_float_count;
+    root_param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = 1;
+    root_desc.pParameters = &root_param;
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+    if (device && root_blob) {
+        stats.create_root_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                           IID_PPV_ARGS(&scene.root_signature));
+    }
+
+    if (device && scene.root_signature && vs && ps) {
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA,
+             stats.per_instance_step_rate},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 1, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA,
+             stats.per_instance_step_rate},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = scene.root_signature;
+        pso_desc.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        pso_desc.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        pso_desc.InputLayout = {input_elements, 3};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
+    }
+
+    if (device) {
+        D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
+        const UINT position_vertex_count = stats.vertex_count_per_draw * 2u;
+        D3D12_RESOURCE_DESC pos_desc = buffer_desc(position_vertex_count * sizeof(MultiSlotPositionVertex));
+        stats.create_position_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &pos_desc,
+                                                                          D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                          IID_PPV_ARGS(&scene.position_buffer));
+        if (SUCCEEDED(stats.create_position_buffer_hr) && scene.position_buffer) {
+            MultiSlotPositionVertex* mapped = nullptr;
+            if (SUCCEEDED(scene.position_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
+                fill_multi_slot_position_quad(mapped, kMultiSlotInstanceRootStampAX, kMultiSlotInstanceRootStampAY,
+                                              backbuffer_width, backbuffer_height);
+                fill_multi_slot_position_quad(mapped + stats.vertex_count_per_draw, kMultiSlotInstanceRootStampBX,
+                                              kMultiSlotInstanceRootStampBY, backbuffer_width, backbuffer_height);
+                D3D12_RANGE written = {0, position_vertex_count * sizeof(MultiSlotPositionVertex)};
+                scene.position_buffer->Unmap(0, &written);
+                stats.position_vertices_created = position_vertex_count;
+            }
+            const D3D12_GPU_VIRTUAL_ADDRESS base = scene.position_buffer->GetGPUVirtualAddress();
+            scene.vertex_views[0].BufferLocation = base;
+            scene.vertex_views[0].SizeInBytes = stats.vertex_count_per_draw * sizeof(MultiSlotPositionVertex);
+            scene.vertex_views[0].StrideInBytes = sizeof(MultiSlotPositionVertex);
+            scene.second_vertex_views[0].BufferLocation =
+                base + stats.vertex_count_per_draw * sizeof(MultiSlotPositionVertex);
+            scene.second_vertex_views[0].SizeInBytes = stats.vertex_count_per_draw * sizeof(MultiSlotPositionVertex);
+            scene.second_vertex_views[0].StrideInBytes = sizeof(MultiSlotPositionVertex);
+        }
+
+        D3D12_RESOURCE_DESC instance_desc = buffer_desc(6u * sizeof(MultiSlotInstanceVertex));
+        stats.create_instance_buffer_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &instance_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.instance_buffer));
+        if (SUCCEEDED(stats.create_instance_buffer_hr) && scene.instance_buffer) {
+            MultiSlotInstanceVertex* mapped = nullptr;
+            if (SUCCEEDED(scene.instance_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
+                const MultiSlotInstanceVertex records[6] = {
+                    {{0.0f, 0.0f, 1.0f, 1.0f}, {2.5f, 0.0f}}, {{1.0f, 0.0f, 1.0f, 1.0f}, {2.5f, 0.0f}},
+                    {{0.5f, 0.5f, 0.5f, 1.0f}, {2.5f, 0.0f}}, {{0.0f, 1.0f, 0.0f, 1.0f}, {2.5f, 0.0f}},
+                    {{1.0f, 0.0f, 0.0f, 1.0f}, {2.5f, 0.0f}}, {{0.5f, 1.0f, 0.5f, 1.0f}, {0.0f, 0.0f}},
+                };
+                std::memcpy(mapped, records, sizeof(records));
+                D3D12_RANGE written = {0, sizeof(records)};
+                scene.instance_buffer->Unmap(0, &written);
+                stats.instance_records_created = 6;
+            }
+            scene.vertex_views[1].BufferLocation = scene.instance_buffer->GetGPUVirtualAddress();
+            scene.vertex_views[1].SizeInBytes = 6u * sizeof(MultiSlotInstanceVertex);
+            scene.vertex_views[1].StrideInBytes = sizeof(MultiSlotInstanceVertex);
+            scene.second_vertex_views[1] = scene.vertex_views[1];
+        }
+    }
+
+    stats.pass =
+        stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
+        SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) && SUCCEEDED(stats.create_pso_hr) &&
+        SUCCEEDED(stats.create_position_buffer_hr) && SUCCEEDED(stats.create_instance_buffer_hr) &&
+        stats.input_slots == 2 && stats.position_vertices_created == stats.vertex_count_per_draw * 2u &&
+        stats.instance_records_created == 6 &&
+        stats.selected_instance_record ==
+            stats.start_instance_location + ((stats.instance_count_per_draw - 1u) / stats.per_instance_step_rate) &&
+        stats.per_instance_step_rate == 2 && stats.start_instance_location == 4 && stats.vertex_count_per_draw == 6 &&
+        stats.instance_count_per_draw == 3 && stats.slot0_stride == 12 && stats.slot1_stride == 24 &&
+        stats.root_constant_float_count == 8 && scene.root_signature && scene.pipeline_state && scene.position_buffer &&
+        scene.instance_buffer && scene.vertex_views[0].BufferLocation != 0 &&
+        scene.vertex_views[1].BufferLocation != 0 && scene.second_vertex_views[0].BufferLocation != 0 &&
+        scene.second_vertex_views[1].BufferLocation != 0;
+
+    safe_release(vs);
+    safe_release(ps);
+    safe_release(root_blob);
+    return scene;
+}
+
+static void destroy_multi_slot_instance_root_scene(MultiSlotInstanceRootSceneResources& scene) {
+    safe_release(scene.instance_buffer);
+    safe_release(scene.position_buffer);
     safe_release(scene.pipeline_state);
     safe_release(scene.root_signature);
 }
@@ -6307,6 +6565,55 @@ static bool inspect_indexed_draw_stamp(DxilReadbackResources& readback, IndexedD
            execute_indirect_indexed_matches;
 }
 
+static bool inspect_multi_slot_instance_root_stamp(DxilReadbackResources& readback, MultiSlotInstanceRootStats& stats) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+
+    auto inspect_stamp = [&](UINT stamp_x, UINT stamp_y, const uint8_t expected[4], uint8_t first_rgba[4],
+                             uint8_t last_rgba[4], uint32_t& samples_checked, uint32_t& sample_matches,
+                             uint32_t& pixels_checked, uint32_t& pixel_matches) {
+        const uint8_t* first = readback_pixel(readback, mapped, stamp_x, stamp_y);
+        std::memcpy(first_rgba, first, 4);
+        const uint8_t* last =
+            readback_pixel(readback, mapped, stamp_x + kFreshTextureWidth - 1u, stamp_y + kFreshTextureHeight - 1u);
+        std::memcpy(last_rgba, last, 4);
+        samples_checked++;
+        uint32_t frame_matches = 0;
+        for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+            for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+                const uint8_t* pixel = readback_pixel(readback, mapped, stamp_x + x, stamp_y + y);
+                pixels_checked++;
+                if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                    pixel[3] == expected[3]) {
+                    pixel_matches++;
+                    frame_matches++;
+                }
+            }
+        }
+        const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+        if (matches)
+            sample_matches++;
+        return matches;
+    };
+
+    const bool first_matches = inspect_stamp(
+        kMultiSlotInstanceRootStampAX, kMultiSlotInstanceRootStampAY, stats.expected_first_rgba,
+        stats.present_first_rgba, stats.present_first_last_rgba, stats.present_first_samples_checked,
+        stats.present_first_sample_matches, stats.present_first_pixels_checked, stats.present_first_pixel_matches);
+    const bool second_matches = inspect_stamp(
+        kMultiSlotInstanceRootStampBX, kMultiSlotInstanceRootStampBY, stats.expected_second_rgba,
+        stats.present_second_rgba, stats.present_second_last_rgba, stats.present_second_samples_checked,
+        stats.present_second_sample_matches, stats.present_second_pixels_checked, stats.present_second_pixel_matches);
+
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return first_matches && second_matches;
+}
+
 static bool inspect_tessellation_fallback_stamp(DxilReadbackResources& readback, TessellationFallbackStats& stats) {
     if (!readback.buffer)
         return false;
@@ -6629,6 +6936,7 @@ struct D3DRunStats {
     Textured3DStats textured_3d;
     CbvSampleStats cbv_sample;
     IndexedDrawStats indexed_draw;
+    MultiSlotInstanceRootStats multi_slot_instance_root;
     TessellationFallbackStats tessellation_fallback;
     IndirectDrawStats indirect_draw;
     NaniteClusterStats nanite_cluster;
@@ -6829,6 +7137,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     IndexedDrawSceneResources indexed_draw =
         create_indexed_draw_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.indexed_draw = indexed_draw.stats;
+    MultiSlotInstanceRootSceneResources multi_slot_instance_root =
+        create_multi_slot_instance_root_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
+    stats.multi_slot_instance_root = multi_slot_instance_root.stats;
     TessellationFallbackSceneResources tessellation_fallback =
         create_tessellation_fallback_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.tessellation_fallback = tessellation_fallback.stats;
@@ -6844,8 +7155,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
         dxil_scene.stats.pass && stats.dxil_hazard_replay.pass && corpus_shader.stats.pass && srv_sample.stats.pass &&
         texture_array_srv_sample.stats.pass && textured_3d.stats.pass && cbv_sample.stats.pass &&
-        indexed_draw.stats.pass && tessellation_fallback.stats.pass && indirect_draw.stats.pass &&
-        nanite_cluster.stats.pass && wave_ops.stats.pass) {
+        indexed_draw.stats.pass && multi_slot_instance_root.stats.pass && tessellation_fallback.stats.pass &&
+        indirect_draw.stats.pass && nanite_cluster.stats.pass && wave_ops.stats.pass) {
         for (UINT frame = 0; frame < visible_frame_target; ++frame) {
             pump_messages();
             UINT index = swapchain->GetCurrentBackBufferIndex();
@@ -6956,6 +7267,27 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                   indexed_draw.stats.execute_indirect_indexed_max_command_count,
                                   indexed_draw.execute_indirect_indexed_argument_buffer, 0, nullptr, 0);
             stats.indexed_draw.execute_indirect_indexed_calls++;
+            list->SetGraphicsRootSignature(multi_slot_instance_root.root_signature);
+            list->SetPipelineState(multi_slot_instance_root.pipeline_state);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 2, multi_slot_instance_root.vertex_views);
+            list->SetGraphicsRoot32BitConstants(0, multi_slot_instance_root.stats.root_constant_float_count,
+                                                multi_slot_instance_root.root_constants_first, 0);
+            stats.multi_slot_instance_root.root_constant_sets++;
+            list->DrawInstanced(multi_slot_instance_root.stats.vertex_count_per_draw,
+                                multi_slot_instance_root.stats.instance_count_per_draw, 0,
+                                multi_slot_instance_root.stats.start_instance_location);
+            stats.multi_slot_instance_root.draw_calls++;
+            stats.multi_slot_instance_root.first_draw_calls++;
+            list->SetGraphicsRoot32BitConstants(0, multi_slot_instance_root.stats.root_constant_float_count,
+                                                multi_slot_instance_root.root_constants_second, 0);
+            stats.multi_slot_instance_root.root_constant_sets++;
+            list->IASetVertexBuffers(0, 2, multi_slot_instance_root.second_vertex_views);
+            list->DrawInstanced(multi_slot_instance_root.stats.vertex_count_per_draw,
+                                multi_slot_instance_root.stats.instance_count_per_draw, 0,
+                                multi_slot_instance_root.stats.start_instance_location);
+            stats.multi_slot_instance_root.draw_calls++;
+            stats.multi_slot_instance_root.second_draw_calls++;
             if (tessellation_fallback.pipeline_state) {
                 list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
                 list->SetPipelineState(tessellation_fallback.pipeline_state);
@@ -7194,6 +7526,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_indexed_draw_stamp(dxil_readback, stats.indexed_draw))
                 break;
+            if (!inspect_multi_slot_instance_root_stamp(dxil_readback, stats.multi_slot_instance_root))
+                break;
             if (stats.tessellation_fallback.fallback_draw_encoded &&
                 !inspect_tessellation_fallback_stamp(dxil_readback, stats.tessellation_fallback))
                 break;
@@ -7348,6 +7682,19 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indexed_draw.present_execute_indirect_indexed_pixel_matches ==
             stats.indexed_draw.present_execute_indirect_indexed_pixels_checked;
+    stats.multi_slot_instance_root.present_pass =
+        stats.multi_slot_instance_root.present_first_samples_checked == visible_frame_target &&
+        stats.multi_slot_instance_root.present_first_sample_matches == visible_frame_target &&
+        stats.multi_slot_instance_root.present_first_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.multi_slot_instance_root.present_first_pixel_matches ==
+            stats.multi_slot_instance_root.present_first_pixels_checked &&
+        stats.multi_slot_instance_root.present_second_samples_checked == visible_frame_target &&
+        stats.multi_slot_instance_root.present_second_sample_matches == visible_frame_target &&
+        stats.multi_slot_instance_root.present_second_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.multi_slot_instance_root.present_second_pixel_matches ==
+            stats.multi_slot_instance_root.present_second_pixels_checked;
     stats.tessellation_fallback.present_pass =
         stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded
             ? stats.tessellation_fallback.draw_calls == 0
@@ -7397,7 +7744,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.draw_indexed_r32_calls == visible_frame_target &&
         stats.indexed_draw.draw_indexed_negative_base_calls == visible_frame_target &&
         stats.indexed_draw.draw_indexed_dynamic_stride_calls == visible_frame_target &&
-        stats.indexed_draw.execute_indirect_indexed_calls == visible_frame_target && stats.tessellation_fallback.pass &&
+        stats.indexed_draw.execute_indirect_indexed_calls == visible_frame_target &&
+        stats.multi_slot_instance_root.pass && stats.multi_slot_instance_root.present_pass &&
+        stats.multi_slot_instance_root.root_constant_sets == visible_frame_target * 2 &&
+        stats.multi_slot_instance_root.draw_calls == visible_frame_target * 2 &&
+        stats.multi_slot_instance_root.first_draw_calls == visible_frame_target &&
+        stats.multi_slot_instance_root.second_draw_calls == visible_frame_target && stats.tessellation_fallback.pass &&
         stats.tessellation_fallback.present_pass && stats.tessellation_fallback.blocked_expected &&
         !stats.tessellation_fallback.fallback_draw_encoded && stats.tessellation_fallback.draw_calls == 0 &&
         stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
@@ -7422,6 +7774,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     destroy_textured3d_scene(textured_3d);
     destroy_cbv_sample_scene(cbv_sample);
     destroy_indexed_draw_scene(indexed_draw);
+    destroy_multi_slot_instance_root_scene(multi_slot_instance_root);
     destroy_tessellation_fallback_scene(tessellation_fallback);
     destroy_indirect_draw_scene(indirect_draw);
     destroy_nanite_cluster_scene(nanite_cluster);
@@ -8334,6 +8687,84 @@ int main() {
                 d3d.indexed_draw.present_execute_indirect_indexed_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.indexed_draw.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.indexed_draw.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"multi_slot_instance_root\": {\n");
+    std::printf("      \"proof_scope\": "
+                "\"two_slot_per_instance_step_rate_start_instance_root_constants_mutation_presented_readback\",\n");
+    std::printf("      \"D3DCompile_loaded\": %s,\n",
+                d3d.multi_slot_instance_root.d3dcompiler_loaded ? "true" : "false");
+    std::printf("      \"multi_slot_vs_vs_5_0\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.compile_vs_hr).c_str());
+    std::printf("      \"multi_slot_ps_ps_5_0\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.compile_ps_hr).c_str());
+    std::printf("      \"D3D12SerializeRootSignature_root_constants\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.create_root_hr).c_str());
+    std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.create_pso_hr).c_str());
+    std::printf("      \"CreatePositionVertexBuffer\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.create_position_buffer_hr).c_str());
+    std::printf("      \"CreateInstanceVertexBuffer\": \"%s\",\n",
+                hr_hex(d3d.multi_slot_instance_root.create_instance_buffer_hr).c_str());
+    std::printf("      \"input_slots\": %u,\n", d3d.multi_slot_instance_root.input_slots);
+    std::printf("      \"position_vertices_created\": %u,\n", d3d.multi_slot_instance_root.position_vertices_created);
+    std::printf("      \"instance_records_created\": %u,\n", d3d.multi_slot_instance_root.instance_records_created);
+    std::printf("      \"selected_instance_record\": %u,\n", d3d.multi_slot_instance_root.selected_instance_record);
+    std::printf("      \"per_instance_step_rate\": %u,\n", d3d.multi_slot_instance_root.per_instance_step_rate);
+    std::printf("      \"start_instance_location\": %u,\n", d3d.multi_slot_instance_root.start_instance_location);
+    std::printf("      \"vertex_count_per_draw\": %u,\n", d3d.multi_slot_instance_root.vertex_count_per_draw);
+    std::printf("      \"instance_count_per_draw\": %u,\n", d3d.multi_slot_instance_root.instance_count_per_draw);
+    std::printf("      \"slot0_stride\": %u,\n", d3d.multi_slot_instance_root.slot0_stride);
+    std::printf("      \"slot1_stride\": %u,\n", d3d.multi_slot_instance_root.slot1_stride);
+    std::printf("      \"root_constant_float_count\": %u,\n", d3d.multi_slot_instance_root.root_constant_float_count);
+    std::printf("      \"root_constant_sets\": %u,\n", d3d.multi_slot_instance_root.root_constant_sets);
+    std::printf("      \"draw_calls\": %u,\n", d3d.multi_slot_instance_root.draw_calls);
+    std::printf("      \"first_draw_calls\": %u,\n", d3d.multi_slot_instance_root.first_draw_calls);
+    std::printf("      \"second_draw_calls\": %u,\n", d3d.multi_slot_instance_root.second_draw_calls);
+    std::printf("      \"present_first_samples_checked\": %u,\n",
+                d3d.multi_slot_instance_root.present_first_samples_checked);
+    std::printf("      \"present_first_sample_matches\": %u,\n",
+                d3d.multi_slot_instance_root.present_first_sample_matches);
+    std::printf("      \"present_first_pixels_checked\": %u,\n",
+                d3d.multi_slot_instance_root.present_first_pixels_checked);
+    std::printf("      \"present_first_pixel_matches\": %u,\n",
+                d3d.multi_slot_instance_root.present_first_pixel_matches);
+    std::printf("      \"present_second_samples_checked\": %u,\n",
+                d3d.multi_slot_instance_root.present_second_samples_checked);
+    std::printf("      \"present_second_sample_matches\": %u,\n",
+                d3d.multi_slot_instance_root.present_second_sample_matches);
+    std::printf("      \"present_second_pixels_checked\": %u,\n",
+                d3d.multi_slot_instance_root.present_second_pixels_checked);
+    std::printf("      \"present_second_pixel_matches\": %u,\n",
+                d3d.multi_slot_instance_root.present_second_pixel_matches);
+    std::printf(
+        "      \"expected_first_rgba\": [%u, %u, %u, %u],\n", d3d.multi_slot_instance_root.expected_first_rgba[0],
+        d3d.multi_slot_instance_root.expected_first_rgba[1], d3d.multi_slot_instance_root.expected_first_rgba[2],
+        d3d.multi_slot_instance_root.expected_first_rgba[3]);
+    std::printf("      \"present_first_rgba\": [%u, %u, %u, %u],\n", d3d.multi_slot_instance_root.present_first_rgba[0],
+                d3d.multi_slot_instance_root.present_first_rgba[1], d3d.multi_slot_instance_root.present_first_rgba[2],
+                d3d.multi_slot_instance_root.present_first_rgba[3]);
+    std::printf("      \"present_first_last_rgba\": [%u, %u, %u, %u],\n",
+                d3d.multi_slot_instance_root.present_first_last_rgba[0],
+                d3d.multi_slot_instance_root.present_first_last_rgba[1],
+                d3d.multi_slot_instance_root.present_first_last_rgba[2],
+                d3d.multi_slot_instance_root.present_first_last_rgba[3]);
+    std::printf(
+        "      \"expected_second_rgba\": [%u, %u, %u, %u],\n", d3d.multi_slot_instance_root.expected_second_rgba[0],
+        d3d.multi_slot_instance_root.expected_second_rgba[1], d3d.multi_slot_instance_root.expected_second_rgba[2],
+        d3d.multi_slot_instance_root.expected_second_rgba[3]);
+    std::printf(
+        "      \"present_second_rgba\": [%u, %u, %u, %u],\n", d3d.multi_slot_instance_root.present_second_rgba[0],
+        d3d.multi_slot_instance_root.present_second_rgba[1], d3d.multi_slot_instance_root.present_second_rgba[2],
+        d3d.multi_slot_instance_root.present_second_rgba[3]);
+    std::printf("      \"present_second_last_rgba\": [%u, %u, %u, %u],\n",
+                d3d.multi_slot_instance_root.present_second_last_rgba[0],
+                d3d.multi_slot_instance_root.present_second_last_rgba[1],
+                d3d.multi_slot_instance_root.present_second_last_rgba[2],
+                d3d.multi_slot_instance_root.present_second_last_rgba[3]);
+    std::printf("      \"present_ok\": %s,\n", d3d.multi_slot_instance_root.present_pass ? "true" : "false");
+    std::printf("      \"ok\": %s\n", d3d.multi_slot_instance_root.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"tessellation_fallback\": {\n");
     std::printf("      \"proof_scope\": \"hs_ds_patch_topology_native_tessellation_required_fail_closed\",\n");

@@ -1735,7 +1735,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     dxil_draws = re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1 .*?vs=([0-9a-f]{16}) ps=([0-9a-f]{16})", stderr_text)
     sm5_pattern = rf"M12 swapchain DrawInstanced encoded v={visible_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     sm5_draws = re.findall(sm5_pattern, stderr_text) if visible_vertices else []
-    corpus_pattern = rf"M12 swapchain DrawInstanced encoded v={corpus_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
+    corpus_pattern = rf"M12 swapchain DrawInstanced encoded v={corpus_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}}).*?vs_cb=0.*?ps_cb=0"
     corpus_draws = re.findall(corpus_pattern, stderr_text) if corpus_vertices else []
     srv_pattern = rf"M12 swapchain DrawInstanced encoded v={srv_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     srv_draws = re.findall(srv_pattern, stderr_text) if srv_vertices else []
@@ -2521,6 +2521,15 @@ def run_fresh_game(
             re.IGNORECASE,
         )
     )
+    multi_slot_instance_root_draw_skipped = bool(
+        re.search(
+            r"DrawInstanced\s+SKIPPED\s+v=6\s+i=1.*start_inst=4|"
+            r"M12 swapchain DrawInstanced skipped v=6\s+i=1.*start_inst=4|"
+            r"M12 skipping unsafe DrawInstanced.*elems=6.*start_inst=4",
+            diagnostic_log_text,
+            re.IGNORECASE,
+        )
+    )
     tessellation_fallback_draw_skipped = bool(
         re.search(r"M12 swapchain DrawInstanced skipped v=42\s+i=1|DrawInstanced\s+SKIPPED\s+v=42\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
@@ -2563,6 +2572,7 @@ def run_fresh_game(
     textured_3d_json = d3d12_json.get("textured_3d", {}) if d3d12_json else {}
     cbv_sample_json = d3d12_json.get("cbv_sample", {}) if d3d12_json else {}
     indexed_draw_json = d3d12_json.get("indexed_draw", {}) if d3d12_json else {}
+    multi_slot_instance_root_json = d3d12_json.get("multi_slot_instance_root", {}) if d3d12_json else {}
     tessellation_fallback_json = d3d12_json.get("tessellation_fallback", {}) if d3d12_json else {}
     indirect_draw_json = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
     nanite_cluster_json = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
@@ -3188,6 +3198,47 @@ def run_fresh_game(
         and indexed_draw_json.get("expected_execute_indirect_indexed_rgba") == [240, 144, 72, 255]
         and indexed_draw_json.get("present_execute_indirect_indexed_rgba") == [240, 144, 72, 255]
         and indexed_draw_json.get("present_execute_indirect_indexed_last_rgba") == [240, 144, 72, 255]
+        and multi_slot_instance_root_json.get("ok") is True
+        and multi_slot_instance_root_json.get("present_ok") is True
+        and multi_slot_instance_root_json.get("proof_scope")
+        == "two_slot_per_instance_step_rate_start_instance_root_constants_mutation_presented_readback"
+        and multi_slot_instance_root_json.get("D3DCompile_loaded") is True
+        and multi_slot_instance_root_json.get("multi_slot_vs_vs_5_0") == "0x00000000"
+        and multi_slot_instance_root_json.get("multi_slot_ps_ps_5_0") == "0x00000000"
+        and multi_slot_instance_root_json.get("D3D12SerializeRootSignature_root_constants") == "0x00000000"
+        and multi_slot_instance_root_json.get("CreateRootSignature") == "0x00000000"
+        and multi_slot_instance_root_json.get("CreateGraphicsPipelineState") == "0x00000000"
+        and multi_slot_instance_root_json.get("CreatePositionVertexBuffer") == "0x00000000"
+        and multi_slot_instance_root_json.get("CreateInstanceVertexBuffer") == "0x00000000"
+        and int(multi_slot_instance_root_json.get("input_slots", 0) or 0) == 2
+        and int(multi_slot_instance_root_json.get("position_vertices_created", 0) or 0) == 12
+        and int(multi_slot_instance_root_json.get("instance_records_created", 0) or 0) == 6
+        and int(multi_slot_instance_root_json.get("selected_instance_record", 0) or 0) == 5
+        and int(multi_slot_instance_root_json.get("per_instance_step_rate", 0) or 0) == 2
+        and int(multi_slot_instance_root_json.get("start_instance_location", 0) or 0) == 4
+        and int(multi_slot_instance_root_json.get("vertex_count_per_draw", 0) or 0) == 6
+        and int(multi_slot_instance_root_json.get("instance_count_per_draw", 0) or 0) == 3
+        and int(multi_slot_instance_root_json.get("slot0_stride", 0) or 0) == 12
+        and int(multi_slot_instance_root_json.get("slot1_stride", 0) or 0) == 24
+        and int(multi_slot_instance_root_json.get("root_constant_float_count", 0) or 0) == 8
+        and int(multi_slot_instance_root_json.get("root_constant_sets", 0) or 0) == visible_frames * 2
+        and int(multi_slot_instance_root_json.get("draw_calls", 0) or 0) == visible_frames * 2
+        and int(multi_slot_instance_root_json.get("first_draw_calls", 0) or 0) == visible_frames
+        and int(multi_slot_instance_root_json.get("second_draw_calls", 0) or 0) == visible_frames
+        and int(multi_slot_instance_root_json.get("present_first_samples_checked", 0) or 0) == visible_frames
+        and int(multi_slot_instance_root_json.get("present_first_sample_matches", 0) or 0) == visible_frames
+        and int(multi_slot_instance_root_json.get("present_first_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(multi_slot_instance_root_json.get("present_first_pixel_matches", 0) or 0) == visible_frames * 256
+        and int(multi_slot_instance_root_json.get("present_second_samples_checked", 0) or 0) == visible_frames
+        and int(multi_slot_instance_root_json.get("present_second_sample_matches", 0) or 0) == visible_frames
+        and int(multi_slot_instance_root_json.get("present_second_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(multi_slot_instance_root_json.get("present_second_pixel_matches", 0) or 0) == visible_frames * 256
+        and multi_slot_instance_root_json.get("expected_first_rgba") == [104, 96, 20, 255]
+        and multi_slot_instance_root_json.get("present_first_rgba") == [104, 96, 20, 255]
+        and multi_slot_instance_root_json.get("present_first_last_rgba") == [104, 96, 20, 255]
+        and multi_slot_instance_root_json.get("expected_second_rgba") == [36, 208, 120, 255]
+        and multi_slot_instance_root_json.get("present_second_rgba") == [36, 208, 120, 255]
+        and multi_slot_instance_root_json.get("present_second_last_rgba") == [36, 208, 120, 255]
         and tessellation_fallback_json.get("ok") is True
         and tessellation_fallback_json.get("present_ok") is True
         and tessellation_fallback_json.get("proof_scope")
@@ -3356,7 +3407,7 @@ def run_fresh_game(
         "native_vertex_execute_indirect_draw_indexed_resolved_required": native_vertex_execute_indirect_draw_indexed_resolved_required,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
         "dxil_draw_encoded_required": min(frames_presented, 6),
-        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect/native-vertex resolver logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=4, indirect>=3, capped native ExecuteIndirectDrawIndexed resolver output, and all JSON/readback lanes to pass.",
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect/native-vertex resolver logs are capped samples; long runs additionally require every present to report draws>=10, indexed>=4, indirect>=3, capped native ExecuteIndirectDrawIndexed resolver output, and all JSON/readback lanes to pass.",
         "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
         "dxil_vertex_pull_snapshot_required": min(frames_presented, 4),
         "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, bound_vbs=1, plus per-frame JSON/readback validation.",
@@ -3364,6 +3415,7 @@ def run_fresh_game(
         "indexed_draw_skipped": indexed_draw_skipped,
         "indirect_draw_skipped": indirect_draw_skipped,
         "execute_indirect_indexed_draw_skipped": execute_indirect_indexed_draw_skipped,
+        "multi_slot_instance_root_draw_skipped": multi_slot_instance_root_draw_skipped,
         "tessellation_fallback_draw_skipped": tessellation_fallback_draw_skipped,
         "nanite_cluster_draw_skipped": nanite_cluster_draw_skipped,
         "texture_array_srv_draw_skipped": texture_array_srv_draw_skipped,
@@ -3392,7 +3444,7 @@ def run_fresh_game(
         and len(present_draw_counts) == frames_presented
         and len(present_indexed_counts) == frames_presented
         and len(present_indirect_counts) == frames_presented
-        and all(draws >= 6 for draws in present_draw_counts)
+        and all(draws >= 10 for draws in present_draw_counts)
         and all(indexed >= 4 for indexed in present_indexed_counts)
         and all(indirect >= 3 for indirect in present_indirect_counts)
         and native_vertex_resolved_count >= native_vertex_resolved_required
@@ -3405,6 +3457,7 @@ def run_fresh_game(
         and not indexed_draw_skipped
         and not indirect_draw_skipped
         and not execute_indirect_indexed_draw_skipped
+        and not multi_slot_instance_root_draw_skipped
         and not tessellation_fallback_draw_skipped
         and not nanite_cluster_draw_skipped
         and not texture_array_srv_draw_skipped

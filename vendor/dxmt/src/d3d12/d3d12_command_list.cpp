@@ -8,6 +8,7 @@
 #include "d3d12_descriptor_heap.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
+#include <cstddef>
 
 #define CLTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, "CmdList::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
@@ -493,7 +494,8 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstants
     UINT root_parameter_index, UINT constant_count, const void *data,
     UINT dst_offset) {
   size_t extra = constant_count * 4;
-  auto total = sizeof(CmdSetRoot32BitConstants) - 1 + extra;
+  const size_t data_offset = offsetof(CmdSetRoot32BitConstants, data);
+  auto total = data_offset + extra;
   auto offset = m_cmds.size();
   m_cmds.resize(offset + total);
   CmdSetRoot32BitConstants cmd = {};
@@ -501,15 +503,16 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstants
   cmd.root_param_index = root_parameter_index;
   cmd.count = constant_count;
   cmd.dst_offset = dst_offset;
-  memcpy(m_cmds.data() + offset, &cmd, sizeof(CmdSetRoot32BitConstants) - 1);
-  memcpy(m_cmds.data() + offset + sizeof(CmdSetRoot32BitConstants) - 1, data, extra);
+  memcpy(m_cmds.data() + offset, &cmd, data_offset);
+  memcpy(m_cmds.data() + offset + data_offset, data, extra);
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstants(
     UINT root_parameter_index, UINT constant_count, const void *data,
     UINT dst_offset) {
   size_t extra = constant_count * 4;
-  auto total = sizeof(CmdSetRoot32BitConstants) - 1 + extra;
+  const size_t data_offset = offsetof(CmdSetRoot32BitConstants, data);
+  auto total = data_offset + extra;
   auto offset = m_cmds.size();
   m_cmds.resize(offset + total);
   CmdSetRoot32BitConstants cmd = {};
@@ -517,8 +520,8 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstant
   cmd.root_param_index = root_parameter_index;
   cmd.count = constant_count;
   cmd.dst_offset = dst_offset;
-  memcpy(m_cmds.data() + offset, &cmd, sizeof(CmdSetRoot32BitConstants) - 1);
-  memcpy(m_cmds.data() + offset + sizeof(CmdSetRoot32BitConstants) - 1, data, extra);
+  memcpy(m_cmds.data() + offset, &cmd, data_offset);
+  memcpy(m_cmds.data() + offset + data_offset, data, extra);
 }
 
 void STDMETHODCALLTYPE

@@ -385,8 +385,8 @@ static bool FindRootDescriptorParameter(
 
   const auto &params = root_signature->GetParameters();
   for (uint32_t pass = 0; pass < 2; pass++) {
-    for (uint32_t p = 0;
-         p < params.size() && p < kD3D12RootParameterSlotCount; p++) {
+    for (uint32_t p = 0; p < params.size() && p < kD3D12RootParameterSlotCount;
+         p++) {
       if (params[p].type == type &&
           params[p].register_index == arg.SM50BindingSlot &&
           params[p].register_space == arg.SM50RegisterSpace &&
@@ -790,11 +790,7 @@ struct ReplayState {
   uint64_t fallback_fragment_texture_slots = 0;
   uint64_t fallback_fragment_sampler_slots = 0;
 
-  ~ReplayState() {
-    CloseRenderEncoder();
-    for (void *ptr : transient_table_slab_hosts)
-      std::free(ptr);
-  }
+  ~ReplayState() { CloseRenderEncoder(); }
 
   MTLD3D12PipelineState *pso = nullptr;
   MTLD3D12RootSignature *graphics_root_sig = nullptr;
@@ -831,6 +827,21 @@ struct ReplayState {
   bool root_srv_set[kRootParameterSlotCount] = {};
   bool root_uav_set[kRootParameterSlotCount] = {};
   bool root_table_set[kRootParameterSlotCount] = {};
+
+  void ResetGraphicsRootBindings() {
+    memset(root_cbvs, 0, sizeof(root_cbvs));
+    memset(root_srvs, 0, sizeof(root_srvs));
+    memset(root_uavs, 0, sizeof(root_uavs));
+    memset(root_tables, 0, sizeof(root_tables));
+    memset(root_constants_buf, 0, sizeof(root_constants_buf));
+    memset(root_constant_offsets, 0, sizeof(root_constant_offsets));
+    memset(root_constant_sizes, 0, sizeof(root_constant_sizes));
+    memset(root_constant_set, 0, sizeof(root_constant_set));
+    memset(root_cbv_set, 0, sizeof(root_cbv_set));
+    memset(root_srv_set, 0, sizeof(root_srv_set));
+    memset(root_uav_set, 0, sizeof(root_uav_set));
+    memset(root_table_set, 0, sizeof(root_table_set));
+  }
 
   bool HasUsableRenderPSO() const {
     return pso && pso->IsCompiled() && !pso->IsCompute() &&
@@ -992,24 +1003,22 @@ struct ReplayState {
     std::string out;
     for (uint32_t i = 0; i < rt_count && i < 8; i++) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(rt_handles[i].ptr);
-      auto *res =
-          desc && desc->resource
-              ? static_cast<MTLD3D12Resource *>(desc->resource)
-              : nullptr;
+      auto *res = desc && desc->resource
+                      ? static_cast<MTLD3D12Resource *>(desc->resource)
+                      : nullptr;
       if (!out.empty())
         out += " ";
       out += str::format("rt", i, "={", ResourceSummary(res), "}");
     }
     if (has_dsv) {
       auto *desc = reinterpret_cast<const D3D12Descriptor *>(dsv_handle.ptr);
-      auto *res =
-          desc && desc->resource
-              ? static_cast<MTLD3D12Resource *>(desc->resource)
-              : nullptr;
+      auto *res = desc && desc->resource
+                      ? static_cast<MTLD3D12Resource *>(desc->resource)
+                      : nullptr;
       if (!out.empty())
         out += " ";
-      out += str::format("dsv={", ResourceSummary(res), " stencil=",
-                         desc ? DSVHasStencil(desc) : false, "}");
+      out += str::format("dsv={", ResourceSummary(res),
+                         " stencil=", desc ? DSVHasStencil(desc) : false, "}");
     }
     return out.empty() ? "rt=none" : out;
   }
@@ -1180,11 +1189,13 @@ struct ReplayState {
           D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA) {
         if (element.InstanceDataStepRate == 0) {
           required = uint64_t(start_instance) + 1ull;
+        } else if (!instance_count) {
+          required = 0;
         } else {
-          required =
-              uint64_t(start_instance) +
-              (uint64_t(instance_count) + element.InstanceDataStepRate - 1ull) /
-                  element.InstanceDataStepRate;
+          const uint64_t last_local_instance = uint64_t(instance_count) - 1ull;
+          required = uint64_t(start_instance) +
+                     (last_local_instance / element.InstanceDataStepRate) +
+                     1ull;
         }
       }
       required_per_slot[element.InputSlot] =
@@ -1385,31 +1396,28 @@ struct ReplayState {
   }
 
   void LogNativeVertexResolved(const char *draw_kind, uint32_t element_count,
-                               uint32_t instance_count,
-                               uint32_t start_element, int32_t base_vertex,
-                               uint32_t start_instance, bool indexed) const {
+                               uint32_t instance_count, uint32_t start_element,
+                               int32_t base_vertex, uint32_t start_instance,
+                               bool indexed) const {
     if (!indexed || !TakeLogBudget(&g_native_vertex_resolve_logs, 256))
       return;
 
-    const uint32_t index_size = ib.Format == DXGI_FORMAT_R32_UINT
-                                    ? 4u
-                                    : (ib.Format == DXGI_FORMAT_R16_UINT ? 2u
-                                                                         : 0u);
+    const uint32_t index_size =
+        ib.Format == DXGI_FORMAT_R32_UINT
+            ? 4u
+            : (ib.Format == DXGI_FORMAT_R16_UINT ? 2u : 0u);
     Logger::info(str::format(
-        "M12 native vertex path resolved draw=", draw_kind,
-        " pso=", (void *)pso, " ", TracePsoShaderSummary(pso),
-        " elems=", element_count, " inst=", instance_count,
-        " start=", start_element, " base=", base_vertex,
-        " start_inst=", start_instance, " index_format=", (unsigned)ib.Format,
-        " index_size=", index_size, " ib_gpu=0x", std::hex,
-        (unsigned long long)ib.BufferLocation, std::dec,
-        " ib_view_size=", ib.SizeInBytes,
-        " index_byte_offset=", uint64_t(start_element) * index_size,
-        " input_slot_mask=0x", std::hex,
+        "M12 native vertex path resolved draw=", draw_kind, " pso=",
+        (void *)pso, " ", TracePsoShaderSummary(pso), " elems=", element_count,
+        " inst=", instance_count, " start=", start_element,
+        " base=", base_vertex, " start_inst=", start_instance,
+        " index_format=", (unsigned)ib.Format, " index_size=", index_size,
+        " ib_gpu=0x", std::hex, (unsigned long long)ib.BufferLocation, std::dec,
+        " ib_view_size=", ib.SizeInBytes, " index_byte_offset=",
+        uint64_t(start_element) * index_size, " input_slot_mask=0x", std::hex,
         (unsigned)(pso ? pso->GetIAInputSlotMask() : 0u), std::dec,
-        " vb0_gpu=0x", std::hex,
-        (unsigned long long)vbs[0].BufferLocation, std::dec,
-        " vb0_size=", vbs[0].SizeInBytes,
+        " vb0_gpu=0x", std::hex, (unsigned long long)vbs[0].BufferLocation,
+        std::dec, " vb0_size=", vbs[0].SizeInBytes,
         " vb0_stride=", vbs[0].StrideInBytes));
   }
 
@@ -1649,8 +1657,8 @@ struct ReplayState {
     Logger::info(
         str::format("M12 final root signature params=", (unsigned)params.size(),
                     " heaps=", desc_heap_count));
-    for (uint32_t i = 0;
-         i < params.size() && i < kRootParameterSlotCount; i++) {
+    for (uint32_t i = 0; i < params.size() && i < kRootParameterSlotCount;
+         i++) {
       const auto &param = params[i];
       Logger::info(str::format(
           "M12 final root[", i, "] type=", RootParameterTypeName(param.type),
@@ -1741,8 +1749,7 @@ struct ReplayState {
   }
 
   void LogNonStageInVertexSnapshot(MTLD3D12Device *device,
-                                   const char *draw_kind,
-                                   uint32_t vertex_count,
+                                   const char *draw_kind, uint32_t vertex_count,
                                    uint32_t instance_count,
                                    uint32_t start_vertex,
                                    uint32_t start_instance) {
@@ -1758,26 +1765,24 @@ struct ReplayState {
         " i=", instance_count, " start_vertex=", start_vertex,
         " start_instance=", start_instance, " slot_mask=0x", std::hex,
         pso->GetIAInputSlotMask(), std::dec, " inputs=", inputs.size(),
-        " bound_vbs=", last_bound_vertex_buffers, " table=",
-        last_vertex_table_summary, " pso=", (void *)pso, " ",
+        " bound_vbs=", last_bound_vertex_buffers,
+        " table=", last_vertex_table_summary, " pso=", (void *)pso, " ",
         TracePsoShaderSummary(pso)));
 
     for (const auto &input : inputs) {
-      if (input.system_value ||
-          input.input_slot >= kVertexBufferSlotCount)
+      if (input.system_value || input.input_slot >= kVertexBufferSlotCount)
         continue;
 
       const auto &vb = vbs[input.input_slot];
       Logger::info(str::format(
           "M12 vertex-pull input semantic=", input.semantic_name,
           input.semantic_index, " reg=", input.shader_register,
-          " slot=", input.input_slot, " table=", input.table_index,
-          " offset=", input.aligned_byte_offset, " fmt=",
-          (unsigned)input.dxgi_format, " metal_fmt=",
-          (unsigned)input.metal_format, " per_instance=", input.per_instance,
-          " step=", input.instance_step_rate, " vb_gpu=0x", std::hex,
-          (unsigned long long)vb.BufferLocation, std::dec, " vb_size=",
-          vb.SizeInBytes, " vb_stride=", vb.StrideInBytes));
+          " slot=", input.input_slot, " table=", input.table_index, " offset=",
+          input.aligned_byte_offset, " fmt=", (unsigned)input.dxgi_format,
+          " metal_fmt=", (unsigned)input.metal_format, " per_instance=",
+          input.per_instance, " step=", input.instance_step_rate, " vb_gpu=0x",
+          std::hex, (unsigned long long)vb.BufferLocation, std::dec,
+          " vb_size=", vb.SizeInBytes, " vb_stride=", vb.StrideInBytes));
     }
 
     const uint32_t sample_vertices = std::min<uint32_t>(vertex_count, 4);
@@ -1853,12 +1858,12 @@ struct ReplayState {
         Logger::info(str::format(
             "M12 vertex-pull sample slot=", slot, " n=", n,
             " vertex_id=", (unsigned long long)vertex_id, " vb_gpu=0x",
-            std::hex, (unsigned long long)vb.BufferLocation, std::dec,
-            " res=", (void *)vb_res, " base_off=",
-            (unsigned long long)vb_base_offset, " vertex_off=",
-            (unsigned long long)vertex_offset, " stride=", vb.StrideInBytes,
-            " sampled=", sampled, " hr=0x", std::hex, (unsigned)map_hr,
-            std::dec, " attrs=[", attrs, "] bytes=[", bytes_text, "]"));
+            std::hex, (unsigned long long)vb.BufferLocation, std::dec, " res=",
+            (void *)vb_res, " base_off=", (unsigned long long)vb_base_offset,
+            " vertex_off=", (unsigned long long)vertex_offset,
+            " stride=", vb.StrideInBytes, " sampled=", sampled, " hr=0x",
+            std::hex, (unsigned)map_hr, std::dec, " attrs=[", attrs,
+            "] bytes=[", bytes_text, "]"));
       }
     }
   }
@@ -1906,6 +1911,8 @@ struct ReplayState {
   WMT::Reference<WMT::Buffer> comp_cbv_table_buf;
   uint64_t comp_cbv_table_buf_offset = 0;
   WMT::Reference<WMT::Buffer> root_constants_mtl_buf;
+  uint64_t root_constants_mtl_buf_offset = 0;
+  uint64_t root_constants_gpu_address = 0;
   WMT::Reference<WMT::Buffer> geometry_draw_args_buf;
   WMT::Reference<WMT::Buffer> msc_vertex_arg_buf;
   WMT::Reference<WMT::Buffer> msc_draw_args_buf;
@@ -1917,12 +1924,12 @@ struct ReplayState {
   WMT::Reference<WMT::Buffer> vertex_table_buf;
   WMT::Reference<WMT::Buffer> transient_table_slab;
   uint64_t transient_table_slab_offset = 0;
-  std::vector<void *> transient_table_slab_hosts;
+  uint64_t transient_table_slab_gpu_address = 0;
   std::vector<WMT::Reference<WMT::Buffer>> transient_buffers;
 
-  WMT::Reference<WMT::Buffer> MakeTransientBuffer(MTLD3D12Device *device,
-                                                  uint64_t length,
-                                                  uint64_t *out_gpu_address = nullptr) {
+  WMT::Reference<WMT::Buffer>
+  MakeTransientBuffer(MTLD3D12Device *device, uint64_t length,
+                      uint64_t *out_gpu_address = nullptr) {
     WMTBufferInfo buf_info = {};
     buf_info.length = length;
     buf_info.options =
@@ -1936,40 +1943,14 @@ struct ReplayState {
     return buffer;
   }
 
-  WMT::Reference<WMT::Buffer> MakeHostBackedTransientBuffer(
-      MTLD3D12Device *device, const void *data, uint64_t length,
-      uint64_t *out_gpu_address) {
-    WMTBufferInfo buf_info = {};
-    buf_info.length = std::max<uint64_t>(length, 256);
-    buf_info.options =
-        WMTResourceHazardTrackingModeUntracked |
-        WMTResourceCPUCacheModeWriteCombined | WMTResourceStorageModeShared;
-    void *host = std::malloc(buf_info.length);
-    if (!host)
-      return {};
-    std::memset(host, 0, buf_info.length);
-    if (data && length)
-      std::memcpy(host, data, length);
-    buf_info.memory.set(host);
-    auto buffer = device->GetDXMTDevice().device().newBuffer(buf_info);
-    if (buffer.handle) {
-      transient_table_slab_hosts.push_back(host);
-      transient_buffers.push_back(buffer);
-      if (out_gpu_address)
-        *out_gpu_address = buf_info.gpu_address;
-    } else {
-      std::free(host);
-    }
-    return buffer;
-  }
-
   static uint64_t AlignUp64(uint64_t value, uint64_t alignment) {
     return (value + alignment - 1) & ~(alignment - 1);
   }
 
-  WMT::Reference<WMT::Buffer> MakeTransientTableSlice(
-      MTLD3D12Device *device, const void *data, uint64_t length,
-      uint64_t *out_offset) {
+  WMT::Reference<WMT::Buffer>
+  MakeTransientTableSlice(MTLD3D12Device *device, const void *data,
+                          uint64_t length, uint64_t *out_offset,
+                          uint64_t *out_gpu_address = nullptr) {
     constexpr uint64_t kTableSliceAlignment = 256;
     constexpr uint64_t kTableSlabSize = 64 * 1024;
     uint64_t aligned_offset =
@@ -1985,6 +1966,8 @@ struct ReplayState {
       transient_table_slab =
           device->GetDXMTDevice().device().newBuffer(buf_info);
       transient_table_slab_offset = 0;
+      transient_table_slab_gpu_address =
+          transient_table_slab.handle ? buf_info.gpu_address : 0;
       aligned_offset = 0;
       if (transient_table_slab.handle) {
         transient_buffers.push_back(transient_table_slab);
@@ -1998,6 +1981,10 @@ struct ReplayState {
     transient_table_slab_offset = aligned_offset + aligned_length;
     if (out_offset)
       *out_offset = aligned_offset;
+    if (out_gpu_address)
+      *out_gpu_address = transient_table_slab_gpu_address
+                             ? transient_table_slab_gpu_address + aligned_offset
+                             : 0;
     return transient_table_slab;
   }
 
@@ -2025,9 +2012,8 @@ struct ReplayState {
     if (FAILED(res->Map(0, nullptr, &mapped)) || !mapped)
       return gpu_address;
 
-    const float *mapped_floats =
-        reinterpret_cast<const float *>(static_cast<const char *>(mapped) +
-                                        offset);
+    const float *mapped_floats = reinterpret_cast<const float *>(
+        static_cast<const char *>(mapped) + offset);
     float cbv_probe[20] = {};
     if (length >= sizeof(cbv_probe))
       std::memcpy(cbv_probe, mapped_floats, sizeof(cbv_probe));
@@ -2044,19 +2030,60 @@ struct ReplayState {
     if (render_enc_open) {
       render_enc.useResource(staged, WMTResourceUsageRead, stages);
     }
-    if (HasSwapchainRenderTarget() && TakeLogBudget(&g_swapchain_vs_cbv_logs, 32)) {
+    if (HasSwapchainRenderTarget() &&
+        TakeLogBudget(&g_swapchain_vs_cbv_logs, 32)) {
       Logger::info(str::format(
           "M12 swapchain staged CBV ", label, " original=0x", std::hex,
           (unsigned long long)gpu_address, " staged=0x",
-          (unsigned long long)staged_gpu_address, std::dec, " bytes=",
-          (unsigned long long)length, " f0=", cbv_probe[0],
-          " f5=", cbv_probe[5], " f15=", cbv_probe[15],
-          " time=", cbv_probe[16], " frame=", cbv_probe[17],
-          " width=", cbv_probe[18], " height=", cbv_probe[19]));
+          (unsigned long long)staged_gpu_address, std::dec,
+          " bytes=", (unsigned long long)length, " f0=", cbv_probe[0],
+          " f5=", cbv_probe[5], " f15=", cbv_probe[15], " time=", cbv_probe[16],
+          " frame=", cbv_probe[17], " width=", cbv_probe[18],
+          " height=", cbv_probe[19]));
     }
-    QTRACE("%s: staged CBV original=0x%llx staged=0x%llx bytes=%llu",
-           label, (unsigned long long)gpu_address,
+    QTRACE("%s: staged CBV original=0x%llx staged=0x%llx bytes=%llu", label,
+           (unsigned long long)gpu_address,
            (unsigned long long)staged_gpu_address, (unsigned long long)length);
+    return staged_gpu_address;
+  }
+
+  uint64_t StageRootConstantsAsConstantBuffer(MTLD3D12Device *device,
+                                              uint32_t root_idx,
+                                              WMTRenderStages stages,
+                                              const char *label) {
+    if (root_idx >= kRootParameterSlotCount || !root_constant_set[root_idx])
+      return 0;
+
+    const uint32_t root_offset = root_constant_offsets[root_idx];
+    const uint32_t root_size = root_constant_sizes[root_idx];
+    if (root_offset >= sizeof(root_constants_buf) || root_size == 0)
+      return 0;
+
+    const uint64_t byte_count = std::min<uint64_t>(
+        kRootConstantBytes, sizeof(root_constants_buf) - root_offset);
+    uint64_t staged_gpu_address = 0;
+    auto staged = MakeTransientBuffer(
+        device, std::max<uint64_t>(byte_count, 256), &staged_gpu_address);
+    if (staged.handle)
+      staged.updateContents(0, root_constants_buf + root_offset, byte_count);
+    if (!staged.handle || !staged_gpu_address)
+      return root_constants_gpu_address
+                 ? root_constants_gpu_address + root_offset
+                 : 0;
+
+    if (render_enc_open)
+      render_enc.useResource(staged, WMTResourceUsageRead, stages);
+    if (HasSwapchainRenderTarget() &&
+        TakeLogBudget(&g_swapchain_vs_cbv_logs, 32)) {
+      const float *floats =
+          reinterpret_cast<const float *>(root_constants_buf + root_offset);
+      Logger::info(str::format("M12 swapchain root constants staged CBV ",
+                               label, " root_idx=", root_idx, " gpu=0x",
+                               std::hex, (unsigned long long)staged_gpu_address,
+                               std::dec, " size=", root_size, " f0=", floats[0],
+                               " f1=", floats[1], " f2=", floats[2],
+                               " f3=", floats[3]));
+    }
     return staged_gpu_address;
   }
 
@@ -2079,8 +2106,8 @@ struct ReplayState {
     void *mapped = nullptr;
     if (FAILED(res->Map(0, nullptr, &mapped)) || !mapped)
       return false;
-    std::memcpy(dst + dst_offset, static_cast<const char *>(mapped) + src_offset,
-                byte_count);
+    std::memcpy(dst + dst_offset,
+                static_cast<const char *>(mapped) + src_offset, byte_count);
     res->Unmap(0, nullptr);
     return true;
   }
@@ -2224,49 +2251,48 @@ struct ReplayState {
     if (!null_vertex_arg_buf.handle)
       return;
 
-	uint32_t filled = 0;
-	for (uint32_t slot = 0; slot < kM12VertexBufferSignatureSlotCount; slot++) {
-	  if (slot == kVertexBufferTableSlot || slot == kConstantBufferTableSlot ||
-	      slot == kArgBufSlot)
-	    continue;
-	  if (bound_vertex_buffer_slots & (1ull << slot))
-	    continue;
-	  if (SetVertexBufferTracked(null_vertex_arg_buf, 0, slot))
-	    filled++;
-	}
+    uint32_t filled = 0;
+    for (uint32_t slot = 0; slot < kM12VertexBufferSignatureSlotCount; slot++) {
+      if (slot == kVertexBufferTableSlot || slot == kConstantBufferTableSlot ||
+          slot == kArgBufSlot)
+        continue;
+      if (bound_vertex_buffer_slots & (1ull << slot))
+        continue;
+      if (SetVertexBufferTracked(null_vertex_arg_buf, 0, slot))
+        filled++;
+    }
 
-	if (filled) {
-	  render_enc.useResource(null_vertex_arg_buf, WMTResourceUsageRead,
-	                         WMTRenderStageVertex);
-	  if (HasSwapchainRenderTarget() &&
-	      TakeLogBudget(&g_swapchain_draw_logs, 384)) {
+    if (filled) {
+      render_enc.useResource(null_vertex_arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+      if (HasSwapchainRenderTarget() &&
+          TakeLogBudget(&g_swapchain_draw_logs, 384)) {
         Logger::info(str::format(
             "M12 non-stage-in filled missing vertex buffers count=", filled,
-            " mask=0x", std::hex, bound_vertex_buffer_slots, std::dec, " pso=",
-	          (void *)pso, " ", TracePsoShaderSummary(pso)));
-	  }
-	}
+            " mask=0x", std::hex, bound_vertex_buffer_slots, std::dec,
+            " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
+      }
+    }
 
-	if (vs_cbv_table_buf.handle) {
-	  uint32_t bind_index = BindIndexOrFallback(
-	      pso->GetVSReflection().ConstanttBufferTableBindIndex,
-	      kConstantBufferTableSlot);
-	  SetVertexBufferTracked(vs_cbv_table_buf, vs_cbv_table_buf_offset,
-	                         bind_index);
-	  render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
-	                         WMTRenderStageVertex);
-	}
-	if (vs_arg_buf.handle) {
-	  uint32_t bind_index = BindIndexOrFallback(
-	      pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
-	  SetVertexBufferTracked(vs_arg_buf, vs_arg_buf_offset, bind_index);
-	  render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
-	                         WMTRenderStageVertex);
-	}
+    if (vs_cbv_table_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetVSReflection().ConstanttBufferTableBindIndex,
+          kConstantBufferTableSlot);
+      SetVertexBufferTracked(vs_cbv_table_buf, vs_cbv_table_buf_offset,
+                             bind_index);
+      render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+    }
+    if (vs_arg_buf.handle) {
+      uint32_t bind_index = BindIndexOrFallback(
+          pso->GetVSReflection().ArgumentBufferBindIndex, kArgBufSlot);
+      SetVertexBufferTracked(vs_arg_buf, vs_arg_buf_offset, bind_index);
+      render_enc.useResource(vs_arg_buf, WMTResourceUsageRead,
+                             WMTRenderStageVertex);
+    }
   }
 
-  D3D12ShaderBindingCompletenessSummary
-  FragmentCompletenessSummary() const {
+  D3D12ShaderBindingCompletenessSummary FragmentCompletenessSummary() const {
     D3D12ShaderBindingCompletenessDesc desc = {};
     desc.buffer_count = kD3D12M12DirectBufferSlots;
     desc.texture_count = kD3D12M12DirectFragmentTextureSlots;
@@ -2307,9 +2333,8 @@ struct ReplayState {
           " bound_tex=0x", bound_fragment_texture_slots, " bound_samp=0x",
           bound_fragment_sampler_slots, " root_tables=0x", root_table_mask,
           " root_cbv=0x", root_cbv_mask, " root_srv=0x", root_srv_mask,
-          " root_uav=0x", root_uav_mask, std::dec, " heaps=",
-          desc_heap_count, " pso=", (void *)pso, " ",
-          TracePsoShaderSummary(pso)));
+          " root_uav=0x", root_uav_mask, std::dec, " heaps=", desc_heap_count,
+          " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
     }
 
     if (!null_vertex_arg_buf.handle) {
@@ -2320,9 +2345,8 @@ struct ReplayState {
     }
 
     if (null_vertex_arg_buf.handle) {
-      uint64_t missing =
-          D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
-          ~bound_fragment_buffer_slots;
+      uint64_t missing = D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
+                         ~bound_fragment_buffer_slots;
       for (uint32_t slot = 0; slot < kD3D12M12DirectBufferSlots; slot++) {
         if (!(missing & (1ull << slot)))
           continue;
@@ -2344,10 +2368,10 @@ struct ReplayState {
         SetFragmentTextureTracked(null_direct_texture, slot, true);
       }
       if (fallback_fragment_texture_slots) {
-        render_enc.useResource(null_direct_texture,
-                               (WMTResourceUsage)(WMTResourceUsageRead |
-                                                  WMTResourceUsageSample),
-                               WMTRenderStageFragment);
+        render_enc.useResource(
+            null_direct_texture,
+            (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageSample),
+            WMTRenderStageFragment);
       }
     }
 
@@ -2367,17 +2391,16 @@ struct ReplayState {
         TakeLogBudget(&g_swapchain_fragment_completeness_logs, 128)) {
       auto summary = FragmentCompletenessSummary();
       Logger::info(str::format(
-          "M12 fragment completeness label=",
-          draw_label ? draw_label : "draw", " pso=", (void *)pso, " buffers ",
-          summary.bound_buffer_count, "+", summary.fallback_buffer_count, "/",
-          summary.required_buffer_count, " missing=0x", std::hex,
-          summary.missing_buffers, " textures ", std::dec,
-          summary.bound_texture_count, "+", summary.fallback_texture_count,
-          "/", summary.required_texture_count, " missing=0x", std::hex,
-          summary.missing_textures, " samplers ", std::dec,
-          summary.bound_sampler_count, "+", summary.fallback_sampler_count,
-          "/", summary.required_sampler_count, " missing=0x", std::hex,
-          summary.missing_samplers, std::dec, " ",
+          "M12 fragment completeness label=", draw_label ? draw_label : "draw",
+          " pso=", (void *)pso, " buffers ", summary.bound_buffer_count, "+",
+          summary.fallback_buffer_count, "/", summary.required_buffer_count,
+          " missing=0x", std::hex, summary.missing_buffers, " textures ",
+          std::dec, summary.bound_texture_count, "+",
+          summary.fallback_texture_count, "/", summary.required_texture_count,
+          " missing=0x", std::hex, summary.missing_textures, " samplers ",
+          std::dec, summary.bound_sampler_count, "+",
+          summary.fallback_sampler_count, "/", summary.required_sampler_count,
+          " missing=0x", std::hex, summary.missing_samplers, std::dec, " ",
           TracePsoShaderSummary(pso)));
     }
   }
@@ -2599,9 +2622,9 @@ struct ReplayState {
                 Logger::info(str::format(
                     "M12 swapchain PS SRV binding slot=", arg.SM50BindingSlot,
                     " space=", arg.SM50RegisterSpace, " root=", root_idx,
-                    " desc_off=", descriptor_offset, " qword_off=",
-                    arg.StructurePtrOffset, " gpu_id=0x", std::hex,
-                    (unsigned long long)gpu_id, std::dec, " ",
+                    " desc_off=", descriptor_offset,
+                    " qword_off=", arg.StructurePtrOffset, " gpu_id=0x",
+                    std::hex, (unsigned long long)gpu_id, std::dec, " ",
                     DescriptorSummary(desc, D3D12_DESCRIPTOR_RANGE_TYPE_SRV),
                     " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
               }
@@ -2762,11 +2785,12 @@ struct ReplayState {
       uint64_t gpu_address = 0;
 
       uint32_t root_idx = ~0u;
+      bool root_idx_is_constants = false;
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
         for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
-          for (uint32_t p = 0;
-               p < params.size() && p < kRootParameterSlotCount; p++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
             if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
                 params[p].register_index == arg.SM50BindingSlot &&
                 params[p].register_space == arg.SM50RegisterSpace &&
@@ -2778,9 +2802,29 @@ struct ReplayState {
             }
           }
         }
+        for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
+            if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS &&
+                params[p].register_index == arg.SM50BindingSlot &&
+                params[p].register_space == arg.SM50RegisterSpace &&
+                ShaderVisibilityMatches(params[p].shader_visibility,
+                                        D3D12_SHADER_VISIBILITY_PIXEL,
+                                        pass == 0)) {
+              root_idx = p;
+              root_idx_is_constants = true;
+              break;
+            }
+          }
+        }
       }
 
-      if (root_idx != ~0u && root_cbv_set[root_idx]) {
+      if (root_idx_is_constants && root_idx < kRootParameterSlotCount &&
+          root_constant_set[root_idx]) {
+        gpu_address = StageRootConstantsAsConstantBuffer(
+            device, root_idx, WMTRenderStageFragment,
+            "PSCBVTableRootConstants");
+      } else if (root_idx != ~0u && root_cbv_set[root_idx]) {
         gpu_address = root_cbvs[root_idx];
       } else if (dxmt_sig) {
         uint32_t table_root_idx = ~0u;
@@ -2814,14 +2858,15 @@ struct ReplayState {
             TakeLogBudget(&g_swapchain_ps_cbv_logs, 96)) {
           Logger::info(str::format(
               "M12 swapchain PS cbv resolve inline slot=", arg.SM50BindingSlot,
-              " space=", arg.SM50RegisterSpace, " field=",
-              arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-              std::hex, (unsigned long long)gpu_address, std::dec,
+              " space=", arg.SM50RegisterSpace,
+              " field=", arg.StructurePtrOffset, " root_idx=", root_idx,
+              " gpu=0x", std::hex, (unsigned long long)gpu_address, std::dec,
               " vec4=", arg.SizeInVec4, " ", TracePsoShaderSummary(pso)));
         }
-        QTRACE("BuildConstantBufferTable: inline cb slot=%u field=%u gpu=0x%llx",
-               arg.SM50BindingSlot, arg.StructurePtrOffset,
-               (unsigned long long)gpu_address);
+        QTRACE(
+            "BuildConstantBufferTable: inline cb slot=%u field=%u gpu=0x%llx",
+            arg.SM50BindingSlot, arg.StructurePtrOffset,
+            (unsigned long long)gpu_address);
         continue;
       }
 
@@ -2832,11 +2877,11 @@ struct ReplayState {
           TakeLogBudget(&g_swapchain_ps_cbv_logs, 96)) {
         Logger::info(str::format(
             "M12 swapchain PS cbv resolve slot=", arg.SM50BindingSlot,
-            " space=", arg.SM50RegisterSpace, " qword_off=",
-            arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-            std::hex, (unsigned long long)gpu_address, " original=0x",
-            (unsigned long long)original_gpu_address, std::dec, " ",
-            TracePsoShaderSummary(pso)));
+            " space=", arg.SM50RegisterSpace,
+            " qword_off=", arg.StructurePtrOffset, " root_idx=", root_idx,
+            " gpu=0x", std::hex, (unsigned long long)gpu_address,
+            " original=0x", (unsigned long long)original_gpu_address, std::dec,
+            " ", TracePsoShaderSummary(pso)));
       }
       QTRACE("BuildConstantBufferTable: cb slot=%u offset=%u gpu=0x%llx",
              arg.SM50BindingSlot, arg.StructurePtrOffset,
@@ -2856,11 +2901,11 @@ struct ReplayState {
 
     uint64_t inline_table_bytes = 0;
     if (has_inline_cbuffers) {
-      std::sort(resolved_cbuffers.begin(), resolved_cbuffers.end(),
-                [](const ResolvedConstantBuffer &a,
-                   const ResolvedConstantBuffer &b) {
-                  return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
-                });
+      std::sort(
+          resolved_cbuffers.begin(), resolved_cbuffers.end(),
+          [](const ResolvedConstantBuffer &a, const ResolvedConstantBuffer &b) {
+            return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
+          });
       std::vector<uint8_t> inline_table_data;
       for (const auto &entry : resolved_cbuffers) {
         const auto &arg = *entry.arg;
@@ -2911,11 +2956,10 @@ struct ReplayState {
           Logger::info(str::format(
               "M12 swapchain PS cbv table bind slot=", bind_index,
               " qwords=", qword_count, " inline_bytes=", inline_table_bytes,
-              " data0=0x", std::hex,
-              (unsigned long long)cbv_table_data[0], " data1=0x",
-              (unsigned long long)cbv_table_data[1], std::dec, " handle=",
-              (unsigned long long)cbv_table_buf.handle, " offset=",
-              (unsigned long long)cbv_table_buf_offset, " ",
+              " data0=0x", std::hex, (unsigned long long)cbv_table_data[0],
+              " data1=0x", (unsigned long long)cbv_table_data[1], std::dec,
+              " handle=", (unsigned long long)cbv_table_buf.handle,
+              " offset=", (unsigned long long)cbv_table_buf_offset, " ",
               TracePsoShaderSummary(pso)));
         }
         QTRACE("BuildConstantBufferTable: bound slot=%u qwords=%u", bind_index,
@@ -2961,11 +3005,12 @@ struct ReplayState {
       uint64_t gpu_address = 0;
 
       uint32_t root_idx = ~0u;
+      bool root_idx_is_constants = false;
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
         for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
-          for (uint32_t p = 0;
-               p < params.size() && p < kRootParameterSlotCount; p++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
             if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
                 params[p].register_index == arg.SM50BindingSlot &&
                 params[p].register_space == arg.SM50RegisterSpace &&
@@ -2977,9 +3022,28 @@ struct ReplayState {
             }
           }
         }
+        for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
+            if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS &&
+                params[p].register_index == arg.SM50BindingSlot &&
+                params[p].register_space == arg.SM50RegisterSpace &&
+                ShaderVisibilityMatches(params[p].shader_visibility,
+                                        D3D12_SHADER_VISIBILITY_VERTEX,
+                                        pass == 0)) {
+              root_idx = p;
+              root_idx_is_constants = true;
+              break;
+            }
+          }
+        }
       }
 
-      if (root_idx != ~0u && root_cbv_set[root_idx]) {
+      if (root_idx_is_constants && root_idx < kRootParameterSlotCount &&
+          root_constant_set[root_idx]) {
+        gpu_address = StageRootConstantsAsConstantBuffer(
+            device, root_idx, WMTRenderStageVertex, "VSCBVTableRootConstants");
+      } else if (root_idx != ~0u && root_cbv_set[root_idx]) {
         gpu_address = root_cbvs[root_idx];
       } else if (dxmt_sig) {
         uint32_t table_root_idx = ~0u;
@@ -3013,15 +3077,15 @@ struct ReplayState {
             TakeLogBudget(&g_swapchain_vs_cbv_logs, 96)) {
           Logger::info(str::format(
               "M12 swapchain VS cbv resolve inline slot=", arg.SM50BindingSlot,
-              " space=", arg.SM50RegisterSpace, " field=",
-              arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-              std::hex, (unsigned long long)gpu_address, std::dec,
+              " space=", arg.SM50RegisterSpace,
+              " field=", arg.StructurePtrOffset, " root_idx=", root_idx,
+              " gpu=0x", std::hex, (unsigned long long)gpu_address, std::dec,
               " vec4=", arg.SizeInVec4, " ", TracePsoShaderSummary(pso)));
         }
-        QTRACE(
-            "BuildVertexConstantBufferTable: inline cb slot=%u field=%u gpu=0x%llx",
-            arg.SM50BindingSlot, arg.StructurePtrOffset,
-            (unsigned long long)gpu_address);
+        QTRACE("BuildVertexConstantBufferTable: inline cb slot=%u field=%u "
+               "gpu=0x%llx",
+               arg.SM50BindingSlot, arg.StructurePtrOffset,
+               (unsigned long long)gpu_address);
         continue;
       }
 
@@ -3032,11 +3096,11 @@ struct ReplayState {
           TakeLogBudget(&g_swapchain_vs_cbv_logs, 96)) {
         Logger::info(str::format(
             "M12 swapchain VS cbv resolve slot=", arg.SM50BindingSlot,
-            " space=", arg.SM50RegisterSpace, " qword_off=",
-            arg.StructurePtrOffset, " root_idx=", root_idx, " gpu=0x",
-            std::hex, (unsigned long long)gpu_address, " original=0x",
-            (unsigned long long)original_gpu_address, std::dec, " ",
-            TracePsoShaderSummary(pso)));
+            " space=", arg.SM50RegisterSpace,
+            " qword_off=", arg.StructurePtrOffset, " root_idx=", root_idx,
+            " gpu=0x", std::hex, (unsigned long long)gpu_address,
+            " original=0x", (unsigned long long)original_gpu_address, std::dec,
+            " ", TracePsoShaderSummary(pso)));
       }
       QTRACE("BuildVertexConstantBufferTable: cb slot=%u offset=%u gpu=0x%llx",
              arg.SM50BindingSlot, arg.StructurePtrOffset,
@@ -3056,11 +3120,11 @@ struct ReplayState {
 
     uint64_t inline_table_bytes = 0;
     if (has_inline_cbuffers) {
-      std::sort(resolved_cbuffers.begin(), resolved_cbuffers.end(),
-                [](const ResolvedConstantBuffer &a,
-                   const ResolvedConstantBuffer &b) {
-                  return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
-                });
+      std::sort(
+          resolved_cbuffers.begin(), resolved_cbuffers.end(),
+          [](const ResolvedConstantBuffer &a, const ResolvedConstantBuffer &b) {
+            return a.arg->StructurePtrOffset < b.arg->StructurePtrOffset;
+          });
       std::vector<uint8_t> inline_table_data;
       for (const auto &entry : resolved_cbuffers) {
         const auto &arg = *entry.arg;
@@ -3111,11 +3175,10 @@ struct ReplayState {
           Logger::info(str::format(
               "M12 swapchain VS cbv table bind slot=", bind_index,
               " qwords=", qword_count, " inline_bytes=", inline_table_bytes,
-              " data0=0x", std::hex,
-              (unsigned long long)vs_cbv_table_data[0], " data1=0x",
-              (unsigned long long)vs_cbv_table_data[1], std::dec, " handle=",
-              (unsigned long long)vs_cbv_table_buf.handle, " offset=",
-              (unsigned long long)vs_cbv_table_buf_offset, " ",
+              " data0=0x", std::hex, (unsigned long long)vs_cbv_table_data[0],
+              " data1=0x", (unsigned long long)vs_cbv_table_data[1], std::dec,
+              " handle=", (unsigned long long)vs_cbv_table_buf.handle,
+              " offset=", (unsigned long long)vs_cbv_table_buf_offset, " ",
               TracePsoShaderSummary(pso)));
         }
         QTRACE("BuildVertexConstantBufferTable: bound slot=%u qwords=%u",
@@ -3384,7 +3447,7 @@ struct ReplayState {
           pso->GetVSReflection().ConstanttBufferTableBindIndex,
           kConstantBufferTableSlot);
       render_enc.setObjectBuffer(vs_cbv_table_buf, vs_cbv_table_buf_offset,
-                                  bind_index);
+                                 bind_index);
       render_enc.useResource(vs_cbv_table_buf, WMTResourceUsageRead,
                              WMTRenderStageObject);
     }
@@ -3414,8 +3477,7 @@ struct ReplayState {
       uint32_t bind_index = BindIndexOrFallback(
           pso->GetPSReflection().ConstanttBufferTableBindIndex,
           kConstantBufferTableSlot);
-      SetFragmentBufferTracked(cbv_table_buf, cbv_table_buf_offset,
-                               bind_index);
+      SetFragmentBufferTracked(cbv_table_buf, cbv_table_buf_offset, bind_index);
       render_enc.useResource(cbv_table_buf, WMTResourceUsageRead,
                              WMTRenderStageFragment);
     }
@@ -3459,8 +3521,8 @@ struct ReplayState {
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
         for (uint32_t pass = 0; pass < 2 && root_idx == ~0u; pass++) {
-          for (uint32_t p = 0;
-               p < params.size() && p < kRootParameterSlotCount; p++) {
+          for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+               p++) {
             if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
                 params[p].register_index == arg.SM50BindingSlot &&
                 params[p].register_space == arg.SM50RegisterSpace &&
@@ -3821,8 +3883,8 @@ struct ReplayState {
       uint32_t root_idx = ~0u;
       if (dxmt_sig) {
         auto &params = dxmt_sig->GetParameters();
-        for (uint32_t p = 0;
-             p < params.size() && p < kRootParameterSlotCount; p++) {
+        for (uint32_t p = 0; p < params.size() && p < kRootParameterSlotCount;
+             p++) {
           if (params[p].type == D3D12_ROOT_PARAMETER_TYPE_CBV &&
               params[p].register_index == arg.SM50BindingSlot &&
               params[p].register_space == arg.SM50RegisterSpace) {
@@ -4142,11 +4204,11 @@ struct ReplayState {
     if (TakeLogBudget(&g_tessellation_fallback_draw_logs, 64)) {
       Logger::warn(str::format(
           "M12 tessellation fallback draw label=", label ? label : "draw",
-          " indexed=", indexed, " patch_control_points=",
-          D3D12PatchControlPointCount(topology), " elements=", element_count,
-          " instances=", instance_count, " primitive_type=",
-          (unsigned)GetMetalPrimitiveType(), " pso=", (void *)pso, " ",
-          TracePsoShaderSummary(pso)));
+          " indexed=", indexed,
+          " patch_control_points=", D3D12PatchControlPointCount(topology),
+          " elements=", element_count, " instances=", instance_count,
+          " primitive_type=", (unsigned)GetMetalPrimitiveType(),
+          " pso=", (void *)pso, " ", TracePsoShaderSummary(pso)));
     }
   }
 
@@ -4334,12 +4396,13 @@ struct ReplayState {
     for (uint32_t i = 0; i < kRootParameterSlotCount; i++)
       has_root_constants |= root_constant_set[i] && root_constant_sizes[i] > 0;
 
+    root_constants_mtl_buf_offset = 0;
+    root_constants_gpu_address = 0;
     if (has_root_constants) {
-      root_constants_mtl_buf =
-          MakeTransientBuffer(device, sizeof(root_constants_buf));
+      root_constants_mtl_buf = MakeTransientTableSlice(
+          device, root_constants_buf, sizeof(root_constants_buf),
+          &root_constants_mtl_buf_offset, &root_constants_gpu_address);
       if (root_constants_mtl_buf.handle) {
-        root_constants_mtl_buf.updateContents(0, root_constants_buf,
-                                              sizeof(root_constants_buf));
         render_enc.useResource(root_constants_mtl_buf, WMTResourceUsageRead,
                                RootBindingStages());
       }
@@ -4348,17 +4411,19 @@ struct ReplayState {
     for (uint32_t i = 0; i < kRootParameterSlotCount; i++) {
       if (root_constant_set[i] && root_constant_sizes[i] > 0 &&
           root_constants_mtl_buf.handle) {
+        const uint64_t root_constant_bind_offset =
+            root_constants_mtl_buf_offset + root_constant_offsets[i];
         if (!stage_in_vertex_inputs) {
-          SetVertexBufferTracked(root_constants_mtl_buf, root_constant_offsets[i],
-                                 i);
+          SetVertexBufferTracked(root_constants_mtl_buf,
+                                 root_constant_bind_offset, i);
         }
         SetFragmentBufferTracked(root_constants_mtl_buf,
-                                 root_constant_offsets[i], i);
+                                 root_constant_bind_offset, i);
         if (!stage_in_vertex_inputs && UsesGeometryMeshPipeline()) {
           render_enc.setObjectBuffer(root_constants_mtl_buf,
-                                     root_constant_offsets[i], i);
+                                     root_constant_bind_offset, i);
           render_enc.setMeshBuffer(root_constants_mtl_buf,
-                                   root_constant_offsets[i], i);
+                                   root_constant_bind_offset, i);
         }
         QTRACE("ApplyRootBindings: constants idx=%u off=%u size=%u via buffer",
                i, root_constant_offsets[i], root_constant_sizes[i]);
@@ -4370,7 +4435,8 @@ struct ReplayState {
             i < graphics_root_sig->GetParameters().size()) {
           const auto &param = graphics_root_sig->GetParameters()[i];
           if (param.type == type) {
-            *out_vis = param.shader_visibility;
+            *out_vis =
+                static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility);
             return param.register_index;
           }
         }
@@ -4448,12 +4514,12 @@ struct ReplayState {
           uint32_t buf_slot = shader_register;
           if (buf_slot >= kD3D12M12DirectBufferSlots)
             return;
-          auto *res = device->LookupResourceByGPUAddress(desc->cbv.BufferLocation);
+          auto *res =
+              device->LookupResourceByGPUAddress(desc->cbv.BufferLocation);
           if (!res || !res->GetMTLBuffer().handle)
             return;
 
-          uint64_t off =
-              desc->cbv.BufferLocation - res->GetGPUVirtualAddress();
+          uint64_t off = desc->cbv.BufferLocation - res->GetGPUVirtualAddress();
           if (vis == D3D12_SHADER_VISIBILITY_ALL ||
               vis == D3D12_SHADER_VISIBILITY_VERTEX)
             SetVertexBufferTracked(res->GetMTLBuffer(), off, buf_slot);
@@ -4471,11 +4537,10 @@ struct ReplayState {
                vis == D3D12_SHADER_VISIBILITY_PIXEL) &&
               TakeLogBudget(&g_swapchain_texture_binding_logs, 128)) {
             Logger::info(str::format(
-                "M12 swapchain direct CBV binding root_table=", i,
-                " reg=", shader_register, " vis=", ShaderVisibilityName(vis),
-                " gpu=0x", std::hex,
-                (unsigned long long)desc->cbv.BufferLocation, std::dec,
-                " size=", desc->cbv.SizeInBytes, " off=", off, " ",
+                "M12 swapchain direct CBV binding root_table=", i, " reg=",
+                shader_register, " vis=", ShaderVisibilityName(vis), " gpu=0x",
+                std::hex, (unsigned long long)desc->cbv.BufferLocation,
+                std::dec, " size=", desc->cbv.SizeInBytes, " off=", off, " ",
                 ResourceSummary(res), " pso=", (void *)pso, " ",
                 TracePsoShaderSummary(pso)));
           }
@@ -4529,8 +4594,8 @@ struct ReplayState {
             Logger::info(str::format(
                 "M12 swapchain direct texture binding root_table=", i,
                 " reg=", shader_register, " vis=", ShaderVisibilityName(vis),
-                " range=", DescriptorRangeTypeName(range_type), " tex=",
-                (unsigned long long)tex.handle, " ",
+                " range=", DescriptorRangeTypeName(range_type),
+                " tex=", (unsigned long long)tex.handle, " ",
                 DescriptorSummary(desc, range_type), " pso=", (void *)pso, " ",
                 TracePsoShaderSummary(pso)));
           }
@@ -4557,7 +4622,8 @@ struct ReplayState {
           if (graphics_root_sig &&
               i < graphics_root_sig->GetParameters().size()) {
             const auto &param = graphics_root_sig->GetParameters()[i];
-            D3D12_SHADER_VISIBILITY table_vis = param.shader_visibility;
+            D3D12_SHADER_VISIBILITY table_vis =
+                static_cast<D3D12_SHADER_VISIBILITY>(param.shader_visibility);
             if (param.type == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE &&
                 !param.ranges.empty()) {
               for (const auto &range : param.ranges) {
@@ -5335,8 +5401,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
         if (writable) {
           append_compute_useresource(
               res->GetMTLBuffer().handle,
-              (WMTResourceUsage)(WMTResourceUsageRead |
-                                 WMTResourceUsageWrite));
+              (WMTResourceUsage)(WMTResourceUsageRead | WMTResourceUsageWrite));
         }
         QTRACE("%s: root %s param=%u -> slot=%u gpu=0x%llx", trace_prefix,
                label, i, slot, (unsigned long long)address);
@@ -5478,11 +5543,12 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
          st.pso->GetThreadgroupSize().height,
          st.pso->GetThreadgroupSize().depth);
 
-  QTRACE("%s: compute fallback begin bound_buffers=0x%llx bound_textures=0x%llx "
-         "bound_samplers=0x%llx",
-         trace_prefix, (unsigned long long)bound_compute_buffer_slots,
-         (unsigned long long)bound_compute_texture_slots,
-         (unsigned long long)bound_compute_sampler_slots);
+  QTRACE(
+      "%s: compute fallback begin bound_buffers=0x%llx bound_textures=0x%llx "
+      "bound_samplers=0x%llx",
+      trace_prefix, (unsigned long long)bound_compute_buffer_slots,
+      (unsigned long long)bound_compute_texture_slots,
+      (unsigned long long)bound_compute_sampler_slots);
   if (!st.null_vertex_arg_buf.handle) {
     uint64_t zero_data[4] = {};
     QTRACE("%s: creating null compute buffer fallback", trace_prefix);
@@ -5493,9 +5559,8 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
            (unsigned long long)st.null_vertex_arg_buf.handle);
   }
   if (st.null_vertex_arg_buf.handle) {
-    uint64_t missing =
-        D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
-        ~bound_compute_buffer_slots;
+    uint64_t missing = D3D12DirectBindingMask(kD3D12M12DirectBufferSlots) &
+                       ~bound_compute_buffer_slots;
     QTRACE("%s: compute buffer fallback missing=0x%llx", trace_prefix,
            (unsigned long long)missing);
     for (uint32_t slot = 0; slot < kD3D12M12DirectBufferSlots; slot++) {
@@ -5567,17 +5632,17 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
            (unsigned long long)summary.missing_textures,
            (unsigned long long)summary.missing_samplers);
     Logger::info(str::format(
-        "M12 compute completeness label=", trace_prefix, " pso=", (void *)st.pso,
-        " dispatch=", x, "x", y, "x", z, " buffers=",
-        summary.bound_buffer_count, "+", summary.fallback_buffer_count, "/",
-        summary.required_buffer_count, " textures=",
-        summary.bound_texture_count, "+", summary.fallback_texture_count, "/",
-        summary.required_texture_count, " samplers=",
-        summary.bound_sampler_count, "+", summary.fallback_sampler_count, "/",
-        summary.required_sampler_count, " cs_args=",
-        st.pso->GetCSArguments().size(), " cs_cb=",
-        st.pso->GetCSConstantBuffers().size(), " cs_qwords=",
-        st.pso->GetCSReflection().ArgumentTableQwords));
+        "M12 compute completeness label=", trace_prefix,
+        " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z,
+        " buffers=", summary.bound_buffer_count, "+",
+        summary.fallback_buffer_count, "/", summary.required_buffer_count,
+        " textures=", summary.bound_texture_count, "+",
+        summary.fallback_texture_count, "/", summary.required_texture_count,
+        " samplers=", summary.bound_sampler_count, "+",
+        summary.fallback_sampler_count, "/", summary.required_sampler_count,
+        " cs_args=", st.pso->GetCSArguments().size(),
+        " cs_cb=", st.pso->GetCSConstantBuffers().size(),
+        " cs_qwords=", st.pso->GetCSReflection().ArgumentTableQwords));
   }
 
   struct wmtcmd_compute_dispatch disp = {};
@@ -5587,9 +5652,9 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
 
   if (compute_cmd_overflow) {
     Logger::err(str::format(
-        "M12 compute command chain overflow label=", trace_prefix, " pso=",
-        (void *)st.pso, " used=", (uint64_t)(cmd_ptr - cmd_buf), " cap=",
-        (uint64_t)sizeof(cmd_buf), " dispatch=", x, "x", y, "x", z));
+        "M12 compute command chain overflow label=", trace_prefix,
+        " pso=", (void *)st.pso, " used=", (uint64_t)(cmd_ptr - cmd_buf),
+        " cap=", (uint64_t)sizeof(cmd_buf), " dispatch=", x, "x", y, "x", z));
     return;
   }
 
@@ -5603,9 +5668,9 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
   }
 
   if (chain_head && !comp.encodeCommands(chain_head)) {
-    Logger::info(str::format("M12 compute encoder encode failed label=",
-                             trace_prefix, " pso=", (void *)st.pso,
-                             " dispatch=", x, "x", y, "x", z));
+    Logger::info(
+        str::format("M12 compute encoder encode failed label=", trace_prefix,
+                    " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z));
   }
   EndMetalEncoder(comp, "compute_dispatch");
 }
@@ -5879,11 +5944,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                     cmd->instance_count, cmd->start_vertex);
           st.LogStageInVertexSnapshot("DrawInstanced", cmd->vertex_count,
                                       cmd->instance_count);
-          st.LogNonStageInVertexSnapshot(m_device, "DrawInstanced",
-                                         cmd->vertex_count,
-                                         cmd->instance_count,
-                                         cmd->start_vertex,
-                                         cmd->start_instance);
+          st.LogNonStageInVertexSnapshot(
+              m_device, "DrawInstanced", cmd->vertex_count, cmd->instance_count,
+              cmd->start_vertex, cmd->start_instance);
           st.BindMissingNonStageInVertexBuffers(m_device);
           st.BindDirectFragmentCompleteness(m_device, "draw_instanced");
           WMTPrimitiveType primitive_type = draw.primitive_type;
@@ -5896,9 +5959,8 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             Logger::info(str::format(
                 "M12 swapchain DrawInstanced encoded v=", cmd->vertex_count,
                 " i=", cmd->instance_count, " start=", cmd->start_vertex,
-                " topology=", (unsigned)st.topology,
-                " primitive=", (unsigned)primitive_type,
-                " pso=", (void *)st.pso,
+                " topology=", (unsigned)st.topology, " primitive=",
+                (unsigned)primitive_type, " pso=", (void *)st.pso,
                 " enc=", (unsigned long long)st.render_enc.handle, " ",
                 TracePsoShaderSummary(st.pso)));
           }
@@ -6149,8 +6211,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           st.LogStageInVertexSnapshot("DrawIndexedInstanced", cmd->index_count,
                                       cmd->instance_count);
           st.BindMissingNonStageInVertexBuffers(m_device);
-          st.BindDirectFragmentCompleteness(m_device,
-                                            "draw_indexed_instanced");
+          st.BindDirectFragmentCompleteness(m_device, "draw_indexed_instanced");
           if (st.EncodeRenderCommands(
                   reinterpret_cast<const wmtcmd_render_nop *>(&draw),
                   "draw_indexed_instanced")) {
@@ -6162,26 +6223,26 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                   "M12 offscreen DrawIndexedInstanced encoded idx=",
                   cmd->index_count, " inst=", cmd->instance_count,
                   " start=", cmd->start_index, " base=", cmd->base_vertex,
-                  " start_inst=", cmd->start_instance, " primitive=",
-                  (unsigned)draw.primitive_type, " ib_fmt=",
-                  (unsigned)st.ib.Format, " ib_gpu=0x", std::hex,
+                  " start_inst=", cmd->start_instance,
+                  " primitive=", (unsigned)draw.primitive_type,
+                  " ib_fmt=", (unsigned)st.ib.Format, " ib_gpu=0x", std::hex,
                   (unsigned long long)st.ib.BufferLocation, std::dec,
-                  " ib_res=", (void *)ib_res, " ib_handle=",
-                  (unsigned long long)draw.index_buffer, " ib_off=",
-                  (unsigned long long)index_buffer_offset, " vb_summary=",
-                  st.last_vertex_table_summary, " vb_bound=",
-                  st.last_bound_vertex_buffers, " frag buffers=",
-                  fragment_summary.bound_buffer_count, "+",
+                  " ib_res=", (void *)ib_res,
+                  " ib_handle=", (unsigned long long)draw.index_buffer,
+                  " ib_off=", (unsigned long long)index_buffer_offset,
+                  " vb_summary=", st.last_vertex_table_summary,
+                  " vb_bound=", st.last_bound_vertex_buffers,
+                  " frag buffers=", fragment_summary.bound_buffer_count, "+",
                   fragment_summary.fallback_buffer_count, "/",
-                  fragment_summary.required_buffer_count, " textures=",
-                  fragment_summary.bound_texture_count, "+",
+                  fragment_summary.required_buffer_count,
+                  " textures=", fragment_summary.bound_texture_count, "+",
                   fragment_summary.fallback_texture_count, "/",
-                  fragment_summary.required_texture_count, " samplers=",
-                  fragment_summary.bound_sampler_count, "+",
+                  fragment_summary.required_texture_count,
+                  " samplers=", fragment_summary.bound_sampler_count, "+",
                   fragment_summary.fallback_sampler_count, "/",
-                  fragment_summary.required_sampler_count, " pso=", (void *)st.pso,
-                  " ", TracePsoShaderSummary(st.pso), " ",
-                  st.RenderTargetResourceSummary()));
+                  fragment_summary.required_sampler_count,
+                  " pso=", (void *)st.pso, " ", TracePsoShaderSummary(st.pso),
+                  " ", st.RenderTargetResourceSummary()));
             }
           }
           if (st.HasSwapchainRenderTarget() &&
@@ -6377,10 +6438,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                 Logger::info(str::format(
                     "M12 swapchain ExecuteIndirect DrawInstanced encoded v=",
                     args.VertexCountPerInstance, " i=", args.InstanceCount,
-                    " start_v=", args.StartVertexLocation,
-                    " start_i=", args.StartInstanceLocation,
-                    " pso=", (void *)st.pso, " enc=",
-                    (unsigned long long)st.render_enc.handle, " ",
+                    " start_v=", args.StartVertexLocation, " start_i=",
+                    args.StartInstanceLocation, " pso=", (void *)st.pso,
+                    " enc=", (unsigned long long)st.render_enc.handle, " ",
                     TracePsoShaderSummary(st.pso)));
               }
             }
@@ -6389,12 +6449,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
             Logger::info(str::format(
                 "M12 swapchain ExecuteIndirect DrawInstanced skipped v=",
                 args.VertexCountPerInstance, " i=", args.InstanceCount,
-                " start_v=", args.StartVertexLocation, " start_i=",
-                args.StartInstanceLocation, " enc_open=", st.render_enc_open,
-                " pso=", (void *)st.pso, " compiled=",
-                st.pso ? st.pso->IsCompiled() : 0, " stage=",
-                TraceCompileFailureStage(st.pso), " detail=",
-                TraceCompileFailureDetail(st.pso)));
+                " start_v=", args.StartVertexLocation,
+                " start_i=", args.StartInstanceLocation,
+                " enc_open=", st.render_enc_open, " pso=", (void *)st.pso,
+                " compiled=", st.pso ? st.pso->IsCompiled() : 0,
+                " stage=", TraceCompileFailureStage(st.pso),
+                " detail=", TraceCompileFailureDetail(st.pso)));
           }
         };
 
@@ -7130,8 +7190,7 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           QTRACE("SetPipelineState closing render encoder for dsv transition "
                  "current_has=%u current_fmt=%u next_fmt=%u",
                  st.render_enc_has_dsv ? 1u : 0u,
-                 (unsigned)st.render_enc_dsv_format,
-                 (unsigned)next_dsv_format);
+                 (unsigned)st.render_enc_dsv_format, (unsigned)next_dsv_format);
           st.CloseRenderEncoder();
         }
         st.pso = next_pso;
@@ -7594,8 +7653,12 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
       }
       case CmdType::SetGraphicsRootSignature: {
         auto *cmd = reinterpret_cast<const CmdSetRootSignature *>(header);
-        st.graphics_root_sig =
+        auto *next_root_sig =
             static_cast<MTLD3D12RootSignature *>(cmd->root_sig);
+        if (st.graphics_root_sig != next_root_sig) {
+          st.ResetGraphicsRootBindings();
+          st.graphics_root_sig = next_root_sig;
+        }
         break;
       }
       case CmdType::SetGraphicsRoot32BitConstants: {
@@ -7788,9 +7851,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     QTRACE("ExecuteCommandLists: committing cmdbuf");
     ENC_COMMIT(cmdbuf.handle);
     cmdbuf.commit();
-    const bool sync_execute =
-        DXMTD3D12SyncExecuteCommandBuffers() ||
-        DXMTD3D12SwapchainRenderReadback() || DXMTD3D12AutopresentSwapchain();
+    const bool sync_execute = DXMTD3D12SyncExecuteCommandBuffers() ||
+                              DXMTD3D12SwapchainRenderReadback() ||
+                              DXMTD3D12AutopresentSwapchain();
     int64_t wait_ms = 0;
     if (sync_execute) {
       auto wait_begin = std::chrono::steady_clock::now();
@@ -7804,8 +7867,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
         li, m_desc.Type, cmd_count, (long long)replay_ms, (long long)wait_ms,
         sync_execute ? 1u : 0u);
 
-    auto status = sync_execute ? cmdbuf.status() : WMTCommandBufferStatusCommitted;
-    QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld sync=%u queue_type=%u",
+    auto status =
+        sync_execute ? cmdbuf.status() : WMTCommandBufferStatusCommitted;
+    QTRACE("ExecuteCommandLists: cmdbuf status=%d wait_ms=%lld sync=%u "
+           "queue_type=%u",
            (int)status, (long long)wait_ms, sync_execute ? 1u : 0u,
            m_desc.Type);
     const uint32_t draw_count = stream_stats.draw_count;
@@ -7852,17 +7917,16 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
     if (interesting_list && TakeLogBudget(&g_command_list_summary_logs, 192)) {
       Logger::info(str::format(
           "M12 command list summary queue=", (unsigned)m_desc.Type,
-          " list=", li, " cmdlist_id=",
-          (unsigned long long)command_list_id,
+          " list=", li, " cmdlist_id=", (unsigned long long)command_list_id,
           " serial=", (unsigned long long)queue_serial,
           " cmds=", stream_stats.command_count, " draws=", draw_count,
           " indexed=", indexed_draw_count, " indirect=", indirect_count,
-          " dispatch=", dispatch_count, " clears=",
-          clear_rtv_count + clear_dsv_count + clear_uav_count,
+          " dispatch=", dispatch_count,
+          " clears=", clear_rtv_count + clear_dsv_count + clear_uav_count,
           " swapchain_work=", st.swapchain_work_encoded,
-          " has_swapchain_rt=", has_swapchain_work_target, " status=",
-          (int)status, " replay_ms=", (long long)replay_ms, " wait_ms=",
-          (long long)wait_ms));
+          " has_swapchain_rt=", has_swapchain_work_target,
+          " status=", (int)status, " replay_ms=", (long long)replay_ms,
+          " wait_ms=", (long long)wait_ms));
     }
     if (sync_execute && status != WMTCommandBufferStatusCompleted) {
       auto err = cmdbuf.error();
