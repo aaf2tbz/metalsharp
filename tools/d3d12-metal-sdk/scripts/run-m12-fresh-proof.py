@@ -346,6 +346,76 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
+def _parse_scalar_token(value: str) -> Any:
+    value = value.strip().rstrip(",")
+    if not value:
+        return value
+    if re.fullmatch(r"0x[0-9a-fA-F]+", value):
+        try:
+            return int(value, 16)
+        except ValueError:
+            return value
+    if re.fullmatch(r"-?\d+", value):
+        try:
+            return int(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _parse_kv_tail(tail: str) -> dict[str, Any]:
+    record: dict[str, Any] = {}
+    for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)", tail):
+        record[match.group(1)] = _parse_scalar_token(match.group(2))
+    return record
+
+
+def extract_native_compute_resolve(text: str) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if "M12 native_compute_resolve" in line:
+            record = _parse_kv_tail(line)
+            record["raw"] = line.strip()
+            records.append(record)
+        elif "M12 compute encoder encode failed" in line:
+            record = _parse_kv_tail(line)
+            record["raw"] = line.strip()
+            failures.append(record)
+
+    dispatch_shapes = sorted(
+        {str(record.get("dispatch", "")) for record in records if record.get("dispatch")}
+    )
+    required_dispatch_shapes = {"16x16x1", "8x1x1", "1x1x1"}
+    seen_required_dispatch_shapes = sorted(required_dispatch_shapes.intersection(dispatch_shapes))
+    valid_records = [
+        record
+        for record in records
+        if record.get("implementation") == "d3d12_native_compute_resolver"
+        and int(record.get("compute_pso", 0) or 0) != 0
+        and int(record.get("cmd_count", 0) or 0) > 0
+        and str(record.get("dispatch", ""))
+    ]
+    return {
+        "schema": "metalsharp.m12.native-compute-resolve.v1",
+        "ok": bool(
+            len(valid_records) >= 4
+            and not failures
+            and required_dispatch_shapes.issubset(set(dispatch_shapes))
+        ),
+        "record_count": len(records),
+        "valid_record_count": len(valid_records),
+        "failure_count": len(failures),
+        "dispatch_shapes": dispatch_shapes,
+        "required_dispatch_shapes": sorted(required_dispatch_shapes),
+        "seen_required_dispatch_shapes": seen_required_dispatch_shapes,
+        "records": records[:128],
+        "records_truncated": len(records) > 128,
+        "failures": failures[:32],
+        "failures_truncated": len(failures) > 32,
+    }
+
+
 LOCAL_GAME_SNAPSHOT_SOURCES: list[dict[str, Any]] = [
     {
         "title": "elden-ring",
@@ -3463,6 +3533,8 @@ def run_fresh_game(
         and len(async_worker_indices) >= 1
         and async_worker_proof["inline_claim_count"] == 0
     )
+    native_compute_resolve = extract_native_compute_resolve(diagnostic_log_text)
+    write_json(run_dir / "native_compute_resolve.json", native_compute_resolve)
 
     result = {
         "command": cmd,
@@ -3472,6 +3544,7 @@ def run_fresh_game(
         "stderr": str(stderr_path),
         "diagnostic_logs": diagnostic_log_records,
         "async_worker_proof": async_worker_proof,
+        "native_compute_resolve": native_compute_resolve,
         "json_parse_error": parse_error,
         "game_json": parsed,
         "loaddll": loaddll_rows,
@@ -3531,6 +3604,7 @@ def run_fresh_game(
         and shader_cache_validation["ok"]
         and hard_fail_gates["native_runtime_pass"]
         and async_worker_proof["ok"]
+        and native_compute_resolve["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented

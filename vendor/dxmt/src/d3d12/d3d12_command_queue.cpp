@@ -5418,6 +5418,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
   wmtcmd_compute_nop *chain_head = nullptr;
   wmtcmd_base *chain_tail = nullptr;
   bool compute_cmd_overflow = false;
+  uint32_t compute_cmd_count = 0;
   uint64_t bound_compute_buffer_slots = 0;
   uint64_t bound_compute_texture_slots = 0;
   uint64_t bound_compute_sampler_slots = 0;
@@ -5439,6 +5440,7 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
     else
       chain_head = (wmtcmd_compute_nop *)c;
     chain_tail = c;
+    compute_cmd_count++;
     return c;
   };
 
@@ -5842,37 +5844,48 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
          (unsigned long long)fallback_compute_texture_slots,
          (unsigned long long)fallback_compute_sampler_slots);
 
-  if (TakeLogBudget(&g_compute_completeness_logs, 128)) {
-    D3D12ShaderBindingCompletenessDesc desc = {};
-    desc.buffer_count = kD3D12M12DirectBufferSlots;
-    desc.texture_count = kD3D12M12DirectComputeTextureSlots;
-    desc.sampler_count = kD3D12M12DirectComputeSamplerSlots;
-    desc.bound_buffers = bound_compute_buffer_slots;
-    desc.bound_textures = bound_compute_texture_slots;
-    desc.bound_samplers = bound_compute_sampler_slots;
-    desc.fallback_buffers = fallback_compute_buffer_slots;
-    desc.fallback_textures = fallback_compute_texture_slots;
-    desc.fallback_samplers = fallback_compute_sampler_slots;
-    auto summary = D3D12EvaluateShaderBindingCompleteness(desc);
+  D3D12ShaderBindingCompletenessDesc compute_binding_desc = {};
+  compute_binding_desc.buffer_count = kD3D12M12DirectBufferSlots;
+  compute_binding_desc.texture_count = kD3D12M12DirectComputeTextureSlots;
+  compute_binding_desc.sampler_count = kD3D12M12DirectComputeSamplerSlots;
+  compute_binding_desc.bound_buffers = bound_compute_buffer_slots;
+  compute_binding_desc.bound_textures = bound_compute_texture_slots;
+  compute_binding_desc.bound_samplers = bound_compute_sampler_slots;
+  compute_binding_desc.fallback_buffers = fallback_compute_buffer_slots;
+  compute_binding_desc.fallback_textures = fallback_compute_texture_slots;
+  compute_binding_desc.fallback_samplers = fallback_compute_sampler_slots;
+  auto compute_binding_summary =
+      D3D12EvaluateShaderBindingCompleteness(compute_binding_desc);
+
+  const bool log_compute_diagnostics =
+      TakeLogBudget(&g_compute_completeness_logs, 128);
+  if (log_compute_diagnostics) {
     QTRACE("%s: compute completeness buffers=%u+%u/%u textures=%u+%u/%u "
            "samplers=%u+%u/%u missing=0x%llx/0x%llx/0x%llx",
-           trace_prefix, summary.bound_buffer_count,
-           summary.fallback_buffer_count, summary.required_buffer_count,
-           summary.bound_texture_count, summary.fallback_texture_count,
-           summary.required_texture_count, summary.bound_sampler_count,
-           summary.fallback_sampler_count, summary.required_sampler_count,
-           (unsigned long long)summary.missing_buffers,
-           (unsigned long long)summary.missing_textures,
-           (unsigned long long)summary.missing_samplers);
+           trace_prefix, compute_binding_summary.bound_buffer_count,
+           compute_binding_summary.fallback_buffer_count,
+           compute_binding_summary.required_buffer_count,
+           compute_binding_summary.bound_texture_count,
+           compute_binding_summary.fallback_texture_count,
+           compute_binding_summary.required_texture_count,
+           compute_binding_summary.bound_sampler_count,
+           compute_binding_summary.fallback_sampler_count,
+           compute_binding_summary.required_sampler_count,
+           (unsigned long long)compute_binding_summary.missing_buffers,
+           (unsigned long long)compute_binding_summary.missing_textures,
+           (unsigned long long)compute_binding_summary.missing_samplers);
     Logger::info(str::format(
         "M12 compute completeness label=", trace_prefix,
         " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z,
-        " buffers=", summary.bound_buffer_count, "+",
-        summary.fallback_buffer_count, "/", summary.required_buffer_count,
-        " textures=", summary.bound_texture_count, "+",
-        summary.fallback_texture_count, "/", summary.required_texture_count,
-        " samplers=", summary.bound_sampler_count, "+",
-        summary.fallback_sampler_count, "/", summary.required_sampler_count,
+        " buffers=", compute_binding_summary.bound_buffer_count, "+",
+        compute_binding_summary.fallback_buffer_count, "/",
+        compute_binding_summary.required_buffer_count,
+        " textures=", compute_binding_summary.bound_texture_count, "+",
+        compute_binding_summary.fallback_texture_count, "/",
+        compute_binding_summary.required_texture_count,
+        " samplers=", compute_binding_summary.bound_sampler_count, "+",
+        compute_binding_summary.fallback_sampler_count, "/",
+        compute_binding_summary.required_sampler_count,
         " cs_args=", st.pso->GetCSArguments().size(),
         " cs_cb=", st.pso->GetCSConstantBuffers().size(),
         " cs_qwords=", st.pso->GetCSReflection().ArgumentTableQwords));
@@ -5901,9 +5914,66 @@ static void ReplayComputeDispatch(ReplayState &st, MTLD3D12Device *device,
   }
 
   if (chain_head && !comp.encodeCommands(chain_head)) {
-    Logger::info(
-        str::format("M12 compute encoder encode failed label=", trace_prefix,
-                    " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z));
+    Logger::info(str::format(
+        "M12 compute encoder encode failed label=", trace_prefix,
+        " pso=", (void *)st.pso, " dispatch=", x, "x", y, "x", z,
+        " native_compute_resolve=failed root_sig=", (void *)compute_sig,
+        " compute_pso=", (unsigned long long)st.pso->GetComputePSO().handle,
+        " threadgroup=", st.pso->GetThreadgroupSize().width, "x",
+        st.pso->GetThreadgroupSize().height, "x",
+        st.pso->GetThreadgroupSize().depth, " cmd_count=", compute_cmd_count,
+        " cbv_qwords=", comp_cb_qwords, " arg_qwords=", comp_arg_qwords,
+        " cs_args=", st.pso->GetCSArguments().size(),
+        " cs_cb=", st.pso->GetCSConstantBuffers().size(),
+        " cs_qwords=", st.pso->GetCSReflection().ArgumentTableQwords,
+        " bound_buffers=0x", std::hex,
+        (unsigned long long)bound_compute_buffer_slots, " bound_textures=0x",
+        (unsigned long long)bound_compute_texture_slots, " bound_samplers=0x",
+        (unsigned long long)bound_compute_sampler_slots, " fallback_buffers=0x",
+        (unsigned long long)fallback_compute_buffer_slots,
+        " fallback_textures=0x",
+        (unsigned long long)fallback_compute_texture_slots,
+        " fallback_samplers=0x",
+        (unsigned long long)fallback_compute_sampler_slots,
+        " missing_buffers=0x",
+        (unsigned long long)compute_binding_summary.missing_buffers,
+        " missing_textures=0x",
+        (unsigned long long)compute_binding_summary.missing_textures,
+        " missing_samplers=0x",
+        (unsigned long long)compute_binding_summary.missing_samplers, std::dec,
+        " breadcrumbs=", st.FormatFaultBreadcrumbs()));
+    EndMetalEncoder(comp, "compute_dispatch_failed");
+    return;
+  }
+  if (chain_head && log_compute_diagnostics) {
+    Logger::info(str::format(
+        "M12 native_compute_resolve label=", trace_prefix,
+        " implementation=d3d12_native_compute_resolver pso=", (void *)st.pso,
+        " root_sig=", (void *)compute_sig, " compute_pso=",
+        (unsigned long long)st.pso->GetComputePSO().handle, " dispatch=", x,
+        "x", y, "x", z, " threadgroup=", st.pso->GetThreadgroupSize().width,
+        "x", st.pso->GetThreadgroupSize().height, "x",
+        st.pso->GetThreadgroupSize().depth, " cmd_count=", compute_cmd_count,
+        " cbv_qwords=", comp_cb_qwords, " arg_qwords=", comp_arg_qwords,
+        " cs_args=", st.pso->GetCSArguments().size(),
+        " cs_cb=", st.pso->GetCSConstantBuffers().size(),
+        " cs_qwords=", st.pso->GetCSReflection().ArgumentTableQwords,
+        " bound_buffers=0x", std::hex,
+        (unsigned long long)bound_compute_buffer_slots, " bound_textures=0x",
+        (unsigned long long)bound_compute_texture_slots, " bound_samplers=0x",
+        (unsigned long long)bound_compute_sampler_slots, " fallback_buffers=0x",
+        (unsigned long long)fallback_compute_buffer_slots,
+        " fallback_textures=0x",
+        (unsigned long long)fallback_compute_texture_slots,
+        " fallback_samplers=0x",
+        (unsigned long long)fallback_compute_sampler_slots,
+        " missing_buffers=0x",
+        (unsigned long long)compute_binding_summary.missing_buffers,
+        " missing_textures=0x",
+        (unsigned long long)compute_binding_summary.missing_textures,
+        " missing_samplers=0x",
+        (unsigned long long)compute_binding_summary.missing_samplers,
+        std::dec));
   }
   EndMetalEncoder(comp, "compute_dispatch");
 }
