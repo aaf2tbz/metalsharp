@@ -2338,8 +2338,7 @@ static void tessellation_fallback_expected_rgba(uint8_t out[4]) {
     out[3] = 255;
 }
 
-static TessellationFallbackSceneResources create_tessellation_fallback_scene(ID3D12Device* device,
-                                                                             D3DCompileFn compile,
+static TessellationFallbackSceneResources create_tessellation_fallback_scene(ID3D12Device* device, D3DCompileFn compile,
                                                                              SerializeRootSignatureFn serialize,
                                                                              UINT backbuffer_width,
                                                                              UINT backbuffer_height) {
@@ -3128,6 +3127,139 @@ static void destroy_dxil_scene(DxilSceneResources& scene) {
     safe_release(scene.vertex_buffer);
     safe_release(scene.pipeline_state);
     safe_release(scene.root_signature);
+}
+
+struct DxilHazardReplayEntryStats {
+    std::string ps_path;
+    bool ps_loaded = false;
+    uint64_t ps_bytes = 0;
+    uint64_t ps_fnv1a64 = 1469598103934665603ull;
+    HRESULT create_pso_hr = E_FAIL;
+    bool ok = false;
+};
+
+struct DxilHazardReplayStats {
+    std::string proof_scope = "exact_elden_dxil_pixel_shader_pso_replay";
+    std::string vs_path;
+    bool vs_loaded = false;
+    uint64_t vs_bytes = 0;
+    uint64_t vs_fnv1a64 = 1469598103934665603ull;
+    HRESULT serialize_root_hr = E_FAIL;
+    HRESULT create_root_hr = E_FAIL;
+    uint32_t requested_count = 0;
+    uint32_t replay_count = 0;
+    uint32_t success_count = 0;
+    std::vector<DxilHazardReplayEntryStats> entries;
+    bool pass = true;
+};
+
+static DxilHazardReplayStats create_dxil_hazard_replay(ID3D12Device* device, SerializeRootSignatureFn serialize,
+                                                       const std::string& vs_path,
+                                                       const std::vector<std::string>& ps_paths) {
+    DxilHazardReplayStats stats;
+    stats.vs_path = vs_path;
+    std::vector<uint8_t> vs;
+    stats.vs_loaded = read_file_bytes(vs_path, vs, stats.vs_fnv1a64);
+    stats.vs_bytes = static_cast<uint64_t>(vs.size());
+
+    std::array<D3D12_DESCRIPTOR_RANGE, 3> descriptor_ranges = {};
+    descriptor_ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+    descriptor_ranges[0].NumDescriptors = 32;
+    descriptor_ranges[0].BaseShaderRegister = 0;
+    descriptor_ranges[0].RegisterSpace = 0;
+    descriptor_ranges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    descriptor_ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    descriptor_ranges[1].NumDescriptors = 128;
+    descriptor_ranges[1].BaseShaderRegister = 0;
+    descriptor_ranges[1].RegisterSpace = 0;
+    descriptor_ranges[1].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    descriptor_ranges[2].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    descriptor_ranges[2].NumDescriptors = 32;
+    descriptor_ranges[2].BaseShaderRegister = 0;
+    descriptor_ranges[2].RegisterSpace = 0;
+    descriptor_ranges[2].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    std::array<D3D12_ROOT_PARAMETER, 3> root_params = {};
+    for (size_t range_index = 0; range_index < root_params.size(); ++range_index) {
+        root_params[range_index].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        root_params[range_index].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        root_params[range_index].DescriptorTable.NumDescriptorRanges = 1;
+        root_params[range_index].DescriptorTable.pDescriptorRanges = &descriptor_ranges[range_index];
+    }
+    std::array<D3D12_STATIC_SAMPLER_DESC, 16> static_samplers = {};
+    for (size_t sampler_index = 0; sampler_index < static_samplers.size(); ++sampler_index) {
+        D3D12_STATIC_SAMPLER_DESC& sampler = static_samplers[sampler_index];
+        sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.ShaderRegister = static_cast<UINT>(sampler_index);
+        sampler.RegisterSpace = 0;
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        sampler.MaxLOD = D3D12_FLOAT32_MAX;
+    }
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {};
+    root_desc.NumParameters = static_cast<UINT>(root_params.size());
+    root_desc.pParameters = root_params.data();
+    root_desc.NumStaticSamplers = static_cast<UINT>(static_samplers.size());
+    root_desc.pStaticSamplers = static_samplers.data();
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    ID3DBlob* root_blob = nullptr;
+    stats.serialize_root_hr = serialize_root_signature(serialize, root_desc, &root_blob);
+    ID3D12RootSignature* root_signature = nullptr;
+    if (device && root_blob) {
+        stats.create_root_hr = device->CreateRootSignature(0, root_blob->GetBufferPointer(), root_blob->GetBufferSize(),
+                                                           IID_PPV_ARGS(&root_signature));
+    }
+
+    stats.entries.resize(ps_paths.size());
+    for (size_t i = 0; i < ps_paths.size(); ++i) {
+        DxilHazardReplayEntryStats& entry = stats.entries[i];
+        entry.ps_path = ps_paths[i];
+        if (entry.ps_path.empty())
+            continue;
+        stats.requested_count++;
+        std::vector<uint8_t> ps;
+        entry.ps_loaded = read_file_bytes(entry.ps_path, ps, entry.ps_fnv1a64);
+        entry.ps_bytes = static_cast<uint64_t>(ps.size());
+        if (!(device && root_signature && stats.vs_loaded && entry.ps_loaded && !vs.empty() && !ps.empty()))
+            continue;
+
+        D3D12_INPUT_ELEMENT_DESC input_elements[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC pso_desc = {};
+        pso_desc.pRootSignature = root_signature;
+        pso_desc.VS = {vs.data(), vs.size()};
+        pso_desc.PS = {ps.data(), ps.size()};
+        pso_desc.InputLayout = {input_elements, 2};
+        pso_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        pso_desc.NumRenderTargets = 1;
+        pso_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        pso_desc.SampleDesc.Count = 1;
+        pso_desc.SampleMask = UINT_MAX;
+        pso_desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+        pso_desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        pso_desc.RasterizerState.DepthClipEnable = TRUE;
+        pso_desc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        pso_desc.DepthStencilState.DepthEnable = FALSE;
+        pso_desc.DepthStencilState.StencilEnable = FALSE;
+        ID3D12PipelineState* pso = nullptr;
+        entry.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&pso));
+        entry.ok = SUCCEEDED(entry.create_pso_hr) && pso != nullptr;
+        stats.replay_count++;
+        if (entry.ok)
+            stats.success_count++;
+        safe_release(pso);
+    }
+
+    if (root_blob)
+        root_blob->Release();
+    safe_release(root_signature);
+    stats.pass = stats.requested_count == 0 ||
+                 (stats.vs_loaded && SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
+                  stats.replay_count == stats.requested_count && stats.success_count == stats.requested_count);
+    return stats;
 }
 
 struct DxilReadbackStats {
@@ -6044,6 +6176,7 @@ struct D3DRunStats {
     NaniteClusterStats nanite_cluster;
     VisibleSceneStats visible_scene;
     DxilSceneStats dxil_scene;
+    DxilHazardReplayStats dxil_hazard_replay;
     DxilReadbackStats dxil_readback;
     AbiSemanticStats abi_semantics;
     uint32_t frames_presented = 0;
@@ -6182,9 +6315,17 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     const uint32_t visible_frame_target = getenv_u32("M12_FRESH_VISIBLE_FRAMES", 600);
     VisibleSceneResources visible_scene = create_visible_scene(device, compile, serialize, visible_frame_target);
     stats.visible_scene = visible_scene.stats;
+    const std::string dxil_vs_path = getenv_string("M12_FRESH_DXIL_VS");
     DxilSceneResources dxil_scene =
-        create_dxil_scene(device, serialize, getenv_string("M12_FRESH_DXIL_VS"), getenv_string("M12_FRESH_DXIL_PS"));
+        create_dxil_scene(device, serialize, dxil_vs_path, getenv_string("M12_FRESH_DXIL_PS"));
     stats.dxil_scene = dxil_scene.stats;
+    std::vector<std::string> dxil_hazard_ps_paths;
+    for (uint32_t hazard_index = 0; hazard_index < 64; ++hazard_index) {
+        std::string path = getenv_string(("M12_FRESH_DXIL_HAZARD_PS" + std::to_string(hazard_index)).c_str());
+        if (!path.empty())
+            dxil_hazard_ps_paths.push_back(path);
+    }
+    stats.dxil_hazard_replay = create_dxil_hazard_replay(device, serialize, dxil_vs_path, dxil_hazard_ps_paths);
     CorpusShaderSceneResources corpus_shader =
         create_corpus_shader_scene(device, compile, serialize, corpus, backbuffer_width, backbuffer_height);
     stats.corpus_shader = corpus_shader.stats;
@@ -6243,7 +6384,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
 
     const float colors[3][4] = {{0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}, {0.01f, 0.02f, 0.05f, 1.0f}};
     if (swapchain && allocator && list && queue && fence && fence_event && visible_scene.stats.pass &&
-        dxil_scene.stats.pass && corpus_shader.stats.pass && srv_sample.stats.pass &&
+        dxil_scene.stats.pass && stats.dxil_hazard_replay.pass && corpus_shader.stats.pass && srv_sample.stats.pass &&
         texture_array_srv_sample.stats.pass && textured_3d.stats.pass && cbv_sample.stats.pass &&
         indexed_draw.stats.pass && tessellation_fallback.stats.pass && indirect_draw.stats.pass &&
         nanite_cluster.stats.pass && wave_ops.stats.pass) {
@@ -6669,7 +6810,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     stats.tessellation_fallback.present_pass =
         stats.tessellation_fallback.present_samples_checked == visible_frame_target &&
         stats.tessellation_fallback.present_sample_matches == visible_frame_target &&
-        stats.tessellation_fallback.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.tessellation_fallback.present_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.tessellation_fallback.present_pixel_matches == stats.tessellation_fallback.present_pixels_checked;
     stats.indirect_draw.present_pass =
         stats.indirect_draw.present_samples_checked == visible_frame_target &&
@@ -6711,12 +6853,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.tessellation_fallback.pass &&
         stats.tessellation_fallback.present_pass && stats.tessellation_fallback.draw_calls == visible_frame_target &&
         stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
-        stats.indirect_draw.execute_indirect_calls == visible_frame_target &&
-        stats.nanite_cluster.pass && stats.nanite_cluster.present_pass &&
-        stats.nanite_cluster.execute_indirect_calls == visible_frame_target && stats.visible_scene.pass &&
-        stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.draw_calls == visible_frame_target &&
-        stats.dxil_scene.pass && stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_readback.pass &&
-        SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
+        stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.nanite_cluster.pass &&
+        stats.nanite_cluster.present_pass && stats.nanite_cluster.execute_indirect_calls == visible_frame_target &&
+        stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
+        stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
+        stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_hazard_replay.pass &&
+        stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
 
     safe_release(gpu_textures.present_texture);
     safe_release(gpu_textures.present_sentinel_upload);
@@ -7521,7 +7663,8 @@ int main() {
     std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.tessellation_fallback.create_root_hr).c_str());
     std::printf("      \"CreateGraphicsPipelineState_PATCH_HS_DS\": \"%s\",\n",
                 hr_hex(d3d.tessellation_fallback.create_pso_hr).c_str());
-    std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.tessellation_fallback.create_vertex_buffer_hr).c_str());
+    std::printf("      \"CreateVertexBuffer\": \"%s\",\n",
+                hr_hex(d3d.tessellation_fallback.create_vertex_buffer_hr).c_str());
     std::printf("      \"patch_control_points\": %u,\n", d3d.tessellation_fallback.patch_control_points);
     std::printf("      \"vertices_created\": %u,\n", d3d.tessellation_fallback.vertices_created);
     std::printf("      \"vertices_per_draw\": %u,\n", d3d.tessellation_fallback.vertices_per_draw);
@@ -7536,9 +7679,9 @@ int main() {
     std::printf("      \"present_rgba\": [%u, %u, %u, %u],\n", d3d.tessellation_fallback.present_rgba[0],
                 d3d.tessellation_fallback.present_rgba[1], d3d.tessellation_fallback.present_rgba[2],
                 d3d.tessellation_fallback.present_rgba[3]);
-    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n",
-                d3d.tessellation_fallback.present_last_rgba[0], d3d.tessellation_fallback.present_last_rgba[1],
-                d3d.tessellation_fallback.present_last_rgba[2], d3d.tessellation_fallback.present_last_rgba[3]);
+    std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.tessellation_fallback.present_last_rgba[0],
+                d3d.tessellation_fallback.present_last_rgba[1], d3d.tessellation_fallback.present_last_rgba[2],
+                d3d.tessellation_fallback.present_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.tessellation_fallback.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.tessellation_fallback.pass ? "true" : "false");
     std::printf("    },\n");
@@ -7695,6 +7838,35 @@ int main() {
     std::printf("      \"draw_calls\": %u,\n", d3d.dxil_scene.draw_calls);
     std::printf("      \"vertices_per_draw\": %u,\n", d3d.dxil_scene.vertices_per_draw);
     std::printf("      \"ok\": %s\n", d3d.dxil_scene.pass ? "true" : "false");
+    std::printf("    },\n");
+    std::printf("    \"dxil_hazard_replay\": {\n");
+    std::printf("      \"proof_scope\": \"%s\",\n", d3d.dxil_hazard_replay.proof_scope.c_str());
+    std::printf("      \"vs_path\": \"%s\",\n", json_escape(d3d.dxil_hazard_replay.vs_path).c_str());
+    std::printf("      \"vs_loaded\": %s,\n", d3d.dxil_hazard_replay.vs_loaded ? "true" : "false");
+    std::printf("      \"vs_bytes\": %llu,\n", static_cast<unsigned long long>(d3d.dxil_hazard_replay.vs_bytes));
+    std::printf("      \"vs_fnv1a64\": \"%016llx\",\n",
+                static_cast<unsigned long long>(d3d.dxil_hazard_replay.vs_fnv1a64));
+    std::printf("      \"D3D12SerializeRootSignature\": \"%s\",\n",
+                hr_hex(d3d.dxil_hazard_replay.serialize_root_hr).c_str());
+    std::printf("      \"CreateRootSignature\": \"%s\",\n", hr_hex(d3d.dxil_hazard_replay.create_root_hr).c_str());
+    std::printf("      \"requested_count\": %u,\n", d3d.dxil_hazard_replay.requested_count);
+    std::printf("      \"replay_count\": %u,\n", d3d.dxil_hazard_replay.replay_count);
+    std::printf("      \"success_count\": %u,\n", d3d.dxil_hazard_replay.success_count);
+    std::printf("      \"entries\": [\n");
+    for (size_t i = 0; i < d3d.dxil_hazard_replay.entries.size(); ++i) {
+        const DxilHazardReplayEntryStats& entry = d3d.dxil_hazard_replay.entries[i];
+        std::printf("        {\n");
+        std::printf("          \"index\": %zu,\n", i);
+        std::printf("          \"ps_path\": \"%s\",\n", json_escape(entry.ps_path).c_str());
+        std::printf("          \"ps_loaded\": %s,\n", entry.ps_loaded ? "true" : "false");
+        std::printf("          \"ps_bytes\": %llu,\n", static_cast<unsigned long long>(entry.ps_bytes));
+        std::printf("          \"ps_fnv1a64\": \"%016llx\",\n", static_cast<unsigned long long>(entry.ps_fnv1a64));
+        std::printf("          \"CreateGraphicsPipelineState\": \"%s\",\n", hr_hex(entry.create_pso_hr).c_str());
+        std::printf("          \"ok\": %s\n", entry.ok ? "true" : "false");
+        std::printf("        }%s\n", (i + 1 == d3d.dxil_hazard_replay.entries.size()) ? "" : ",");
+    }
+    std::printf("      ],\n");
+    std::printf("      \"ok\": %s\n", d3d.dxil_hazard_replay.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"dxil_readback\": {\n");
     std::printf("      \"CreateReadbackBuffer\": \"%s\",\n", hr_hex(d3d.dxil_readback.create_readback_hr).c_str());

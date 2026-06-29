@@ -25,6 +25,35 @@ from typing import Any
 DEFAULT_LAB_ROOT = Path("/Volumes/AverySSD/MetalSharp-SM6-UE-Lab")
 REQUIRED_WINDOWS = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
 REQUIRED_UNIX = ["winemetal.so"]
+ELDEN_DXIL_HAZARD_PIXEL_STEMS = [
+    "172aaf0883bf7172",
+    "1a45b731c0e4fe83",
+    "2f1af397f9153841",
+    "30ee00cb96b4e801",
+    "3bea9f2a9e72171a",
+    "541f079ea76591c4",
+    "5dd27787e68d6c77",
+    "664f77848ee358b1",
+    "672ea3ead7e49d6c",
+    "6c4971b857643392",
+    "904fdbc1433b7246",
+    "90f3e6ee48cc6ba0",
+    "a5270ef1facc3035",
+    "bacc06724ae0df15",
+    "bcb47c5245ffbb98",
+    "bcfd3010eba1f51d",
+    "c9d9b9cf9ff78442",
+    "ce00e60cb04556b9",
+    "ce0bfbedf57c229d",
+    "cffde66df3b3c364",
+    "d11ba18f4a2db366",
+    "da999dae38812a81",
+    "e05ebac4d10f0bed",
+    "e802a4479e7393fe",
+    "e94138af0ae38fe0",
+    "eea08e169425b9aa",
+    "f496498dc565ab22",
+]
 
 
 def sha256(path: Path) -> str:
@@ -1191,11 +1220,20 @@ PSIn VSMain(VSIn input) {
 }
 float4 PSMain(PSIn input) : SV_TARGET {
   // M12_SCALAR_VECTOR_SEMANTICS_PROOF: keep this input-dependent so DXIL/MSL lowering cannot collapse to a constant.
+  // M12_ELDEN_VECTOR_BOOL_PROOF: stage-input vector comparison must lower through any()/all(), never bool = bool4.
+  // M12_ELDEN_VECTOR_CTOR_ARITY_PROOF: vector constructor/shuffle lowering must never emit over-width int4/uint4/float4 constructors.
+  float4 vector_cmp_value = input.color + float4(-0.25, -0.75, -0.50, -1.0);
+  bool4 vector_mask = (vector_cmp_value != float4(0.0, 0.0, 0.0, 0.0));
+  bool vector_condition = any(vector_mask);
+  int4 ctor_left = int4(6, 4, 0, 0);
+  int4 ctor_right = int4(0, 0, 7, 7);
+  int4 ctor_merged = int4(ctor_left.xy, ctor_right.zw);
+  float proof_bias = (ctor_merged.x == 6 && ctor_merged.y == 4 && ctor_merged.z == 7 && ctor_merged.w == 7 && !vector_condition) ? 0.0 : 1.0;
   float scalar_dot = dot(input.color.rgb, float3(0.25, 0.50, 0.25));
   float scalar_abs = abs(input.color.r - input.color.b);
   float2 scalar_pair = float2(scalar_dot, scalar_abs);
   float2 swizzled_pair = scalar_pair.yx;
-  float red = scalar_dot;
+  float red = scalar_dot + proof_bias;
   float green = 0.5 + 0.5 * saturate((scalar_abs - 0.5) * 8.0);
   float blue = min(scalar_dot + scalar_abs, 0.75);
   float alpha = max(swizzled_pair.x + 0.5, input.color.a - 0.5);
@@ -1214,6 +1252,12 @@ float4 PSMain(PSIn input) : SV_TARGET {
     source_text = hlsl_path.read_text(encoding="utf-8")
     semantic_markers = {
         "proof_marker": "M12_SCALAR_VECTOR_SEMANTICS_PROOF" in source_text,
+        "elden_vector_bool_marker": "M12_ELDEN_VECTOR_BOOL_PROOF" in source_text,
+        "elden_vector_ctor_marker": "M12_ELDEN_VECTOR_CTOR_ARITY_PROOF" in source_text,
+        "stage_input_vector_compare": "bool4 vector_mask = (vector_cmp_value != float4" in source_text,
+        "stage_input_any_bool": "bool vector_condition = any(vector_mask);" in source_text,
+        "int4_ctor_merge": "int4 ctor_merged = int4(ctor_left.xy, ctor_right.zw);" in source_text,
+        "proof_bias_keeps_expected_color": "float proof_bias =" in source_text and "!vector_condition" in source_text,
         "dot_input_color": "dot(input.color.rgb" in source_text,
         "scalar_pair_float2": "float2 scalar_pair" in source_text,
         "swizzle_yx": "scalar_pair.yx" in source_text,
@@ -1282,6 +1326,42 @@ float4 PSMain(PSIn input) : SV_TARGET {
         "ps_path": str(ps_path),
         "vs": results.get("vs", {}),
         "ps": results.get("ps", {}),
+    }
+
+
+def stage_elden_dxil_hazard_shaders(run_dir: Path) -> dict[str, Any]:
+    hazard_dir = run_dir / "exact-elden-dxil-hazards"
+    hazard_dir.mkdir(parents=True, exist_ok=True)
+    source_dir = Path.home() / ".metalsharp" / "shader-cache" / "m12" / "1245620"
+    stems = ELDEN_DXIL_HAZARD_PIXEL_STEMS
+    entries: list[dict[str, Any]] = []
+    ok = True
+    for index, stem in enumerate(stems):
+        source = source_dir / f"{stem}.dxbc"
+        destination = hazard_dir / f"{stem}.dxbc"
+        copied = False
+        if source.exists() and source.stat().st_size > 0:
+            shutil.copy2(source, destination)
+            copied = True
+        ok = ok and copied and destination.exists() and destination.stat().st_size > 0
+        entries.append(
+            {
+                "index": index,
+                "stem": stem,
+                "kind": "pixel",
+                "source": str(source),
+                "destination": str(destination),
+                "copied": copied,
+                "size": destination.stat().st_size if destination.exists() else 0,
+                "sha256": sha256(destination) if destination.exists() else "",
+            }
+        )
+    return {
+        "ok": ok,
+        "proof_scope": "exact_elden_dxil_pixel_shader_failure_replay_inputs",
+        "source_dir": str(source_dir),
+        "destination_dir": str(hazard_dir),
+        "entries": entries,
     }
 
 
@@ -1465,6 +1545,99 @@ def validate_textured_3d_face_provenance(corpus_tsv: Path, faces: list[dict[str,
         errors.append(f"unexpected_face_families:{sorted(actual_families)}")
     return {"ok": not errors, "records": records, "errors": errors}
 
+
+def _strip_cpp_line_comments(text: str) -> str:
+    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
+
+
+def _split_top_level_args(arg_text: str) -> list[str]:
+    args: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(arg_text):
+        if char in "([{":
+            depth += 1
+        elif char in ")}]":
+            depth = max(0, depth - 1)
+        elif char == "," and depth == 0:
+            args.append(arg_text[start:index].strip())
+            start = index + 1
+    tail = arg_text[start:].strip()
+    if tail:
+        args.append(tail)
+    return args
+
+
+def _strip_balanced_parens(expr: str) -> str:
+    value = expr.strip()
+    while value.startswith("(") and value.endswith(")"):
+        depth = 0
+        balanced = True
+        for index, char in enumerate(value):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0 and index != len(value) - 1:
+                    balanced = False
+                    break
+        if not balanced:
+            break
+        value = value[1:-1].strip()
+    return value
+
+
+def _vector_arg_width(expr: str) -> int:
+    value = _strip_balanced_parens(expr)
+    swizzle = re.search(r"\.([xyzwrgba]{2,4})$", value)
+    if swizzle:
+        return len(swizzle.group(1))
+    constructor = re.match(r"\b(?:float|int|uint|half)([234])\s*\(", value)
+    if constructor and value.endswith(")"):
+        return int(constructor.group(1))
+    return 1
+
+
+def _find_matching_paren(text: str, open_index: int) -> int:
+    depth = 0
+    for index in range(open_index, len(text)):
+        char = text[index]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _has_overarity_vector_constructor(text: str) -> bool:
+    code = _strip_cpp_line_comments(text)
+    pattern = re.compile(r"\b(float|int|uint|half)([234])\s*\(")
+    for match in pattern.finditer(code):
+        target_width = int(match.group(2))
+        open_index = match.end() - 1
+        close_index = _find_matching_paren(code, open_index)
+        if close_index < 0:
+            continue
+        args = _split_top_level_args(code[open_index + 1 : close_index])
+        total_width = sum(_vector_arg_width(arg) for arg in args)
+        if total_width > target_width:
+            return True
+    return False
+
+
+def _has_float2_pointer_coordinate(text: str) -> bool:
+    code = _strip_cpp_line_comments(text)
+    pointer_vars = set(re.findall(r"\b(?:device|thread|threadgroup|constant)\s+char\s*\*\s*(v\d+)\b", code))
+    if not pointer_vars:
+        return False
+    for match in re.finditer(r"\bfloat2\s*\(\s*(v\d+)\s*,\s*(v\d+)\s*\)", code):
+        if match.group(1) in pointer_vars or match.group(2) in pointer_vars:
+            return True
+    return False
+
+
 def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3d12_json: dict[str, Any], visible_frames: int) -> dict[str, Any]:
     errors: list[str] = []
     visible_scene = d3d12_json.get("visible_scene", {}) if d3d12_json else {}
@@ -1635,10 +1808,20 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
                 "result.w = v",
             ]
         )
+        code_text = _strip_cpp_line_comments(text)
+        dxil_report = shader_cache_dir / f"{dxil_ps}.dxil_report.txt"
+        report_text = dxil_report.read_text(errors="replace") if dxil_report.exists() else ""
+        msl_checks["dxil_ps_synthetic_vector_bool_any"] = "any(" in code_text and "in.v0" in code_text
+        msl_checks["dxil_ps_no_overarity_vector_constructors"] = not _has_overarity_vector_constructor(text)
+        msl_checks["dxil_ps_msllowering_runtime_path"] = "MSLLowering runtime path active" in report_text
         if not msl_checks["dxil_ps_semantic_result_channels"]:
             errors.append("dxil_ps_msl_missing_result_channel_writes")
         if not msl_checks["dxil_ps_scalar_vector_lowering"]:
             errors.append("dxil_ps_msl_missing_scalar_vector_lowering")
+        if not msl_checks["dxil_ps_no_overarity_vector_constructors"]:
+            errors.append("dxil_ps_msl_overarity_vector_constructor")
+        if not msl_checks["dxil_ps_msllowering_runtime_path"]:
+            errors.append("dxil_ps_not_msllowering_runtime_path")
     if dxil_vs:
         vs_msl = shader_cache_dir / f"{dxil_vs}.msl"
         text = vs_msl.read_text(errors="replace") if vs_msl.exists() else ""
@@ -1648,6 +1831,52 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             errors.append("dxil_vs_msl_missing_clip_w_one")
         if not msl_checks["dxil_vs_vertex_pull"]:
             errors.append("dxil_vs_msl_missing_vertex_pull")
+
+    hazard_replay = d3d12_json.get("dxil_hazard_replay", {}) if d3d12_json else {}
+    expected_hazard_stems = ELDEN_DXIL_HAZARD_PIXEL_STEMS
+    expected_hazard_count = len(expected_hazard_stems)
+    hazard_entries = hazard_replay.get("entries", []) if isinstance(hazard_replay.get("entries", []), list) else []
+    hazard_shader_records: list[dict[str, Any]] = []
+    msl_checks["dxil_hazard_replay_runtime_ok"] = bool(
+        hazard_replay.get("ok") is True
+        and hazard_replay.get("proof_scope") == "exact_elden_dxil_pixel_shader_pso_replay"
+        and int(hazard_replay.get("requested_count", 0) or 0) == expected_hazard_count
+        and int(hazard_replay.get("replay_count", 0) or 0) == expected_hazard_count
+        and int(hazard_replay.get("success_count", 0) or 0) == expected_hazard_count
+        and len(hazard_entries) == expected_hazard_count
+        and all(entry.get("ok") is True for entry in hazard_entries)
+    )
+    if not msl_checks["dxil_hazard_replay_runtime_ok"]:
+        errors.append("dxil_hazard_replay_runtime_failed")
+    for stem in expected_hazard_stems:
+        msl_path = shader_cache_dir / f"{stem}.msl"
+        report_path = shader_cache_dir / f"{stem}.dxil_report.txt"
+        msl_text = msl_path.read_text(errors="replace") if msl_path.exists() else ""
+        report_text = report_path.read_text(errors="replace") if report_path.exists() else ""
+        code_text = _strip_cpp_line_comments(msl_text)
+        record = {
+            "stem": stem,
+            "msl": cache_file_record(msl_path),
+            "dxil_report": cache_file_record(report_path),
+            "msllowering_runtime_path": "MSLLowering runtime path active" in report_text,
+            "no_overarity_vector_constructors": not _has_overarity_vector_constructor(msl_text),
+            "no_float2_pointer_coordinates": not _has_float2_pointer_coordinate(msl_text),
+            "vector_bool_any": ("any(" in code_text and "in.v0" in code_text) if stem == "bcfd3010eba1f51d" else True,
+        }
+        record["ok"] = bool(
+            record["msl"]["exists"]
+            and int(record["msl"]["size"] or 0) > 0
+            and record["dxil_report"]["exists"]
+            and int(record["dxil_report"]["size"] or 0) > 0
+            and record["msllowering_runtime_path"]
+            and record["no_overarity_vector_constructors"]
+            and record["no_float2_pointer_coordinates"]
+            and record["vector_bool_any"]
+        )
+        if not record["ok"]:
+            errors.append(f"dxil_hazard_shader_validation_failed:{stem}")
+        hazard_shader_records.append(record)
+    msl_checks["dxil_hazard_shader_records_ok"] = all(record["ok"] for record in hazard_shader_records)
 
     pso_files = sorted([*shader_cache_dir.glob("pso-render-*.json"), *shader_cache_dir.glob("pso-compute-*.json")])
     pso_records = [cache_file_record(path) for path in pso_files]
@@ -2036,6 +2265,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "policy": "runtime_source_compile_from_cached_waveops_msl_with_compute_pso_manifest",
             "requires_hash_metallib_file": False,
         },
+        "dxil_hazard_shader_records": hazard_shader_records,
         "msl_checks": msl_checks,
         "metallib_policy": metallib_policy,
         "errors": errors,
@@ -2084,6 +2314,7 @@ def run_fresh_game(
             )
 
     dxil_artifacts = build_fresh_game_dxil(out_bin, run_dir, wine, prefix)
+    dxil_hazard_artifacts = stage_elden_dxil_hazard_shaders(run_dir)
     waveops_artifacts = build_fresh_game_waveops_dxil(out_bin, run_dir, wine, prefix)
 
     shader_cache_dir = run_dir / "shader-cache-fresh"
@@ -2119,6 +2350,8 @@ def run_fresh_game(
             "WINEDEBUG": "+loaddll",
         }
     )
+    for index, entry in enumerate(dxil_hazard_artifacts.get("entries", [])):
+        env[f"M12_FRESH_DXIL_HAZARD_PS{index}"] = str(entry.get("destination", ""))
     cmd = [str(wine), exe.name]
     proc = subprocess.run(cmd, cwd=out_bin, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout_path = run_dir / "m12_fresh_game.stdout.json"
@@ -2224,6 +2457,7 @@ def run_fresh_game(
     tessellation_fallback_json = d3d12_json.get("tessellation_fallback", {}) if d3d12_json else {}
     indirect_draw_json = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
     nanite_cluster_json = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
+    dxil_hazard_replay_json = d3d12_json.get("dxil_hazard_replay", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, diagnostic_log_text, d3d12_json, visible_frames)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
@@ -2381,6 +2615,11 @@ def run_fresh_game(
         and d3d12_json.get("dxil_scene", {}).get("vertex_source") == "POSITION_NONDEGENERATE_COLOR_VERTEX_BUFFER_PS_SCALAR_VECTOR_SEMANTICS"
         and int(d3d12_json.get("dxil_scene", {}).get("draw_calls", 0) or 0) == visible_frames
         and int(d3d12_json.get("dxil_scene", {}).get("vertices_per_draw", 0) or 0) == 3
+        and dxil_hazard_replay_json.get("ok") is True
+        and dxil_hazard_replay_json.get("proof_scope") == "exact_elden_dxil_pixel_shader_pso_replay"
+        and int(dxil_hazard_replay_json.get("requested_count", 0) or 0) == len(ELDEN_DXIL_HAZARD_PIXEL_STEMS)
+        and int(dxil_hazard_replay_json.get("replay_count", 0) or 0) == len(ELDEN_DXIL_HAZARD_PIXEL_STEMS)
+        and int(dxil_hazard_replay_json.get("success_count", 0) or 0) == len(ELDEN_DXIL_HAZARD_PIXEL_STEMS)
         and d3d12_json.get("dxil_readback", {}).get("ok") is True
         and d3d12_json.get("dxil_readback", {}).get("CreateReadbackBuffer") == "0x00000000"
         and int(d3d12_json.get("dxil_readback", {}).get("copy_commands", 0) or 0) == visible_frames
@@ -2878,6 +3117,7 @@ def run_fresh_game(
         "loaddll": loaddll_rows,
         "runtime_match": runtime_match,
         "dxil_artifacts": dxil_artifacts,
+        "dxil_hazard_artifacts": dxil_hazard_artifacts,
         "waveops_artifacts": waveops_artifacts,
         "shader_cache_dir": str(shader_cache_dir),
         "shader_cache_validation": shader_cache_validation,

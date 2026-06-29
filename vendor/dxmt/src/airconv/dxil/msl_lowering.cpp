@@ -137,17 +137,32 @@ static std::vector<std::string> parseAggregateLiteral(const std::string &text) {
         }
         if (!is_ctor) return values;
     }
-    while (start < text.size() - 1) {
-        size_t comma = text.find(',', start);
-        size_t end_pos = comma == std::string::npos ? text.size() - 1 : comma;
-        std::string val = text.substr(start, end_pos - start);
+    int depth = 0;
+    size_t arg_start = start;
+    for (size_t i = start; i < text.size() - 1; i++) {
+        char c = text[i];
+        if (c == '(' || c == '[' || c == '{') {
+            depth++;
+        } else if (c == ')' || c == ']' || c == '}') {
+            if (depth > 0)
+                depth--;
+        } else if (c == ',' && depth == 0) {
+            std::string val = text.substr(arg_start, i - arg_start);
+            while (!val.empty() && (val.front() == ' ' || val.front() == '\t'))
+                val.erase(val.begin());
+            while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
+                val.pop_back();
+            if (!val.empty()) values.push_back(val);
+            arg_start = i + 1;
+        }
+    }
+    if (arg_start < text.size() - 1) {
+        std::string val = text.substr(arg_start, text.size() - arg_start - 1);
         while (!val.empty() && (val.front() == ' ' || val.front() == '\t'))
             val.erase(val.begin());
         while (!val.empty() && (val.back() == ' ' || val.back() == '\t'))
             val.pop_back();
         if (!val.empty()) values.push_back(val);
-        if (comma == std::string::npos) break;
-        start = comma + 1;
     }
     return values;
 }
@@ -1130,9 +1145,43 @@ static std::string vectorZeroForExpression(const std::string &value) {
     return "";
 }
 
+static bool exprLooksScalarResultCall(const std::string &value) {
+    std::string stripped = stripEnclosingParens(value);
+    static const char *scalar_calls[] = {
+        "any(", "all(", "dot(", "length(", "distance("
+    };
+    for (const char *call : scalar_calls)
+        if (startsWith(stripped, call))
+            return true;
+    return false;
+}
+
+static bool exprContainsBareStageInputVector(const std::string &value) {
+    size_t pos = value.find("in.v");
+    while (pos != std::string::npos) {
+        bool start_ok = pos == 0 || (!std::isalnum((unsigned char)value[pos - 1]) && value[pos - 1] != '_');
+        size_t idx = pos + 4;
+        if (start_ok && idx < value.size() && std::isdigit((unsigned char)value[idx])) {
+            while (idx < value.size() && std::isdigit((unsigned char)value[idx]))
+                idx++;
+            size_t use = idx;
+            while (use < value.size() && std::isspace((unsigned char)value[use]))
+                use++;
+            bool scalar_access = use < value.size() && (value[use] == '.' || value[use] == '[');
+            bool end_ok = use >= value.size() || (!std::isalnum((unsigned char)value[use]) && value[use] != '_');
+            if (!scalar_access && end_ok)
+                return true;
+        }
+        pos = value.find("in.v", pos + 1);
+    }
+    return false;
+}
+
 static bool exprLooksVectorValue(const std::string &value) {
-    if (exprEndsWithComponent(value))
+    if (exprEndsWithComponent(value) || exprLooksScalarResultCall(value))
         return false;
+    if (exprContainsBareStageInputVector(value))
+        return true;
     return startsWith(value, "float2(") || startsWith(value, "float3(") ||
            startsWith(value, "float4(") || startsWith(value, "int2(") ||
            startsWith(value, "int3(") || startsWith(value, "int4(") ||
@@ -1195,6 +1244,157 @@ static bool parseConstructorArguments(const std::string &value,
     }
     args.push_back(trimmed.substr(arg_start, trimmed.size() - arg_start - 1));
     return true;
+}
+
+static std::string normalizeVectorConstructorArities(const std::string &value) {
+    struct ConstructorInfo {
+        const char *prefix;
+        const char *name;
+        size_t width;
+    };
+    static const ConstructorInfo constructors[] = {
+        {"float2(", "float2", 2}, {"float3(", "float3", 3}, {"float4(", "float4", 4},
+        {"int2(", "int2", 2},     {"int3(", "int3", 3},     {"int4(", "int4", 4},
+        {"uint2(", "uint2", 2},   {"uint3(", "uint3", 3},   {"uint4(", "uint4", 4},
+        {"half2(", "half2", 2},   {"half3(", "half3", 3},   {"half4(", "half4", 4},
+    };
+
+    auto find_matching_close = [](const std::string &text, size_t open_pos) -> size_t {
+        int depth = 0;
+        for (size_t i = open_pos; i < text.size(); i++) {
+            char c = text[i];
+            if (c == '(' || c == '[' || c == '{') {
+                depth++;
+            } else if (c == ')' || c == ']' || c == '}') {
+                depth--;
+                if (depth == 0)
+                    return i;
+            }
+        }
+        return std::string::npos;
+    };
+
+    std::string out;
+    size_t pos = 0;
+    bool changed = false;
+    while (pos < value.size()) {
+        size_t best = std::string::npos;
+        const ConstructorInfo *match = nullptr;
+        for (const auto &ctor : constructors) {
+            size_t found = value.find(ctor.prefix, pos);
+            while (found != std::string::npos) {
+                bool boundary = found == 0 || (!std::isalnum((unsigned char)value[found - 1]) && value[found - 1] != '_');
+                if (boundary)
+                    break;
+                found = value.find(ctor.prefix, found + 1);
+            }
+            if (found != std::string::npos && (best == std::string::npos || found < best)) {
+                best = found;
+                match = &ctor;
+            }
+        }
+
+        if (!match) {
+            out += value.substr(pos);
+            break;
+        }
+
+        out += value.substr(pos, best - pos);
+        size_t open_pos = best + std::strlen(match->name);
+        size_t close_pos = find_matching_close(value, open_pos);
+        if (close_pos == std::string::npos) {
+            out += value.substr(best);
+            break;
+        }
+
+        std::string segment = value.substr(best, close_pos - best + 1);
+        std::vector<std::string> args;
+        if (!parseConstructorArguments(segment, match->name, args)) {
+            out += segment;
+            pos = close_pos + 1;
+            continue;
+        }
+
+        auto trim = [](std::string text) {
+            while (!text.empty() && std::isspace((unsigned char)text.front()))
+                text.erase(text.begin());
+            while (!text.empty() && std::isspace((unsigned char)text.back()))
+                text.pop_back();
+            return text;
+        };
+        auto swizzle_width_for = [&](const std::string &expr) -> size_t {
+            std::string stripped = stripEnclosingParens(trim(expr));
+            size_t dot = stripped.rfind('.');
+            if (dot == std::string::npos || dot + 2 > stripped.size())
+                return 1;
+            size_t width = stripped.size() - dot - 1;
+            if (width < 2 || width > 4)
+                return 1;
+            for (size_t i = dot + 1; i < stripped.size(); i++) {
+                char c = stripped[i];
+                if (c != 'x' && c != 'y' && c != 'z' && c != 'w' && c != 'r' && c != 'g' && c != 'b' && c != 'a')
+                    return 1;
+            }
+            return width;
+        };
+        auto constructor_width_for = [&](const std::string &expr) -> size_t {
+            std::string stripped = stripEnclosingParens(trim(expr));
+            size_t swizzle_width = swizzle_width_for(stripped);
+            if (swizzle_width > 1)
+                return swizzle_width;
+            for (const auto &ctor : constructors) {
+                if (startsWith(stripped, ctor.prefix) && stripped.size() > std::strlen(ctor.prefix) && stripped.back() == ')')
+                    return ctor.width;
+            }
+            return 1;
+        };
+        auto zero_for_constructor = [&]() -> std::string {
+            if (startsWith(match->name, "float") || startsWith(match->name, "half"))
+                return "0.0f";
+            if (startsWith(match->name, "uint"))
+                return "0u";
+            return "0";
+        };
+
+        bool segment_changed = args.size() > match->width;
+        std::vector<std::string> normalized_args;
+        normalized_args.reserve(match->width);
+        for (size_t i = 0; i < args.size() && normalized_args.size() < match->width; i++) {
+            std::string arg = trim(args[i]);
+            std::string normalized_arg = normalizeVectorConstructorArities(arg);
+            if (normalized_arg != arg)
+                segment_changed = true;
+            size_t arg_width = constructor_width_for(normalized_arg);
+            if (arg_width > 1) {
+                segment_changed = true;
+                for (size_t component = 0; component < arg_width && normalized_args.size() < match->width; component++)
+                    normalized_args.push_back("(" + normalized_arg + ")" + componentSuffix((uint32_t)component));
+            } else {
+                normalized_args.push_back(normalized_arg);
+            }
+        }
+        if (segment_changed) {
+            while (normalized_args.size() < match->width)
+                normalized_args.push_back(zero_for_constructor());
+        }
+
+        if (segment_changed) {
+            changed = true;
+            out += match->name;
+            out += "(";
+            for (size_t i = 0; i < normalized_args.size(); i++) {
+                if (i)
+                    out += ", ";
+                out += normalized_args[i];
+            }
+            out += ")";
+        } else {
+            out += segment;
+        }
+        pos = close_pos + 1;
+    }
+
+    return changed ? out : value;
 }
 
 static bool startsWithVectorConstructor(std::string value) {
@@ -1451,7 +1651,7 @@ static std::string coerceResolvedValue(const std::string &value, const MSLType &
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) && exprLooksVectorValue(resolved) &&
         !exprLooksScalarMathCall(resolved) && !exprLooksScalarCast(resolved))
-        return "(" + resolved + ").x";
+        return "(" + normalizeVectorConstructorArities(resolved) + ").x";
     if (DXILIRBuilder::isVectorType(target) && !exprLooksVectorValue(resolved)) {
         std::string type_name = emitTypeName(target);
         if (!type_name.empty() && type_name != "auto")
@@ -1548,7 +1748,7 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
         DXILIRBuilder::isVectorType(source_type))
-        return "(" + sanitized_value + ").x";
+        return "(" + normalizeVectorConstructorArities(sanitized_value) + ").x";
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
@@ -1570,7 +1770,7 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
             return coerceResolvedValue(scalarized, target);
         if (exprLooksScalarizedArithmetic(sanitized_value))
             return sanitized_value;
-        return coerceResolvedValue("(" + sanitized_value + ").x", target);
+        return coerceResolvedValue("(" + normalizeVectorConstructorArities(sanitized_value) + ").x", target);
     }
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
@@ -1582,7 +1782,7 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
         !DXILIRBuilder::isVectorType(target) &&
         sanitized_value.find('?') != std::string::npos &&
         exprLooksVectorValue(sanitized_value))
-        return "(" + sanitized_value + ").x";
+        return "(" + normalizeVectorConstructorArities(sanitized_value) + ").x";
 
     std::string then_branch;
     std::string else_branch;
@@ -1592,7 +1792,7 @@ static std::string coerceResolvedValue(const LowerContext &ctx, const std::strin
         (exprLooksVectorValue(then_branch) || exprLooksVectorValue(else_branch) ||
          DXILIRBuilder::isVectorType(typeForResolvedExpression(ctx, then_branch)) ||
          DXILIRBuilder::isVectorType(typeForResolvedExpression(ctx, else_branch))))
-        return "(" + sanitized_value + ").x";
+        return "(" + normalizeVectorConstructorArities(sanitized_value) + ").x";
 
     if ((DXILIRBuilder::isFloatType(target) || DXILIRBuilder::isIntType(target)) &&
         !DXILIRBuilder::isVectorType(target) &&
@@ -1736,7 +1936,8 @@ static std::string componentAccess(const std::string &value, uint32_t component,
     if (!parseEmittedValueName(stripEnclosingParens(value), value_id) &&
         !exprLooksVectorValue(value))
         return value;
-    return "(" + value + ")" + componentSuffix(component);
+    std::string normalized = normalizeVectorConstructorArities(value);
+    return "(" + normalized + ")" + componentSuffix(component);
 }
 
 static std::string coerceVectorWidth(const std::string &value, const MSLType &source_type,
@@ -1770,6 +1971,9 @@ static std::string textureCoordComponent(LowerContext &ctx,
                                          uint32_t component) {
     std::string sanitized = sanitizeThreadVectorCasts(value);
     MSLType source_type = typeForResolvedExpression(ctx, sanitized);
+    if (typeLooksResourceHandle(source_type) || exprLooksResourceHandle(sanitized) ||
+        exprContainsPointerSyntax(sanitized) || exprContainsPointerTypedValue(ctx, sanitized))
+        return "0u";
     if (DXILIRBuilder::isVectorType(source_type))
         sanitized = componentAccess(sanitized, component, source_type);
     else if (exprLooksVectorValue(sanitized))
@@ -1782,6 +1986,9 @@ static std::string sampleCoordComponent(LowerContext &ctx,
                                         uint32_t component) {
     std::string sanitized = sanitizeThreadVectorCasts(value);
     MSLType source_type = typeForResolvedExpression(ctx, sanitized);
+    if (typeLooksResourceHandle(source_type) || exprLooksResourceHandle(sanitized) ||
+        exprContainsPointerSyntax(sanitized) || exprContainsPointerTypedValue(ctx, sanitized))
+        return "0.0f";
     if (DXILIRBuilder::isVectorType(source_type))
         sanitized = componentAccess(sanitized, component, source_type);
     else if (exprLooksVectorValue(sanitized))
@@ -3011,6 +3218,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
                 declared_type.kind == MSLTypeKind::RWTexture2D)
                 declared_type = {MSLTypeKind::Texture2D, 0, {}};
             std::string assigned = coerceResolvedValue(ctx, source_expr, declared_type);
+            assigned = normalizeVectorConstructorArities(assigned);
             if (DXILIRBuilder::isVectorType(declared_type)) {
                 MSLType assigned_type = inferTypeFromExpr(assigned);
                 if (DXILIRBuilder::isVectorType(assigned_type) &&
@@ -3040,6 +3248,7 @@ static void emitTypedInstruction(LowerContext &ctx, const LLVMInstruction &inst,
             return;
         }
         std::string assigned = coerceResolvedValue(ctx, source_expr, type);
+        assigned = normalizeVectorConstructorArities(assigned);
         if (DXILIRBuilder::isVectorType(type)) {
             MSLType assigned_type = inferTypeFromExpr(assigned);
             if (DXILIRBuilder::isVectorType(assigned_type) &&
