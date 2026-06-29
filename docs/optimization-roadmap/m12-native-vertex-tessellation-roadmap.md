@@ -209,6 +209,7 @@ Code changes:
   - `D3D12_APPEND_ALIGNED_ELEMENT` layout.
   - Per-instance input with `InstanceDataStepRate > 1` and nonzero `StartInstanceLocation`.
   - Dynamic `IASetVertexBuffers` stride changes across draws using the same PSO.
+  - Progressive RGB vertex triangle lane: genuinely draw the triangle out over time, starting from a single lit pixel/point-sized primitive and growing frame-by-frame through partial coverage until the final frame presents the complete RGB interpolated triangle. This must prove ordinary vertex interpolation and frame progression rather than only static square stamps or an already-complete triangle on frame 1.
   - Descriptor/root-table mutation between draws.
   - ExecuteIndirect DrawIndexed with nonzero start/base values.
 - Emit one JSON block per lane with expected color/readback hash and draw parameters.
@@ -217,6 +218,7 @@ Mini-game proof:
 
 - Load `m12_fresh_game.exe` for at least one visible/readback frame per lane.
 - Read back stamped pixels and/or structured readback buffers proving the intended geometry appeared.
+- For the RGB vertex triangle lane, prove progressive reveal across a bounded frame sequence: frame 0/1 has only the seed pixel/point, intermediate frames have monotonically increasing triangle coverage/sample counts, and the final frame matches the full triangle. A single static square, static flat-color triangle, or complete triangle presented immediately on the first frame is not sufficient.
 - Run invalid lanes and prove they produce named diagnostics without poisoning the next valid lane.
 
 Validity artifacts:
@@ -229,6 +231,7 @@ Acceptance:
 
 - Every suspected IA/index failure mode has a local proof case.
 - Valid lanes render/read back correctly.
+- The RGB vertex triangle lane shows a real frame-by-frame rasterization/reveal sequence: seed pixel/point → partial triangle → complete interpolated RGB triangle, matching a real-world render-loop signal instead of a one-shot static stamp.
 - Invalid lanes fail closed and subsequent lanes still pass.
 
 ### Phase 2 — Implement `d3d12_native_vertex_path.*`
@@ -370,6 +373,7 @@ Code changes:
 Mini-game proof:
 
 - Add and load minimal quad/triangle patch HS/DS scenes in `m12_fresh_game.exe`.
+- Include a progressive RGB tessellated triangle lane that renders frame-by-frame from a single lit pixel/point-sized patch output through increasing tessellated coverage to a complete RGB tessellated triangle. The lane must vary tessellation factor and/or control-point color/position over frames and must not satisfy the proof by presenting a complete triangle immediately.
 - Include indexed and non-indexed patch variants.
 - Include a tessellation-factor debug/readback buffer.
 - Include per-patch and per-control-point validation.
@@ -378,6 +382,7 @@ Mini-game proof:
 Validity artifacts:
 
 - Visible/readback proof of tessellated output.
+- Per-frame RGB tessellated triangle artifacts: expected/actual sample colors, frame index, lit-pixel/coverage count, monotonic-growth verdict, control-point values, tessellation factor, and motion/color hash.
 - Factor-buffer readback or debug dump.
 - `native_tessellation_path resolved` logs with control-point count and factor metadata.
 - Log scan: `D3D12 tessellation fallback=0`.
@@ -385,6 +390,7 @@ Validity artifacts:
 Acceptance:
 
 - Native tessellation mini-game draw is visibly/readback correct on GPU.
+- Progressive RGB vertex and tessellated triangle lanes both pass over a bounded frame sequence, with coverage growing from seed pixel/point to full triangle, giving a real-world frame-by-frame render-loop proof.
 - Elden-like HS/DS PSOs no longer compile as VS/PS-only render PSOs.
 - Unsupported tessellation blocks explicitly and never renders fallback.
 
@@ -544,8 +550,8 @@ Produce a single, source-backed launch-readiness artifact before asking for any 
 Code changes:
 
 - Add a final proof bundle generator that collects:
-  - mini-game native vertex proof
-  - native/fail-closed tessellation proof
+  - mini-game native vertex proof, including the progressive seed-pixel-to-full-triangle RGB vertex lane
+  - native/fail-closed tessellation proof, including the progressive seed-pixel-to-full-triangle RGB tessellated lane once native tessellation is implemented
   - compute proof
   - command/resource lifetime proof
   - backpressure proof
@@ -557,6 +563,7 @@ Code changes:
 Mini-game/probe proof:
 
 - Load `m12_fresh_game.exe` through the full proof harness for the final bounded run.
+- Require the progressive RGB vertex triangle lane and the native/fail-closed tessellation lane outputs in the final bundle; once Phase 5 lands, require the progressive RGB tessellated triangle lane as green too. The final bundle must include per-frame coverage counts proving the triangle was drawn out over time rather than presented whole immediately.
 - Run `/mtsp/prepare` for Elden only after all mini-game/probe gates are green.
 - Do not launch Elden as part of this phase without explicit user approval.
 
@@ -577,11 +584,11 @@ Acceptance:
 | Phase | Goal | Mini-game/probe proof | Must be zero for valid lanes |
 |---|---|---|---|
 | 0 | Wire no-fallback gates | short `m12_fresh_game.exe` smoke | fallback/draw-skip counters cannot pass |
-| 1 | Add IA truth-table lanes | indexed/base/stride/instance/indirect scenes | valid-lane `vertex_range_oob` |
+| 1 | Add IA truth-table lanes | indexed/base/stride/instance/indirect scenes + progressive RGB vertex triangle reveal | valid-lane `vertex_range_oob` |
 | 2 | Implement native vertex resolver | resolver JSON matches lane expectations | valid-lane OOB/block |
 | 3 | Bind native vertex/index to Metal | 600f repeated draw/readback proof | compact-slot fallback, draw skip, Metal error |
 | 4 | Remove tessellation fallback success | HS/DS lane blocks explicitly | `D3D12 tessellation fallback` |
-| 5 | Native GPU tessellation | patch draw readback/factor proof | fallback, CPU tessellation, fake VS/PS draw |
+| 5 | Native GPU tessellation | patch draw readback/factor proof + progressive RGB tessellated triangle reveal | fallback, CPU tessellation, fake VS/PS draw |
 | 6 | Harden compute encode | compute descriptor/churn lanes | compute encode failure |
 | 7 | Fix lifetime/breadcrumbs | resource churn stress | invalid resource/page fault/timeout |
 | 8 | Bound backpressure | present/drawable stress | stall/reboot/WindowServer warning |
