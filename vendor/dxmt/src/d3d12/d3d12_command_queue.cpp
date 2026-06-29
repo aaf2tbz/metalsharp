@@ -174,6 +174,7 @@ static uint32_t g_tessellation_fallback_draw_logs = 0;
 static uint32_t g_compute_completeness_logs = 0;
 static uint32_t g_command_list_summary_logs = 0;
 static uint32_t g_draw_safety_skip_logs = 0;
+static uint32_t g_native_vertex_resolve_logs = 0;
 static uint64_t g_queue_submit_serial = 0;
 
 static uint32_t g_quarantine_zero_vb_offscreen = 0;
@@ -1381,6 +1382,35 @@ struct ReplayState {
         (unsigned long long)(pso ? pso->GetRenderPSO().handle : 0),
         " stage=", TraceCompileFailureStage(pso),
         " detail=", TraceCompileFailureDetail(pso)));
+  }
+
+  void LogNativeVertexResolved(const char *draw_kind, uint32_t element_count,
+                               uint32_t instance_count,
+                               uint32_t start_element, int32_t base_vertex,
+                               uint32_t start_instance, bool indexed) const {
+    if (!indexed || !TakeLogBudget(&g_native_vertex_resolve_logs, 256))
+      return;
+
+    const uint32_t index_size = ib.Format == DXGI_FORMAT_R32_UINT
+                                    ? 4u
+                                    : (ib.Format == DXGI_FORMAT_R16_UINT ? 2u
+                                                                         : 0u);
+    Logger::info(str::format(
+        "M12 native vertex path resolved draw=", draw_kind,
+        " pso=", (void *)pso, " ", TracePsoShaderSummary(pso),
+        " elems=", element_count, " inst=", instance_count,
+        " start=", start_element, " base=", base_vertex,
+        " start_inst=", start_instance, " index_format=", (unsigned)ib.Format,
+        " index_size=", index_size, " ib_gpu=0x", std::hex,
+        (unsigned long long)ib.BufferLocation, std::dec,
+        " ib_view_size=", ib.SizeInBytes,
+        " index_byte_offset=", uint64_t(start_element) * index_size,
+        " input_slot_mask=0x", std::hex,
+        (unsigned)(pso ? pso->GetIAInputSlotMask() : 0u), std::dec,
+        " vb0_gpu=0x", std::hex,
+        (unsigned long long)vbs[0].BufferLocation, std::dec,
+        " vb0_size=", vbs[0].SizeInBytes,
+        " vb0_stride=", vbs[0].StrideInBytes));
   }
 
   struct RenderReadbackProbe {
@@ -5925,6 +5955,9 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                                cmd->base_vertex, cmd->start_instance, true);
           break;
         }
+        st.LogNativeVertexResolved("DrawIndexedInstanced", cmd->index_count,
+                                   cmd->instance_count, cmd->start_index,
+                                   cmd->base_vertex, cmd->start_instance, true);
         std::string unsafe_stage_in_reason;
         if (st.ShouldSkipUnsafeMSCIndexedStageInDraw(
                 m_device, cmd->index_count, cmd->instance_count,
@@ -6393,6 +6426,10 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                     args.StartInstanceLocation, true);
                 return;
               }
+              st.LogNativeVertexResolved(
+                  "ExecuteIndirectDrawIndexed", args.IndexCountPerInstance,
+                  args.InstanceCount, args.StartIndexLocation,
+                  args.BaseVertexLocation, args.StartInstanceLocation, true);
               if (args.InstanceCount > 0 && args.IndexCountPerInstance > 0 &&
                   st.ib.BufferLocation) {
                 auto *ib_res =

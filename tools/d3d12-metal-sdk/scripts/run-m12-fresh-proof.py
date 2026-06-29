@@ -2476,6 +2476,10 @@ def run_fresh_game(
         int(match.group(1))
         for match in re.finditer(r"M12 present backbuffer work count=\d+ .*? indirect=(\d+).*?classification=drawn", proc.stderr)
     ]
+    native_vertex_resolved_count = len(re.findall(r"M12 native vertex path resolved", diagnostic_log_text))
+    native_vertex_draw_indexed_resolved_count = len(
+        re.findall(r"M12 native vertex path resolved draw=DrawIndexedInstanced", diagnostic_log_text)
+    )
     dxil_draw_encoded_count = len(re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1", diagnostic_log_text))
     dxil_vertex_pull_snapshot_count = len(
         re.findall(
@@ -3229,6 +3233,8 @@ def run_fresh_game(
         "present_draw_counts": present_draw_counts,
         "present_indexed_counts": present_indexed_counts,
         "present_indirect_counts": present_indirect_counts,
+        "native_vertex_resolved_count": native_vertex_resolved_count,
+        "native_vertex_draw_indexed_resolved_count": native_vertex_draw_indexed_resolved_count,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
         "dxil_draw_encoded_required": min(frames_presented, 6),
         "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect encoded logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=1, indirect>=2, and all JSON/readback lanes to pass.",
@@ -3263,8 +3269,10 @@ def run_fresh_game(
         and len(present_indexed_counts) == frames_presented
         and len(present_indirect_counts) == frames_presented
         and all(draws >= 6 for draws in present_draw_counts)
-        and all(indexed >= 1 for indexed in present_indexed_counts)
+        and all(indexed >= 2 for indexed in present_indexed_counts)
         and all(indirect >= 2 for indirect in present_indirect_counts)
+        and native_vertex_resolved_count >= visible_frames * 2
+        and native_vertex_draw_indexed_resolved_count >= visible_frames * 2
         and dxil_draw_encoded_count >= min(frames_presented, 6)
         and dxil_vertex_pull_snapshot_count >= min(frames_presented, 4)
         and not dxil_draw_skipped
