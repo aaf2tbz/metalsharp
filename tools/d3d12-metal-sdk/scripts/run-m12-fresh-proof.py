@@ -1778,6 +1778,16 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and tessellation_fallback.get("fallback_draw_encoded") is False
         and int(tessellation_fallback.get("draw_calls", 0) or 0) == 0
     )
+    tessellation_native_resolved = bool(
+        tessellation_fallback.get("native_tessellation_required") is True
+        and tessellation_fallback.get("native_tessellation_resolved") is True
+        and tessellation_fallback.get("native_draw_encoded") is True
+        and tessellation_fallback.get("native_indexed_draw_encoded") is True
+        and tessellation_fallback.get("blocked_expected") is False
+        and tessellation_fallback.get("fallback_draw_encoded") is False
+        and int(tessellation_fallback.get("draw_calls", 0) or 0) >= visible_frames
+        and int(tessellation_fallback.get("draw_indexed_calls", 0) or 0) >= visible_frames
+    )
     indirect_draw = d3d12_json.get("indirect_draw", {}) if d3d12_json else {}
     indirect_vertices = int(indirect_draw.get("argument_vertex_count", 0) or 0)
     nanite_cluster = d3d12_json.get("nanite_cluster", {}) if d3d12_json else {}
@@ -1799,8 +1809,10 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     cbv_draws = re.findall(cbv_pattern, stderr_text) if cbv_vertices else []
     indexed_pattern = rf"M12 swapchain DrawIndexedInstanced encoded idx={indexed_count} inst=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
     indexed_draws = re.findall(indexed_pattern, stderr_text) if indexed_count else []
-    tessellation_pattern = rf"M12 swapchain DrawInstanced encoded v={tessellation_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}}).*?tess_fallback=1"
+    tessellation_pattern = r"M12 native_tessellation_path draw encoded control_points=3 patches=\d+ instances=1"
     tessellation_draws = re.findall(tessellation_pattern, stderr_text) if tessellation_vertices else []
+    tessellation_indexed_pattern = r"M12 native_tessellation_path indexed draw encoded control_points=3 patches=\d+ instances=1"
+    tessellation_indexed_draws = re.findall(tessellation_indexed_pattern, stderr_text) if tessellation_vertices else []
     tessellation_fallback_trace_pattern = rf"M12 tessellation fallback draw .*?patch_control_points=3 .*?elements={tessellation_vertices} .*?tess_fallback=1"
     tessellation_fallback_traces = re.findall(tessellation_fallback_trace_pattern, stderr_text) if tessellation_vertices else []
     indirect_pattern = rf"M12 swapchain ExecuteIndirect DrawInstanced encoded v={indirect_vertices} i=1 .*?vs=([0-9a-f]{{16}}) ps=([0-9a-f]{{16}})"
@@ -1816,6 +1828,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     cbv_unique_draws = sorted(set(cbv_draws))
     indexed_unique_draws = sorted(set(indexed_draws))
     tessellation_unique_draws = sorted(set(tessellation_draws))
+    tessellation_indexed_unique_draws = sorted(set(tessellation_indexed_draws))
     indirect_unique_draws = sorted(set(indirect_draws))
     nanite_unique_draws = sorted(set(nanite_draws))
     if not dxil_draws:
@@ -1834,12 +1847,16 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_cbv_sample_presented_draw_hashes")
     if not indexed_draws:
         errors.append("missing_indexed_presented_draw_hashes")
-    if not tessellation_blocked_expected and not tessellation_draws:
-        errors.append("missing_tessellation_fallback_presented_draw_hashes")
-    if not tessellation_blocked_expected and not tessellation_fallback_traces:
-        errors.append("missing_tessellation_fallback_trace")
-    if tessellation_blocked_expected and (tessellation_draws or tessellation_fallback_traces):
-        errors.append("tessellation_blocked_expected_but_fallback_was_encoded")
+    if not tessellation_native_resolved:
+        errors.append("missing_native_tessellation_resolved_draw")
+    if not tessellation_draws:
+        errors.append("missing_native_tessellation_draw_log")
+    if not tessellation_indexed_draws:
+        errors.append("missing_native_tessellation_indexed_draw_log")
+    if tessellation_fallback_traces:
+        errors.append("unexpected_tessellation_fallback_trace")
+    if tessellation_blocked_expected:
+        errors.append("tessellation_blocked_expected_in_native_proof")
     if not indirect_draws:
         errors.append("missing_indirect_presented_draw_hashes")
     if not nanite_draws:
@@ -1861,7 +1878,9 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     if len(indexed_unique_draws) > 1:
         errors.append("unexpected_multiple_indexed_presented_shader_pairs")
     if len(tessellation_unique_draws) > 1:
-        errors.append("unexpected_multiple_tessellation_fallback_presented_shader_pairs")
+        errors.append("unexpected_multiple_native_tessellation_draw_log_shapes")
+    if len(tessellation_indexed_unique_draws) > 1:
+        errors.append("unexpected_multiple_native_tessellation_indexed_draw_log_shapes")
     if len(indirect_unique_draws) > 1:
         errors.append("unexpected_multiple_indirect_presented_shader_pairs")
     if len(nanite_unique_draws) > 1:
@@ -1874,15 +1893,11 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
     textured_3d_vs, textured_3d_ps = textured_3d_unique_draws[0] if textured_3d_unique_draws else ("", "")
     cbv_vs, cbv_ps = cbv_unique_draws[0] if cbv_unique_draws else ("", "")
     indexed_vs, indexed_ps = indexed_unique_draws[0] if indexed_unique_draws else ("", "")
-    tessellation_vs, tessellation_ps = tessellation_unique_draws[0] if tessellation_unique_draws else ("", "")
+    tessellation_vs, tessellation_ps = ("", "")
     indirect_vs, indirect_ps = indirect_unique_draws[0] if indirect_unique_draws else ("", "")
     nanite_vs, nanite_ps = nanite_unique_draws[0] if nanite_unique_draws else ("", "")
     if indexed_unique_draws and indirect_unique_draws and (indirect_vs, indirect_ps) == (indexed_vs, indexed_ps):
         errors.append("indirect_shader_pair_reused_indexed_pair")
-    if tessellation_unique_draws and indexed_unique_draws and (tessellation_vs, tessellation_ps) == (indexed_vs, indexed_ps):
-        errors.append("tessellation_fallback_shader_pair_reused_indexed_pair")
-    if tessellation_unique_draws and indirect_unique_draws and (tessellation_vs, tessellation_ps) == (indirect_vs, indirect_ps):
-        errors.append("tessellation_fallback_shader_pair_reused_indirect_pair")
     if texture_array_srv_unique_draws and srv_unique_draws and (texture_array_srv_vs, texture_array_srv_ps) == (srv_vs, srv_ps):
         errors.append("texture_array_srv_shader_pair_reused_srv_sample_pair")
     if textured_3d_unique_draws and srv_unique_draws and (textured_3d_vs, textured_3d_ps) == (srv_vs, srv_ps):
@@ -2117,15 +2132,7 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ),
         None,
     )
-    tessellation_pso = next(
-        (
-            p
-            for p in pipelines
-            if p.get("d3d12", {}).get("vs_hash") == tessellation_vs
-            and p.get("d3d12", {}).get("ps_hash") == tessellation_ps
-        ),
-        None,
-    )
+    tessellation_pso = None
     indirect_pso = next(
         (
             p
@@ -2158,20 +2165,12 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         errors.append("missing_textured_3d_presented_pso_manifest")
     if not indexed_pso:
         errors.append("missing_indexed_presented_pso_manifest")
-    if not tessellation_blocked_expected and not tessellation_pso:
-        errors.append("missing_tessellation_fallback_presented_pso_manifest")
-    if tessellation_blocked_expected and tessellation_pso:
-        errors.append("tessellation_blocked_expected_but_render_pso_manifest_exists")
     if not indirect_pso:
         errors.append("missing_indirect_presented_pso_manifest")
     if not nanite_pso:
         errors.append("missing_nanite_cluster_presented_pso_manifest")
     if indirect_pso and indexed_pso and indirect_pso.get("manifest") == indexed_pso.get("manifest"):
         errors.append("indirect_pso_manifest_reused_indexed_manifest")
-    if tessellation_pso and indexed_pso and tessellation_pso.get("manifest") == indexed_pso.get("manifest"):
-        errors.append("tessellation_fallback_pso_manifest_reused_indexed_manifest")
-    if tessellation_pso and indirect_pso and tessellation_pso.get("manifest") == indirect_pso.get("manifest"):
-        errors.append("tessellation_fallback_pso_manifest_reused_indirect_manifest")
     if texture_array_srv_pso and srv_pso and texture_array_srv_pso.get("manifest") == srv_pso.get("manifest"):
         errors.append("texture_array_srv_pso_manifest_reused_srv_sample_manifest")
     if textured_3d_pso and srv_pso and textured_3d_pso.get("manifest") == srv_pso.get("manifest"):
@@ -2198,7 +2197,6 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         ("textured_3d", textured_3d_pso),
         ("cbv_sample", cbv_pso),
         ("indexed_draw", indexed_pso),
-        ("tessellation_fallback", tessellation_pso),
         ("indirect_draw", indirect_pso),
         ("nanite_cluster", nanite_pso),
     ]:
@@ -2275,14 +2273,10 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
         and len(cbv_unique_draws) == 1
         and len(indexed_draws) >= presented_log_required
         and len(indexed_unique_draws) == 1
-        and (
-            tessellation_blocked_expected
-            or (
-                len(tessellation_draws) >= presented_log_required
-                and len(tessellation_unique_draws) == 1
-                and len(tessellation_fallback_traces) >= presented_log_required
-            )
-        )
+        and tessellation_native_resolved
+        and len(tessellation_draws) >= 1
+        and len(tessellation_indexed_draws) >= 1
+        and len(tessellation_fallback_traces) == 0
         and len(indirect_draws) >= presented_log_required
         and len(indirect_unique_draws) == 1
         and len(nanite_draws) >= presented_log_required
@@ -2354,9 +2348,14 @@ def validate_presented_shader_cache(shader_cache_dir: Path, stderr_text: str, d3
             "ps": tessellation_ps,
             "logged_draws": len(tessellation_draws),
             "fallback_trace_count": len(tessellation_fallback_traces),
-            "unique_pairs": [[vs, ps] for vs, ps in tessellation_unique_draws],
+            "unique_pairs": [],
+            "unique_logs": tessellation_unique_draws,
             "vertices": tessellation_vertices,
             "native_tessellation_required": tessellation_fallback.get("native_tessellation_required") is True,
+            "native_tessellation_resolved": tessellation_native_resolved,
+            "native_draw_encoded": tessellation_fallback.get("native_draw_encoded") is True,
+            "native_indexed_draw_encoded": tessellation_fallback.get("native_indexed_draw_encoded") is True,
+            "logged_indexed_draws": len(tessellation_indexed_draws),
             "blocked_expected": tessellation_blocked_expected,
             "fallback_draw_encoded": tessellation_fallback.get("fallback_draw_encoded") is True,
         },
@@ -2583,7 +2582,7 @@ def run_fresh_game(
         )
     )
     tessellation_fallback_draw_skipped = bool(
-        re.search(r"M12 swapchain DrawInstanced skipped v=42\s+i=1|DrawInstanced\s+SKIPPED\s+v=42\s+i=1", diagnostic_log_text,
+        re.search(r"M12 swapchain DrawInstanced skipped v=51\s+i=1|DrawInstanced\s+SKIPPED\s+v=51\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
     )
     nanite_cluster_draw_skipped = bool(
@@ -3294,7 +3293,7 @@ def run_fresh_game(
         and tessellation_fallback_json.get("ok") is True
         and tessellation_fallback_json.get("present_ok") is True
         and tessellation_fallback_json.get("proof_scope")
-        == "hs_ds_patch_topology_native_tessellation_required_fail_closed"
+        == "hs_ds_patch_topology_d3d12_native_metal_tessellation_presented_readback"
         and tessellation_fallback_json.get("D3DCompile_loaded") is True
         and tessellation_fallback_json.get("tess_vs_vs_5_0") == "0x00000000"
         and tessellation_fallback_json.get("tess_hs_hs_5_0") == "0x00000000"
@@ -3302,15 +3301,57 @@ def run_fresh_game(
         and tessellation_fallback_json.get("tess_ps_ps_5_0") == "0x00000000"
         and tessellation_fallback_json.get("D3D12SerializeRootSignature") == "0x00000000"
         and tessellation_fallback_json.get("CreateRootSignature") == "0x00000000"
-        and tessellation_fallback_json.get("CreateGraphicsPipelineState_PATCH_HS_DS") != "0x00000000"
+        and tessellation_fallback_json.get("CreateGraphicsPipelineState_PATCH_HS_DS") == "0x00000000"
+        and tessellation_fallback_json.get("CreateVertexBuffer") == "0x00000000"
+        and tessellation_fallback_json.get("CreateIndexBuffer") == "0x00000000"
         and tessellation_fallback_json.get("native_tessellation_required") is True
-        and tessellation_fallback_json.get("blocked_expected") is True
+        and tessellation_fallback_json.get("native_tessellation_resolved") is True
+        and tessellation_fallback_json.get("native_draw_encoded") is True
+        and tessellation_fallback_json.get("native_indexed_draw_encoded") is True
+        and tessellation_fallback_json.get("blocked_expected") is False
         and tessellation_fallback_json.get("fallback_draw_encoded") is False
         and int(tessellation_fallback_json.get("patch_control_points", 0) or 0) == 3
-        and int(tessellation_fallback_json.get("draw_calls", 0) or 0) == 0
-        and int(tessellation_fallback_json.get("present_samples_checked", 0) or 0) == 0
-        and int(tessellation_fallback_json.get("present_sample_matches", 0) or 0) == 0
-        and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("blocked_expected") is True
+        and int(tessellation_fallback_json.get("vertices_created", 0) or 0) == 93
+        and int(tessellation_fallback_json.get("vertices_per_draw", 0) or 0) == 51
+        and int(tessellation_fallback_json.get("indices_created", 0) or 0) == 42
+        and int(tessellation_fallback_json.get("indices_per_draw", 0) or 0) == 42
+        and int(tessellation_fallback_json.get("draw_calls", 0) or 0) == visible_frames
+        and int(tessellation_fallback_json.get("draw_indexed_calls", 0) or 0) == visible_frames
+        and int(tessellation_fallback_json.get("present_samples_checked", 0) or 0) == visible_frames
+        and int(tessellation_fallback_json.get("present_sample_matches", 0) or 0) == visible_frames
+        and int(tessellation_fallback_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(tessellation_fallback_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and tessellation_fallback_json.get("expected_rgba") == tessellation_fallback_expected_rgba
+        and tessellation_fallback_json.get("present_rgba") == tessellation_fallback_expected_rgba
+        and tessellation_fallback_json.get("present_last_rgba") == tessellation_fallback_expected_rgba
+        and tessellation_fallback_json.get("indexed_expected_rgba") == [32, 224, 216, 255]
+        and tessellation_fallback_json.get("indexed_present_rgba") == [32, 224, 216, 255]
+        and tessellation_fallback_json.get("indexed_present_last_rgba") == [32, 224, 216, 255]
+        and tessellation_fallback_json.get("indexed_present_ok") is True
+        and int(tessellation_fallback_json.get("indexed_present_samples_checked", 0) or 0) == visible_frames
+        and int(tessellation_fallback_json.get("indexed_present_sample_matches", 0) or 0) == visible_frames
+        and int(tessellation_fallback_json.get("indexed_present_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(tessellation_fallback_json.get("indexed_present_pixel_matches", 0) or 0) == visible_frames * 256
+        and tessellation_fallback_json.get("tessellation_factor_debug_dump", {}).get("edge_half") == "0x3c00"
+        and tessellation_fallback_json.get("tessellation_factor_debug_dump", {}).get("inside_half") == "0x3c00"
+        and len(tessellation_fallback_json.get("tessellation_factor_history", [])) >= visible_frames
+        and tessellation_fallback_json.get("progressive_triangle_proof_scope")
+        == "progressive_rgb_tessellated_triangle_seed_point_to_full_triangle"
+        and tessellation_fallback_json.get("progressive_triangle_ok") is True
+        and tessellation_fallback_json.get("progressive_triangle_seed_point_ok") is True
+        and tessellation_fallback_json.get("progressive_triangle_full_ok") is True
+        and tessellation_fallback_json.get("progressive_triangle_rgb_channels_present") is True
+        and tessellation_fallback_json.get("progressive_triangle_coverage_monotonic") is True
+        and int(tessellation_fallback_json.get("progressive_triangle_frames_validated", 0) or 0) == visible_frames
+        and len(tessellation_fallback_json.get("progressive_triangle_coverage_counts", [])) == visible_frames
+        and int(tessellation_fallback_json.get("progressive_triangle_seed_pixels", 0) or 0) > 0
+        and int(tessellation_fallback_json.get("progressive_triangle_seed_pixels", 0) or 0) < 96
+        and int(tessellation_fallback_json.get("progressive_triangle_final_pixels", 0) or 0) >= 1800
+        and int(tessellation_fallback_json.get("progressive_triangle_final_pixels", 0) or 0)
+        > int(tessellation_fallback_json.get("progressive_triangle_seed_pixels", 0) or 0) * 8
+        and len(tessellation_fallback_json.get("last_control_points_ndc", [])) == 9
+        and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("native_tessellation_resolved") is True
+        and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("native_indexed_draw_encoded") is True
         and shader_cache_validation.get("tessellation_fallback_presented_hashes", {}).get("fallback_trace_count", 0) == 0
         and indirect_draw_json.get("ok") is True
         and indirect_draw_json.get("present_ok") is True

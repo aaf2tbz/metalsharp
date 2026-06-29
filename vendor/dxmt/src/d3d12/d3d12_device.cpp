@@ -523,18 +523,17 @@ static void CreateDescriptorTextureView(D3D12Descriptor *descriptor,
   uint16_t requested_mip_count = mip_count;
   uint16_t requested_slice_start = slice_start;
   uint16_t requested_slice_count = slice_count;
-  uint32_t total_mips = std::max<uint32_t>(
-      1, static_cast<uint32_t>(base.mipmapLevelCount()));
-  uint32_t total_slices = std::max<uint32_t>(
-      1, static_cast<uint32_t>(base.arrayLength()));
+  uint32_t total_mips =
+      std::max<uint32_t>(1, static_cast<uint32_t>(base.mipmapLevelCount()));
+  uint32_t total_slices =
+      std::max<uint32_t>(1, static_cast<uint32_t>(base.arrayLength()));
   mip_start = std::min<uint16_t>(mip_start, total_mips - 1);
   mip_count = std::min<uint16_t>(std::max<uint16_t>(1, mip_count),
                                  total_mips - mip_start);
   slice_start = std::min<uint16_t>(slice_start, total_slices - 1);
   slice_count = std::min<uint16_t>(std::max<uint16_t>(1, slice_count),
                                    total_slices - slice_start);
-  if (mip_start != requested_mip_start ||
-      mip_count != requested_mip_count ||
+  if (mip_start != requested_mip_start || mip_count != requested_mip_count ||
       slice_start != requested_slice_start ||
       slice_count != requested_slice_count) {
     TRACE("CreateDescriptorTextureView clamp res=%p fmt=%u type=%u "
@@ -1754,7 +1753,8 @@ ULONG STDMETHODCALLTYPE MTLD3D12Device::Release() {
   if (rc <= 1)
     TRACE("Device::Release rc=%u this=%p", rc, (void *)this);
   if (rc == 1 && m_dxgi_device && !m_dxgi_owner_released.exchange(true)) {
-    TRACE("Device::Release dropping companion DXGI-device owner ref this=%p dxgi=%p",
+    TRACE("Device::Release dropping companion DXGI-device owner ref this=%p "
+          "dxgi=%p",
           (void *)this, (void *)m_dxgi_device);
     m_dxgi_device->Release();
     return rc;
@@ -1860,18 +1860,18 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
                          desc->GS.BytecodeLength, desc->NumRenderTargets,
                          desc->InputLayout.NumElements);
 
-  if (D3D12NativeTessellationRequired(*desc)) {
+  const bool native_tessellation_required =
+      D3D12NativeTessellationRequired(*desc);
+  if (native_tessellation_required) {
     auto metadata = InspectD3D12NativeTessellationPSO(*desc);
     auto detail = DescribeD3D12NativeTessellationPSO(metadata);
     Logger::warn(str::format("M12 native_tessellation_required: ", detail));
-    TRACE("CreateGraphicsPSO native_tessellation_required %s",
-          detail.c_str());
-    return E_FAIL;
+    TRACE("CreateGraphicsPSO native_tessellation_required %s", detail.c_str());
   }
 
   auto pso = new MTLD3D12PipelineState(this, false);
   pso->SetGraphicsDesc(*desc);
-  bool compiled = pso->RequestCompile(true);
+  bool compiled = pso->RequestCompile(!native_tessellation_required);
   auto failure_stage = pso->GetCompileFailureStage();
   auto failure_detail = pso->GetCompileFailureDetail();
   TRACE(
@@ -1885,8 +1885,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
     const bool unsupported_pso_state =
         failure_stage.rfind("pso/unsupported_", 0) == 0 ||
         failure_stage.rfind("pso/metal_", 0) == 0;
-    const bool shader_compile_failure =
-        failure_stage.rfind("shader/", 0) == 0;
+    const bool shader_compile_failure = failure_stage.rfind("shader/", 0) == 0;
     char strict_fail[8] = {};
     const bool strict_deferred =
         GetEnvironmentVariableA("DXMT_D3D12_FAIL_DEFERRED_PSO", strict_fail,
@@ -2712,8 +2711,8 @@ MTLD3D12Device::CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *desc,
 
 UINT STDMETHODCALLTYPE MTLD3D12Device::GetDescriptorHandleIncrementSize(
     D3D12_DESCRIPTOR_HEAP_TYPE descriptor_heap_type) {
-  TRACE("GetDescriptorHandleIncrementSize type=%u -> %zu",
-        descriptor_heap_type, sizeof(D3D12Descriptor));
+  TRACE("GetDescriptorHandleIncrementSize type=%u -> %zu", descriptor_heap_type,
+        sizeof(D3D12Descriptor));
   return sizeof(D3D12Descriptor);
 }
 
@@ -3272,8 +3271,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
     void **resource) {
   TRACE("CreateReservedResource dim=%u fmt=%u w=%llu",
         desc ? static_cast<unsigned>(desc->Dimension) : 0,
-        desc ? static_cast<unsigned>(desc->Format) : 0,
-        desc ? desc->Width : 0);
+        desc ? static_cast<unsigned>(desc->Format) : 0, desc ? desc->Width : 0);
   CheckVtable("CreateReservedResource");
   if (!resource)
     return E_POINTER;
@@ -3293,9 +3291,9 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreateReservedResource sparse-compat out=%p hr=0x%lx",
         resource ? *resource : nullptr, hr);
-  Logger::info(str::format("M12 sparse reserved resource compat dim=",
-                           desc->Dimension, " width=", desc->Width,
-                           " flags=0x", (unsigned)desc->Flags));
+  Logger::info(
+      str::format("M12 sparse reserved resource compat dim=", desc->Dimension,
+                  " width=", desc->Width, " flags=0x", (unsigned)desc->Flags));
   res->Release();
   return hr;
 }
@@ -3442,8 +3440,8 @@ void STDMETHODCALLTYPE MTLD3D12Device::GetCopyableFootprints(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateQueryHeap(
     const D3D12_QUERY_HEAP_DESC *desc, REFIID riid, void **heap) {
   TRACE("CreateQueryHeap desc=%p type=%u count=%u node=0x%x heap_out=%p",
-        (void *)desc, desc ? desc->Type : 0xFFFFFFFFu,
-        desc ? desc->Count : 0, desc ? desc->NodeMask : 0, (void *)heap);
+        (void *)desc, desc ? desc->Type : 0xFFFFFFFFu, desc ? desc->Count : 0,
+        desc ? desc->NodeMask : 0, (void *)heap);
   if (!desc || !heap)
     return E_POINTER;
   InitReturnPtr(heap);
@@ -3628,8 +3626,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
       fences[i]->AddRef();
       ctx->waits.push_back({fences[i], values[i]});
     }
-    HANDLE thread = CreateThread(nullptr, 0, MultiFenceWaitThread, ctx, 0,
-                                 nullptr);
+    HANDLE thread =
+        CreateThread(nullptr, 0, MultiFenceWaitThread, ctx, 0, nullptr);
     if (!thread) {
       for (auto &wait : ctx->waits)
         wait.fence->Release();
@@ -3650,8 +3648,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetEventOnMultipleFenceCompletion(
 HRESULT STDMETHODCALLTYPE MTLD3D12Device::SetResidencyPriority(
     UINT object_count, ID3D12Pageable *const *objects,
     const D3D12_RESIDENCY_PRIORITY *priorities) {
-  TRACE("SetResidencyPriority count=%u objects=%p priorities=%p",
-        object_count, (void *)objects, (void *)priorities);
+  TRACE("SetResidencyPriority count=%u objects=%p priorities=%p", object_count,
+        (void *)objects, (void *)priorities);
   return S_OK;
 }
 

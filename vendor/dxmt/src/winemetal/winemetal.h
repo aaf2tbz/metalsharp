@@ -700,6 +700,12 @@ enum WMTTessellationFactorStepFunction : uint8_t {
   WMTTessellationFactorStepFunctionPerPatchAndPerInstance = 3,
 };
 
+enum WMTTessellationControlPointIndexType : uint8_t {
+  WMTTessellationControlPointIndexTypeNone = 0,
+  WMTTessellationControlPointIndexTypeUInt16 = 1,
+  WMTTessellationControlPointIndexTypeUInt32 = 2,
+};
+
 enum WMTWinding : uint8_t {
   WMTWindingClockwise = 0,
   WMTWindingCounterClockwise = 1,
@@ -839,6 +845,7 @@ struct WMTRenderPipelineInfo {
   uint8_t max_tessellation_factor;
   enum WMTWinding tessellation_output_winding_order;
   enum WMTTessellationFactorStepFunction tessellation_factor_step;
+  enum WMTTessellationControlPointIndexType tessellation_control_point_index_type;
   obj_handle_t binary_archive_for_serialization;
   struct WMTConstMemoryPointer binary_archives_for_lookup;
   uint8_t num_binary_archives_for_lookup;

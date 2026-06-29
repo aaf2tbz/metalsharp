@@ -447,10 +447,10 @@ public:
   }
 
   bool
-  setRasterizerState(WMTTriangleFillMode fill_mode, WMTCullMode cull_mode,
-                     WMTDepthClipMode depth_clip_mode, WMTWinding winding,
-                     float depth_bias, float slope_scale,
-                     float depth_bias_clamp) {
+  setRasterizerState(
+      WMTTriangleFillMode fill_mode, WMTCullMode cull_mode, WMTDepthClipMode depth_clip_mode, WMTWinding winding,
+      float depth_bias, float slope_scale, float depth_bias_clamp
+  ) {
     struct wmtcmd_render_setrasterizerstate cmd;
     cmd.type = WMTRenderCommandSetRasterizerState;
     cmd.reserved[0] = cmd.reserved[1] = cmd.reserved[2] = 0;
@@ -717,7 +717,9 @@ public:
 
   BlitCommandEncoder
   blitCommandEncoderWithSampleBuffers(WMTSampleBufferAttachmentInfo *attachments, uint64_t num_attachments) {
-    return BlitCommandEncoder{MTLCommandBuffer_blitCommandEncoderWithSampleBuffers(handle, attachments, num_attachments)};
+    return BlitCommandEncoder{
+        MTLCommandBuffer_blitCommandEncoderWithSampleBuffers(handle, attachments, num_attachments)
+    };
   }
 
   ComputeCommandEncoder
@@ -777,8 +779,8 @@ public:
 
   Reference<Function>
   newFunctionWithDescriptor(
-      const char *name, const char *specialized_name, const WMTFunctionConstant *constants,
-      uint32_t num_constants, WMTFunctionOptions options, Error &error
+      const char *name, const char *specialized_name, const WMTFunctionConstant *constants, uint32_t num_constants,
+      WMTFunctionOptions options, Error &error
   ) {
     return Reference<Function>(MTLLibrary_newFunctionWithDescriptor(
         handle, name, specialized_name, constants, num_constants, options, &error.handle
@@ -1151,6 +1153,7 @@ InitializeRenderPipelineInfo(WMTRenderPipelineInfo &info) {
   info.tessellation_factor_step = WMTTessellationFactorStepFunctionConstant;
   info.tessellation_partition_mode = WMTTessellationPartitionModePow2;
   info.tessellation_output_winding_order = WMTWindingClockwise;
+  info.tessellation_control_point_index_type = WMTTessellationControlPointIndexTypeNone;
 
   info.vertex_function = NULL_OBJECT_HANDLE;
   info.fragment_function = NULL_OBJECT_HANDLE;

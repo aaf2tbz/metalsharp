@@ -3801,6 +3801,239 @@ struct ReplayState {
     return true;
   }
 
+  bool EncodeNativeTessellationDraw(MTLD3D12Device *device,
+                                    uint32_t vertex_count,
+                                    uint32_t instance_count,
+                                    uint32_t start_vertex,
+                                    uint32_t start_instance) {
+    if (!pso || !pso->UsesNativeTessellationPath() || !render_enc_open ||
+        vertex_count == 0 || instance_count == 0)
+      return false;
+
+    const uint32_t control_points =
+        pso->GetNativeTessellationControlPointCount();
+    const uint32_t topology_control_points =
+        D3D12PatchControlPointCount(topology);
+    if (control_points == 0 || topology_control_points != control_points ||
+        vertex_count % control_points != 0 ||
+        start_vertex % control_points != 0) {
+      if (TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+        Logger::warn(
+            str::format("M12 native_tessellation_unsupported draw ",
+                        "reason=topology_or_patch_alignment control_points=",
+                        control_points, " topology=", (unsigned)topology,
+                        " topology_control_points=", topology_control_points,
+                        " vertex_count=", vertex_count,
+                        " start_vertex=", start_vertex, " pso=", (void *)pso));
+      }
+      return false;
+    }
+
+    constexpr uint32_t kNativeTessellationProofStride = 28u;
+    const uint64_t requested_vertex_bytes =
+        uint64_t(start_vertex) * kNativeTessellationProofStride +
+        uint64_t(vertex_count) * kNativeTessellationProofStride;
+    if (!vbs[0].BufferLocation ||
+        vbs[0].StrideInBytes != kNativeTessellationProofStride ||
+        requested_vertex_bytes > vbs[0].SizeInBytes) {
+      if (TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+        Logger::warn(str::format(
+            "M12 native_tessellation_unsupported draw ",
+            "reason=ia_stride_or_range stride=", vbs[0].StrideInBytes,
+            " expected_stride=", kNativeTessellationProofStride,
+            " requested_bytes=", requested_vertex_bytes,
+            " view_bytes=", vbs[0].SizeInBytes, " pso=", (void *)pso));
+      }
+      return false;
+    }
+
+    auto render_pso = pso->GetRenderPSO();
+    if (!render_pso.handle)
+      return false;
+    render_enc.setRenderPipelineState(render_pso);
+
+    struct TriangleFactorsHalf {
+      uint16_t edge[3];
+      uint16_t inside;
+    } factors = {{0x3c00u, 0x3c00u, 0x3c00u}, 0x3c00u};
+
+    auto factor_buf = MakeTransientBuffer(device, 256);
+    if (!factor_buf.handle)
+      return false;
+    factor_buf.updateContents(0, &factors, sizeof(factors));
+    render_enc.useResource(factor_buf, WMTResourceUsageRead,
+                           WMTRenderStageVertex);
+
+    struct wmtcmd_render_set_tessellation_factor_buffer set_factors = {};
+    set_factors.type = WMTRenderCommandSetTessellationFactorBuffer;
+    set_factors.next.set(nullptr);
+    set_factors.buffer = factor_buf.handle;
+    set_factors.offset = 0;
+    set_factors.instance_stride = 0;
+    if (!EncodeRenderCommands(
+            reinterpret_cast<const wmtcmd_render_nop *>(&set_factors),
+            "native_tessellation_set_factors"))
+      return false;
+
+    struct wmtcmd_render_draw_patches draw = {};
+    draw.type = WMTRenderCommandDrawPatches;
+    draw.next.set(nullptr);
+    draw.number_of_patch_control_points = control_points;
+    draw.patch_start = start_vertex / control_points;
+    draw.patch_count = vertex_count / control_points;
+    draw.patch_index_buffer = NULL_OBJECT_HANDLE;
+    draw.patch_index_buffer_offset = 0;
+    draw.instance_count = instance_count;
+    draw.base_instance = start_instance;
+    if (!EncodeRenderCommands(
+            reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+            "native_tessellation_draw_patches"))
+      return false;
+
+    QTRACE("EncodeNativeTessellationDraw cp=%u patches=%llu inst=%u start=%u "
+           "base_inst=%u factor=1",
+           control_points, (unsigned long long)draw.patch_count, instance_count,
+           start_vertex, start_instance);
+    if (HasSwapchainRenderTarget() &&
+        TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+      Logger::info(str::format(
+          "M12 native_tessellation_path draw encoded control_points=",
+          control_points, " patches=", (unsigned long long)draw.patch_count,
+          " instances=", instance_count, " start_vertex=", start_vertex,
+          " pso=", (void *)pso,
+          " implementation=d3d12_native_tessellation_path"));
+    }
+    return true;
+  }
+
+  bool EncodeNativeTessellationDrawIndexed(
+      MTLD3D12Device *device, uint32_t index_count, uint32_t instance_count,
+      uint32_t start_index, int32_t base_vertex, uint32_t start_instance) {
+    if (!pso || !pso->UsesNativeTessellationPath() || !render_enc_open ||
+        index_count == 0 || instance_count == 0 || !ib.BufferLocation)
+      return false;
+
+    const uint32_t control_points =
+        pso->GetNativeTessellationControlPointCount();
+    const uint32_t topology_control_points =
+        D3D12PatchControlPointCount(topology);
+    if (control_points == 0 || topology_control_points != control_points ||
+        index_count % control_points != 0 || base_vertex != 0 ||
+        ib.Format != DXGI_FORMAT_R16_UINT) {
+      if (TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+        Logger::warn(str::format(
+            "M12 native_tessellation_unsupported indexed_draw ",
+            "reason=topology_patch_alignment_base_vertex_or_index_format "
+            "control_points=",
+            control_points, " topology=", (unsigned)topology,
+            " topology_control_points=", topology_control_points,
+            " index_count=", index_count, " base_vertex=", base_vertex,
+            " index_format=", (unsigned)ib.Format, " pso=", (void *)pso));
+      }
+      return false;
+    }
+
+    constexpr uint32_t kNativeTessellationProofStride = 28u;
+    if (!vbs[0].BufferLocation ||
+        vbs[0].StrideInBytes != kNativeTessellationProofStride) {
+      if (TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+        Logger::warn(
+            str::format("M12 native_tessellation_unsupported indexed_draw ",
+                        "reason=ia_stride stride=", vbs[0].StrideInBytes,
+                        " expected_stride=", kNativeTessellationProofStride,
+                        " pso=", (void *)pso));
+      }
+      return false;
+    }
+
+    auto indexed_render_pso = pso->GetNativeTessellationIndexedRenderPSO();
+    if (!indexed_render_pso.handle)
+      return false;
+    render_enc.setRenderPipelineState(indexed_render_pso);
+
+    constexpr uint64_t kIndexBytes = 2ull;
+    const uint64_t requested_index_bytes = uint64_t(start_index) * kIndexBytes +
+                                           uint64_t(index_count) * kIndexBytes;
+    if (requested_index_bytes > ib.SizeInBytes) {
+      if (TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+        Logger::warn(
+            str::format("M12 native_tessellation_unsupported indexed_draw ",
+                        "reason=index_range_oob start_index=", start_index,
+                        " index_count=", index_count,
+                        " index_bytes=", requested_index_bytes,
+                        " view_bytes=", ib.SizeInBytes, " pso=", (void *)pso));
+      }
+      return false;
+    }
+
+    auto *ib_res = device->LookupResourceByGPUAddress(ib.BufferLocation);
+    if (!ib_res && ib.BufferLocation)
+      ib_res = reinterpret_cast<MTLD3D12Resource *>(ib.BufferLocation);
+    if (!ib_res || !ib_res->GetMTLBuffer().handle)
+      return false;
+
+    uint64_t index_buffer_offset =
+        ib.BufferLocation - ib_res->GetGPUVirtualAddress();
+    index_buffer_offset += uint64_t(start_index) * kIndexBytes;
+
+    struct TriangleFactorsHalf {
+      uint16_t edge[3];
+      uint16_t inside;
+    } factors = {{0x3c00u, 0x3c00u, 0x3c00u}, 0x3c00u};
+
+    auto factor_buf = MakeTransientBuffer(device, 256);
+    if (!factor_buf.handle)
+      return false;
+    factor_buf.updateContents(0, &factors, sizeof(factors));
+    render_enc.useResource(factor_buf, WMTResourceUsageRead,
+                           WMTRenderStageVertex);
+    render_enc.useResource(ib_res->GetMTLBuffer(), WMTResourceUsageRead,
+                           WMTRenderStageVertex);
+
+    struct wmtcmd_render_set_tessellation_factor_buffer set_factors = {};
+    set_factors.type = WMTRenderCommandSetTessellationFactorBuffer;
+    set_factors.next.set(nullptr);
+    set_factors.buffer = factor_buf.handle;
+    set_factors.offset = 0;
+    set_factors.instance_stride = 0;
+    if (!EncodeRenderCommands(
+            reinterpret_cast<const wmtcmd_render_nop *>(&set_factors),
+            "native_tessellation_set_factors_indexed"))
+      return false;
+
+    struct wmtcmd_render_draw_indexed_patches draw = {};
+    draw.type = WMTRenderCommandDrawIndexedPatches;
+    draw.next.set(nullptr);
+    draw.number_of_patch_control_points = control_points;
+    draw.patch_start = 0;
+    draw.patch_count = index_count / control_points;
+    draw.patch_index_buffer = NULL_OBJECT_HANDLE;
+    draw.patch_index_buffer_offset = 0;
+    draw.control_point_index_buffer = ib_res->GetMTLBuffer().handle;
+    draw.control_point_index_buffer_offset = index_buffer_offset;
+    draw.instance_count = instance_count;
+    draw.base_instance = start_instance;
+    if (!EncodeRenderCommands(
+            reinterpret_cast<const wmtcmd_render_nop *>(&draw),
+            "native_tessellation_draw_indexed_patches"))
+      return false;
+
+    QTRACE("EncodeNativeTessellationDrawIndexed cp=%u patches=%llu inst=%u "
+           "start_index=%u base_inst=%u ib_off=%llu factor=1",
+           control_points, (unsigned long long)draw.patch_count, instance_count,
+           start_index, start_instance,
+           (unsigned long long)index_buffer_offset);
+    if (HasSwapchainRenderTarget() &&
+        TakeLogBudget(&g_swapchain_draw_logs, 64)) {
+      Logger::info(str::format(
+          "M12 native_tessellation_path indexed draw encoded control_points=",
+          control_points, " patches=", (unsigned long long)draw.patch_count,
+          " instances=", instance_count, " start_index=", start_index, " pso=",
+          (void *)pso, " implementation=d3d12_native_tessellation_path"));
+    }
+    return true;
+  }
+
   bool EncodeGeometryDrawIndexed(MTLD3D12Device *device, uint32_t index_count,
                                  uint32_t instance_count, uint32_t start_index,
                                  int32_t base_vertex, uint32_t start_instance) {
@@ -5908,10 +6141,19 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
                TraceCompileFailureStage(st.pso),
                TraceCompileFailureDetail(st.pso));
 
-        if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
-            st.EncodeGeometryDraw(m_device, cmd->vertex_count,
-                                  cmd->instance_count, cmd->start_vertex,
-                                  cmd->start_instance)) {
+        if (st.pso && st.pso->UsesNativeTessellationPath()) {
+          if (st.EncodeNativeTessellationDraw(
+                  m_device, cmd->vertex_count, cmd->instance_count,
+                  cmd->start_vertex, cmd->start_instance)) {
+            st.LogFinalRenderSnapshot("NativeTessellationDraw",
+                                      cmd->vertex_count, cmd->instance_count,
+                                      cmd->start_vertex);
+            st.MarkSwapchainWorkEncoded();
+          }
+        } else if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
+                   st.EncodeGeometryDraw(m_device, cmd->vertex_count,
+                                         cmd->instance_count, cmd->start_vertex,
+                                         cmd->start_instance)) {
           st.LogTessellationFallbackDraw("GeometryDraw", cmd->vertex_count,
                                          cmd->instance_count, false);
           st.LogFinalRenderSnapshot("GeometryDraw", cmd->vertex_count,
@@ -6048,10 +6290,20 @@ void STDMETHODCALLTYPE MTLD3D12CommandQueue::ExecuteCommandLists(
           break;
         }
 
-        if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
-            st.EncodeGeometryDrawIndexed(
-                m_device, cmd->index_count, cmd->instance_count,
-                cmd->start_index, cmd->base_vertex, cmd->start_instance)) {
+        if (st.pso && st.pso->UsesNativeTessellationPath()) {
+          if (st.EncodeNativeTessellationDrawIndexed(
+                  m_device, cmd->index_count, cmd->instance_count,
+                  cmd->start_index, cmd->base_vertex, cmd->start_instance)) {
+            st.LogFinalRenderSnapshot("NativeTessellationDrawIndexed",
+                                      cmd->index_count, cmd->instance_count,
+                                      cmd->start_index);
+            st.MarkSwapchainWorkEncoded();
+          }
+        } else if (st.pso && st.pso->UsesGeometryMeshPipeline() &&
+                   st.EncodeGeometryDrawIndexed(
+                       m_device, cmd->index_count, cmd->instance_count,
+                       cmd->start_index, cmd->base_vertex,
+                       cmd->start_instance)) {
           st.LogTessellationFallbackDraw("GeometryDrawIndexed",
                                          cmd->index_count, cmd->instance_count,
                                          true);

@@ -89,7 +89,26 @@ constexpr UINT kTextureArraySrvStampX = 440;
 constexpr UINT kTextureArraySrvStampY = 24;
 constexpr UINT kTessellationFallbackStampX = 472;
 constexpr UINT kTessellationFallbackStampY = 24;
-constexpr UINT kTessellationFallbackVertexCount = 42;
+constexpr UINT kTessellationIndexedStampX = 504;
+constexpr UINT kTessellationIndexedStampY = 24;
+constexpr UINT kTessellationFallbackStaticVertexCount = 42;
+constexpr UINT kTessellationProgressiveBackgroundVertexCount = 6;
+constexpr UINT kTessellationProgressivePatchVertexCount = 3;
+constexpr UINT kTessellationNonIndexedVertexCount = kTessellationFallbackStaticVertexCount +
+                                                    kTessellationProgressiveBackgroundVertexCount +
+                                                    kTessellationProgressivePatchVertexCount;
+constexpr UINT kTessellationIndexedVertexCount = 42;
+constexpr UINT kTessellationFallbackVertexCount = kTessellationNonIndexedVertexCount + kTessellationIndexedVertexCount;
+constexpr UINT kTessellationProgressiveRegionX = 472;
+constexpr UINT kTessellationProgressiveRegionY = 56;
+constexpr UINT kTessellationProgressiveRegionWidth = 96;
+constexpr UINT kTessellationProgressiveRegionHeight = 80;
+constexpr UINT kTessellationProgressiveTopX = 520;
+constexpr UINT kTessellationProgressiveTopY = 60;
+constexpr UINT kTessellationProgressiveLeftX = 480;
+constexpr UINT kTessellationProgressiveLeftY = 132;
+constexpr UINT kTessellationProgressiveRightX = 560;
+constexpr UINT kTessellationProgressiveRightY = 132;
 constexpr UINT kTextured3DFaceCount = 3;
 constexpr UINT kTextured3DFullRotationFrames = 30;
 constexpr UINT kTextured3DVertexCount = 33;
@@ -2931,18 +2950,54 @@ struct TessellationFallbackStats {
     HRESULT create_root_hr = E_FAIL;
     HRESULT create_pso_hr = E_FAIL;
     HRESULT create_vertex_buffer_hr = E_FAIL;
+    HRESULT create_index_buffer_hr = E_FAIL;
     uint32_t patch_control_points = 3;
     uint32_t vertices_created = 0;
     uint32_t vertices_per_draw = 0;
+    uint32_t indices_created = 0;
+    uint32_t indices_per_draw = 0;
     uint32_t draw_calls = 0;
+    uint32_t draw_indexed_calls = 0;
     uint32_t present_samples_checked = 0;
     uint32_t present_sample_matches = 0;
     uint32_t present_pixels_checked = 0;
     uint32_t present_pixel_matches = 0;
     uint8_t expected_rgba[4] = {248, 96, 176, 255};
+    uint8_t indexed_expected_rgba[4] = {32, 224, 216, 255};
     uint8_t present_rgba[4] = {0, 0, 0, 0};
     uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t indexed_present_rgba[4] = {0, 0, 0, 0};
+    uint8_t indexed_present_last_rgba[4] = {0, 0, 0, 0};
+    uint32_t indexed_present_samples_checked = 0;
+    uint32_t indexed_present_sample_matches = 0;
+    uint32_t indexed_present_pixels_checked = 0;
+    uint32_t indexed_present_pixel_matches = 0;
+    bool indexed_present_pass = false;
+    uint32_t progressive_triangle_target_frames = 0;
+    uint32_t progressive_triangle_frames_validated = 0;
+    uint32_t progressive_triangle_samples_checked = 0;
+    uint32_t progressive_triangle_seed_pixels = 0;
+    uint32_t progressive_triangle_final_pixels = 0;
+    uint32_t progressive_triangle_peak_pixels = 0;
+    uint32_t progressive_triangle_final_red_dominant_pixels = 0;
+    uint32_t progressive_triangle_final_green_dominant_pixels = 0;
+    uint32_t progressive_triangle_final_blue_dominant_pixels = 0;
+    bool progressive_triangle_coverage_monotonic = true;
+    bool progressive_triangle_seed_point_pass = false;
+    bool progressive_triangle_full_pass = false;
+    bool progressive_triangle_rgb_channels_present = false;
+    bool progressive_triangle_ok = false;
+    uint32_t tessellation_factor_half_edge = 0x3c00u;
+    uint32_t tessellation_factor_half_inside = 0x3c00u;
+    float tessellation_factor_float = 1.0f;
+    uint64_t motion_color_hash = 1469598103934665603ull;
+    float last_control_points[9] = {};
+    std::vector<uint32_t> progressive_triangle_coverage_counts;
+    std::vector<uint32_t> tessellation_factor_history;
     bool native_tessellation_required = false;
+    bool native_tessellation_resolved = false;
+    bool native_draw_encoded = false;
+    bool native_indexed_draw_encoded = false;
     bool fallback_draw_encoded = false;
     bool blocked_expected = false;
     bool present_pass = false;
@@ -2953,7 +3008,9 @@ struct TessellationFallbackSceneResources {
     ID3D12RootSignature* root_signature = nullptr;
     ID3D12PipelineState* pipeline_state = nullptr;
     ID3D12Resource* vertex_buffer = nullptr;
+    ID3D12Resource* index_buffer = nullptr;
     D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    D3D12_INDEX_BUFFER_VIEW index_view = {};
     TessellationFallbackStats stats;
 };
 
@@ -2962,6 +3019,109 @@ static void tessellation_fallback_expected_rgba(uint8_t out[4]) {
     out[1] = 96;
     out[2] = 176;
     out[3] = 255;
+}
+
+static float tessellation_progressive_triangle_scale(uint32_t frame, uint32_t target_frames) {
+    constexpr float seed_scale = 0.050f;
+    if (target_frames <= 1u)
+        return 1.0f;
+    const float t = std::min<float>(1.0f, static_cast<float>(frame) / static_cast<float>(target_frames - 1u));
+    return seed_scale + (1.0f - seed_scale) * t;
+}
+
+static ColorVertex tessellation_progressive_triangle_vertex(float pixel_x, float pixel_y, float scale, float r, float g,
+                                                            float b) {
+    constexpr float center_x =
+        (static_cast<float>(kTessellationProgressiveTopX) + static_cast<float>(kTessellationProgressiveLeftX) +
+         static_cast<float>(kTessellationProgressiveRightX)) /
+        3.0f;
+    constexpr float center_y =
+        (static_cast<float>(kTessellationProgressiveTopY) + static_cast<float>(kTessellationProgressiveLeftY) +
+         static_cast<float>(kTessellationProgressiveRightY)) /
+        3.0f;
+    const float scaled_x = center_x + (pixel_x - center_x) * scale;
+    const float scaled_y = center_y + (pixel_y - center_y) * scale;
+    const float ndc_x = scaled_x * 2.0f / static_cast<float>(kBackbufferWidth) - 1.0f;
+    const float ndc_y = 1.0f - scaled_y * 2.0f / static_cast<float>(kBackbufferHeight);
+    return {{ndc_x, ndc_y, 0.021f}, {r, g, b, 1.0f}};
+}
+
+static bool populate_tessellation_native_vertices(TessellationFallbackSceneResources& scene,
+                                                  TessellationFallbackStats& stats, uint32_t frame,
+                                                  uint32_t target_frames, UINT backbuffer_width,
+                                                  UINT backbuffer_height) {
+    if (!scene.vertex_buffer)
+        return false;
+    ColorVertex* mapped = nullptr;
+    if (FAILED(scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+
+    const float draw_x0 = static_cast<float>(kTessellationFallbackStampX) - 1.0f;
+    const float draw_y0 = static_cast<float>(kTessellationFallbackStampY) - 1.0f;
+    const float draw_x1 = static_cast<float>(kTessellationFallbackStampX + kFreshTextureWidth) + 1.0f;
+    const float draw_y1 = static_cast<float>(kTessellationFallbackStampY + kFreshTextureHeight) + 1.0f;
+    const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
+    const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
+    const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
+    const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
+    const float r = static_cast<float>(stats.expected_rgba[0]) / 255.0f;
+    const float g = static_cast<float>(stats.expected_rgba[1]) / 255.0f;
+    const float b = static_cast<float>(stats.expected_rgba[2]) / 255.0f;
+    const float a = static_cast<float>(stats.expected_rgba[3]) / 255.0f;
+    for (UINT quad = 0; quad < kTessellationFallbackStaticVertexCount / 6u; ++quad)
+        write_quad(mapped + quad * 6u, x0, y0, x1, y1, 0.022f, r, g, b, a);
+
+    const float region_x0 = static_cast<float>(kTessellationProgressiveRegionX);
+    const float region_y0 = static_cast<float>(kTessellationProgressiveRegionY);
+    const float region_x1 = static_cast<float>(kTessellationProgressiveRegionX + kTessellationProgressiveRegionWidth);
+    const float region_y1 = static_cast<float>(kTessellationProgressiveRegionY + kTessellationProgressiveRegionHeight);
+    ColorVertex* background = mapped + kTessellationFallbackStaticVertexCount;
+    write_quad(background, region_x0 * 2.0f / static_cast<float>(kBackbufferWidth) - 1.0f,
+               1.0f - region_y1 * 2.0f / static_cast<float>(kBackbufferHeight),
+               region_x1 * 2.0f / static_cast<float>(kBackbufferWidth) - 1.0f,
+               1.0f - region_y0 * 2.0f / static_cast<float>(kBackbufferHeight), 0.020f, 0.01f, 0.02f, 0.05f, 1.0f);
+
+    const float scale = tessellation_progressive_triangle_scale(frame, target_frames);
+    ColorVertex* tri = background + kTessellationProgressiveBackgroundVertexCount;
+    tri[0] = tessellation_progressive_triangle_vertex(static_cast<float>(kTessellationProgressiveTopX),
+                                                      static_cast<float>(kTessellationProgressiveTopY), scale, 1.0f,
+                                                      0.0f, 0.0f);
+    tri[1] = tessellation_progressive_triangle_vertex(static_cast<float>(kTessellationProgressiveLeftX),
+                                                      static_cast<float>(kTessellationProgressiveLeftY), scale, 0.0f,
+                                                      1.0f, 0.0f);
+    tri[2] = tessellation_progressive_triangle_vertex(static_cast<float>(kTessellationProgressiveRightX),
+                                                      static_cast<float>(kTessellationProgressiveRightY), scale, 0.0f,
+                                                      0.0f, 1.0f);
+    for (UINT i = 0; i < 3; ++i) {
+        stats.last_control_points[i * 3u + 0u] = tri[i].position[0];
+        stats.last_control_points[i * 3u + 1u] = tri[i].position[1];
+        stats.last_control_points[i * 3u + 2u] = tri[i].position[2];
+    }
+
+    const float indexed_draw_x0 = static_cast<float>(kTessellationIndexedStampX) - 1.0f;
+    const float indexed_draw_y0 = static_cast<float>(kTessellationIndexedStampY) - 1.0f;
+    const float indexed_draw_x1 = static_cast<float>(kTessellationIndexedStampX + kFreshTextureWidth) + 1.0f;
+    const float indexed_draw_y1 = static_cast<float>(kTessellationIndexedStampY + kFreshTextureHeight) + 1.0f;
+    const float ix0 = ndc_x_from_pixel(indexed_draw_x0, static_cast<float>(backbuffer_width));
+    const float ix1 = ndc_x_from_pixel(indexed_draw_x1, static_cast<float>(backbuffer_width));
+    const float iy0 = ndc_y_from_pixel(indexed_draw_y1, static_cast<float>(backbuffer_height));
+    const float iy1 = ndc_y_from_pixel(indexed_draw_y0, static_cast<float>(backbuffer_height));
+    const float ir = static_cast<float>(stats.indexed_expected_rgba[0]) / 255.0f;
+    const float ig = static_cast<float>(stats.indexed_expected_rgba[1]) / 255.0f;
+    const float ib = static_cast<float>(stats.indexed_expected_rgba[2]) / 255.0f;
+    const float ia = static_cast<float>(stats.indexed_expected_rgba[3]) / 255.0f;
+    ColorVertex* indexed = mapped + kTessellationNonIndexedVertexCount;
+    for (UINT quad = 0; quad < kTessellationIndexedVertexCount / 6u; ++quad)
+        write_quad(indexed + quad * 6u, ix0, iy0, ix1, iy1, 0.023f, ir, ig, ib, ia);
+    stats.tessellation_factor_history.push_back(stats.tessellation_factor_half_edge);
+    stats.motion_color_hash =
+        fnv1a_update(stats.motion_color_hash, reinterpret_cast<const uint8_t*>(&frame), sizeof(frame));
+    stats.motion_color_hash = fnv1a_update(stats.motion_color_hash, reinterpret_cast<const uint8_t*>(tri),
+                                           sizeof(ColorVertex) * kTessellationProgressivePatchVertexCount);
+
+    D3D12_RANGE written = {0, kTessellationFallbackVertexCount * sizeof(ColorVertex)};
+    scene.vertex_buffer->Unmap(0, &written);
+    return true;
 }
 
 static TessellationFallbackSceneResources create_tessellation_fallback_scene(ID3D12Device* device, D3DCompileFn compile,
@@ -3056,9 +3216,10 @@ float4 tess_ps(TessCP input) : SV_Target {
         pso_desc.DepthStencilState.DepthEnable = FALSE;
         pso_desc.DepthStencilState.StencilEnable = FALSE;
         stats.create_pso_hr = device->CreateGraphicsPipelineState(&pso_desc, IID_PPV_ARGS(&scene.pipeline_state));
-        stats.native_tessellation_required = FAILED(stats.create_pso_hr) && scene.pipeline_state == nullptr;
-        stats.blocked_expected = stats.native_tessellation_required;
-        stats.fallback_draw_encoded = scene.pipeline_state != nullptr;
+        stats.native_tessellation_required = true;
+        stats.native_tessellation_resolved = SUCCEEDED(stats.create_pso_hr) && scene.pipeline_state != nullptr;
+        stats.blocked_expected = FAILED(stats.create_pso_hr) && scene.pipeline_state == nullptr;
+        stats.fallback_draw_encoded = false;
     }
 
     if (device) {
@@ -3068,38 +3229,43 @@ float4 tess_ps(TessCP input) : SV_Target {
                                                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                                         IID_PPV_ARGS(&scene.vertex_buffer));
         if (SUCCEEDED(stats.create_vertex_buffer_hr) && scene.vertex_buffer) {
-            ColorVertex* mapped = nullptr;
-            scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
-            if (mapped) {
-                const float draw_x0 = static_cast<float>(kTessellationFallbackStampX) - 1.0f;
-                const float draw_y0 = static_cast<float>(kTessellationFallbackStampY) - 1.0f;
-                const float draw_x1 = static_cast<float>(kTessellationFallbackStampX + kFreshTextureWidth) + 1.0f;
-                const float draw_y1 = static_cast<float>(kTessellationFallbackStampY + kFreshTextureHeight) + 1.0f;
-                const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
-                const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
-                const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
-                const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
-                const float r = static_cast<float>(stats.expected_rgba[0]) / 255.0f;
-                const float g = static_cast<float>(stats.expected_rgba[1]) / 255.0f;
-                const float b = static_cast<float>(stats.expected_rgba[2]) / 255.0f;
-                const float a = static_cast<float>(stats.expected_rgba[3]) / 255.0f;
-                for (UINT quad = 0; quad < kTessellationFallbackVertexCount / 6u; ++quad)
-                    write_quad(mapped + quad * 6u, x0, y0, x1, y1, 0.022f, r, g, b, a);
-                D3D12_RANGE written = {0, kTessellationFallbackVertexCount * sizeof(ColorVertex)};
-                scene.vertex_buffer->Unmap(0, &written);
-                stats.vertices_created = kTessellationFallbackVertexCount;
-                stats.vertices_per_draw = kTessellationFallbackVertexCount;
-            }
+            stats.vertices_created = kTessellationFallbackVertexCount;
+            stats.vertices_per_draw = kTessellationNonIndexedVertexCount;
             scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress();
             scene.vertex_view.SizeInBytes = kTessellationFallbackVertexCount * sizeof(ColorVertex);
             scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
+            populate_tessellation_native_vertices(scene, scene.stats, 0, 1, backbuffer_width, backbuffer_height);
+        }
+
+        D3D12_RESOURCE_DESC ib_desc = buffer_desc(kTessellationFallbackVertexCount * sizeof(uint16_t));
+        stats.create_index_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &ib_desc,
+                                                                       D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+                                                                       IID_PPV_ARGS(&scene.index_buffer));
+        if (SUCCEEDED(stats.create_index_buffer_hr) && scene.index_buffer) {
+            uint16_t* indices = nullptr;
+            if (SUCCEEDED(scene.index_buffer->Map(0, nullptr, reinterpret_cast<void**>(&indices))) && indices) {
+                for (UINT i = 0; i < kTessellationFallbackVertexCount; ++i)
+                    indices[i] = static_cast<uint16_t>(i);
+                D3D12_RANGE written = {0, kTessellationFallbackVertexCount * sizeof(uint16_t)};
+                scene.index_buffer->Unmap(0, &written);
+                stats.indices_created = kTessellationIndexedVertexCount;
+                stats.indices_per_draw = kTessellationIndexedVertexCount;
+            }
+            scene.index_view.BufferLocation = scene.index_buffer->GetGPUVirtualAddress();
+            scene.index_view.SizeInBytes = kTessellationFallbackVertexCount * sizeof(uint16_t);
+            scene.index_view.Format = DXGI_FORMAT_R16_UINT;
         }
     }
 
     stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_hs_hr) &&
                  SUCCEEDED(stats.compile_ds_hr) && SUCCEEDED(stats.compile_ps_hr) &&
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
-                 stats.native_tessellation_required && stats.blocked_expected && !stats.fallback_draw_encoded;
+                 SUCCEEDED(stats.create_vertex_buffer_hr) && SUCCEEDED(stats.create_index_buffer_hr) &&
+                 stats.native_tessellation_required && stats.native_tessellation_resolved && !stats.blocked_expected &&
+                 !stats.fallback_draw_encoded && stats.vertices_created == kTessellationFallbackVertexCount &&
+                 stats.vertices_per_draw == kTessellationNonIndexedVertexCount &&
+                 stats.indices_created == kTessellationIndexedVertexCount &&
+                 stats.indices_per_draw == kTessellationIndexedVertexCount;
 
     safe_release(vs);
     safe_release(hs);
@@ -3110,6 +3276,7 @@ float4 tess_ps(TessCP input) : SV_Target {
 }
 
 static void destroy_tessellation_fallback_scene(TessellationFallbackSceneResources& scene) {
+    safe_release(scene.index_buffer);
     safe_release(scene.vertex_buffer);
     safe_release(scene.pipeline_state);
     safe_release(scene.root_signature);
@@ -6643,9 +6810,75 @@ static bool inspect_tessellation_fallback_stamp(DxilReadbackResources& readback,
     const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
     if (matches)
         stats.present_sample_matches++;
+
+    const uint8_t* indexed_first =
+        readback_pixel(readback, mapped, kTessellationIndexedStampX, kTessellationIndexedStampY);
+    std::memcpy(stats.indexed_present_rgba, indexed_first, sizeof(stats.indexed_present_rgba));
+    const uint8_t* indexed_last = readback_pixel(readback, mapped, kTessellationIndexedStampX + kFreshTextureWidth - 1u,
+                                                 kTessellationIndexedStampY + kFreshTextureHeight - 1u);
+    std::memcpy(stats.indexed_present_last_rgba, indexed_last, sizeof(stats.indexed_present_last_rgba));
+    stats.indexed_present_samples_checked++;
+    uint32_t indexed_frame_matches = 0;
+    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+            const uint8_t* pixel =
+                readback_pixel(readback, mapped, kTessellationIndexedStampX + x, kTessellationIndexedStampY + y);
+            stats.indexed_present_pixels_checked++;
+            if (pixel[0] == stats.indexed_expected_rgba[0] && pixel[1] == stats.indexed_expected_rgba[1] &&
+                pixel[2] == stats.indexed_expected_rgba[2] && pixel[3] == stats.indexed_expected_rgba[3]) {
+                stats.indexed_present_pixel_matches++;
+                indexed_frame_matches++;
+            }
+        }
+    }
+    const bool indexed_matches = indexed_frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+    if (indexed_matches)
+        stats.indexed_present_sample_matches++;
+
+    uint32_t covered_pixels = 0;
+    uint32_t red_dominant = 0;
+    uint32_t green_dominant = 0;
+    uint32_t blue_dominant = 0;
+    for (UINT y = 0; y < kTessellationProgressiveRegionHeight; ++y) {
+        for (UINT x = 0; x < kTessellationProgressiveRegionWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kTessellationProgressiveRegionX + x,
+                                                  kTessellationProgressiveRegionY + y);
+            stats.progressive_triangle_samples_checked++;
+            const uint32_t color_sum =
+                static_cast<uint32_t>(pixel[0]) + static_cast<uint32_t>(pixel[1]) + static_cast<uint32_t>(pixel[2]);
+            const bool covered =
+                pixel[3] >= 240u && color_sum >= 96u && (pixel[0] >= 32u || pixel[1] >= 32u || pixel[2] >= 32u);
+            if (!covered)
+                continue;
+            covered_pixels++;
+            if (pixel[0] > pixel[1] + 24u && pixel[0] > pixel[2] + 24u)
+                red_dominant++;
+            if (pixel[1] > pixel[0] + 24u && pixel[1] > pixel[2] + 24u)
+                green_dominant++;
+            if (pixel[2] > pixel[0] + 24u && pixel[2] > pixel[1] + 24u)
+                blue_dominant++;
+        }
+    }
+    stats.progressive_triangle_coverage_counts.push_back(covered_pixels);
+    if (stats.progressive_triangle_frames_validated == 0u) {
+        stats.progressive_triangle_seed_pixels = covered_pixels;
+    } else if (covered_pixels <
+               stats.progressive_triangle_coverage_counts[stats.progressive_triangle_coverage_counts.size() - 2u]) {
+        stats.progressive_triangle_coverage_monotonic = false;
+    }
+    stats.progressive_triangle_peak_pixels = std::max(stats.progressive_triangle_peak_pixels, covered_pixels);
+    stats.progressive_triangle_frames_validated++;
+    if (stats.progressive_triangle_target_frames != 0u &&
+        stats.progressive_triangle_frames_validated == stats.progressive_triangle_target_frames) {
+        stats.progressive_triangle_final_pixels = covered_pixels;
+        stats.progressive_triangle_final_red_dominant_pixels = red_dominant;
+        stats.progressive_triangle_final_green_dominant_pixels = green_dominant;
+        stats.progressive_triangle_final_blue_dominant_pixels = blue_dominant;
+    }
+
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
-    return matches;
+    return matches && indexed_matches && covered_pixels > 0u && stats.progressive_triangle_coverage_monotonic;
 }
 
 static bool inspect_indirect_draw_stamp(DxilReadbackResources& readback, IndirectDrawStats& stats) {
@@ -7143,6 +7376,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
     TessellationFallbackSceneResources tessellation_fallback =
         create_tessellation_fallback_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.tessellation_fallback = tessellation_fallback.stats;
+    stats.tessellation_fallback.progressive_triangle_target_frames = visible_frame_target;
     IndirectDrawSceneResources indirect_draw =
         create_indirect_draw_scene(device, compile, serialize, backbuffer_width, backbuffer_height);
     stats.indirect_draw = indirect_draw.stats;
@@ -7288,14 +7522,23 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                                 multi_slot_instance_root.stats.start_instance_location);
             stats.multi_slot_instance_root.draw_calls++;
             stats.multi_slot_instance_root.second_draw_calls++;
-            if (tessellation_fallback.pipeline_state) {
+            if (tessellation_fallback.pipeline_state &&
+                populate_tessellation_native_vertices(tessellation_fallback, stats.tessellation_fallback, frame,
+                                                      visible_frame_target, backbuffer_width, backbuffer_height)) {
                 list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
                 list->SetPipelineState(tessellation_fallback.pipeline_state);
                 list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
                 list->IASetVertexBuffers(0, 1, &tessellation_fallback.vertex_view);
-                list->DrawInstanced(tessellation_fallback.stats.vertices_per_draw, 1, 0, 0);
+                list->DrawInstanced(stats.tessellation_fallback.vertices_per_draw, 1, 0, 0);
                 stats.tessellation_fallback.draw_calls++;
-                stats.tessellation_fallback.fallback_draw_encoded = true;
+                stats.tessellation_fallback.native_tessellation_resolved = true;
+                stats.tessellation_fallback.native_draw_encoded = true;
+                stats.tessellation_fallback.fallback_draw_encoded = false;
+                list->IASetIndexBuffer(&tessellation_fallback.index_view);
+                list->DrawIndexedInstanced(stats.tessellation_fallback.indices_per_draw, 1,
+                                           kTessellationNonIndexedVertexCount, 0, 0);
+                stats.tessellation_fallback.draw_indexed_calls++;
+                stats.tessellation_fallback.native_indexed_draw_encoded = true;
             } else {
                 stats.tessellation_fallback.native_tessellation_required = true;
                 stats.tessellation_fallback.blocked_expected = true;
@@ -7528,7 +7771,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_multi_slot_instance_root_stamp(dxil_readback, stats.multi_slot_instance_root))
                 break;
-            if (stats.tessellation_fallback.fallback_draw_encoded &&
+            if (stats.tessellation_fallback.native_draw_encoded &&
                 !inspect_tessellation_fallback_stamp(dxil_readback, stats.tessellation_fallback))
                 break;
             if (!inspect_indirect_draw_stamp(dxil_readback, stats.indirect_draw))
@@ -7695,6 +7938,31 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.multi_slot_instance_root.present_second_pixel_matches ==
             stats.multi_slot_instance_root.present_second_pixels_checked;
+    stats.tessellation_fallback.progressive_triangle_seed_point_pass =
+        stats.tessellation_fallback.progressive_triangle_seed_pixels > 0u &&
+        stats.tessellation_fallback.progressive_triangle_seed_pixels < 96u;
+    stats.tessellation_fallback.progressive_triangle_full_pass =
+        stats.tessellation_fallback.progressive_triangle_final_pixels >= 1800u &&
+        stats.tessellation_fallback.progressive_triangle_final_pixels >
+            stats.tessellation_fallback.progressive_triangle_seed_pixels * 8u;
+    stats.tessellation_fallback.progressive_triangle_rgb_channels_present =
+        stats.tessellation_fallback.progressive_triangle_final_red_dominant_pixels > 16u &&
+        stats.tessellation_fallback.progressive_triangle_final_green_dominant_pixels > 16u &&
+        stats.tessellation_fallback.progressive_triangle_final_blue_dominant_pixels > 16u;
+    stats.tessellation_fallback.progressive_triangle_ok =
+        stats.tessellation_fallback.progressive_triangle_frames_validated == visible_frame_target &&
+        stats.tessellation_fallback.progressive_triangle_coverage_counts.size() == visible_frame_target &&
+        stats.tessellation_fallback.progressive_triangle_coverage_monotonic &&
+        stats.tessellation_fallback.progressive_triangle_seed_point_pass &&
+        stats.tessellation_fallback.progressive_triangle_full_pass &&
+        stats.tessellation_fallback.progressive_triangle_rgb_channels_present;
+    stats.tessellation_fallback.indexed_present_pass =
+        stats.tessellation_fallback.indexed_present_samples_checked == visible_frame_target &&
+        stats.tessellation_fallback.indexed_present_sample_matches == visible_frame_target &&
+        stats.tessellation_fallback.indexed_present_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.tessellation_fallback.indexed_present_pixel_matches ==
+            stats.tessellation_fallback.indexed_present_pixels_checked;
     stats.tessellation_fallback.present_pass =
         stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded
             ? stats.tessellation_fallback.draw_calls == 0
@@ -7702,7 +7970,9 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                stats.tessellation_fallback.present_sample_matches == visible_frame_target &&
                stats.tessellation_fallback.present_pixels_checked ==
                    visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
-               stats.tessellation_fallback.present_pixel_matches == stats.tessellation_fallback.present_pixels_checked);
+               stats.tessellation_fallback.present_pixel_matches ==
+                   stats.tessellation_fallback.present_pixels_checked &&
+               stats.tessellation_fallback.indexed_present_pass && stats.tessellation_fallback.progressive_triangle_ok);
     stats.indirect_draw.present_pass =
         stats.indirect_draw.present_samples_checked == visible_frame_target &&
         stats.indirect_draw.present_sample_matches == visible_frame_target &&
@@ -7750,13 +8020,15 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.multi_slot_instance_root.draw_calls == visible_frame_target * 2 &&
         stats.multi_slot_instance_root.first_draw_calls == visible_frame_target &&
         stats.multi_slot_instance_root.second_draw_calls == visible_frame_target && stats.tessellation_fallback.pass &&
-        stats.tessellation_fallback.present_pass && stats.tessellation_fallback.blocked_expected &&
-        !stats.tessellation_fallback.fallback_draw_encoded && stats.tessellation_fallback.draw_calls == 0 &&
-        stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
-        stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.nanite_cluster.pass &&
-        stats.nanite_cluster.present_pass && stats.nanite_cluster.execute_indirect_calls == visible_frame_target &&
-        stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
-        stats.visible_scene.progressive_triangle_present_pass &&
+        stats.tessellation_fallback.present_pass && stats.tessellation_fallback.native_tessellation_resolved &&
+        stats.tessellation_fallback.native_draw_encoded && stats.tessellation_fallback.native_indexed_draw_encoded &&
+        !stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded &&
+        stats.tessellation_fallback.draw_calls == visible_frame_target &&
+        stats.tessellation_fallback.draw_indexed_calls == visible_frame_target && stats.indirect_draw.pass &&
+        stats.indirect_draw.present_pass && stats.indirect_draw.execute_indirect_calls == visible_frame_target &&
+        stats.nanite_cluster.pass && stats.nanite_cluster.present_pass &&
+        stats.nanite_cluster.execute_indirect_calls == visible_frame_target && stats.visible_scene.pass &&
+        stats.visible_scene.sm5_stamp_present_pass && stats.visible_scene.progressive_triangle_present_pass &&
         stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
         stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_hazard_replay.pass &&
         stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
@@ -8767,7 +9039,8 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.multi_slot_instance_root.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"tessellation_fallback\": {\n");
-    std::printf("      \"proof_scope\": \"hs_ds_patch_topology_native_tessellation_required_fail_closed\",\n");
+    std::printf(
+        "      \"proof_scope\": \"hs_ds_patch_topology_d3d12_native_metal_tessellation_presented_readback\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.tessellation_fallback.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"tess_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.tessellation_fallback.compile_vs_hr).c_str());
     std::printf("      \"tess_hs_hs_5_0\": \"%s\",\n", hr_hex(d3d.tessellation_fallback.compile_hs_hr).c_str());
@@ -8780,16 +9053,27 @@ int main() {
                 hr_hex(d3d.tessellation_fallback.create_pso_hr).c_str());
     std::printf("      \"CreateVertexBuffer\": \"%s\",\n",
                 hr_hex(d3d.tessellation_fallback.create_vertex_buffer_hr).c_str());
+    std::printf("      \"CreateIndexBuffer\": \"%s\",\n",
+                hr_hex(d3d.tessellation_fallback.create_index_buffer_hr).c_str());
     std::printf("      \"patch_control_points\": %u,\n", d3d.tessellation_fallback.patch_control_points);
     std::printf("      \"vertices_created\": %u,\n", d3d.tessellation_fallback.vertices_created);
     std::printf("      \"vertices_per_draw\": %u,\n", d3d.tessellation_fallback.vertices_per_draw);
+    std::printf("      \"indices_created\": %u,\n", d3d.tessellation_fallback.indices_created);
+    std::printf("      \"indices_per_draw\": %u,\n", d3d.tessellation_fallback.indices_per_draw);
     std::printf("      \"draw_calls\": %u,\n", d3d.tessellation_fallback.draw_calls);
+    std::printf("      \"draw_indexed_calls\": %u,\n", d3d.tessellation_fallback.draw_indexed_calls);
     std::printf("      \"present_samples_checked\": %u,\n", d3d.tessellation_fallback.present_samples_checked);
     std::printf("      \"present_sample_matches\": %u,\n", d3d.tessellation_fallback.present_sample_matches);
     std::printf("      \"present_pixels_checked\": %u,\n", d3d.tessellation_fallback.present_pixels_checked);
     std::printf("      \"present_pixel_matches\": %u,\n", d3d.tessellation_fallback.present_pixel_matches);
     std::printf("      \"native_tessellation_required\": %s,\n",
                 d3d.tessellation_fallback.native_tessellation_required ? "true" : "false");
+    std::printf("      \"native_tessellation_resolved\": %s,\n",
+                d3d.tessellation_fallback.native_tessellation_resolved ? "true" : "false");
+    std::printf("      \"native_draw_encoded\": %s,\n",
+                d3d.tessellation_fallback.native_draw_encoded ? "true" : "false");
+    std::printf("      \"native_indexed_draw_encoded\": %s,\n",
+                d3d.tessellation_fallback.native_indexed_draw_encoded ? "true" : "false");
     std::printf("      \"blocked_expected\": %s,\n", d3d.tessellation_fallback.blocked_expected ? "true" : "false");
     std::printf("      \"fallback_draw_encoded\": %s,\n",
                 d3d.tessellation_fallback.fallback_draw_encoded ? "true" : "false");
@@ -8802,6 +9086,73 @@ int main() {
     std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.tessellation_fallback.present_last_rgba[0],
                 d3d.tessellation_fallback.present_last_rgba[1], d3d.tessellation_fallback.present_last_rgba[2],
                 d3d.tessellation_fallback.present_last_rgba[3]);
+    std::printf("      \"indexed_expected_rgba\": [%u, %u, %u, %u],\n",
+                d3d.tessellation_fallback.indexed_expected_rgba[0], d3d.tessellation_fallback.indexed_expected_rgba[1],
+                d3d.tessellation_fallback.indexed_expected_rgba[2], d3d.tessellation_fallback.indexed_expected_rgba[3]);
+    std::printf("      \"indexed_present_rgba\": [%u, %u, %u, %u],\n",
+                d3d.tessellation_fallback.indexed_present_rgba[0], d3d.tessellation_fallback.indexed_present_rgba[1],
+                d3d.tessellation_fallback.indexed_present_rgba[2], d3d.tessellation_fallback.indexed_present_rgba[3]);
+    std::printf(
+        "      \"indexed_present_last_rgba\": [%u, %u, %u, %u],\n",
+        d3d.tessellation_fallback.indexed_present_last_rgba[0], d3d.tessellation_fallback.indexed_present_last_rgba[1],
+        d3d.tessellation_fallback.indexed_present_last_rgba[2], d3d.tessellation_fallback.indexed_present_last_rgba[3]);
+    std::printf("      \"indexed_present_samples_checked\": %u,\n",
+                d3d.tessellation_fallback.indexed_present_samples_checked);
+    std::printf("      \"indexed_present_sample_matches\": %u,\n",
+                d3d.tessellation_fallback.indexed_present_sample_matches);
+    std::printf("      \"indexed_present_pixels_checked\": %u,\n",
+                d3d.tessellation_fallback.indexed_present_pixels_checked);
+    std::printf("      \"indexed_present_pixel_matches\": %u,\n",
+                d3d.tessellation_fallback.indexed_present_pixel_matches);
+    std::printf("      \"indexed_present_ok\": %s,\n",
+                d3d.tessellation_fallback.indexed_present_pass ? "true" : "false");
+    std::printf("      \"tessellation_factor_debug_dump\": {\"format\": \"half\", \"edge_half\": \"0x%04x\", "
+                "\"inside_half\": \"0x%04x\", \"float_value\": %.1f},\n",
+                d3d.tessellation_fallback.tessellation_factor_half_edge,
+                d3d.tessellation_fallback.tessellation_factor_half_inside,
+                d3d.tessellation_fallback.tessellation_factor_float);
+    std::printf("      \"tessellation_factor_history\": [");
+    for (size_t i = 0; i < d3d.tessellation_fallback.tessellation_factor_history.size(); ++i)
+        std::printf("%s%u", i ? ", " : "", d3d.tessellation_fallback.tessellation_factor_history[i]);
+    std::printf("],\n");
+    std::printf("      \"progressive_triangle_proof_scope\": "
+                "\"progressive_rgb_tessellated_triangle_seed_point_to_full_triangle\",\n");
+    std::printf("      \"progressive_triangle_frames_validated\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_frames_validated);
+    std::printf("      \"progressive_triangle_samples_checked\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_samples_checked);
+    std::printf("      \"progressive_triangle_coverage_counts\": [");
+    for (size_t i = 0; i < d3d.tessellation_fallback.progressive_triangle_coverage_counts.size(); ++i)
+        std::printf("%s%u", i ? ", " : "", d3d.tessellation_fallback.progressive_triangle_coverage_counts[i]);
+    std::printf("],\n");
+    std::printf("      \"progressive_triangle_seed_pixels\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_seed_pixels);
+    std::printf("      \"progressive_triangle_final_pixels\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_final_pixels);
+    std::printf("      \"progressive_triangle_peak_pixels\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_peak_pixels);
+    std::printf("      \"progressive_triangle_final_red_dominant_pixels\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_final_red_dominant_pixels);
+    std::printf("      \"progressive_triangle_final_green_dominant_pixels\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_final_green_dominant_pixels);
+    std::printf("      \"progressive_triangle_final_blue_dominant_pixels\": %u,\n",
+                d3d.tessellation_fallback.progressive_triangle_final_blue_dominant_pixels);
+    std::printf("      \"progressive_triangle_coverage_monotonic\": %s,\n",
+                d3d.tessellation_fallback.progressive_triangle_coverage_monotonic ? "true" : "false");
+    std::printf("      \"progressive_triangle_seed_point_ok\": %s,\n",
+                d3d.tessellation_fallback.progressive_triangle_seed_point_pass ? "true" : "false");
+    std::printf("      \"progressive_triangle_full_ok\": %s,\n",
+                d3d.tessellation_fallback.progressive_triangle_full_pass ? "true" : "false");
+    std::printf("      \"progressive_triangle_rgb_channels_present\": %s,\n",
+                d3d.tessellation_fallback.progressive_triangle_rgb_channels_present ? "true" : "false");
+    std::printf("      \"progressive_triangle_ok\": %s,\n",
+                d3d.tessellation_fallback.progressive_triangle_ok ? "true" : "false");
+    std::printf("      \"progressive_triangle_motion_color_hash\": \"%016llx\",\n",
+                static_cast<unsigned long long>(d3d.tessellation_fallback.motion_color_hash));
+    std::printf("      \"last_control_points_ndc\": [");
+    for (size_t i = 0; i < 9; ++i)
+        std::printf("%s%.6f", i ? ", " : "", d3d.tessellation_fallback.last_control_points[i]);
+    std::printf("],\n");
     std::printf("      \"present_ok\": %s,\n", d3d.tessellation_fallback.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.tessellation_fallback.pass ? "true" : "false");
     std::printf("    },\n");

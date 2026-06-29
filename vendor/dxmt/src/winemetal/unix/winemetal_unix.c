@@ -35,7 +35,10 @@ winemetal_open_log(const char *fallback_name) {
   if (!root || !root[0])
     return fopen(file, "a");
 
-  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", file);
+  snprintf(
+      path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/",
+      file
+  );
   path[sizeof(path) - 1] = '\0';
   return fopen(path, "a");
 }
@@ -63,10 +66,10 @@ winemetal_end_encoder_safely(id<MTLCommandEncoder> encoder, const char *label) {
     if (el) {
       const char *name = [[exception name] UTF8String];
       const char *reason = [[exception reason] UTF8String];
-      fprintf(el,
-              "encoder_end_exception label=%s encoder=%p exception=%s reason=%s\n",
-              label ? label : "(null)", encoder, name ? name : "(null)",
-              reason ? reason : "(null)");
+      fprintf(
+          el, "encoder_end_exception label=%s encoder=%p exception=%s reason=%s\n", label ? label : "(null)", encoder,
+          name ? name : "(null)", reason ? reason : "(null)"
+      );
       fclose(el);
     }
     return false;
@@ -239,8 +242,10 @@ winemetal_log_render_command(
   case WMTRenderCommandSetTessellationFactorBuffer: {
     const struct wmtcmd_render_set_tessellation_factor_buffer *body =
         (const struct wmtcmd_render_set_tessellation_factor_buffer *)cmd;
-    fprintf(dl, " buffer=%p offset=%llu instance_stride=%llu", (void *)body->buffer,
-            (unsigned long long)body->offset, (unsigned long long)body->instance_stride);
+    fprintf(
+        dl, " buffer=%p offset=%llu instance_stride=%llu", (void *)body->buffer, (unsigned long long)body->offset,
+        (unsigned long long)body->instance_stride
+    );
     break;
   }
   case WMTRenderCommandDrawPatches: {
@@ -250,19 +255,20 @@ winemetal_log_render_command(
         " control_points=%u patch_start=%llu patch_count=%llu patch_index_buffer=%p patch_index_offset=%llu instances=%u base_instance=%u",
         body->number_of_patch_control_points, (unsigned long long)body->patch_start,
         (unsigned long long)body->patch_count, (void *)body->patch_index_buffer,
-        (unsigned long long)body->patch_index_buffer_offset, body->instance_count, body->base_instance);
+        (unsigned long long)body->patch_index_buffer_offset, body->instance_count, body->base_instance
+    );
     break;
   }
   case WMTRenderCommandDrawIndexedPatches: {
-    const struct wmtcmd_render_draw_indexed_patches *body =
-        (const struct wmtcmd_render_draw_indexed_patches *)cmd;
+    const struct wmtcmd_render_draw_indexed_patches *body = (const struct wmtcmd_render_draw_indexed_patches *)cmd;
     fprintf(
         dl,
         " control_points=%u patch_start=%llu patch_count=%llu patch_index_buffer=%p patch_index_offset=%llu control_point_index_buffer=%p control_point_index_offset=%llu instances=%u base_instance=%u",
         body->number_of_patch_control_points, (unsigned long long)body->patch_start,
         (unsigned long long)body->patch_count, (void *)body->patch_index_buffer,
         (unsigned long long)body->patch_index_buffer_offset, (void *)body->control_point_index_buffer,
-        (unsigned long long)body->control_point_index_buffer_offset, body->instance_count, body->base_instance);
+        (unsigned long long)body->control_point_index_buffer_offset, body->instance_count, body->base_instance
+    );
     break;
   }
   default:
@@ -815,10 +821,8 @@ _MTLCommandBuffer_renderCommandEncoder(void *obj) {
 static NTSTATUS
 _MTLCommandEncoder_endEncoding(void *obj) {
   struct unixcall_generic_obj_noret *params = obj;
-  return winemetal_end_encoder_safely((id<MTLCommandEncoder>)params->handle,
-                                      "explicit")
-             ? STATUS_SUCCESS
-             : STATUS_UNSUCCESSFUL;
+  return winemetal_end_encoder_safely((id<MTLCommandEncoder>)params->handle, "explicit") ? STATUS_SUCCESS
+                                                                                         : STATUS_UNSUCCESSFUL;
 }
 
 #ifndef DXMT_NO_PRIVATE_API
@@ -898,6 +902,8 @@ _MTLDevice_newRenderPipelineState(void *obj) {
   descriptor.tessellationPartitionMode = (MTLTessellationPartitionMode)info->tessellation_partition_mode;
   descriptor.tessellationFactorStepFunction = (MTLTessellationFactorStepFunction)info->tessellation_factor_step;
   descriptor.tessellationOutputWindingOrder = (MTLWinding)info->tessellation_output_winding_order;
+  descriptor.tessellationControlPointIndexType =
+      (MTLTessellationControlPointIndexType)info->tessellation_control_point_index_type;
   descriptor.maxTessellationFactor = info->max_tessellation_factor;
 
   descriptor.vertexFunction = (id<MTLFunction>)info->vertex_function;
@@ -1048,18 +1054,18 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
 #endif
   NSError *err = NULL;
   @try {
-    params->ret_pso = (obj_handle_t)[(id<MTLDevice>)params->device
-        newRenderPipelineStateWithMeshDescriptor:descriptor
-                                         options:options
-                                      reflection:nil
-                                           error:&err];
-  } @catch (NSException *exception) {
+    params->ret_pso = (obj_handle_t)[(id<MTLDevice>)params->device newRenderPipelineStateWithMeshDescriptor:descriptor
+                                                                                                    options:options
+                                                                                                 reflection:nil
+                                                                                                      error:&err];
+  } @catch(NSException * exception) {
     params->ret_pso = 0;
     FILE *dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl, "[winemetal] mesh PSO ObjC exception: %s reason=%s\n",
-              winemetal_nsstring_utf8([exception name]),
-              winemetal_nsstring_utf8([exception reason]));
+      fprintf(
+          dl, "[winemetal] mesh PSO ObjC exception: %s reason=%s\n", winemetal_nsstring_utf8([exception name]),
+          winemetal_nsstring_utf8([exception reason])
+      );
       fclose(dl);
     }
   }
@@ -1067,30 +1073,23 @@ _MTLDevice_newMeshRenderPipelineState(void *obj) {
   if (!params->ret_pso) {
     FILE *dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl,
-              "[winemetal] mesh PSO failed: err=%s object=%s mesh=%s fragment=%s "
-              "payload=%u rt0=%u depth=%u stencil=%u samples=%u raster=%d "
-              "obj_linked=%u mesh_linked=%u frag_linked=%u "
-              "obj_mut=0x%08x mesh_mut=0x%08x frag_mut=0x%08x\n",
-              err ? winemetal_nsstring_utf8([err localizedDescription]) : "<nil>",
-              winemetal_nsstring_utf8([descriptor.objectFunction name]),
-              winemetal_nsstring_utf8([descriptor.meshFunction name]),
-              winemetal_nsstring_utf8([descriptor.fragmentFunction name]),
-              info->payload_memory_length,
-              info->colors[0].pixel_format,
-              info->depth_pixel_format,
-              info->stencil_pixel_format,
-              info->raster_sample_count,
-              info->rasterization_enabled ? 1 : 0,
-              info->num_object_linked_functions,
-              info->num_mesh_linked_functions,
-              info->num_fragment_linked_functions,
-              info->immutable_object_buffers,
-              info->immutable_mesh_buffers,
-              info->immutable_fragment_buffers);
+      fprintf(
+          dl,
+          "[winemetal] mesh PSO failed: err=%s object=%s mesh=%s fragment=%s "
+          "payload=%u rt0=%u depth=%u stencil=%u samples=%u raster=%d "
+          "obj_linked=%u mesh_linked=%u frag_linked=%u "
+          "obj_mut=0x%08x mesh_mut=0x%08x frag_mut=0x%08x\n",
+          err ? winemetal_nsstring_utf8([err localizedDescription]) : "<nil>",
+          winemetal_nsstring_utf8([descriptor.objectFunction name]),
+          winemetal_nsstring_utf8([descriptor.meshFunction name]),
+          winemetal_nsstring_utf8([descriptor.fragmentFunction name]), info->payload_memory_length,
+          info->colors[0].pixel_format, info->depth_pixel_format, info->stencil_pixel_format, info->raster_sample_count,
+          info->rasterization_enabled ? 1 : 0, info->num_object_linked_functions, info->num_mesh_linked_functions,
+          info->num_fragment_linked_functions, info->immutable_object_buffers, info->immutable_mesh_buffers,
+          info->immutable_fragment_buffers
+      );
       if (err)
-        fprintf(dl, "[winemetal] mesh PSO userInfo: %s\n",
-                winemetal_nsstring_utf8([[err userInfo] description]));
+        fprintf(dl, "[winemetal] mesh PSO userInfo: %s\n", winemetal_nsstring_utf8([[err userInfo] description]));
       fclose(dl);
     }
   }
@@ -1334,8 +1333,7 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
         if (dl) {
           fclose(dl);
         }
-        winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder,
-                                     "render_unknown_command");
+        winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder, "render_unknown_command");
         return STATUS_UNSUCCESSFUL;
       }
       case WMTRenderCommandNop:
@@ -1532,26 +1530,25 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
       case WMTRenderCommandDrawPatches: {
         struct wmtcmd_render_draw_patches *body = (struct wmtcmd_render_draw_patches *)next;
         [encoder drawPatches:body->number_of_patch_control_points
-                   patchStart:body->patch_start
-                   patchCount:body->patch_count
-             patchIndexBuffer:(id<MTLBuffer>)body->patch_index_buffer
-       patchIndexBufferOffset:body->patch_index_buffer_offset
-                instanceCount:body->instance_count
-                 baseInstance:body->base_instance];
+                        patchStart:body->patch_start
+                        patchCount:body->patch_count
+                  patchIndexBuffer:(id<MTLBuffer>)body->patch_index_buffer
+            patchIndexBufferOffset:body->patch_index_buffer_offset
+                     instanceCount:body->instance_count
+                      baseInstance:body->base_instance];
         break;
       }
       case WMTRenderCommandDrawIndexedPatches: {
-        struct wmtcmd_render_draw_indexed_patches *body =
-            (struct wmtcmd_render_draw_indexed_patches *)next;
+        struct wmtcmd_render_draw_indexed_patches *body = (struct wmtcmd_render_draw_indexed_patches *)next;
         [encoder drawIndexedPatches:body->number_of_patch_control_points
-                          patchStart:body->patch_start
-                          patchCount:body->patch_count
-                    patchIndexBuffer:(id<MTLBuffer>)body->patch_index_buffer
-              patchIndexBufferOffset:body->patch_index_buffer_offset
-             controlPointIndexBuffer:(id<MTLBuffer>)body->control_point_index_buffer
-       controlPointIndexBufferOffset:body->control_point_index_buffer_offset
-                       instanceCount:body->instance_count
-                        baseInstance:body->base_instance];
+                               patchStart:body->patch_start
+                               patchCount:body->patch_count
+                         patchIndexBuffer:(id<MTLBuffer>)body->patch_index_buffer
+                   patchIndexBufferOffset:body->patch_index_buffer_offset
+                  controlPointIndexBuffer:(id<MTLBuffer>)body->control_point_index_buffer
+            controlPointIndexBufferOffset:body->control_point_index_buffer_offset
+                            instanceCount:body->instance_count
+                             baseInstance:body->base_instance];
         break;
       }
       case WMTRenderCommandDXMTGeometryDraw: {
@@ -1694,8 +1691,7 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
       if (dl) {
         fclose(dl);
       }
-      winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder,
-                                   "render_encode_exception");
+      winemetal_end_encoder_safely((id<MTLCommandEncoder>)encoder, "render_encode_exception");
       return STATUS_UNSUCCESSFUL;
     }
     next = next->next.ptr;
@@ -2186,8 +2182,9 @@ _CreateMetalViewFromHWND(void *obj) {
   if (!win_data && pfn_macdrv_get_cocoa_window) {
     fallback_cocoa_window = pfn_macdrv_get_cocoa_window((HWND)params->hwnd, TRUE);
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND get_win_data NULL, direct cocoa_window=%p\n",
-              fallback_cocoa_window);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND get_win_data NULL, direct cocoa_window=%p\n", fallback_cocoa_window
+      );
     }
   }
   if (!win_data && !fallback_cocoa_window) {
@@ -2261,16 +2258,20 @@ _CreateMetalViewFromHWND(void *obj) {
       if (!dl)
         dl = winemetal_critical_log();
       if (dl) {
-        fprintf(dl, "[winemetal] CreateMetalViewFromHWND create_metal_view failed for target_view=%p cocoa_window=%p\n",
-                target_view, cocoa_window_handle);
+        fprintf(
+            dl, "[winemetal] CreateMetalViewFromHWND create_metal_view failed for target_view=%p cocoa_window=%p\n",
+            target_view, cocoa_window_handle
+        );
       }
     }
   } else {
     if (!dl)
       dl = winemetal_critical_log();
     if (dl) {
-      fprintf(dl, "[winemetal] CreateMetalViewFromHWND client_view/contentView unavailable cocoa_window=%p\n",
-              cocoa_window_handle);
+      fprintf(
+          dl, "[winemetal] CreateMetalViewFromHWND client_view/contentView unavailable cocoa_window=%p\n",
+          cocoa_window_handle
+      );
     }
   }
 
@@ -2995,8 +2996,8 @@ _MTLLibrary_newFunctionWithDescriptor(void *obj) {
   NSString *name = [[NSString alloc] initWithCString:(char *)params->name.ptr encoding:NSUTF8StringEncoding];
   NSString *specialized_name = nil;
   if (params->specialized_name.ptr) {
-    specialized_name = [[NSString alloc] initWithCString:(char *)params->specialized_name.ptr
-                                                encoding:NSUTF8StringEncoding];
+    specialized_name =
+        [[NSString alloc] initWithCString:(char *)params->specialized_name.ptr encoding:NSUTF8StringEncoding];
   }
 
   MTLFunctionDescriptor *descriptor = [MTLFunctionDescriptor functionDescriptor];
