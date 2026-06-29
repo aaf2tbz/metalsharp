@@ -268,36 +268,118 @@ def d3d12_native_tessellation_source_guard(repo: Path) -> dict[str, Any]:
     }
 
 
-def active_msl_err_sidecars(shader_cache_dir: Path) -> list[dict[str, Any]]:
+def msl_err_sidecar_inventory(shader_cache_dir: Path) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
-    if not shader_cache_dir.exists():
-        return records
-    for err_path in sorted(shader_cache_dir.rglob("*.msl.err.txt")):
-        paired_msl = err_path.with_suffix("").with_suffix("")
-        try:
-            err_mtime = err_path.stat().st_mtime
-        except OSError:
-            continue
-        msl_exists = paired_msl.exists()
-        msl_mtime = paired_msl.stat().st_mtime if msl_exists else 0.0
-        active = (not msl_exists) or err_mtime >= msl_mtime
-        if active:
-            records.append(
-                {
-                    "err_path": str(err_path),
-                    "paired_msl": str(paired_msl),
-                    "paired_msl_exists": msl_exists,
-                    "err_mtime": err_mtime,
-                    "paired_msl_mtime": msl_mtime,
-                }
-            )
-    return records
+    active_records: list[dict[str, Any]] = []
+    stale_records: list[dict[str, Any]] = []
+    if shader_cache_dir.exists():
+        for err_path in sorted(shader_cache_dir.rglob("*.msl.err.txt")):
+            paired_msl = err_path.with_suffix("").with_suffix("")
+            try:
+                err_mtime = err_path.stat().st_mtime
+                err_size = err_path.stat().st_size
+            except OSError:
+                continue
+            msl_exists = paired_msl.exists()
+            try:
+                msl_mtime = paired_msl.stat().st_mtime if msl_exists else 0.0
+                msl_size = paired_msl.stat().st_size if msl_exists else 0
+            except OSError:
+                msl_exists = False
+                msl_mtime = 0.0
+                msl_size = 0
+            active = (not msl_exists) or err_mtime >= msl_mtime
+            record = {
+                "err_path": str(err_path),
+                "paired_msl": str(paired_msl),
+                "paired_msl_exists": msl_exists,
+                "classification": "active" if active else "stale",
+                "err_mtime": err_mtime,
+                "paired_msl_mtime": msl_mtime,
+                "err_size": err_size,
+                "paired_msl_size": msl_size,
+            }
+            records.append(record)
+            if active:
+                active_records.append(record)
+            else:
+                stale_records.append(record)
+    return {
+        "schema": "metalsharp.m12.msl-sidecar-inventory.v1",
+        "shader_cache_dir": str(shader_cache_dir),
+        "freshness_rule": "active when paired .msl is missing or .msl.err.txt mtime is >= paired .msl mtime; stale otherwise",
+        "total_count": len(records),
+        "active_count": len(active_records),
+        "stale_count": len(stale_records),
+        "post_launch_msl_err_count": len(active_records),
+        "records": records[:100],
+        "records_truncated": len(records) > 100,
+        "active_records": active_records[:50],
+        "active_records_truncated": len(active_records) > 50,
+        "stale_records": stale_records[:50],
+        "stale_records_truncated": len(stale_records) > 50,
+    }
+
+
+def active_msl_err_sidecars(shader_cache_dir: Path) -> list[dict[str, Any]]:
+    return list(msl_err_sidecar_inventory(shader_cache_dir)["active_records"])
+
+
+def shader_replay_guardrail(
+    shader_cache_dir: Path,
+    shader_cache_validation: dict[str, Any],
+    dxil_hazard_replay: dict[str, Any],
+    hard_fail_gates: dict[str, Any],
+) -> dict[str, Any]:
+    inventory = msl_err_sidecar_inventory(shader_cache_dir)
+    expected_hazard_count = len(ELDEN_DXIL_HAZARD_PIXEL_STEMS)
+    shader_gates = {
+        "shader_cache_validation_ok": shader_cache_validation.get("ok") is True,
+        "dxil_hazard_replay_ok": bool(
+            dxil_hazard_replay.get("ok") is True
+            and dxil_hazard_replay.get("proof_scope") == "exact_elden_dxil_pixel_shader_pso_replay"
+            and int(dxil_hazard_replay.get("requested_count", 0) or 0) == expected_hazard_count
+            and int(dxil_hazard_replay.get("replay_count", 0) or 0) == expected_hazard_count
+            and int(dxil_hazard_replay.get("success_count", 0) or 0) == expected_hazard_count
+        ),
+        "active_msl_err_count_zero": int(inventory.get("active_count", 0) or 0) == 0,
+        "post_launch_msl_err_count_zero": int(inventory.get("post_launch_msl_err_count", 0) or 0) == 0,
+    }
+    runtime_gates = {
+        "hard_fail_native_runtime_pass": hard_fail_gates.get("native_runtime_pass") is True,
+        "hard_fail_no_fallback_pass": hard_fail_gates.get("no_fallback_pass") is True,
+        "active_msl_err_counter_zero": int(hard_fail_gates.get("counters", {}).get("active_msl_err_sidecars", 0) or 0) == 0,
+    }
+    return {
+        "schema": "metalsharp.m12.shader-replay-guardrail.v1",
+        "ok": all(shader_gates.values()),
+        "runtime_ok": all(runtime_gates.values()),
+        "proof_scope": "phase9_shader_replay_and_stale_sidecar_guardrail_separate_from_runtime_gates",
+        "shader_cache_dir": str(shader_cache_dir),
+        "shader_gates": shader_gates,
+        "runtime_gates": runtime_gates,
+        "sidecar_inventory": inventory,
+        "full_cache_replay_summary": {
+            "ok": shader_cache_validation.get("ok") is True,
+            "errors": shader_cache_validation.get("errors", []),
+            "proof_scope": shader_cache_validation.get("proof_scope"),
+        },
+        "dxil_hazard_replay_summary": {
+            "ok": dxil_hazard_replay.get("ok") is True,
+            "proof_scope": dxil_hazard_replay.get("proof_scope"),
+            "requested_count": dxil_hazard_replay.get("requested_count"),
+            "replay_count": dxil_hazard_replay.get("replay_count"),
+            "success_count": dxil_hazard_replay.get("success_count"),
+        },
+        "hard_fail_counters": hard_fail_gates.get("counters", {}),
+    }
 
 
 def hard_fail_scan(text: str, shader_cache_dir: Path) -> dict[str, Any]:
     counters = {key: len(re.findall(pattern, text, re.IGNORECASE)) for key, pattern in HARD_FAIL_PATTERNS}
-    active_sidecars = active_msl_err_sidecars(shader_cache_dir)
-    counters["active_msl_err_sidecars"] = len(active_sidecars)
+    sidecar_inventory = msl_err_sidecar_inventory(shader_cache_dir)
+    active_sidecars = list(sidecar_inventory["active_records"])
+    counters["active_msl_err_sidecars"] = int(sidecar_inventory["active_count"])
     no_fallback_pass = (
         counters["vertex_range_oob"] == 0
         and counters["d3d12_tessellation_fallback"] == 0
@@ -314,7 +396,7 @@ def hard_fail_scan(text: str, shader_cache_dir: Path) -> dict[str, Any]:
         "schema": "metalsharp.m12.fresh.hard-fail-scan.v1",
         "counters": counters,
         "active_msl_err_sidecars": active_sidecars[:50],
-        "active_msl_err_sidecars_truncated": len(active_sidecars) > 50,
+        "active_msl_err_sidecars_truncated": bool(sidecar_inventory["active_records_truncated"]),
         "no_fallback_pass": no_fallback_pass,
         "native_runtime_pass": native_runtime_pass,
         "hard_fail_patterns": {key: pattern for key, pattern in HARD_FAIL_PATTERNS},
@@ -2930,6 +3012,13 @@ def run_fresh_game(
     dxil_hazard_replay_json = d3d12_json.get("dxil_hazard_replay", {}) if d3d12_json else {}
     shader_cache_validation = validate_presented_shader_cache(shader_cache_dir, diagnostic_log_text, d3d12_json, visible_frames)
     hard_fail_gates = hard_fail_scan(diagnostic_log_text, shader_cache_dir)
+    shader_replay_guardrail_result = shader_replay_guardrail(
+        shader_cache_dir,
+        shader_cache_validation,
+        dxil_hazard_replay_json,
+        hard_fail_gates,
+    )
+    write_json(run_dir / "shader_replay_guardrail.json", shader_replay_guardrail_result)
     texture_payload_bytes_required = 300 * 16 * 16 * 4
     rtv_format_expected_rgba = [32, 192, 96, 255]
     subresource_view_expected_slice0_rgba = [64, 48, 208, 255]
@@ -3803,6 +3892,7 @@ def run_fresh_game(
         "waveops_artifacts": waveops_artifacts,
         "shader_cache_dir": str(shader_cache_dir),
         "shader_cache_validation": shader_cache_validation,
+        "shader_replay_guardrail": shader_replay_guardrail_result,
         "hard_fail_gates": hard_fail_gates,
         "no_fallback_pass": hard_fail_gates["no_fallback_pass"],
         "native_runtime_pass": hard_fail_gates["native_runtime_pass"],
@@ -3852,6 +3942,7 @@ def run_fresh_game(
         and game_json_ok
         and corpus_hash_validation["ok"]
         and shader_cache_validation["ok"]
+        and shader_replay_guardrail_result["ok"]
         and hard_fail_gates["native_runtime_pass"]
         and async_worker_proof["ok"]
         and native_compute_resolve["ok"]
