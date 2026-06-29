@@ -21,6 +21,11 @@ Working implementation names:
 - `d3d12_native_tessellation_path.*` — D3D12 HS/DS patch topology, tessellation-factor generation, and Metal patch draw encoding.
 - `m12_native_vertex_tessellation` — shared counters, proof gates, logs, and mini-game/probe outputs.
 
+D3D12-native ownership rule:
+
+- Phase 5 must not port, subclass, or depend on the existing D3D11 tessellation context/pipeline/shader machinery. D3D11-oriented code may be inspected only as historical context for low-level Metal/WMT capability, not reused as the D3D12 implementation basis.
+- Shared low-level bridge primitives are allowed only when they are API-neutral (`winemetal` C structs/thunks, Metal feature queries, resource wrappers). Any D3D12 tessellation state machine, PSO metadata, root binding, draw validation, and proof diagnostics must live in D3D12-owned code paths.
+
 ## Absolute gates before another Elden Ring launch
 
 No live Elden launch is allowed until all local gates below pass under the PR runtime/backend:

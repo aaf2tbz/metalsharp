@@ -7,6 +7,7 @@
 #include "d3d12_trace.hpp"
 #include "d3d12_fence.hpp"
 #include "d3d12_heap.hpp"
+#include "d3d12_native_tessellation_path.hpp"
 #include "d3d12_pipeline_state.hpp"
 #include "d3d12_query_heap.hpp"
 #include "d3d12_resource.hpp"
@@ -1859,15 +1860,12 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
                          desc->GS.BytecodeLength, desc->NumRenderTargets,
                          desc->InputLayout.NumElements);
 
-  if (desc->HS.BytecodeLength > 0 || desc->DS.BytecodeLength > 0) {
-    Logger::warn(str::format(
-        "M12 native_tessellation_required: failing HS/DS graphics PSO "
-        "HS bytes=",
-        desc->HS.BytecodeLength, " DS bytes=", desc->DS.BytecodeLength,
-        " topology=", (unsigned)desc->PrimitiveTopologyType));
-    TRACE("CreateGraphicsPSO native_tessellation_required hs=%zu ds=%zu topo=%u",
-          desc->HS.BytecodeLength, desc->DS.BytecodeLength,
-          (unsigned)desc->PrimitiveTopologyType);
+  if (D3D12NativeTessellationRequired(*desc)) {
+    auto metadata = InspectD3D12NativeTessellationPSO(*desc);
+    auto detail = DescribeD3D12NativeTessellationPSO(metadata);
+    Logger::warn(str::format("M12 native_tessellation_required: ", detail));
+    TRACE("CreateGraphicsPSO native_tessellation_required %s",
+          detail.c_str());
     return E_FAIL;
   }
 

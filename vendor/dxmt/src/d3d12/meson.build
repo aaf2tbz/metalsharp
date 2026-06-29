@@ -10,6 +10,7 @@ d3d12_src = [
   'd3d12_dxgi_device.cpp',
   'd3d12_fence.cpp',
   'd3d12_heap.cpp',
+  'd3d12_native_tessellation_path.cpp',
   'd3d12_pipeline_state.cpp',
   'd3d12_query_heap.cpp',
   'd3d12_resource.cpp',

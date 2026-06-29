@@ -450,7 +450,8 @@ enum WMTPixelFormat : uint32_t {
 
   WMTPixelFormatBGRA4Unorm = WMTPixelFormatGBARSwizzle | WMTPixelFormatABGR4Unorm,
 
-  WMTPixelFormatCustomSwizzle = WMTPixelFormatRGB1Swizzle | WMTPixelFormatR001Swizzle | WMTPixelFormat0R01Swizzle | WMTPixelFormatGBARSwizzle,
+  WMTPixelFormatCustomSwizzle =
+      WMTPixelFormatRGB1Swizzle | WMTPixelFormatR001Swizzle | WMTPixelFormat0R01Swizzle | WMTPixelFormatGBARSwizzle,
 };
 
 #define ORIGINAL_FORMAT(format) (format & ~WMTPixelFormatCustomSwizzle)
@@ -505,7 +506,7 @@ struct WMTTextureInfo {
   enum WMTTextureUsage usage  : 8;
   enum WMTResourceOptions options;
   uint32_t reserved;
-  mach_port_t mach_port; // in/out
+  mach_port_t mach_port;    // in/out
   uint64_t gpu_resource_id; // out
 };
 
@@ -584,7 +585,8 @@ WINEMETAL_API obj_handle_t MTLDevice_newLibrary(obj_handle_t device, obj_handle_
 
 WINEMETAL_API obj_handle_t MTLDevice_newLibraryWithData(obj_handle_t device, obj_handle_t data, obj_handle_t *err_out);
 
-WINEMETAL_API obj_handle_t MTLDevice_newLibraryWithSource(obj_handle_t device, const char *source, uint64_t source_length, obj_handle_t *err_out);
+WINEMETAL_API obj_handle_t
+MTLDevice_newLibraryWithSource(obj_handle_t device, const char *source, uint64_t source_length, obj_handle_t *err_out);
 
 WINEMETAL_API obj_handle_t MTLLibrary_newFunction(obj_handle_t library, const char *name);
 
@@ -1157,7 +1159,7 @@ enum WMTBarrierScope : uint8_t {
 };
 
 struct wmtcmd_compute_memory_barrier {
-enum WMTComputeCommandType type;
+  enum WMTComputeCommandType type;
   uint16_t reserved[3];
   struct WMTMemoryPointer next;
   enum WMTBarrierScope scope;
@@ -1193,9 +1195,9 @@ enum WMTRenderCommandType : uint16_t {
   WMTRenderCommandDrawMeshThreadgroups,
   WMTRenderCommandDrawMeshThreadgroupsIndirect,
   WMTRenderCommandMemoryBarrier,
-  Unused0,
-  Unused1,
-  Unused2,
+  WMTRenderCommandSetTessellationFactorBuffer,
+  WMTRenderCommandDrawPatches,
+  WMTRenderCommandDrawIndexedPatches,
   WMTRenderCommandDXMTGeometryDraw,
   WMTRenderCommandDXMTGeometryDrawIndexed,
   WMTRenderCommandDXMTGeometryDrawIndirect,
@@ -1411,6 +1413,45 @@ struct wmtcmd_render_memory_barrier {
   enum WMTBarrierScope scope;
   enum WMTRenderStages stages_before;
   enum WMTRenderStages stages_after;
+};
+
+struct wmtcmd_render_set_tessellation_factor_buffer {
+  enum WMTRenderCommandType type;
+  uint16_t reserved[3];
+  struct WMTMemoryPointer next;
+  obj_handle_t buffer;
+  uint64_t offset;
+  uint64_t instance_stride;
+};
+
+struct wmtcmd_render_draw_patches {
+  enum WMTRenderCommandType type;
+  uint16_t reserved[3];
+  struct WMTMemoryPointer next;
+  uint32_t number_of_patch_control_points;
+  uint32_t instance_count;
+  uint32_t base_instance;
+  uint32_t reserved0;
+  uint64_t patch_start;
+  uint64_t patch_count;
+  obj_handle_t patch_index_buffer;
+  uint64_t patch_index_buffer_offset;
+};
+
+struct wmtcmd_render_draw_indexed_patches {
+  enum WMTRenderCommandType type;
+  uint16_t reserved[3];
+  struct WMTMemoryPointer next;
+  uint32_t number_of_patch_control_points;
+  uint32_t instance_count;
+  uint32_t base_instance;
+  uint32_t reserved0;
+  uint64_t patch_start;
+  uint64_t patch_count;
+  obj_handle_t patch_index_buffer;
+  uint64_t patch_index_buffer_offset;
+  obj_handle_t control_point_index_buffer;
+  uint64_t control_point_index_buffer_offset;
 };
 
 struct WMTViewport {
@@ -1894,9 +1935,8 @@ enum WMTFunctionOptions : uint32_t {
 };
 
 WINEMETAL_API obj_handle_t MTLLibrary_newFunctionWithDescriptor(
-    obj_handle_t library, const char *name, const char *specialized_name,
-    const struct WMTFunctionConstant *constants, uint32_t num_constants,
-    enum WMTFunctionOptions options, obj_handle_t *err_out
+    obj_handle_t library, const char *name, const char *specialized_name, const struct WMTFunctionConstant *constants,
+    uint32_t num_constants, enum WMTFunctionOptions options, obj_handle_t *err_out
 );
 
 struct WMTHDRMetadata {

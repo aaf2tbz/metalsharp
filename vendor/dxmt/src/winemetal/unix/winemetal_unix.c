@@ -135,6 +135,12 @@ winemetal_render_command_name(uint16_t type) {
     return "DrawMeshThreadgroupsIndirect";
   case WMTRenderCommandMemoryBarrier:
     return "MemoryBarrier";
+  case WMTRenderCommandSetTessellationFactorBuffer:
+    return "SetTessellationFactorBuffer";
+  case WMTRenderCommandDrawPatches:
+    return "DrawPatches";
+  case WMTRenderCommandDrawIndexedPatches:
+    return "DrawIndexedPatches";
   case WMTRenderCommandDXMTGeometryDraw:
     return "DXMTGeometryDraw";
   case WMTRenderCommandDXMTGeometryDrawIndexed:
@@ -228,6 +234,35 @@ winemetal_log_render_command(
         body->primitive_type, body->index_type, (unsigned long long)body->index_count, (void *)body->index_buffer,
         (unsigned long long)body->index_buffer_offset, body->instance_count, body->base_vertex, body->base_instance
     );
+    break;
+  }
+  case WMTRenderCommandSetTessellationFactorBuffer: {
+    const struct wmtcmd_render_set_tessellation_factor_buffer *body =
+        (const struct wmtcmd_render_set_tessellation_factor_buffer *)cmd;
+    fprintf(dl, " buffer=%p offset=%llu instance_stride=%llu", (void *)body->buffer,
+            (unsigned long long)body->offset, (unsigned long long)body->instance_stride);
+    break;
+  }
+  case WMTRenderCommandDrawPatches: {
+    const struct wmtcmd_render_draw_patches *body = (const struct wmtcmd_render_draw_patches *)cmd;
+    fprintf(
+        dl,
+        " control_points=%u patch_start=%llu patch_count=%llu patch_index_buffer=%p patch_index_offset=%llu instances=%u base_instance=%u",
+        body->number_of_patch_control_points, (unsigned long long)body->patch_start,
+        (unsigned long long)body->patch_count, (void *)body->patch_index_buffer,
+        (unsigned long long)body->patch_index_buffer_offset, body->instance_count, body->base_instance);
+    break;
+  }
+  case WMTRenderCommandDrawIndexedPatches: {
+    const struct wmtcmd_render_draw_indexed_patches *body =
+        (const struct wmtcmd_render_draw_indexed_patches *)cmd;
+    fprintf(
+        dl,
+        " control_points=%u patch_start=%llu patch_count=%llu patch_index_buffer=%p patch_index_offset=%llu control_point_index_buffer=%p control_point_index_offset=%llu instances=%u base_instance=%u",
+        body->number_of_patch_control_points, (unsigned long long)body->patch_start,
+        (unsigned long long)body->patch_count, (void *)body->patch_index_buffer,
+        (unsigned long long)body->patch_index_buffer_offset, (void *)body->control_point_index_buffer,
+        (unsigned long long)body->control_point_index_buffer_offset, body->instance_count, body->base_instance);
     break;
   }
   default:
@@ -1484,6 +1519,39 @@ _MTLRenderCommandEncoder_encodeCommands(void *obj) {
         [encoder memoryBarrierWithScope:(MTLBarrierScope)body->scope
                             afterStages:(MTLRenderStages)body->stages_after
                            beforeStages:(MTLRenderStages)body->stages_before];
+        break;
+      }
+      case WMTRenderCommandSetTessellationFactorBuffer: {
+        struct wmtcmd_render_set_tessellation_factor_buffer *body =
+            (struct wmtcmd_render_set_tessellation_factor_buffer *)next;
+        [encoder setTessellationFactorBuffer:(id<MTLBuffer>)body->buffer
+                                      offset:body->offset
+                              instanceStride:body->instance_stride];
+        break;
+      }
+      case WMTRenderCommandDrawPatches: {
+        struct wmtcmd_render_draw_patches *body = (struct wmtcmd_render_draw_patches *)next;
+        [encoder drawPatches:body->number_of_patch_control_points
+                   patchStart:body->patch_start
+                   patchCount:body->patch_count
+             patchIndexBuffer:(id<MTLBuffer>)body->patch_index_buffer
+       patchIndexBufferOffset:body->patch_index_buffer_offset
+                instanceCount:body->instance_count
+                 baseInstance:body->base_instance];
+        break;
+      }
+      case WMTRenderCommandDrawIndexedPatches: {
+        struct wmtcmd_render_draw_indexed_patches *body =
+            (struct wmtcmd_render_draw_indexed_patches *)next;
+        [encoder drawIndexedPatches:body->number_of_patch_control_points
+                          patchStart:body->patch_start
+                          patchCount:body->patch_count
+                    patchIndexBuffer:(id<MTLBuffer>)body->patch_index_buffer
+              patchIndexBufferOffset:body->patch_index_buffer_offset
+             controlPointIndexBuffer:(id<MTLBuffer>)body->control_point_index_buffer
+       controlPointIndexBufferOffset:body->control_point_index_buffer_offset
+                       instanceCount:body->instance_count
+                        baseInstance:body->base_instance];
         break;
       }
       case WMTRenderCommandDXMTGeometryDraw: {

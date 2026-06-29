@@ -214,6 +214,58 @@ HARD_FAIL_PATTERNS: list[tuple[str, str]] = [
     ("windowserver_watchdog_reboot", r"WindowServer|watchdog|userspace_watchdog|IOGPU|AGX|panic|reboot"),
 ]
 
+D3D12_NATIVE_TESSELLATION_SOURCE_GUARD_FILES = [
+    "vendor/dxmt/src/d3d12/d3d12_native_tessellation_path.cpp",
+    "vendor/dxmt/src/d3d12/d3d12_native_tessellation_path.hpp",
+    "vendor/dxmt/src/d3d12/d3d12_device.cpp",
+    "vendor/dxmt/src/d3d12/d3d12_pipeline_state.cpp",
+    "vendor/dxmt/src/d3d12/d3d12_command_queue.cpp",
+]
+
+D3D12_NATIVE_TESSELLATION_FORBIDDEN_PATTERNS: list[tuple[str, str]] = [
+    ("d3d11_header_include", r"#\s*include\s+[\"<][^\">]*d3d11"),
+    ("mtld3d11_symbol", r"\bI?MTLD3D11\w*\b"),
+    ("d3d11_runtime_object_symbol", r"\bI?D3D11(Device|Context|Buffer|Texture|Shader|InputLayout|Class|Blend|Rasterizer|Depth|Sampler|View)\w*\b"),
+    ("d3d11_tessellation_pipeline_class", r"\bMTLCompiledTessellationMeshPipeline\b"),
+    ("d3d11_tessellation_shader_variant", r"\bShaderVariantTessellation\w*\b"),
+    ("d3d11_tessellation_factory", r"\bCreateTessellationMeshPipeline\b"),
+]
+
+
+def d3d12_native_tessellation_source_guard(repo: Path) -> dict[str, Any]:
+    matches: list[dict[str, Any]] = []
+    scanned: list[str] = []
+    missing: list[str] = []
+    compiled = [(name, re.compile(pattern)) for name, pattern in D3D12_NATIVE_TESSELLATION_FORBIDDEN_PATTERNS]
+    for rel in D3D12_NATIVE_TESSELLATION_SOURCE_GUARD_FILES:
+        path = repo / rel
+        if not path.exists():
+            missing.append(rel)
+            continue
+        scanned.append(rel)
+        text = read_existing_text(path)
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            for pattern_name, pattern in compiled:
+                if pattern.search(line):
+                    matches.append(
+                        {
+                            "file": rel,
+                            "line": line_no,
+                            "pattern": pattern_name,
+                            "text": line.strip(),
+                        }
+                    )
+    return {
+        "schema": "metalsharp.m12.d3d12-native-tessellation-source-guard.v1",
+        "ok": not matches and not missing,
+        "rule": "D3D12 native tessellation must not reuse D3D11 context/pipeline/shader machinery",
+        "scanned_files": scanned,
+        "missing_files": missing,
+        "forbidden_patterns": {name: pattern for name, pattern in D3D12_NATIVE_TESSELLATION_FORBIDDEN_PATTERNS},
+        "matches": matches[:50],
+        "matches_truncated": len(matches) > 50,
+    }
+
 
 def active_msl_err_sidecars(shader_cache_dir: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
@@ -4218,6 +4270,9 @@ def main() -> int:
     if not all(x["hash_match"] for x in staged):
         return 7
 
+    source_guard = d3d12_native_tessellation_source_guard(repo)
+    write_json(proof_root / "phase0-d3d12-native-tessellation-source-guard.json", source_guard)
+
     identity_result: dict[str, Any] | None = None
     visible_game_result: dict[str, Any] | None = None
     metal_archive_result: dict[str, Any] | None = None
@@ -4257,6 +4312,7 @@ def main() -> int:
         and build["ok"]
         and game_build["ok"]
         and all(x["hash_match"] for x in staged)
+        and source_guard["ok"]
         and (args.skip_run or bool(identity_result and identity_result["ok"]))
         and (args.skip_run or bool(vulkan_report_result and vulkan_report_result["ok"]))
         and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"]))
@@ -4267,6 +4323,7 @@ def main() -> int:
         "build_ok": build["ok"],
         "game_build_ok": game_build["ok"],
         "runtime_stage_ok": all(x["hash_match"] for x in staged),
+        "d3d12_native_tessellation_source_guard_ok": source_guard["ok"],
         "identity_probe_ok": None if args.skip_run else bool(identity_result and identity_result["ok"]),
         "vulkan_report_ok": None if args.skip_run else bool(vulkan_report_result and vulkan_report_result["ok"]),
         "visible_game_ok": None
@@ -4291,6 +4348,9 @@ def main() -> int:
             "manifest": str(proof_root / "proof-run-manifest.json"),
             "build": str(proof_root / "phase0-build-runtime-identity-probe.json"),
             "staged_hashes": str(proof_root / "phase0-staged-runtime-hashes.json"),
+            "d3d12_native_tessellation_source_guard": str(
+                proof_root / "phase0-d3d12-native-tessellation-source-guard.json"
+            ),
             "identity": str(proof_root / "phase0-runtime-identity" / "phase0-runtime-identity-summary.json")
             if not args.skip_run
             else None,
