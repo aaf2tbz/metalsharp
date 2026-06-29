@@ -2131,6 +2131,8 @@ struct IndexedDrawStats {
     uint32_t indices_created = 0;
     uint32_t index_format = DXGI_FORMAT_R16_UINT;
     uint32_t index_buffer_size = 0;
+    uint32_t index_view_byte_offset = 0;
+    uint32_t start_index_location = 2;
     uint32_t draw_indexed_calls = 0;
     uint32_t present_samples_checked = 0;
     uint32_t present_sample_matches = 0;
@@ -2256,22 +2258,23 @@ float4 indexed_ps(PSIn input) : SV_Target {
             scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
         }
 
-        D3D12_RESOURCE_DESC ib_desc = buffer_desc(6u * sizeof(uint16_t));
+        D3D12_RESOURCE_DESC ib_desc = buffer_desc(10u * sizeof(uint16_t));
         stats.create_index_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &ib_desc,
                                                                        D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                                        IID_PPV_ARGS(&scene.index_buffer));
         if (SUCCEEDED(stats.create_index_buffer_hr) && scene.index_buffer) {
             uint16_t* mapped = nullptr;
             if (SUCCEEDED(scene.index_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
-                const uint16_t indices[6] = {0, 1, 2, 2, 1, 3};
+                const uint16_t indices[10] = {65535, 65535, 65535, 65535, 0, 1, 2, 2, 1, 3};
                 std::memcpy(mapped, indices, sizeof(indices));
                 D3D12_RANGE written = {0, sizeof(indices)};
                 scene.index_buffer->Unmap(0, &written);
                 stats.indices_created = 6;
-                stats.index_buffer_size = sizeof(indices);
+                stats.index_view_byte_offset = 2u * sizeof(uint16_t);
+                stats.index_buffer_size = 8u * sizeof(uint16_t);
             }
-            scene.index_view.BufferLocation = scene.index_buffer->GetGPUVirtualAddress();
-            scene.index_view.SizeInBytes = 6u * sizeof(uint16_t);
+            scene.index_view.BufferLocation = scene.index_buffer->GetGPUVirtualAddress() + stats.index_view_byte_offset;
+            scene.index_view.SizeInBytes = stats.index_buffer_size;
             scene.index_view.Format = DXGI_FORMAT_R16_UINT;
             stats.index_format = DXGI_FORMAT_R16_UINT;
         }
@@ -2281,7 +2284,8 @@ float4 indexed_ps(PSIn input) : SV_Target {
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
                  SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
                  SUCCEEDED(stats.create_index_buffer_hr) && stats.vertices_created == 4 && stats.indices_created == 6 &&
-                 stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 12 && scene.root_signature &&
+                 stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
+                 stats.index_view_byte_offset == 4 && stats.start_index_location == 2 && scene.root_signature &&
                  scene.pipeline_state && scene.vertex_buffer && scene.index_buffer &&
                  scene.vertex_view.BufferLocation != 0 && scene.index_view.BufferLocation != 0;
 
@@ -6477,7 +6481,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
             list->IASetVertexBuffers(0, 1, &indexed_draw.vertex_view);
             list->IASetIndexBuffer(&indexed_draw.index_view);
-            list->DrawIndexedInstanced(indexed_draw.stats.indices_created, 1, 0, 0, 0);
+            list->DrawIndexedInstanced(indexed_draw.stats.indices_created, 1,
+                                       indexed_draw.stats.start_index_location, 0, 0);
             stats.indexed_draw.draw_indexed_calls++;
             if (tessellation_fallback.pipeline_state) {
                 list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
@@ -7649,6 +7654,8 @@ int main() {
     std::printf("      \"indices_created\": %u,\n", d3d.indexed_draw.indices_created);
     std::printf("      \"index_format\": %u,\n", d3d.indexed_draw.index_format);
     std::printf("      \"index_buffer_size\": %u,\n", d3d.indexed_draw.index_buffer_size);
+    std::printf("      \"index_view_byte_offset\": %u,\n", d3d.indexed_draw.index_view_byte_offset);
+    std::printf("      \"start_index_location\": %u,\n", d3d.indexed_draw.start_index_location);
     std::printf("      \"draw_indexed_calls\": %u,\n", d3d.indexed_draw.draw_indexed_calls);
     std::printf("      \"present_samples_checked\": %u,\n", d3d.indexed_draw.present_samples_checked);
     std::printf("      \"present_sample_matches\": %u,\n", d3d.indexed_draw.present_sample_matches);

@@ -3042,7 +3042,9 @@ def run_fresh_game(
         and int(indexed_draw_json.get("vertices_created", 0) or 0) == 4
         and int(indexed_draw_json.get("indices_created", 0) or 0) == 6
         and int(indexed_draw_json.get("index_format", 0) or 0) == 57
-        and int(indexed_draw_json.get("index_buffer_size", 0) or 0) == 12
+        and int(indexed_draw_json.get("index_buffer_size", 0) or 0) == 16
+        and int(indexed_draw_json.get("index_view_byte_offset", 0) or 0) == 4
+        and int(indexed_draw_json.get("start_index_location", 0) or 0) == 2
         and int(indexed_draw_json.get("draw_indexed_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_samples_checked", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_sample_matches", 0) or 0) == visible_frames
