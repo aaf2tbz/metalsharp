@@ -594,9 +594,10 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
             windows_dll_dir = source_path.parent().map(|p| p.to_path_buf());
         }
         let present = source_path.exists();
-        let optional_stub = deploy.filename.starts_with("nvapi")
-            || deploy.filename.starts_with("nvngx")
-            || deploy.filename.starts_with("atidxx");
+        let optional_stub = pipeline != PipelineId::M12
+            && (deploy.filename.starts_with("nvapi")
+                || deploy.filename.starts_with("nvngx")
+                || deploy.filename.starts_with("atidxx"));
         let sha = if present { crate::diagnostics::file_sha256(&source_path) } else { None };
         let size = if present { std::fs::metadata(&source_path).ok().map(|m| m.len()) } else { None };
         deploy_dlls.push(serde_json::json!({
@@ -686,9 +687,10 @@ pub fn deploy_recipe_dlls(recipe: &super::recipe::LaunchRecipe) -> Result<(), Bo
     let mut manifest_dlls = Vec::new();
     for deploy in &recipe.dlls {
         if !deploy.source_present {
-            let is_optional_stub = deploy.filename.starts_with("nvapi")
-                || deploy.filename.starts_with("nvngx")
-                || deploy.filename.starts_with("atidxx");
+            let is_optional_stub = recipe.pipeline != PipelineId::M12
+                && (deploy.filename.starts_with("nvapi")
+                    || deploy.filename.starts_with("nvngx")
+                    || deploy.filename.starts_with("atidxx"));
             if is_optional_stub {
                 continue;
             }
@@ -955,8 +957,9 @@ fn runtime_path_record(path: &Path, required: bool) -> serde_json::Value {
     })
 }
 
-fn optional_route_stub(filename: &str) -> bool {
-    filename.starts_with("nvapi") || filename.starts_with("nvngx") || filename.starts_with("atidxx")
+fn optional_route_stub(pipeline: PipelineId, filename: &str) -> bool {
+    pipeline != PipelineId::M12
+        && (filename.starts_with("nvapi") || filename.starts_with("nvngx") || filename.starts_with("atidxx"))
 }
 
 fn prepare_readiness_report(recipe: &super::recipe::LaunchRecipe, env: &[(String, String)]) -> serde_json::Value {
@@ -982,7 +985,7 @@ fn prepare_readiness_report(recipe: &super::recipe::LaunchRecipe, env: &[(String
         .dlls
         .iter()
         .map(|dll| {
-            let optional = optional_route_stub(&dll.filename);
+            let optional = optional_route_stub(recipe.pipeline, &dll.filename);
             let source_sha256 =
                 if dll.source_present { crate::diagnostics::file_sha256(&dll.source_path) } else { None };
             let dest_present = dll.dest_path.metadata().map(|m| m.is_file() && m.len() > 0).unwrap_or(false);

@@ -48,12 +48,16 @@ if [[ -f "${BUILD_DIR}/build.ninja" ]]; then
   meson setup "${BUILD_DIR}" "${DXMT_DIR}" --reconfigure \
     --cross-file "${DXMT_DIR}/build-win64.txt" \
     -Dnative_llvm_path="${LLVM_DIR}" \
-    -Dwine_install_path="${WINE_ROOT}"
+    -Dwine_install_path="${WINE_ROOT}" \
+    -Denable_nvapi=true \
+    -Denable_nvngx=true
 else
   meson setup "${BUILD_DIR}" "${DXMT_DIR}" \
     --cross-file "${DXMT_DIR}/build-win64.txt" \
     -Dnative_llvm_path="${LLVM_DIR}" \
-    -Dwine_install_path="${WINE_ROOT}"
+    -Dwine_install_path="${WINE_ROOT}" \
+    -Denable_nvapi=true \
+    -Denable_nvngx=true
 fi
 
 ninja -C "${BUILD_DIR}" \
@@ -63,7 +67,9 @@ ninja -C "${BUILD_DIR}" \
   src/winemetal/winemetal.dll \
   src/d3d10/d3d10core.dll \
   src/d3d11/d3d11.dll \
-  src/d3d12/d3d12.dll
+  src/d3d12/d3d12.dll \
+  src/nvapi/nvapi64.dll \
+  src/nvngx/nvngx.dll
 
 echo "x86_64 LLVM ready: ${LLVM_DIR}"
 echo "rebuilt: ${BUILD_DIR}/src/dxgi/dxgi.dll"
@@ -73,3 +79,5 @@ echo "rebuilt: ${BUILD_DIR}/src/d3d11/d3d11.dll"
 echo "rebuilt: ${BUILD_DIR}/src/d3d12/d3d12.dll"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/winemetal.dll"
 echo "rebuilt: ${BUILD_DIR}/src/winemetal/unix/winemetal.so"
+echo "rebuilt: ${BUILD_DIR}/src/nvapi/nvapi64.dll"
+echo "rebuilt: ${BUILD_DIR}/src/nvngx/nvngx.dll"

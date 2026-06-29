@@ -935,7 +935,7 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
 
     for deploy in &node.deploy_dlls {
         let path = ms_root.join(deploy.source_subpath).join(deploy.filename);
-        let required = !optional_runtime_stub(deploy.filename);
+        let required = node.id == PipelineId::M12 || !optional_runtime_stub(deploy.filename);
         assets.push(RuntimeAsset {
             name: format!("{}/{}", deploy.source_subpath, deploy.filename),
             present: runtime_file_present(&path),

@@ -26,6 +26,8 @@ ARTIFACTS = [
     ("src/dxgi/dxgi.dll", "x86_64-windows/dxgi.dll"),
     ("src/dxgi/dxgi_dxmt.dll", "x86_64-windows/dxgi_dxmt.dll"),
     ("src/winemetal/winemetal.dll", "x86_64-windows/winemetal.dll"),
+    ("src/nvapi/nvapi64.dll", "x86_64-windows/nvapi64.dll"),
+    ("src/nvngx/nvngx.dll", "x86_64-windows/nvngx.dll"),
     ("src/winemetal/unix/winemetal.so", "x86_64-unix/winemetal.so"),
 ]
 
