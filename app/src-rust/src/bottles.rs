@@ -637,24 +637,22 @@ fn refresh_m12_runtime_before_save(manifest: &mut BottleManifest) {
     manifest.installed_components =
         merge_components(manifest.installed_components.clone(), default_components_for(manifest.runtime_profile));
 
-    #[cfg(not(test))]
-    {
-        match dirs::home_dir().ok_or_else(|| "home directory could not be resolved".to_string()).and_then(|home| {
-            crate::installer::ensure_m12_runtime_ready(&home)
-                .map(|changed| if changed { "installed" } else { "current" }.to_string())
-        }) {
-            Ok(state) => {
-                eprintln!("bottle: M12 shared runtime is {} before save", state);
-                for id in ["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"] {
-                    mark_component_state(manifest, id, ComponentState::Installed);
-                }
-            },
-            Err(e) => {
-                eprintln!("bottle: M12 shared runtime setup failed before save: {}", e);
-                for id in ["d3d12", "d3d12_agility", "d3d11", "dxgi", "gpu_vendor_stubs"] {
-                    mark_component_state(manifest, id, ComponentState::NeedsRepair);
-                }
-            },
+    let m12_runtime_ready = dirs::home_dir()
+        .map(|home| crate::installer::runtime_artifact_report_for(&home))
+        .and_then(|report| {
+            report.get("dxmt_m12").and_then(|m12| m12.get("all_present")).and_then(|value| value.as_bool())
+        })
+        .unwrap_or(false);
+
+    if m12_runtime_ready {
+        eprintln!("bottle: M12 shared runtime is current before save");
+        for id in ["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"] {
+            mark_component_state(manifest, id, ComponentState::Installed);
+        }
+    } else {
+        eprintln!("bottle: M12 shared runtime is incomplete before save");
+        for id in ["d3d12", "d3d12_agility", "d3d11", "dxgi", "gpu_vendor_stubs"] {
+            mark_component_state(manifest, id, ComponentState::NeedsRepair);
         }
     }
 
@@ -1084,14 +1082,12 @@ pub fn prepare_steam_game_launch(
     appid: u32,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    if matches!(pipeline, crate::mtsp::engine::PipelineId::M12) {
-        #[cfg(not(test))]
-        if let Some(home) = dirs::home_dir() {
-            crate::installer::ensure_m12_runtime_ready(&home)
-                .map_err(|e| format!("M12 runtime setup failed before Steam launch: {}", e))?;
-        }
-        let _ = crate::setup::prepare_game(appid)?;
-    }
+    // Do not run legacy setup::prepare_game or installer restaging here for
+    // MTSP routes. /steam/launch-game immediately calls
+    // mtsp::launcher::prepare_steam_pipeline_env(), which validates the route
+    // runtime and stages the same game-local DLLs/env that launch will use.
+    // Calling the old setup path here can overwrite an explicitly staged M12
+    // runtime with packaged assets and break PR/runtime proof runs.
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let mut manifest = ensure_steam_game_bottle_inner(appid, &name, dual.wine_dir.as_deref(), pipeline, false)?;

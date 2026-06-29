@@ -445,51 +445,51 @@ pub fn launch_auto(appid: u32) -> Result<(u32, &'static str), Box<dyn std::error
 }
 
 pub fn prepare_pipeline(appid: u32) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    prepare_pipeline_with_request(appid, None)
+}
+
+pub fn prepare_pipeline_with_request(
+    appid: u32,
+    requested: Option<PipelineId>,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let mut timing = crate::diagnostics::LaunchTiming::start();
     timing.mark("pipeline_resolution_start");
-    let pipeline_id = super::rules::resolve_pipeline(appid);
+    let pipeline_id = super::rules::resolve_requested_pipeline(appid, requested);
     let node = get_pipeline(pipeline_id);
     timing.mark("pipeline_resolution_done");
-    prepare_start_protected_game_for_pipeline(appid, pipeline_id);
-    timing.mark("start_protected_game_prepare_done");
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
-    timing.mark("recipe_build_done");
-    let deployed_sources: Vec<String> = {
-        validate_recipe_runtime(&recipe)?;
-        timing.mark("recipe_runtime_validate_done");
-        if let Some(game_dir) = recipe.game_dir.as_ref() {
-            cleanup_legacy_injections(game_dir)?;
-            timing.mark("legacy_injection_cleanup_done");
-        }
-        let sources = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
-        deploy_recipe_dlls(&recipe)?;
-        timing.mark("dll_staging_done");
-        let home = dirs::home_dir().ok_or("no home dir")?;
-        let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
-        deploy_prefix_route_dlls(&recipe, &prefix)?;
-        timing.mark("prefix_route_dll_deploy_done");
-        sources
-    };
+
+    // Use the exact MTSP handoff preparation path used by /steam/launch-game:
+    // runtime validation, legacy cleanup, Steam API sidecars, game-local DLL
+    // deployment, prefix route DLL deployment, and launch env construction.
+    let (env, recipe) = prepare_steam_pipeline_env(appid, pipeline_id)?;
+    timing.mark("mtsp_launch_handoff_prepare_done");
+    let readiness = prepare_readiness_report(&recipe, &env);
+    timing.mark("prepare_readiness_report_done");
     timing.mark("prepare_complete");
 
     // Persist launch timing so performance deltas can be compared between PRs
     // via GET /diagnostics/launch/timing?appid=...
-    let home_for_timing = dirs::home_dir();
-    if let Some(home) = home_for_timing {
+    if let Some(home) = dirs::home_dir() {
         timing.record_for_bottle(&home, &format!("steam_{}", appid));
     }
 
-    let timing_json = timing.to_json();
+    let readiness_ok = readiness.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
 
     Ok(serde_json::json!({
-        "ok": true,
+        "ok": readiness_ok,
+        "schema": "metalsharp.mtsp.prepare.v2",
+        "canonical_endpoint": "/mtsp/prepare",
         "appid": appid,
+        "requested_pipeline": requested,
         "pipeline": node.id,
         "pipeline_name": node.name,
         "recipe": recipe,
+        "launch_env": env.iter().map(|(key, value)| serde_json::json!({"key": key, "value": value})).collect::<Vec<_>>(),
+        "readiness": readiness,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
-        "timing": timing_json,
+        "timing": timing.to_json(),
     }))
 }
 
@@ -530,6 +530,8 @@ pub fn prepare_steam_pipeline_env(
         prepare_steam_api_for_game_dir(&home, game_dir, appid, pipeline_id);
         cleanup_legacy_injections(game_dir)?;
         if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
+            let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
+            cleanup_m12_legacy_hook_artifacts(game_dir, &prefix);
             crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
         }
     }
@@ -618,7 +620,7 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
     // For the isolated M12/M13 lane, also verify the x86_64-unix sidecars that
     // winemetal requires at runtime.
     let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
-    let unix_lib_dir = if matches!(pipeline, PipelineId::M12 | PipelineId::M13) {
+    let unix_lib_dir = if pipeline == PipelineId::M12 {
         let dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
         for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
             let path = dir.join(sidecar);
@@ -939,6 +941,140 @@ fn files_match(left: &std::path::Path, right: &std::path::Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     }
+}
+
+fn runtime_path_record(path: &Path, required: bool) -> serde_json::Value {
+    let metadata = std::fs::metadata(path).ok();
+    let present = metadata.as_ref().map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+    serde_json::json!({
+        "path": path,
+        "required": required,
+        "present": present,
+        "size_bytes": metadata.map(|m| m.len()),
+        "sha256": if present { crate::diagnostics::file_sha256(path) } else { None },
+    })
+}
+
+fn optional_route_stub(filename: &str) -> bool {
+    filename.starts_with("nvapi") || filename.starts_with("nvngx") || filename.starts_with("atidxx")
+}
+
+fn prepare_readiness_report(recipe: &super::recipe::LaunchRecipe, env: &[(String, String)]) -> serde_json::Value {
+    let env_value = |key: &str| -> Option<&str> {
+        env.iter().find(|(candidate, _)| candidate == key).map(|(_, value)| value.as_str())
+    };
+
+    let runtime_assets: Vec<serde_json::Value> = recipe
+        .runtime_assets
+        .iter()
+        .map(|asset| {
+            let mut record = runtime_path_record(&asset.path, asset.required);
+            if let Some(obj) = record.as_object_mut() {
+                obj.insert("name".into(), serde_json::json!(asset.name));
+                obj.insert("present".into(), serde_json::json!(asset.present));
+            }
+            record
+        })
+        .collect();
+    let runtime_assets_ok = recipe.runtime_assets.iter().all(|asset| !asset.required || asset.present);
+
+    let dlls: Vec<serde_json::Value> = recipe
+        .dlls
+        .iter()
+        .map(|dll| {
+            let optional = optional_route_stub(&dll.filename);
+            let source_sha256 =
+                if dll.source_present { crate::diagnostics::file_sha256(&dll.source_path) } else { None };
+            let dest_present = dll.dest_path.metadata().map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+            let dest_sha256 = if dest_present { crate::diagnostics::file_sha256(&dll.dest_path) } else { None };
+            let matches_source = matches!((&source_sha256, &dest_sha256), (Some(source), Some(dest)) if source == dest);
+            serde_json::json!({
+                "filename": dll.filename,
+                "source_subpath": dll.source_subpath,
+                "source_path": dll.source_path,
+                "dest_path": dll.dest_path,
+                "required": !optional,
+                "source_present": dll.source_present,
+                "dest_present": dest_present,
+                "source_sha256": source_sha256,
+                "dest_sha256": dest_sha256,
+                "matches_source": matches_source,
+                "ok": optional || (dll.source_present && dest_present && matches_source),
+            })
+        })
+        .collect();
+    let dlls_ok = dlls.iter().all(|record| record.get("ok").and_then(|value| value.as_bool()).unwrap_or(false));
+
+    let prefix = dirs::home_dir()
+        .map(|home| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"))
+        .unwrap_or_default();
+    let prefix_system32 = prefix.join("drive_c").join("windows").join("system32");
+    let prefix_dlls: Vec<serde_json::Value> = if recipe.pipeline == PipelineId::M12 {
+        recipe
+            .dlls
+            .iter()
+            .filter(|dll| {
+                matches!(
+                    dll.filename.as_str(),
+                    "d3d12.dll" | "dxgi.dll" | "dxgi_dxmt.dll" | "d3d11.dll" | "d3d10core.dll" | "winemetal.dll"
+                )
+            })
+            .map(|dll| {
+                let dest_path = prefix_system32.join(&dll.filename);
+                let source_sha256 =
+                    if dll.source_present { crate::diagnostics::file_sha256(&dll.source_path) } else { None };
+                let dest_present = dest_path.metadata().map(|m| m.is_file() && m.len() > 0).unwrap_or(false);
+                let dest_sha256 = if dest_present { crate::diagnostics::file_sha256(&dest_path) } else { None };
+                let matches_source =
+                    matches!((&source_sha256, &dest_sha256), (Some(source), Some(dest)) if source == dest);
+                serde_json::json!({
+                    "filename": dll.filename,
+                    "source_path": dll.source_path,
+                    "dest_path": dest_path,
+                    "source_sha256": source_sha256,
+                    "dest_sha256": dest_sha256,
+                    "dest_present": dest_present,
+                    "matches_source": matches_source,
+                    "ok": dll.source_present && dest_present && matches_source,
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let prefix_dlls_ok =
+        prefix_dlls.iter().all(|record| record.get("ok").and_then(|value| value.as_bool()).unwrap_or(false));
+
+    let winedllpath = env_value("WINEDLLPATH").unwrap_or_default();
+    let dyld_library_path = env_value("DYLD_LIBRARY_PATH").unwrap_or_default();
+    let dyld_fallback_library_path = env_value("DYLD_FALLBACK_LIBRARY_PATH").unwrap_or_default();
+    let winemetal_unixlib = env_value("DXMT_WINEMETAL_UNIXLIB").unwrap_or_default();
+    let m12_env_ok = recipe.pipeline != PipelineId::M12
+        || (winedllpath.contains("dxmt_m12/x86_64-windows")
+            && (dyld_library_path.contains("dxmt_m12/x86_64-unix")
+                || dyld_fallback_library_path.contains("dxmt_m12/x86_64-unix"))
+            && winemetal_unixlib == "winemetal.so");
+
+    let ok = runtime_assets_ok && dlls_ok && prefix_dlls_ok && m12_env_ok;
+    serde_json::json!({
+        "ok": ok,
+        "runtime_assets_ok": runtime_assets_ok,
+        "game_local_dlls_ok": dlls_ok,
+        "prefix_route_dlls_ok": prefix_dlls_ok,
+        "m12_env_ok": m12_env_ok,
+        "runtime_assets": runtime_assets,
+        "game_local_dlls": dlls,
+        "prefix_route_dlls": prefix_dlls,
+        "env_checks": {
+            "WINEDLLPATH": winedllpath,
+            "DYLD_LIBRARY_PATH": dyld_library_path,
+            "DYLD_FALLBACK_LIBRARY_PATH": dyld_fallback_library_path,
+            "WINEDLLOVERRIDES": env_value("WINEDLLOVERRIDES"),
+            "DXMT_WINEMETAL_UNIXLIB": winemetal_unixlib,
+            "requires_dxmt_m12_windows": recipe.pipeline == PipelineId::M12,
+            "requires_dxmt_m12_unix": recipe.pipeline == PipelineId::M12,
+        },
+    })
 }
 
 fn launch_working_dir<'a>(game_dir: &'a std::path::Path, exe_path: &'a std::path::Path) -> &'a std::path::Path {

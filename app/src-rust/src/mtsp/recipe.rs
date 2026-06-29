@@ -894,22 +894,64 @@ fn m9_d3d9_source_subpath(game_dir: &Path, exe_path: Option<&Path>) -> &'static 
     "lib/wine/x86_64-windows"
 }
 
+fn runtime_file_present(path: &Path) -> bool {
+    path.metadata().map(|metadata| metadata.is_file() && metadata.len() > 0).unwrap_or(false)
+}
+
+fn optional_runtime_stub(filename: &str) -> bool {
+    filename.starts_with("nvapi") || filename.starts_with("nvngx") || filename.starts_with("atidxx")
+}
+
 fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAsset> {
     let mut assets = Vec::new();
 
     if node.requires_wine {
         let wine = crate::platform::runtime_wine_binary(ms_root);
-        assets.push(RuntimeAsset { name: "wine".into(), present: wine.exists(), path: wine, required: true });
+        assets.push(RuntimeAsset {
+            name: "wine".into(),
+            present: runtime_file_present(&wine),
+            path: wine,
+            required: true,
+        });
     }
 
     for path in &node.dyld_paths {
         let p = ms_root.join(path);
-        assets.push(RuntimeAsset { name: path.to_string(), present: p.exists(), path: p, required: true });
+        assets.push(RuntimeAsset { name: path.to_string(), present: p.is_dir(), path: p, required: true });
+    }
+
+    if node.id == PipelineId::M12 {
+        let unix_dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
+        for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+            let path = unix_dir.join(filename);
+            assets.push(RuntimeAsset {
+                name: format!("lib/dxmt_m12/x86_64-unix/{filename}"),
+                present: runtime_file_present(&path),
+                path,
+                required: true,
+            });
+        }
+    }
+
+    for deploy in &node.deploy_dlls {
+        let path = ms_root.join(deploy.source_subpath).join(deploy.filename);
+        let required = !optional_runtime_stub(deploy.filename);
+        assets.push(RuntimeAsset {
+            name: format!("{}/{}", deploy.source_subpath, deploy.filename),
+            present: runtime_file_present(&path),
+            path,
+            required,
+        });
     }
 
     if node.backend == "dxmt" {
         let conf = ms_root.join("etc").join("dxmt.conf");
-        assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
+        assets.push(RuntimeAsset {
+            name: "dxmt.conf".into(),
+            present: runtime_file_present(&conf),
+            path: conf,
+            required: false,
+        });
     }
 
     if node.backend == "d3dmetal" {

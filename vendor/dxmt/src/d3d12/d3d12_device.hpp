@@ -438,6 +438,7 @@ private:
   FormatCapabilityInspector m_format_inspector;
   Com<IMTLDXGIAdapter> m_adapter;
   IMTLDXGIDevice *m_dxgi_device = nullptr;
+  std::atomic_bool m_dxgi_owner_released = false;
   ComPrivateData m_private_data;
   std::atomic<uint32_t> m_refCount = {1ul};
   std::atomic<uint32_t> m_refPrivate = {1ul};

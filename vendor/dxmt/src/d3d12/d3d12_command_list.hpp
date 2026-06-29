@@ -265,7 +265,10 @@ public:
       UINT thread_group_count_z) override;
 
   const std::vector<uint8_t> &GetCommands() const { return m_cmds; }
-  void ClearCommands() { m_cmds.clear(); }
+  void ClearCommands() {
+    ReleaseReferencedPipelineStates();
+    m_cmds.clear();
+  }
   uint64_t GetDebugId() const { return m_debug_id; }
 
 private:
@@ -284,12 +287,16 @@ private:
     memcpy(m_cmds.data() + offset + sizeof(T) - 1, extra, extra_size);
   }
 
+  void RetainPipelineState(ID3D12PipelineState *pipeline_state);
+  void ReleaseReferencedPipelineStates();
+
   MTLD3D12Device *m_device;
   MTLD3D12CommandAllocator *m_allocator;
   D3D12_COMMAND_LIST_TYPE m_type;
   bool m_closed = false;
   uint64_t m_debug_id = 0;
   std::vector<uint8_t> m_cmds;
+  std::vector<ID3D12PipelineState *> m_referenced_pipeline_states;
   std::atomic<uint32_t> m_refCount = {1ul};
   std::atomic<uint32_t> m_refPrivate = {1ul};
 };

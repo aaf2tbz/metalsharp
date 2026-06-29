@@ -16,11 +16,11 @@
 #include "d3d12_root_signature.hpp"
 #include "com/com_object.hpp"
 #include "log/log.hpp"
+#include "thread.hpp"
 #include "util_string.hpp"
 #include "d3d12_resource.hpp"
 #include <algorithm>
 #include <bit>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 #include <string>
@@ -1654,7 +1654,7 @@ MTLD3D12Device::MTLD3D12Device(std::unique_ptr<Device> &&device,
         g_d3d12_device_addr, g_d3d12_device_size);
   if (device_vtable_watcher_enabled()) {
     g_device_watcher_running.store(true);
-    std::thread watcher(device_vtable_watcher);
+    dxmt::thread watcher([]() { device_vtable_watcher(); });
     watcher.detach();
   }
   Logger::info("D3D12 device created via DXMT Metal backend");
@@ -1752,12 +1752,19 @@ ULONG STDMETHODCALLTYPE MTLD3D12Device::Release() {
   uint32_t rc = --m_refCount;
   if (rc <= 1)
     TRACE("Device::Release rc=%u this=%p", rc, (void *)this);
+  if (rc == 1 && m_dxgi_device && !m_dxgi_owner_released.exchange(true)) {
+    TRACE("Device::Release dropping companion DXGI-device owner ref this=%p dxgi=%p",
+          (void *)this, (void *)m_dxgi_device);
+    m_dxgi_device->Release();
+    return rc;
+  }
   if (!rc) {
     uint32_t rp = --m_refPrivate;
     if (!rp) {
       TRACE("Device::Release DELETING this=%p", (void *)this);
       m_refPrivate += 0x80000000;
-      delete this;
+      this->~MTLD3D12Device();
+      VirtualFree(this, 0, MEM_RELEASE);
     }
   }
   return rc;
@@ -1793,8 +1800,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandQueue(
 
   auto queue = new MTLD3D12CommandQueue(this, m_device->queue(), *desc);
   HRESULT hr = queue->QueryInterface(riid, command_queue);
-  if (FAILED(hr))
-    queue->Release();
+  queue->Release();
   return hr;
 }
 
@@ -1807,8 +1813,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommandAllocator(
 
   auto allocator = new MTLD3D12CommandAllocator(this, type);
   HRESULT hr = allocator->QueryInterface(riid, command_allocator);
-  if (FAILED(hr))
-    allocator->Release();
+  allocator->Release();
   return hr;
 }
 
@@ -1886,8 +1891,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateGraphicsPipelineState(
     }
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
-  if (FAILED(hr))
-    pso->Release();
+  pso->Release();
   TRACE("CreateGraphicsPSO EXIT hr=0x%lx pso=%p", hr, *pipeline_state);
   return hr;
 }
@@ -1933,8 +1937,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateComputePipelineState(
     }
   }
   HRESULT hr = pso->QueryInterface(riid, pipeline_state);
-  if (FAILED(hr))
-    pso->Release();
+  pso->Release();
   return hr;
 }
 
@@ -1952,8 +1955,7 @@ MTLD3D12Device::CreateCommandList(UINT node_mask, D3D12_COMMAND_LIST_TYPE type,
   auto list = new MTLD3D12GraphicsCommandList(this, allocator, type,
                                               initial_pipeline_state);
   HRESULT hr = list->QueryInterface(riid, command_list);
-  if (FAILED(hr))
-    list->Release();
+  list->Release();
   return hr;
 }
 
@@ -2694,10 +2696,7 @@ MTLD3D12Device::CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *desc,
   TRACE("CreateDescriptorHeap: heap=%p data=%p", (void *)heap,
         heap->GetDescriptors());
   HRESULT hr = heap->QueryInterface(riid, descriptor_heap);
-  if (FAILED(hr)) {
-    heap->~MTLD3D12DescriptorHeap();
-    HeapFree(GetProcessHeap(), 0, raw);
-  }
+  heap->Release();
   return hr;
 }
 
@@ -2718,8 +2717,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateRootSignature(
 
   auto rs = new MTLD3D12RootSignature(this, bytecode, bytecode_length);
   HRESULT hr = rs->QueryInterface(riid, root_signature);
-  if (FAILED(hr))
-    rs->Release();
+  rs->Release();
   TRACE("CreateRootSignature DONE hr=0x%lx rs=%p out=%p", hr, (void *)rs,
         root_signature ? *root_signature : nullptr);
   return hr;
@@ -3161,8 +3159,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateCommittedResource(
           "%p as resource!",
           (void *)this);
   }
-  if (FAILED(hr))
-    res->Release();
+  res->Release();
   return hr;
 }
 
@@ -3192,8 +3189,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateHeap(
   TRACE("CreateHeap normalized size=%llu alignment=%llu out=%p hr=0x%lx",
         (unsigned long long)normalized.SizeInBytes,
         (unsigned long long)normalized.Alignment, heap ? *heap : nullptr, hr);
-  if (FAILED(hr))
-    h->Release();
+  h->Release();
   return hr;
 }
 
@@ -3256,8 +3252,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreatePlacedResource(
   HRESULT hr = res->QueryInterface(riid, resource);
   TRACE("CreatePlacedResource out=%p hr=0x%lx", resource ? *resource : nullptr,
         hr);
-  if (FAILED(hr))
-    res->Release();
+  res->Release();
   return hr;
 }
 
@@ -3291,8 +3286,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateReservedResource(
   Logger::info(str::format("M12 sparse reserved resource compat dim=",
                            desc->Dimension, " width=", desc->Width,
                            " flags=0x", (unsigned)desc->Flags));
-  if (FAILED(hr))
-    res->Release();
+  res->Release();
   return hr;
 }
 
@@ -3337,8 +3331,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateFence(UINT64 initial_value,
   TRACE("CreateFence init=%llu fence=%p", (unsigned long long)initial_value,
         (void *)f);
   HRESULT hr = f->QueryInterface(riid, fence);
-  if (FAILED(hr))
-    f->Release();
+  f->Release();
   return hr;
 }
 
@@ -3449,8 +3442,7 @@ HRESULT STDMETHODCALLTYPE MTLD3D12Device::CreateQueryHeap(
   HRESULT hr = qh->QueryInterface(riid, heap);
   TRACE("CreateQueryHeap DONE qh=%p out=%p hr=0x%lx", (void *)qh,
         heap ? *heap : nullptr, hr);
-  if (FAILED(hr))
-    qh->Release();
+  qh->Release();
   return hr;
 }
 
@@ -3473,7 +3465,7 @@ MTLD3D12Device::CreateCommandSignature(const D3D12_COMMAND_SIGNATURE_DESC *desc,
   auto *obj = new MTLD3D12CommandSignature(this, *desc);
   HRESULT hr = obj->QueryInterface(riid, command_signature);
   if (FAILED(hr))
-    obj->Release();
+    delete obj;
   return hr;
 }
 

@@ -64,6 +64,32 @@ static uint32_t ReadLe32(const uint8_t *data) {
          ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
 }
 
+bool DXBCContainerHasChunk(const void *bytecode, SIZE_T size,
+                          const char tag[4]) {
+  if (!bytecode || size < 36)
+    return false;
+  const auto *bytes = static_cast<const uint8_t *>(bytecode);
+  if (std::memcmp(bytes, "DXBC", 4) != 0)
+    return false;
+
+  uint32_t chunk_count = ReadLe32(bytes + 28);
+  if (chunk_count > 128 || 32ull + (uint64_t)chunk_count * 4ull > size)
+    return false;
+
+  for (uint32_t i = 0; i < chunk_count; i++) {
+    uint32_t off = ReadLe32(bytes + 32 + i * 4);
+    if ((uint64_t)off + 8ull > size)
+      continue;
+    const uint8_t *chunk = bytes + off;
+    uint32_t chunk_size = ReadLe32(chunk + 4);
+    if ((uint64_t)off + 8ull + chunk_size > size)
+      continue;
+    if (std::memcmp(chunk, tag, 4) == 0)
+      return true;
+  }
+  return false;
+}
+
 bool ExtractPSV0ComputeThreadgroupSize(const void *bytecode, SIZE_T size,
                                        uint32_t out[3]) {
   if (!bytecode || size < 36)
@@ -170,27 +196,54 @@ uint32_t AsyncPipelineWorkerCount() {
 
 class AsyncPipelineCompiler {
 public:
-  void Enqueue(MTLD3D12PipelineState *pso) {
-    EnsureStarted();
+  bool Enqueue(MTLD3D12PipelineState *pso) {
+    std::lock_guard<dxmt::mutex> lock(m_mutex);
+    if (m_stopping)
+      return false;
+
+    EnsureStartedLocked();
     pso->AddRef();
-    {
-      std::lock_guard<std::mutex> lock(m_mutex);
-      m_queue.push_back(pso);
-    }
+    m_queue.push_back(pso);
     m_cv.notify_one();
+    return true;
+  }
+
+  void Shutdown() {
+    std::vector<dxmt::thread> workers;
+    {
+      std::lock_guard<dxmt::mutex> lock(m_mutex);
+      if (m_workers.empty())
+        return;
+      PSTRACE("PSO async compiler shutdown requested workers=%zu queued=%zu active=%u",
+              m_workers.size(), m_queue.size(), m_active_workers);
+      m_stopping = true;
+      workers.swap(m_workers);
+      m_cv.notify_all();
+    }
+
+    for (auto &worker : workers) {
+      if (worker.joinable())
+        worker.join();
+    }
+
+    {
+      std::lock_guard<dxmt::mutex> lock(m_mutex);
+      m_stopping = false;
+      PSTRACE("PSO async compiler shutdown complete queued=%zu active=%u",
+              m_queue.size(), m_active_workers);
+    }
   }
 
 private:
-  void EnsureStarted() {
-    std::lock_guard<std::mutex> lock(m_start_mutex);
-    if (m_started)
+  void EnsureStartedLocked() {
+    if (!m_workers.empty())
       return;
-    m_started = true;
     m_worker_count = AsyncPipelineWorkerCount();
     Logger::info(str::format("M12 async PSO compiler starting workers=",
                              m_worker_count));
+    PSTRACE("PSO async compiler starting workers=%u", m_worker_count);
     for (uint32_t i = 0; i < m_worker_count; i++) {
-      std::thread([this, i]() { WorkerLoop(i); }).detach();
+      m_workers.emplace_back([this, i]() { WorkerLoop(i); });
     }
   }
 
@@ -198,29 +251,46 @@ private:
     for (;;) {
       MTLD3D12PipelineState *pso = nullptr;
       {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        m_cv.wait(lock, [this]() { return !m_queue.empty(); });
+        std::unique_lock<dxmt::mutex> lock(m_mutex);
+        m_cv.wait(lock, [this]() { return m_stopping || !m_queue.empty(); });
+        if (m_queue.empty()) {
+          if (m_stopping)
+            break;
+          continue;
+        }
         pso = m_queue.front();
         m_queue.pop_front();
+        m_active_workers++;
       }
-      if (!pso)
-        continue;
-      PSTRACE("PSO async worker[%u] compiling pso=%p", worker_index,
-              (void *)pso);
-      g_async_pipeline_worker_thread = true;
-      g_async_pipeline_worker_index = worker_index;
-      pso->RunAsyncCompile();
-      g_async_pipeline_worker_thread = false;
-      pso->Release();
+
+      if (pso) {
+        PSTRACE("PSO async worker[%u] compiling pso=%p", worker_index,
+                (void *)pso);
+        g_async_pipeline_worker_thread = true;
+        g_async_pipeline_worker_index = worker_index;
+        pso->RunAsyncCompile();
+        g_async_pipeline_worker_thread = false;
+        pso->Release();
+      }
+
+      {
+        std::lock_guard<dxmt::mutex> lock(m_mutex);
+        if (m_active_workers)
+          m_active_workers--;
+        if (m_stopping && m_queue.empty() && m_active_workers == 0)
+          m_cv.notify_all();
+      }
     }
+    PSTRACE("PSO async worker[%u] exiting", worker_index);
   }
 
-  std::mutex m_start_mutex;
-  bool m_started = false;
   uint32_t m_worker_count = 0;
-  std::mutex m_mutex;
-  std::condition_variable m_cv;
+  bool m_stopping = false;
+  uint32_t m_active_workers = 0;
+  dxmt::mutex m_mutex;
+  dxmt::condition_variable m_cv;
   std::deque<MTLD3D12PipelineState *> m_queue;
+  std::vector<dxmt::thread> m_workers;
 };
 
 AsyncPipelineCompiler &GetAsyncPipelineCompiler() {
@@ -743,6 +813,10 @@ constexpr WMTStencilOperation kStencilOperationMap[] = {
 
 } // namespace
 
+void ShutdownAsyncPipelineCompiler() {
+  GetAsyncPipelineCompiler().Shutdown();
+}
+
 std::mutex MTLD3D12PipelineState::s_shader_mutex;
 std::unordered_map<size_t, WMT::Reference<WMT::Function>> MTLD3D12PipelineState::s_shader_cache;
 
@@ -831,8 +905,14 @@ bool MTLD3D12PipelineState::RequestCompile(bool allow_async) {
   if (m_compile_state.compare_exchange_strong(expected, CompileState::Pending)) {
     PSTRACE("PSO async compile scheduled pso=%p compute=%d", (void *)this,
             m_is_compute);
-    GetAsyncPipelineCompiler().Enqueue(this);
-    return false;
+    if (GetAsyncPipelineCompiler().Enqueue(this))
+      return false;
+
+    PSTRACE("PSO async compile enqueue rejected during shutdown pso=%p compute=%d; compiling inline",
+            (void *)this, m_is_compute);
+    CompileState pending = CompileState::Pending;
+    m_compile_state.compare_exchange_strong(pending, CompileState::NotStarted);
+    return Compile();
   }
 
   return expected == CompileState::Compiled;
@@ -959,12 +1039,21 @@ bool MTLD3D12PipelineState::CompileShader(const void *bytecode, SIZE_T size,
     m_ia_slot_mask = ia_slot_mask;
   }
 
+  const bool prefer_dxil_path = DXBCContainerHasChunk(bytecode, size, "DXIL");
+  if (prefer_dxil_path) {
+    PSTRACE("CompileShader: %s DXIL chunk present; bypassing legacy SM50 compiler",
+            func_name);
+  }
+
   const uint32_t sm50_options = 0;
-  if (SM50InitializeWithOptions(bytecode, size, sm50_options,
+  if (prefer_dxil_path ||
+      SM50InitializeWithOptions(bytecode, size, sm50_options,
                                 &shader, &reflection, &sm50_err)) {
     char err_buf[256] = {};
-    SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
-    SM50FreeError(sm50_err);
+    if (sm50_err) {
+      SM50GetErrorMessage(sm50_err, err_buf, sizeof(err_buf));
+      SM50FreeError(sm50_err);
+    }
 
     bool has_dxil = false;
     using namespace microsoft;
@@ -1585,7 +1674,7 @@ bool MTLD3D12PipelineState::Compile() {
   PTRACE("Compile() called state=%u is_compute=%d async_worker=%d worker=%u",
          (unsigned)entry_state, m_is_compute, g_async_pipeline_worker_thread,
          g_async_pipeline_worker_index);
-  std::unique_lock<std::mutex> lock(m_compile_mutex);
+  std::unique_lock<dxmt::mutex> lock(m_compile_mutex);
   CompileState locked_state = m_compile_state.load();
   if (locked_state == CompileState::Compiled)
     return true;

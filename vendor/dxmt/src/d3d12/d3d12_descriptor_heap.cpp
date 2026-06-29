@@ -13,6 +13,8 @@ namespace dxmt {
 MTLD3D12DescriptorHeap::MTLD3D12DescriptorHeap(
     MTLD3D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC &desc)
     : m_device(device), m_desc(desc), m_data(nullptr), m_data_is_virtual(false), m_data_size(0) {
+  if (m_device)
+    m_device->AddRef();
   HTRACE("DescriptorHeap ctor: device=%p type=%u num=%u this=%p", (void*)m_device, desc.Type, desc.NumDescriptors, (void*)this);
   size_t alloc_size = (size_t)desc.NumDescriptors * sizeof(D3D12Descriptor);
   HTRACE("DescriptorHeap ctor: alloc_size computed");
@@ -45,6 +47,8 @@ MTLD3D12DescriptorHeap::~MTLD3D12DescriptorHeap() {
       HeapFree(GetProcessHeap(), 0, m_data);
     }
   }
+  if (m_device)
+    m_device->Release();
 }
 
 HRESULT STDMETHODCALLTYPE

@@ -5,8 +5,8 @@
 #include "d3d12_vertex_input.hpp"
 #include "Metal.hpp"
 #include "airconv_public.h"
+#include "thread.hpp"
 #include <atomic>
-#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -15,6 +15,8 @@
 namespace dxmt {
 
 class MTLD3D12Device;
+
+void ShutdownAsyncPipelineCompiler();
 
 struct StageInVertexAttributeInfo {
   uint32_t register_index = 0;
@@ -174,8 +176,8 @@ private:
   MTLD3D12Device *m_device;
   bool m_is_compute;
   std::atomic<CompileState> m_compile_state = {CompileState::NotStarted};
-  mutable std::mutex m_compile_mutex;
-  std::condition_variable m_compile_cv;
+  mutable dxmt::mutex m_compile_mutex;
+  dxmt::condition_variable m_compile_cv;
   std::string m_compile_failure_stage;
   std::string m_compile_failure_detail;
   ID3D12RootSignature *m_root_sig = nullptr;

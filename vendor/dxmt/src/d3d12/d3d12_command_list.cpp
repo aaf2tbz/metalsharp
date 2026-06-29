@@ -71,15 +71,33 @@ MTLD3D12GraphicsCommandList::MTLD3D12GraphicsCommandList(
     CmdSetPipelineState cmd = {};
     cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
     cmd.pso = initial_state;
+    RetainPipelineState(initial_state);
     Emit(cmd);
   }
   LogCommandListLifecycle("create", m_debug_id, m_type, m_cmds, m_closed);
 }
 
 MTLD3D12GraphicsCommandList::~MTLD3D12GraphicsCommandList() {
+  ReleaseReferencedPipelineStates();
   if (m_allocator)
     m_allocator->Release();
   m_device->Release();
+}
+
+void MTLD3D12GraphicsCommandList::RetainPipelineState(
+    ID3D12PipelineState *pipeline_state) {
+  if (!pipeline_state)
+    return;
+  pipeline_state->AddRef();
+  m_referenced_pipeline_states.push_back(pipeline_state);
+}
+
+void MTLD3D12GraphicsCommandList::ReleaseReferencedPipelineStates() {
+  for (auto *pipeline_state : m_referenced_pipeline_states) {
+    if (pipeline_state)
+      pipeline_state->Release();
+  }
+  m_referenced_pipeline_states.clear();
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -163,11 +181,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Reset(
     ID3D12CommandAllocator *allocator, ID3D12PipelineState *initial_state) {
   CLTRACE("Reset");
   m_closed = false;
+  ReleaseReferencedPipelineStates();
   m_cmds.clear();
   if (initial_state) {
     CmdSetPipelineState cmd = {};
     cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
     cmd.pso = initial_state;
+    RetainPipelineState(initial_state);
     Emit(cmd);
   }
   LogCommandListLifecycle("reset", m_debug_id, m_type, m_cmds, m_closed);
@@ -176,7 +196,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Reset(
 
 void STDMETHODCALLTYPE
 MTLD3D12GraphicsCommandList::ClearState(ID3D12PipelineState *pipeline_state) {
+  ReleaseReferencedPipelineStates();
   m_cmds.clear();
+  if (pipeline_state) {
+    CmdSetPipelineState cmd = {};
+    cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
+    cmd.pso = pipeline_state;
+    RetainPipelineState(pipeline_state);
+    Emit(cmd);
+  }
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::DrawInstanced(
@@ -361,6 +389,7 @@ MTLD3D12GraphicsCommandList::SetPipelineState(
   CmdSetPipelineState cmd = {};
   cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
   cmd.pso = pipeline_state;
+  RetainPipelineState(pipeline_state);
   Emit(cmd);
 }
 

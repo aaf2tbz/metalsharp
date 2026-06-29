@@ -258,10 +258,6 @@ MTLD3D12SwapChain::MTLD3D12SwapChain(
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC *fs_desc)
     : m_factory(factory), m_dxgi_device(dxgi_device), m_device(device),
       m_hwnd(hWnd), m_desc(*desc) {
-  if (m_factory)
-    m_factory->AddRef();
-  if (m_dxgi_device)
-    m_dxgi_device->AddRef();
   if (m_device)
     m_device->AddRef();
 
@@ -676,8 +672,8 @@ HRESULT STDMETHODCALLTYPE MTLD3D12SwapChain::ResizeBuffers(UINT buffer_count,
   if (count > 4)
     count = 4;
   for (uint32_t i = 0; i < count; i++) {
-    m_backbuffers[i] = new MTLD3D12Resource(
-        m_device, res_desc, D3D12_RESOURCE_STATE_RENDER_TARGET, heap_props);
+    m_backbuffers[i] = Com<MTLD3D12Resource>::transfer(new MTLD3D12Resource(
+        m_device, res_desc, D3D12_RESOURCE_STATE_RENDER_TARGET, heap_props));
     auto *res = static_cast<MTLD3D12Resource *>(m_backbuffers[i].ptr());
     if (res)
       res->MarkSwapchainBackBuffer(i, this);
@@ -1161,8 +1157,7 @@ HRESULT CreateD3D12SwapChain(IDXGIFactory1 *factory, MTLD3D12Device *device,
   auto swapchain =
       new MTLD3D12SwapChain(factory, device, dxgi_device, hWnd, desc, fs_desc);
   HRESULT hr = swapchain->QueryInterface(IID_PPV_ARGS(pp_swap_chain));
-  if (FAILED(hr))
-    swapchain->Release();
+  swapchain->Release();
   return hr;
 }
 

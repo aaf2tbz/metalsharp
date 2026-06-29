@@ -275,10 +275,57 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    app_log(&format!("Preparing game runtime: appid {}", id));
-                    match setup::prepare_game(id as u32) {
-                        Ok(v) => resp(200, v),
-                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    let requested_pipeline =
+                        body.get("pipeline").or_else(|| body.get("launchMethod")).and_then(|v| v.as_str());
+                    let requested_pipeline = match requested_pipeline {
+                        Some(value) => match mtsp::engine::PipelineId::from_str_flexible(value) {
+                            Some(pipeline) => Some(pipeline),
+                            None => {
+                                return resp(400, json!({"ok": false, "error": format!("unknown pipeline: {}", value)}))
+                            },
+                        },
+                        None => None,
+                    };
+                    let effective_pipeline = bottles::resolve_steam_pipeline_for_request(id as u32, requested_pipeline);
+                    let mtsp_prepare_supported = !matches!(
+                        effective_pipeline,
+                        mtsp::engine::PipelineId::FnaArm64
+                            | mtsp::engine::PipelineId::Steam
+                            | mtsp::engine::PipelineId::MacSteam
+                    );
+                    if mtsp_prepare_supported {
+                        app_log(&format!(
+                            "Preparing game runtime via MTSP: appid {}, requested={:?}, effective={:?}",
+                            id, requested_pipeline, effective_pipeline
+                        ));
+                        match mtsp::launcher::prepare_pipeline_with_request(id as u32, Some(effective_pipeline)) {
+                            Ok(mut v) => {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("deprecated_endpoint".into(), json!("/game/prepare"));
+                                    obj.insert("canonical_endpoint".into(), json!("/mtsp/prepare"));
+                                }
+                                resp(200, v)
+                            },
+                            Err(e) => resp(
+                                500,
+                                json!({"ok": false, "error": e.to_string(), "canonical_endpoint": "/mtsp/prepare"}),
+                            ),
+                        }
+                    } else {
+                        app_log(&format!(
+                            "Preparing legacy game runtime: appid {}, effective={:?}",
+                            id, effective_pipeline
+                        ));
+                        match setup::prepare_game(id as u32) {
+                            Ok(mut v) => {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("legacy_prepare".into(), json!(true));
+                                    obj.insert("deprecated_endpoint".into(), json!("/game/prepare"));
+                                }
+                                resp(200, v)
+                            },
+                            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                        }
                     }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
@@ -845,9 +892,22 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
-                Some(id) => match mtsp::launcher::prepare_pipeline(id as u32) {
-                    Ok(v) => resp(200, v),
-                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Some(id) => {
+                    let requested_pipeline =
+                        body.get("pipeline").or_else(|| body.get("launchMethod")).and_then(|v| v.as_str());
+                    let requested_pipeline = match requested_pipeline {
+                        Some(value) => match mtsp::engine::PipelineId::from_str_flexible(value) {
+                            Some(pipeline) => Some(pipeline),
+                            None => {
+                                return resp(400, json!({"ok": false, "error": format!("unknown pipeline: {}", value)}))
+                            },
+                        },
+                        None => None,
+                    };
+                    match mtsp::launcher::prepare_pipeline_with_request(id as u32, requested_pipeline) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
