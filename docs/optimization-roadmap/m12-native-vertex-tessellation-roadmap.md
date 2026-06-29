@@ -391,6 +391,99 @@ Acceptance:
 - No live launch proceeds without explicit user approval after all gates pass.
 - Any failure produces a persistent evidence directory and stops before system instability can escalate.
 
+
+## Deeper source-backed design constraints
+
+This section was added after validating with local Apple SDK headers, Microsoft Learn pages, and SearXNG-backed web searches against official docs and credible open-source issue trackers. It tightens the implementation requirements for each remaining issue.
+
+### D3D12 input assembler constraints that M12-NVTP must preserve
+
+The native vertex path must treat D3D12 IA state as draw-time state, not as a vague PSO hint:
+
+- `D3D12_INPUT_ELEMENT_DESC` carries `SemanticName`, `SemanticIndex`, `Format`, `InputSlot`, `AlignedByteOffset`, `InputSlotClass`, and `InstanceDataStepRate`. Microsoft documents `InputSlot` as the input-assembler slot, `AlignedByteOffset` as the byte offset from the start of the vertex, and `InstanceDataStepRate` as the number of instances using the same per-instance data.
+- `D3D12_APPEND_ALIGNED_ELEMENT` must be resolved using D3D packing rules when building the input layout; a wrong append offset can make every later attribute read wrong bytes while the VB range check still appears superficially valid.
+- D3D12 VB stride lives in `D3D12_VERTEX_BUFFER_VIEW`, supplied through `IASetVertexBuffers`, not only in PSO state. Therefore any Metal pipeline strategy that bakes stride into a `MTLVertexDescriptor` must include effective D3D12 strides in the pipeline key or must use a shader-side vertex-pull/table strategy that keeps stride dynamic.
+- `InputSlotClass == PER_INSTANCE_DATA` and `InstanceDataStepRate` need a separate range formula from per-vertex inputs. The required row count for a per-instance slot is based on `StartInstanceLocation`, `InstanceCount`, and `InstanceDataStepRate`, not on vertex/index count.
+- A native resolver should report both element-space and byte-space requirements. For each input element, compute at least:
+  - `row_id` range
+  - `AlignedByteOffset`
+  - element byte width from DXGI format
+  - `row_id * StrideInBytes + AlignedByteOffset + element_size`
+  - comparison against `D3D12_VERTEX_BUFFER_VIEW.SizeInBytes`
+
+### Indexed draw constraints that must be exact
+
+`DrawIndexedInstanced` must be modeled as a two-stage lookup:
+
+- First, read indices from the current IBV beginning at `IBV.BufferLocation + StartIndexLocation * indexSize`.
+- Second, add signed `BaseVertexLocation` to each fetched index before resolving vertex buffer rows.
+- `StartIndexLocation` must not also be added inside the shader helper when the Metal index buffer offset already accounts for it. The current code already comments on this in `BindMSCDrawParameters`; the native path should preserve this invariant and test it directly.
+- Metal’s `drawIndexedPrimitives(... indexBufferOffset ... baseVertex ... baseInstance ...)` requires `indexBufferOffset` to be a byte offset and a multiple of the index size; the local Apple SDK header documents that `baseVertex` may be negative. This maps well to D3D12, but only if M12 passes the values exactly once.
+- IB range validation must use `D3D12_INDEX_BUFFER_VIEW.SizeInBytes`, not the full resource width, because the view can point at a subrange of a larger resource.
+- Production may not always map/read the index buffer to compute min/max. If min/max cannot be sampled safely, the native path should still validate the IB byte range, bind with exact Metal offsets, and optionally run debug builds with a GPU-side min/max or bounds telemetry pass. The proof harness should include CPU-readable cases so the formula is testable.
+
+### Resource-state and barrier constraints
+
+D3D12 resource states are part of correctness, not optional logging:
+
+- Microsoft documents `D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER` as required when a subresource is accessed by the GPU as a vertex or constant buffer; it is a read-only state.
+- Microsoft documents `D3D12_RESOURCE_STATE_INDEX_BUFFER` as required when accessed by the 3D pipeline as an index buffer; it is also read-only.
+- `D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT` is the relevant state for ExecuteIndirect argument buffers.
+- UAV writes feeding draw/dispatch arguments or vertex/index data need explicit UAV/barrier ordering before later reads.
+- M12-NVTP should keep a lightweight resource-state ledger for buffers used as VB/IB/indirect/root descriptors. It does not need to emulate the Windows debug layer perfectly to start, but it must detect obvious missing transitions in proof cases and report them with draw/dispatch breadcrumbs.
+
+### Native Metal draw encoding constraints
+
+The local Metal SDK headers give direct requirements that should shape the M12 bridge:
+
+- `MTLRenderCommandEncoder` exposes `setVertexBuffer:offset:atIndex:` and `setVertexBufferOffset:atIndex:`. M12 should log the exact Metal slot, MTLBuffer handle, and byte offset for every D3D12 input slot it binds.
+- `drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:baseVertex:baseInstance:` exists on macOS and accepts a signed `baseVertex`. That means the native indexed draw path should not need a CPU-side base-vertex workaround for ordinary indexed draws.
+- `indexBufferOffset` must be a multiple of the index size. This should become a hard validation check before encoding.
+- `useResource` does not retain resources. The Apple header explicitly states the caller must retain resources until GPU access completes. M12 must therefore maintain its own per-command-buffer retained-resource list instead of assuming `useResource` is lifetime management.
+- Heap/argument-buffer `useHeap`/resource usage calls do not solve all data hazards; the Apple headers state hazards must be addressed with `MTLFence` where required. This supports the roadmap’s fence/lifetime phase.
+
+### Native Metal tessellation constraints
+
+Metal has first-class tessellation APIs, so the long-term goal should be real patch rendering, not a downgraded render path:
+
+- `MTLRenderPipelineDescriptor` has tessellation properties: `tessellationPartitionMode`, `maxTessellationFactor`, `tessellationFactorFormat`, `tessellationControlPointIndexType`, `tessellationFactorStepFunction`, and `tessellationOutputWindingOrder`.
+- `MTLRenderCommandEncoder` has `setTessellationFactorBuffer`, `setTessellationFactorScale`, `drawPatches`, and `drawIndexedPatches`.
+- This implies a concrete M12 native design: translate D3D12 HS/patch-constant output into a Metal tessellation factor buffer, bind that buffer, then encode Metal patch draws using D3D12 patch topology/control-point count.
+- Microsoft’s tessellation docs emphasize that hardware tessellation converts low-detail subdivision surfaces into higher-detail primitives on the GPU and avoids CPU-side detail expansion. This directly supports the no-fallback requirement: if Elden character geometry depends on tessellation, CPU or VS/PS-only substitution is the wrong direction.
+- If the translated HS/DS shape cannot yet be represented, the correct behavior is `native_tessellation_required`/`native_tessellation_unsupported` with a captured artifact, not a draw that pretends tessellation was handled.
+
+### Command-buffer error and watchdog constraints
+
+The final run ended in system instability, so command-buffer health must become a first-class proof output:
+
+- Apple documents `MTLCommandBufferErrorTimeout`, `MTLCommandBufferErrorPageFault`, `MTLCommandBufferErrorInvalidResource`, `MTLCommandBufferErrorOutOfMemory`, and related error codes.
+- Apple’s `MTLCommandBufferErrorPageFault` description explicitly includes out-of-boundary access as a possible cause.
+- Apple’s `MTLCommandBufferErrorInvalidResource` description explicitly calls out resources deleted before a command buffer that references them executes.
+- `MTLCommandBufferErrorOptionEncoderExecutionStatus` can populate encoder execution status in command-buffer error userInfo, with overhead. This should be enabled only in diagnostic/proof profiles first, but the roadmap should require support for it.
+- `CAMetalLayer.nextDrawable` can return nil after a one-second timeout when all drawables are in use; if `allowsNextDrawableTimeout` is disabled it can block forever. Bounded launches must not let drawable acquisition become an unbounded WindowServer/backpressure stall.
+
+### Open-source ecosystem lessons from SearXNG-backed searches
+
+These are not primary API contracts, but they support why the roadmap emphasizes validation and lifetime:
+
+- MoltenVK issue searches show real regressions around Metal argument buffers, validation, descriptor-pool lifetime, imported textures, and device-loss-like behavior. This reinforces that D3D12 descriptor/argument-buffer lifetimes cannot be hand-waved.
+- wgpu issue searches show real Metal vertex pulling and vertex-buffer out-of-bounds concerns, including cross-API differences in robust access behavior. This reinforces that M12 should explicitly validate or robustly handle vertex/index bounds rather than trusting undefined backend behavior.
+- GPUWeb discussions identify a portability mismatch: D3D12 supplies vertex stride through IA buffer views, while Metal/Vulkan often tie vertex layout/stride more closely to pipeline layout. This reinforces either raw-slot vertex pulling or stride-inclusive pipeline keys.
+
+### Additional proof cases required by this deeper research
+
+Add these to the Phase 1/Phase 8 gates:
+
+- D3D12 input layout using `D3D12_APPEND_ALIGNED_ELEMENT` across multiple semantics and formats.
+- Per-instance input with `InstanceDataStepRate > 1` and nonzero `StartInstanceLocation`.
+- IBV subrange inside a larger resource to prove validation uses IBV size, not full resource width.
+- VBV subrange inside a larger resource to prove validation uses VBV size and `AlignedByteOffset`.
+- R16 and R32 indexed draws with identical geometry to verify `indexBufferOffset` scale.
+- Negative `BaseVertexLocation` that is valid after index addition and negative `BaseVertexLocation` that underflows.
+- ExecuteIndirect argument buffer requiring `D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT` and proper resource lifetime.
+- Patch tessellation proof using `setTessellationFactorBuffer` and `drawPatches`/`drawIndexedPatches` once the native path begins.
+- Diagnostic profile that enables command-buffer encoder status and verifies no `MTLCommandBufferErrorDomain` errors occur during a bounded stress run.
+
 ## Validation matrix
 
 | Failure class | Local proof | Runtime gate | Launch gate |
