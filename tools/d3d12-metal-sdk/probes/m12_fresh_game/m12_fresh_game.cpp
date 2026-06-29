@@ -71,6 +71,8 @@ constexpr UINT kIndexedNegativeBaseStampX = 280;
 constexpr UINT kIndexedNegativeBaseStampY = 88;
 constexpr UINT kIndexedDynamicStrideStampX = 280;
 constexpr UINT kIndexedDynamicStrideStampY = 120;
+constexpr UINT kIndexedExecuteIndirectStampX = 280;
+constexpr UINT kIndexedExecuteIndirectStampY = 152;
 constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
 constexpr UINT kWaveOpsStampX = 344;
@@ -2225,6 +2227,9 @@ struct IndexedDrawStats {
     HRESULT create_index_buffer_hr = E_FAIL;
     HRESULT create_index_buffer_r32_hr = E_FAIL;
     HRESULT create_index_buffer_negative_base_hr = E_FAIL;
+    HRESULT create_index_buffer_execute_indirect_hr = E_FAIL;
+    HRESULT create_execute_indirect_indexed_argument_buffer_hr = E_FAIL;
+    HRESULT create_execute_indirect_indexed_command_signature_hr = E_FAIL;
     bool append_aligned_element = true;
     uint32_t append_aligned_color_expected_offset = 12;
     uint32_t vertices_created = 0;
@@ -2249,10 +2254,22 @@ struct IndexedDrawStats {
     uint32_t negative_base_index_buffer_size = 0;
     uint32_t negative_base_start_index_location = 0;
     INT negative_base_vertex_location = -4;
+    uint32_t execute_indirect_indexed_indices_created = 0;
+    uint32_t execute_indirect_indexed_index_format = DXGI_FORMAT_R32_UINT;
+    uint32_t execute_indirect_indexed_index_buffer_size = 0;
+    uint32_t execute_indirect_indexed_argument_byte_stride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+    uint32_t execute_indirect_indexed_command_signature_arguments = 1;
+    uint32_t execute_indirect_indexed_max_command_count = 1;
+    uint32_t execute_indirect_indexed_index_count = 6;
+    uint32_t execute_indirect_indexed_instance_count = 1;
+    uint32_t execute_indirect_indexed_start_index_location = 2;
+    INT execute_indirect_indexed_base_vertex_location = -6;
+    uint32_t execute_indirect_indexed_start_instance_location = 0;
     uint32_t draw_indexed_calls = 0;
     uint32_t draw_indexed_r32_calls = 0;
     uint32_t draw_indexed_negative_base_calls = 0;
     uint32_t draw_indexed_dynamic_stride_calls = 0;
+    uint32_t execute_indirect_indexed_calls = 0;
     uint32_t present_samples_checked = 0;
     uint32_t present_sample_matches = 0;
     uint32_t present_pixels_checked = 0;
@@ -2261,6 +2278,7 @@ struct IndexedDrawStats {
     uint8_t expected_r32_rgba[4] = {64, 220, 240, 255};
     uint8_t expected_negative_base_rgba[4] = {200, 80, 240, 255};
     uint8_t expected_dynamic_stride_rgba[4] = {96, 240, 120, 255};
+    uint8_t expected_execute_indirect_indexed_rgba[4] = {240, 144, 72, 255};
     uint8_t present_rgba[4] = {0, 0, 0, 0};
     uint8_t present_last_rgba[4] = {0, 0, 0, 0};
     uint8_t present_r32_rgba[4] = {0, 0, 0, 0};
@@ -2281,6 +2299,12 @@ struct IndexedDrawStats {
     uint32_t present_dynamic_stride_sample_matches = 0;
     uint32_t present_dynamic_stride_pixels_checked = 0;
     uint32_t present_dynamic_stride_pixel_matches = 0;
+    uint8_t present_execute_indirect_indexed_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_execute_indirect_indexed_last_rgba[4] = {0, 0, 0, 0};
+    uint32_t present_execute_indirect_indexed_samples_checked = 0;
+    uint32_t present_execute_indirect_indexed_sample_matches = 0;
+    uint32_t present_execute_indirect_indexed_pixels_checked = 0;
+    uint32_t present_execute_indirect_indexed_pixel_matches = 0;
     bool present_pass = false;
     bool pass = false;
 };
@@ -2293,11 +2317,16 @@ struct IndexedDrawSceneResources {
     ID3D12Resource* index_buffer = nullptr;
     ID3D12Resource* index_buffer_r32 = nullptr;
     ID3D12Resource* index_buffer_negative_base = nullptr;
+    ID3D12Resource* index_buffer_execute_indirect = nullptr;
+    ID3D12Resource* execute_indirect_indexed_argument_buffer = nullptr;
+    ID3D12CommandSignature* execute_indirect_indexed_command_signature = nullptr;
     D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
     D3D12_VERTEX_BUFFER_VIEW vertex_view_dynamic_stride = {};
+    D3D12_VERTEX_BUFFER_VIEW vertex_view_execute_indirect = {};
     D3D12_INDEX_BUFFER_VIEW index_view = {};
     D3D12_INDEX_BUFFER_VIEW index_view_r32 = {};
     D3D12_INDEX_BUFFER_VIEW index_view_negative_base = {};
+    D3D12_INDEX_BUFFER_VIEW index_view_execute_indirect = {};
     IndexedDrawStats stats;
 };
 
@@ -2371,7 +2400,7 @@ float4 indexed_ps(PSIn input) : SV_Target {
 
     if (device) {
         D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
-        D3D12_RESOURCE_DESC vb_desc = buffer_desc(13u * sizeof(ColorVertex));
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(17u * sizeof(ColorVertex));
         stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
                                                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                                         IID_PPV_ARGS(&scene.vertex_buffer));
@@ -2403,7 +2432,9 @@ float4 indexed_ps(PSIn input) : SV_Target {
                 fill_quad(mapped + 5, kIndexedR32StampX, kIndexedR32StampY, stats.expected_r32_rgba);
                 fill_quad(mapped + 9, kIndexedNegativeBaseStampX, kIndexedNegativeBaseStampY,
                           stats.expected_negative_base_rgba);
-                D3D12_RANGE written = {0, 13u * sizeof(ColorVertex)};
+                fill_quad(mapped + 13, kIndexedExecuteIndirectStampX, kIndexedExecuteIndirectStampY,
+                          stats.expected_execute_indirect_indexed_rgba);
+                D3D12_RANGE written = {0, 17u * sizeof(ColorVertex)};
                 scene.vertex_buffer->Unmap(0, &written);
                 stats.vertices_created = 12;
                 stats.vertex_view_byte_offset = sizeof(ColorVertex);
@@ -2413,6 +2444,9 @@ float4 indexed_ps(PSIn input) : SV_Target {
                 scene.vertex_buffer->GetGPUVirtualAddress() + stats.vertex_view_byte_offset;
             scene.vertex_view.SizeInBytes = stats.vertex_buffer_size;
             scene.vertex_view.StrideInBytes = sizeof(ColorVertex);
+            scene.vertex_view_execute_indirect.BufferLocation = scene.vertex_view.BufferLocation;
+            scene.vertex_view_execute_indirect.SizeInBytes = 16u * sizeof(ColorVertex);
+            scene.vertex_view_execute_indirect.StrideInBytes = sizeof(ColorVertex);
         }
 
         struct DynamicStrideVertex {
@@ -2519,29 +2553,96 @@ float4 indexed_ps(PSIn input) : SV_Target {
             scene.index_view_negative_base.Format = DXGI_FORMAT_R32_UINT;
             stats.negative_base_index_format = DXGI_FORMAT_R32_UINT;
         }
+
+        D3D12_RESOURCE_DESC ib_execute_desc = buffer_desc(8u * sizeof(uint32_t));
+        stats.create_index_buffer_execute_indirect_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &ib_execute_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.index_buffer_execute_indirect));
+        if (SUCCEEDED(stats.create_index_buffer_execute_indirect_hr) && scene.index_buffer_execute_indirect) {
+            uint32_t* mapped = nullptr;
+            if (SUCCEEDED(scene.index_buffer_execute_indirect->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) &&
+                mapped) {
+                const uint32_t indices[8] = {0xffffffffu, 0xffffffffu, 18u, 19u, 20u, 20u, 19u, 21u};
+                std::memcpy(mapped, indices, sizeof(indices));
+                D3D12_RANGE written = {0, sizeof(indices)};
+                scene.index_buffer_execute_indirect->Unmap(0, &written);
+                stats.execute_indirect_indexed_indices_created = 6;
+                stats.execute_indirect_indexed_index_buffer_size = sizeof(indices);
+            }
+            scene.index_view_execute_indirect.BufferLocation =
+                scene.index_buffer_execute_indirect->GetGPUVirtualAddress();
+            scene.index_view_execute_indirect.SizeInBytes = stats.execute_indirect_indexed_index_buffer_size;
+            scene.index_view_execute_indirect.Format = DXGI_FORMAT_R32_UINT;
+            stats.execute_indirect_indexed_index_format = DXGI_FORMAT_R32_UINT;
+        }
+
+        D3D12_RESOURCE_DESC arg_desc = buffer_desc(sizeof(D3D12_DRAW_INDEXED_ARGUMENTS));
+        stats.create_execute_indirect_indexed_argument_buffer_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &arg_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.execute_indirect_indexed_argument_buffer));
+        if (SUCCEEDED(stats.create_execute_indirect_indexed_argument_buffer_hr) &&
+            scene.execute_indirect_indexed_argument_buffer) {
+            D3D12_DRAW_INDEXED_ARGUMENTS* mapped = nullptr;
+            if (SUCCEEDED(scene.execute_indirect_indexed_argument_buffer->Map(0, nullptr,
+                                                                              reinterpret_cast<void**>(&mapped))) &&
+                mapped) {
+                mapped->IndexCountPerInstance = stats.execute_indirect_indexed_index_count;
+                mapped->InstanceCount = stats.execute_indirect_indexed_instance_count;
+                mapped->StartIndexLocation = stats.execute_indirect_indexed_start_index_location;
+                mapped->BaseVertexLocation = stats.execute_indirect_indexed_base_vertex_location;
+                mapped->StartInstanceLocation = stats.execute_indirect_indexed_start_instance_location;
+                D3D12_RANGE written = {0, sizeof(D3D12_DRAW_INDEXED_ARGUMENTS)};
+                scene.execute_indirect_indexed_argument_buffer->Unmap(0, &written);
+            }
+        }
+
+        D3D12_INDIRECT_ARGUMENT_DESC execute_indirect_arg = {};
+        execute_indirect_arg.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+        D3D12_COMMAND_SIGNATURE_DESC execute_signature_desc = {};
+        execute_signature_desc.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+        execute_signature_desc.NumArgumentDescs = 1;
+        execute_signature_desc.pArgumentDescs = &execute_indirect_arg;
+        stats.create_execute_indirect_indexed_command_signature_hr = device->CreateCommandSignature(
+            &execute_signature_desc, nullptr, IID_PPV_ARGS(&scene.execute_indirect_indexed_command_signature));
     }
 
-    stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
-                 SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
-                 SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
-                 SUCCEEDED(stats.create_dynamic_stride_vertex_buffer_hr) && SUCCEEDED(stats.create_index_buffer_hr) &&
-                 SUCCEEDED(stats.create_index_buffer_r32_hr) && stats.append_aligned_element &&
-                 stats.append_aligned_color_expected_offset == 12 && stats.vertices_created == 12 &&
-                 stats.vertex_buffer_size == 336 && stats.dynamic_stride_vertices_created == 4 &&
-                 stats.dynamic_stride_vertex_buffer_size == 128 && stats.dynamic_stride == 32 &&
-                 stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
-                 stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
-                 stats.index_view_byte_offset == 4 && stats.start_index_location == 2 &&
-                 stats.r32_indices_created == 6 && stats.r32_index_format == DXGI_FORMAT_R32_UINT &&
-                 stats.r32_index_buffer_size == 32 && stats.r32_index_view_byte_offset == 8 &&
-                 stats.r32_start_index_location == 2 && stats.r32_base_vertex_location == 4 &&
-                 stats.negative_base_indices_created == 6 && stats.negative_base_index_format == DXGI_FORMAT_R32_UINT &&
-                 stats.negative_base_index_buffer_size == 24 && stats.negative_base_start_index_location == 0 &&
-                 stats.negative_base_vertex_location == -4 && scene.root_signature && scene.pipeline_state &&
-                 scene.vertex_buffer && scene.vertex_buffer_dynamic_stride && scene.index_buffer &&
-                 scene.index_buffer_r32 && scene.index_buffer_negative_base && scene.vertex_view.BufferLocation != 0 &&
-                 scene.vertex_view_dynamic_stride.BufferLocation != 0 && scene.index_view.BufferLocation != 0 &&
-                 scene.index_view_r32.BufferLocation != 0 && scene.index_view_negative_base.BufferLocation != 0;
+    stats.pass =
+        stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
+        SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) && SUCCEEDED(stats.create_pso_hr) &&
+        SUCCEEDED(stats.create_vertex_buffer_hr) && SUCCEEDED(stats.create_dynamic_stride_vertex_buffer_hr) &&
+        SUCCEEDED(stats.create_index_buffer_hr) && SUCCEEDED(stats.create_index_buffer_r32_hr) &&
+        SUCCEEDED(stats.create_index_buffer_negative_base_hr) &&
+        SUCCEEDED(stats.create_index_buffer_execute_indirect_hr) &&
+        SUCCEEDED(stats.create_execute_indirect_indexed_argument_buffer_hr) &&
+        SUCCEEDED(stats.create_execute_indirect_indexed_command_signature_hr) && stats.append_aligned_element &&
+        stats.append_aligned_color_expected_offset == 12 && stats.vertices_created == 12 &&
+        stats.vertex_buffer_size == 336 && stats.dynamic_stride_vertices_created == 4 &&
+        stats.dynamic_stride_vertex_buffer_size == 128 && stats.dynamic_stride == 32 &&
+        stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
+        stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
+        stats.index_view_byte_offset == 4 && stats.start_index_location == 2 && stats.r32_indices_created == 6 &&
+        stats.r32_index_format == DXGI_FORMAT_R32_UINT && stats.r32_index_buffer_size == 32 &&
+        stats.r32_index_view_byte_offset == 8 && stats.r32_start_index_location == 2 &&
+        stats.r32_base_vertex_location == 4 && stats.negative_base_indices_created == 6 &&
+        stats.negative_base_index_format == DXGI_FORMAT_R32_UINT && stats.negative_base_index_buffer_size == 24 &&
+        stats.negative_base_start_index_location == 0 && stats.negative_base_vertex_location == -4 &&
+        stats.execute_indirect_indexed_indices_created == 6 &&
+        stats.execute_indirect_indexed_index_format == DXGI_FORMAT_R32_UINT &&
+        stats.execute_indirect_indexed_index_buffer_size == 32 &&
+        stats.execute_indirect_indexed_argument_byte_stride == sizeof(D3D12_DRAW_INDEXED_ARGUMENTS) &&
+        stats.execute_indirect_indexed_command_signature_arguments == 1 &&
+        stats.execute_indirect_indexed_max_command_count == 1 && stats.execute_indirect_indexed_index_count == 6 &&
+        stats.execute_indirect_indexed_instance_count == 1 &&
+        stats.execute_indirect_indexed_start_index_location == 2 &&
+        stats.execute_indirect_indexed_base_vertex_location == -6 &&
+        stats.execute_indirect_indexed_start_instance_location == 0 && scene.root_signature && scene.pipeline_state &&
+        scene.vertex_buffer && scene.vertex_buffer_dynamic_stride && scene.index_buffer && scene.index_buffer_r32 &&
+        scene.index_buffer_negative_base && scene.index_buffer_execute_indirect &&
+        scene.execute_indirect_indexed_argument_buffer && scene.execute_indirect_indexed_command_signature &&
+        scene.vertex_view.BufferLocation != 0 && scene.vertex_view_dynamic_stride.BufferLocation != 0 &&
+        scene.vertex_view_execute_indirect.BufferLocation != 0 && scene.index_view.BufferLocation != 0 &&
+        scene.index_view_r32.BufferLocation != 0 && scene.index_view_negative_base.BufferLocation != 0 &&
+        scene.index_view_execute_indirect.BufferLocation != 0;
 
     safe_release(vs);
     safe_release(ps);
@@ -2550,6 +2651,9 @@ float4 indexed_ps(PSIn input) : SV_Target {
 }
 
 static void destroy_indexed_draw_scene(IndexedDrawSceneResources& scene) {
+    safe_release(scene.execute_indirect_indexed_command_signature);
+    safe_release(scene.execute_indirect_indexed_argument_buffer);
+    safe_release(scene.index_buffer_execute_indirect);
     safe_release(scene.index_buffer_negative_base);
     safe_release(scene.index_buffer_r32);
     safe_release(scene.index_buffer);
@@ -6191,10 +6295,16 @@ static bool inspect_indexed_draw_stamp(DxilReadbackResources& readback, IndexedD
                       stats.present_dynamic_stride_rgba, stats.present_dynamic_stride_last_rgba,
                       stats.present_dynamic_stride_samples_checked, stats.present_dynamic_stride_sample_matches,
                       stats.present_dynamic_stride_pixels_checked, stats.present_dynamic_stride_pixel_matches);
+    const bool execute_indirect_indexed_matches = inspect_stamp(
+        kIndexedExecuteIndirectStampX, kIndexedExecuteIndirectStampY, stats.expected_execute_indirect_indexed_rgba,
+        stats.present_execute_indirect_indexed_rgba, stats.present_execute_indirect_indexed_last_rgba,
+        stats.present_execute_indirect_indexed_samples_checked, stats.present_execute_indirect_indexed_sample_matches,
+        stats.present_execute_indirect_indexed_pixels_checked, stats.present_execute_indirect_indexed_pixel_matches);
 
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
-    return r16_matches && r32_matches && negative_base_matches && dynamic_stride_matches;
+    return r16_matches && r32_matches && negative_base_matches && dynamic_stride_matches &&
+           execute_indirect_indexed_matches;
 }
 
 static bool inspect_tessellation_fallback_stamp(DxilReadbackResources& readback, TessellationFallbackStats& stats) {
@@ -6840,6 +6950,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->DrawIndexedInstanced(indexed_draw.stats.indices_created, 1, indexed_draw.stats.start_index_location,
                                        0, 0);
             stats.indexed_draw.draw_indexed_dynamic_stride_calls++;
+            list->IASetVertexBuffers(0, 1, &indexed_draw.vertex_view_execute_indirect);
+            list->IASetIndexBuffer(&indexed_draw.index_view_execute_indirect);
+            list->ExecuteIndirect(indexed_draw.execute_indirect_indexed_command_signature,
+                                  indexed_draw.stats.execute_indirect_indexed_max_command_count,
+                                  indexed_draw.execute_indirect_indexed_argument_buffer, 0, nullptr, 0);
+            stats.indexed_draw.execute_indirect_indexed_calls++;
             if (tessellation_fallback.pipeline_state) {
                 list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
                 list->SetPipelineState(tessellation_fallback.pipeline_state);
@@ -7225,7 +7341,13 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.present_dynamic_stride_pixels_checked ==
             visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
         stats.indexed_draw.present_dynamic_stride_pixel_matches ==
-            stats.indexed_draw.present_dynamic_stride_pixels_checked;
+            stats.indexed_draw.present_dynamic_stride_pixels_checked &&
+        stats.indexed_draw.present_execute_indirect_indexed_samples_checked == visible_frame_target &&
+        stats.indexed_draw.present_execute_indirect_indexed_sample_matches == visible_frame_target &&
+        stats.indexed_draw.present_execute_indirect_indexed_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.indexed_draw.present_execute_indirect_indexed_pixel_matches ==
+            stats.indexed_draw.present_execute_indirect_indexed_pixels_checked;
     stats.tessellation_fallback.present_pass =
         stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded
             ? stats.tessellation_fallback.draw_calls == 0
@@ -7275,9 +7397,10 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.draw_indexed_r32_calls == visible_frame_target &&
         stats.indexed_draw.draw_indexed_negative_base_calls == visible_frame_target &&
         stats.indexed_draw.draw_indexed_dynamic_stride_calls == visible_frame_target &&
-        stats.tessellation_fallback.pass && stats.tessellation_fallback.present_pass &&
-        stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded &&
-        stats.tessellation_fallback.draw_calls == 0 && stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
+        stats.indexed_draw.execute_indirect_indexed_calls == visible_frame_target && stats.tessellation_fallback.pass &&
+        stats.tessellation_fallback.present_pass && stats.tessellation_fallback.blocked_expected &&
+        !stats.tessellation_fallback.fallback_draw_encoded && stats.tessellation_fallback.draw_calls == 0 &&
+        stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
         stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.nanite_cluster.pass &&
         stats.nanite_cluster.present_pass && stats.nanite_cluster.execute_indirect_calls == visible_frame_target &&
         stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
@@ -8048,7 +8171,8 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.cbv_sample.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"indexed_draw\": {\n");
-    std::printf("      \"proof_scope\": \"r16_r32_subrange_base_append_dynamic_stride_presented_readback\",\n");
+    std::printf("      \"proof_scope\": "
+                "\"r16_r32_subrange_base_append_dynamic_stride_execute_indirect_indexed_presented_readback\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.indexed_draw.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"indexed_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_vs_hr).c_str());
     std::printf("      \"indexed_ps_ps_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_ps_hr).c_str());
@@ -8063,6 +8187,12 @@ int main() {
                 hr_hex(d3d.indexed_draw.create_index_buffer_r32_hr).c_str());
     std::printf("      \"CreateIndexBufferNegativeBase\": \"%s\",\n",
                 hr_hex(d3d.indexed_draw.create_index_buffer_negative_base_hr).c_str());
+    std::printf("      \"CreateIndexBufferExecuteIndirectIndexed\": \"%s\",\n",
+                hr_hex(d3d.indexed_draw.create_index_buffer_execute_indirect_hr).c_str());
+    std::printf("      \"CreateExecuteIndirectIndexedArgumentBuffer\": \"%s\",\n",
+                hr_hex(d3d.indexed_draw.create_execute_indirect_indexed_argument_buffer_hr).c_str());
+    std::printf("      \"CreateExecuteIndirectIndexedCommandSignature\": \"%s\",\n",
+                hr_hex(d3d.indexed_draw.create_execute_indirect_indexed_command_signature_hr).c_str());
     std::printf("      \"append_aligned_element\": %s,\n", d3d.indexed_draw.append_aligned_element ? "true" : "false");
     std::printf("      \"append_aligned_color_expected_offset\": %u,\n",
                 d3d.indexed_draw.append_aligned_color_expected_offset);
@@ -8090,11 +8220,34 @@ int main() {
     std::printf("      \"negative_base_start_index_location\": %u,\n",
                 d3d.indexed_draw.negative_base_start_index_location);
     std::printf("      \"negative_base_vertex_location\": %d,\n", d3d.indexed_draw.negative_base_vertex_location);
+    std::printf("      \"execute_indirect_indexed_indices_created\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_indices_created);
+    std::printf("      \"execute_indirect_indexed_index_format\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_index_format);
+    std::printf("      \"execute_indirect_indexed_index_buffer_size\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_index_buffer_size);
+    std::printf("      \"execute_indirect_indexed_argument_byte_stride\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_argument_byte_stride);
+    std::printf("      \"execute_indirect_indexed_command_signature_arguments\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_command_signature_arguments);
+    std::printf("      \"execute_indirect_indexed_max_command_count\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_max_command_count);
+    std::printf("      \"execute_indirect_indexed_index_count\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_index_count);
+    std::printf("      \"execute_indirect_indexed_instance_count\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_instance_count);
+    std::printf("      \"execute_indirect_indexed_start_index_location\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_start_index_location);
+    std::printf("      \"execute_indirect_indexed_base_vertex_location\": %d,\n",
+                d3d.indexed_draw.execute_indirect_indexed_base_vertex_location);
+    std::printf("      \"execute_indirect_indexed_start_instance_location\": %u,\n",
+                d3d.indexed_draw.execute_indirect_indexed_start_instance_location);
     std::printf("      \"draw_indexed_calls\": %u,\n", d3d.indexed_draw.draw_indexed_calls);
     std::printf("      \"draw_indexed_r32_calls\": %u,\n", d3d.indexed_draw.draw_indexed_r32_calls);
     std::printf("      \"draw_indexed_negative_base_calls\": %u,\n", d3d.indexed_draw.draw_indexed_negative_base_calls);
     std::printf("      \"draw_indexed_dynamic_stride_calls\": %u,\n",
                 d3d.indexed_draw.draw_indexed_dynamic_stride_calls);
+    std::printf("      \"execute_indirect_indexed_calls\": %u,\n", d3d.indexed_draw.execute_indirect_indexed_calls);
     std::printf("      \"present_samples_checked\": %u,\n", d3d.indexed_draw.present_samples_checked);
     std::printf("      \"present_sample_matches\": %u,\n", d3d.indexed_draw.present_sample_matches);
     std::printf("      \"present_pixels_checked\": %u,\n", d3d.indexed_draw.present_pixels_checked);
@@ -8119,6 +8272,14 @@ int main() {
                 d3d.indexed_draw.present_dynamic_stride_pixels_checked);
     std::printf("      \"present_dynamic_stride_pixel_matches\": %u,\n",
                 d3d.indexed_draw.present_dynamic_stride_pixel_matches);
+    std::printf("      \"present_execute_indirect_indexed_samples_checked\": %u,\n",
+                d3d.indexed_draw.present_execute_indirect_indexed_samples_checked);
+    std::printf("      \"present_execute_indirect_indexed_sample_matches\": %u,\n",
+                d3d.indexed_draw.present_execute_indirect_indexed_sample_matches);
+    std::printf("      \"present_execute_indirect_indexed_pixels_checked\": %u,\n",
+                d3d.indexed_draw.present_execute_indirect_indexed_pixels_checked);
+    std::printf("      \"present_execute_indirect_indexed_pixel_matches\": %u,\n",
+                d3d.indexed_draw.present_execute_indirect_indexed_pixel_matches);
     std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.expected_rgba[0],
                 d3d.indexed_draw.expected_rgba[1], d3d.indexed_draw.expected_rgba[2],
                 d3d.indexed_draw.expected_rgba[3]);
@@ -8156,6 +8317,21 @@ int main() {
         "      \"present_dynamic_stride_last_rgba\": [%u, %u, %u, %u],\n",
         d3d.indexed_draw.present_dynamic_stride_last_rgba[0], d3d.indexed_draw.present_dynamic_stride_last_rgba[1],
         d3d.indexed_draw.present_dynamic_stride_last_rgba[2], d3d.indexed_draw.present_dynamic_stride_last_rgba[3]);
+    std::printf("      \"expected_execute_indirect_indexed_rgba\": [%u, %u, %u, %u],\n",
+                d3d.indexed_draw.expected_execute_indirect_indexed_rgba[0],
+                d3d.indexed_draw.expected_execute_indirect_indexed_rgba[1],
+                d3d.indexed_draw.expected_execute_indirect_indexed_rgba[2],
+                d3d.indexed_draw.expected_execute_indirect_indexed_rgba[3]);
+    std::printf("      \"present_execute_indirect_indexed_rgba\": [%u, %u, %u, %u],\n",
+                d3d.indexed_draw.present_execute_indirect_indexed_rgba[0],
+                d3d.indexed_draw.present_execute_indirect_indexed_rgba[1],
+                d3d.indexed_draw.present_execute_indirect_indexed_rgba[2],
+                d3d.indexed_draw.present_execute_indirect_indexed_rgba[3]);
+    std::printf("      \"present_execute_indirect_indexed_last_rgba\": [%u, %u, %u, %u],\n",
+                d3d.indexed_draw.present_execute_indirect_indexed_last_rgba[0],
+                d3d.indexed_draw.present_execute_indirect_indexed_last_rgba[1],
+                d3d.indexed_draw.present_execute_indirect_indexed_last_rgba[2],
+                d3d.indexed_draw.present_execute_indirect_indexed_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.indexed_draw.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.indexed_draw.pass ? "true" : "false");
     std::printf("    },\n");

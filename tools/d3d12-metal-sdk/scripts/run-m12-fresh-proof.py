@@ -2480,6 +2480,19 @@ def run_fresh_game(
     native_vertex_draw_indexed_resolved_count = len(
         re.findall(r"M12 native vertex path resolved draw=DrawIndexedInstanced", diagnostic_log_text)
     )
+    native_vertex_execute_indirect_draw_indexed_resolved_count = len(
+        re.findall(r"M12 native vertex path resolved draw=ExecuteIndirectDrawIndexed", diagnostic_log_text)
+    )
+    native_vertex_resolve_log_budget = 256
+    native_vertex_resolved_required = min(visible_frames * 5, native_vertex_resolve_log_budget)
+    native_vertex_draw_indexed_resolved_required = min(
+        visible_frames * 4,
+        (native_vertex_resolve_log_budget * 4) // 5,
+    )
+    native_vertex_execute_indirect_draw_indexed_resolved_required = min(
+        visible_frames,
+        native_vertex_resolve_log_budget // 5,
+    )
     dxil_draw_encoded_count = len(re.findall(r"M12 swapchain DrawInstanced encoded v=3 i=1", diagnostic_log_text))
     dxil_vertex_pull_snapshot_count = len(
         re.findall(
@@ -2498,6 +2511,15 @@ def run_fresh_game(
     indirect_draw_skipped = bool(
         re.search(r"M12 swapchain ExecuteIndirect DrawInstanced skipped v=24\s+i=1|ExecuteIndirectDraw\s+SKIPPED\s+v=24\s+i=1", diagnostic_log_text,
                   re.IGNORECASE)
+    )
+    execute_indirect_indexed_draw_skipped = bool(
+        re.search(
+            r"ExecuteIndirect DRAW_INDEXED SKIPPED idx=6\s+inst=1|"
+            r"ExecuteIndirectDrawIndexed\s+SKIPPED\s+idx=6\s+inst=1|"
+            r"M12 skipping unsafe ExecuteIndirectDrawIndexed",
+            diagnostic_log_text,
+            re.IGNORECASE,
+        )
     )
     tessellation_fallback_draw_skipped = bool(
         re.search(r"M12 swapchain DrawInstanced skipped v=42\s+i=1|DrawInstanced\s+SKIPPED\s+v=42\s+i=1", diagnostic_log_text,
@@ -3073,7 +3095,8 @@ def run_fresh_game(
         and cbv_sample_json.get("present_last_rgba") == cbv_sample_expected_rgba
         and indexed_draw_json.get("ok") is True
         and indexed_draw_json.get("present_ok") is True
-        and indexed_draw_json.get("proof_scope") == "r16_r32_subrange_base_append_dynamic_stride_presented_readback"
+        and indexed_draw_json.get("proof_scope")
+        == "r16_r32_subrange_base_append_dynamic_stride_execute_indirect_indexed_presented_readback"
         and indexed_draw_json.get("D3DCompile_loaded") is True
         and indexed_draw_json.get("indexed_vs_vs_5_0") == "0x00000000"
         and indexed_draw_json.get("indexed_ps_ps_5_0") == "0x00000000"
@@ -3085,6 +3108,9 @@ def run_fresh_game(
         and indexed_draw_json.get("CreateIndexBuffer") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBufferR32") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBufferNegativeBase") == "0x00000000"
+        and indexed_draw_json.get("CreateIndexBufferExecuteIndirectIndexed") == "0x00000000"
+        and indexed_draw_json.get("CreateExecuteIndirectIndexedArgumentBuffer") == "0x00000000"
+        and indexed_draw_json.get("CreateExecuteIndirectIndexedCommandSignature") == "0x00000000"
         and indexed_draw_json.get("append_aligned_element") is True
         and int(indexed_draw_json.get("append_aligned_color_expected_offset", 0) or 0) == 12
         and int(indexed_draw_json.get("vertices_created", 0) or 0) == 12
@@ -3109,10 +3135,22 @@ def run_fresh_game(
         and int(indexed_draw_json.get("negative_base_index_buffer_size", 0) or 0) == 24
         and int(indexed_draw_json.get("negative_base_start_index_location", 0) or 0) == 0
         and int(indexed_draw_json.get("negative_base_vertex_location", 0) or 0) == -4
+        and int(indexed_draw_json.get("execute_indirect_indexed_indices_created", 0) or 0) == 6
+        and int(indexed_draw_json.get("execute_indirect_indexed_index_format", 0) or 0) == 42
+        and int(indexed_draw_json.get("execute_indirect_indexed_index_buffer_size", 0) or 0) == 32
+        and int(indexed_draw_json.get("execute_indirect_indexed_argument_byte_stride", 0) or 0) == 20
+        and int(indexed_draw_json.get("execute_indirect_indexed_command_signature_arguments", 0) or 0) == 1
+        and int(indexed_draw_json.get("execute_indirect_indexed_max_command_count", 0) or 0) == 1
+        and int(indexed_draw_json.get("execute_indirect_indexed_index_count", 0) or 0) == 6
+        and int(indexed_draw_json.get("execute_indirect_indexed_instance_count", 0) or 0) == 1
+        and int(indexed_draw_json.get("execute_indirect_indexed_start_index_location", 0) or 0) == 2
+        and int(indexed_draw_json.get("execute_indirect_indexed_base_vertex_location", 0) or 0) == -6
+        and int(indexed_draw_json.get("execute_indirect_indexed_start_instance_location", 0) or 0) == 0
         and int(indexed_draw_json.get("draw_indexed_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("draw_indexed_r32_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("draw_indexed_negative_base_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("draw_indexed_dynamic_stride_calls", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("execute_indirect_indexed_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_samples_checked", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_sample_matches", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
@@ -3129,6 +3167,12 @@ def run_fresh_game(
         and int(indexed_draw_json.get("present_dynamic_stride_sample_matches", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_dynamic_stride_pixels_checked", 0) or 0) == visible_frames * 256
         and int(indexed_draw_json.get("present_dynamic_stride_pixel_matches", 0) or 0) == visible_frames * 256
+        and int(indexed_draw_json.get("present_execute_indirect_indexed_samples_checked", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("present_execute_indirect_indexed_sample_matches", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("present_execute_indirect_indexed_pixels_checked", 0) or 0)
+        == visible_frames * 256
+        and int(indexed_draw_json.get("present_execute_indirect_indexed_pixel_matches", 0) or 0)
+        == visible_frames * 256
         and indexed_draw_json.get("expected_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("present_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("present_last_rgba") == indexed_draw_expected_rgba
@@ -3141,6 +3185,9 @@ def run_fresh_game(
         and indexed_draw_json.get("expected_dynamic_stride_rgba") == [96, 240, 120, 255]
         and indexed_draw_json.get("present_dynamic_stride_rgba") == [96, 240, 120, 255]
         and indexed_draw_json.get("present_dynamic_stride_last_rgba") == [96, 240, 120, 255]
+        and indexed_draw_json.get("expected_execute_indirect_indexed_rgba") == [240, 144, 72, 255]
+        and indexed_draw_json.get("present_execute_indirect_indexed_rgba") == [240, 144, 72, 255]
+        and indexed_draw_json.get("present_execute_indirect_indexed_last_rgba") == [240, 144, 72, 255]
         and tessellation_fallback_json.get("ok") is True
         and tessellation_fallback_json.get("present_ok") is True
         and tessellation_fallback_json.get("proof_scope")
@@ -3300,17 +3347,23 @@ def run_fresh_game(
         "present_draw_counts": present_draw_counts,
         "present_indexed_counts": present_indexed_counts,
         "present_indirect_counts": present_indirect_counts,
+        "native_vertex_resolve_log_budget": native_vertex_resolve_log_budget,
         "native_vertex_resolved_count": native_vertex_resolved_count,
+        "native_vertex_resolved_required": native_vertex_resolved_required,
         "native_vertex_draw_indexed_resolved_count": native_vertex_draw_indexed_resolved_count,
+        "native_vertex_draw_indexed_resolved_required": native_vertex_draw_indexed_resolved_required,
+        "native_vertex_execute_indirect_draw_indexed_resolved_count": native_vertex_execute_indirect_draw_indexed_resolved_count,
+        "native_vertex_execute_indirect_draw_indexed_resolved_required": native_vertex_execute_indirect_draw_indexed_resolved_required,
         "dxil_draw_encoded_count": dxil_draw_encoded_count,
         "dxil_draw_encoded_required": min(frames_presented, 6),
-        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect encoded logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=1, indirect>=2, and all JSON/readback lanes to pass.",
+        "dxil_draw_encoded_log_budget_note": "DXMT swapchain DrawInstanced/DrawIndexedInstanced/ExecuteIndirect/native-vertex resolver logs are capped samples; long runs additionally require every present to report draws>=6, indexed>=4, indirect>=3, capped native ExecuteIndirectDrawIndexed resolver output, and all JSON/readback lanes to pass.",
         "dxil_vertex_pull_snapshot_count": dxil_vertex_pull_snapshot_count,
         "dxil_vertex_pull_snapshot_required": min(frames_presented, 4),
         "dxil_vertex_pull_snapshot_note": "DXMT vertex-pull snapshot logs are capped; proof requires the DXIL overlay draw to have v=3, slot_mask=0x1, bound_vbs=1, plus per-frame JSON/readback validation.",
         "dxil_draw_skipped": dxil_draw_skipped,
         "indexed_draw_skipped": indexed_draw_skipped,
         "indirect_draw_skipped": indirect_draw_skipped,
+        "execute_indirect_indexed_draw_skipped": execute_indirect_indexed_draw_skipped,
         "tessellation_fallback_draw_skipped": tessellation_fallback_draw_skipped,
         "nanite_cluster_draw_skipped": nanite_cluster_draw_skipped,
         "texture_array_srv_draw_skipped": texture_array_srv_draw_skipped,
@@ -3341,14 +3394,17 @@ def run_fresh_game(
         and len(present_indirect_counts) == frames_presented
         and all(draws >= 6 for draws in present_draw_counts)
         and all(indexed >= 4 for indexed in present_indexed_counts)
-        and all(indirect >= 2 for indirect in present_indirect_counts)
-        and native_vertex_resolved_count >= visible_frames * 4
-        and native_vertex_draw_indexed_resolved_count >= visible_frames * 4
+        and all(indirect >= 3 for indirect in present_indirect_counts)
+        and native_vertex_resolved_count >= native_vertex_resolved_required
+        and native_vertex_draw_indexed_resolved_count >= native_vertex_draw_indexed_resolved_required
+        and native_vertex_execute_indirect_draw_indexed_resolved_count
+        >= native_vertex_execute_indirect_draw_indexed_resolved_required
         and dxil_draw_encoded_count >= min(frames_presented, 6)
         and dxil_vertex_pull_snapshot_count >= min(frames_presented, 4)
         and not dxil_draw_skipped
         and not indexed_draw_skipped
         and not indirect_draw_skipped
+        and not execute_indirect_indexed_draw_skipped
         and not tessellation_fallback_draw_skipped
         and not nanite_cluster_draw_skipped
         and not texture_array_srv_draw_skipped
