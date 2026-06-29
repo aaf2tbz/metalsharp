@@ -91,6 +91,9 @@ WINEMETAL_API void MTLCommandBuffer_commit(obj_handle_t cmdbuf);
 
 WINEMETAL_API void MTLCommandBuffer_waitUntilCompleted(obj_handle_t cmdbuf);
 
+WINEMETAL_API void
+MTLCommandBuffer_retainObjectsUntilCompleted(obj_handle_t cmdbuf, const obj_handle_t *objects, uint64_t count);
+
 enum WMTCommandBufferStatus : uint64_t {
   WMTCommandBufferStatusNotEnqueued = 0,
   WMTCommandBufferStatusEnqueued = 1,

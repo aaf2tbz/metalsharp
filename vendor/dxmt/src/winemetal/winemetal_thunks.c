@@ -21,7 +21,10 @@ winemetal_open_log(const char *fallback_name) {
   if (!root || !root[0])
     return fopen(file, "a");
 
-  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", file);
+  snprintf(
+      path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/",
+      file
+  );
   path[sizeof(path) - 1] = '\0';
   return fopen(path, "a");
 }
@@ -70,30 +73,24 @@ winemetal_log_render_encode_call(obj_handle_t encoder, const struct wmtcmd_base 
   if (!f)
     return;
 
-  fprintf(f, "PE render_encode_call encoder=%llu cmd=%p",
-          (unsigned long long)encoder, (const void *)cmd_head);
+  fprintf(f, "PE render_encode_call encoder=%llu cmd=%p", (unsigned long long)encoder, (const void *)cmd_head);
   if (cmd_head) {
-    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type,
-            (void *)cmd_head->next.ptr);
+    fprintf(f, " type=%u next=%p", (unsigned)cmd_head->type, (void *)cmd_head->next.ptr);
     if (cmd_head->type == WMTRenderCommandDraw) {
-      const struct wmtcmd_render_draw *body =
-          (const struct wmtcmd_render_draw *)cmd_head;
-      fprintf(f,
-              " prim=%u start=%llu count=%llu inst=%u base_inst=%u",
-              (unsigned)body->primitive_type,
-              (unsigned long long)body->vertex_start,
-              (unsigned long long)body->vertex_count,
-              body->instance_count, body->base_instance);
+      const struct wmtcmd_render_draw *body = (const struct wmtcmd_render_draw *)cmd_head;
+      fprintf(
+          f, " prim=%u start=%llu count=%llu inst=%u base_inst=%u", (unsigned)body->primitive_type,
+          (unsigned long long)body->vertex_start, (unsigned long long)body->vertex_count, body->instance_count,
+          body->base_instance
+      );
     } else if (cmd_head->type == WMTRenderCommandDrawIndexed) {
-      const struct wmtcmd_render_draw_indexed *body =
-          (const struct wmtcmd_render_draw_indexed *)cmd_head;
-      fprintf(f,
-              " prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
-              (unsigned)body->primitive_type, (unsigned)body->index_type,
-              (unsigned long long)body->index_count,
-              (unsigned long long)body->index_buffer,
-              (unsigned long long)body->index_buffer_offset,
-              body->instance_count, body->base_vertex, body->base_instance);
+      const struct wmtcmd_render_draw_indexed *body = (const struct wmtcmd_render_draw_indexed *)cmd_head;
+      fprintf(
+          f, " prim=%u index_type=%u count=%llu ib=%llu ib_off=%llu inst=%u base_vertex=%d base_inst=%u",
+          (unsigned)body->primitive_type, (unsigned)body->index_type, (unsigned long long)body->index_count,
+          (unsigned long long)body->index_buffer, (unsigned long long)body->index_buffer_offset, body->instance_count,
+          body->base_vertex, body->base_instance
+      );
     }
   }
   fprintf(f, "\n");
@@ -215,6 +212,16 @@ MTLCommandBuffer_waitUntilCompleted(obj_handle_t cmdbuf) {
   struct unixcall_generic_obj_noret params;
   params.handle = cmdbuf;
   UNIX_CALL(13, &params);
+  return;
+}
+
+WINEMETAL_API void
+MTLCommandBuffer_retainObjectsUntilCompleted(obj_handle_t cmdbuf, const obj_handle_t *objects, uint64_t count) {
+  struct unixcall_mtlcommandbuffer_retain_objects_until_completed params;
+  params.cmdbuf = cmdbuf;
+  WMT_MEMPTR_SET(params.objects, objects);
+  params.count = count;
+  UNIX_CALL(134, &params);
   return;
 }
 
@@ -958,9 +965,8 @@ MTLLibrary_newFunctionWithConstants(
 
 WINEMETAL_API obj_handle_t
 MTLLibrary_newFunctionWithDescriptor(
-    obj_handle_t library, const char *name, const char *specialized_name,
-    const struct WMTFunctionConstant *constants, uint32_t num_constants,
-    enum WMTFunctionOptions options, obj_handle_t *err_out
+    obj_handle_t library, const char *name, const char *specialized_name, const struct WMTFunctionConstant *constants,
+    uint32_t num_constants, enum WMTFunctionOptions options, obj_handle_t *err_out
 ) {
   struct unixcall_mtllibrary_newfunction_with_descriptor params;
   params.library = library;

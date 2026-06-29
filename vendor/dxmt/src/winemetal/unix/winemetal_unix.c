@@ -386,6 +386,42 @@ _MTLCommandBuffer_waitUntilCompleted(void *obj) {
 }
 
 static NTSTATUS
+_MTLCommandBuffer_retainObjectsUntilCompleted(void *obj) {
+  struct unixcall_mtlcommandbuffer_retain_objects_until_completed *params = obj;
+  id<MTLCommandBuffer> cmdbuf = (id<MTLCommandBuffer>)params->cmdbuf;
+  const obj_handle_t *objects = (const obj_handle_t *)params->objects.ptr;
+  if (!cmdbuf || !objects || !params->count)
+    return STATUS_SUCCESS;
+
+  NSMutableArray *retained = [[NSMutableArray alloc] initWithCapacity:params->count];
+  for (uint64_t i = 0; i < params->count; i++) {
+    id object = (id)objects[i];
+    if (object)
+      [retained addObject:object];
+  }
+
+  if (![retained count]) {
+    [retained release];
+    return STATUS_SUCCESS;
+  }
+
+  const NSUInteger retained_count = [retained count];
+  const obj_handle_t cmdbuf_handle = params->cmdbuf;
+  [cmdbuf addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+    (void)completed;
+    fprintf(
+        stderr,
+        "info:  M12 command buffer retained resources released "
+        "schema=metalsharp.m12.command-buffer-retention-release.v1 "
+        "cmdbuf=%llu retained=%llu\n",
+        (unsigned long long)cmdbuf_handle, (unsigned long long)retained_count
+    );
+    [retained release];
+  }];
+  return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 _MTLCommandBuffer_status(void *obj) {
   struct unixcall_generic_obj_uint64_ret *params = obj;
   params->ret = [(id<MTLCommandBuffer>)params->handle status];
@@ -3666,6 +3702,7 @@ const void *__wine_unix_call_funcs[] = {
     &_MTLDevice_newTileRenderPipelineState,
     &_MTLDevice_newLibraryWithSource,
     &_MTLLibrary_newFunctionWithDescriptor,
+    &_MTLCommandBuffer_retainObjectsUntilCompleted,
 };
 
 #ifndef DXMT_NATIVE
@@ -3804,5 +3841,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
     &_MTLDevice_newTileRenderPipelineState,
     &_MTLDevice_newLibraryWithSource,
     &_MTLLibrary_newFunctionWithDescriptor,
+    &_MTLCommandBuffer_retainObjectsUntilCompleted,
 };
 #endif

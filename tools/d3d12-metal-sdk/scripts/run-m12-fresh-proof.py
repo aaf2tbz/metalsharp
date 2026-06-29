@@ -370,6 +370,70 @@ def _parse_kv_tail(tail: str) -> dict[str, Any]:
     return record
 
 
+def extract_command_buffer_retention(text: str, required_records: int) -> dict[str, Any]:
+    records: list[dict[str, Any]] = []
+    releases: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if "M12 command buffer retained resources released" in line:
+            release = _parse_kv_tail(line)
+            release["raw"] = line.strip()
+            releases.append(release)
+            continue
+        if "M12 command buffer retained resources" not in line:
+            continue
+        record = _parse_kv_tail(line)
+        record["raw"] = line.strip()
+        records.append(record)
+
+    valid_records = [
+        record
+        for record in records
+        if record.get("schema") == "metalsharp.m12.command-buffer-retention.v1"
+        and int(record.get("cmdbuf", 0) or 0) != 0
+        and int(record.get("retained", 0) or 0) > 0
+        and int(record.get("command_count", 0) or 0) > 0
+        and int(record.get("overflow", 0) or 0) == 0
+    ]
+    valid_release_records = [
+        release
+        for release in releases
+        if release.get("schema") == "metalsharp.m12.command-buffer-retention-release.v1"
+        and int(release.get("cmdbuf", 0) or 0) != 0
+        and int(release.get("retained", 0) or 0) > 0
+    ]
+    retained_counts = [int(record.get("retained", 0) or 0) for record in valid_records]
+    draw_records = [record for record in valid_records if int(record.get("draw_count", 0) or 0) > 0]
+    compute_records = [record for record in valid_records if int(record.get("dispatch_count", 0) or 0) > 0]
+    retained_cmdbufs = {int(record.get("cmdbuf", 0) or 0) for record in valid_records}
+    released_cmdbufs = {int(release.get("cmdbuf", 0) or 0) for release in valid_release_records}
+    return {
+        "schema": "metalsharp.m12.command-buffer-retention-proof.v1",
+        "ok": bool(
+            len(valid_records) >= required_records
+            and len(draw_records) >= required_records
+            and compute_records
+            and retained_cmdbufs.issubset(released_cmdbufs)
+            and not any(int(record.get("overflow", 0) or 0) for record in records)
+        ),
+        "required_records": required_records,
+        "record_count": len(records),
+        "valid_record_count": len(valid_records),
+        "release_record_count": len(releases),
+        "valid_release_record_count": len(valid_release_records),
+        "unreleased_cmdbufs": sorted(retained_cmdbufs - released_cmdbufs),
+        "draw_record_count": len(draw_records),
+        "compute_record_count": len(compute_records),
+        "min_retained": min(retained_counts) if retained_counts else 0,
+        "max_retained": max(retained_counts) if retained_counts else 0,
+        "total_overflow": sum(int(record.get("overflow", 0) or 0) for record in records),
+        "total_duplicates": sum(int(record.get("duplicates", 0) or 0) for record in records),
+        "records": records[:128],
+        "records_truncated": len(records) > 128,
+        "releases": releases[:128],
+        "releases_truncated": len(releases) > 128,
+    }
+
+
 def extract_native_compute_resolve(text: str) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -3535,6 +3599,8 @@ def run_fresh_game(
     )
     native_compute_resolve = extract_native_compute_resolve(diagnostic_log_text)
     write_json(run_dir / "native_compute_resolve.json", native_compute_resolve)
+    command_buffer_retention = extract_command_buffer_retention(diagnostic_log_text, min(visible_frames, 4))
+    write_json(run_dir / "command_buffer_retention.json", command_buffer_retention)
 
     result = {
         "command": cmd,
@@ -3545,6 +3611,7 @@ def run_fresh_game(
         "diagnostic_logs": diagnostic_log_records,
         "async_worker_proof": async_worker_proof,
         "native_compute_resolve": native_compute_resolve,
+        "command_buffer_retention": command_buffer_retention,
         "json_parse_error": parse_error,
         "game_json": parsed,
         "loaddll": loaddll_rows,
@@ -3605,6 +3672,7 @@ def run_fresh_game(
         and hard_fail_gates["native_runtime_pass"]
         and async_worker_proof["ok"]
         and native_compute_resolve["ok"]
+        and command_buffer_retention["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented

@@ -675,6 +675,11 @@ public:
     return MTLCommandBuffer_waitUntilCompleted(handle);
   }
 
+  void
+  retainObjectsUntilCompleted(const obj_handle_t *objects, uint64_t count) {
+    MTLCommandBuffer_retainObjectsUntilCompleted(handle, objects, count);
+  }
+
   WMTCommandBufferStatus
   status() {
     return MTLCommandBuffer_status(handle);
