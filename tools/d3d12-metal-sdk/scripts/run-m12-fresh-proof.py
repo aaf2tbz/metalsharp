@@ -3030,7 +3030,7 @@ def run_fresh_game(
         and cbv_sample_json.get("present_last_rgba") == cbv_sample_expected_rgba
         and indexed_draw_json.get("ok") is True
         and indexed_draw_json.get("present_ok") is True
-        and indexed_draw_json.get("proof_scope") == "index_buffer_view_draw_indexed_instanced_presented_readback"
+        and indexed_draw_json.get("proof_scope") == "r16_r32_indexed_subrange_base_vertex_presented_readback"
         and indexed_draw_json.get("D3DCompile_loaded") is True
         and indexed_draw_json.get("indexed_vs_vs_5_0") == "0x00000000"
         and indexed_draw_json.get("indexed_ps_ps_5_0") == "0x00000000"
@@ -3039,22 +3039,37 @@ def run_fresh_game(
         and indexed_draw_json.get("CreateGraphicsPipelineState") == "0x00000000"
         and indexed_draw_json.get("CreateVertexBuffer") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBuffer") == "0x00000000"
-        and int(indexed_draw_json.get("vertices_created", 0) or 0) == 4
-        and int(indexed_draw_json.get("vertex_buffer_size", 0) or 0) == 112
+        and indexed_draw_json.get("CreateIndexBufferR32") == "0x00000000"
+        and int(indexed_draw_json.get("vertices_created", 0) or 0) == 8
+        and int(indexed_draw_json.get("vertex_buffer_size", 0) or 0) == 224
         and int(indexed_draw_json.get("vertex_view_byte_offset", 0) or 0) == 28
         and int(indexed_draw_json.get("indices_created", 0) or 0) == 6
         and int(indexed_draw_json.get("index_format", 0) or 0) == 57
         and int(indexed_draw_json.get("index_buffer_size", 0) or 0) == 16
         and int(indexed_draw_json.get("index_view_byte_offset", 0) or 0) == 4
         and int(indexed_draw_json.get("start_index_location", 0) or 0) == 2
+        and int(indexed_draw_json.get("r32_indices_created", 0) or 0) == 6
+        and int(indexed_draw_json.get("r32_index_format", 0) or 0) == 42
+        and int(indexed_draw_json.get("r32_index_buffer_size", 0) or 0) == 32
+        and int(indexed_draw_json.get("r32_index_view_byte_offset", 0) or 0) == 8
+        and int(indexed_draw_json.get("r32_start_index_location", 0) or 0) == 2
+        and int(indexed_draw_json.get("r32_base_vertex_location", 0) or 0) == 4
         and int(indexed_draw_json.get("draw_indexed_calls", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("draw_indexed_r32_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_samples_checked", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_sample_matches", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
         and int(indexed_draw_json.get("present_pixel_matches", 0) or 0) == visible_frames * 256
+        and int(indexed_draw_json.get("present_r32_samples_checked", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("present_r32_sample_matches", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("present_r32_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(indexed_draw_json.get("present_r32_pixel_matches", 0) or 0) == visible_frames * 256
         and indexed_draw_json.get("expected_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("present_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("present_last_rgba") == indexed_draw_expected_rgba
+        and indexed_draw_json.get("expected_r32_rgba") == [64, 220, 240, 255]
+        and indexed_draw_json.get("present_r32_rgba") == [64, 220, 240, 255]
+        and indexed_draw_json.get("present_r32_last_rgba") == [64, 220, 240, 255]
         and tessellation_fallback_json.get("ok") is True
         and tessellation_fallback_json.get("present_ok") is True
         and tessellation_fallback_json.get("proof_scope")

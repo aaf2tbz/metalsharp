@@ -65,6 +65,8 @@ constexpr UINT kCbvStampX = 248;
 constexpr UINT kCbvStampY = 24;
 constexpr UINT kIndexedStampX = 280;
 constexpr UINT kIndexedStampY = 24;
+constexpr UINT kIndexedR32StampX = 280;
+constexpr UINT kIndexedR32StampY = 56;
 constexpr UINT kIndirectStampX = 312;
 constexpr UINT kIndirectStampY = 24;
 constexpr UINT kWaveOpsStampX = 344;
@@ -2127,6 +2129,7 @@ struct IndexedDrawStats {
     HRESULT create_pso_hr = E_FAIL;
     HRESULT create_vertex_buffer_hr = E_FAIL;
     HRESULT create_index_buffer_hr = E_FAIL;
+    HRESULT create_index_buffer_r32_hr = E_FAIL;
     uint32_t vertices_created = 0;
     uint32_t vertex_buffer_size = 0;
     uint32_t vertex_view_byte_offset = 0;
@@ -2135,14 +2138,28 @@ struct IndexedDrawStats {
     uint32_t index_buffer_size = 0;
     uint32_t index_view_byte_offset = 0;
     uint32_t start_index_location = 2;
+    uint32_t r32_indices_created = 0;
+    uint32_t r32_index_format = DXGI_FORMAT_R32_UINT;
+    uint32_t r32_index_buffer_size = 0;
+    uint32_t r32_index_view_byte_offset = 0;
+    uint32_t r32_start_index_location = 2;
+    INT r32_base_vertex_location = 4;
     uint32_t draw_indexed_calls = 0;
+    uint32_t draw_indexed_r32_calls = 0;
     uint32_t present_samples_checked = 0;
     uint32_t present_sample_matches = 0;
     uint32_t present_pixels_checked = 0;
     uint32_t present_pixel_matches = 0;
     uint8_t expected_rgba[4] = {240, 200, 48, 255};
+    uint8_t expected_r32_rgba[4] = {64, 220, 240, 255};
     uint8_t present_rgba[4] = {0, 0, 0, 0};
     uint8_t present_last_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_r32_rgba[4] = {0, 0, 0, 0};
+    uint8_t present_r32_last_rgba[4] = {0, 0, 0, 0};
+    uint32_t present_r32_samples_checked = 0;
+    uint32_t present_r32_sample_matches = 0;
+    uint32_t present_r32_pixels_checked = 0;
+    uint32_t present_r32_pixel_matches = 0;
     bool present_pass = false;
     bool pass = false;
 };
@@ -2152,8 +2169,10 @@ struct IndexedDrawSceneResources {
     ID3D12PipelineState* pipeline_state = nullptr;
     ID3D12Resource* vertex_buffer = nullptr;
     ID3D12Resource* index_buffer = nullptr;
+    ID3D12Resource* index_buffer_r32 = nullptr;
     D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
     D3D12_INDEX_BUFFER_VIEW index_view = {};
+    D3D12_INDEX_BUFFER_VIEW index_view_r32 = {};
     IndexedDrawStats stats;
 };
 
@@ -2226,7 +2245,7 @@ float4 indexed_ps(PSIn input) : SV_Target {
 
     if (device) {
         D3D12_HEAP_PROPERTIES upload_heap = heap_props(D3D12_HEAP_TYPE_UPLOAD);
-        D3D12_RESOURCE_DESC vb_desc = buffer_desc(5u * sizeof(ColorVertex));
+        D3D12_RESOURCE_DESC vb_desc = buffer_desc(9u * sizeof(ColorVertex));
         stats.create_vertex_buffer_hr = device->CreateCommittedResource(&upload_heap, D3D12_HEAP_FLAG_NONE, &vb_desc,
                                                                         D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
                                                                         IID_PPV_ARGS(&scene.vertex_buffer));
@@ -2234,30 +2253,33 @@ float4 indexed_ps(PSIn input) : SV_Target {
             ColorVertex* mapped = nullptr;
             scene.vertex_buffer->Map(0, nullptr, reinterpret_cast<void**>(&mapped));
             if (mapped) {
-                const float draw_x0 = static_cast<float>(kIndexedStampX) - 1.0f;
-                const float draw_y0 = static_cast<float>(kIndexedStampY) - 1.0f;
-                const float draw_x1 = static_cast<float>(kIndexedStampX + kFreshTextureWidth) + 1.0f;
-                const float draw_y1 = static_cast<float>(kIndexedStampY + kFreshTextureHeight) + 1.0f;
-                const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
-                const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
-                const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
-                const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
-                const float r = static_cast<float>(stats.expected_rgba[0]) / 255.0f;
-                const float g = static_cast<float>(stats.expected_rgba[1]) / 255.0f;
-                const float b = static_cast<float>(stats.expected_rgba[2]) / 255.0f;
-                const float a = static_cast<float>(stats.expected_rgba[3]) / 255.0f;
+                auto fill_quad = [&](ColorVertex* out, UINT stamp_x, UINT stamp_y, const uint8_t rgba[4]) {
+                    const float draw_x0 = static_cast<float>(stamp_x) - 1.0f;
+                    const float draw_y0 = static_cast<float>(stamp_y) - 1.0f;
+                    const float draw_x1 = static_cast<float>(stamp_x + kFreshTextureWidth) + 1.0f;
+                    const float draw_y1 = static_cast<float>(stamp_y + kFreshTextureHeight) + 1.0f;
+                    const float x0 = ndc_x_from_pixel(draw_x0, static_cast<float>(backbuffer_width));
+                    const float x1 = ndc_x_from_pixel(draw_x1, static_cast<float>(backbuffer_width));
+                    const float y0 = ndc_y_from_pixel(draw_y1, static_cast<float>(backbuffer_height));
+                    const float y1 = ndc_y_from_pixel(draw_y0, static_cast<float>(backbuffer_height));
+                    const float r = static_cast<float>(rgba[0]) / 255.0f;
+                    const float g = static_cast<float>(rgba[1]) / 255.0f;
+                    const float b = static_cast<float>(rgba[2]) / 255.0f;
+                    const float a = static_cast<float>(rgba[3]) / 255.0f;
+                    out[0] = {{x0, y1, 0.025f}, {r, g, b, a}};
+                    out[1] = {{x1, y1, 0.025f}, {r, g, b, a}};
+                    out[2] = {{x0, y0, 0.025f}, {r, g, b, a}};
+                    out[3] = {{x1, y0, 0.025f}, {r, g, b, a}};
+                };
                 const ColorVertex poison = {{-1.0f, -1.0f, 0.025f}, {0.0f, 0.0f, 0.0f, 0.0f}};
-                const ColorVertex vertices[4] = {{{x0, y1, 0.025f}, {r, g, b, a}},
-                                                 {{x1, y1, 0.025f}, {r, g, b, a}},
-                                                 {{x0, y0, 0.025f}, {r, g, b, a}},
-                                                 {{x1, y0, 0.025f}, {r, g, b, a}}};
                 mapped[0] = poison;
-                std::memcpy(mapped + 1, vertices, sizeof(vertices));
-                D3D12_RANGE written = {0, 5u * sizeof(ColorVertex)};
+                fill_quad(mapped + 1, kIndexedStampX, kIndexedStampY, stats.expected_rgba);
+                fill_quad(mapped + 5, kIndexedR32StampX, kIndexedR32StampY, stats.expected_r32_rgba);
+                D3D12_RANGE written = {0, 9u * sizeof(ColorVertex)};
                 scene.vertex_buffer->Unmap(0, &written);
-                stats.vertices_created = 4;
+                stats.vertices_created = 8;
                 stats.vertex_view_byte_offset = sizeof(ColorVertex);
-                stats.vertex_buffer_size = 4u * sizeof(ColorVertex);
+                stats.vertex_buffer_size = 8u * sizeof(ColorVertex);
             }
             scene.vertex_view.BufferLocation = scene.vertex_buffer->GetGPUVirtualAddress() + stats.vertex_view_byte_offset;
             scene.vertex_view.SizeInBytes = stats.vertex_buffer_size;
@@ -2284,17 +2306,44 @@ float4 indexed_ps(PSIn input) : SV_Target {
             scene.index_view.Format = DXGI_FORMAT_R16_UINT;
             stats.index_format = DXGI_FORMAT_R16_UINT;
         }
+
+        D3D12_RESOURCE_DESC ib_r32_desc = buffer_desc(10u * sizeof(uint32_t));
+        stats.create_index_buffer_r32_hr = device->CreateCommittedResource(
+            &upload_heap, D3D12_HEAP_FLAG_NONE, &ib_r32_desc, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr,
+            IID_PPV_ARGS(&scene.index_buffer_r32));
+        if (SUCCEEDED(stats.create_index_buffer_r32_hr) && scene.index_buffer_r32) {
+            uint32_t* mapped = nullptr;
+            if (SUCCEEDED(scene.index_buffer_r32->Map(0, nullptr, reinterpret_cast<void**>(&mapped))) && mapped) {
+                const uint32_t indices[10] = {0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0, 1, 2, 2, 1, 3};
+                std::memcpy(mapped, indices, sizeof(indices));
+                D3D12_RANGE written = {0, sizeof(indices)};
+                scene.index_buffer_r32->Unmap(0, &written);
+                stats.r32_indices_created = 6;
+                stats.r32_index_view_byte_offset = 2u * sizeof(uint32_t);
+                stats.r32_index_buffer_size = 8u * sizeof(uint32_t);
+            }
+            scene.index_view_r32.BufferLocation =
+                scene.index_buffer_r32->GetGPUVirtualAddress() + stats.r32_index_view_byte_offset;
+            scene.index_view_r32.SizeInBytes = stats.r32_index_buffer_size;
+            scene.index_view_r32.Format = DXGI_FORMAT_R32_UINT;
+            stats.r32_index_format = DXGI_FORMAT_R32_UINT;
+        }
     }
 
     stats.pass = stats.d3dcompiler_loaded && SUCCEEDED(stats.compile_vs_hr) && SUCCEEDED(stats.compile_ps_hr) &&
                  SUCCEEDED(stats.serialize_root_hr) && SUCCEEDED(stats.create_root_hr) &&
                  SUCCEEDED(stats.create_pso_hr) && SUCCEEDED(stats.create_vertex_buffer_hr) &&
-                 SUCCEEDED(stats.create_index_buffer_hr) && stats.vertices_created == 4 &&
-                 stats.vertex_buffer_size == 112 && stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
+                 SUCCEEDED(stats.create_index_buffer_hr) && SUCCEEDED(stats.create_index_buffer_r32_hr) &&
+                 stats.vertices_created == 8 && stats.vertex_buffer_size == 224 &&
+                 stats.vertex_view_byte_offset == 28 && stats.indices_created == 6 &&
                  stats.index_format == DXGI_FORMAT_R16_UINT && stats.index_buffer_size == 16 &&
-                 stats.index_view_byte_offset == 4 && stats.start_index_location == 2 && scene.root_signature &&
-                 scene.pipeline_state && scene.vertex_buffer && scene.index_buffer &&
-                 scene.vertex_view.BufferLocation != 0 && scene.index_view.BufferLocation != 0;
+                 stats.index_view_byte_offset == 4 && stats.start_index_location == 2 &&
+                 stats.r32_indices_created == 6 && stats.r32_index_format == DXGI_FORMAT_R32_UINT &&
+                 stats.r32_index_buffer_size == 32 && stats.r32_index_view_byte_offset == 8 &&
+                 stats.r32_start_index_location == 2 && stats.r32_base_vertex_location == 4 &&
+                 scene.root_signature && scene.pipeline_state && scene.vertex_buffer && scene.index_buffer &&
+                 scene.index_buffer_r32 && scene.vertex_view.BufferLocation != 0 && scene.index_view.BufferLocation != 0 &&
+                 scene.index_view_r32.BufferLocation != 0;
 
     safe_release(vs);
     safe_release(ps);
@@ -2303,6 +2352,7 @@ float4 indexed_ps(PSIn input) : SV_Target {
 }
 
 static void destroy_indexed_draw_scene(IndexedDrawSceneResources& scene) {
+    safe_release(scene.index_buffer_r32);
     safe_release(scene.index_buffer);
     safe_release(scene.vertex_buffer);
     safe_release(scene.pipeline_state);
@@ -5895,30 +5945,46 @@ static bool inspect_indexed_draw_stamp(DxilReadbackResources& readback, IndexedD
     D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
     if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
         return false;
-    const uint8_t* first = readback_pixel(readback, mapped, kIndexedStampX, kIndexedStampY);
-    std::memcpy(stats.present_rgba, first, sizeof(stats.present_rgba));
-    const uint8_t* last = readback_pixel(readback, mapped, kIndexedStampX + kFreshTextureWidth - 1u,
-                                         kIndexedStampY + kFreshTextureHeight - 1u);
-    std::memcpy(stats.present_last_rgba, last, sizeof(stats.present_last_rgba));
-    stats.present_samples_checked++;
-    uint32_t frame_matches = 0;
-    for (UINT y = 0; y < kFreshTextureHeight; ++y) {
-        for (UINT x = 0; x < kFreshTextureWidth; ++x) {
-            const uint8_t* pixel = readback_pixel(readback, mapped, kIndexedStampX + x, kIndexedStampY + y);
-            stats.present_pixels_checked++;
-            if (pixel[0] == stats.expected_rgba[0] && pixel[1] == stats.expected_rgba[1] &&
-                pixel[2] == stats.expected_rgba[2] && pixel[3] == stats.expected_rgba[3]) {
-                stats.present_pixel_matches++;
-                frame_matches++;
+
+    auto inspect_stamp = [&](UINT stamp_x, UINT stamp_y, const uint8_t expected[4], uint8_t first_rgba[4],
+                             uint8_t last_rgba[4], uint32_t& samples_checked, uint32_t& sample_matches,
+                             uint32_t& pixels_checked, uint32_t& pixel_matches) {
+        const uint8_t* first = readback_pixel(readback, mapped, stamp_x, stamp_y);
+        std::memcpy(first_rgba, first, 4);
+        const uint8_t* last =
+            readback_pixel(readback, mapped, stamp_x + kFreshTextureWidth - 1u, stamp_y + kFreshTextureHeight - 1u);
+        std::memcpy(last_rgba, last, 4);
+        samples_checked++;
+        uint32_t frame_matches = 0;
+        for (UINT y = 0; y < kFreshTextureHeight; ++y) {
+            for (UINT x = 0; x < kFreshTextureWidth; ++x) {
+                const uint8_t* pixel = readback_pixel(readback, mapped, stamp_x + x, stamp_y + y);
+                pixels_checked++;
+                if (pixel[0] == expected[0] && pixel[1] == expected[1] && pixel[2] == expected[2] &&
+                    pixel[3] == expected[3]) {
+                    pixel_matches++;
+                    frame_matches++;
+                }
             }
         }
-    }
-    const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
-    if (matches)
-        stats.present_sample_matches++;
+        const bool matches = frame_matches == kFreshTextureWidth * kFreshTextureHeight;
+        if (matches)
+            sample_matches++;
+        return matches;
+    };
+
+    const bool r16_matches = inspect_stamp(kIndexedStampX, kIndexedStampY, stats.expected_rgba, stats.present_rgba,
+                                           stats.present_last_rgba, stats.present_samples_checked,
+                                           stats.present_sample_matches, stats.present_pixels_checked,
+                                           stats.present_pixel_matches);
+    const bool r32_matches = inspect_stamp(kIndexedR32StampX, kIndexedR32StampY, stats.expected_r32_rgba,
+                                           stats.present_r32_rgba, stats.present_r32_last_rgba,
+                                           stats.present_r32_samples_checked, stats.present_r32_sample_matches,
+                                           stats.present_r32_pixels_checked, stats.present_r32_pixel_matches);
+
     D3D12_RANGE written = {0, 0};
     readback.buffer->Unmap(0, &written);
-    return matches;
+    return r16_matches && r32_matches;
 }
 
 static bool inspect_tessellation_fallback_stamp(DxilReadbackResources& readback, TessellationFallbackStats& stats) {
@@ -6491,6 +6557,11 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->DrawIndexedInstanced(indexed_draw.stats.indices_created, 1,
                                        indexed_draw.stats.start_index_location, 0, 0);
             stats.indexed_draw.draw_indexed_calls++;
+            list->IASetIndexBuffer(&indexed_draw.index_view_r32);
+            list->DrawIndexedInstanced(indexed_draw.stats.r32_indices_created, 1,
+                                       indexed_draw.stats.r32_start_index_location,
+                                       indexed_draw.stats.r32_base_vertex_location, 0);
+            stats.indexed_draw.draw_indexed_r32_calls++;
             if (tessellation_fallback.pipeline_state) {
                 list->SetGraphicsRootSignature(tessellation_fallback.root_signature);
                 list->SetPipelineState(tessellation_fallback.pipeline_state);
@@ -6829,7 +6900,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indexed_draw.present_samples_checked == visible_frame_target &&
         stats.indexed_draw.present_sample_matches == visible_frame_target &&
         stats.indexed_draw.present_pixels_checked == visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
-        stats.indexed_draw.present_pixel_matches == stats.indexed_draw.present_pixels_checked;
+        stats.indexed_draw.present_pixel_matches == stats.indexed_draw.present_pixels_checked &&
+        stats.indexed_draw.present_r32_samples_checked == visible_frame_target &&
+        stats.indexed_draw.present_r32_sample_matches == visible_frame_target &&
+        stats.indexed_draw.present_r32_pixels_checked ==
+            visible_frame_target * kFreshTextureWidth * kFreshTextureHeight &&
+        stats.indexed_draw.present_r32_pixel_matches == stats.indexed_draw.present_r32_pixels_checked;
     stats.tessellation_fallback.present_pass =
         stats.tessellation_fallback.blocked_expected && !stats.tessellation_fallback.fallback_draw_encoded
             ? stats.tessellation_fallback.draw_calls == 0
@@ -6875,7 +6951,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.textured_3d.clear_depth_commands == visible_frame_target && stats.cbv_sample.pass &&
         stats.cbv_sample.present_pass && stats.cbv_sample.draw_calls == visible_frame_target &&
         stats.indexed_draw.pass && stats.indexed_draw.present_pass &&
-        stats.indexed_draw.draw_indexed_calls == visible_frame_target && stats.tessellation_fallback.pass &&
+        stats.indexed_draw.draw_indexed_calls == visible_frame_target &&
+        stats.indexed_draw.draw_indexed_r32_calls == visible_frame_target && stats.tessellation_fallback.pass &&
         stats.tessellation_fallback.present_pass && stats.tessellation_fallback.blocked_expected &&
         !stats.tessellation_fallback.fallback_draw_encoded && stats.tessellation_fallback.draw_calls == 0 &&
         stats.indirect_draw.pass && stats.indirect_draw.present_pass &&
@@ -7648,7 +7725,7 @@ int main() {
     std::printf("      \"ok\": %s\n", d3d.cbv_sample.pass ? "true" : "false");
     std::printf("    },\n");
     std::printf("    \"indexed_draw\": {\n");
-    std::printf("      \"proof_scope\": \"index_buffer_view_draw_indexed_instanced_presented_readback\",\n");
+    std::printf("      \"proof_scope\": \"r16_r32_indexed_subrange_base_vertex_presented_readback\",\n");
     std::printf("      \"D3DCompile_loaded\": %s,\n", d3d.indexed_draw.d3dcompiler_loaded ? "true" : "false");
     std::printf("      \"indexed_vs_vs_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_vs_hr).c_str());
     std::printf("      \"indexed_ps_ps_5_0\": \"%s\",\n", hr_hex(d3d.indexed_draw.compile_ps_hr).c_str());
@@ -7657,6 +7734,7 @@ int main() {
     std::printf("      \"CreateGraphicsPipelineState\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_pso_hr).c_str());
     std::printf("      \"CreateVertexBuffer\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_vertex_buffer_hr).c_str());
     std::printf("      \"CreateIndexBuffer\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_index_buffer_hr).c_str());
+    std::printf("      \"CreateIndexBufferR32\": \"%s\",\n", hr_hex(d3d.indexed_draw.create_index_buffer_r32_hr).c_str());
     std::printf("      \"vertices_created\": %u,\n", d3d.indexed_draw.vertices_created);
     std::printf("      \"vertex_buffer_size\": %u,\n", d3d.indexed_draw.vertex_buffer_size);
     std::printf("      \"vertex_view_byte_offset\": %u,\n", d3d.indexed_draw.vertex_view_byte_offset);
@@ -7665,11 +7743,22 @@ int main() {
     std::printf("      \"index_buffer_size\": %u,\n", d3d.indexed_draw.index_buffer_size);
     std::printf("      \"index_view_byte_offset\": %u,\n", d3d.indexed_draw.index_view_byte_offset);
     std::printf("      \"start_index_location\": %u,\n", d3d.indexed_draw.start_index_location);
+    std::printf("      \"r32_indices_created\": %u,\n", d3d.indexed_draw.r32_indices_created);
+    std::printf("      \"r32_index_format\": %u,\n", d3d.indexed_draw.r32_index_format);
+    std::printf("      \"r32_index_buffer_size\": %u,\n", d3d.indexed_draw.r32_index_buffer_size);
+    std::printf("      \"r32_index_view_byte_offset\": %u,\n", d3d.indexed_draw.r32_index_view_byte_offset);
+    std::printf("      \"r32_start_index_location\": %u,\n", d3d.indexed_draw.r32_start_index_location);
+    std::printf("      \"r32_base_vertex_location\": %d,\n", d3d.indexed_draw.r32_base_vertex_location);
     std::printf("      \"draw_indexed_calls\": %u,\n", d3d.indexed_draw.draw_indexed_calls);
+    std::printf("      \"draw_indexed_r32_calls\": %u,\n", d3d.indexed_draw.draw_indexed_r32_calls);
     std::printf("      \"present_samples_checked\": %u,\n", d3d.indexed_draw.present_samples_checked);
     std::printf("      \"present_sample_matches\": %u,\n", d3d.indexed_draw.present_sample_matches);
     std::printf("      \"present_pixels_checked\": %u,\n", d3d.indexed_draw.present_pixels_checked);
     std::printf("      \"present_pixel_matches\": %u,\n", d3d.indexed_draw.present_pixel_matches);
+    std::printf("      \"present_r32_samples_checked\": %u,\n", d3d.indexed_draw.present_r32_samples_checked);
+    std::printf("      \"present_r32_sample_matches\": %u,\n", d3d.indexed_draw.present_r32_sample_matches);
+    std::printf("      \"present_r32_pixels_checked\": %u,\n", d3d.indexed_draw.present_r32_pixels_checked);
+    std::printf("      \"present_r32_pixel_matches\": %u,\n", d3d.indexed_draw.present_r32_pixel_matches);
     std::printf("      \"expected_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.expected_rgba[0],
                 d3d.indexed_draw.expected_rgba[1], d3d.indexed_draw.expected_rgba[2],
                 d3d.indexed_draw.expected_rgba[3]);
@@ -7678,6 +7767,15 @@ int main() {
     std::printf("      \"present_last_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.present_last_rgba[0],
                 d3d.indexed_draw.present_last_rgba[1], d3d.indexed_draw.present_last_rgba[2],
                 d3d.indexed_draw.present_last_rgba[3]);
+    std::printf("      \"expected_r32_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.expected_r32_rgba[0],
+                d3d.indexed_draw.expected_r32_rgba[1], d3d.indexed_draw.expected_r32_rgba[2],
+                d3d.indexed_draw.expected_r32_rgba[3]);
+    std::printf("      \"present_r32_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.present_r32_rgba[0],
+                d3d.indexed_draw.present_r32_rgba[1], d3d.indexed_draw.present_r32_rgba[2],
+                d3d.indexed_draw.present_r32_rgba[3]);
+    std::printf("      \"present_r32_last_rgba\": [%u, %u, %u, %u],\n", d3d.indexed_draw.present_r32_last_rgba[0],
+                d3d.indexed_draw.present_r32_last_rgba[1], d3d.indexed_draw.present_r32_last_rgba[2],
+                d3d.indexed_draw.present_r32_last_rgba[3]);
     std::printf("      \"present_ok\": %s,\n", d3d.indexed_draw.present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.indexed_draw.pass ? "true" : "false");
     std::printf("    },\n");
