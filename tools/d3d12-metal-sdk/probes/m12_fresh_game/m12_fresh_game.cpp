@@ -91,6 +91,17 @@ constexpr UINT kTextured3DDepthSampleX = 704;
 constexpr UINT kTextured3DDepthSampleY = 156;
 constexpr UINT kSm5StampX = 96;
 constexpr UINT kSm5StampY = 96;
+constexpr UINT kProgressiveVertexTriangleRegionX = 752;
+constexpr UINT kProgressiveVertexTriangleRegionY = 384;
+constexpr UINT kProgressiveVertexTriangleRegionWidth = 144;
+constexpr UINT kProgressiveVertexTriangleRegionHeight = 112;
+constexpr UINT kProgressiveVertexTriangleTopX = 824;
+constexpr UINT kProgressiveVertexTriangleTopY = 390;
+constexpr UINT kProgressiveVertexTriangleLeftX = 760;
+constexpr UINT kProgressiveVertexTriangleLeftY = 486;
+constexpr UINT kProgressiveVertexTriangleRightX = 888;
+constexpr UINT kProgressiveVertexTriangleRightY = 486;
+constexpr UINT kProgressiveVertexTriangleFinalCoverageMin = 3000;
 constexpr size_t kFreshTexturePayloadBytes = kFreshTextureWidth * kFreshTextureHeight * 4;
 
 struct TexturePayload {
@@ -717,6 +728,22 @@ struct VisibleSceneStats {
     uint8_t sm5_stamp_expected_rgba[4] = {0, 0, 0, 0};
     uint8_t sm5_stamp_rgba[4] = {0, 0, 0, 0};
     bool sm5_stamp_present_pass = false;
+    uint32_t progressive_triangle_vertices_per_frame = 0;
+    uint32_t progressive_triangle_draw_calls = 0;
+    uint32_t progressive_triangle_frames_validated = 0;
+    uint32_t progressive_triangle_samples_checked = 0;
+    uint32_t progressive_triangle_seed_pixels = 0;
+    uint32_t progressive_triangle_final_pixels = 0;
+    uint32_t progressive_triangle_peak_pixels = 0;
+    uint32_t progressive_triangle_final_red_dominant_pixels = 0;
+    uint32_t progressive_triangle_final_green_dominant_pixels = 0;
+    uint32_t progressive_triangle_final_blue_dominant_pixels = 0;
+    bool progressive_triangle_coverage_monotonic = true;
+    bool progressive_triangle_seed_point_pass = false;
+    bool progressive_triangle_full_pass = false;
+    bool progressive_triangle_rgb_channels_present = false;
+    bool progressive_triangle_present_pass = false;
+    std::vector<uint32_t> progressive_triangle_coverage_counts;
     bool pass = false;
 };
 
@@ -726,6 +753,7 @@ struct VisibleSceneResources {
     ID3D12Resource* vertex_buffer = nullptr;
     ColorVertex* mapped_vertices = nullptr;
     D3D12_VERTEX_BUFFER_VIEW vertex_view = {};
+    D3D12_VERTEX_BUFFER_VIEW progressive_triangle_vertex_view = {};
     uint32_t max_quads = 96;
     VisibleSceneStats stats;
 };
@@ -780,6 +808,58 @@ static void write_quad(ColorVertex* dst, float x0, float y0, float x1, float y1,
         {{x1, y0, z}, {r, g, b, a}}, {{x0, y1, z}, {r, g, b, a}}, {{x1, y1, z}, {r, g, b, a}},
     };
     std::memcpy(dst, quad, sizeof(quad));
+}
+
+static float progressive_rgb_triangle_scale(uint32_t frame, uint32_t target_frames) {
+    constexpr float seed_scale = 0.050f;
+    if (target_frames <= 1u)
+        return 1.0f;
+    const float t = std::min<float>(1.0f, static_cast<float>(frame) / static_cast<float>(target_frames - 1u));
+    return seed_scale + (1.0f - seed_scale) * t;
+}
+
+static ColorVertex progressive_rgb_triangle_vertex(float pixel_x, float pixel_y, float scale, float r, float g,
+                                                   float b) {
+    constexpr float center_x =
+        (static_cast<float>(kProgressiveVertexTriangleTopX) + static_cast<float>(kProgressiveVertexTriangleLeftX) +
+         static_cast<float>(kProgressiveVertexTriangleRightX)) /
+        3.0f;
+    constexpr float center_y =
+        (static_cast<float>(kProgressiveVertexTriangleTopY) + static_cast<float>(kProgressiveVertexTriangleLeftY) +
+         static_cast<float>(kProgressiveVertexTriangleRightY)) /
+        3.0f;
+    const float scaled_x = center_x + (pixel_x - center_x) * scale;
+    const float scaled_y = center_y + (pixel_y - center_y) * scale;
+    const float ndc_x = scaled_x * 2.0f / static_cast<float>(kBackbufferWidth) - 1.0f;
+    const float ndc_y = 1.0f - scaled_y * 2.0f / static_cast<float>(kBackbufferHeight);
+    return {{ndc_x, ndc_y, 0.06f}, {r, g, b, 1.0f}};
+}
+
+static void write_progressive_rgb_triangle(ColorVertex* dst, uint32_t frame, uint32_t target_frames) {
+    const float region_x0 = static_cast<float>(kProgressiveVertexTriangleRegionX);
+    const float region_y0 = static_cast<float>(kProgressiveVertexTriangleRegionY);
+    const float region_x1 =
+        static_cast<float>(kProgressiveVertexTriangleRegionX + kProgressiveVertexTriangleRegionWidth);
+    const float region_y1 =
+        static_cast<float>(kProgressiveVertexTriangleRegionY + kProgressiveVertexTriangleRegionHeight);
+    write_quad(dst, region_x0 * 2.0f / static_cast<float>(kBackbufferWidth) - 1.0f,
+               1.0f - region_y1 * 2.0f / static_cast<float>(kBackbufferHeight),
+               region_x1 * 2.0f / static_cast<float>(kBackbufferWidth) - 1.0f,
+               1.0f - region_y0 * 2.0f / static_cast<float>(kBackbufferHeight), 0.055f, 0.01f, 0.02f, 0.05f, 1.0f);
+
+    const float scale = progressive_rgb_triangle_scale(frame, target_frames);
+    for (uint32_t repeat = 0; repeat < 3u; ++repeat) {
+        ColorVertex* tri = dst + 6u + repeat * 3u;
+        tri[0] = progressive_rgb_triangle_vertex(static_cast<float>(kProgressiveVertexTriangleTopX),
+                                                 static_cast<float>(kProgressiveVertexTriangleTopY), scale, 1.0f, 0.0f,
+                                                 0.0f);
+        tri[1] = progressive_rgb_triangle_vertex(static_cast<float>(kProgressiveVertexTriangleLeftX),
+                                                 static_cast<float>(kProgressiveVertexTriangleLeftY), scale, 0.0f, 1.0f,
+                                                 0.0f);
+        tri[2] = progressive_rgb_triangle_vertex(static_cast<float>(kProgressiveVertexTriangleRightX),
+                                                 static_cast<float>(kProgressiveVertexTriangleRightY), scale, 0.0f,
+                                                 0.0f, 1.0f);
+    }
 }
 
 static uint32_t populate_visible_loading_vertices(VisibleSceneResources& scene, uint32_t frame,
@@ -846,9 +926,18 @@ static uint32_t populate_visible_loading_vertices(VisibleSceneResources& scene, 
          static_cast<float>(sm5_expected[3]) / 255.0f);
     scene.stats.sm5_stamp_quads_per_frame = 2;
 
+    const uint32_t progressive_triangle_vertex_offset = quads * 6;
+    write_progressive_rgb_triangle(out + progressive_triangle_vertex_offset, frame, scene.stats.target_frames);
+    scene.stats.progressive_triangle_vertices_per_frame = 15;
+    scene.progressive_triangle_vertex_view.BufferLocation =
+        scene.vertex_view.BufferLocation + progressive_triangle_vertex_offset * sizeof(ColorVertex);
+    scene.progressive_triangle_vertex_view.SizeInBytes =
+        scene.stats.progressive_triangle_vertices_per_frame * sizeof(ColorVertex);
+    scene.progressive_triangle_vertex_view.StrideInBytes = sizeof(ColorVertex);
+
     scene.stats.quads_per_frame = quads;
     scene.stats.vertices_per_frame = quads * 6;
-    return quads * 6;
+    return scene.stats.vertices_per_frame;
 }
 
 static VisibleSceneResources create_visible_scene(ID3D12Device* device, D3DCompileFn compile,
@@ -6175,6 +6264,64 @@ static bool inspect_indirect_draw_stamp(DxilReadbackResources& readback, Indirec
     return matches;
 }
 
+static bool inspect_progressive_rgb_triangle(DxilReadbackResources& readback, VisibleSceneStats& visible_stats,
+                                             uint32_t frame) {
+    if (!readback.buffer)
+        return false;
+    uint8_t* mapped = nullptr;
+    D3D12_RANGE range = {0, static_cast<SIZE_T>(readback.total_bytes)};
+    if (FAILED(readback.buffer->Map(0, &range, reinterpret_cast<void**>(&mapped))) || !mapped)
+        return false;
+
+    uint32_t covered_pixels = 0;
+    uint32_t red_dominant = 0;
+    uint32_t green_dominant = 0;
+    uint32_t blue_dominant = 0;
+    for (UINT y = 0; y < kProgressiveVertexTriangleRegionHeight; ++y) {
+        for (UINT x = 0; x < kProgressiveVertexTriangleRegionWidth; ++x) {
+            const uint8_t* pixel = readback_pixel(readback, mapped, kProgressiveVertexTriangleRegionX + x,
+                                                  kProgressiveVertexTriangleRegionY + y);
+            visible_stats.progressive_triangle_samples_checked++;
+            const uint32_t color_sum =
+                static_cast<uint32_t>(pixel[0]) + static_cast<uint32_t>(pixel[1]) + static_cast<uint32_t>(pixel[2]);
+            const bool covered =
+                pixel[3] >= 240u && color_sum >= 96u && (pixel[0] >= 32u || pixel[1] >= 32u || pixel[2] >= 32u);
+            if (!covered)
+                continue;
+            covered_pixels++;
+            if (pixel[0] > pixel[1] + 24u && pixel[0] > pixel[2] + 24u)
+                red_dominant++;
+            if (pixel[1] > pixel[0] + 24u && pixel[1] > pixel[2] + 24u)
+                green_dominant++;
+            if (pixel[2] > pixel[0] + 24u && pixel[2] > pixel[1] + 24u)
+                blue_dominant++;
+        }
+    }
+
+    visible_stats.progressive_triangle_coverage_counts.push_back(covered_pixels);
+    if (visible_stats.progressive_triangle_frames_validated == 0u) {
+        visible_stats.progressive_triangle_seed_pixels = covered_pixels;
+    } else if (covered_pixels <
+               visible_stats
+                   .progressive_triangle_coverage_counts[visible_stats.progressive_triangle_coverage_counts.size() -
+                                                         2u]) {
+        visible_stats.progressive_triangle_coverage_monotonic = false;
+    }
+    visible_stats.progressive_triangle_peak_pixels =
+        std::max(visible_stats.progressive_triangle_peak_pixels, covered_pixels);
+    visible_stats.progressive_triangle_frames_validated++;
+    if (visible_stats.target_frames != 0u && frame + 1u == visible_stats.target_frames) {
+        visible_stats.progressive_triangle_final_pixels = covered_pixels;
+        visible_stats.progressive_triangle_final_red_dominant_pixels = red_dominant;
+        visible_stats.progressive_triangle_final_green_dominant_pixels = green_dominant;
+        visible_stats.progressive_triangle_final_blue_dominant_pixels = blue_dominant;
+    }
+
+    D3D12_RANGE written = {0, 0};
+    readback.buffer->Unmap(0, &written);
+    return covered_pixels > 0u && visible_stats.progressive_triangle_coverage_monotonic;
+}
+
 static bool channel_matches_expected(uint8_t actual, uint8_t expected) {
     return expected >= 128 ? actual >= 180 : actual <= 80;
 }
@@ -6720,6 +6867,12 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
             list->ExecuteIndirect(nanite_cluster.command_signature, nanite_cluster.stats.max_command_count,
                                   nanite_cluster.indirect_argument_buffer, 0, nullptr, 0);
             stats.nanite_cluster.execute_indirect_calls++;
+            list->SetGraphicsRootSignature(visible_scene.root_signature);
+            list->SetPipelineState(visible_scene.pipeline_state);
+            list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            list->IASetVertexBuffers(0, 1, &visible_scene.progressive_triangle_vertex_view);
+            list->DrawInstanced(visible_scene.stats.progressive_triangle_vertices_per_frame, 1, 0, 0);
+            stats.visible_scene.progressive_triangle_draw_calls++;
             D3D12_RESOURCE_STATES backbuffer_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
             if (gpu_textures.present_texture && gpu_textures.present_sentinel_upload) {
                 auto backbuffer_to_copy_dest =
@@ -6932,6 +7085,8 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
                 break;
             if (!inspect_nanite_cluster_stamp(dxil_readback, stats.nanite_cluster))
                 break;
+            if (!inspect_progressive_rgb_triangle(dxil_readback, stats.visible_scene, frame))
+                break;
             if (!inspect_sm5_stamp(dxil_readback, stats.visible_scene, frame))
                 break;
             stats.present_hr = swapchain->Present(0, 0);
@@ -6944,11 +7099,33 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
 
     stats.visible_scene.quads_per_frame = visible_scene.stats.quads_per_frame;
     stats.visible_scene.vertices_per_frame = visible_scene.stats.vertices_per_frame;
+    stats.visible_scene.progressive_triangle_vertices_per_frame =
+        visible_scene.stats.progressive_triangle_vertices_per_frame;
     stats.visible_scene.sm5_stamp_quads_per_frame = visible_scene.stats.sm5_stamp_quads_per_frame;
     stats.visible_scene.sm5_stamp_present_pass =
         stats.visible_scene.sm5_stamp_quads_per_frame == 2 &&
         stats.visible_scene.sm5_stamp_samples_checked == visible_frame_target &&
         stats.visible_scene.sm5_stamp_matches == visible_frame_target;
+    stats.visible_scene.progressive_triangle_seed_point_pass =
+        stats.visible_scene.progressive_triangle_seed_pixels > 0u &&
+        stats.visible_scene.progressive_triangle_seed_pixels <= 48u;
+    stats.visible_scene.progressive_triangle_full_pass =
+        stats.visible_scene.progressive_triangle_final_pixels >= kProgressiveVertexTriangleFinalCoverageMin &&
+        stats.visible_scene.progressive_triangle_final_pixels >
+            stats.visible_scene.progressive_triangle_seed_pixels * 100u;
+    stats.visible_scene.progressive_triangle_rgb_channels_present =
+        stats.visible_scene.progressive_triangle_final_red_dominant_pixels >= 64u &&
+        stats.visible_scene.progressive_triangle_final_green_dominant_pixels >= 64u &&
+        stats.visible_scene.progressive_triangle_final_blue_dominant_pixels >= 64u;
+    stats.visible_scene.progressive_triangle_present_pass =
+        stats.visible_scene.progressive_triangle_vertices_per_frame == 15u &&
+        stats.visible_scene.progressive_triangle_draw_calls == visible_frame_target &&
+        stats.visible_scene.progressive_triangle_frames_validated == visible_frame_target &&
+        stats.visible_scene.progressive_triangle_coverage_counts.size() == visible_frame_target &&
+        stats.visible_scene.progressive_triangle_coverage_monotonic &&
+        stats.visible_scene.progressive_triangle_seed_point_pass &&
+        stats.visible_scene.progressive_triangle_full_pass &&
+        stats.visible_scene.progressive_triangle_rgb_channels_present;
     dxil_readback.stats.pass = SUCCEEDED(dxil_readback.stats.create_readback_hr) &&
                                dxil_readback.stats.copy_commands == visible_frame_target &&
                                dxil_readback.stats.sentinel_writes == visible_frame_target &&
@@ -7104,6 +7281,7 @@ static D3DRunStats run_d3d_window(const CorpusStats& corpus) {
         stats.indirect_draw.execute_indirect_calls == visible_frame_target && stats.nanite_cluster.pass &&
         stats.nanite_cluster.present_pass && stats.nanite_cluster.execute_indirect_calls == visible_frame_target &&
         stats.visible_scene.pass && stats.visible_scene.sm5_stamp_present_pass &&
+        stats.visible_scene.progressive_triangle_present_pass &&
         stats.visible_scene.draw_calls == visible_frame_target && stats.dxil_scene.pass &&
         stats.dxil_scene.draw_calls == visible_frame_target && stats.dxil_hazard_replay.pass &&
         stats.dxil_readback.pass && SUCCEEDED(stats.present_hr) && stats.frames_presented == visible_frame_target;
@@ -8151,6 +8329,45 @@ int main() {
     std::printf("      \"sm5_stamp_rgba\": [%u, %u, %u, %u],\n", d3d.visible_scene.sm5_stamp_rgba[0],
                 d3d.visible_scene.sm5_stamp_rgba[1], d3d.visible_scene.sm5_stamp_rgba[2],
                 d3d.visible_scene.sm5_stamp_rgba[3]);
+    std::printf("      \"progressive_triangle_proof_scope\": "
+                "\"progressive_rgb_vertex_triangle_seed_point_to_full_triangle\",\n");
+    std::printf("      \"progressive_triangle_region\": [%u, %u, %u, %u],\n", kProgressiveVertexTriangleRegionX,
+                kProgressiveVertexTriangleRegionY, kProgressiveVertexTriangleRegionWidth,
+                kProgressiveVertexTriangleRegionHeight);
+    std::printf("      \"progressive_triangle_vertices_per_frame\": %u,\n",
+                d3d.visible_scene.progressive_triangle_vertices_per_frame);
+    std::printf("      \"progressive_triangle_draw_calls\": %u,\n", d3d.visible_scene.progressive_triangle_draw_calls);
+    std::printf("      \"progressive_triangle_frames_validated\": %u,\n",
+                d3d.visible_scene.progressive_triangle_frames_validated);
+    std::printf("      \"progressive_triangle_samples_checked\": %u,\n",
+                d3d.visible_scene.progressive_triangle_samples_checked);
+    std::printf("      \"progressive_triangle_seed_pixels\": %u,\n",
+                d3d.visible_scene.progressive_triangle_seed_pixels);
+    std::printf("      \"progressive_triangle_final_pixels\": %u,\n",
+                d3d.visible_scene.progressive_triangle_final_pixels);
+    std::printf("      \"progressive_triangle_peak_pixels\": %u,\n",
+                d3d.visible_scene.progressive_triangle_peak_pixels);
+    std::printf("      \"progressive_triangle_final_red_dominant_pixels\": %u,\n",
+                d3d.visible_scene.progressive_triangle_final_red_dominant_pixels);
+    std::printf("      \"progressive_triangle_final_green_dominant_pixels\": %u,\n",
+                d3d.visible_scene.progressive_triangle_final_green_dominant_pixels);
+    std::printf("      \"progressive_triangle_final_blue_dominant_pixels\": %u,\n",
+                d3d.visible_scene.progressive_triangle_final_blue_dominant_pixels);
+    std::printf("      \"progressive_triangle_coverage_monotonic\": %s,\n",
+                d3d.visible_scene.progressive_triangle_coverage_monotonic ? "true" : "false");
+    std::printf("      \"progressive_triangle_seed_point_ok\": %s,\n",
+                d3d.visible_scene.progressive_triangle_seed_point_pass ? "true" : "false");
+    std::printf("      \"progressive_triangle_full_ok\": %s,\n",
+                d3d.visible_scene.progressive_triangle_full_pass ? "true" : "false");
+    std::printf("      \"progressive_triangle_rgb_channels_present\": %s,\n",
+                d3d.visible_scene.progressive_triangle_rgb_channels_present ? "true" : "false");
+    std::printf("      \"progressive_triangle_coverage_counts\": [");
+    for (size_t i = 0; i < d3d.visible_scene.progressive_triangle_coverage_counts.size(); ++i) {
+        std::printf("%s%u", i == 0 ? "" : ", ", d3d.visible_scene.progressive_triangle_coverage_counts[i]);
+    }
+    std::printf("],\n");
+    std::printf("      \"progressive_triangle_ok\": %s,\n",
+                d3d.visible_scene.progressive_triangle_present_pass ? "true" : "false");
     std::printf("      \"present_ok\": %s,\n", d3d.visible_scene.sm5_stamp_present_pass ? "true" : "false");
     std::printf("      \"ok\": %s\n", d3d.visible_scene.pass ? "true" : "false");
     std::printf("    },\n");

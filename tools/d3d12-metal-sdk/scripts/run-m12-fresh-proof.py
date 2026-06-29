@@ -2527,6 +2527,7 @@ def run_fresh_game(
     d3d12_json = parsed.get("d3d12_window", {}) if parsed else {}
     adapter_json = d3d12_json.get("adapter_report", {}) if d3d12_json else {}
     abi_semantics_json = d3d12_json.get("abi_semantics", {}) if d3d12_json else {}
+    visible_scene_json = d3d12_json.get("visible_scene", {}) if d3d12_json else {}
     gpu_textures_json = d3d12_json.get("gpu_textures", {}) if d3d12_json else {}
     heap_alias_json = d3d12_json.get("heap_alias", {}) if d3d12_json else {}
     uav_barrier_json = d3d12_json.get("uav_barrier", {}) if d3d12_json else {}
@@ -2564,6 +2565,43 @@ def run_fresh_game(
     textured_3d_require_all_faces = visible_frames >= 30
     textured_3d_faces = textured_3d_json.get("faces", []) if isinstance(textured_3d_json, dict) else []
     textured_3d_face_provenance = validate_textured_3d_face_provenance(corpus_tsv, textured_3d_faces)
+    progressive_triangle_counts_raw = visible_scene_json.get("progressive_triangle_coverage_counts", [])
+    progressive_triangle_counts = [
+        int(value or 0) for value in progressive_triangle_counts_raw if isinstance(value, (int, float))
+    ]
+    progressive_triangle_counts_monotonic = all(
+        progressive_triangle_counts[index] >= progressive_triangle_counts[index - 1]
+        for index in range(1, len(progressive_triangle_counts))
+    )
+    progressive_triangle_seed_pixels = int(visible_scene_json.get("progressive_triangle_seed_pixels", 0) or 0)
+    progressive_triangle_final_pixels = int(visible_scene_json.get("progressive_triangle_final_pixels", 0) or 0)
+    progressive_triangle_ok = bool(
+        visible_scene_json.get("progressive_triangle_proof_scope")
+        == "progressive_rgb_vertex_triangle_seed_point_to_full_triangle"
+        and visible_scene_json.get("progressive_triangle_ok") is True
+        and visible_scene_json.get("progressive_triangle_seed_point_ok") is True
+        and visible_scene_json.get("progressive_triangle_full_ok") is True
+        and visible_scene_json.get("progressive_triangle_rgb_channels_present") is True
+        and visible_scene_json.get("progressive_triangle_coverage_monotonic") is True
+        and progressive_triangle_counts_monotonic
+        and len(progressive_triangle_counts) == visible_frames
+        and visible_frames >= 3
+        and int(visible_scene_json.get("progressive_triangle_vertices_per_frame", 0) or 0) == 15
+        and int(visible_scene_json.get("progressive_triangle_draw_calls", 0) or 0) == visible_frames
+        and int(visible_scene_json.get("progressive_triangle_frames_validated", 0) or 0) == visible_frames
+        and int(visible_scene_json.get("progressive_triangle_samples_checked", 0) or 0)
+        == visible_frames * 144 * 112
+        and progressive_triangle_counts[0] == progressive_triangle_seed_pixels
+        and progressive_triangle_counts[-1] == progressive_triangle_final_pixels
+        and 0 < progressive_triangle_seed_pixels <= 48
+        and progressive_triangle_final_pixels >= 3000
+        and progressive_triangle_final_pixels > progressive_triangle_seed_pixels * 100
+        and int(visible_scene_json.get("progressive_triangle_peak_pixels", 0) or 0)
+        == progressive_triangle_final_pixels
+        and int(visible_scene_json.get("progressive_triangle_final_red_dominant_pixels", 0) or 0) >= 64
+        and int(visible_scene_json.get("progressive_triangle_final_green_dominant_pixels", 0) or 0) >= 64
+        and int(visible_scene_json.get("progressive_triangle_final_blue_dominant_pixels", 0) or 0) >= 64
+    )
     textured_3d_ok = bool(
         textured_3d_json.get("ok") is True
         and textured_3d_json.get("present_ok") is True
@@ -2691,12 +2729,13 @@ def run_fresh_game(
                 "GetPrivateData",
             ]
         )
-        and d3d12_json.get("visible_scene", {}).get("ok") is True
-        and d3d12_json.get("visible_scene", {}).get("present_ok") is True
-        and d3d12_json.get("visible_scene", {}).get("sm5_stamp_source") == "DXBC_SM5_DYNAMIC_STAMP_SENTINEL_OVERWRITE"
-        and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_quads_per_frame", 0) or 0) == 2
-        and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_samples_checked", 0) or 0) == visible_frames
-        and int(d3d12_json.get("visible_scene", {}).get("sm5_stamp_matches", 0) or 0) == visible_frames
+        and visible_scene_json.get("ok") is True
+        and visible_scene_json.get("present_ok") is True
+        and visible_scene_json.get("sm5_stamp_source") == "DXBC_SM5_DYNAMIC_STAMP_SENTINEL_OVERWRITE"
+        and int(visible_scene_json.get("sm5_stamp_quads_per_frame", 0) or 0) == 2
+        and int(visible_scene_json.get("sm5_stamp_samples_checked", 0) or 0) == visible_frames
+        and int(visible_scene_json.get("sm5_stamp_matches", 0) or 0) == visible_frames
+        and progressive_triangle_ok
         and d3d12_json.get("dxil_scene", {}).get("ok") is True
         and d3d12_json.get("dxil_scene", {}).get("CreateDxilVertexBuffer") == "0x00000000"
         and d3d12_json.get("dxil_scene", {}).get("vertex_source") == "POSITION_NONDEGENERATE_COLOR_VERTEX_BUFFER_PS_SCALAR_VECTOR_SEMANTICS"
@@ -3276,6 +3315,10 @@ def run_fresh_game(
         "nanite_cluster_draw_skipped": nanite_cluster_draw_skipped,
         "texture_array_srv_draw_skipped": texture_array_srv_draw_skipped,
         "textured_3d_draw_skipped": textured_3d_draw_skipped,
+        "progressive_triangle_ok": progressive_triangle_ok,
+        "progressive_triangle_coverage_counts": progressive_triangle_counts,
+        "progressive_triangle_seed_pixels": progressive_triangle_seed_pixels,
+        "progressive_triangle_final_pixels": progressive_triangle_final_pixels,
         "textured_3d_ok": textured_3d_ok,
         "textured_3d_face_provenance": textured_3d_face_provenance,
         "abi_semantics": abi_semantics_json,
