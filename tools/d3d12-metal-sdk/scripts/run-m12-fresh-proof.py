@@ -3034,7 +3034,7 @@ def run_fresh_game(
         and cbv_sample_json.get("present_last_rgba") == cbv_sample_expected_rgba
         and indexed_draw_json.get("ok") is True
         and indexed_draw_json.get("present_ok") is True
-        and indexed_draw_json.get("proof_scope") == "r16_r32_indexed_subrange_base_vertex_presented_readback"
+        and indexed_draw_json.get("proof_scope") == "r16_r32_subrange_positive_and_negative_base_vertex_presented_readback"
         and indexed_draw_json.get("D3DCompile_loaded") is True
         and indexed_draw_json.get("indexed_vs_vs_5_0") == "0x00000000"
         and indexed_draw_json.get("indexed_ps_ps_5_0") == "0x00000000"
@@ -3044,8 +3044,9 @@ def run_fresh_game(
         and indexed_draw_json.get("CreateVertexBuffer") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBuffer") == "0x00000000"
         and indexed_draw_json.get("CreateIndexBufferR32") == "0x00000000"
-        and int(indexed_draw_json.get("vertices_created", 0) or 0) == 8
-        and int(indexed_draw_json.get("vertex_buffer_size", 0) or 0) == 224
+        and indexed_draw_json.get("CreateIndexBufferNegativeBase") == "0x00000000"
+        and int(indexed_draw_json.get("vertices_created", 0) or 0) == 12
+        and int(indexed_draw_json.get("vertex_buffer_size", 0) or 0) == 336
         and int(indexed_draw_json.get("vertex_view_byte_offset", 0) or 0) == 28
         and int(indexed_draw_json.get("indices_created", 0) or 0) == 6
         and int(indexed_draw_json.get("index_format", 0) or 0) == 57
@@ -3058,8 +3059,14 @@ def run_fresh_game(
         and int(indexed_draw_json.get("r32_index_view_byte_offset", 0) or 0) == 8
         and int(indexed_draw_json.get("r32_start_index_location", 0) or 0) == 2
         and int(indexed_draw_json.get("r32_base_vertex_location", 0) or 0) == 4
+        and int(indexed_draw_json.get("negative_base_indices_created", 0) or 0) == 6
+        and int(indexed_draw_json.get("negative_base_index_format", 0) or 0) == 42
+        and int(indexed_draw_json.get("negative_base_index_buffer_size", 0) or 0) == 24
+        and int(indexed_draw_json.get("negative_base_start_index_location", 0) or 0) == 0
+        and int(indexed_draw_json.get("negative_base_vertex_location", 0) or 0) == -4
         and int(indexed_draw_json.get("draw_indexed_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("draw_indexed_r32_calls", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("draw_indexed_negative_base_calls", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_samples_checked", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_sample_matches", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_pixels_checked", 0) or 0) == visible_frames * 256
@@ -3068,12 +3075,19 @@ def run_fresh_game(
         and int(indexed_draw_json.get("present_r32_sample_matches", 0) or 0) == visible_frames
         and int(indexed_draw_json.get("present_r32_pixels_checked", 0) or 0) == visible_frames * 256
         and int(indexed_draw_json.get("present_r32_pixel_matches", 0) or 0) == visible_frames * 256
+        and int(indexed_draw_json.get("present_negative_base_samples_checked", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("present_negative_base_sample_matches", 0) or 0) == visible_frames
+        and int(indexed_draw_json.get("present_negative_base_pixels_checked", 0) or 0) == visible_frames * 256
+        and int(indexed_draw_json.get("present_negative_base_pixel_matches", 0) or 0) == visible_frames * 256
         and indexed_draw_json.get("expected_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("present_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("present_last_rgba") == indexed_draw_expected_rgba
         and indexed_draw_json.get("expected_r32_rgba") == [64, 220, 240, 255]
         and indexed_draw_json.get("present_r32_rgba") == [64, 220, 240, 255]
         and indexed_draw_json.get("present_r32_last_rgba") == [64, 220, 240, 255]
+        and indexed_draw_json.get("expected_negative_base_rgba") == [200, 80, 240, 255]
+        and indexed_draw_json.get("present_negative_base_rgba") == [200, 80, 240, 255]
+        and indexed_draw_json.get("present_negative_base_last_rgba") == [200, 80, 240, 255]
         and tessellation_fallback_json.get("ok") is True
         and tessellation_fallback_json.get("present_ok") is True
         and tessellation_fallback_json.get("proof_scope")
@@ -3269,10 +3283,10 @@ def run_fresh_game(
         and len(present_indexed_counts) == frames_presented
         and len(present_indirect_counts) == frames_presented
         and all(draws >= 6 for draws in present_draw_counts)
-        and all(indexed >= 2 for indexed in present_indexed_counts)
+        and all(indexed >= 3 for indexed in present_indexed_counts)
         and all(indirect >= 2 for indirect in present_indirect_counts)
-        and native_vertex_resolved_count >= visible_frames * 2
-        and native_vertex_draw_indexed_resolved_count >= visible_frames * 2
+        and native_vertex_resolved_count >= visible_frames * 3
+        and native_vertex_draw_indexed_resolved_count >= visible_frames * 3
         and dxil_draw_encoded_count >= min(frames_presented, 6)
         and dxil_vertex_pull_snapshot_count >= min(frames_presented, 4)
         and not dxil_draw_skipped
