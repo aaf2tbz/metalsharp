@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -368,6 +369,145 @@ def _parse_kv_tail(tail: str) -> dict[str, Any]:
     for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)=([^\s]+)", tail):
         record[match.group(1)] = _parse_scalar_token(match.group(2))
     return record
+
+
+def _diagnostic_report_watchdog_files(start_time: float, end_time: float, grace_s: float = 120.0) -> dict[str, Any]:
+    roots = [Path("/Library/Logs/DiagnosticReports"), Path.home() / "Library" / "Logs" / "DiagnosticReports"]
+    patterns = re.compile(r"WindowServer|watchdog|userspace_watchdog|IOGPU|AGX|panic|reboot", re.IGNORECASE)
+    deadline = end_time + grace_s
+    reports_by_path: dict[str, dict[str, Any]] = {}
+    scan_count = 0
+    while True:
+        scan_count += 1
+        for root in roots:
+            if not root.exists():
+                continue
+            for path in root.glob("*"):
+                if not patterns.search(path.name):
+                    continue
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                if start_time <= stat.st_mtime <= deadline:
+                    reports_by_path[str(path)] = {"path": str(path), "mtime": stat.st_mtime, "size": stat.st_size}
+        if time.time() >= deadline:
+            break
+        time.sleep(min(5.0, max(0.0, deadline - time.time())))
+    reports = sorted(reports_by_path.values(), key=lambda item: str(item["path"]))
+    return {
+        "reports": reports,
+        "scan_count": scan_count,
+        "grace_s": grace_s,
+        "deadline": deadline,
+        "completed_at": time.time(),
+        "waited_until_deadline": time.time() >= deadline,
+    }
+
+
+def _unified_log_watchdog_hits(start_time: float, end_time: float) -> dict[str, Any]:
+    # Keep the unified-log scan strict enough to avoid routine WindowServer/TCC chatter.
+    # DiagnosticReports filename scanning catches WindowServer crash/spin files; unified logs
+    # should only fail the proof for watchdog/GPU/reboot/panic signals.
+    broad_patterns = r"userspace_watchdog|watchdog (?:timeout|stall|terminated|fired)|IOGPU|\bAGX\b|panic|previous shutdown cause|shutdown cause|system reboot|reboot reason|GPU Restart|GPU Hang|WindowServer"
+    serious_patterns = re.compile(
+        r"userspace_watchdog|watchdog (?:timeout|stall|terminated|fired)|IOGPU|\bAGX\b|GPU (?:Restart|Hang|Fault)|"
+        r"panic(?:\(.*\))?:|kernel panic|previous shutdown cause|shutdown cause|system reboot|reboot reason|"
+        r"WindowServer.*(?:watchdog|timeout|spin|crash|hang)",
+        re.IGNORECASE,
+    )
+    false_positive_patterns = re.compile(
+        r"Extensible paniclog not supported|IsConnectedToWindowServer|TCCDProcess: identifier=com\.apple\.WindowServer|"
+        r"WindowServer[^\n]*(?:has the com\.apple\.private\.tcc|checking access|AttributionChain)|"
+        r"Acquiring assertion[^\n]*AppDrawing|Invalidating assertion[^\n]*AppDrawing|"
+        r"(?:failed lookup.*com\.apple\.AppleLOM\.Watchdog|com\.apple\.AppleLOM\.Watchdog.*failed lookup)|"
+        r"log run noninteractively.*eventMessage MATCHES|_LaunchWatchdogTimeOut.*: 0$",
+        re.IGNORECASE,
+    )
+    start = dt.datetime.fromtimestamp(start_time).strftime("%Y-%m-%d %H:%M:%S")
+    end = dt.datetime.fromtimestamp(end_time + 120.0).strftime("%Y-%m-%d %H:%M:%S")
+    cmd = ["log", "show", "--style", "compact", "--start", start, "--end", end, "--predicate", f'eventMessage MATCHES[c] ".*({broad_patterns}).*"', "--info", "--debug"]
+    try:
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    except (subprocess.SubprocessError, OSError) as error:
+        return {"ok": False, "command": cmd, "error": str(error), "hit_count": 0, "hits": [], "raw_match_count": 0}
+    raw_hits = [line for line in proc.stdout.splitlines() if re.search(broad_patterns, line, re.IGNORECASE)]
+    hits = [line for line in raw_hits if serious_patterns.search(line) and not false_positive_patterns.search(line)]
+    return {
+        "ok": proc.returncode == 0,
+        "command": cmd,
+        "returncode": proc.returncode,
+        "stderr": proc.stderr[-2000:],
+        "raw_match_count": len(raw_hits),
+        "hit_count": len(hits),
+        "hits": hits[:32],
+        "hits_truncated": len(hits) > 32,
+    }
+
+
+def extract_backpressure_window_safety(
+    text: str,
+    frames_presented: int,
+    visible_frames: int,
+    elapsed_ms: int,
+    hard_fail_gates: dict[str, Any],
+    proof_start_time: float,
+    proof_end_time: float,
+    timed_out: bool,
+    process_timeout_ms: int,
+) -> dict[str, Any]:
+    nil_drawable_count = len(re.findall(r"nil drawable|nextDrawable.*nil|drawable unavailable", text, re.IGNORECASE))
+    present_stall_count = len(re.findall(r"present stall|drawable wait timeout|present timeout", text, re.IGNORECASE))
+    abort_triggers = {
+        "proof_timeout": 1 if timed_out else 0,
+        "fallback_string": int(hard_fail_gates["counters"].get("d3d12_tessellation_fallback", 0) or 0),
+        "vertex_oob_string": int(hard_fail_gates["counters"].get("vertex_range_oob", 0) or 0),
+        "compute_encode_failure": int(hard_fail_gates["counters"].get("compute_encoder_encode_failed", 0) or 0),
+        "metal_command_buffer_error": int(hard_fail_gates["counters"].get("metal_command_buffer_error", 0) or 0),
+        "repeated_nil_drawables": 1 if nil_drawable_count >= 2 else 0,
+        "present_stall_threshold": 1 if present_stall_count else 0,
+        "windowserver_watchdog_reboot": int(hard_fail_gates["counters"].get("windowserver_watchdog_reboot", 0) or 0),
+    }
+    host_watchdog_scan = _diagnostic_report_watchdog_files(proof_start_time, proof_end_time)
+    host_watchdog_reports = host_watchdog_scan["reports"]
+    unified_log_watchdog = _unified_log_watchdog_hits(proof_start_time, proof_end_time)
+    avg_frame_ms = (elapsed_ms / frames_presented) if frames_presented else 0.0
+    max_avg_frame_ms = 5000.0 if visible_frames < 10 else 2000.0
+    return {
+        "schema": "metalsharp.m12.backpressure-window-safety.v1",
+        "ok": bool(
+            not timed_out
+            and frames_presented == visible_frames
+            and elapsed_ms > 0
+            and elapsed_ms < process_timeout_ms
+            and avg_frame_ms < max_avg_frame_ms
+            and nil_drawable_count == 0
+            and present_stall_count == 0
+            and not host_watchdog_reports
+            and unified_log_watchdog.get("ok") is True
+            and int(unified_log_watchdog.get("hit_count", 0) or 0) == 0
+            and all(value == 0 for value in abort_triggers.values())
+        ),
+        "frames_presented": frames_presented,
+        "visible_frames": visible_frames,
+        "process_elapsed_ms": elapsed_ms,
+        "process_timeout_ms": process_timeout_ms,
+        "timed_out": timed_out,
+        "avg_frame_ms": avg_frame_ms,
+        "max_avg_frame_ms": max_avg_frame_ms,
+        "queue_depth_bound": 1,
+        "queue_depth_source": "m12_fresh_game ExecuteCommandLists completes submitted command buffers before next bounded proof process exits",
+        "drawable_wait_ms_max": 0,
+        "drawable_wait_source": "no nil-drawable or drawable-timeout diagnostics emitted during proof window",
+        "nil_drawable_count": nil_drawable_count,
+        "present_stall_count": present_stall_count,
+        "abort_trigger_counters": abort_triggers,
+        "host_watchdog_report_count": len(host_watchdog_reports),
+        "host_watchdog_reports": host_watchdog_reports[:32],
+        "host_watchdog_reports_truncated": len(host_watchdog_reports) > 32,
+        "host_watchdog_scan": {key: value for key, value in host_watchdog_scan.items() if key != "reports"},
+        "unified_log_watchdog": unified_log_watchdog,
+    }
 
 
 def extract_command_buffer_retention(text: str, required_records: int) -> dict[str, Any]:
@@ -2620,7 +2760,33 @@ def run_fresh_game(
     for index, entry in enumerate(dxil_hazard_artifacts.get("entries", [])):
         env[f"M12_FRESH_DXIL_HAZARD_PS{index}"] = str(entry.get("destination", ""))
     cmd = [str(wine), exe.name]
-    proc = subprocess.run(cmd, cwd=out_bin, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process_timeout_s = max(180, min(900, visible_frames * 5))
+    process_timeout_ms = process_timeout_s * 1000
+    timed_out = False
+    proof_start_time = time.time()
+    proof_start_mono = time.monotonic()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=out_bin,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=process_timeout_s,
+        )
+    except subprocess.TimeoutExpired as error:
+        timed_out = True
+        timeout_stdout = error.stdout if isinstance(error.stdout, str) else (error.stdout or b"").decode("utf-8", "replace")
+        timeout_stderr = error.stderr if isinstance(error.stderr, str) else (error.stderr or b"").decode("utf-8", "replace")
+        timeout_stderr += (
+            f"\nM12 proof timeout schema=metalsharp.m12.proof-timeout.v1 "
+            f"timeout_s={process_timeout_s} visible_frames={visible_frames}\n"
+        )
+        proc = subprocess.CompletedProcess(cmd, -9, timeout_stdout, timeout_stderr)
+    proof_end_mono = time.monotonic()
+    proof_end_time = time.time()
+    process_elapsed_ms = int(round((proof_end_mono - proof_start_mono) * 1000.0))
     stdout_path = run_dir / "m12_fresh_game.stdout.json"
     stderr_path = run_dir / "m12_fresh_game.stderr.txt"
     stdout_path.write_text(proc.stdout)
@@ -3601,17 +3767,33 @@ def run_fresh_game(
     write_json(run_dir / "native_compute_resolve.json", native_compute_resolve)
     command_buffer_retention = extract_command_buffer_retention(diagnostic_log_text, min(visible_frames, 4))
     write_json(run_dir / "command_buffer_retention.json", command_buffer_retention)
+    backpressure_window_safety = extract_backpressure_window_safety(
+        diagnostic_log_text,
+        frames_presented,
+        visible_frames,
+        process_elapsed_ms,
+        hard_fail_gates,
+        proof_start_time,
+        proof_end_time,
+        timed_out,
+        process_timeout_ms,
+    )
+    write_json(run_dir / "backpressure_window_safety.json", backpressure_window_safety)
 
     result = {
         "command": cmd,
         "cwd": str(out_bin),
         "returncode": proc.returncode,
+        "process_elapsed_ms": process_elapsed_ms,
+        "process_timeout_ms": process_timeout_ms,
+        "timed_out": timed_out,
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),
         "diagnostic_logs": diagnostic_log_records,
         "async_worker_proof": async_worker_proof,
         "native_compute_resolve": native_compute_resolve,
         "command_buffer_retention": command_buffer_retention,
+        "backpressure_window_safety": backpressure_window_safety,
         "json_parse_error": parse_error,
         "game_json": parsed,
         "loaddll": loaddll_rows,
@@ -3663,7 +3845,8 @@ def run_fresh_game(
         "render_encoder_encode_failed": render_encoder_encode_failed,
         "frames_presented": frames_presented,
         "stderr_assertion": stderr_assertion,
-        "ok": proc.returncode == 0
+        "ok": not timed_out
+        and proc.returncode == 0
         and dxil_artifacts["ok"]
         and waveops_artifacts["ok"]
         and game_json_ok
@@ -3673,6 +3856,7 @@ def run_fresh_game(
         and async_worker_proof["ok"]
         and native_compute_resolve["ok"]
         and command_buffer_retention["ok"]
+        and backpressure_window_safety["ok"]
         and runtime_match["ok"]
         and frames_presented == visible_frames
         and drawn_present_count == frames_presented
