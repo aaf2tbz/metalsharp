@@ -647,7 +647,13 @@ fn m12_runtime_component_artifacts(component_id: &str) -> Option<&'static [&'sta
         "m12_d3d10core" => Some(&["x86_64-windows/d3d10core.dll"]),
         "m12_dxgi_dxmt" => Some(&["x86_64-windows/dxgi_dxmt.dll"]),
         "m12_dxgi" => Some(&["x86_64-windows/dxgi.dll"]),
-        "m12_winemetal" => Some(&["x86_64-windows/winemetal.dll", "x86_64-unix/winemetal.so"]),
+        "m12_winemetal" => Some(&[
+            "x86_64-windows/winemetal.dll",
+            "x86_64-unix/winemetal.so",
+            "x86_64-unix/libc++.1.dylib",
+            "x86_64-unix/libc++abi.1.dylib",
+            "x86_64-unix/libunwind.1.dylib",
+        ]),
         "m12_gpu_stubs" => Some(&["x86_64-windows/nvapi64.dll", "x86_64-windows/nvngx.dll"]),
         _ => None,
     }
@@ -5212,7 +5218,7 @@ fn component_action_detail(id: &str) -> String {
         "m12_d3d10core" => "Refresh PR230 M12 d3d10core.dll from the bundled dxmt_m12 runtime".to_string(),
         "m12_dxgi_dxmt" => "Refresh PR230 M12 dxgi_dxmt.dll from the bundled dxmt_m12 runtime".to_string(),
         "m12_dxgi" => "Refresh PR230 M12 dxgi.dll from the bundled dxmt_m12 runtime".to_string(),
-        "m12_winemetal" => "Refresh PR230 M12 winemetal.dll and winemetal.so bridge files".to_string(),
+        "m12_winemetal" => "Refresh PR230 M12 winemetal.dll, winemetal.so, and required Unix sidecars".to_string(),
         "m12_gpu_stubs" => "Refresh PR230 M12 NVAPI/NVNGX GPU stub DLLs".to_string(),
         "d3d12_agility" => "Download and stage the D3D12 Agility SDK payload".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
@@ -7208,6 +7214,20 @@ mod tests {
         let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m13_ids.contains(&"gpu_vendor_stubs"));
         assert!(!m13_ids.contains(&"gptk_amd_stub"));
+    }
+
+    #[test]
+    fn m12_winemetal_component_tracks_required_unix_sidecars() {
+        let artifacts = m12_runtime_component_artifacts("m12_winemetal").expect("m12 winemetal artifacts");
+        for required in [
+            "x86_64-windows/winemetal.dll",
+            "x86_64-unix/winemetal.so",
+            "x86_64-unix/libc++.1.dylib",
+            "x86_64-unix/libc++abi.1.dylib",
+            "x86_64-unix/libunwind.1.dylib",
+        ] {
+            assert!(artifacts.contains(&required), "m12_winemetal must validate {required}");
+        }
     }
 
     #[test]
