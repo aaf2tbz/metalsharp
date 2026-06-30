@@ -191,8 +191,6 @@ const componentDisplayName: Record<string, string> = {
   "directx_jun2010": "DX Jun2010",
   "openal": "OpenAL",
   "physx": "PhysX",
-  "easyanticheat_eos": "EAC EOS",
-  "battleye": "BattlEye",
 };
 
 const fnaComponentIds = new Set(["mono-arm64", "mono-x86", "fna", "xna", "sdl2", "fna3d", "faudio", "fmod"]);

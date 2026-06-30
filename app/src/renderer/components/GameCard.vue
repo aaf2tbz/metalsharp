@@ -164,8 +164,6 @@ const componentDisplayName: Record<string, string> = {
   "directx_jun2010": "DX Jun2010",
   "openal": "OpenAL",
   "physx": "PhysX",
-  "easyanticheat_eos": "EAC EOS",
-  "battleye": "BattlEye",
 };
 
 const runtimeProfileDisplayName: Record<string, string> = {

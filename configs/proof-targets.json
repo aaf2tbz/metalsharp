@@ -23,12 +23,19 @@
       "audio_result",
       "input_result",
       "online_session_result",
-      "anti_cheat_status",
       "failure_classification",
       "failure_evidence",
       "next_action"
     ],
-    "status_values": ["untested", "yes", "no", "partial", "not_applicable", "blocked", "needs_evidence"]
+    "status_values": [
+      "untested",
+      "yes",
+      "no",
+      "partial",
+      "not_applicable",
+      "blocked",
+      "needs_evidence"
+    ]
   },
   "targets": [
     {
@@ -53,15 +60,17 @@
       "audio_result": "not_applicable",
       "input_result": "not_applicable",
       "online_session_result": "untested",
-      "anti_cheat_status": "not_applicable",
-      "failure_classification": ["store_bootstrapper_mismatch", "cef_rendering_path", "cef_child_process_flags"],
+      "failure_classification": [
+        "store_bootstrapper_mismatch",
+        "cef_rendering_path",
+        "cef_child_process_flags"
+      ],
       "failure_evidence": [
         "~/Downloads/MinecraftInstaller.exe is a Microsoft Store / Windows 10-11 .NET bootstrapper and remains a bad proof route for this phase",
         "~/.metalsharp/bottles/installer_057475b8830b64bc/bottle.json",
         "~/.metalsharp/bottles/installer_057475b8830b64bc/logs/launch-1779249524.log",
         "~/.metalsharp/bottles/installer_057475b8830b64bc/logs/launch-1779250143.log",
         "~/.metalsharp/bottles/installer_057475b8830b64bc/logs/manual-winebare-1779249756.log",
-        "~/.metalsharp/bottles/installer_057475b8830b64bc/logs/manual-disable-mscompatdb-1779250267.log",
         "~/.metalsharp/bottles/installer_057475b8830b64bc/logs/component-corefonts-1779250127.log",
         "~/.metalsharp/bottles/installer_057475b8830b64bc/logs/component-gecko-1779249576.log",
         "POST /sharp-library/install {\"srcPath\":\"~/Downloads/MinecraftInstaller.exe\",\"name\":\"Minecraft Launcher Phase 11\"}",
@@ -100,7 +109,6 @@
       "audio_result": "needs_evidence",
       "input_result": "needs_evidence",
       "online_session_result": "not_applicable",
-      "anti_cheat_status": "needs_evidence",
       "failure_classification": [],
       "failure_evidence": [],
       "next_action": "Install a known small GOG title and record detected app import."
@@ -127,7 +135,6 @@
       "audio_result": "needs_evidence",
       "input_result": "needs_evidence",
       "online_session_result": "untested",
-      "anti_cheat_status": "needs_evidence",
       "failure_classification": [
         "ea_inst_14_1603",
         "msi_custom_action_failure",
@@ -167,7 +174,6 @@
       "audio_result": "needs_evidence",
       "input_result": "needs_evidence",
       "online_session_result": "untested",
-      "anti_cheat_status": "needs_evidence",
       "failure_classification": [
         "launcher_started_then_crash_reporter",
         "webview2_missing_after_install",
@@ -206,141 +212,9 @@
       "audio_result": "needs_evidence",
       "input_result": "needs_evidence",
       "online_session_result": "needs_evidence",
-      "anti_cheat_status": "not_applicable",
       "failure_classification": [],
       "failure_evidence": [],
       "next_action": "Launch through Steam game bottle and confirm compatdata log/route."
-    },
-    {
-      "id": "elden-ring-eac-eos",
-      "group": "anti_cheat",
-      "name": "Elden Ring Easy Anti-Cheat EOS",
-      "source": "wine_steam_install",
-      "appid": 1245620,
-      "installer_path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
-      "bottle_id": "steam_1245620",
-      "compatdata_path": "~/.metalsharp/compatdata/1245620/metalsharp-compatdata.json",
-      "runtime_profile": "m11",
-      "launch_pipeline": "m11",
-      "prefix_path": "~/.metalsharp/prefix-steam",
-      "expected_route": "game_runtime_asset",
-      "install_result": "needs_evidence",
-      "launcher_open_result": "not_applicable",
-      "login_result": "not_applicable",
-      "child_game_process_result": "untested",
-      "game_launch_result": "needs_evidence",
-      "graphics_result": "m11",
-      "audio_result": "needs_evidence",
-      "input_result": "needs_evidence",
-      "online_session_result": "blocked",
-      "anti_cheat_status": "game_local_eac_eos_assets_detected",
-      "failure_classification": [],
-      "failure_evidence": [
-        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/easyanticheat_eos_setup.exe",
-        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ELDEN RING/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
-        "install script command: EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e"
-      ],
-      "next_action": "Use Launch Doctor and dry-run component repair to verify the Steam game bottle resolves the game-local EAC setup asset before attempting an actual service install."
-    },
-    {
-      "id": "armored-core-vi-eac-eos",
-      "group": "anti_cheat",
-      "name": "ARMORED CORE VI FIRES OF RUBICON Easy Anti-Cheat EOS",
-      "source": "wine_steam_install",
-      "appid": 1888160,
-      "installer_path": "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
-      "bottle_id": "steam_1888160",
-      "compatdata_path": "~/.metalsharp/compatdata/1888160/metalsharp-compatdata.json",
-      "runtime_profile": "m11",
-      "launch_pipeline": "m11",
-      "prefix_path": "~/.metalsharp/prefix-steam",
-      "expected_route": "game_runtime_asset",
-      "install_result": "yes",
-      "launcher_open_result": "not_applicable",
-      "login_result": "not_applicable",
-      "child_game_process_result": "untested",
-      "game_launch_result": "needs_evidence",
-      "graphics_result": "m11",
-      "audio_result": "needs_evidence",
-      "input_result": "needs_evidence",
-      "online_session_result": "blocked",
-      "anti_cheat_status": "eac_eos_installed_in_steam_prefix",
-      "failure_classification": [
-        "not_battleye",
-        "path_normalization_required"
-      ],
-      "failure_evidence": [
-        "Rubicon ships Easy Anti-Cheat EOS assets, not BattlEye/BEService assets",
-        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/easyanticheat_eos_setup.exe",
-        "/Volumes/AverySSD/SteamLibrary/steamapps/common/ARMORED CORE VI FIRES OF RUBICON/Game/EasyAntiCheat/install_easyanticheat_eos_setup.bat",
-        "install script command: EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709",
-        "~/.metalsharp/bottles/steam_1888160/logs/component-easyanticheat_eos-1779259468.log: Wine failed when runtime asset path was stored as //Volumes//...",
-        "~/.metalsharp/bottles/steam_1888160/logs/component-easyanticheat_eos-1779259573.log",
-        "~/.metalsharp/prefix-steam/drive_c/users/alexmondello/AppData/Roaming/EasyAntiCheat/service.log: Operation 1 completed successfully",
-        "~/.metalsharp/prefix-steam/drive_c/Program Files (x86)/EasyAntiCheat_EOS/EasyAntiCheat_EOS.exe",
-        "Bottle Doctor after install: Bottle runtime checks passed"
-      ],
-      "next_action": "Launch Rubicon through the Steam game bottle and capture whether the game reaches the EAC bootstrap, offline mode, or an online/vendor block."
-    },
-    {
-      "id": "eac-proton-supported-title",
-      "group": "anti_cheat",
-      "name": "EAC Proton-Supported Title",
-      "source": "wine_steam_install",
-      "appid": null,
-      "installer_path": null,
-      "bottle_id": null,
-      "compatdata_path": null,
-      "runtime_profile": "needs_evidence",
-      "launch_pipeline": "needs_evidence",
-      "prefix_path": null,
-      "expected_route": "needs_evidence",
-      "install_result": "untested",
-      "launcher_open_result": "not_applicable",
-      "login_result": "not_applicable",
-      "child_game_process_result": "not_applicable",
-      "game_launch_result": "blocked",
-      "graphics_result": "needs_evidence",
-      "audio_result": "needs_evidence",
-      "input_result": "needs_evidence",
-      "online_session_result": "blocked",
-      "anti_cheat_status": "blocked_pending_vendor_support",
-      "failure_classification": [],
-      "failure_evidence": [],
-      "next_action": "Pick a real title with Unix EAC assets and capture Launch Doctor classification."
-    },
-    {
-      "id": "battleye-rcon-client",
-      "group": "anti_cheat",
-      "name": "BattlEye RCon Client",
-      "source": "local_windows_tool",
-      "appid": null,
-      "installer_path": "~/Downloads/BERCon.exe",
-      "bottle_id": null,
-      "compatdata_path": null,
-      "runtime_profile": "win32_console_tool",
-      "launch_pipeline": "wine_bare",
-      "prefix_path": null,
-      "expected_route": "not_a_service_installer",
-      "install_result": "not_applicable",
-      "launcher_open_result": "not_applicable",
-      "login_result": "not_applicable",
-      "child_game_process_result": "not_applicable",
-      "game_launch_result": "not_applicable",
-      "graphics_result": "not_applicable",
-      "audio_result": "not_applicable",
-      "input_result": "not_applicable",
-      "online_session_result": "needs_evidence",
-      "anti_cheat_status": "not_battleye_runtime",
-      "failure_classification": [
-        "artifact_mismatch"
-      ],
-      "failure_evidence": [
-        "~/Downloads/BERCon.exe: PE32 console app",
-        "strings: BattlEye RCon v0.94 beta",
-        "imports: KERNEL32.dll and WS2_32.dll only"
-      ],
-      "next_action": "Do not treat BERCon.exe as the BattlEye service installer; pick a real Steam title that ships BattlEye/BEService assets and capture its launch-time service/runtime behavior."
     }
   ]
 }

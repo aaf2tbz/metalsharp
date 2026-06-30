@@ -2745,7 +2745,11 @@ mod tests {
         );
 
         write_runtime_core(&ms_dir);
-        assert!(verify_migration_ready(&ms_dir, None).is_ok());
+        assert_eq!(
+            verify_migration_ready(&ms_dir, None).unwrap_err(),
+            "runtime bundle is still incomplete after install",
+            "dummy runtime files with stale M12 hashes must not satisfy migration readiness"
+        );
         let _ = fs::remove_dir_all(home);
     }
 

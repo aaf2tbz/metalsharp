@@ -1302,10 +1302,6 @@ fn launch_dxmt_metal_with_context(
 
     deploy_d3d12_agility_sidecars(appid, node, game_dir)?;
 
-    if !recipe.anti_cheat.is_empty() {
-        deploy_steam_appid(game_dir, appid);
-    }
-
     let cache_paths = build_cache_paths(&home, node, appid);
     if node.id == PipelineId::M12
         && std::env::var("METALSHARP_M12_LIVE_MSC_SIDECAR")
@@ -1411,10 +1407,6 @@ fn launch_wine_bare_with_context(
     let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
     validate_recipe_runtime(&recipe)?;
-
-    if !recipe.anti_cheat.is_empty() {
-        deploy_steam_appid(game_dir, appid);
-    }
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -5311,8 +5303,6 @@ mod tests {
             env: vec![],
             dlls: vec![],
             runtime_assets: vec![],
-            anti_cheat: vec![],
-            anti_cheat_status: vec![],
             warnings: vec![],
         };
 
@@ -5349,13 +5339,13 @@ mod tests {
         let home = test_dir("spg-bypass");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write stub");
         std::fs::write(game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write real exe");
 
         apply_start_protected_game_bypass(1245620, &home);
 
         assert!(game_dir.join("start_protected_game.old").exists());
-        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"PROTECTED_STUB");
         assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME");
 
         let _ = std::fs::remove_dir_all(home);
@@ -5383,12 +5373,12 @@ mod tests {
         let home = test_dir("spg-ac6");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write stub");
         std::fs::write(game_dir.join("armoredcore6.exe"), b"AC6_REAL_GAME").expect("write real exe");
 
         apply_start_protected_game_bypass(1888160, &home);
 
-        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"PROTECTED_STUB");
         assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"AC6_REAL_GAME");
 
         let _ = std::fs::remove_dir_all(home);
@@ -5399,12 +5389,12 @@ mod tests {
         let home = test_dir("spg-generic");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write stub");
         std::fs::write(game_dir.join("realgame.exe"), b"REAL_GAME").expect("write real exe");
 
         apply_start_protected_game_bypass(99999, &home);
 
-        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.old")).unwrap(), b"PROTECTED_STUB");
         assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"REAL_GAME");
 
         let _ = std::fs::remove_dir_all(home);
@@ -5415,13 +5405,13 @@ mod tests {
         let home = test_dir("spg-ambiguous");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write stub");
         std::fs::write(game_dir.join("first.exe"), b"FIRST").expect("write first exe");
         std::fs::write(game_dir.join("second.exe"), b"SECOND").expect("write second exe");
 
         apply_start_protected_game_bypass(99999, &home);
 
-        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"PROTECTED_STUB");
         assert!(!game_dir.join("start_protected_game.old").exists());
 
         let _ = std::fs::remove_dir_all(home);
@@ -5432,13 +5422,13 @@ mod tests {
         let home = test_dir("spg-skip");
         let game_dir = home.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write stub");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write stub");
         std::fs::write(game_dir.join("first.exe"), b"FIRST").expect("write first exe");
         std::fs::write(game_dir.join("second.exe"), b"SECOND").expect("write second exe");
 
         apply_start_protected_game_bypass(99999, &home);
 
-        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"EAC_STUB");
+        assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"PROTECTED_STUB");
         assert!(!game_dir.join("start_protected_game.old").exists());
 
         let _ = std::fs::remove_dir_all(home);
@@ -5485,8 +5475,6 @@ mod tests {
             env: Vec::new(),
             dlls: Vec::new(),
             runtime_assets: Vec::new(),
-            anti_cheat: Vec::new(),
-            anti_cheat_status: Vec::new(),
             warnings: Vec::new(),
         }
     }

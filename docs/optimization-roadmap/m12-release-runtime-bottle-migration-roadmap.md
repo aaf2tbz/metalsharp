@@ -96,6 +96,28 @@ Current M12 work started in this area, but the desired model must be broader:
 
 ## Target runtime and launch shape
 
+### Confirmed-good M12 release material
+
+The final approved Elden Ring proof rendered only after rebuilding/staging the M12 DXMT runtime from last-known-good source commit:
+
+```text
+a24464357fc0cb09ba794330d89d7dd6df9e2140
+```
+
+The release graphics bundle and developer SDK must contain that M12 runtime material, not a later unverified DXMT build. Release CI must consume and verify the prebuilt release bundles; it must not build or repair runtime/graphics/assets bundles itself. The only bundle artifact release CI may generate is the developer SDK, built from the verified release bundles. The proofed hashes are:
+
+```text
+d3d10core.dll  e6647486489473800a85e5ca8dff94e0beec63847138c72d9145297dd97de3c1
+d3d11.dll      04f7573de3bdb6953b3df3b4521b8e8c9de2c1d81f62924eec4c9a0f1761471f
+d3d12.dll      71b1defeb4ef0b6e7a2bda03f4699f77ed9ac8ebaecf0d93d84e258332083793
+dxgi.dll       482ce5711966c24c994ec3939270518f3ebd45d76f50e8a0ae06f2233f13b300
+dxgi_dxmt.dll  94c1d253e77f0b5a2a144e170b43d6256bf663a331598352e29c9cfff16e08ec
+winemetal.dll  22b90526bd5f9f4cf87770549415d81d5098a3e73a32268c735d95cc2cf3e002
+winemetal.so   031dd0030ca0f188fb9d872e9d755a1ea704b97c292ce258cfd376cff92e498b
+nvapi64.dll    5254ddf867b89e77b2b341a56541112d0fadd106714c0a6280a07c3a17b3f4e0
+nvngx.dll      322bb63e93b83aa0585a6b8ba7dd5cc73f895cfea0a31b210aa50bac1b09375b
+```
+
 ### M11 lane
 
 M11 uses:
