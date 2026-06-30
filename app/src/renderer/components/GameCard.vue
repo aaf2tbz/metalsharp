@@ -344,6 +344,10 @@ const visibleD3DMetalActions = computed(() =>
   d3dmetalActions.value.filter((action) => action.id !== "play_d3dmetal"),
 );
 
+function d3dmetalActionReady(action: D3DMetalGptkAction) {
+  return ["installed", "updated", "seeded"].includes(action.state);
+}
+
 function clearD3DMetalPanelState() {
   d3dmetalState.value = null;
   d3dmetalActions.value = [];
@@ -924,7 +928,12 @@ function formatBytes(bytes: number): string {
                 <div v-if="d3dmetalState.last_error" class="doctor-notes blocked">{{ d3dmetalState.last_error }}</div>
                 <div v-for="action in visibleD3DMetalActions" :key="action.id" class="runtime-action-row">
                   <span>{{ action.detail }}</span>
+                  <span v-if="d3dmetalActionReady(action)" class="d3dmetal-ready-state">
+                    <span class="doctor-check-state">OK</span>
+                    <span>Ready</span>
+                  </span>
                   <button
+                    v-else
                     class="btn btn-secondary btn-sm"
                     :disabled="d3dmetalLoading || !action.enabled"
                     @click="runD3DMetalPanelAction(action)"
@@ -1424,6 +1433,14 @@ function formatBytes(bytes: number): string {
 }
 .runtime-action-row span {
   overflow-wrap: anywhere;
+}
+.d3dmetal-ready-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+  font-weight: 700;
+  white-space: nowrap;
 }
 .bottle-edit-row {
   display: grid;

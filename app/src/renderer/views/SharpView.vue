@@ -254,6 +254,10 @@ function componentStateClass(state: string): string {
   return "pill-unknown";
 }
 
+function d3dmetalActionReady(action: D3DMetalGptkAction): boolean {
+  return ["installed", "updated", "seeded"].includes(action.state);
+}
+
 function isFnaProfile(profile: string): boolean {
   return profile === "fna_arm64" || profile === "fna_x86";
 }
@@ -955,7 +959,8 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   </template>
                   <div v-for="action in visibleD3DMetalActionsForBottle(bottle.id)" :key="action.id" class="bottle-action-row">
                     <span>{{ action.detail }}</span>
-                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id] || !action.enabled" @click="runD3DMetalAction(bottle, action)">{{ action.label }}</button>
+                    <span v-if="d3dmetalActionReady(action)" class="component-pill pill-ok">OK: Ready</span>
+                    <button v-else class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id] || !action.enabled" @click="runD3DMetalAction(bottle, action)">{{ action.label }}</button>
                   </div>
                 </div>
                 <div class="bottle-components">
