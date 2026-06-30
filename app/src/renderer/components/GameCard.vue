@@ -291,6 +291,7 @@ function runtimeDoctorPipelineRequest() {
 }
 
 function isD3DMetalBottleSelected() {
+  if (bottlePreferredMode.value !== "auto" && bottlePreferredMode.value !== "d3dmetal") return false;
   return bottlePreferredMode.value === "d3dmetal" || runtimeReport.value?.preferred_pipeline === "d3dmetal" || runtimeReport.value?.runtime_profile === "d3dmetal";
 }
 
@@ -477,6 +478,7 @@ async function runRuntimeDoctor() {
     runtimeLoading.value = false;
     return;
   }
+  clearD3DMetalPanelState();
   const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>(
     "POST",
     "/steam/runtime-doctor",
