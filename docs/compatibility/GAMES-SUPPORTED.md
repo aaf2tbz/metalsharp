@@ -1,6 +1,6 @@
 # Games Supported
 
-Updated: 2026-06-11
+Updated: 2026-06-30
 
 Tested and working games organized by pipeline. Only games confirmed playable are listed.
 
@@ -12,7 +12,7 @@ Games were tested from an external 1TB M.2 SSD (~5000 MB/s over USB-C 3.1) on an
 
 | Pipeline | Backend | Use |
 |---|---|---|
-| **D3DMetal** | Apple GPTK 4.0 | D3D11/D3D12 via Apple's D3DMetal framework |
+| **D3DMetal** | Homebrew GPTK / Apple D3DMetal | D3D11/D3D12 via Apple's D3DMetal framework. GPTK is installed through Homebrew and is not bundled by MetalSharp. |
 | **M12** | DXMT | D3D12 to Metal |
 | **M11** | DXMT | D3D11 to Metal |
 | **M10** | DXMT | D3D10 to Metal |
@@ -25,7 +25,7 @@ Internal routes (`dxmt` auto-detect, Wine Steam, macOS Steam, `wine_bare`) remai
 
 ## D3DMetal
 
-Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
+Games running through Homebrew GPTK and Apple's D3DMetal pipeline. D3DMetal bottles use the explicit Save → Repair Redist → Seed Prefix → Play D3DMetal flow, with route DLLs copied from `/Applications/Game Porting Toolkit.app` into the shared GPTK prefix.
 
 | Game | AppID | Notes |
 |---|---:|---|
@@ -100,3 +100,4 @@ Games running through Apple's Game Porting Toolkit 4.0 D3DMetal pipeline.
 - Wine Steam remains the background Steam client for installed Windows Steam games.
 - Installed Wine Steam games create `steam_<appid>` bottle records for runtime asset/component preflight before launch.
 - Env-dependent Steam routes keep Wine Steam alive as the background client, then launch the game executable directly with the selected pipeline, bottle prefix, route env, and Steam identity variables.
+- D3DMetal is the exception to normal bundled-runtime routing: it uses Homebrew GPTK, a shared `~/.metalsharp/prefix-gptk`, copied x64+x86 VC runtime DLLs, and Homebrew-matched D3DMetal route DLLs in prefix `system32`.

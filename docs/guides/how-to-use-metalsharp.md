@@ -5,8 +5,10 @@
 1. Download the latest MetalSharp DMG from [GitHub Releases](https://github.com/aaf2tbz/metalsharp/releases).
 2. Drag MetalSharp into `/Applications`.
 3. Open it. If macOS blocks the unsigned app, go to **System Settings → Privacy & Security** and choose **Open Anyway**.
-4. Run setup from inside MetalSharp — it will install Homebrew dependencies, the Wine runtime, and VC++ 2015-2022 redistributables (x64 and x86).
+4. Run setup from inside MetalSharp — it will install Homebrew dependencies, the Wine runtime, MetalSharp-owned graphics/runtime assets, and redistributable source material used by bottle repair.
 5. Start Wine Steam, sign in, and download a Windows game.
+
+GPTK/D3DMetal is not installed during generic setup. MetalSharp installs and uses Homebrew GPTK only when you save a game as a D3DMetal bottle.
 
 ## Steam Games
 
@@ -27,8 +29,18 @@ Click **Play** from the Library page. Use the launch mode dropdown when you want
 | M10 | D3D10 to Metal |
 | M9 | D3D9 through the DXMT launch/cache family |
 | Mono/FNA | Windows XNA/FNA games through MetalSharp's native Mono runtime, staged FNA/XNA assemblies, native dylibs, FMOD/FAudio/FNA3D shims, and Steamworks shim support |
+| D3DMetal | Apple Game Porting Toolkit via Homebrew, using a shared GPTK prefix and Homebrew-matched D3DMetal route DLLs |
 
 Use **Runtime Doctor** on a game card when a game needs VC runtime, DirectX, .NET, WebView2, fonts, or other launch assets.
+
+### D3DMetal / GPTK Bottles
+
+D3DMetal is an explicit bottle lane for games that should run through Apple Game Porting Toolkit instead of MetalSharp's DXMT route.
+
+1. Save the game as a **D3DMetal** bottle. MetalSharp installs/trusts Homebrew GPTK (`brew trust --cask gcenx/wine/game-porting-toolkit` as needed, then `brew install game-porting-toolkit`) and ensures Rosetta 2 is present.
+2. Click **Repair Redist**. This copies MetalSharp-bundled x64+x86 VC runtime DLLs into `~/.metalsharp/prefix-gptk/drive_c/windows/system32` and `syswow64`, then writes VC runtime registry keys.
+3. Click **Seed Prefix**. This wineboots `~/.metalsharp/prefix-gptk`, copies Homebrew GPTK route DLLs from `/Applications/Game Porting Toolkit.app` into prefix `system32`, quarantines app-local D3D/DXGI/NVAPI shims, and writes D3DMetal launch metadata.
+4. Click **Play D3DMetal**. MetalSharp launches the game executable directly through Homebrew GPTK Wine; it does not launch Steam for this route.
 
 ### Goldberg Steam Emulator
 
