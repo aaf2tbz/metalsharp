@@ -336,6 +336,15 @@ function runtimeReportFromD3DMetalState(state: D3DMetalGptkState, actions: D3DMe
   };
 }
 
+const visibleD3DMetalActions = computed(() =>
+  d3dmetalActions.value.filter((action) => action.id !== "play_d3dmetal"),
+);
+
+function clearD3DMetalPanelState() {
+  d3dmetalState.value = null;
+  d3dmetalActions.value = [];
+}
+
 function syncD3DMetalRuntimeReport() {
   if (d3dmetalState.value && runtimeReport.value?.runtime_profile === "d3dmetal") {
     runtimeReport.value = runtimeReportFromD3DMetalState(d3dmetalState.value, d3dmetalActions.value);
@@ -482,7 +491,11 @@ async function runRuntimeDoctor() {
     runtimeReport.value = result.report;
     bottleName.value = result.report.bottle_name || props.game.name;
     bottlePreferredMode.value = preferredBottlePipeline(result.report);
-    if (isD3DMetalBottleSelected()) await loadD3DMetalStatus();
+    if (isD3DMetalBottleSelected()) {
+      await loadD3DMetalStatus();
+    } else {
+      clearD3DMetalPanelState();
+    }
   } else {
     toast.show(result?.error ?? "Runtime Doctor failed", "error");
   }
@@ -669,6 +682,10 @@ async function saveBottleEdit() {
     }
     toast.show(d3dmetalResult?.error ?? "D3DMetal bottle save failed", "error");
     return;
+  }
+
+  if (bottlePreferredMode.value !== "d3dmetal") {
+    clearD3DMetalPanelState();
   }
 
   const result = await api<BottleEditResponse>("POST", "/bottles/edit", {
@@ -867,7 +884,7 @@ function formatBytes(bytes: number): string {
               <button class="btn btn-secondary btn-sm" :disabled="bottleSaving" @click="saveBottleEdit">
                 {{ bottleSaving ? "Saving..." : "Save Bottle" }}
               </button>
-              <div v-if="d3dmetalState" class="doctor-notes d3dmetal-actions">
+              <div v-if="isD3DMetalBottleSelected() && d3dmetalState" class="doctor-notes d3dmetal-actions">
                 <strong>D3DMetal GPTK</strong>
                 <div class="runtime-action-row">
                   <span>Homebrew GPTK: {{ d3dmetalState.gptk_homebrew }} / Homebrew payload: {{ d3dmetalState.gptk_payload }}</span>
@@ -876,7 +893,7 @@ function formatBytes(bytes: number): string {
                   <span>VC runtimes: {{ d3dmetalState.x64_redist }} / Seed: {{ d3dmetalState.seed }}</span>
                 </div>
                 <div v-if="d3dmetalState.last_error" class="doctor-notes blocked">{{ d3dmetalState.last_error }}</div>
-                <div v-for="action in d3dmetalActions" :key="action.id" class="runtime-action-row">
+                <div v-for="action in visibleD3DMetalActions" :key="action.id" class="runtime-action-row">
                   <span>{{ action.detail }}</span>
                   <button
                     class="btn btn-secondary btn-sm"

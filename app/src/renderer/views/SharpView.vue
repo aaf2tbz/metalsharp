@@ -362,6 +362,10 @@ async function prepareBottle(id: string) {
   }
 }
 
+function visibleD3DMetalActionsForBottle(bottleId: string) {
+  return (d3dmetalActions.value[bottleId] ?? []).filter((action) => action.id !== "play_d3dmetal");
+}
+
 async function loadD3DMetalStatus(bottle: BottleManifest) {
   if (!bottle.steam_app_id) return;
   const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/status", {
@@ -940,7 +944,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     </div>
                     <div v-if="d3dmetalStates[bottle.id]?.last_error" class="doctor-notes blocked">{{ d3dmetalStates[bottle.id]?.last_error }}</div>
                   </template>
-                  <div v-for="action in d3dmetalActions[bottle.id] ?? []" :key="action.id" class="bottle-action-row">
+                  <div v-for="action in visibleD3DMetalActionsForBottle(bottle.id)" :key="action.id" class="bottle-action-row">
                     <span>{{ action.detail }}</span>
                     <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id] || !action.enabled" @click="runD3DMetalAction(bottle, action)">{{ action.label }}</button>
                   </div>
