@@ -130,7 +130,7 @@ Global M12 launch env must include:
 WINEDLLPATH=.../lib/dxmt_m12/x86_64-windows
 DYLD_LIBRARY_PATH includes .../lib/dxmt_m12/x86_64-unix
 DYLD_FALLBACK_LIBRARY_PATH includes .../lib/dxmt_m12/x86_64-unix
-WINEDLLOVERRIDES=winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d
+WINEDLLOVERRIDES=winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d
 DXMT_WINEMETAL_UNIXLIB=winemetal.so
 DXMT_CONFIG_FILE=.../runtime/wine/etc/dxmt.conf
 MS_GRAPHICS_BACKEND=dxmt
@@ -249,7 +249,7 @@ For M12:
 - Prepare `dxmt_m12` lane.
 - Verify full 8-DLL deploy set.
 - Verify M12 Unix sidecars.
-- Verify `WINEDLLOVERRIDES` includes `winemetal,d3d12,dxgi,d3d11,d3d10core=n,b`.
+- Verify `WINEDLLOVERRIDES` includes `winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b`.
 - Verify `WINEDLLPATH` and DYLD paths target `dxmt_m12`.
 - Stage/verify D3D12 Agility only if the game/title requires it.
 
