@@ -48,9 +48,13 @@ function getMetalsharpDir(): string {
   return path.join(os.homedir(), isDevRuntime() ? ".metalsharp-dev" : ".metalsharp");
 }
 
+function uiOnlyVersion(): string {
+  return `${app.getVersion()}-ui`;
+}
+
 function uiOnlyBackendResponse(method: string, url: string): unknown {
   if (url === "/status") {
-    return { ok: true, data: { ok: true, version: "0.46.9-ui" } };
+    return { ok: true, data: { ok: true, version: uiOnlyVersion() } };
   }
   if (url === "/setup/state") {
     return {
@@ -132,7 +136,8 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
     return { ok: true, steam: { installed: true, running: false } };
   }
   if (url === "/update/check") {
-    return { ok: true, available: false, current_version: "0.46.9-ui", latest_version: "0.46.9-ui" };
+    const version = uiOnlyVersion();
+    return { ok: true, available: false, current_version: version, latest_version: version };
   }
   if (url === "/steam/watch-steamapps") {
     return { ok: true, new_appids: [] };

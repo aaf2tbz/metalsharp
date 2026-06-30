@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.48.9",
+  "version": "0.49.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
