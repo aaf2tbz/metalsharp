@@ -53,6 +53,22 @@ for path in "${required[@]}"; do
   fi
 done
 
+while IFS=$'\t' read -r rel expected; do
+  case "$rel" in
+    ""|"#"*|path) continue ;;
+  esac
+  path="$TMP_DIR/$ROOT/runtime/dxmt_m12/$rel"
+  if [ ! -s "$path" ]; then
+    echo "Developer SDK archive is missing M12 hash-checked file: runtime/dxmt_m12/$rel" >&2
+    exit 1
+  fi
+  actual="$(shasum -a 256 "$path" | awk '{print $1}')"
+  if [ "$actual" != "$expected" ]; then
+    echo "Developer SDK M12 hash mismatch: runtime/dxmt_m12/$rel expected=$expected actual=$actual" >&2
+    exit 1
+  fi
+done < "$PROJECT_ROOT/tools/bundles/m12-dxmt-runtime-hashes.tsv"
+
 python3 - "$TMP_DIR/$ROOT/runtime/manifest.json" <<'PY'
 import json
 import sys

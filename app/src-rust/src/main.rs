@@ -17,11 +17,11 @@
     unused_variables
 )]
 
-mod anticheat;
 mod binding_contract;
 mod bottles;
 mod command_contract;
 mod d3d12_runtime_doctor;
+mod d3dmetal_gptk;
 mod diagnostics;
 mod fna_profile;
 mod installer;
@@ -50,7 +50,7 @@ fn running_games() -> &'static Mutex<HashMap<u32, i32>> {
     RUNNING_GAMES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn register_game_pid(appid: u32, pid: u32) {
+pub(crate) fn register_game_pid(appid: u32, pid: u32) {
     if let Ok(mut map) = running_games().lock() {
         map.insert(appid, pid as i32);
     }
@@ -275,10 +275,57 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
                 Some(id) => {
-                    app_log(&format!("Preparing game runtime: appid {}", id));
-                    match setup::prepare_game(id as u32) {
-                        Ok(v) => resp(200, v),
-                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    let requested_pipeline =
+                        body.get("pipeline").or_else(|| body.get("launchMethod")).and_then(|v| v.as_str());
+                    let requested_pipeline = match requested_pipeline {
+                        Some(value) => match mtsp::engine::PipelineId::from_str_flexible(value) {
+                            Some(pipeline) => Some(pipeline),
+                            None => {
+                                return resp(400, json!({"ok": false, "error": format!("unknown pipeline: {}", value)}))
+                            },
+                        },
+                        None => None,
+                    };
+                    let effective_pipeline = bottles::resolve_steam_pipeline_for_request(id as u32, requested_pipeline);
+                    let mtsp_prepare_supported = !matches!(
+                        effective_pipeline,
+                        mtsp::engine::PipelineId::FnaArm64
+                            | mtsp::engine::PipelineId::Steam
+                            | mtsp::engine::PipelineId::MacSteam
+                    );
+                    if mtsp_prepare_supported {
+                        app_log(&format!(
+                            "Preparing game runtime via MTSP: appid {}, requested={:?}, effective={:?}",
+                            id, requested_pipeline, effective_pipeline
+                        ));
+                        match mtsp::launcher::prepare_pipeline_with_request(id as u32, Some(effective_pipeline)) {
+                            Ok(mut v) => {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("deprecated_endpoint".into(), json!("/game/prepare"));
+                                    obj.insert("canonical_endpoint".into(), json!("/mtsp/prepare"));
+                                }
+                                resp(200, v)
+                            },
+                            Err(e) => resp(
+                                500,
+                                json!({"ok": false, "error": e.to_string(), "canonical_endpoint": "/mtsp/prepare"}),
+                            ),
+                        }
+                    } else {
+                        app_log(&format!(
+                            "Preparing legacy game runtime: appid {}, effective={:?}",
+                            id, effective_pipeline
+                        ));
+                        match setup::prepare_game(id as u32) {
+                            Ok(mut v) => {
+                                if let Some(obj) = v.as_object_mut() {
+                                    obj.insert("legacy_prepare".into(), json!(true));
+                                    obj.insert("deprecated_endpoint".into(), json!("/game/prepare"));
+                                }
+                                resp(200, v)
+                            },
+                            Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                        }
                     }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
@@ -304,7 +351,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                             "graphics_backend": node.graphics_backend,
                             "backend": node.backend,
                             "offline_capable": recipe.as_ref().map(|r| r.offline_capable).unwrap_or(false),
-                            "anticheat": recipe.as_ref().and_then(|r| r.anticheat.clone()),
                             "recipe": recipe,
                         }),
                     )
@@ -491,7 +537,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 let Some(game_dir) = launch_recipe.game_dir.as_ref() else {
                                     return resp(404, json!({"ok": false, "error": "Game directory not found"}));
                                 };
-                                crate::mtsp::launcher::deploy_eac_toggle(game_dir);
                                 if let Some(home) = dirs::home_dir() {
                                     crate::mtsp::launcher::deploy_goldberg_for_pipeline(&home, game_dir, id, pipeline);
                                 }
@@ -499,7 +544,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 env.push(("SteamGameId".to_string(), id.to_string()));
                                 env.push(("METALSHARP_OFFLINE_MODE".to_string(), "1".to_string()));
                             }
-                            let compatdata = bottles::load_steam_compatdata(id).ok();
                             let is_gptk_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetal);
                             let steam_started = if is_gptk_direct {
                                 false
@@ -515,8 +559,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                     register_game_pid(id, pid);
                                     let compatdata = bottles::set_launch_started(&bottle.id, pid, &log_path)
                                         .ok()
-                                        .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok())
-                                        .or(compatdata);
+                                        .and_then(|manifest| bottles::save_steam_compatdata(&manifest, pipeline).ok());
                                     json!({
                                         "ok": true,
                                         "pid": pid,
@@ -531,7 +574,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                         "steam_started": steam_started,
                                         "steam_runtime": if offline_direct { "offline" } else { "background" },
                                         "offline_mode": offline_direct,
-                                        "eac_toggle_deployed": offline_direct,
                                         "env_applied_to": "game_process",
                                         "env_handoff": env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
                                     })
@@ -544,7 +586,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 Ok(bottle) => bottle,
                                 Err(e) => return resp(500, json!({"ok": false, "error": e.to_string()})),
                             };
-                            let compatdata = bottles::load_steam_compatdata(id).ok();
+                            let compatdata = bottles::save_steam_compatdata(&bottle, pipeline).ok();
                             steam::launch_game_via_steam(id).map(|mut v| {
                                 if let Some(obj) = v.as_object_mut() {
                                     obj.insert("bottle_id".into(), json!(bottle.id));
@@ -589,7 +631,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         return resp(404, json!({"ok": false, "error": "Game directory not found"}));
                     };
 
-                    crate::mtsp::launcher::deploy_eac_toggle(&std::path::PathBuf::from(dir));
                     if let Some(home) = dirs::home_dir() {
                         crate::mtsp::launcher::deploy_goldberg_for_pipeline(
                             &home,
@@ -618,11 +659,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                         mtsp::launcher::launch_steam_bottle_with_pipeline(id, pipeline, &bottle_prefix, &env);
 
                     app_log(&format!(
-                        "[OFFLINE] appid={} pipeline={} backend={} eac_toggle=true anticheat={}",
-                        id,
-                        node.name,
-                        node.graphics_backend,
-                        recipe.as_ref().and_then(|r| r.anticheat.as_ref()).map(|s| s.as_str()).unwrap_or("none")
+                        "[OFFLINE] appid={} pipeline={} backend={} offline_runtime=goldberg",
+                        id, node.name, node.graphics_backend
                     ));
 
                     match launch_result {
@@ -639,8 +677,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 "pipeline": pipeline,
                                 "graphics_backend": node.graphics_backend,
                                 "offline_mode": true,
-                                "eac_toggle_deployed": true,
-                                "anticheat": recipe.and_then(|r| r.anticheat),
                             }),
                         ),
                         Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
@@ -795,8 +831,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/config") => resp(200, launch::get_config()),
         (Method::Post, "/config") => {
             let body = read_body(req);
-            let mode = body.get("launchMode").and_then(|v| v.as_str()).unwrap_or("native");
-            match launch::set_config(mode) {
+            match launch::set_config(&body) {
                 Ok(cfg) => resp(200, cfg),
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
@@ -845,9 +880,22 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             let appid = body.get("appid").and_then(|v| v.as_u64());
             match appid {
-                Some(id) => match mtsp::launcher::prepare_pipeline(id as u32) {
-                    Ok(v) => resp(200, v),
-                    Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                Some(id) => {
+                    let requested_pipeline =
+                        body.get("pipeline").or_else(|| body.get("launchMethod")).and_then(|v| v.as_str());
+                    let requested_pipeline = match requested_pipeline {
+                        Some(value) => match mtsp::engine::PipelineId::from_str_flexible(value) {
+                            Some(pipeline) => Some(pipeline),
+                            None => {
+                                return resp(400, json!({"ok": false, "error": format!("unknown pipeline: {}", value)}))
+                            },
+                        },
+                        None => None,
+                    };
+                    match mtsp::launcher::prepare_pipeline_with_request(id as u32, requested_pipeline) {
+                        Ok(v) => resp(200, v),
+                        Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
+                    }
                 },
                 None => resp(400, json!({"ok": false, "error": "appid required"})),
             }
@@ -942,6 +990,26 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
+        (Method::Post, "/d3dmetal/bottles/save") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_save(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/status") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_status(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/install-x64-redist") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_install_x64_redist(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/seed-prefix") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_seed_prefix(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/play") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_play(&body))
+        },
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
         // Phase 2: declarative Steam route contract table (protected + first-class lanes).
         (Method::Get, "/bottles/route-contracts") => {
@@ -1227,30 +1295,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))
-        },
-        (Method::Post, "/steam/anticheat-evidence") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_anticheat_evidence(&body))
-        },
-        (Method::Post, "/steam/anticheat-probe") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_anticheat_probe(&body))
-        },
-        (Method::Post, "/steam/anticheat-delta-audit") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_anticheat_delta_audit(&body))
-        },
-        (Method::Post, "/steam/anticheat-contract-probe") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_anticheat_contract_probe(&body))
-        },
-        (Method::Post, "/steam/anticheat-substrate-decision") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_anticheat_substrate_decision(&body))
-        },
-        (Method::Post, "/steam/anticheat-substrate-plan") => {
-            let body = read_body(req);
-            resp(200, anticheat::handle_steam_anticheat_substrate_plan(&body))
         },
         (Method::Post, "/kernel-translation/probe") => {
             let body = read_body(req);
@@ -1745,59 +1789,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::es_live::handle_es_live_processes(&body))
         },
-        (Method::Get, "/mscompatdb/rules") => resp(200, mtsp::mscompatdb::handle_generate_compatdb_rules()),
-        (Method::Post, "/mscompatdb/generate") => {
-            let home = dirs::home_dir().unwrap_or_default();
-            let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-            match mtsp::mscompatdb::write_compatdb_rules(&ms_root) {
-                Ok(()) => resp(
-                    200,
-                    json!({"ok": true, "path": ms_root.join("share/metalsharp/mscompatdb-rules.json").to_string_lossy().to_string()}),
-                ),
-                Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
-            }
-        },
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))
-        },
-        (Method::Get, "/eac-toggle/status") => {
-            let url_str = req.url().to_string();
-            let appid: u32 = url_str
-                .split("appid=")
-                .nth(1)
-                .and_then(|v| v.split('&').next())
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
-            let game_dir = crate::setup::resolve_game_dir(appid);
-            let active = game_dir.as_ref().map(|d| mtsp::launcher::eac_toggle_status(d)).unwrap_or(false);
-            resp(200, json!({"ok": true, "appid": appid, "eac_toggle_active": active}))
-        },
-        (Method::Post, "/eac-toggle/toggle") => {
-            let body = read_body(req);
-            let appid = body.get("appid").and_then(|v| v.as_u64());
-            let enable = body.get("enable").and_then(|v| v.as_bool()).unwrap_or(true);
-            match appid {
-                Some(id) => {
-                    let aid = id as u32;
-                    let game_dir = crate::setup::resolve_game_dir(aid);
-                    match game_dir {
-                        Some(dir) if dir.exists() => {
-                            if enable {
-                                mtsp::launcher::deploy_eac_toggle(&dir);
-                                app_log(&format!("[EAC-TOGGLE] enabled for appid {}", aid));
-                                resp(200, json!({"ok": true, "eac_toggle_active": true}))
-                            } else {
-                                mtsp::launcher::cleanup_eac_toggle(&dir);
-                                app_log(&format!("[EAC-TOGGLE] disabled for appid {}", aid));
-                                resp(200, json!({"ok": true, "eac_toggle_active": false}))
-                            }
-                        },
-                        _ => resp(404, json!({"ok": false, "error": "game directory not found"})),
-                    }
-                },
-                None => resp(400, json!({"ok": false, "error": "appid required"})),
-            }
         },
         (Method::Post, "/sharp-library/install") => {
             let body = read_body(req);

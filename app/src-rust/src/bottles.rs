@@ -221,7 +221,6 @@ fn vcpp_prefix_has_x86(prefix: &Path) -> bool {
     has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll")
 }
 const MANIFEST_FILE: &str = "bottle.json";
-const COMPATDATA_MANIFEST_FILE: &str = "metalsharp-compatdata.json";
 const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
 const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
@@ -554,12 +553,11 @@ pub fn steam_compatdata_dir(appid: u32) -> PathBuf {
     compatdata_root().join(appid.to_string())
 }
 
-pub fn steam_compatdata_manifest_path(appid: u32) -> PathBuf {
-    steam_compatdata_dir(appid).join(COMPATDATA_MANIFEST_FILE)
-}
-
 pub fn steam_compatdata_launch_log_path(appid: u32) -> PathBuf {
-    steam_compatdata_dir(appid).join("logs").join(format!("launch-{}.log", timestamp_secs()))
+    // Deprecated compatdata route state is no longer written; keep the helper
+    // as a compatibility shim for callers that still identify Steam bottles by
+    // appid, but place launch logs under the bottle/global logs tree.
+    bottle_logs_dir(&format!("steam_{}", appid)).join(format!("launch-{}.log", timestamp_secs()))
 }
 
 fn validate_bottle_id(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -616,7 +614,7 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     validate_bottle_id(&manifest.id)?;
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
-    refresh_m12_runtime_before_save(&mut persisted);
+    refresh_dxmt_runtime_before_save(&mut persisted);
     let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
@@ -629,32 +627,43 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn refresh_m12_runtime_before_save(manifest: &mut BottleManifest) {
-    if !matches!(manifest.runtime_profile, RuntimeProfile::M12) {
-        return;
-    }
+fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
+    let (lane, components): (&str, &[&str]) = match manifest.runtime_profile {
+        RuntimeProfile::M11 => ("dxmt", &["d3d11", "dxgi"]),
+        RuntimeProfile::M12 => ("dxmt_m12", &["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"]),
+        _ => return,
+    };
 
     manifest.installed_components =
         merge_components(manifest.installed_components.clone(), default_components_for(manifest.runtime_profile));
 
     #[cfg(not(test))]
-    {
-        match dirs::home_dir().ok_or_else(|| "home directory could not be resolved".to_string()).and_then(|home| {
-            crate::installer::ensure_m12_runtime_ready(&home)
-                .map(|changed| if changed { "installed" } else { "current" }.to_string())
-        }) {
-            Ok(state) => {
-                eprintln!("bottle: M12 shared runtime is {} before save", state);
-                for id in ["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"] {
-                    mark_component_state(manifest, id, ComponentState::Installed);
-                }
-            },
-            Err(e) => {
-                eprintln!("bottle: M12 shared runtime setup failed before save: {}", e);
-                for id in ["d3d12", "d3d12_agility", "d3d11", "dxgi", "gpu_vendor_stubs"] {
-                    mark_component_state(manifest, id, ComponentState::NeedsRepair);
-                }
-            },
+    let runtime_ready = dirs::home_dir()
+        .ok_or_else(|| "home directory could not be resolved".to_string())
+        .and_then(|home| match manifest.runtime_profile {
+            RuntimeProfile::M11 => crate::installer::ensure_dxmt_runtime_ready(&home).map(|_| true),
+            RuntimeProfile::M12 => crate::installer::ensure_dxmt_m12_runtime_ready(&home).map(|_| true),
+            _ => Ok(false),
+        })
+        .unwrap_or_else(|e| {
+            eprintln!("bottle: {} shared runtime setup failed before save: {}", lane, e);
+            false
+        });
+    #[cfg(test)]
+    let runtime_ready = dirs::home_dir()
+        .map(|home| crate::installer::runtime_artifact_report_for(&home))
+        .and_then(|report| report.get(lane).and_then(|lane| lane.get("all_present")).and_then(|value| value.as_bool()))
+        .unwrap_or(false);
+
+    if runtime_ready {
+        eprintln!("bottle: {} shared runtime is current before save", lane);
+        for id in components {
+            mark_component_state(manifest, id, ComponentState::Installed);
+        }
+    } else {
+        eprintln!("bottle: {} shared runtime is incomplete before save", lane);
+        for id in components {
+            mark_component_state(manifest, id, ComponentState::NeedsRepair);
         }
     }
 
@@ -776,26 +785,19 @@ pub fn steam_pipeline_defaults_offline(pipeline: crate::mtsp::engine::PipelineId
     matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
 }
 
-pub fn load_steam_compatdata(appid: u32) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
-    let data = fs::read_to_string(steam_compatdata_manifest_path(appid))?;
-    Ok(serde_json::from_str(&data)?)
-}
-
 pub fn save_steam_compatdata(
     manifest: &BottleManifest,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
-    refresh_m12_runtime_before_save(&mut persisted);
+    refresh_dxmt_runtime_before_save(&mut persisted);
     let appid = persisted.steam_app_id.ok_or("steam compatdata requires steam appid")?;
     let record = steam_compatdata_record(&persisted, pipeline);
-    let dir = steam_compatdata_dir(appid);
-    fs::create_dir_all(dir.join("logs"))?;
-    fs::create_dir_all(dir.join("assets"))?;
-    let data = serde_json::to_string_pretty(&record)?;
-    let manifest_path = steam_compatdata_manifest_path(appid);
-    write_bottle_manifest_atomic(&manifest_path, data.as_bytes())?;
+    eprintln!(
+        "bottle: compatdata write skipped for appid {} — route state is stored in bottle manifest {}",
+        appid, manifest.id
+    );
     Ok(record)
 }
 
@@ -809,7 +811,7 @@ fn steam_compatdata_record(
         appid,
         name: manifest.name.clone(),
         bottle_id: manifest.id.clone(),
-        compatdata_path: steam_compatdata_dir(appid).to_string_lossy().to_string(),
+        compatdata_path: bottle_dir(&manifest.id).to_string_lossy().to_string(),
         prefix_path: manifest.prefix_path.clone(),
         steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
         game_install_path: manifest.game_install_path.clone(),
@@ -830,7 +832,7 @@ fn steam_compatdata_record(
                 pipeline_preference_id(pipeline)
             )
         },
-        log_dir: steam_compatdata_dir(appid).join("logs").to_string_lossy().to_string(),
+        log_dir: bottle_logs_dir(&manifest.id).to_string_lossy().to_string(),
         runtime_assets: manifest.runtime_assets.clone(),
         required_components: manifest.installed_components.clone(),
         last_launch_log: manifest.last_launch_log.clone(),
@@ -1084,14 +1086,26 @@ pub fn prepare_steam_game_launch(
     appid: u32,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
-    if matches!(pipeline, crate::mtsp::engine::PipelineId::M12) {
-        #[cfg(not(test))]
-        if let Some(home) = dirs::home_dir() {
-            crate::installer::ensure_m12_runtime_ready(&home)
-                .map_err(|e| format!("M12 runtime setup failed before Steam launch: {}", e))?;
+    #[cfg(not(test))]
+    if let Some(home) = dirs::home_dir() {
+        match pipeline {
+            crate::mtsp::engine::PipelineId::M11 => {
+                crate::installer::ensure_dxmt_runtime_ready(&home)
+                    .map_err(|e| format!("M11 runtime setup failed before Steam launch: {}", e))?;
+            },
+            crate::mtsp::engine::PipelineId::M12 => {
+                crate::installer::ensure_dxmt_m12_runtime_ready(&home)
+                    .map_err(|e| format!("M12 runtime setup failed before Steam launch: {}", e))?;
+            },
+            _ => {},
         }
-        let _ = crate::setup::prepare_game(appid)?;
     }
+    // Do not run legacy setup::prepare_game or installer restaging here for
+    // MTSP routes. /steam/launch-game immediately calls
+    // mtsp::launcher::prepare_steam_pipeline_env(), which validates the route
+    // runtime and stages the same game-local DLLs/env that launch will use.
+    // Calling the old setup path here can overwrite an explicitly staged M12
+    // runtime with packaged assets and break PR/runtime proof runs.
     let dual = crate::scan::resolve_dual_game_dir(appid);
     let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
     let mut manifest = ensure_steam_game_bottle_inner(appid, &name, dual.wine_dir.as_deref(), pipeline, false)?;
@@ -1103,7 +1117,31 @@ pub fn prepare_steam_game_launch(
     save_bottle(&manifest)?;
     if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
         if let Some(ref home) = dirs::home_dir() {
+            match crate::installer::ensure_gptk_runtime_ready(home) {
+                Ok(_) => mark_component_state(&mut manifest, "gptk", ComponentState::Installed),
+                Err(e) => {
+                    eprintln!("bottle: D3DMetal GPTK runtime staging failed: {}", e);
+                    mark_component_state(&mut manifest, "gptk", ComponentState::NeedsRepair);
+                },
+            }
+
+            if !crate::platform::gptk_prefix_ready(home) {
+                match crate::platform::ensure_gptk_prefix(home) {
+                    Ok(_) => mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed),
+                    Err(e) => {
+                        eprintln!("bottle: D3DMetal GPTK prefix seed requested: {}", e);
+                        let state = if crate::platform::gptk_prefix_seeding(home) {
+                            ComponentState::Unknown
+                        } else {
+                            ComponentState::NeedsRepair
+                        };
+                        mark_component_state(&mut manifest, "gptk_prefix", state);
+                    },
+                }
+            }
+
             if crate::platform::gptk_prefix_ready(home) {
+                mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed);
                 if let Some(ref game_path) = manifest.game_install_path {
                     let game_dir = std::path::PathBuf::from(game_path);
                     if let Ok(Some(external_path)) = crate::platform::migrate_game_to_external(home, &game_dir, appid) {
@@ -1121,9 +1159,21 @@ pub fn prepare_steam_game_launch(
                     let result = crate::platform::install_gptk_prefix_components(home);
                     if let Err(e) = &result {
                         eprintln!("bottle: VC++ redist install failed: {}", e);
+                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::NeedsRepair);
+                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::NeedsRepair);
+                    } else {
+                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::Installed);
+                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::Installed);
                     }
                 }
             }
+            manifest.health = if components_ready(&manifest.installed_components) {
+                BottleHealth::Ready
+            } else {
+                BottleHealth::NeedsRepair
+            };
+            manifest.updated_at = timestamp_secs();
+            save_bottle(&manifest)?;
         }
     } else {
         let vcrun_ids: Vec<String> = manifest
@@ -1471,20 +1521,11 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
             ok: !runtime_assets.is_empty(),
             detail: format!("{} game runtime assets tracked", runtime_assets.len()),
         });
-        if let Some(appid) = manifest.steam_app_id {
-            let compatdata_manifest = steam_compatdata_manifest_path(appid);
-            let compatdata_logs = steam_compatdata_dir(appid).join("logs");
-            checks.push(BottleCheck {
-                id: "compatdata".to_string(),
-                ok: compatdata_manifest.exists(),
-                detail: compatdata_manifest.to_string_lossy().to_string(),
-            });
-            checks.push(BottleCheck {
-                id: "compatdata_logs".to_string(),
-                ok: compatdata_logs.exists(),
-                detail: compatdata_logs.to_string_lossy().to_string(),
-            });
-        }
+        checks.push(BottleCheck {
+            id: "bottle_route_state".to_string(),
+            ok: bottle_manifest_path(&manifest.id).exists(),
+            detail: bottle_manifest_path(&manifest.id).to_string_lossy().to_string(),
+        });
     }
 
     let actions = component_actions(&manifest.installed_components);
@@ -1987,7 +2028,7 @@ pub fn repair_component(
     if matches!(component_id, "gptk" | "rosetta") {
         if dry_run {
             let available = if component_id == "gptk" {
-                crate::platform::gptk_is_installed()
+                dirs::home_dir().as_deref().map(crate::platform::gptk_is_installed_for_home).unwrap_or(false)
             } else {
                 crate::platform::rosetta_is_installed()
             };
@@ -2008,22 +2049,8 @@ pub fn repair_component(
         }
 
         let installed = if component_id == "gptk" {
-            if crate::platform::gptk_is_installed() {
-                true
-            } else {
-                let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
-                    .iter()
-                    .find(|p| std::path::Path::new(p).is_file())
-                    .unwrap_or(&"brew");
-                let path_val = std::env::var("PATH").unwrap_or_default();
-                let full_path = format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{}", path_val);
-                let status = std::process::Command::new(brew)
-                    .args(["install", "game-porting-toolkit"])
-                    .env("PATH", &full_path)
-                    .env("HOME", std::env::var("HOME").unwrap_or_default())
-                    .status()?;
-                status.success() && crate::platform::gptk_is_installed()
-            }
+            let home = dirs::home_dir().ok_or("no home dir")?;
+            crate::installer::ensure_gptk_runtime_ready(&home).is_ok()
         } else {
             if crate::platform::rosetta_is_installed() {
                 true
@@ -2051,7 +2078,11 @@ pub fn repair_component(
             id: component_id.to_string(),
             status: if installed { "installed" } else { "install_failed" }.to_string(),
             detail: if installed {
-                format!("{} is now available", component_id)
+                if component_id == "gptk" {
+                    "Homebrew GPTK is installed and its D3DMetal route payload is available".to_string()
+                } else {
+                    format!("{} is now available", component_id)
+                }
             } else if component_id == "gptk" {
                 "Failed to install Game Porting Toolkit via Homebrew".to_string()
             } else {
@@ -2187,6 +2218,25 @@ pub fn repair_component(
                 log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
+        }
+
+        match crate::installer::ensure_gptk_runtime_ready(&home) {
+            Ok(_) => mark_component_state(&mut manifest, "gptk", ComponentState::Installed),
+            Err(e) => {
+                mark_component_state(&mut manifest, "gptk", ComponentState::NeedsRepair);
+                mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
+                manifest.health = BottleHealth::NeedsRepair;
+                manifest.updated_at = timestamp_secs();
+                save_bottle(&manifest)?;
+                return Ok(ComponentRepairReport {
+                    id: component_id.to_string(),
+                    status: "install_failed".to_string(),
+                    detail: format!("GPTK runtime staging failed before prefix seed: {}", e),
+                    asset_path: None,
+                    log_path: Some(log_path.to_string_lossy().to_string()),
+                    pid: None,
+                });
+            },
         }
 
         mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
@@ -2839,7 +2889,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         .map(|manifest| inspect_components_for_manifest(manifest, &prefix, &default_components))
         .unwrap_or_else(|| inspect_components(&prefix, &default_components));
     let actions = component_actions(&components);
-    let compatdata = load_steam_compatdata(appid).ok();
+    let compatdata = bottle.as_ref().map(|manifest| steam_compatdata_record(manifest, pipeline));
     let recipe_deps = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
     let recipe = crate::mtsp::rules::get_game_recipe(appid);
     let missing_check_dlls = recipe
@@ -2886,22 +2936,13 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     json!({"ok": true, "report": report})
 }
 
-pub fn handle_steam_compatdata(body: &serde_json::Map<String, Value>) -> Value {
-    let appid = match parse_steam_runtime_doctor_appid(body) {
-        Ok(appid) => appid,
-        Err(error) => return json!({"ok": false, "error": error}),
-    };
-    let requested_pipeline =
-        body.get("pipeline").and_then(|v| v.as_str()).and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
-    let pipeline = resolve_steam_pipeline_for_request(appid, requested_pipeline);
-    let dual = crate::scan::resolve_dual_game_dir(appid);
-    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
-    match ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)
-        .and_then(|manifest| save_steam_compatdata(&manifest, pipeline))
-    {
-        Ok(record) => json!({"ok": true, "compatdata": record}),
-        Err(e) => json!({"ok": false, "error": e.to_string()}),
-    }
+pub fn handle_steam_compatdata(_body: &serde_json::Map<String, Value>) -> Value {
+    json!({
+        "ok": false,
+        "deprecated": true,
+        "replacement": "bottle manifest route state",
+        "error": "compatdata is deprecated and no longer written"
+    })
 }
 
 pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Value {
@@ -3368,12 +3409,6 @@ fn infer_components_from_runtime_assets(assets: &[BottleRuntimeAsset]) -> Vec<Ru
             "physx" => {
                 ids.insert("physx".to_string());
             },
-            "easyanticheat" | "easyanticheat_eos" => {
-                ids.insert("easyanticheat_eos".to_string());
-            },
-            "battleye" => {
-                ids.insert("battleye".to_string());
-            },
             "installscript" => {
                 for id in components_from_installscript(Path::new(&asset.source_path)) {
                     ids.insert(id);
@@ -3751,24 +3786,6 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         },
         "rosetta" => {
             if crate::platform::rosetta_is_installed() {
-                ComponentState::Installed
-            } else {
-                ComponentState::Missing
-            }
-        },
-        "easyanticheat_eos" => {
-            if drive_c.join("Program Files (x86)").join("EasyAntiCheat_EOS").exists()
-                || drive_c.join("Program Files").join("EasyAntiCheat_EOS").exists()
-            {
-                ComponentState::Installed
-            } else {
-                ComponentState::Missing
-            }
-        },
-        "battleye" => {
-            if drive_c.join("Program Files (x86)").join("Common Files").join("BattlEye").exists()
-                || drive_c.join("Program Files").join("Common Files").join("BattlEye").exists()
-            {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
@@ -4328,21 +4345,6 @@ fn component_kind_from_local_installer(path: &Path) -> Option<String> {
 }
 
 fn resolve_game_runtime_asset_installer(manifest: &BottleManifest, component_id: &str) -> Option<ComponentInstaller> {
-    if component_id == "easyanticheat_eos" {
-        let candidates = game_runtime_installer_candidates(manifest, component_id);
-        for asset in candidates.iter().filter(|asset| {
-            let lower = asset.source_path.to_ascii_lowercase();
-            lower.ends_with(".bat") || lower.ends_with(".cmd")
-        }) {
-            if let Some(installer) = easyanticheat_eos_installer_from_asset(Path::new(&asset.source_path)) {
-                return Some(installer);
-            }
-        }
-        return candidates
-            .iter()
-            .filter(|asset| asset.source_path.to_ascii_lowercase().ends_with(".exe"))
-            .find_map(|asset| easyanticheat_eos_installer_from_asset(Path::new(&asset.source_path)));
-    }
     let candidates = game_runtime_installer_candidates(manifest, component_id);
     let preferred = candidates
         .iter()
@@ -4366,8 +4368,6 @@ fn game_runtime_installer_candidates<'a>(
             asset.present
                 && is_game_runtime_installer_candidate(asset, component_id)
                 && match component_id {
-                    "easyanticheat_eos" => matches!(asset.kind.as_str(), "easyanticheat" | "easyanticheat_eos"),
-                    "battleye" => asset.kind == "battleye",
                     "xna" => asset.kind == "xna",
                     _ => false,
                 }
@@ -4388,39 +4388,9 @@ fn is_game_runtime_installer_candidate(asset: &BottleRuntimeAsset, component_id:
         return false;
     }
     match component_id {
-        "easyanticheat_eos" => lower_name.contains("setup") || lower_name.contains("install"),
-        "battleye" => {
-            lower_name.contains("setup")
-                || lower_name.contains("install")
-                || lower_name == "beservice.exe"
-                || lower_name == "beservice_x64.exe"
-        },
         "xna" => lower_name.contains("xnafx") || lower_name.contains("xna"),
         _ => false,
     }
-}
-
-fn easyanticheat_eos_installer_from_asset(path: &Path) -> Option<ComponentInstaller> {
-    let lower = path.file_name()?.to_string_lossy().to_ascii_lowercase();
-    if lower.ends_with(".exe") {
-        return Some(ComponentInstaller { path: path.to_path_buf(), args: Vec::new() });
-    }
-    if !(lower.ends_with(".bat") || lower.ends_with(".cmd")) {
-        return None;
-    }
-    let script = fs::read_to_string(path).ok()?;
-    for line in script.lines() {
-        let trimmed = line.trim();
-        let lower_line = trimmed.to_ascii_lowercase();
-        if !lower_line.contains("easyanticheat_eos_setup.exe") || !lower_line.contains(" install ") {
-            continue;
-        }
-        let product_id = trimmed.split_whitespace().last()?.trim_matches('"').to_string();
-        if let Some(setup) = find_case_insensitive_sibling(path.parent()?, "easyanticheat_eos_setup.exe") {
-            return Some(ComponentInstaller { path: setup, args: vec!["install".to_string(), product_id] });
-        }
-    }
-    None
 }
 
 fn find_case_insensitive_sibling(parent: &Path, file_name: &str) -> Option<PathBuf> {
@@ -4829,27 +4799,7 @@ fn component_source_policies_for_manifest(manifest: &BottleManifest) -> Vec<Comp
     manifest
         .installed_components
         .iter()
-        .map(|component| {
-            if matches!(component.id.as_str(), "easyanticheat_eos" | "battleye") {
-                if let Some(installer) = resolve_game_runtime_asset_installer(manifest, &component.id) {
-                    return ComponentSourcePolicy {
-                        id: component.id.clone(),
-                        source: "game_runtime_asset".to_string(),
-                        available: true,
-                        detail: match component.id.as_str() {
-                            "easyanticheat_eos" => {
-                                "Uses the game-local Easy Anti-Cheat EOS setup asset shipped with this install"
-                            },
-                            "battleye" => "Uses the game-local BattlEye setup/service asset shipped with this install",
-                            _ => "Uses a game-local runtime installer asset",
-                        }
-                        .to_string(),
-                        path: Some(installer.path.to_string_lossy().to_string()),
-                    };
-                }
-            }
-            component_source_policy(&component.id, manifest.arch)
-        })
+        .map(|component| component_source_policy(&component.id, manifest.arch))
         .collect()
 }
 
@@ -4963,8 +4913,6 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
                 "Uses Steam CommonRedist, Sharp Library installer bottles, or ~/.metalsharp/runtime/redist XNA 4.0 installer"
             },
             "physx" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist PhysX installer",
-            "easyanticheat_eos" => "Uses game-local Easy Anti-Cheat EOS setup assets when present",
-            "battleye" => "Uses game-local BattlEye setup/service assets when present",
             _ => "No external installer source required or source is not yet mapped",
         }
         .to_string(),
@@ -5006,8 +4954,6 @@ fn component_action_detail(id: &str) -> String {
         "openal" => "Install OpenAL audio runtime".to_string(),
         "xna" => "Install XNA Framework 4.0 runtime".to_string(),
         "physx" => "Install NVIDIA PhysX legacy runtime".to_string(),
-        "easyanticheat_eos" => "Run the game-local Easy Anti-Cheat EOS service installer".to_string(),
-        "battleye" => "Run the game-local BattlEye service installer".to_string(),
         "d3d10" => "Verify MetalSharp D3D10 runtime DLLs".to_string(),
         "d3d10_1" => "Verify MetalSharp D3D10.1 runtime DLLs".to_string(),
         id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
@@ -5543,23 +5489,8 @@ fn detect_game_runtime_assets(game_dir: &Path) -> Vec<BottleRuntimeAsset> {
     assets
 }
 
-fn classify_game_runtime_asset(lower_name: &str, lower_path: &str) -> Option<String> {
-    if lower_path.contains("easyanticheat") || lower_name.contains("easyanticheat") {
-        if lower_path.contains("easyanticheat_eos") || lower_name.contains("eos") {
-            Some("easyanticheat_eos".to_string())
-        } else {
-            Some("easyanticheat".to_string())
-        }
-    } else if lower_path.contains("battleye")
-        || lower_path.contains("battle-eye")
-        || lower_name.contains("beservice")
-        || lower_name.contains("beclient")
-        || lower_name.contains("bedaisy")
-    {
-        Some("battleye".to_string())
-    } else {
-        None
-    }
+fn classify_game_runtime_asset(_lower_name: &str, _lower_path: &str) -> Option<String> {
+    None
 }
 
 fn classify_redist_asset(lower_name: &str) -> Option<String> {
@@ -6168,6 +6099,36 @@ mod tests {
         let vcrun_x86 = rebuilt.iter().find(|component| component.id == "vcrun2019_x86").expect("vcrun x86 component");
         assert_eq!(vcrun_x86.state, ComponentState::NeedsRepair);
         assert!(!rebuilt.iter().any(|component| component.id == "d3d12"));
+
+        let d3dmetal_existing = vec![
+            RuntimeComponent { id: "gptk".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "gptk_prefix".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x86".into(), state: ComponentState::Installed },
+        ];
+        let rebuilt_m12 = rebuild_components_for_profile(&d3dmetal_existing, RuntimeProfile::M12);
+        assert!(!rebuilt_m12.iter().any(|component| component.id == "gptk"));
+        assert!(!rebuilt_m12.iter().any(|component| component.id == "gptk_prefix"));
+        assert!(rebuilt_m12.iter().any(|component| component.id == "d3d12_agility"));
+
+        let m12_existing = vec![
+            RuntimeComponent { id: "d3d12_agility".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "m12_runtime".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::NeedsRepair },
+        ];
+        let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetal);
+        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "d3d12_agility"));
+        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_runtime"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk_prefix"));
+        assert_eq!(
+            rebuilt_d3dmetal
+                .iter()
+                .find(|component| component.id == "vcrun2019_x64")
+                .expect("shared vcrun x64 component")
+                .state,
+            ComponentState::NeedsRepair
+        );
     }
 
     #[test]
@@ -6558,22 +6519,10 @@ mod tests {
         let dir = test_dir("game-redists");
         let redist = dir.join("_CommonRedist").join("vcredist").join("2019");
         let openal = dir.join("_CommonRedist").join("OpenAL");
-        let eac = dir.join("Game").join("EasyAntiCheat");
-        let battleye = dir.join("BattlEye");
         fs::create_dir_all(&redist).expect("create redist dir");
         fs::create_dir_all(&openal).expect("create openal dir");
-        fs::create_dir_all(&eac).expect("create eac dir");
-        fs::create_dir_all(&battleye).expect("create battleye dir");
         fs::write(redist.join("VC_redist.x86.exe"), b"redist").expect("write vcredist");
         fs::write(openal.join("oalinst.exe"), b"openal").expect("write openal");
-        fs::write(eac.join("EasyAntiCheat_EOS_Setup.exe"), b"eac").expect("write eac setup");
-        fs::write(
-            eac.join("install_easyanticheat_eos_setup.bat"),
-            b"call EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e",
-        )
-        .expect("write eac installer script");
-        fs::write(battleye.join("Install_BattlEye.bat"), b"call BEService.exe").expect("write battleye script");
-        fs::write(battleye.join("BEService.exe"), b"battleye").expect("write battleye service");
         fs::write(
             redist.join("installscript.vdf"),
             br#"
@@ -6597,149 +6546,23 @@ mod tests {
         assert!(assets.iter().any(|asset| asset.kind == "vcredist"));
         assert!(assets.iter().any(|asset| asset.kind == "openal"));
         assert!(assets.iter().any(|asset| asset.kind == "installscript"));
-        assert!(assets.iter().any(|asset| asset.kind == "easyanticheat_eos"));
-        assert!(assets.iter().any(|asset| asset.kind == "battleye"));
+        assert!(!assets.iter().any(|asset| asset.kind.contains("anti") || asset.kind == "battleye"));
         assert!(ids.contains(&"vcrun2019_x64"));
         assert!(ids.contains(&"vcrun2019_x86"));
         assert!(ids.contains(&"openal"));
         assert!(ids.contains(&"directx_jun2010"));
         assert!(ids.contains(&"xna"));
         assert!(ids.contains(&"physx"));
-        assert!(ids.contains(&"easyanticheat_eos"));
-        assert!(ids.contains(&"battleye"));
+        assert!(!ids.contains(&"easyanticheat_eos"));
+        assert!(!ids.contains(&"battleye"));
         let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn easyanticheat_eos_installer_uses_game_script_install_args() {
-        let dir = test_dir("eac-eos-installer");
-        fs::create_dir_all(&dir).expect("create eac dir");
-        let setup = dir.join("EasyAntiCheat_EOS_Setup.exe");
-        let script = dir.join("install_easyanticheat_eos_setup.bat");
-        fs::write(&setup, b"eac").expect("write eac setup");
-        fs::write(
-            &script,
-            b"@echo off\r\ncall EasyAntiCheat_EOS_Setup.exe install 773d3a68f76f4b2ebebc5b4127bbad3e\r\npause\r\n",
-        )
-        .expect("write eac script");
-
-        let installer = easyanticheat_eos_installer_from_asset(&script).expect("resolve eac installer");
-
-        assert_eq!(installer.path, setup);
-        assert_eq!(installer.args, vec!["install".to_string(), "773d3a68f76f4b2ebebc5b4127bbad3e".to_string()]);
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn easyanticheat_eos_installer_skips_checker_scripts() {
-        let dir = test_dir("eac-eos-multiple-scripts");
-        fs::create_dir_all(&dir).expect("create eac dir");
-        let setup = dir.join("EasyAntiCheat_EOS_Setup.exe");
-        let checker = dir.join("eacchecker.bat");
-        let install = dir.join("install_easyanticheat_eos_setup.bat");
-        fs::write(&setup, b"eac").expect("write eac setup");
-        fs::write(&checker, b"reg query HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\EasyAntiCheat_EOS")
-            .expect("write checker");
-        fs::write(
-            &install,
-            b"@echo off\r\ncall EasyAntiCheat_EOS_Setup.exe install 789399aada914e66bb3c3facebc5d709\r\npause\r\n",
-        )
-        .expect("write install");
-        let manifest = BottleManifest {
-            id: "steam_1888160".into(),
-            name: "ARMORED CORE VI FIRES OF RUBICON".into(),
-            custom_name: None,
-            bottle_type: BottleType::Steam,
-            steam_app_id: Some(1888160),
-            prefix_path: "/tmp/metalsharp-test-prefix".into(),
-            arch: BottleArch::Wow64,
-            runtime_profile: RuntimeProfile::M11,
-            preferred_pipeline: None,
-            installed_components: vec![RuntimeComponent {
-                id: "easyanticheat_eos".into(),
-                state: ComponentState::Missing,
-            }],
-            source_installer_path: None,
-            installer_kind: None,
-            game_install_path: None,
-            runtime_assets: vec![
-                BottleRuntimeAsset {
-                    id: "easyanticheat:eacchecker.bat".into(),
-                    kind: "easyanticheat".into(),
-                    source_path: checker.to_string_lossy().to_string(),
-                    present: true,
-                },
-                BottleRuntimeAsset {
-                    id: "easyanticheat_eos:install_easyanticheat_eos_setup.bat".into(),
-                    kind: "easyanticheat_eos".into(),
-                    source_path: install.to_string_lossy().to_string(),
-                    present: true,
-                },
-                BottleRuntimeAsset {
-                    id: "easyanticheat_eos:easyanticheat_eos_setup.exe".into(),
-                    kind: "easyanticheat_eos".into(),
-                    source_path: setup.to_string_lossy().to_string(),
-                    present: true,
-                },
-            ],
-            installed_app_detections: Vec::new(),
-            health: BottleHealth::NeedsRepair,
-            last_launch_log: None,
-            last_launch_pid: None,
-            last_launch_status: None,
-            last_launch_finished_at: None,
-            created_at: timestamp_secs(),
-            updated_at: timestamp_secs(),
-        };
-
-        let installer =
-            resolve_game_runtime_asset_installer(&manifest, "easyanticheat_eos").expect("resolve installer");
-
-        assert_eq!(installer.path, setup);
-        assert_eq!(installer.args, vec!["install".to_string(), "789399aada914e66bb3c3facebc5d709".to_string()]);
-        let _ = fs::remove_dir_all(dir);
-    }
-
-    #[test]
-    fn game_runtime_asset_repair_ignores_non_installer_dlls() {
-        let manifest = BottleManifest {
-            id: "steam_123".into(),
-            name: "Game 123".into(),
-            custom_name: None,
-            bottle_type: BottleType::Steam,
-            steam_app_id: Some(123),
-            prefix_path: "/tmp/metalsharp-test-prefix".into(),
-            arch: BottleArch::Wow64,
-            runtime_profile: RuntimeProfile::M11,
-            preferred_pipeline: None,
-            installed_components: vec![RuntimeComponent { id: "battleye".into(), state: ComponentState::Missing }],
-            source_installer_path: None,
-            installer_kind: None,
-            game_install_path: None,
-            runtime_assets: vec![BottleRuntimeAsset {
-                id: "battleye:BEClient_x64.dll".into(),
-                kind: "battleye".into(),
-                source_path: "/tmp/BattlEye/BEClient_x64.dll".into(),
-                present: true,
-            }],
-            installed_app_detections: Vec::new(),
-            health: BottleHealth::NeedsRepair,
-            last_launch_log: None,
-            last_launch_pid: None,
-            last_launch_status: None,
-            last_launch_finished_at: None,
-            created_at: timestamp_secs(),
-            updated_at: timestamp_secs(),
-        };
-
-        assert!(resolve_game_runtime_asset_installer(&manifest, "battleye").is_none());
     }
 
     #[test]
     fn wine_z_drive_path_quotes_unix_script_paths_for_cmd() {
         assert_eq!(
-            wine_z_drive_path(Path::new("/Volumes/AverySSD/Game/BattlEye/Install_BattlEye.bat")),
-            "Z:\\Volumes\\AverySSD\\Game\\BattlEye\\Install_BattlEye.bat"
+            wine_z_drive_path(Path::new("/Volumes/AverySSD/Game/Scripts/Install_Redist.bat")),
+            "Z:\\Volumes\\AverySSD\\Game\\Scripts\\Install_Redist.bat"
         );
     }
 
@@ -6781,7 +6604,7 @@ mod tests {
     }
 
     #[test]
-    fn steam_compatdata_record_is_appid_scoped_and_launch_authoritative() {
+    fn deprecated_steam_compatdata_record_points_at_bottle_route_state() {
         let manifest = BottleManifest {
             id: steam_game_bottle_id(620),
             name: "Portal 2".into(),
@@ -6816,7 +6639,8 @@ mod tests {
 
         assert_eq!(record.appid, 620);
         assert_eq!(record.bottle_id, "steam_620");
-        assert!(record.compatdata_path.ends_with("/compatdata/620"));
+        assert!(record.compatdata_path.ends_with("/bottles/steam_620"));
+        assert!(record.log_dir.ends_with("/bottles/steam_620/logs"));
         assert_eq!(record.launch_pipeline, "m9");
         assert_eq!(record.steam_identity_mode, "wine_steam_background");
         assert_eq!(record.compat_tool_name, "MetalSharp");

@@ -115,6 +115,7 @@ struct D3D12ResolvedIAInputElementMetadata {
   uint32_t aligned_byte_offset = 0;
   uint32_t dxgi_format = 0;
   uint32_t metal_format = 0;
+  uint32_t bytes_per_element = 0;
   D3D12VertexInputSlotClass input_slot_class =
       D3D12VertexInputSlotClass::PerVertex;
   uint32_t instance_step_rate = 1;
@@ -363,19 +364,26 @@ D3D12ValidateDrawSafety(const D3D12DrawSafetyDesc &desc) {
     if (input.input_slot_class == D3D12VertexInputSlotClass::PerInstance) {
       if (!input.instance_step_rate) {
         required = uint64_t(desc.start_instance) + 1ull;
+      } else if (!desc.instance_count) {
+        required = 0;
       } else {
-        required =
-            uint64_t(desc.start_instance) +
-            (uint64_t(desc.instance_count) + input.instance_step_rate - 1ull) /
-                input.instance_step_rate;
+        const uint64_t last_local_instance =
+            uint64_t(desc.instance_count) - 1ull;
+        required = uint64_t(desc.start_instance) +
+                   (last_local_instance / input.instance_step_rate) + 1ull;
       }
     }
 
-    const uint64_t available =
-        view->stride_in_bytes ? view->size_in_bytes / view->stride_in_bytes : 0;
-    if (required > available) {
+    const uint64_t element_bytes =
+        input.bytes_per_element ? input.bytes_per_element : 1ull;
+    const uint64_t last_row = required ? required - 1ull : 0ull;
+    const uint64_t required_end = last_row * uint64_t(view->stride_in_bytes) +
+                                  uint64_t(input.aligned_byte_offset) +
+                                  element_bytes;
+    const uint64_t available = view->size_in_bytes;
+    if (required_end > available) {
       result.reason = D3D12DrawSafetySkipReason::VertexRangeOutOfBounds;
-      result.required_vertices = required;
+      result.required_vertices = required_end;
       result.available_vertices = available;
       return result;
     }
@@ -427,6 +435,7 @@ inline D3D12IAInputLayoutMetadata D3D12BuildIAInputLayoutMetadata(
     info.aligned_byte_offset = aligned_offset;
     info.dxgi_format = desc.dxgi_format;
     info.metal_format = desc.metal_format;
+    info.bytes_per_element = desc.bytes_per_texel;
     info.input_slot_class = desc.input_slot_class;
     info.instance_step_rate =
         desc.input_slot_class == D3D12VertexInputSlotClass::PerInstance

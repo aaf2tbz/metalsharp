@@ -25,7 +25,7 @@ const brewChecking = ref(true);
 const brewInstalled = ref(false);
 const brewInstalling = ref(false);
 
-const steps = ["Welcome", "Install Homebrew", "Install Runtime", "VC++ Runtimes", "Done"];
+const steps = ["Welcome", "Homebrew", "Runtime", "VC++", "Done"];
 
 const vcppX64Done = ref(false);
 const vcppX86Done = ref(false);
@@ -272,7 +272,7 @@ async function installVcppX86() {
       <div v-if="step === 1" class="setup-body">
         <div class="setup-section-header">
           <h1>Install Homebrew</h1>
-          <p>MetalSharp needs Homebrew to install runtime dependencies. Click below to open Terminal.</p>
+          <p>MetalSharp uses Homebrew for setup tools such as zstd and Rosetta checks. GPTK/D3DMetal is optional and is only installed later when you save a game as a D3DMetal bottle.</p>
         </div>
 
         <div class="setup-brew-step">
@@ -294,7 +294,7 @@ async function installVcppX86() {
       <div v-if="step === 2" class="setup-body">
         <div class="setup-section-header">
           <h1>Install Runtime</h1>
-          <p>MetalSharp needs the Wine runtime and game assets. One click installs everything.</p>
+          <p>Install the MetalSharp-owned Wine runtime, DXMT graphics runtimes, Steam support files, Mono/FNA support, scripts, and bottle rules. GPTK is not installed during first-time setup.</p>
         </div>
 
         <button
@@ -320,7 +320,7 @@ async function installVcppX86() {
 
         <div v-if="installStatus === 'complete'" class="setup-steam-section">
           <h2>Steam</h2>
-          <p>Install Windows Steam to download and play games.</p>
+          <p>Install Windows Steam to download and play games through MetalSharp's Wine runtime.</p>
           <span v-if="steamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">Steam installed</span>
           <button v-else class="btn btn-primary" :disabled="steamInstalling" @click="installSteam">
             {{ steamInstalling ? "Installing Steam..." : "Install Steam" }}
@@ -336,7 +336,7 @@ async function installVcppX86() {
       <div v-if="step === 3" class="setup-body">
         <div class="setup-section-header">
           <h1>VC++ 2015-2022 Runtimes</h1>
-          <p>Many Windows games depend on the Microsoft Visual C++ Redistributable. Installing both x64 and x86 ensures games like Portal 2, Celeste, and other Steam titles can find the runtime DLLs they need at launch.</p>
+          <p>Many Windows games depend on the Microsoft Visual C++ Redistributable. Install both x64 and x86 into the standard MetalSharp Wine prefix so Steam games can find the runtime DLLs they need at launch.</p>
         </div>
 
         <div class="setup-vcpp-section">

@@ -38,11 +38,21 @@ const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
 const pipelineCache = ref<CacheSummary | null>(null);
 const apiKeyInput = ref("");
+const graphicsRuntimeLogs = ref(false);
 
 onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
+  await refreshConfig();
   await refreshCacheSizes();
 });
+
+async function refreshConfig() {
+  const result = await api<AppConfig>("GET", "/config");
+  if (result?.ok) {
+    config.value = result;
+    graphicsRuntimeLogs.value = Boolean(result.graphicsRuntimeLogs ?? result.graphics_runtime_logs);
+  }
+}
 
 async function refreshCacheSizes() {
   const result = await api<{
@@ -239,6 +249,23 @@ function toggleDeveloperMode(enabled: boolean) {
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
 }
 
+async function toggleGraphicsRuntimeLogs(enabled: boolean) {
+  const previous = graphicsRuntimeLogs.value;
+  graphicsRuntimeLogs.value = enabled;
+  const result = await api<AppConfig>("POST", "/config", { graphicsRuntimeLogs: enabled, logs: enabled });
+  if (result?.ok) {
+    config.value = result;
+    graphicsRuntimeLogs.value = Boolean(result.graphicsRuntimeLogs ?? result.graphics_runtime_logs);
+    toast.show(
+      graphicsRuntimeLogs.value ? "Graphics runtime logs enabled for future launches" : "Graphics runtime logs disabled",
+      "success",
+    );
+  } else {
+    graphicsRuntimeLogs.value = previous;
+    toast.show("Failed to save graphics logging setting", "error");
+  }
+}
+
 function uninstallMetalsharp() {
   getAPI().uninstallApp();
 }
@@ -351,6 +378,27 @@ function uninstallMetalsharp() {
               type="checkbox"
               :checked="developerMode"
               @change="toggleDeveloperMode(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="toggle-switch"></span>
+          </label>
+        </div>
+      </div>
+      <div v-if="developerMode" class="settings-row">
+        <div>
+          <div class="settings-label">Graphics Runtime Logs</div>
+          <div class="settings-desc">
+            Opt in to DXMT graphics logs for future launches. Off by default so M12 games do not emit runtime logs unless requested.
+          </div>
+        </div>
+        <div class="settings-value">
+          <span class="badge" :class="graphicsRuntimeLogs ? 'badge-warn' : 'badge-ok'">
+            {{ graphicsRuntimeLogs ? "Logs On" : "Default Off" }}
+          </span>
+          <label class="settings-toggle toggle-label" aria-label="Graphics Runtime Logs">
+            <input
+              type="checkbox"
+              :checked="graphicsRuntimeLogs"
+              @change="toggleGraphicsRuntimeLogs(($event.target as HTMLInputElement).checked)"
             />
             <span class="toggle-switch"></span>
           </label>

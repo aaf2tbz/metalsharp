@@ -27,9 +27,12 @@ interface LoginState {
 
 interface AppConfig {
   ok: boolean;
-  launch_mode: "native" | "wine";
-  wine_available: boolean;
+  launch_mode?: "native" | "wine";
+  wine_available?: boolean;
   native_available: boolean;
+  mono_available?: boolean;
+  graphicsRuntimeLogs?: boolean;
+  graphics_runtime_logs?: boolean;
 }
 
 interface UpdateStatus {
@@ -57,6 +60,7 @@ interface InstallStatus {
   message: string;
   error: string | null;
   new_version: string | null;
+  dmg_path?: string | null;
   timestamp: number;
 }
 
@@ -142,7 +146,7 @@ type MetalsharpAPI = {
   ) => Promise<BackendResponse>;
   isFirstLaunch: () => Promise<boolean>;
   isMigrationMode: () => Promise<boolean>;
-  restartAfterMigration: () => Promise<void>;
+  restartAfterMigration: () => Promise<{ ok: boolean; error?: string; deletedDmg?: string | null; launched?: string }>;
   ejectDmg: () => Promise<void>;
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
   installHomebrew: () => Promise<{ ok: boolean; error?: string }>;

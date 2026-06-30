@@ -6,7 +6,7 @@ Use this page as the repo map before changing launch/runtime code.
 
 - [How to Use MetalSharp](guides/how-to-use-metalsharp.md) - install, launch, diagnose, and update flow.
 - [Install from Source](guides/install-from-source.md) - build MetalSharp from source without the DMG.
-- [GPTK (D3DMetal) Guide](guides/gptk-guide.md) - Game Porting Toolkit setup, prefix management, and troubleshooting.
+- [GPTK (D3DMetal) Guide](guides/gptk-guide.md) - Homebrew GPTK setup, D3DMetal bottle actions, prefix seeding, and troubleshooting.
 
 ## Compatibility
 
@@ -61,6 +61,7 @@ These files are planning history and should not be treated as the current implem
 
 - Release assets live on the [`bundles` GitHub release](https://github.com/aaf2tbz/metalsharp/releases/tag/bundles).
 - Manifest-tracked hashes live in [tools/bundles/asset-manifest.tsv](../tools/bundles/asset-manifest.tsv).
+- GPTK/D3DMetal is not a MetalSharp bundle asset. D3DMetal uses Homebrew GPTK at `/Applications/Game Porting Toolkit.app` and seeds matched route DLLs into `~/.metalsharp/prefix-gptk` when a D3DMetal bottle is prepared.
 - Verify local and remote bundle state with:
 
 ```bash

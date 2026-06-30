@@ -21,6 +21,7 @@ export interface InstallStatus {
   message: string;
   error: string | null;
   new_version: string | null;
+  dmg_path?: string | null;
   timestamp: number;
 }
 

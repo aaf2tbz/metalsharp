@@ -26,16 +26,20 @@ MTLD3D12DXGIDevice::MTLD3D12DXGIDevice(std::unique_ptr<Device> &&device,
 }
 
 MTLD3D12DXGIDevice::~MTLD3D12DXGIDevice() {
-  if (m_d3d12_device)
+  if (m_d3d12_device) {
+    m_d3d12_device->SetDXGIDevice(nullptr);
     m_d3d12_device->Release();
+  }
 }
 
 ULONG STDMETHODCALLTYPE MTLD3D12DXGIDevice::AddRef() { return ++m_refCount; }
 
 ULONG STDMETHODCALLTYPE MTLD3D12DXGIDevice::Release() {
   uint32_t rc = --m_refCount;
-  if (!rc)
-    delete this;
+  if (!rc) {
+    this->~MTLD3D12DXGIDevice();
+    VirtualFree(this, 0, MEM_RELEASE);
+  }
   return rc;
 }
 

@@ -1,6 +1,7 @@
 #define INITGUID
 #include "d3d12_dxgi_device.hpp"
 #include "d3d12_device.hpp"
+#include "d3d12_pipeline_state.hpp"
 #include "d3d12_trace.hpp"
 #include "com/com_pointer.hpp"
 #include "dxgi_interfaces.h"
@@ -2053,6 +2054,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
       fclose(f);
     }
   } else if (reason == DLL_PROCESS_DETACH) {
+    dxmt::ShutdownAsyncPipelineCompiler();
     FILE *f = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log");
     if (f) {
       char exe[MAX_PATH];

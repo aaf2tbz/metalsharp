@@ -50,7 +50,10 @@ winemetal_open_pe_log(void) {
   if (!root || !root[0])
     return fopen("winemetal-pe-debug.log", "a");
 
-  snprintf(path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/", "winemetal-pe-debug.log");
+  snprintf(
+      path, sizeof(path), "%s%s%s", root, (root[strlen(root) - 1] == '/' || root[strlen(root) - 1] == '\\') ? "" : "/",
+      "winemetal-pe-debug.log"
+  );
   path[sizeof(path) - 1] = '\0';
   return fopen(path, "a");
 }
@@ -64,8 +67,9 @@ DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     return TRUE;
 
   DisableThreadLibraryCalls(instance);
+  const char *requested_unixlib = getenv("DXMT_WINEMETAL_UNIXLIB");
   status = load_unixlib_from_env();
-  if ((DWORD)status == STATUS_DLL_NOT_FOUND)
+  if ((DWORD)status == STATUS_DLL_NOT_FOUND && (!requested_unixlib || !requested_unixlib[0]))
     status = __wine_init_unix_call();
   if (winemetal_debug_enabled()) {
     log = winemetal_open_pe_log();

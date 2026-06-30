@@ -8,6 +8,7 @@
 #include "d3d12_descriptor_heap.hpp"
 #include "log/log.hpp"
 #include "util_string.hpp"
+#include <cstddef>
 
 #define CLTRACE(fmt, ...) do { FILE *_tf = dxmt::openDiagnosticLog("dxmt-d3d12-trace.log"); if (_tf) { fprintf(_tf, "CmdList::" fmt "\n", ##__VA_ARGS__); fclose(_tf); } } while(0)
 
@@ -71,15 +72,33 @@ MTLD3D12GraphicsCommandList::MTLD3D12GraphicsCommandList(
     CmdSetPipelineState cmd = {};
     cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
     cmd.pso = initial_state;
+    RetainPipelineState(initial_state);
     Emit(cmd);
   }
   LogCommandListLifecycle("create", m_debug_id, m_type, m_cmds, m_closed);
 }
 
 MTLD3D12GraphicsCommandList::~MTLD3D12GraphicsCommandList() {
+  ReleaseReferencedPipelineStates();
   if (m_allocator)
     m_allocator->Release();
   m_device->Release();
+}
+
+void MTLD3D12GraphicsCommandList::RetainPipelineState(
+    ID3D12PipelineState *pipeline_state) {
+  if (!pipeline_state)
+    return;
+  pipeline_state->AddRef();
+  m_referenced_pipeline_states.push_back(pipeline_state);
+}
+
+void MTLD3D12GraphicsCommandList::ReleaseReferencedPipelineStates() {
+  for (auto *pipeline_state : m_referenced_pipeline_states) {
+    if (pipeline_state)
+      pipeline_state->Release();
+  }
+  m_referenced_pipeline_states.clear();
 }
 
 HRESULT STDMETHODCALLTYPE
@@ -163,11 +182,13 @@ HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Reset(
     ID3D12CommandAllocator *allocator, ID3D12PipelineState *initial_state) {
   CLTRACE("Reset");
   m_closed = false;
+  ReleaseReferencedPipelineStates();
   m_cmds.clear();
   if (initial_state) {
     CmdSetPipelineState cmd = {};
     cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
     cmd.pso = initial_state;
+    RetainPipelineState(initial_state);
     Emit(cmd);
   }
   LogCommandListLifecycle("reset", m_debug_id, m_type, m_cmds, m_closed);
@@ -176,7 +197,15 @@ HRESULT STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::Reset(
 
 void STDMETHODCALLTYPE
 MTLD3D12GraphicsCommandList::ClearState(ID3D12PipelineState *pipeline_state) {
+  ReleaseReferencedPipelineStates();
   m_cmds.clear();
+  if (pipeline_state) {
+    CmdSetPipelineState cmd = {};
+    cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
+    cmd.pso = pipeline_state;
+    RetainPipelineState(pipeline_state);
+    Emit(cmd);
+  }
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::DrawInstanced(
@@ -361,6 +390,7 @@ MTLD3D12GraphicsCommandList::SetPipelineState(
   CmdSetPipelineState cmd = {};
   cmd.header = {CmdType::SetPipelineState, sizeof(cmd)};
   cmd.pso = pipeline_state;
+  RetainPipelineState(pipeline_state);
   Emit(cmd);
 }
 
@@ -464,7 +494,8 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstants
     UINT root_parameter_index, UINT constant_count, const void *data,
     UINT dst_offset) {
   size_t extra = constant_count * 4;
-  auto total = sizeof(CmdSetRoot32BitConstants) - 1 + extra;
+  const size_t data_offset = offsetof(CmdSetRoot32BitConstants, data);
+  auto total = data_offset + extra;
   auto offset = m_cmds.size();
   m_cmds.resize(offset + total);
   CmdSetRoot32BitConstants cmd = {};
@@ -472,15 +503,16 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetComputeRoot32BitConstants
   cmd.root_param_index = root_parameter_index;
   cmd.count = constant_count;
   cmd.dst_offset = dst_offset;
-  memcpy(m_cmds.data() + offset, &cmd, sizeof(CmdSetRoot32BitConstants) - 1);
-  memcpy(m_cmds.data() + offset + sizeof(CmdSetRoot32BitConstants) - 1, data, extra);
+  memcpy(m_cmds.data() + offset, &cmd, data_offset);
+  memcpy(m_cmds.data() + offset + data_offset, data, extra);
 }
 
 void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstants(
     UINT root_parameter_index, UINT constant_count, const void *data,
     UINT dst_offset) {
   size_t extra = constant_count * 4;
-  auto total = sizeof(CmdSetRoot32BitConstants) - 1 + extra;
+  const size_t data_offset = offsetof(CmdSetRoot32BitConstants, data);
+  auto total = data_offset + extra;
   auto offset = m_cmds.size();
   m_cmds.resize(offset + total);
   CmdSetRoot32BitConstants cmd = {};
@@ -488,8 +520,8 @@ void STDMETHODCALLTYPE MTLD3D12GraphicsCommandList::SetGraphicsRoot32BitConstant
   cmd.root_param_index = root_parameter_index;
   cmd.count = constant_count;
   cmd.dst_offset = dst_offset;
-  memcpy(m_cmds.data() + offset, &cmd, sizeof(CmdSetRoot32BitConstants) - 1);
-  memcpy(m_cmds.data() + offset + sizeof(CmdSetRoot32BitConstants) - 1, data, extra);
+  memcpy(m_cmds.data() + offset, &cmd, data_offset);
+  memcpy(m_cmds.data() + offset + data_offset, data, extra);
 }
 
 void STDMETHODCALLTYPE

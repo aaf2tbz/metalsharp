@@ -113,6 +113,12 @@ archive_contains_root() {
     <<< "$listing"
 }
 
+archive_not_contains() {
+  local path="$1"
+  local forbidden="$2"
+  ! tar --use-compress-program=unzstd -tf "$path" | grep -E "$forbidden" >/dev/null
+}
+
 verify_required_files() {
   local path="$1"
   local label="$2"
@@ -150,7 +156,8 @@ verify_runtime_core() {
 }
 
 verify_graphics_core() {
-  verify_required_files "$1" "GRAPHICS" \
+  local path="$1"
+  verify_required_files "$path" "GRAPHICS" \
     Graphics/dll/dxmt/x86_64-unix/winemetal.so \
     Graphics/dll/dxmt/x86_64-windows/d3d10core.dll \
     Graphics/dll/dxmt/x86_64-windows/d3d11.dll \
@@ -171,13 +178,36 @@ verify_graphics_core() {
     Graphics/dll/dxmt-m12/x86_64-windows/dxgi_dxmt.dll \
     Graphics/dll/dxmt-m12/x86_64-windows/nvapi64.dll \
     Graphics/dll/dxmt-m12/x86_64-windows/nvngx.dll \
-    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll
+    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll &&
+    verify_hash_manifest "$path" "GRAPHICS M12" "Graphics/dll/dxmt-m12" "$SCRIPT_DIR/m12-dxmt-runtime-hashes.tsv"
+}
+
+verify_hash_manifest() {
+  local archive="$1"
+  local label="$2"
+  local prefix="$3"
+  local manifest="$4"
+  local failed=0
+
+  while IFS=$'\t' read -r rel expected; do
+    case "$rel" in
+      ""|"#"*|path) continue ;;
+    esac
+    local archive_path="$prefix/$rel"
+    local actual
+    actual="$(tar --use-compress-program=unzstd -xOf "$archive" "$archive_path" 2>/dev/null | shasum -a 256 | awk '{print $1}')" || actual=""
+    if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
+      echo "$label HASH MISMATCH: $archive_path expected=$expected actual=${actual:-missing}" >&2
+      failed=1
+    fi
+  done < "$manifest"
+
+  return "$failed"
 }
 
 verify_assets_core() {
   local path="$1"
   verify_required_files "$path" "ASSETS" \
-    assets/eac-toggle/x86_64-windows/_winhttp.dll \
     assets/fna-kickstart/kick.bin.osx \
     assets/fna-kickstart/FNA.dll \
     assets/fna-kickstart/mscorlib.dll \
@@ -194,16 +224,9 @@ verify_assets_core() {
     assets/fnalibs/fmod/libfmodstudio.dylib \
     assets/goldberg/x64/steam_api64.dll \
     assets/goldberg/x86/steam_api.dll \
-    assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal \
-    assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib \
-    assets/gptk/x86_64-windows/d3d10.dll \
-    assets/gptk/x86_64-windows/d3d11.dll \
-    assets/gptk/x86_64-windows/d3d12.dll \
-    assets/gptk/x86_64-windows/dxgi.dll \
-    assets/gptk/x86_64-windows/nvapi64.dll \
-    assets/gptk/x86_64-windows/nvngx-on-metalfx.dll \
     assets/mono-arm64/bin/mono-sgen \
     assets/shims/libsteam_api.dylib &&
+    archive_not_contains "$path" '^assets/eac-toggle/' &&
     verify_fna_payloads "$path" "ASSETS" assets/fnalibs &&
     verify_fna_kickstart_payloads "$path" "ASSETS" assets/fna-kickstart/osx
 }

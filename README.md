@@ -13,11 +13,13 @@
 
 ---
 
-MetalSharp is a macOS app for Apple Silicon that translates Direct3D calls to Metal via DXMT, bundles its own Wine runtime, and manages Steam game detection, launch routing, and runtime bottles.
+MetalSharp is an application designed to run Windows Steam and Windows Steam games natively on Apple Silicon macOS. MetalSharp builds and includes its own custom Wine 11.5 runtime, game launch rules, custom DXMT build, runtime bottles, and repair tooling.
 
 ## Quick Start
 
 Download the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it. The setup wizard handles the rest.
+
+If Gatekeeper cannot verify the app, open **System Settings → Privacy & Security** and choose **Open Anyway** for MetalSharp. VirusTotal scans are included with release notes when available.
 
 For building from source, see [Install from Source](docs/guides/install-from-source.md).
 
@@ -25,25 +27,27 @@ For building from source, see [Install from Source](docs/guides/install-from-sou
 
 | Route | Engine |
 |---|---|
-| **M12** | D3D12 to Metal |
-| **M11** | D3D11 to Metal |
-| **M10** | D3D10 to Metal |
-| **M9** | D3D9 / 32-bit DXMT |
+| **M12** | D3D12 to Metal (experimental DXMT) |
+| **M11** | D3D11 to Metal (DXMT) |
+| **M10** | D3D10 to Metal (DXMT) |
+| **M9** | D3D9 / 32-bit DXMT (DXMT, M-SYNC) |
 | **Mono/FNA** | Windows XNA/FNA via native Mono |
-| **D3DMetal** | Apple Game Porting Toolkit |
+| **D3DMetal** | Apple Game Porting Toolkit via Homebrew. GPTK is not bundled; selecting a D3DMetal bottle installs/trusts Homebrew GPTK + Rosetta, then seeds the GPTK prefix with Homebrew-matched D3DMetal route DLLs. |
 
 ## Features
 
-- **Sharp Library** - Import and run standalone Windows programs, installers, and launchers
-- **Runtime Bottles** - Per-game isolated Wine prefixes with component tracking and repair
-- **MTSP Routing** - Automatic pipeline selection based on game compatibility data
-- **Steam Integration** - Detects your Steam library, manages the Wine Steam session, and deploys the CEF wrapper
+- **Sharp Library** - Import and run standalone Windows programs, installers, and launchers.
+- **Runtime Bottles** - Select your launch method, repair missing assets, and switch between bottle runtimes.
+- **MTSP Routing** - Automatic pipeline selection based on game compatibility data and developer testing.
+- **Steam Integration** - Detects your Steam library, manages the Wine Steam session, and deploys a CEF runtime wrapper that survives Steam updates.
 
 ## Requirements
 
 - Apple Silicon Mac, macOS 14+
 - About 2 GB free space
 - Homebrew (installed by setup wizard)
+
+All other bundled assets, DLLs, and graphics backends are installed during the setup process. GPTK/D3DMetal is the exception: MetalSharp installs and uses Homebrew GPTK only when a D3DMetal bottle is saved.
 
 ## Developer Setup
 

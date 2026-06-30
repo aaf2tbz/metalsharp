@@ -51,6 +51,12 @@ struct unixcall_generic_obj_obj_uint64_noret {
   uint64_t arg1;
 };
 
+struct unixcall_mtlcommandbuffer_retain_objects_until_completed {
+  obj_handle_t cmdbuf;
+  struct WMTConstMemoryPointer objects;
+  uint64_t count;
+};
+
 struct unixcall_generic_obj_uint64_uint64_ret {
   obj_handle_t handle;
   uint64_t arg;

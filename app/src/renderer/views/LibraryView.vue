@@ -231,6 +231,12 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   }
 }
 
+function markD3DMetalLaunched(game: SteamGame, pid: number) {
+  runningPid.value = pid;
+  runningAppId.value = game.appid;
+  launchingAppId.value = null;
+}
+
 async function stopGame(game: SteamGame) {
   await api("POST", "/kill", { pid: runningPid.value, appid: game.appid });
   runningPid.value = null;
@@ -346,6 +352,7 @@ watch([library, search, filter], () => {
         :steam-installed="wineSteamInstalled"
         :developer-mode="developerMode"
         @play="launchGame(game, $event)"
+        @d3dmetal-launched="markD3DMetalLaunched(game, $event)"
         @stop="stopGame(game)"
         @install="installGame(game)"
         @uninstall="uninstallGame(game)"

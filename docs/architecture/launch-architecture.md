@@ -32,6 +32,8 @@ For env-dependent Steam routes, MetalSharp keeps Wine Steam running as the backg
 executable directly through the selected MTSP pipeline with the bottle prefix, route env, cache paths, and
 `SteamAppId`/`SteamGameId`. Internal client-only Steam handoff still exists for diagnostics and bootstrap cases, but it is not exposed as a normal bottle option.
 
+D3DMetal is an explicit GPTK lane rather than a generic bottle repair path. Saving a D3DMetal bottle installs/trusts Homebrew GPTK and Rosetta, **Repair Redist** copies x64+x86 VC runtime DLLs plus registry keys into `~/.metalsharp/prefix-gptk`, **Seed Prefix** copies Homebrew GPTK route DLLs into prefix `system32`, and **Play D3DMetal** launches the game exe directly through Homebrew GPTK Wine.
+
 ## Current Pipelines
 
 | Public route | Backend | Launch path |
@@ -41,8 +43,9 @@ executable directly through the selected MTSP pipeline with the bottle prefix, r
 | **M10** | DXMT | Direct Wine launch with legacy `dxmt` D3D10/D3D11/DXGI DLLs |
 | **M9** | DXMT launch family | Direct Wine launch with bundled `d3d9.dll` and DXMT-family cache/env |
 | **Mono/FNA** | Native Mono | Native FNA/XNA/Mono runtime with FNA/XNA assemblies, native dylib staging, FMOD/FAudio/FNA3D shims, and Steamworks shim support |
+| **D3DMetal** | Homebrew GPTK | Direct GPTK Wine launch with Homebrew D3DMetal framework and prefix-seeded Homebrew route DLLs |
 
-Internal route IDs such as `dxmt`, `steam`, `macos_steam`, `wine_bare`, `m32`, and `m13` remain parseable for old records, diagnostics, and backend fallback behavior. They are intentionally hidden from normal bottle selectors.
+Internal route IDs such as `dxmt`, `steam`, `macos_steam`, `wine_bare`, `m32`, and `m13` remain parseable for old records, diagnostics, and backend fallback behavior. `m13` is treated as legacy GPTK/D3DMetal compatibility and should not be used as a separate public route. Internal routes are intentionally hidden from normal bottle selectors.
 
 ## Resolution
 
@@ -107,6 +110,8 @@ M9 copies:
 
 M9 no longer accepts the legacy `dxvk_metal32`, `m9_gl`, or `m32_vk` aliases. D3D9 imports resolve to `[m9]`, and `[m9]` stays on the DXMT-family launch path instead of selecting DXVK/MoltenVK.
 
+D3DMetal does not use MetalSharp's bundled GPTK assets because there are none. It uses Homebrew GPTK at `/Applications/Game Porting Toolkit.app`, copies the matched route DLLs (`d3d10`, `d3d11`, `d3d12`, `dxgi`, `nvapi64`, `nvngx-on-metalfx`) into `~/.metalsharp/prefix-gptk/drive_c/windows/system32`, sets `D3DMETAL_FRAMEWORK_PATH`, and launches through Homebrew GPTK Wine.
+
 Mono/FNA does not use Wine. Wine Steam remains the background client for Windows Steam ownership/session state, while the selected MTSP route owns the game process.
 
 ## Bottles
@@ -115,6 +120,7 @@ Mono/FNA does not use Wine. Wine Steam remains the background client for Windows
 |---|---|---|
 | Installer / Sharp Library | Dedicated bottle prefix | Windows installers, launchers, demos, imported apps |
 | Steam game | Shared `~/.metalsharp/prefix-steam` | Steam game preflight, runtime assets, component repair, launch health |
+| D3DMetal game | Shared `~/.metalsharp/prefix-gptk` | Homebrew GPTK route, copied VC runtime DLL/registry seed, D3DMetal direct-game launch |
 
 Steam game bottles do not replace Steam. They prepare the runtime state the game will use and keep Wine Steam alive as
 the background Steamworks client/session owner. Env-dependent pipeline launches run the game executable directly with

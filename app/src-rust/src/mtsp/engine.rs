@@ -89,7 +89,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/dxmt_m12/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt_m12/x86_64-windows"],
@@ -326,25 +326,12 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "gptk",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some("d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/gptk/x86_64-unix", "lib/external"],
-                winedllpath_dirs: vec!["lib/gptk/x86_64-windows", "lib/metalsharp/x86_64-windows"],
-                deploy_dlls: vec![
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d10.dll", dest_filename: None },
-                    DllDeploy {
-                        source_subpath: "lib/gptk/x86_64-windows",
-                        filename: "nvapi64.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/metalsharp/x86_64-windows",
-                        filename: "metalsharp_ntdll_hook.dll",
-                        dest_filename: None,
-                    },
-                ],
+                wine_overrides: Some(
+                    "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
+                dyld_paths: vec!["lib/wine/x86_64-unix"],
+                winedllpath_dirs: vec![],
+                deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
                 alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::Steam],
@@ -358,30 +345,12 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "d3dmetal",
                 experimental: true,
                 requires_wine: false,
-                wine_overrides: Some("d3d10,d3d11,d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                dyld_paths: vec!["lib/gptk/x86_64-unix", "lib/external"],
-                winedllpath_dirs: vec!["lib/gptk/x86_64-windows", "lib/metalsharp/x86_64-windows"],
-                deploy_dlls: vec![
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d12.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
-                    DllDeploy { source_subpath: "lib/gptk/x86_64-windows", filename: "d3d10.dll", dest_filename: None },
-                    DllDeploy {
-                        source_subpath: "lib/gptk/x86_64-windows",
-                        filename: "nvapi64.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/gptk/x86_64-windows",
-                        filename: "nvngx-on-metalfx.dll",
-                        dest_filename: None,
-                    },
-                    DllDeploy {
-                        source_subpath: "lib/metalsharp/x86_64-windows",
-                        filename: "metalsharp_ntdll_hook.dll",
-                        dest_filename: None,
-                    },
-                ],
+                wine_overrides: Some(
+                    "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
+                dyld_paths: vec![],
+                winedllpath_dirs: vec![],
+                deploy_dlls: vec![],
                 env_vars: vec![],
                 launch_args: vec![],
                 alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M13],
@@ -644,8 +613,8 @@ mod tests {
         assert!(m12_overrides.contains("winemetal"));
         assert!(m12_overrides.contains("d3d12"));
         assert!(m12_overrides.contains("dxgi"));
+        assert!(m12_overrides.contains("dxgi_dxmt"));
         assert!(m12_overrides.contains("gameoverlayrenderer"));
-        assert!(!m12_overrides.contains("mscompatdb"));
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 

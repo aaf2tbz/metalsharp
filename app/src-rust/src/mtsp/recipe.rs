@@ -16,8 +16,6 @@ pub struct LaunchRecipe {
     pub env: Vec<RecipeEnv>,
     pub dlls: Vec<RecipeDll>,
     pub runtime_assets: Vec<RuntimeAsset>,
-    pub anti_cheat: Vec<String>,
-    pub anti_cheat_status: Vec<AntiCheatCompatibility>,
     pub warnings: Vec<String>,
 }
 
@@ -42,16 +40,6 @@ pub struct RuntimeAsset {
     pub path: PathBuf,
     pub required: bool,
     pub present: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AntiCheatCompatibility {
-    pub name: String,
-    pub status: String,
-    pub reason: String,
-    pub evidence: Vec<String>,
-    pub allowed_actions: Vec<String>,
-    pub forbidden_actions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,16 +110,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         None => Vec::new(),
     };
 
-    let anti_cheat = game_dir.as_ref().map(detect_anti_cheat).unwrap_or_default();
-    let anti_cheat_status =
-        game_dir.as_ref().map(|dir| classify_anti_cheat_components(dir, &anti_cheat)).unwrap_or_default();
     let mut warnings = Vec::new();
-    if !anti_cheat.is_empty() {
-        warnings.push(format!(
-            "Detected anti-cheat components: {}. MetalSharp should use publisher-supported modes only.",
-            anti_cheat.join(", ")
-        ));
-    }
     if exe_path.as_ref().map(|p| is_likely_launcher_exe(p)).unwrap_or(false) {
         warnings.push(
             "Selected executable still looks like a launcher; add an app-specific exe override if launch stalls."
@@ -155,8 +134,6 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
             .collect(),
         dlls,
         runtime_assets: runtime_assets_for_node(node, &ms_root),
-        anti_cheat,
-        anti_cheat_status,
         warnings,
     })
 }
@@ -287,16 +264,7 @@ pub fn build_custom_launch_recipe(
     };
     let game_dir = game_dir.to_path_buf();
     let dlls = selected_deploy_dlls_for_pipeline(&game_dir, exe_path.as_deref(), node, &ms_root);
-    let anti_cheat = detect_anti_cheat(&game_dir);
-    let anti_cheat_status = classify_anti_cheat_components(&game_dir, &anti_cheat);
     let mut warnings = Vec::new();
-
-    if !anti_cheat.is_empty() {
-        warnings.push(format!(
-            "Detected anti-cheat components: {}. MetalSharp should use publisher-supported modes only.",
-            anti_cheat.join(", ")
-        ));
-    }
     if exe_path.as_ref().map(|p| is_likely_launcher_exe(p)).unwrap_or(false) {
         warnings.push(
             "Selected executable still looks like a launcher; add an app-specific exe override if launch stalls."
@@ -320,8 +288,6 @@ pub fn build_custom_launch_recipe(
             .collect(),
         dlls,
         runtime_assets: runtime_assets_for_node(node, &ms_root),
-        anti_cheat,
-        anti_cheat_status,
         warnings,
     })
 }
@@ -459,8 +425,6 @@ pub fn diagnose_launch_request(appid: u32, node: &PipelineNode) -> LaunchDoctorR
                     .collect(),
                 dlls: Vec::new(),
                 runtime_assets: runtime_assets_for_node(node, &ms_root),
-                anti_cheat: Vec::new(),
-                anti_cheat_status: Vec::new(),
                 warnings: Vec::new(),
             };
             let mut report = diagnose_recipe(recipe);
@@ -585,32 +549,6 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
             missing_target_dirs.iter().map(|parent| parent.display().to_string()).collect::<Vec<_>>().join(", ");
         blockers.push(format!("Missing DLL target folder(s): {}", detail));
         push_check(&mut checks, "dll_targets", "DLL targets", false, detail);
-    }
-
-    if recipe.anti_cheat.is_empty() {
-        push_check(&mut checks, "anti_cheat", "Anti-cheat", true, "No common anti-cheat folders detected");
-    } else {
-        let blocking = recipe
-            .anti_cheat_status
-            .iter()
-            .filter(|entry| {
-                matches!(entry.status.as_str(), "unsupported_kernel_driver" | "blocked_pending_vendor_support")
-            })
-            .collect::<Vec<_>>();
-        for entry in &blocking {
-            blockers.push(format!("{}: {}", entry.name, entry.reason));
-        }
-        let detail = if recipe.anti_cheat_status.is_empty() {
-            format!("Detected {}; use publisher-supported modes only", recipe.anti_cheat.join(", "))
-        } else {
-            recipe
-                .anti_cheat_status
-                .iter()
-                .map(|entry| format!("{}={}", entry.name, entry.status))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        push_check(&mut checks, "anti_cheat", "Anti-cheat", blocking.is_empty(), detail);
     }
 
     if recipe.exe_path.as_ref().map(|path| is_likely_launcher_exe(path)).unwrap_or(false) {
@@ -894,22 +832,64 @@ fn m9_d3d9_source_subpath(game_dir: &Path, exe_path: Option<&Path>) -> &'static 
     "lib/wine/x86_64-windows"
 }
 
+fn runtime_file_present(path: &Path) -> bool {
+    path.metadata().map(|metadata| metadata.is_file() && metadata.len() > 0).unwrap_or(false)
+}
+
+fn optional_runtime_stub(filename: &str) -> bool {
+    filename.starts_with("nvapi") || filename.starts_with("nvngx") || filename.starts_with("atidxx")
+}
+
 fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAsset> {
     let mut assets = Vec::new();
 
     if node.requires_wine {
         let wine = crate::platform::runtime_wine_binary(ms_root);
-        assets.push(RuntimeAsset { name: "wine".into(), present: wine.exists(), path: wine, required: true });
+        assets.push(RuntimeAsset {
+            name: "wine".into(),
+            present: runtime_file_present(&wine),
+            path: wine,
+            required: true,
+        });
     }
 
     for path in &node.dyld_paths {
         let p = ms_root.join(path);
-        assets.push(RuntimeAsset { name: path.to_string(), present: p.exists(), path: p, required: true });
+        assets.push(RuntimeAsset { name: path.to_string(), present: p.is_dir(), path: p, required: true });
+    }
+
+    if node.id == PipelineId::M12 {
+        let unix_dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
+        for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+            let path = unix_dir.join(filename);
+            assets.push(RuntimeAsset {
+                name: format!("lib/dxmt_m12/x86_64-unix/{filename}"),
+                present: runtime_file_present(&path),
+                path,
+                required: true,
+            });
+        }
+    }
+
+    for deploy in &node.deploy_dlls {
+        let path = ms_root.join(deploy.source_subpath).join(deploy.filename);
+        let required = node.id == PipelineId::M12 || !optional_runtime_stub(deploy.filename);
+        assets.push(RuntimeAsset {
+            name: format!("{}/{}", deploy.source_subpath, deploy.filename),
+            present: runtime_file_present(&path),
+            path,
+            required,
+        });
     }
 
     if node.backend == "dxmt" {
         let conf = ms_root.join("etc").join("dxmt.conf");
-        assets.push(RuntimeAsset { name: "dxmt.conf".into(), present: conf.exists(), path: conf, required: false });
+        assets.push(RuntimeAsset {
+            name: "dxmt.conf".into(),
+            present: runtime_file_present(&conf),
+            path: conf,
+            required: false,
+        });
     }
 
     if node.backend == "d3dmetal" {
@@ -930,9 +910,10 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
     }
 
     if node.backend == "gptk" {
-        let framework = ms_root.join("lib").join("external").join("D3DMetal.framework");
+        let framework =
+            crate::platform::gptk_homebrew_wine_root().join("lib").join("external").join("D3DMetal.framework");
         assets.push(RuntimeAsset {
-            name: "D3DMetal.framework".into(),
+            name: "Homebrew D3DMetal.framework".into(),
             present: framework.exists(),
             path: framework,
             required: true,
@@ -945,101 +926,6 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
     }
 
     assets
-}
-
-fn detect_anti_cheat(game_dir: &PathBuf) -> Vec<String> {
-    let mut found = Vec::new();
-    for entry in WalkDir::new(game_dir).max_depth(4).into_iter().flatten() {
-        let name = entry.file_name().to_string_lossy().to_lowercase();
-        let label = if name.contains("easyanticheat") || name == "eac.exe" {
-            Some("Easy Anti-Cheat")
-        } else if name.contains("battleye") {
-            Some("BattlEye")
-        } else if name.contains("gameguard") || name.contains("nprotect") {
-            Some("nProtect GameGuard")
-        } else if name.contains("equ8") {
-            Some("EQU8")
-        } else if name.contains("ace") && name.contains("anti") {
-            Some("Anti-Cheat Expert")
-        } else {
-            None
-        };
-
-        if let Some(label) = label {
-            if !found.iter().any(|existing| existing == label) {
-                found.push(label.to_string());
-            }
-        }
-    }
-    found
-}
-
-fn classify_anti_cheat_components(game_dir: &Path, detected: &[String]) -> Vec<AntiCheatCompatibility> {
-    detected.iter().map(|name| classify_anti_cheat_component(game_dir, name)).collect()
-}
-
-fn classify_anti_cheat_component(game_dir: &Path, name: &str) -> AntiCheatCompatibility {
-    let evidence = anti_cheat_evidence(game_dir, name);
-    let has_proton_assets = evidence.iter().any(|item| item.ends_with(".so"));
-    let (status, reason) = match name {
-        "Easy Anti-Cheat" | "BattlEye" if has_proton_assets => (
-            "vendor_supported_on_proton_assets_present",
-            "Proton/Linux anti-cheat module assets are present; MetalSharp still needs publisher/vendor-supported macOS/Wine enablement.",
-        ),
-        "Easy Anti-Cheat" | "BattlEye" => (
-            "blocked_pending_vendor_support",
-            "Protected title requires publisher/vendor opt-in and compatible Unix module assets; MetalSharp should not bypass or spoof support.",
-        ),
-        "nProtect GameGuard" | "Anti-Cheat Expert" => (
-            "unsupported_kernel_driver",
-            "Detected anti-cheat family normally depends on Windows kernel-driver behavior that Wine/macOS cannot honestly provide.",
-        ),
-        "EQU8" => (
-            "unknown",
-            "Detected anti-cheat requires title-specific validation before MetalSharp can classify it safely.",
-        ),
-        _ => (
-            "user_mode_possible",
-            "Detected anti-cheat appears user-mode or legacy; launch may be possible only in publisher-supported configurations.",
-        ),
-    };
-    AntiCheatCompatibility {
-        name: name.to_string(),
-        status: status.to_string(),
-        reason: reason.to_string(),
-        evidence,
-        allowed_actions: vec![
-            "collect_logs".to_string(),
-            "try_offline_mode_if_supported".to_string(),
-            "request_publisher_vendor_support".to_string(),
-        ],
-        forbidden_actions: vec!["bypass".to_string(), "tamper".to_string(), "spoof_kernel_trust".to_string()],
-    }
-}
-
-fn anti_cheat_evidence(game_dir: &Path, name: &str) -> Vec<String> {
-    let mut evidence = Vec::new();
-    for entry in WalkDir::new(game_dir).max_depth(5).into_iter().flatten() {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let lower = entry.file_name().to_string_lossy().to_ascii_lowercase();
-        let matches = match name {
-            "Easy Anti-Cheat" => {
-                lower.contains("easyanticheat") || lower == "eac.exe" || lower.contains("easyanticheat_eos")
-            },
-            "BattlEye" => lower.contains("battleye") || lower.contains("beclient"),
-            "nProtect GameGuard" => lower.contains("gameguard") || lower.contains("nprotect"),
-            "Anti-Cheat Expert" => lower.contains("anticheatexpert") || lower.contains("ace"),
-            "EQU8" => lower.contains("equ8"),
-            _ => false,
-        };
-        if matches {
-            evidence.push(entry.path().to_string_lossy().to_string());
-        }
-    }
-    evidence.sort();
-    evidence
 }
 
 #[cfg(test)]
@@ -1070,7 +956,7 @@ mod tests {
         let dir = test_dir("spg-prepared");
         let game_dir = dir.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.old"), b"EAC_STUB").expect("write old");
+        std::fs::write(game_dir.join("start_protected_game.old"), b"PROTECTED_STUB").expect("write old");
         std::fs::write(game_dir.join("start_protected_game.exe"), b"REAL_GAME_COPY").expect("write protected copy");
         std::fs::write(game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write real exe");
 
@@ -1087,7 +973,7 @@ mod tests {
         let dir = test_dir("ac6-preferred");
         let game_dir = dir.join("Game");
         std::fs::create_dir_all(&game_dir).expect("create game dir");
-        std::fs::write(game_dir.join("start_protected_game.exe"), b"EAC_STUB").expect("write protected exe");
+        std::fs::write(game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write protected exe");
         std::fs::write(game_dir.join("armoredcore6.exe"), b"REAL_GAME").expect("write real exe");
 
         let selected = resolve_game_exe(1888160, &dir).expect("select AC6 protected exe");
@@ -1464,8 +1350,6 @@ mod tests {
                 required: true,
                 present: false,
             }],
-            anti_cheat: vec![],
-            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -1492,8 +1376,6 @@ mod tests {
             env: vec![],
             dlls: vec![],
             runtime_assets: vec![],
-            anti_cheat: vec![],
-            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -1522,8 +1404,6 @@ mod tests {
             env: vec![],
             dlls: vec![],
             runtime_assets: vec![],
-            anti_cheat: vec![],
-            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -1552,8 +1432,6 @@ mod tests {
             env: vec![],
             dlls: vec![],
             runtime_assets: vec![],
-            anti_cheat: vec![],
-            anti_cheat_status: vec![],
             warnings: vec![],
         });
 
@@ -1571,37 +1449,6 @@ mod tests {
         assert!(report.summary.contains("Blocked"));
         assert!(report.blockers.iter().any(|blocker| blocker.contains("Recipe build did not complete")));
         assert!(report.checks.iter().any(|check| check.id == "exe" && !check.ok));
-    }
-
-    #[test]
-    fn anticheat_classifier_blocks_eac_without_vendor_assets() {
-        let game_dir = test_dir("eac-no-assets");
-        let eac_dir = game_dir.join("EasyAntiCheat");
-        std::fs::create_dir_all(&eac_dir).expect("create eac dir");
-        std::fs::write(eac_dir.join("EasyAntiCheat_EOS_Setup.exe"), b"eac").expect("write eac marker");
-        let detected = detect_anti_cheat(&game_dir);
-
-        let report = classify_anti_cheat_components(&game_dir, &detected);
-
-        assert_eq!(detected, vec!["Easy Anti-Cheat"]);
-        assert_eq!(report[0].status, "blocked_pending_vendor_support");
-        assert!(report[0].forbidden_actions.contains(&"bypass".to_string()));
-        let _ = std::fs::remove_dir_all(game_dir);
-    }
-
-    #[test]
-    fn anticheat_classifier_marks_proton_assets_as_vendor_supported_evidence() {
-        let game_dir = test_dir("eac-proton-assets");
-        let eac_dir = game_dir.join("EasyAntiCheat");
-        std::fs::create_dir_all(&eac_dir).expect("create eac dir");
-        std::fs::write(eac_dir.join("easyanticheat_x64.so"), b"eac").expect("write eac proton marker");
-        let detected = detect_anti_cheat(&game_dir);
-
-        let report = classify_anti_cheat_components(&game_dir, &detected);
-
-        assert_eq!(report[0].status, "vendor_supported_on_proton_assets_present");
-        assert!(report[0].evidence.iter().any(|path| path.ends_with(".so")));
-        let _ = std::fs::remove_dir_all(game_dir);
     }
 
     fn test_dir(name: &str) -> PathBuf {

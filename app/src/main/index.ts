@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
@@ -48,9 +48,13 @@ function getMetalsharpDir(): string {
   return path.join(os.homedir(), isDevRuntime() ? ".metalsharp-dev" : ".metalsharp");
 }
 
+function uiOnlyVersion(): string {
+  return `${app.getVersion()}-ui`;
+}
+
 function uiOnlyBackendResponse(method: string, url: string): unknown {
   if (url === "/status") {
-    return { ok: true, data: { ok: true, version: "0.46.9-ui" } };
+    return { ok: true, data: { ok: true, version: uiOnlyVersion() } };
   }
   if (url === "/setup/state") {
     return {
@@ -132,7 +136,8 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
     return { ok: true, steam: { installed: true, running: false } };
   }
   if (url === "/update/check") {
-    return { ok: true, available: false, current_version: "0.46.9-ui", latest_version: "0.46.9-ui" };
+    const version = uiOnlyVersion();
+    return { ok: true, available: false, current_version: version, latest_version: version };
   }
   if (url === "/steam/watch-steamapps") {
     return { ok: true, new_appids: [] };
@@ -209,6 +214,58 @@ function clearPostUpdateMigrationMarker() {
   try {
     fs.unlinkSync(markerPath);
   } catch {}
+}
+
+function appBundleFromExe(exePath: string): string | null {
+  const match = exePath.match(/^(.*?\.app)\/Contents\/MacOS\//);
+  return match?.[1] ?? null;
+}
+
+function installedMetalSharpAppPath(): string | null {
+  const candidates = ["/Applications/MetalSharp.app", appBundleFromExe(app.getPath("exe"))].filter(
+    (candidate): candidate is string => !!candidate && !candidate.startsWith("/Volumes/"),
+  );
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function deleteInstalledUpdateDmg(): string | null {
+  const status = updaterBridge?.readInstallStatus?.();
+  const dmgPath = status?.dmg_path ? path.resolve(status.dmg_path) : null;
+  if (!dmgPath?.toLowerCase().endsWith(".dmg")) return null;
+  if (!fs.existsSync(dmgPath)) return null;
+
+  const msDir = path.resolve(getMetalsharpDir());
+  const updatesDir = path.join(msDir, "cache", "updates");
+  const allowed =
+    dmgPath.startsWith(updatesDir + path.sep) || path.basename(dmgPath).toLowerCase().startsWith("metalsharp-");
+  if (!allowed) return null;
+
+  fs.rmSync(dmgPath, { force: true });
+  return dmgPath;
+}
+
+function spawnFreshInstalledAppAfterExit(appPath: string) {
+  const script = `current_pid=${process.pid}\napp_path=${JSON.stringify(appPath)}\nwhile kill -0 "$current_pid" 2>/dev/null; do sleep 0.2; done\n/usr/bin/open -n "$app_path"\n`;
+  const child = spawn("/bin/sh", ["-c", script], {
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, PATH: ensureShellPath() },
+  });
+  child.unref();
+}
+
+function forceKillBackendProcesses() {
+  for (const signal of ["TERM", "KILL"]) {
+    try {
+      execFileSync("/usr/bin/pkill", [`-${signal}`, "-x", "metalsharp-backend"], { stdio: "ignore" });
+    } catch {}
+    if (signal === "TERM") {
+      try {
+        execFileSync("/bin/sleep", ["0.5"]);
+      } catch {}
+    }
+  }
 }
 
 type ProcessRow = { pid: number; comm: string; command: string };
@@ -513,9 +570,42 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:restart-after-migration", async () => {
+    const appPath = installedMetalSharpAppPath();
+    if (!appPath) {
+      return { ok: false, error: "Installed MetalSharp.app was not found in /Applications." };
+    }
+
+    // Remove cached updater DMGs before tearing down the backend; this keeps the
+    // user's disk from retaining the old installer image after a successful update.
+    try {
+      await requestMigrationBackend("POST", "/update/cleanup", undefined, 10000);
+    } catch (error) {
+      console.warn("Migration handoff: update cleanup request failed", error);
+    }
+
+    let deletedDmg: string | null = null;
+    try {
+      deletedDmg = deleteInstalledUpdateDmg();
+    } catch (error) {
+      console.warn("Migration handoff: failed to delete update DMG", error);
+    }
+    updaterBridge.clearInstallStatus();
+
     clearPostUpdateMigrationMarker();
-    app.relaunch();
-    app.exit(0);
+
+    // User-requested order: close any leftover MetalSharp app instances first,
+    // then kill the backend, then launch the freshly installed app bundle.
+    const duplicateKill = forceKillDuplicateMetalSharpApps();
+    if (duplicateKill.errors.length > 0) {
+      console.warn(`Migration handoff app cleanup errors: ${duplicateKill.errors.join(" | ")}`);
+    }
+
+    await bridge.killProcess();
+    forceKillBackendProcesses();
+    spawnFreshInstalledAppAfterExit(appPath);
+
+    setTimeout(() => app.exit(0), 50);
+    return { ok: true, deletedDmg, launched: appPath };
   });
 
   ipcMain.handle("app:eject-dmg", async () => {

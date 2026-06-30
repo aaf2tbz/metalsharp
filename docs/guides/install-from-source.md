@@ -40,7 +40,9 @@ cd app && npm install && npm run build && cd ..
 
 ## Fetch Runtime Bundles
 
-Downloads Wine, DXMT, GPTK DLLs, Steam setup files, and other runtime assets from the GitHub release:
+Downloads MetalSharp-owned runtime assets from the GitHub release: Wine, DXMT/M12 graphics DLLs, Steam setup files, Mono/FNA support files, Goldberg assets, and other bundled runtime material.
+
+GPTK/D3DMetal is not bundled in MetalSharp release assets. When you save a D3DMetal bottle, MetalSharp installs/trusts Homebrew GPTK separately and uses `/Applications/Game Porting Toolkit.app` directly.
 
 ```bash
 ./tools/dmg/create-bundles.sh
@@ -72,5 +74,5 @@ cd app && npm run dmg
 
 - **`cmake` fails**: Ensure Xcode CLI tools are installed (`xcode-select -p` should return a path)
 - **`npm install` fails**: Make sure Node 18+ is installed (`brew install node`)
-- **Missing bundles**: Run `./tools/dmg/create-bundles.sh` — this downloads all runtime assets from GitHub
+- **Missing bundles**: Run `./tools/dmg/create-bundles.sh` — this downloads MetalSharp-owned runtime assets from GitHub. It does not download GPTK; D3DMetal uses Homebrew GPTK.
 - **App won't open**: If you see a Gatekeeper warning, run `xattr -cr /path/to/MetalSharp.app`
