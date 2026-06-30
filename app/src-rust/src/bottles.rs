@@ -1117,7 +1117,31 @@ pub fn prepare_steam_game_launch(
     save_bottle(&manifest)?;
     if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
         if let Some(ref home) = dirs::home_dir() {
+            match crate::installer::ensure_gptk_runtime_ready(home) {
+                Ok(_) => mark_component_state(&mut manifest, "gptk", ComponentState::Installed),
+                Err(e) => {
+                    eprintln!("bottle: D3DMetal GPTK runtime staging failed: {}", e);
+                    mark_component_state(&mut manifest, "gptk", ComponentState::NeedsRepair);
+                },
+            }
+
+            if !crate::platform::gptk_prefix_ready(home) {
+                match crate::platform::ensure_gptk_prefix(home) {
+                    Ok(_) => mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed),
+                    Err(e) => {
+                        eprintln!("bottle: D3DMetal GPTK prefix seed requested: {}", e);
+                        let state = if crate::platform::gptk_prefix_seeding(home) {
+                            ComponentState::Unknown
+                        } else {
+                            ComponentState::NeedsRepair
+                        };
+                        mark_component_state(&mut manifest, "gptk_prefix", state);
+                    },
+                }
+            }
+
             if crate::platform::gptk_prefix_ready(home) {
+                mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed);
                 if let Some(ref game_path) = manifest.game_install_path {
                     let game_dir = std::path::PathBuf::from(game_path);
                     if let Ok(Some(external_path)) = crate::platform::migrate_game_to_external(home, &game_dir, appid) {
@@ -1135,9 +1159,21 @@ pub fn prepare_steam_game_launch(
                     let result = crate::platform::install_gptk_prefix_components(home);
                     if let Err(e) = &result {
                         eprintln!("bottle: VC++ redist install failed: {}", e);
+                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::NeedsRepair);
+                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::NeedsRepair);
+                    } else {
+                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::Installed);
+                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::Installed);
                     }
                 }
             }
+            manifest.health = if components_ready(&manifest.installed_components) {
+                BottleHealth::Ready
+            } else {
+                BottleHealth::NeedsRepair
+            };
+            manifest.updated_at = timestamp_secs();
+            save_bottle(&manifest)?;
         }
     } else {
         let vcrun_ids: Vec<String> = manifest
@@ -1992,7 +2028,7 @@ pub fn repair_component(
     if matches!(component_id, "gptk" | "rosetta") {
         if dry_run {
             let available = if component_id == "gptk" {
-                crate::platform::gptk_is_installed()
+                dirs::home_dir().as_deref().map(crate::platform::gptk_is_installed_for_home).unwrap_or(false)
             } else {
                 crate::platform::rosetta_is_installed()
             };
@@ -2013,22 +2049,8 @@ pub fn repair_component(
         }
 
         let installed = if component_id == "gptk" {
-            if crate::platform::gptk_is_installed() {
-                true
-            } else {
-                let brew = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"]
-                    .iter()
-                    .find(|p| std::path::Path::new(p).is_file())
-                    .unwrap_or(&"brew");
-                let path_val = std::env::var("PATH").unwrap_or_default();
-                let full_path = format!("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:{}", path_val);
-                let status = std::process::Command::new(brew)
-                    .args(["install", "game-porting-toolkit"])
-                    .env("PATH", &full_path)
-                    .env("HOME", std::env::var("HOME").unwrap_or_default())
-                    .status()?;
-                status.success() && crate::platform::gptk_is_installed()
-            }
+            let home = dirs::home_dir().ok_or("no home dir")?;
+            crate::installer::ensure_gptk_runtime_ready(&home).is_ok()
         } else {
             if crate::platform::rosetta_is_installed() {
                 true
@@ -2056,7 +2078,11 @@ pub fn repair_component(
             id: component_id.to_string(),
             status: if installed { "installed" } else { "install_failed" }.to_string(),
             detail: if installed {
-                format!("{} is now available", component_id)
+                if component_id == "gptk" {
+                    "GPTK Homebrew wine is staged and bundled GPTK 4 DLLs are ready".to_string()
+                } else {
+                    format!("{} is now available", component_id)
+                }
             } else if component_id == "gptk" {
                 "Failed to install Game Porting Toolkit via Homebrew".to_string()
             } else {
@@ -2192,6 +2218,25 @@ pub fn repair_component(
                 log_path: Some(log_path.to_string_lossy().to_string()),
                 pid: None,
             });
+        }
+
+        match crate::installer::ensure_gptk_runtime_ready(&home) {
+            Ok(_) => mark_component_state(&mut manifest, "gptk", ComponentState::Installed),
+            Err(e) => {
+                mark_component_state(&mut manifest, "gptk", ComponentState::NeedsRepair);
+                mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
+                manifest.health = BottleHealth::NeedsRepair;
+                manifest.updated_at = timestamp_secs();
+                save_bottle(&manifest)?;
+                return Ok(ComponentRepairReport {
+                    id: component_id.to_string(),
+                    status: "install_failed".to_string(),
+                    detail: format!("GPTK runtime staging failed before prefix seed: {}", e),
+                    asset_path: None,
+                    log_path: Some(log_path.to_string_lossy().to_string()),
+                    pid: None,
+                });
+            },
         }
 
         mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
@@ -6054,6 +6099,36 @@ mod tests {
         let vcrun_x86 = rebuilt.iter().find(|component| component.id == "vcrun2019_x86").expect("vcrun x86 component");
         assert_eq!(vcrun_x86.state, ComponentState::NeedsRepair);
         assert!(!rebuilt.iter().any(|component| component.id == "d3d12"));
+
+        let d3dmetal_existing = vec![
+            RuntimeComponent { id: "gptk".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "gptk_prefix".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x86".into(), state: ComponentState::Installed },
+        ];
+        let rebuilt_m12 = rebuild_components_for_profile(&d3dmetal_existing, RuntimeProfile::M12);
+        assert!(!rebuilt_m12.iter().any(|component| component.id == "gptk"));
+        assert!(!rebuilt_m12.iter().any(|component| component.id == "gptk_prefix"));
+        assert!(rebuilt_m12.iter().any(|component| component.id == "d3d12_agility"));
+
+        let m12_existing = vec![
+            RuntimeComponent { id: "d3d12_agility".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "m12_runtime".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::NeedsRepair },
+        ];
+        let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetal);
+        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "d3d12_agility"));
+        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_runtime"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk_prefix"));
+        assert_eq!(
+            rebuilt_d3dmetal
+                .iter()
+                .find(|component| component.id == "vcrun2019_x64")
+                .expect("shared vcrun x64 component")
+                .state,
+            ComponentState::NeedsRepair
+        );
     }
 
     #[test]

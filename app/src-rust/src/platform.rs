@@ -109,8 +109,33 @@ pub fn runtime_wine_binary(ms_root: &std::path::Path) -> PathBuf {
     ms_root.join("bin").join("wine")
 }
 
+pub fn gptk_staged_app_root(home: &Path) -> PathBuf {
+    metalsharp_home_dir_for(home).join("runtime").join("gptk").join("Game Porting Toolkit.app")
+}
+
+pub fn gptk_staged_wine_root(home: &Path) -> PathBuf {
+    gptk_staged_app_root(home).join("Contents").join("Resources").join("wine")
+}
+
+pub fn gptk_homebrew_app_root() -> PathBuf {
+    PathBuf::from("/Applications/Game Porting Toolkit.app")
+}
+
+pub fn gptk_homebrew_wine_root() -> PathBuf {
+    gptk_homebrew_app_root().join("Contents").join("Resources").join("wine")
+}
+
+pub fn gptk_wine_root_for_home(home: &Path) -> PathBuf {
+    let staged = gptk_staged_wine_root(home);
+    if staged.join("bin").join("wine64").is_file() {
+        staged
+    } else {
+        gptk_homebrew_wine_root()
+    }
+}
+
 pub fn gptk_wine_root() -> PathBuf {
-    PathBuf::from("/Applications/Game Porting Toolkit.app/Contents/Resources/wine")
+    dirs::home_dir().map(|home| gptk_wine_root_for_home(&home)).unwrap_or_else(gptk_homebrew_wine_root)
 }
 
 pub fn gptk_prefix_path(home: &Path) -> PathBuf {
@@ -236,11 +261,11 @@ fn gptk_seed_winedllpath(home: &Path) -> Result<String, Box<dyn std::error::Erro
 fn gptk_seed_dyld(home: &Path) -> String {
     let ms_root = gptk_runtime_wine_root(home);
     let mut parts = vec![
-        gptk_wine_root().join("lib"),
-        gptk_wine_root().join("lib").join("wine").join("x86_64-unix"),
+        gptk_wine_root_for_home(home).join("lib"),
+        gptk_wine_root_for_home(home).join("lib").join("wine").join("x86_64-unix"),
         ms_root.join("lib").join("gptk").join("x86_64-unix"),
         ms_root.join("lib").join("external"),
-        gptk_wine_root().join("lib").join("external"),
+        gptk_wine_root_for_home(home).join("lib").join("external"),
     ];
     parts.retain(|path| path.is_dir());
     parts.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
@@ -817,8 +842,8 @@ pub fn seed_gptk_prefix_sync(home: &Path) -> Result<(), Box<dyn std::error::Erro
 fn seed_gptk_prefix_sync_inner(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let gptk_prefix = gptk_prefix_path(home);
     let steam_prefix = metalsharp_home_dir_for(home).join("prefix-steam");
-    let gptk_wine64 = gptk_wine64_binary();
-    let gptk_wineserver = gptk_wineserver_binary();
+    let gptk_wine64 = gptk_wine64_binary_for_home(home);
+    let gptk_wineserver = gptk_wineserver_binary_for_home(home);
     if !gptk_wine64.is_file() {
         return Err("GPTK wine64 not found".into());
     }
@@ -1008,7 +1033,7 @@ fn count_dir_entries(path: &Path) -> std::io::Result<u64> {
 
 pub fn gptk_vcrun_installed(home: &Path) -> bool {
     let gptk_prefix = gptk_prefix_path(home);
-    gptk_vcrun_x64_installed(&gptk_prefix)
+    gptk_vcrun_x64_installed(&gptk_prefix) && gptk_vcrun_x86_installed(&gptk_prefix)
 }
 
 fn gptk_vcrun_x64_installed(gptk_prefix: &Path) -> bool {
@@ -1039,12 +1064,12 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
     }
 
     if gptk_vcrun_installed(home) {
-        append_gptk_seed_log(home, "vcrun already installed in GPTK prefix (x64)");
+        append_gptk_seed_log(home, "vcrun already installed in GPTK prefix (x64+x86)");
         return Ok(());
     }
 
-    let gptk_wine64 = gptk_wine64_binary();
-    let gptk_wineserver = gptk_wineserver_binary();
+    let gptk_wine64 = gptk_wine64_binary_for_home(home);
+    let gptk_wineserver = gptk_wineserver_binary_for_home(home);
     let gptk_winedllpath = gptk_seed_winedllpath(home)?;
     let dyld = gptk_seed_dyld(home);
 
@@ -1053,8 +1078,11 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
 
     append_gptk_seed_log(home, "checking VC++ redist payloads before GPTK install");
     let x64 = resolve_or_download_vcrun(home, &redist_dir, "x64")?;
+    let x86 = resolve_or_download_vcrun(home, &redist_dir, "x86")?;
 
-    for (arch, path, already_installed) in [("x64", &x64, gptk_vcrun_x64_installed(&gptk_prefix))] {
+    for (arch, path, already_installed) in
+        [("x64", &x64, gptk_vcrun_x64_installed(&gptk_prefix)), ("x86", &x86, gptk_vcrun_x86_installed(&gptk_prefix))]
+    {
         if already_installed {
             append_gptk_seed_log(home, &format!("VC++ {} runtime already present, skipping installer", arch));
             continue;
@@ -1100,7 +1128,7 @@ pub fn install_gptk_prefix_components(home: &Path) -> Result<(), Box<dyn std::er
     let installed = gptk_vcrun_installed(home);
     append_gptk_seed_log(home, &format!("VC++ redist install complete, installed={}", installed));
     if !installed {
-        return Err("GPTK VC++ redist install did not verify x64 runtime DLLs".into());
+        return Err("GPTK VC++ redist install did not verify x64+x86 runtime DLLs".into());
     }
     Ok(())
 }
@@ -1177,6 +1205,14 @@ fn copy_registry_hive(src_prefix: &Path, dst_prefix: &Path, hive: &str) {
     }
 }
 
+pub fn gptk_wine64_binary_for_home(home: &Path) -> PathBuf {
+    gptk_wine_root_for_home(home).join("bin").join("wine64")
+}
+
+pub fn gptk_wineserver_binary_for_home(home: &Path) -> PathBuf {
+    gptk_wine_root_for_home(home).join("bin").join("wineserver")
+}
+
 pub fn gptk_wine64_binary() -> PathBuf {
     gptk_wine_root().join("bin").join("wine64")
 }
@@ -1185,8 +1221,17 @@ pub fn gptk_wineserver_binary() -> PathBuf {
     gptk_wine_root().join("bin").join("wineserver")
 }
 
+pub fn gptk_homebrew_installed() -> bool {
+    gptk_homebrew_wine_root().join("bin").join("wine64").is_file()
+        && gptk_homebrew_wine_root().join("bin").join("wineserver").is_file()
+}
+
+pub fn gptk_is_installed_for_home(home: &Path) -> bool {
+    gptk_wine64_binary_for_home(home).is_file() && gptk_wineserver_binary_for_home(home).is_file()
+}
+
 pub fn gptk_is_installed() -> bool {
-    gptk_wine64_binary().is_file() && gptk_wineserver_binary().is_file()
+    dirs::home_dir().map(|home| gptk_is_installed_for_home(&home)).unwrap_or_else(gptk_homebrew_installed)
 }
 
 pub fn rosetta_is_installed() -> bool {
@@ -1378,15 +1423,22 @@ mod tests {
     }
 
     #[test]
-    fn gptk_vcrun_installed_is_x64_route_ready() {
+    fn gptk_vcrun_installed_requires_x64_and_x86_routes() {
         let home = test_prefix("gptk-vcrun-home");
         let prefix = gptk_prefix_path(&home);
         let system32 = prefix.join("drive_c").join("windows").join("system32");
+        let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
         fs::create_dir_all(&system32).expect("create system32");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
         let dll_payload = vec![0u8; 20_000];
-        fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write vcruntime");
-        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write vcruntime140_1");
-        fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write msvcp");
+        fs::write(system32.join("vcruntime140.dll"), &dll_payload).expect("write x64 vcruntime");
+        fs::write(system32.join("vcruntime140_1.dll"), &dll_payload).expect("write x64 vcruntime140_1");
+        fs::write(system32.join("msvcp140.dll"), &dll_payload).expect("write x64 msvcp");
+
+        assert!(!gptk_vcrun_installed(&home));
+
+        fs::write(syswow64.join("vcruntime140.dll"), &dll_payload).expect("write x86 vcruntime");
+        fs::write(syswow64.join("msvcp140.dll"), &dll_payload).expect("write x86 msvcp");
 
         assert!(gptk_vcrun_installed(&home));
 

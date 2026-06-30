@@ -318,7 +318,6 @@ fn install_steps() -> Vec<InstallStep> {
         ("Support Assets", Box::new(install_split_assets_bundle)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Graphics Runtimes", Box::new(|home| ensure_graphics_runtimes_ready(home))),
-        ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("Steam Bridge Shim", Box::new(install_steam_bridge)),
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
@@ -727,13 +726,18 @@ fn split_bundle_marker_path(home: &Path, bundle: &str) -> PathBuf {
 }
 
 fn split_bundle_current(home: &Path, bundle: &str, archive: &Path) -> bool {
-    if bundle == ASSETS_BUNDLE && !fna_support_assets_current(home) {
+    if bundle == ASSETS_BUNDLE && (!fna_support_assets_current(home) || !gptk_support_assets_current(home)) {
         return false;
     }
     let Some(hash) = archive_sha256(archive) else {
         return false;
     };
     fs::read_to_string(split_bundle_marker_path(home, bundle)).map(|existing| existing.trim() == hash).unwrap_or(false)
+}
+
+fn gptk_support_assets_current(home: &Path) -> bool {
+    let runtime = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine").join("lib");
+    gptk_runtime_ready(&runtime.join("gptk"), &runtime.join("external").join("D3DMetal.framework"))
 }
 
 fn fna_support_assets_current(home: &Path) -> bool {
@@ -1166,6 +1170,10 @@ pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
     ensure_dxmt_m12_runtime_ready(home)
 }
 
+pub fn ensure_gptk_runtime_ready(home: &Path) -> Result<bool, String> {
+    install_gptk_runtime(&home.to_path_buf())
+}
+
 fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let bundled = find_bundled_archive(GRAPHICS_DLL_BUNDLE);
@@ -1533,67 +1541,45 @@ fn dxmt_m12_runtime_ready(dxmt_m12_dir: &Path) -> bool {
 }
 
 fn install_gptk_runtime(home: &PathBuf) -> Result<bool, String> {
-    let gptk_dir =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine").join("lib").join("gptk");
-    let ext_dir =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine").join("lib").join("external");
+    let ms_dir = crate::platform::metalsharp_home_dir_for(home);
+    let gptk_dir = ms_dir.join("runtime").join("wine").join("lib").join("gptk");
+    let ext_dir = ms_dir.join("runtime").join("wine").join("lib").join("external");
     let framework = ext_dir.join("D3DMetal.framework");
+    let staged_wine = crate::platform::gptk_staged_wine_root(home);
+    let mut changed = false;
 
-    if gptk_runtime_ready(&gptk_dir, &framework) {
-        return Ok(false);
+    if !gptk_runtime_ready(&gptk_dir, &framework) {
+        changed |= ensure_runtime_bundle_assets(home)?;
+        changed |= install_split_assets_bundle(home)?;
+    }
+    if !gptk_runtime_ready(&gptk_dir, &framework) {
+        return Err("Bundled GPTK 4 D3DMetal DLL/framework payload is missing; repair the assets bundle".into());
     }
 
-    fs::create_dir_all(gptk_dir.join("x86_64-windows")).map_err(|e| format!("create GPTK PE dir: {}", e))?;
-    fs::create_dir_all(gptk_dir.join("x86_64-unix")).map_err(|e| format!("create GPTK Unix dir: {}", e))?;
-    fs::create_dir_all(&ext_dir).map_err(|e| format!("create GPTK external dir: {}", e))?;
-
-    let bundled = find_bundled_archive("gptk");
-    if let Some(archive) = bundled {
-        let tmp = std::env::temp_dir().join("metalsharp-gptk-extract");
-        let _ = fs::remove_dir_all(&tmp);
-        let _ = fs::create_dir_all(&tmp);
-        extract_zst(&archive, &tmp, "gptk")?;
-
-        let src_x64_windows = tmp.join("x86_64-windows");
-        let src_x64_unix = tmp.join("x86_64-unix");
-        let src_external = tmp.join("external");
-
-        if src_x64_windows.exists() {
-            for entry in fs::read_dir(&src_x64_windows).map_err(|e| format!("read x86_64-windows: {}", e))? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                fs::copy(entry.path(), gptk_dir.join("x86_64-windows").join(entry.file_name()))
-                    .map_err(|e| format!("copy GPTK Windows DLL {}: {}", entry.file_name().to_string_lossy(), e))?;
-            }
-        }
-        if src_x64_unix.exists() {
-            for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read x86_64-unix: {}", e))? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                fs::copy(entry.path(), gptk_dir.join("x86_64-unix").join(entry.file_name()))
-                    .map_err(|e| format!("copy GPTK Unix library {}: {}", entry.file_name().to_string_lossy(), e))?;
-            }
-        }
-        if src_external.exists() {
-            for entry in fs::read_dir(&src_external).map_err(|e| format!("read external: {}", e))? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let dst = ext_dir.join(entry.file_name());
-                if entry.path().is_dir() {
-                    fs::create_dir_all(&dst)
-                        .map_err(|e| format!("create GPTK external dir {}: {}", dst.display(), e))?;
-                    copy_dir_recursive(&entry.path(), &dst)?;
-                } else {
-                    fs::copy(entry.path(), &dst)
-                        .map_err(|e| format!("copy GPTK external file {}: {}", dst.display(), e))?;
-                }
-            }
-        }
-
-        let _ = fs::remove_dir_all(&tmp);
+    if !crate::platform::gptk_homebrew_installed() {
+        brew_install("game-porting-toolkit")?;
+    }
+    if !crate::platform::gptk_homebrew_installed() {
+        return Err("GPTK installed via Homebrew but wine64/wineserver were not found".into());
     }
 
-    if gptk_runtime_ready(&gptk_dir, &framework) {
-        Ok(true)
+    let source_app = crate::platform::gptk_homebrew_app_root();
+    let staged_app = crate::platform::gptk_staged_app_root(home);
+    if !staged_wine.join("bin").join("wine64").is_file() || !staged_wine.join("bin").join("wineserver").is_file() {
+        let _ = fs::remove_dir_all(&staged_app);
+        fs::create_dir_all(staged_app.parent().ok_or_else(|| "GPTK staged path has no parent".to_string())?)
+            .map_err(|e| format!("create staged GPTK parent: {}", e))?;
+        copy_dir_recursive(&source_app, &staged_app)?;
+        changed = true;
+    }
+
+    if gptk_runtime_ready(&gptk_dir, &framework) && staged_wine.join("bin").join("wine64").is_file() {
+        Ok(changed)
     } else {
-        Err("GPTK D3DMetal runtime incomplete — bundle gptk.tar.zst with required PE DLLs and D3DMetal.framework contents".into())
+        Err(format!(
+            "GPTK D3DMetal runtime incomplete after staging Homebrew GPTK wine into {}",
+            ms_dir.join("runtime").join("gptk").display()
+        ))
     }
 }
 

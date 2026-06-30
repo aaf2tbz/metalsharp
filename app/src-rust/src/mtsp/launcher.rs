@@ -1100,7 +1100,7 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
     }
 }
 
-fn gptk_ensure_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+fn gptk_ensure_dependencies(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
     if !crate::platform::rosetta_is_installed() {
         eprintln!("d3dmetal: Installing Rosetta 2...");
         let status =
@@ -1112,19 +1112,9 @@ fn gptk_ensure_dependencies() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
-    if !crate::platform::gptk_is_installed() {
-        eprintln!("d3dmetal: Installing Game Porting Toolkit via Homebrew...");
-        let status = std::process::Command::new("brew").args(["install", "game-porting-toolkit"]).status()?;
-        if !status.success() {
-            return Err(
-                "Failed to install GPTK via Homebrew. Install manually: brew install game-porting-toolkit".into()
-            );
-        }
-        if !crate::platform::gptk_is_installed() {
-            return Err("GPTK installed via brew but wine64 binary not found at expected path".into());
-        }
-    }
-    Ok(())
+    crate::installer::ensure_gptk_runtime_ready(home)
+        .map(|_| ())
+        .map_err(|e| format!("D3DMetal GPTK runtime setup failed: {}", e).into())
 }
 
 fn launch_d3dmetal_gptk(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
@@ -1138,18 +1128,17 @@ fn launch_d3dmetal_gptk_with_context(
     extra_env: &[(String, String)],
     log_path: Option<&Path>,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    gptk_ensure_dependencies()?;
-
     let home = dirs::home_dir().ok_or("no home dir")?;
+    gptk_ensure_dependencies(&home)?;
 
     if !crate::platform::gptk_prefix_ready(&home) {
         return Err("GPTK prefix is not ready — open the bottle settings and repair 'gptk_prefix' first".into());
     }
     let gptk_prefix = crate::platform::gptk_prefix_path(&home);
     crate::platform::sync_gptk_prefix(&home)?;
-    let gptk_root = crate::platform::gptk_wine_root();
-    let gptk_wine64 = crate::platform::gptk_wine64_binary();
-    let gptk_wineserver = crate::platform::gptk_wineserver_binary();
+    let gptk_root = crate::platform::gptk_wine_root_for_home(&home);
+    let gptk_wine64 = crate::platform::gptk_wine64_binary_for_home(&home);
+    let gptk_wineserver = crate::platform::gptk_wineserver_binary_for_home(&home);
 
     let default_log_path;
     let log_path = match log_path {
