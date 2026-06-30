@@ -2215,8 +2215,8 @@ mod tests {
     }
 
     #[test]
-    fn missing_beta7_foundation_requests_repair() {
-        let home = test_dir("missing-beta7-foundation");
+    fn missing_stale_bundled_gptk_payload_does_not_request_migration_repair() {
+        let home = test_dir("missing-stale-bundled-gptk");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         write_runtime_core(&ms_dir);
 
@@ -2229,10 +2229,10 @@ mod tests {
                 .join("x86_64-windows")
                 .join("nvngx-on-metalfx.dll"),
         )
-        .expect("remove beta7 foundation file");
+        .expect("remove stale bundled GPTK file");
 
-        assert!(!runtime_core_ready(&ms_dir));
-        assert!(runtime_needs_repair(&home, true));
+        assert!(runtime_core_ready(&ms_dir));
+        assert!(!runtime_needs_repair(&home, true));
 
         let _ = fs::remove_dir_all(home);
     }
