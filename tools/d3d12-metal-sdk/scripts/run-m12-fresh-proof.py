@@ -415,6 +415,153 @@ def git_text(repo: Path, *args: str) -> str:
         return ""
 
 
+def command_json(cmd: list[str], cwd: Path | None = None, timeout_s: int = 120) -> tuple[dict[str, Any] | list[Any] | None, dict[str, Any]]:
+    try:
+        proc = subprocess.run(cmd, cwd=cwd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout_s)
+    except (OSError, subprocess.SubprocessError) as error:
+        return None, {"ok": False, "command": cmd, "error": str(error)}
+    try:
+        parsed: dict[str, Any] | list[Any] | None = json.loads(proc.stdout) if proc.stdout.strip() else None
+    except json.JSONDecodeError as error:
+        parsed = None
+        return parsed, {
+            "ok": False,
+            "command": cmd,
+            "returncode": proc.returncode,
+            "stderr": proc.stderr[-4000:],
+            "json_error": str(error),
+        }
+    return parsed, {"ok": proc.returncode == 0, "command": cmd, "returncode": proc.returncode, "stderr": proc.stderr[-4000:]}
+
+
+def collect_pr_ci_status(repo: Path, pr_number: int, local_commit: str, skip_pr_ci: bool) -> dict[str, Any]:
+    if skip_pr_ci:
+        return {"schema": "metalsharp.m12.pr-ci-status.v1", "ok": False, "skipped": True, "checks": []}
+    view_json, view_meta = command_json(
+        ["gh", "pr", "view", str(pr_number), "--json", "number,url,headRefName,headRefOid,state"],
+        cwd=repo,
+    )
+    checks_json, checks_meta = command_json(
+        ["gh", "pr", "checks", str(pr_number), "--json", "name,state,link,startedAt,completedAt,workflow"],
+        cwd=repo,
+    )
+    checks = checks_json if isinstance(checks_json, list) else []
+    states = sorted({str(check.get("state", "UNKNOWN")) for check in checks if isinstance(check, dict)})
+    failing_states = sorted(state for state in states if state in {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"})
+    pending_states = sorted(state for state in states if state not in {"SUCCESS"} and state not in failing_states)
+    head_oid = str(view_json.get("headRefOid", "")) if isinstance(view_json, dict) else ""
+    head_matches_local = bool(head_oid and head_oid == local_commit)
+    return {
+        "schema": "metalsharp.m12.pr-ci-status.v1",
+        "ok": bool(view_meta["ok"] and checks_meta["ok"] and head_matches_local and checks and states == ["SUCCESS"]),
+        "skipped": False,
+        "pr_number": pr_number,
+        "local_commit": local_commit,
+        "head_ref_oid": head_oid,
+        "head_matches_local": head_matches_local,
+        "states": states,
+        "failing_states": failing_states,
+        "pending_states": pending_states,
+        "view": view_json if isinstance(view_json, dict) else {},
+        "view_command": view_meta,
+        "checks_command": checks_meta,
+        "checks": checks,
+    }
+
+
+def write_readiness_bundle(
+    proof_root: Path,
+    repo: Path,
+    summary: dict[str, Any],
+    visible_game_result: dict[str, Any] | None,
+    pr_ci_status: dict[str, Any],
+) -> dict[str, Any]:
+    shader_guard = visible_game_result.get("shader_replay_guardrail", {}) if visible_game_result else {}
+    backpressure = visible_game_result.get("backpressure_window_safety", {}) if visible_game_result else {}
+    command_retention = visible_game_result.get("command_buffer_retention", {}) if visible_game_result else {}
+    native_compute = visible_game_result.get("native_compute_resolve", {}) if visible_game_result else {}
+    hard_fail = visible_game_result.get("hard_fail_gates", {}) if visible_game_result else {}
+    runtime_hash_ok = bool(summary.get("runtime_stage_ok") is True)
+    repo_status_short = git_text(repo, "status", "--short")
+    readiness = {
+        "schema": "metalsharp.m12.final-readiness.v1",
+        "ok": False,
+        "proof_root": str(proof_root),
+        "repo": {
+            "path": str(repo),
+            "branch": git_text(repo, "branch", "--show-current"),
+            "commit": git_text(repo, "rev-parse", "HEAD"),
+            "status_short": repo_status_short,
+        },
+        "commercial_launch": {"requested": False, "performed": False, "requires_explicit_user_approval": True},
+        "local_proof_ok": bool(summary.get("ok") is True),
+        "pr_ci": pr_ci_status,
+        "runtime_hash_ok": runtime_hash_ok,
+        "hard_fail_counters": hard_fail.get("counters", {}),
+        "gates": {
+            "native_vertex_progressive_triangle_ok": bool(visible_game_result and visible_game_result.get("progressive_triangle_ok") is True),
+            "native_tessellation_progressive_triangle_ok": bool(visible_game_result and visible_game_result.get("tessellation_progressive_triangle_ok") is True),
+            "native_compute_resolve_ok": bool(native_compute.get("ok") is True),
+            "command_buffer_retention_ok": bool(command_retention.get("ok") is True),
+            "backpressure_window_safety_ok": bool(backpressure.get("ok") is True),
+            "shader_replay_guardrail_ok": bool(shader_guard.get("ok") is True),
+            "runtime_hash_ok": runtime_hash_ok,
+            "repo_clean_ok": repo_status_short == "",
+            "hard_fail_native_runtime_pass": bool(hard_fail.get("native_runtime_pass") is True),
+            "pr_ci_ok": bool(pr_ci_status.get("ok") is True),
+        },
+        "unsupported_native_tessellation_shapes": [
+            "Only the narrow D3D12-owned proof shape is admitted; all other HS/DS native GPU shapes remain fail-closed with named diagnostics and no fallback rendering."
+        ],
+        "artifacts": summary.get("artifacts", {}),
+    }
+    readiness["ok"] = bool(
+        readiness["local_proof_ok"] is True
+        and pr_ci_status.get("ok") is True
+        and all(readiness["gates"].values())
+    )
+    write_json(proof_root / "final-readiness.json", readiness)
+    checks_lines = []
+    for check in pr_ci_status.get("checks", []):
+        if isinstance(check, dict):
+            checks_lines.append(f"- {check.get('name')}: {check.get('state')} ({check.get('link')})")
+    if not checks_lines:
+        checks_lines.append("- No PR checks recorded.")
+    gates_lines = [f"- {name}: {value}" for name, value in sorted(readiness["gates"].items())]
+    hard_fail_lines = [f"- {name}: {value}" for name, value in sorted(readiness["hard_fail_counters"].items())]
+    md = "\n".join(
+        [
+            "# M12 Final Prelaunch Readiness",
+            "",
+            f"- Overall readiness: `{readiness['ok']}`",
+            f"- Local proof: `{readiness['local_proof_ok']}`",
+            f"- PR CI: `{pr_ci_status.get('ok')}`",
+            f"- Commit: `{readiness['repo']['commit']}`",
+            f"- Proof root: `{proof_root}`",
+            "- Commercial launch performed: `False`",
+            "- Commercial launch approval required before any launch: `True`",
+            "",
+            "## Gates",
+            *gates_lines,
+            "",
+            "## Hard-fail counters",
+            *hard_fail_lines,
+            "",
+            "## PR CI checks",
+            *checks_lines,
+            "",
+            "## Unsupported native tessellation shapes",
+            *[f"- {item}" for item in readiness["unsupported_native_tessellation_shapes"]],
+            "",
+            "## Key artifacts",
+            *[f"- {name}: `{path}`" for name, path in sorted(readiness["artifacts"].items())],
+            "",
+        ]
+    )
+    (proof_root / "READINESS.md").write_text(md)
+    return readiness
+
+
 def disk_free_gib(path: Path) -> int:
     usage = shutil.disk_usage(path)
     return int(usage.free // (1024**3))
@@ -3074,6 +3221,22 @@ def run_fresh_game(
         and int(visible_scene_json.get("progressive_triangle_final_green_dominant_pixels", 0) or 0) >= 64
         and int(visible_scene_json.get("progressive_triangle_final_blue_dominant_pixels", 0) or 0) >= 64
     )
+    tessellation_progressive_triangle_ok = bool(
+        tessellation_fallback_json.get("progressive_triangle_proof_scope")
+        == "progressive_rgb_tessellated_triangle_seed_point_to_full_triangle"
+        and tessellation_fallback_json.get("progressive_triangle_ok") is True
+        and tessellation_fallback_json.get("progressive_triangle_seed_point_ok") is True
+        and tessellation_fallback_json.get("progressive_triangle_full_ok") is True
+        and tessellation_fallback_json.get("progressive_triangle_rgb_channels_present") is True
+        and tessellation_fallback_json.get("progressive_triangle_coverage_monotonic") is True
+        and int(tessellation_fallback_json.get("progressive_triangle_frames_validated", 0) or 0) == visible_frames
+        and len(tessellation_fallback_json.get("progressive_triangle_coverage_counts", [])) == visible_frames
+        and int(tessellation_fallback_json.get("progressive_triangle_seed_pixels", 0) or 0) > 0
+        and int(tessellation_fallback_json.get("progressive_triangle_seed_pixels", 0) or 0) < 96
+        and int(tessellation_fallback_json.get("progressive_triangle_final_pixels", 0) or 0) >= 1800
+        and int(tessellation_fallback_json.get("progressive_triangle_final_pixels", 0) or 0)
+        > int(tessellation_fallback_json.get("progressive_triangle_seed_pixels", 0) or 0) * 8
+    )
     textured_3d_ok = bool(
         textured_3d_json.get("ok") is True
         and textured_3d_json.get("present_ok") is True
@@ -3926,6 +4089,7 @@ def run_fresh_game(
         "texture_array_srv_draw_skipped": texture_array_srv_draw_skipped,
         "textured_3d_draw_skipped": textured_3d_draw_skipped,
         "progressive_triangle_ok": progressive_triangle_ok,
+        "tessellation_progressive_triangle_ok": tessellation_progressive_triangle_ok,
         "progressive_triangle_coverage_counts": progressive_triangle_counts,
         "progressive_triangle_seed_pixels": progressive_triangle_seed_pixels,
         "progressive_triangle_final_pixels": progressive_triangle_final_pixels,
@@ -4603,6 +4767,8 @@ def main() -> int:
     parser.add_argument("--cxx", default=os.environ.get("CXX", "x86_64-w64-mingw32-g++"))
     parser.add_argument("--corpus-tsv", default=os.environ.get("M12_FRESH_CORPUS_TSV", ""))
     parser.add_argument("--visible-frames", type=int, default=600)
+    parser.add_argument("--pr-number", type=int, default=230, help="GitHub PR number for final readiness CI accounting.")
+    parser.add_argument("--skip-pr-ci", action="store_true", help="Skip PR CI accounting in final readiness output.")
     parser.add_argument("--skip-game", action="store_true", help="Skip the visible m12_fresh_game.exe phase.")
     parser.add_argument(
         "--local-game-snapshot-root",
@@ -4763,9 +4929,8 @@ def main() -> int:
             if visible_game_result["ok"]:
                 metal_archive_result = run_metal_archive_proof(repo, proof_root, visible_game_result)
 
-    summary = {
-        "schema": "metalsharp.m12.fresh.phase0-summary.v1",
-        "ok": disk_guard["ok"]
+    local_ok = (
+        disk_guard["ok"]
         and not missing_runtime
         and build["ok"]
         and game_build["ok"]
@@ -4775,7 +4940,12 @@ def main() -> int:
         and (args.skip_run or bool(vulkan_report_result and vulkan_report_result["ok"]))
         and (args.skip_run or args.skip_game or bool(visible_game_result and visible_game_result["ok"]))
         and (args.skip_run or args.skip_local_game_inventory or bool(local_game_inventory_result and local_game_inventory_result["ok"]))
-        and (args.skip_run or args.skip_game or bool(metal_archive_result and metal_archive_result["ok"])),
+        and (args.skip_run or args.skip_game or bool(metal_archive_result and metal_archive_result["ok"]))
+    )
+    summary = {
+        "schema": "metalsharp.m12.fresh.phase0-summary.v1",
+        "ok": local_ok,
+        "local_ok": local_ok,
         "proof_root": str(proof_root),
         "disk_guard": disk_guard,
         "build_ok": build["ok"],
@@ -4832,6 +5002,14 @@ def main() -> int:
             else None,
         },
     }
+    pr_ci_status = collect_pr_ci_status(repo, args.pr_number, git_text(repo, "rev-parse", "HEAD"), args.skip_pr_ci)
+    readiness = write_readiness_bundle(proof_root, repo, summary, visible_game_result, pr_ci_status)
+    summary["pr_ci_status"] = pr_ci_status
+    summary["final_readiness"] = readiness
+    summary["final_readiness_ok"] = readiness["ok"]
+    summary["ok"] = readiness["ok"]
+    summary["artifacts"]["final_readiness_json"] = str(proof_root / "final-readiness.json")
+    summary["artifacts"]["readiness_md"] = str(proof_root / "READINESS.md")
     write_json(proof_root / "phase0-summary.json", summary)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0 if summary["ok"] else 8
