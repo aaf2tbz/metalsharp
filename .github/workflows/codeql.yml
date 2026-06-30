@@ -15,6 +15,9 @@ name: Main CodeQL
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
   schedule:
     - cron: '0 6 * * 1'
 
@@ -89,8 +92,8 @@ jobs:
         with:
           category: '/language:javascript'
 
-  cpp:
-    name: CodeQL C++
+  analyze:
+    name: CodeQL C/C++
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -106,4 +109,4 @@ jobs:
 
       - uses: github/codeql-action/analyze@v4
         with:
-          category: '/language:c-cpp'
+          category: '/language:cpp'
