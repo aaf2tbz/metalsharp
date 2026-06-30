@@ -21,6 +21,7 @@ mod binding_contract;
 mod bottles;
 mod command_contract;
 mod d3d12_runtime_doctor;
+mod d3dmetal_gptk;
 mod diagnostics;
 mod fna_profile;
 mod installer;
@@ -49,7 +50,7 @@ fn running_games() -> &'static Mutex<HashMap<u32, i32>> {
     RUNNING_GAMES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn register_game_pid(appid: u32, pid: u32) {
+pub(crate) fn register_game_pid(appid: u32, pid: u32) {
     if let Ok(mut map) = running_games().lock() {
         map.insert(appid, pid as i32);
     }
@@ -989,6 +990,26 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
+        (Method::Post, "/d3dmetal/bottles/save") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_save(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/status") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_status(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/install-x64-redist") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_install_x64_redist(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/seed-prefix") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_seed_prefix(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/play") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_play(&body))
+        },
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
         // Phase 2: declarative Steam route contract table (protected + first-class lanes).
         (Method::Get, "/bottles/route-contracts") => {
