@@ -358,26 +358,6 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d9.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10.dll"),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join("d3d10_1.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d10.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d11.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("d3d12.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("dxgi.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvapi64.dll"),
-        runtime_wine.join("lib").join("gptk").join("x86_64-windows").join("nvngx-on-metalfx.dll"),
-        runtime_wine
-            .join("lib")
-            .join("external")
-            .join("D3DMetal.framework")
-            .join("Versions")
-            .join("A")
-            .join("D3DMetal"),
-        runtime_wine
-            .join("lib")
-            .join("external")
-            .join("D3DMetal.framework")
-            .join("Versions")
-            .join("A")
-            .join("Resources"),
         ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
         ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
         ms_dir.join("configs").join("mtsp-rules.toml"),
@@ -385,21 +365,7 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
     ]
     .iter()
     .all(|path| path.exists())
-        && framework_has_resource_dylib(&runtime_wine.join("lib").join("external").join("D3DMetal.framework"))
         && crate::installer::dxmt_graphics_runtimes_current_for_ms_dir(ms_dir)
-}
-
-fn framework_has_resource_dylib(framework: &Path) -> bool {
-    for resources_dir in [framework.join("Resources"), framework.join("Versions").join("A").join("Resources")] {
-        if let Ok(entries) = fs::read_dir(resources_dir) {
-            if entries.flatten().any(|entry| {
-                entry.path().extension().and_then(|ext| ext.to_str()) == Some("dylib") && file_nonempty(&entry.path())
-            }) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn host_runtime_ready(dir: &Path) -> bool {

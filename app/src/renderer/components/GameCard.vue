@@ -322,6 +322,7 @@ function runtimeReportFromD3DMetalState(state: D3DMetalGptkState, actions: D3DMe
       { id: "gptk", state: d3dmetalComponentState(state.gptk_payload) },
       { id: "rosetta", state: d3dmetalComponentState(state.rosetta) },
       { id: "vcrun2019_x64", state: d3dmetalComponentState(state.x64_redist) },
+      { id: "vcrun2019_x86", state: d3dmetalComponentState(state.x64_redist) },
       { id: "gptk_prefix", state: d3dmetalComponentState(state.seed) },
     ],
     actions: requiredActions,
@@ -520,7 +521,7 @@ async function playSelectedLaunchMode() {
     detail: "Launch game exe directly through GPTK Wine",
   };
   if (!d3dmetalState.value?.play_ready || !playAction.enabled) {
-    toast.show("D3DMetal bottle is not ready; install x64 redist and seed prefix first", "error");
+    toast.show("D3DMetal bottle is not ready; seed VC runtime DLLs and seed prefix first", "error");
     return;
   }
   const pid = await runD3DMetalAction(playAction);
@@ -656,7 +657,7 @@ async function saveBottleEdit() {
       localStorage.setItem(launchModeStorageKey.value, "d3dmetal");
       pipelineName.value = "D3DMetal";
       pipelineResolvedLocally.value = true;
-      toast.show("D3DMetal bottle saved; install x64 redist and seed prefix when ready", "success");
+      toast.show("D3DMetal bottle saved; seed VC runtime DLLs and seed prefix when ready", "success");
       return;
     }
     toast.show(d3dmetalResult?.error ?? "D3DMetal bottle save failed", "error");
@@ -862,10 +863,10 @@ function formatBytes(bytes: number): string {
               <div v-if="d3dmetalState" class="doctor-notes d3dmetal-actions">
                 <strong>D3DMetal GPTK</strong>
                 <div class="runtime-action-row">
-                  <span>Homebrew GPTK: {{ d3dmetalState.gptk_homebrew }} / GPTK4 payload: {{ d3dmetalState.gptk_payload }}</span>
+                  <span>Homebrew GPTK: {{ d3dmetalState.gptk_homebrew }} / Homebrew payload: {{ d3dmetalState.gptk_payload }}</span>
                 </div>
                 <div class="runtime-action-row">
-                  <span>x64 redist: {{ d3dmetalState.x64_redist }} / Seed: {{ d3dmetalState.seed }}</span>
+                  <span>VC runtimes: {{ d3dmetalState.x64_redist }} / Seed: {{ d3dmetalState.seed }}</span>
                 </div>
                 <div v-if="d3dmetalState.last_error" class="doctor-notes blocked">{{ d3dmetalState.last_error }}</div>
                 <div v-for="action in d3dmetalActions" :key="action.id" class="runtime-action-row">

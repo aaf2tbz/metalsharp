@@ -2,17 +2,28 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 use walkdir::WalkDir;
 
-const VCPP_2015_2022_X64_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
-const VCPP_2015_2022_X64_FILENAME: &str = "vc_redist.x64.exe";
-const VCPP_MIN_SIZE: u64 = 1_000_000;
-const GPTK_PE_DLLS: &[&str] =
+const VC_REDIST_X64_REQUIRED_DLLS: &[&str] = &["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
+const VC_REDIST_X86_REQUIRED_DLLS: &[&str] = &["vcruntime140.dll", "msvcp140.dll"];
+const VC_REDIST_SEED_DLLS: &[&str] = &[
+    "concrt140.dll",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "msvcp140_atomic_wait.dll",
+    "msvcp140_codecvt_ids.dll",
+    "vcomp140.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+];
+const GPTK_ROUTE_DLLS: &[&str] =
     &["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"];
+const GPTK_EXTERNAL_PAYLOAD_FILES: &[&str] = &["libd3dshared.dylib", "D3DMetal.framework/Versions/A/D3DMetal"];
 const GPTK_OVERRIDES: &str =
     "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d";
 
@@ -145,7 +156,7 @@ fn save_d3dmetal_bottle(body: &serde_json::Map<String, Value>) -> Result<D3DMeta
     }
     state.rosetta = D3DMetalStepState::Installed;
 
-    if let Err(e) = replace_homebrew_gptk_payload() {
+    if let Err(e) = ensure_homebrew_gptk_payload_ready() {
         state.gptk_payload = D3DMetalStepState::Failed;
         state.last_error = Some(e.clone());
         state.play_ready = false;
@@ -179,7 +190,7 @@ fn refresh_status_state(mut state: D3DMetalGptkState) -> D3DMetalGptkState {
         D3DMetalStepState::Missing
     };
     state.rosetta = if rosetta_installed() { D3DMetalStepState::Installed } else { D3DMetalStepState::Missing };
-    let x64_verified = verify_x64_vcredist_installed().is_ok();
+    let x64_verified = verify_vc_redist_seeded().is_ok();
     if x64_verified {
         state.x64_redist = D3DMetalStepState::Installed;
     } else if matches!(
@@ -207,7 +218,7 @@ fn refresh_status_state(mut state: D3DMetalGptkState) -> D3DMetalGptkState {
         && state.x64_redist == D3DMetalStepState::Installed
         && state.seed == D3DMetalStepState::Seeded
         && verify_seed(&state).is_ok()
-        && verify_x64_vcredist_installed().is_ok();
+        && verify_vc_redist_seeded().is_ok();
     if state.play_ready {
         state.last_error = None;
     }
@@ -235,10 +246,9 @@ fn install_x64_redist(body: &serde_json::Map<String, Value>) -> Result<D3DMetalG
     let result = (|| -> Result<(), String> {
         ensure_homebrew_gptk_ready_for_actions()?;
         ensure_gptk_prefix_winebooted()?;
-        let installer = download_fresh_vcpp_x64()?;
-        run_nonquiet_vcpp_x64_installer(&installer)?;
-        verify_x64_vcredist_installed()?;
-        write_redist_marker(&state, &installer)?;
+        seed_vc_redist_dlls_and_registry()?;
+        verify_vc_redist_seeded()?;
+        write_redist_marker(&state)?;
         Ok(())
     })();
 
@@ -271,12 +281,13 @@ fn seed_prefix(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkStat
 
     let result = (|| -> Result<(), String> {
         if state.x64_redist != D3DMetalStepState::Installed {
-            return Err("Install x64 redist before seeding the D3DMetal GPTK prefix".to_string());
+            return Err("Run Repair Redist before seeding the D3DMetal GPTK prefix".to_string());
         }
-        verify_x64_vcredist_installed()?;
+        verify_vc_redist_seeded()?;
         ensure_homebrew_gptk_ready_for_actions()?;
-        replace_homebrew_gptk_payload()?;
         ensure_gptk_prefix_winebooted()?;
+        seed_homebrew_gptk_route_dlls_into_prefix()?;
+        quarantine_game_local_route_dlls(&state)?;
         seed_steam_user_and_game_files(&state)?;
         verify_seed(&state)?;
         Ok(())
@@ -307,16 +318,19 @@ fn seed_prefix(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkStat
 fn play_d3dmetal(body: &serde_json::Map<String, Value>) -> Result<Value, String> {
     let mut state = state_from_request(body)?;
     if !state.play_ready {
-        return Err("D3DMetal bottle is not ready; install x64 redist and seed prefix first".to_string());
+        return Err("D3DMetal bottle is not ready; seed VC runtime DLLs and seed prefix first".to_string());
     }
+    let game_exe = request_play_exe(body, &state)?;
+    state.game_exe = Some(game_exe.to_string_lossy().to_string());
+    quarantine_game_local_route_dlls_for_exe(&state, &game_exe)?;
     verify_seed(&state)?;
-    verify_x64_vcredist_installed()?;
+    verify_no_game_local_route_conflicts_for_exe(&state, &game_exe)?;
+    verify_vc_redist_seeded()?;
     if !rosetta_installed() {
         return Err(
             "Rosetta is required for D3DMetal GPTK play; save the D3DMetal bottle to install Rosetta".to_string()
         );
     }
-    let game_exe = request_play_exe(body, &state)?;
     let launch_args = request_launch_args(body);
 
     let log_path = state_dir(&state.bottle_id).join("logs").join(format!("play-{}.log", now_secs()));
@@ -339,6 +353,8 @@ fn play_d3dmetal(body: &serde_json::Map<String, Value>) -> Result<Value, String>
         .env("WINEARCH", "win64")
         .env("WINEDEBUG", "-all")
         .env("WINEDLLOVERRIDES", GPTK_OVERRIDES)
+        .env("D3DMETAL_FRAMEWORK_PATH", d3dmetal_framework_path())
+        .env("WINEESYNC", "1")
         .env("SteamAppId", &appid)
         .env("SteamGameId", &appid)
         .env("SteamOverlayGameId", &appid)
@@ -364,36 +380,39 @@ fn play_d3dmetal(body: &serde_json::Map<String, Value>) -> Result<Value, String>
         "wine": homebrew_wine64().to_string_lossy(),
         "prefix": gptk_prefix().to_string_lossy(),
         "overrides": GPTK_OVERRIDES,
+        "d3dmetal_framework_path": d3dmetal_framework_path().to_string_lossy(),
+        "wineesync": "1",
         "launch_mode": "d3dmetal_direct_game_exe",
         "persistence_error": persistence_error
     }))
 }
 
 fn actions_for(state: &D3DMetalGptkState) -> Vec<D3DMetalAction> {
-    let x64_repair = matches!(state.x64_redist, D3DMetalStepState::RepairRequired | D3DMetalStepState::Failed);
     let seed_repair = matches!(state.seed, D3DMetalStepState::RepairRequired | D3DMetalStepState::Failed);
     vec![
         D3DMetalAction {
             id: "install_x64_redist".to_string(),
-            label: if x64_repair { "Repair x64" } else { "Install x64 redist" }.to_string(),
+            label: "Repair Redist".to_string(),
             enabled: state.gptk_homebrew == D3DMetalStepState::Installed
                 && state.gptk_payload == D3DMetalStepState::Updated,
             state: state.x64_redist.clone(),
-            detail: "Install Microsoft Visual C++ 2015-2022 x64 non-quiet through Homebrew GPTK Wine".to_string(),
+            detail:
+                "Copy MetalSharp-bundled VC runtime DLLs into GPTK system32/syswow64 and write runtime registry keys"
+                    .to_string(),
         },
         D3DMetalAction {
             id: "seed_prefix".to_string(),
             label: if seed_repair { "Repair Seed" } else { "Seed Prefix" }.to_string(),
             enabled: state.x64_redist == D3DMetalStepState::Installed,
             state: state.seed.clone(),
-            detail: "Wineboot the GPTK prefix and seed Steam/user/game launch material".to_string(),
+            detail: "Wineboot the GPTK prefix, copy Homebrew GPTK route DLLs into system32, quarantine app-local shims, and seed launch material".to_string(),
         },
         D3DMetalAction {
             id: "play_d3dmetal".to_string(),
             label: "Play D3DMetal".to_string(),
             enabled: state.play_ready,
             state: if state.play_ready { D3DMetalStepState::Installed } else { D3DMetalStepState::Missing },
-            detail: "Launch the game exe directly through Homebrew GPTK Wine with n,b route overrides".to_string(),
+            detail: "Launch the game exe directly through Homebrew GPTK Wine with Homebrew-matched D3DMetal route DLLs".to_string(),
         },
     ]
 }
@@ -616,6 +635,7 @@ fn d3dmetal_manifest_components(state: &D3DMetalGptkState) -> Vec<crate::bottles
         RuntimeComponent { id: "rosetta".to_string(), state: step_state(&state.rosetta) },
         RuntimeComponent { id: "gptk_prefix".to_string(), state: step_state(&state.seed) },
         RuntimeComponent { id: "vcrun2019_x64".to_string(), state: step_state(&state.x64_redist) },
+        RuntimeComponent { id: "vcrun2019_x86".to_string(), state: step_state(&state.x64_redist) },
     ]
 }
 
@@ -659,7 +679,8 @@ fn ensure_homebrew_gptk_ready_for_actions() -> Result<(), String> {
         return Err("Homebrew GPTK is missing; save the D3DMetal bottle first".to_string());
     }
     if !verify_homebrew_gptk_payload() {
-        return Err("Homebrew GPTK does not have the updated bundled GPTK4 DLL/framework payload; save the D3DMetal bottle first".to_string());
+        return Err("Homebrew GPTK payload is incomplete; reinstall Homebrew GPTK and save the D3DMetal bottle again"
+            .to_string());
     }
     Ok(())
 }
@@ -731,41 +752,150 @@ fn ensure_rosetta() -> Result<(), String> {
     }
 }
 
-fn replace_homebrew_gptk_payload() -> Result<(), String> {
+fn ensure_homebrew_gptk_payload_ready() -> Result<(), String> {
     if !homebrew_gptk_installed() {
         return Err("Homebrew GPTK is not installed".to_string());
     }
-    let src_pe = metalsharp_home().join("runtime").join("wine").join("lib").join("gptk").join("x86_64-windows");
-    let src_framework =
-        metalsharp_home().join("runtime").join("wine").join("lib").join("external").join("D3DMetal.framework");
-    let dst_pe = homebrew_wine_root().join("lib").join("wine").join("x86_64-windows");
-    let dst_framework = homebrew_wine_root().join("lib").join("external").join("D3DMetal.framework");
-
-    for dll in GPTK_PE_DLLS {
-        copy_file_checked(&src_pe.join(dll), &dst_pe.join(dll))?;
-    }
-    copy_dir_replace(&src_framework, &dst_framework)?;
     if verify_homebrew_gptk_payload() {
         Ok(())
     } else {
-        Err("Homebrew GPTK payload replacement did not verify".to_string())
+        Err("Homebrew GPTK payload is incomplete; reinstall game-porting-toolkit and seed again".to_string())
     }
 }
 
 fn verify_homebrew_gptk_payload() -> bool {
-    let src_pe = metalsharp_home().join("runtime").join("wine").join("lib").join("gptk").join("x86_64-windows");
-    let src_framework =
-        metalsharp_home().join("runtime").join("wine").join("lib").join("external").join("D3DMetal.framework");
-    let dst_pe = homebrew_wine_root().join("lib").join("wine").join("x86_64-windows");
-    let dst_framework = homebrew_wine_root().join("lib").join("external").join("D3DMetal.framework");
+    let wine_dll_dir = homebrew_gptk_route_dll_dir();
+    let external = homebrew_wine_root().join("lib").join("external");
+    GPTK_ROUTE_DLLS.iter().all(|dll| file_nonempty(&wine_dll_dir.join(dll)))
+        && GPTK_EXTERNAL_PAYLOAD_FILES.iter().all(|rel| file_nonempty(&external.join(rel)))
+        && framework_ready(&external.join("D3DMetal.framework"))
+}
 
-    GPTK_PE_DLLS.iter().all(|dll| same_file_hash(&src_pe.join(dll), &dst_pe.join(dll)))
-        && framework_ready(&src_framework)
-        && framework_ready(&dst_framework)
-        && same_file_hash(
-            &src_framework.join("Versions").join("A").join("D3DMetal"),
-            &dst_framework.join("Versions").join("A").join("D3DMetal"),
-        )
+fn seed_homebrew_gptk_route_dlls_into_prefix() -> Result<(), String> {
+    ensure_homebrew_gptk_payload_ready()?;
+    let src_dir = homebrew_gptk_route_dll_dir();
+    let dst_dir = gptk_prefix().join("drive_c").join("windows").join("system32");
+    fs::create_dir_all(&dst_dir).map_err(|e| format!("create {}: {}", dst_dir.display(), e))?;
+    for dll in GPTK_ROUTE_DLLS {
+        copy_file_checked(&src_dir.join(dll), &dst_dir.join(dll))?;
+    }
+    verify_prefix_route_dlls()
+}
+
+fn verify_prefix_route_dlls() -> Result<(), String> {
+    let src_dir = homebrew_gptk_route_dll_dir();
+    let dst_dir = gptk_prefix().join("drive_c").join("windows").join("system32");
+    let mismatched: Vec<&str> =
+        GPTK_ROUTE_DLLS.iter().copied().filter(|dll| !same_file_hash(&src_dir.join(dll), &dst_dir.join(dll))).collect();
+    if mismatched.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("GPTK prefix route DLLs are missing or do not match Homebrew GPTK: {}", mismatched.join(", ")))
+    }
+}
+
+fn quarantine_game_local_route_dlls(state: &D3DMetalGptkState) -> Result<(), String> {
+    let game_exe = state
+        .game_exe
+        .as_ref()
+        .map(PathBuf::from)
+        .ok_or_else(|| "no game exe detected for D3DMetal shim quarantine".to_string())?;
+    quarantine_game_local_route_dlls_for_exe(state, &game_exe)
+}
+
+fn quarantine_game_local_route_dlls_for_exe(state: &D3DMetalGptkState, game_exe: &Path) -> Result<(), String> {
+    let exe_dir =
+        game_exe.parent().ok_or_else(|| format!("game exe has no parent directory: {}", game_exe.display()))?;
+    if !exe_dir.is_dir() {
+        return Err(format!("game exe directory missing: {}", exe_dir.display()));
+    }
+
+    let mut moved = Vec::new();
+    for entry in fs::read_dir(exe_dir).map_err(|e| format!("read {}: {}", exe_dir.display(), e))? {
+        let entry = entry.map_err(|e| format!("read {} entry: {}", exe_dir.display(), e))?;
+        let path = entry.path();
+        if !path.is_file() || !is_d3dmetal_route_conflict(&path) {
+            continue;
+        }
+        let quarantine_root =
+            Path::new(&state.game_dir).join(".metalsharp").join("d3dmetal-quarantine").join(now_secs().to_string());
+        let rel = quarantine_relative_path(state, &path);
+        let target = quarantine_root.join(rel);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
+        }
+        fs::rename(&path, &target).map_err(|e| {
+            format!("quarantine app-local D3DMetal shim {} -> {}: {}", path.display(), target.display(), e)
+        })?;
+        moved.push(json!({"from": path.to_string_lossy(), "to": target.to_string_lossy()}));
+    }
+
+    if !moved.is_empty() {
+        let quarantine_root = Path::new(&state.game_dir).join(".metalsharp").join("d3dmetal-quarantine");
+        fs::create_dir_all(&quarantine_root).map_err(|e| format!("create {}: {}", quarantine_root.display(), e))?;
+        let marker = quarantine_root.join("latest-manifest.json");
+        let manifest = json!({
+            "quarantined_at": now_secs(),
+            "reason": "explicit D3DMetal/GPTK lane uses Homebrew-matched route DLLs from the GPTK prefix, not app-local shims",
+            "moved": moved
+        });
+        fs::write(&marker, serde_json::to_string_pretty(&manifest).unwrap_or_default())
+            .map_err(|e| format!("write {}: {}", marker.display(), e))?;
+    }
+    Ok(())
+}
+
+fn verify_no_game_local_route_conflicts(state: &D3DMetalGptkState) -> Result<(), String> {
+    let Some(game_exe) = state.game_exe.as_ref().map(PathBuf::from) else {
+        return Err("D3DMetal seed game exe missing".to_string());
+    };
+    verify_no_game_local_route_conflicts_for_exe(state, &game_exe)
+}
+
+fn quarantine_relative_path(state: &D3DMetalGptkState, path: &Path) -> PathBuf {
+    if let Ok(rel) = path.strip_prefix(&state.game_dir) {
+        if !rel.as_os_str().is_empty() && !rel.is_absolute() {
+            return rel.to_path_buf();
+        }
+    }
+    if let (Ok(base), Ok(canonical_path)) = (Path::new(&state.game_dir).canonicalize(), path.canonicalize()) {
+        if let Ok(rel) = canonical_path.strip_prefix(base) {
+            if !rel.as_os_str().is_empty() && !rel.is_absolute() {
+                return rel.to_path_buf();
+            }
+        }
+    }
+    path.file_name().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("route-dll"))
+}
+
+fn verify_no_game_local_route_conflicts_for_exe(_state: &D3DMetalGptkState, game_exe: &Path) -> Result<(), String> {
+    let Some(exe_dir) = game_exe.parent() else {
+        return Err(format!("game exe has no parent directory: {}", game_exe.display()));
+    };
+    let conflicts: Vec<String> = fs::read_dir(exe_dir)
+        .map_err(|e| format!("read {}: {}", exe_dir.display(), e))?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && is_d3dmetal_route_conflict(path))
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    if conflicts.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("app-local D3DMetal route DLL conflicts remain near game exe: {}", conflicts.join(", ")))
+    }
+}
+
+fn is_d3dmetal_route_conflict(path: &Path) -> bool {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    name == "d3d10.dll"
+        || name == "d3d11.dll"
+        || name == "d3d12.dll"
+        || (name.starts_with("dxgi") && name.ends_with(".dll"))
+        || (name.starts_with("nvapi") && name.ends_with(".dll"))
+        || name == "nvngx.dll"
+        || name == "nvngx-on-metalfx.dll"
+        || name == "winemetal.dll"
 }
 
 fn ensure_gptk_prefix_winebooted() -> Result<(), String> {
@@ -777,6 +907,7 @@ fn ensure_gptk_prefix_winebooted() -> Result<(), String> {
         .env("WINEARCH", "win64")
         .env("WINEDEBUG", "-all")
         .env("DYLD_FALLBACK_LIBRARY_PATH", gptk_dyld_path())
+        .env("D3DMETAL_FRAMEWORK_PATH", d3dmetal_framework_path())
         .arg("wineboot")
         .arg("--init")
         .output()
@@ -800,102 +931,145 @@ fn ensure_gptk_prefix_winebooted() -> Result<(), String> {
     Ok(())
 }
 
-fn download_fresh_vcpp_x64() -> Result<PathBuf, String> {
-    let dir = metalsharp_home().join("d3dmetal-gptk").join("redist");
-    fs::create_dir_all(&dir).map_err(|e| format!("create {}: {}", dir.display(), e))?;
-    let dest = dir.join(VCPP_2015_2022_X64_FILENAME);
-    let tmp = dest.with_extension(format!("download-{}", now_secs()));
-    let output = Command::new("/usr/bin/curl")
-        .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "-o"])
-        .arg(&tmp)
-        .arg(VCPP_2015_2022_X64_URL)
-        .output()
-        .map_err(|e| format!("download VC++ 2015-2022 x64 failed: {}", e))?;
-    if !output.status.success() {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("download VC++ 2015-2022 x64 failed: {}", command_text(&output)));
-    }
-    let len = fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
-    if len < VCPP_MIN_SIZE {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("downloaded VC++ 2015-2022 x64 is too small ({} bytes)", len));
-    }
-    fs::rename(&tmp, &dest).map_err(|e| format!("replace {}: {}", dest.display(), e))?;
-    Ok(dest)
-}
-
-fn run_nonquiet_vcpp_x64_installer(installer: &Path) -> Result<(), String> {
-    let prefix = gptk_prefix();
-    let status = Command::new(homebrew_wine64())
-        .arg("start")
-        .arg("/wait")
-        .arg("/unix")
-        .arg(installer)
-        .arg("/install")
-        .env("WINEPREFIX", &prefix)
-        .env("WINEARCH", "win64")
-        .env("WINEDEBUG", "-all")
-        .env("DYLD_FALLBACK_LIBRARY_PATH", gptk_dyld_path())
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .map_err(|e| format!("run VC++ 2015-2022 x64 installer through GPTK Wine: {}", e))?;
-    let _ = Command::new(homebrew_wineserver()).env("WINEPREFIX", &prefix).arg("-w").status();
-    if matches!(status.code(), Some(0) | Some(194)) {
-        Ok(())
-    } else {
-        Err(format!("VC++ 2015-2022 x64 installer exited with {:?}", status.code()))
-    }
-}
-
-fn verify_x64_vcredist_installed() -> Result<(), String> {
+fn seed_vc_redist_dlls_and_registry() -> Result<(), String> {
+    let runtime_wine = metalsharp_home().join("runtime").join("wine").join("lib").join("wine");
     let prefix = gptk_prefix();
     let system32 = prefix.join("drive_c").join("windows").join("system32");
-    let required = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"];
-    let missing: Vec<&str> = required.iter().copied().filter(|dll| !file_nonempty(&system32.join(dll))).collect();
-    if !missing.is_empty() {
+    let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
+
+    seed_vc_redist_arch(&runtime_wine.join("x86_64-windows"), &system32, VC_REDIST_X64_REQUIRED_DLLS)?;
+    seed_vc_redist_arch(&runtime_wine.join("i386-windows"), &syswow64, VC_REDIST_X86_REQUIRED_DLLS)?;
+    write_vc_redist_registry_keys()?;
+    Ok(())
+}
+
+fn seed_vc_redist_arch(src_dir: &Path, dst_dir: &Path, required: &[&str]) -> Result<(), String> {
+    if !src_dir.is_dir() {
+        return Err(format!("MetalSharp VC runtime source directory missing: {}", src_dir.display()));
+    }
+    fs::create_dir_all(dst_dir).map_err(|e| format!("create {}: {}", dst_dir.display(), e))?;
+    for dll in required {
+        let src = src_dir.join(dll);
+        if !file_nonempty(&src) {
+            return Err(format!("MetalSharp VC runtime source DLL missing: {}", src.display()));
+        }
+    }
+    for dll in VC_REDIST_SEED_DLLS {
+        let src = src_dir.join(dll);
+        if file_nonempty(&src) {
+            copy_file_checked(&src, &dst_dir.join(dll))?;
+        }
+    }
+    Ok(())
+}
+
+fn write_vc_redist_registry_keys() -> Result<(), String> {
+    let system_reg = gptk_prefix().join("system.reg");
+    if let Some(parent) = system_reg.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
+    }
+    let timestamp = now_secs();
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&system_reg)
+        .map_err(|e| format!("open {}: {}", system_reg.display(), e))?;
+    write!(
+        file,
+        r#"
+[Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64] {}
+"Bld"=dword:0000611c
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:0000002c
+"Rbld"=dword:00000000
+"Version"="v14.44.24828.0"
+
+[Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x86] {}
+"Bld"=dword:0000611c
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:0000002c
+"Rbld"=dword:00000000
+"Version"="v14.44.24828.0"
+"#,
+        timestamp, timestamp
+    )
+    .map_err(|e| format!("write {}: {}", system_reg.display(), e))
+}
+
+fn verify_vc_redist_seeded() -> Result<(), String> {
+    let prefix = gptk_prefix();
+    let system32 = prefix.join("drive_c").join("windows").join("system32");
+    let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
+    let missing_x64: Vec<&str> =
+        VC_REDIST_X64_REQUIRED_DLLS.iter().copied().filter(|dll| !file_nonempty(&system32.join(dll))).collect();
+    let missing_x86: Vec<&str> =
+        VC_REDIST_X86_REQUIRED_DLLS.iter().copied().filter(|dll| !file_nonempty(&syswow64.join(dll))).collect();
+    if !missing_x64.is_empty() || !missing_x86.is_empty() {
         return Err(format!(
-            "VC++ 2015-2022 x64 install did not verify in GPTK prefix system32; missing {}",
-            missing.join(", ")
+            "VC runtime seed did not verify in GPTK prefix; missing x64 [{}], x86 [{}]",
+            missing_x64.join(", "),
+            missing_x86.join(", ")
         ));
     }
     let system_reg = fs::read_to_string(prefix.join("system.reg")).unwrap_or_default();
-    if vcredist_x64_registry_installed(&system_reg) {
+    let x64 = vcredist_registry_installed(&system_reg, "x64");
+    let x86 = vcredist_registry_installed(&system_reg, "x86");
+    if x64 && x86 {
         Ok(())
     } else {
-        Err("VC++ 2015-2022 x64 install did not verify in GPTK prefix registry".to_string())
+        Err(format!("VC runtime registry seed did not verify in GPTK prefix (x64={}, x86={})", x64, x86))
     }
 }
 
-fn vcredist_x64_registry_installed(system_reg: &str) -> bool {
-    let mut in_x64_runtime_key = false;
+fn vcredist_registry_installed(system_reg: &str, arch: &str) -> bool {
+    let needle = format!("software\\microsoft\\visualstudio\\14.0\\vc\\runtimes\\{}", arch);
+    let wow_needle = format!("software\\wow6432node\\microsoft\\visualstudio\\14.0\\vc\\runtimes\\{}", arch);
+    let mut in_runtime_key = false;
     for raw_line in system_reg.lines() {
         let line = raw_line.trim().to_ascii_lowercase().replace("\\\\", "\\");
         if let Some(section_end) = line.strip_prefix('[').and_then(|rest| rest.find(']').map(|idx| idx + 1)) {
             let section = &line[..section_end];
-            in_x64_runtime_key = section.contains("software\\microsoft\\visualstudio\\14.0\\vc\\runtimes\\x64")
-                || section.contains("software\\wow6432node\\microsoft\\visualstudio\\14.0\\vc\\runtimes\\x64");
+            in_runtime_key = section.contains(&needle) || section.contains(&wow_needle);
             continue;
         }
-        if in_x64_runtime_key && line == "\"installed\"=dword:00000001" {
+        if in_runtime_key && line == "\"installed\"=dword:00000001" {
             return true;
         }
     }
     false
 }
 
-fn write_redist_marker(state: &D3DMetalGptkState, installer: &Path) -> Result<(), String> {
-    let marker = state_dir(&state.bottle_id).join("x64-redist-installed.json");
+fn write_redist_marker(state: &D3DMetalGptkState) -> Result<(), String> {
+    let marker = state_dir(&state.bottle_id).join("vc-runtime-seeded.json");
     if let Some(parent) = marker.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
     }
+    let prefix = gptk_prefix();
+    let mut copied = Vec::new();
+    for (arch, dir) in [
+        ("x64", prefix.join("drive_c").join("windows").join("system32")),
+        ("x86", prefix.join("drive_c").join("windows").join("syswow64")),
+    ] {
+        for dll in VC_REDIST_SEED_DLLS {
+            let path = dir.join(dll);
+            if file_nonempty(&path) {
+                copied.push(json!({
+                    "arch": arch,
+                    "dll": dll,
+                    "path": path.to_string_lossy(),
+                    "sha256": file_sha256(&path).unwrap_or_default()
+                }));
+            }
+        }
+    }
     let value = json!({
-        "installed_at": now_secs(),
-        "source_url": VCPP_2015_2022_X64_URL,
-        "installer": installer.to_string_lossy(),
-        "installer_sha256": file_sha256(installer).unwrap_or_default(),
-        "prefix": gptk_prefix().to_string_lossy()
+        "seeded_at": now_secs(),
+        "source": metalsharp_home().join("runtime").join("wine").join("lib").join("wine").to_string_lossy(),
+        "method": "copy_dlls_and_write_registry",
+        "prefix": prefix.to_string_lossy(),
+        "copied_dlls": copied
     });
     fs::write(&marker, serde_json::to_string_pretty(&value).unwrap_or_default())
         .map_err(|e| format!("write {}: {}", marker.display(), e))
@@ -935,6 +1109,9 @@ fn seed_steam_user_and_game_files(state: &D3DMetalGptkState) -> Result<(), Strin
         "game_exe": game_exe.to_string_lossy(),
         "prefix": gptk_prefix().to_string_lossy(),
         "overrides": GPTK_OVERRIDES,
+        "d3dmetal_framework_path": d3dmetal_framework_path().to_string_lossy(),
+        "route_dll_source": homebrew_gptk_route_dll_dir().to_string_lossy(),
+        "route_dll_destination": gptk_prefix().join("drive_c").join("windows").join("system32").to_string_lossy(),
         "steam_identity_env": ["SteamAppId", "SteamGameId", "SteamOverlayGameId"],
         "seeded_at": now_secs()
     });
@@ -947,9 +1124,9 @@ fn seed_steam_user_and_game_files(state: &D3DMetalGptkState) -> Result<(), Strin
 }
 
 fn verify_seed(state: &D3DMetalGptkState) -> Result<(), String> {
-    if !verify_homebrew_gptk_payload() {
-        return Err("updated GPTK DLL/framework payload is not active in Homebrew GPTK".to_string());
-    }
+    ensure_homebrew_gptk_payload_ready()?;
+    verify_prefix_route_dlls()?;
+    verify_no_game_local_route_conflicts(state)?;
     let prefix = gptk_prefix();
     for rel in ["drive_c", "system.reg", "user.reg", "dosdevices"] {
         if !prefix.join(rel).exists() {
@@ -1125,6 +1302,14 @@ fn homebrew_wine64() -> PathBuf {
     homebrew_wine_root().join("bin").join("wine64")
 }
 
+fn homebrew_gptk_route_dll_dir() -> PathBuf {
+    homebrew_wine_root().join("lib").join("wine").join("x86_64-windows")
+}
+
+fn d3dmetal_framework_path() -> PathBuf {
+    homebrew_wine_root().join("lib").join("external").join("D3DMetal.framework").join("D3DMetal")
+}
+
 fn homebrew_wineserver() -> PathBuf {
     homebrew_wine_root().join("bin").join("wineserver")
 }
@@ -1140,6 +1325,7 @@ fn gptk_dyld_path() -> String {
         root.join("lib").join("wine").join("x86_64-unix"),
         root.join("lib").join("wine").join("x86_32on64-unix"),
         root.join("lib").join("external"),
+        homebrew_app_root().join("Contents").join("Resources").join("lib"),
     ]
     .into_iter()
     .filter(|path| path.is_dir())
@@ -1196,7 +1382,7 @@ mod tests {
         state.x64_redist = D3DMetalStepState::RepairRequired;
         state.seed = D3DMetalStepState::RepairRequired;
         let actions = actions_for(&state);
-        assert!(actions.iter().any(|a| a.id == "install_x64_redist" && a.label == "Repair x64"));
+        assert!(actions.iter().any(|a| a.id == "install_x64_redist" && a.label == "Repair Redist"));
         assert!(actions.iter().any(|a| a.id == "seed_prefix" && a.label == "Repair Seed"));
     }
 
@@ -1206,7 +1392,7 @@ mod tests {
         state.gptk_homebrew = D3DMetalStepState::Installed;
         state.gptk_payload = D3DMetalStepState::Updated;
         let actions = actions_for(&state);
-        assert!(actions.iter().any(|a| a.id == "install_x64_redist" && a.label == "Install x64 redist"));
+        assert!(actions.iter().any(|a| a.id == "install_x64_redist" && a.label == "Repair Redist"));
         assert!(actions.iter().any(|a| a.id == "seed_prefix" && a.label == "Seed Prefix"));
     }
 
@@ -1235,13 +1421,28 @@ mod tests {
 [Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64]
 "Version"="14.44.35211.0"
 "#;
-        assert!(!vcredist_x64_registry_installed(unrelated_installed));
+        assert!(!vcredist_registry_installed(unrelated_installed, "x64"));
 
         let x64_installed = r#"
 [Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64] 1782809006
 "Version"="14.44.35211.0"
 "Installed"=dword:00000001
 "#;
-        assert!(vcredist_x64_registry_installed(x64_installed));
+        assert!(vcredist_registry_installed(x64_installed, "x64"));
+    }
+
+    #[test]
+    fn detects_app_local_d3dmetal_route_conflicts() {
+        assert!(is_d3dmetal_route_conflict(Path::new("dxgi.dll")));
+        assert!(is_d3dmetal_route_conflict(Path::new("dxgi_dxmt.dll")));
+        assert!(is_d3dmetal_route_conflict(Path::new("d3d12.dll")));
+        assert!(!is_d3dmetal_route_conflict(Path::new("d3d10core.dll")));
+        assert!(!is_d3dmetal_route_conflict(Path::new("d3dcompiler_47.dll")));
+        assert!(!is_d3dmetal_route_conflict(Path::new("d3dx9_43.dll")));
+        assert!(is_d3dmetal_route_conflict(Path::new("nvapi64.dll")));
+        assert!(is_d3dmetal_route_conflict(Path::new("nvngx.dll")));
+        assert!(is_d3dmetal_route_conflict(Path::new("winemetal.dll")));
+        assert!(!is_d3dmetal_route_conflict(Path::new("sl.interposer.dll")));
+        assert!(!is_d3dmetal_route_conflict(Path::new("steam_api64.dll")));
     }
 }

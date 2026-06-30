@@ -399,8 +399,7 @@ pub fn launch_with_pipeline(
         PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
             launch_dxmt_metal(appid, node)
         },
-        PipelineId::M13 => launch_dxmt_metal(appid, node),
-        PipelineId::D3DMetal => launch_d3dmetal_gptk(appid, node),
+        PipelineId::M13 | PipelineId::D3DMetal => launch_d3dmetal_gptk(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
@@ -422,11 +421,11 @@ pub fn launch_steam_bottle_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 | PipelineId::M13 => {
+        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
-        PipelineId::D3DMetal => {
+        PipelineId::M13 | PipelineId::D3DMetal => {
             launch_d3dmetal_gptk_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },

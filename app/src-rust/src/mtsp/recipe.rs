@@ -910,9 +910,10 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
     }
 
     if node.backend == "gptk" {
-        let framework = ms_root.join("lib").join("external").join("D3DMetal.framework");
+        let framework =
+            crate::platform::gptk_homebrew_wine_root().join("lib").join("external").join("D3DMetal.framework");
         assets.push(RuntimeAsset {
-            name: "D3DMetal.framework".into(),
+            name: "Homebrew D3DMetal.framework".into(),
             present: framework.exists(),
             path: framework,
             required: true,

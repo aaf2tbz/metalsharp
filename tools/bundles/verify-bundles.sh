@@ -224,14 +224,6 @@ verify_assets_core() {
     assets/fnalibs/fmod/libfmodstudio.dylib \
     assets/goldberg/x64/steam_api64.dll \
     assets/goldberg/x86/steam_api.dll \
-    assets/gptk/external/D3DMetal.framework/Versions/A/D3DMetal \
-    assets/gptk/external/D3DMetal.framework/Versions/A/Resources/libmetalirconverter.dylib \
-    assets/gptk/x86_64-windows/d3d10.dll \
-    assets/gptk/x86_64-windows/d3d11.dll \
-    assets/gptk/x86_64-windows/d3d12.dll \
-    assets/gptk/x86_64-windows/dxgi.dll \
-    assets/gptk/x86_64-windows/nvapi64.dll \
-    assets/gptk/x86_64-windows/nvngx-on-metalfx.dll \
     assets/mono-arm64/bin/mono-sgen \
     assets/shims/libsteam_api.dylib &&
     archive_not_contains "$path" '^assets/eac-toggle/' &&

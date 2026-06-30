@@ -2079,7 +2079,7 @@ pub fn repair_component(
             status: if installed { "installed" } else { "install_failed" }.to_string(),
             detail: if installed {
                 if component_id == "gptk" {
-                    "GPTK Homebrew wine is staged and bundled GPTK 4 DLLs are ready".to_string()
+                    "Homebrew GPTK is installed and its D3DMetal route payload is available".to_string()
                 } else {
                     format!("{} is now available", component_id)
                 }

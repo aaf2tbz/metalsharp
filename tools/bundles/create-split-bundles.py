@@ -250,7 +250,6 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     copy_tree(source2 / "wine" / "etc", roots["assets"] / "wine" / "etc")
 
     optional_archives = {
-        "gptk.tar.zst": ("gptk", "gptk"),
         "dxvk.tar.zst": ("dxvk", "dxvk-1.10.3"),
         "mono-x86.tar.zst": ("mono-x86", "mono-x86"),
         "fnalibs.tar.zst": ("fnalibs", "fnalibs"),

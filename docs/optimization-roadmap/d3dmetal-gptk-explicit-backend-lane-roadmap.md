@@ -28,35 +28,35 @@ When the user is in the MetalSharp library and saves a game as a D3DMetal bottle
 4. Backend runs/ensures:
    - `brew install game-porting-toolkit`
    - `softwareupdate --install-rosetta --agree-to-license`
-5. Backend updates/replaces Homebrew GPTK’s D3DMetal DLL/framework payload using MetalSharp’s bundled updated GPTK4 payload.
+5. Backend verifies the Homebrew-owned GPTK app at `/Applications/Game Porting Toolkit.app` has its self-consistent D3DMetal route DLLs/framework.
 6. Backend records the bottle as D3DMetal-prepared enough to show next explicit actions.
 
-Saving the bottle must not install x64 VC++ redist and must not seed Steam/user/game payloads.
+MetalSharp must not bundle, stage, replace, or patch GPTK itself. Homebrew owns GPTK; MetalSharp only consumes the installed Homebrew payload.
+
+Saving the bottle must not seed VC runtime DLLs/registry and must not seed Steam/user/game payloads.
 
 ### 2. User sees honest next actions
 
-After a D3DMetal bottle is saved and GPTK/Homebrew + updated DLL/framework are prepared, the UI should show two separate actions:
+After a D3DMetal bottle is saved and Homebrew GPTK + Rosetta are prepared, the UI should show two separate actions:
 
-- `Install x64 redist`
+- `Repair Redist`
 - `Seed Prefix`
 
-If either previously failed, labels become:
+If prefix seed previously failed, the seed label becomes:
 
-- `Repair x64`
 - `Repair Seed`
 
-### 3. User clicks `Install x64 redist`
+### 3. User clicks `Repair Redist`
 
 Backend behavior:
 
-1. Download Microsoft Visual C++ 2015-2022 x64 redistributable from the same x64 URL already used by the install wizard:
-   - `https://aka.ms/vs/17/release/vc_redist.x64.exe`
-2. Do not rely on a stale bundled/cached MetalSharp asset unless it was freshly downloaded by this action.
-3. Run the installer through Homebrew GPTK Wine, non-quiet:
-   - `/install`
-4. Treat the installer window disappearing / process returning as the completion signal.
-5. Verify that the GPTK prefix has an actual completed x64 install marker/state sufficient for D3DMetal readiness.
-6. If verification fails, mark the x64 action as repairable and show `Repair x64`.
+1. Do not download or run any Microsoft VC++ redistributable installer for this lane.
+2. Copy MetalSharp-bundled VC runtime DLLs from `~/.metalsharp/runtime/wine/lib/wine` into the GPTK prefix:
+   - x64 DLLs into `drive_c/windows/system32`.
+   - x86 DLLs into `drive_c/windows/syswow64`.
+3. Write explicit VC runtime registry keys for both `x64` and `x86` under `Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes`.
+4. Verify both DLL presence and registry presence before marking the action installed.
+5. If verification fails, mark the VC runtime action as repairable and keep showing `Repair Redist`.
 
 ### 4. User clicks `Seed Prefix`
 
@@ -64,14 +64,22 @@ Backend behavior:
 
 1. Use Homebrew GPTK Wine.
 2. Create/wineboot the MetalSharp-owned GPTK prefix.
-3. Ensure the wineboot happens with the updated GPTK4 DLL/framework payload active.
-4. Immediately seed the prefix with:
+3. Ensure Homebrew GPTK’s own D3DMetal framework path and dyld paths are active.
+4. Copy Homebrew GPTK route DLLs from `/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-windows` into the GPTK prefix `drive_c/windows/system32`:
+   - `d3d10.dll`
+   - `d3d11.dll`
+   - `d3d12.dll`
+   - `dxgi.dll`
+   - `nvapi64.dll`
+   - `nvngx-on-metalfx.dll`
+5. Quarantine app-local D3D/DXGI/NVAPI/Winemetal shims near the game exe so they cannot win over the Homebrew-matched prefix route DLLs.
+6. Immediately seed the prefix with:
    - Steam redist/user files needed by the game.
    - Game executable routing material.
    - Game config files.
    - Any other D3DMetal-specific seed material explicitly required for direct game launch.
-5. Verify all seed requirements:
-   - Updated GPTK DLLs/framework are present where expected.
+7. Verify all seed requirements:
+   - Homebrew GPTK DLLs/framework are present where expected.
    - GPTK prefix exists and is winebooted.
    - Steam/user seed files are present.
    - Game exe material is present.
@@ -85,8 +93,11 @@ Backend behavior:
 1. Do not launch Steam.
 2. Launch the game exe directly through Homebrew GPTK Wine.
 3. Use the MetalSharp-owned GPTK prefix.
-4. Apply native/builtin overrides for the updated GPTK DLL/framework route:
-   - GPTK D3DMetal route DLL overrides must be `n,b`.
+4. Apply the proven launch shape:
+   - `WINEDLLOVERRIDES=d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d`
+   - `D3DMETAL_FRAMEWORK_PATH=/Applications/Game Porting Toolkit.app/Contents/Resources/wine/lib/external/D3DMetal.framework/D3DMetal`
+   - `DYLD_FALLBACK_LIBRARY_PATH` including Homebrew GPTK `lib`, Wine unix dirs, and `lib/external`
+   - `WINEESYNC=1`
 5. Launch state should be recorded as a D3DMetal direct-game launch, not a Steam launch.
 
 ## Proposed backend shape
@@ -110,8 +121,8 @@ Suggested states:
 
 ```text
 gptk_homebrew: missing | installing | installed | failed
-gptk_payload: missing | updating | updated | failed
-x64_redist: missing | installing | installed | repair_required
+gptk_payload: missing | updating | updated | failed  # legacy field name; now means Homebrew GPTK payload verified, not MetalSharp-staged GPTK
+x64_redist: missing | installing | installed | repair_required  # legacy field name; now represents copied x64+x86 VC runtime DLL/registry seed
 seed: missing | seeding | seeded | repair_required
 play_ready: false | true
 ```
@@ -120,21 +131,20 @@ A D3DMetal bottle is play-ready only when:
 
 - Homebrew GPTK is installed.
 - Rosetta is installed.
-- Updated GPTK4 DLL/framework payload has been applied to GPTK’s active route.
-- x64 VC++ 2015-2022 redist is installed in the GPTK prefix.
+- Homebrew GPTK’s own D3DMetal DLL/framework payload has been verified and its route DLLs copied into the GPTK prefix.
+- x64 and x86 VC runtime DLLs and registry keys are seeded into the GPTK prefix from MetalSharp’s runtime.
 - Seed verification succeeds.
 
 ## UI labels
 
 Use user-facing labels that say exactly what happens:
 
-- `Install x64 redist`
-- `Repair x64`
+- `Repair Redist`
 - `Seed Prefix`
 - `Repair Seed`
 - `Play D3DMetal`
 
-Avoid `vcrun2019_x64` in UI text for this lane. This is explicitly Microsoft Visual C++ 2015-2022 x64.
+Avoid `vcrun2019_x64` in UI text for this lane. This action is explicitly a copied x64+x86 VC runtime DLL/registry seed from MetalSharp’s own runtime, not a Microsoft installer run.
 
 ## Verification checklist
 
@@ -142,22 +152,22 @@ Before coding is considered complete:
 
 1. Fresh machine/state with no GPTK should pass D3DMetal bottle save by installing Homebrew GPTK + Rosetta only.
 2. Save must not require GPTK during app install or migration.
-3. Save must not install x64 redist.
+3. Save must not seed VC runtime DLLs/registry.
 4. Save must not seed prefix.
-5. `Install x64 redist` must run the Microsoft VC++ 2015-2022 x64 installer non-quiet through Homebrew GPTK Wine.
-6. Failed x64 install must become `Repair x64`.
-7. `Seed Prefix` must wineboot and seed only after x64 is installed or clearly report missing x64.
+5. `Repair Redist` must copy x64+x86 VC runtime DLLs from MetalSharp’s runtime into the GPTK prefix and write x64+x86 registry keys.
+6. Failed VC runtime seed must remain repairable via `Repair Redist`.
+7. `Seed Prefix` must wineboot and seed only after VC runtimes are seeded or clearly report missing VC runtimes.
 8. Failed seed must become `Repair Seed`.
 9. Play must launch the game exe directly, not Steam.
-10. Play must use GPTK Wine and `n,b` overrides for updated GPTK route DLLs/framework.
+10. Play must use Homebrew GPTK Wine, prefix-seeded Homebrew route DLLs, `D3DMETAL_FRAMEWORK_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`, `WINEESYNC=1`, and `n,b` overrides.
 
 ## Implementation sequencing
 
 1. Freeze current generic GPTK behavior; do not extend it further.
 2. Add explicit D3DMetal/GPTK status model and JSON persistence.
 3. Add Homebrew GPTK install/verify action with trust + Rosetta.
-4. Add updated GPTK4 DLL/framework replacement action for Homebrew GPTK route.
-5. Add x64 redist install/repair action.
+4. Verify Homebrew GPTK route DLL/framework payload without replacing or staging GPTK.
+5. Add VC runtime copy/registry repair action.
 6. Add seed/repair-seed action.
 7. Add direct-game D3DMetal play action.
 8. Wire UI to explicit action labels.

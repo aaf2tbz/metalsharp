@@ -254,7 +254,7 @@ const selectableRuntimeProfileIds = new Set(["m12", "d3dmetal", "m11", "m10", "m
 const visibleRuntimeProfiles = computed(() => {
   const profiles = runtimeProfiles.value.some((profile) => profile.id === "d3dmetal")
     ? runtimeProfiles.value
-    : [...runtimeProfiles.value, { id: "d3dmetal", name: "D3DMetal (GPTK)", components: ["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64"] }];
+    : [...runtimeProfiles.value, { id: "d3dmetal", name: "D3DMetal (GPTK)", components: ["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"] }];
   return profiles
     .filter((profile) => selectableRuntimeProfileIds.has(profile.id))
     .map((profile) => ({
@@ -386,7 +386,7 @@ async function saveD3DMetalBottle(bottle: BottleManifest) {
   if (result?.ok && result.state) {
     d3dmetalStates.value[bottle.id] = result.state;
     d3dmetalActions.value[bottle.id] = result.actions ?? [];
-    toast.show("D3DMetal bottle saved; install x64 redist and seed prefix when ready", "success");
+    toast.show("D3DMetal bottle saved; seed VC runtime DLLs and seed prefix when ready", "success");
   } else {
     toast.show(result?.error ?? "D3DMetal bottle save failed", "error");
   }
@@ -600,7 +600,7 @@ async function launchApp(id: string, engine: string) {
         detail: "Launch game exe directly through GPTK Wine",
       };
       if (!d3dmetalStates.value[bottle.id]?.play_ready || !playAction.enabled) {
-        toast.show("D3DMetal bottle is not ready; install x64 redist and seed prefix first", "error");
+        toast.show("D3DMetal bottle is not ready; seed VC runtime DLLs and seed prefix first", "error");
         return;
       }
       const pid = await runD3DMetalAction(bottle, playAction, app);
@@ -926,10 +926,10 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="saveD3DMetalBottle(bottle)">Save D3DMetal</button>
                   <template v-if="d3dmetalStates[bottle.id]">
                     <div class="bottle-action-row">
-                      <span>Homebrew GPTK: {{ d3dmetalStates[bottle.id]?.gptk_homebrew }} / GPTK4 payload: {{ d3dmetalStates[bottle.id]?.gptk_payload }}</span>
+                      <span>Homebrew GPTK: {{ d3dmetalStates[bottle.id]?.gptk_homebrew }} / Homebrew payload: {{ d3dmetalStates[bottle.id]?.gptk_payload }}</span>
                     </div>
                     <div class="bottle-action-row">
-                      <span>x64 redist: {{ d3dmetalStates[bottle.id]?.x64_redist }} / Seed: {{ d3dmetalStates[bottle.id]?.seed }}</span>
+                      <span>VC runtimes: {{ d3dmetalStates[bottle.id]?.x64_redist }} / Seed: {{ d3dmetalStates[bottle.id]?.seed }}</span>
                     </div>
                     <div v-if="d3dmetalStates[bottle.id]?.last_error" class="doctor-notes blocked">{{ d3dmetalStates[bottle.id]?.last_error }}</div>
                   </template>
