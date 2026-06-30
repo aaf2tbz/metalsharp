@@ -607,7 +607,34 @@ pub fn load_bottle(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error
         manifest.installed_components.sort_by(|a, b| a.id.cmp(&b.id));
         let _ = save_bottle(&manifest);
     }
+    normalize_loaded_runtime_profile_components(&mut manifest);
     Ok(manifest)
+}
+
+fn normalize_loaded_runtime_profile_components(manifest: &mut BottleManifest) {
+    let should_rebuild = match manifest.runtime_profile {
+        RuntimeProfile::M12 => {
+            let has_pr230_shape = M12_RUNTIME_COMPONENT_IDS
+                .iter()
+                .all(|id| manifest.installed_components.iter().any(|component| component.id == *id));
+            let has_stale_m12_shape = manifest.installed_components.iter().any(|component| {
+                matches!(
+                    component.id.as_str(),
+                    "d3d12" | "d3d11" | "dxgi" | "gpu_vendor_stubs" | "gptk" | "gptk_prefix" | "rosetta"
+                )
+            });
+            !has_pr230_shape || has_stale_m12_shape
+        },
+        RuntimeProfile::D3DMetal => {
+            manifest.installed_components.iter().any(|component| is_m12_runtime_component(&component.id))
+        },
+        _ => false,
+    };
+
+    if should_rebuild {
+        manifest.installed_components =
+            rebuild_components_for_profile(&manifest.installed_components, manifest.runtime_profile);
+    }
 }
 
 const M12_RUNTIME_COMPONENT_IDS: &[&str] =
