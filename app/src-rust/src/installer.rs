@@ -1249,6 +1249,21 @@ pub fn dxmt_runtime_current_for_home(home: &Path) -> bool {
     dxmt_runtime_current_for_dir(&dxmt_runtime_dir_for_home(home))
 }
 
+pub fn dxmt_m12_runtime_current_for_home(home: &Path) -> bool {
+    dxmt_m12_runtime_current_for_dir(&dxmt_m12_runtime_dir_for_home(home))
+}
+
+pub fn dxmt_m12_runtime_artifact_valid_for_home(home: &Path, rel: &str) -> bool {
+    let Some((_, expected)) = DXMT_M12_EXPECTED_HASHES.iter().find(|(candidate, _)| *candidate == rel) else {
+        return false;
+    };
+    crate::diagnostics::file_sha256(&dxmt_m12_runtime_dir_for_home(home).join(rel)).as_deref() == Some(*expected)
+}
+
+pub fn dxmt_m12_runtime_artifact_path_for_home(home: &Path, rel: &str) -> PathBuf {
+    dxmt_m12_runtime_dir_for_home(home).join(rel)
+}
+
 pub fn dxmt_runtime_current_for_ms_dir(ms_dir: &Path) -> bool {
     dxmt_runtime_current_for_dir(&ms_dir.join("runtime").join("wine").join("lib").join("dxmt"))
 }
