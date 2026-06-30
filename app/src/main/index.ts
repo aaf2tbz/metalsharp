@@ -217,10 +217,9 @@ function appBundleFromExe(exePath: string): string | null {
 }
 
 function installedMetalSharpAppPath(): string | null {
-  const candidates = [
-    "/Applications/MetalSharp.app",
-    appBundleFromExe(app.getPath("exe")),
-  ].filter((candidate): candidate is string => !!candidate && !candidate.startsWith("/Volumes/"));
+  const candidates = ["/Applications/MetalSharp.app", appBundleFromExe(app.getPath("exe"))].filter(
+    (candidate): candidate is string => !!candidate && !candidate.startsWith("/Volumes/"),
+  );
 
   return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 }
@@ -228,12 +227,13 @@ function installedMetalSharpAppPath(): string | null {
 function deleteInstalledUpdateDmg(): string | null {
   const status = updaterBridge?.readInstallStatus?.();
   const dmgPath = status?.dmg_path ? path.resolve(status.dmg_path) : null;
-  if (!dmgPath || !dmgPath.toLowerCase().endsWith(".dmg")) return null;
+  if (!dmgPath?.toLowerCase().endsWith(".dmg")) return null;
   if (!fs.existsSync(dmgPath)) return null;
 
   const msDir = path.resolve(getMetalsharpDir());
   const updatesDir = path.join(msDir, "cache", "updates");
-  const allowed = dmgPath.startsWith(updatesDir + path.sep) || path.basename(dmgPath).toLowerCase().startsWith("metalsharp-");
+  const allowed =
+    dmgPath.startsWith(updatesDir + path.sep) || path.basename(dmgPath).toLowerCase().startsWith("metalsharp-");
   if (!allowed) return null;
 
   fs.rmSync(dmgPath, { force: true });
