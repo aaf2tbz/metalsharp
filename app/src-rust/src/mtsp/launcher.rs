@@ -1048,6 +1048,10 @@ pub fn launch_custom_with_options(
 
     let mut recipe = super::recipe::build_custom_launch_recipe(launch_id, node, game_dir, Some(exe_path))?;
     recipe.launch_args.extend(launch_args.iter().cloned());
+    let quarantined = quarantine_route_conflicts_for_recipe(&recipe)?;
+    if quarantined > 0 {
+        eprintln!("mtsp: quarantined {} stale route DLL(s) before custom {} launch", quarantined, node.name);
+    }
     if node.uses_winedllpath_routing() || node.deploy_dlls.is_empty() {
         validate_recipe_runtime(&recipe)?;
     } else {

@@ -695,112 +695,6 @@ fn m12_runtime_component_detail(component_id: &str) -> String {
     }
 }
 
-fn quarantine_m12_game_local_route_dlls(manifest: &BottleManifest) -> Result<usize, String> {
-    let Some(game_dir) = manifest.game_install_path.as_deref().map(PathBuf::from) else {
-        return Ok(0);
-    };
-    if !game_dir.is_dir() {
-        return Ok(0);
-    }
-
-    let mut candidate_dirs = vec![game_dir.clone()];
-    if let Some(game_exe) = find_m12_game_exe(&game_dir) {
-        if let Some(exe_dir) = game_exe.parent() {
-            if !candidate_dirs.iter().any(|dir| dir == exe_dir) {
-                candidate_dirs.push(exe_dir.to_path_buf());
-            }
-        }
-    }
-
-    let now = timestamp_secs();
-    let quarantine_root = game_dir.join(".metalsharp").join("m12-quarantine").join(&now);
-    let mut moved = Vec::new();
-    for dir in candidate_dirs {
-        if !dir.is_dir() {
-            continue;
-        }
-        for entry in fs::read_dir(&dir).map_err(|e| format!("read {}: {}", dir.display(), e))? {
-            let entry = entry.map_err(|e| format!("read {} entry: {}", dir.display(), e))?;
-            let path = entry.path();
-            if !path.is_file() || !is_m12_game_local_route_conflict(&path) {
-                continue;
-            }
-            let rel = m12_quarantine_relative_path(&game_dir, &path);
-            let target = quarantine_root.join(rel);
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
-            }
-            fs::rename(&path, &target).map_err(|e| {
-                format!("quarantine app-local M12 route DLL {} -> {}: {}", path.display(), target.display(), e)
-            })?;
-            moved.push(json!({"from": path.to_string_lossy(), "to": target.to_string_lossy()}));
-        }
-    }
-
-    if !moved.is_empty() {
-        let marker_root = game_dir.join(".metalsharp").join("m12-quarantine");
-        fs::create_dir_all(&marker_root).map_err(|e| format!("create {}: {}", marker_root.display(), e))?;
-        let marker = marker_root.join("latest-manifest.json");
-        let marker_json = json!({
-            "quarantined_at": now,
-            "reason": "M12 uses the bundled PR230 dxmt_m12 runtime surface, not stale app-local D3D/DXGI/winemetal shims",
-            "bottle_id": manifest.id,
-            "moved": moved,
-        });
-        fs::write(&marker, serde_json::to_string_pretty(&marker_json).unwrap_or_default())
-            .map_err(|e| format!("write {}: {}", marker.display(), e))?;
-    }
-
-    Ok(moved.len())
-}
-
-fn find_m12_game_exe(game_dir: &Path) -> Option<PathBuf> {
-    let mut candidates = WalkDir::new(game_dir)
-        .max_depth(5)
-        .into_iter()
-        .flatten()
-        .map(|entry| entry.into_path())
-        .filter(|path| path.is_file())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("exe")))
-        .filter(|path| {
-            let text = path.to_string_lossy().to_ascii_lowercase();
-            !text.contains("/.metalsharp/")
-                && !text.contains("redist")
-                && !text.contains("setup")
-                && !text.contains("installer")
-                && !text.contains("crash")
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by_key(|path| {
-        let text = path.to_string_lossy().to_ascii_lowercase();
-        (if text.contains("shipping") { 0 } else { 1 }, if text.contains("binaries/win64") { 0 } else { 1 }, text.len())
-    });
-    candidates.into_iter().next()
-}
-
-fn m12_quarantine_relative_path(game_dir: &Path, path: &Path) -> PathBuf {
-    if let Ok(rel) = path.strip_prefix(game_dir) {
-        if !rel.as_os_str().is_empty() && !rel.is_absolute() {
-            return rel.to_path_buf();
-        }
-    }
-    path.file_name().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("route-dll"))
-}
-
-fn is_m12_game_local_route_conflict(path: &Path) -> bool {
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-    name == "d3d10.dll"
-        || name == "d3d10core.dll"
-        || name == "d3d11.dll"
-        || name == "d3d12.dll"
-        || name == "dxgi.dll"
-        || name == "dxgi_dxmt.dll"
-        || (name.starts_with("nvapi") && name.ends_with(".dll"))
-        || name == "nvngx.dll"
-        || name == "nvngx-on-metalfx.dll"
-        || name == "winemetal.dll"
-}
-
 pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::Error>> {
     validate_bottle_id(&manifest.id)?;
     let mut persisted = manifest.clone();
@@ -827,16 +721,6 @@ fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
 
     manifest.installed_components =
         merge_components(manifest.installed_components.clone(), default_components_for(manifest.runtime_profile));
-
-    if matches!(manifest.runtime_profile, RuntimeProfile::M12) {
-        match quarantine_m12_game_local_route_dlls(manifest) {
-            Ok(moved) if moved > 0 => {
-                eprintln!("bottle: quarantined {} app-local M12 route DLL conflict(s) before save", moved);
-            },
-            Ok(_) => {},
-            Err(e) => eprintln!("bottle: M12 app-local route DLL quarantine failed before save: {}", e),
-        }
-    }
 
     #[cfg(not(test))]
     let runtime_ready = dirs::home_dir()
@@ -3342,6 +3226,8 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
                 "m12_dxgi",
                 "m12_winemetal",
                 "m12_gpu_stubs",
+                "vcrun2019_x64",
+                "vcrun2019_x86",
                 "d3d12_agility",
                 "corefonts",
             ][..],
@@ -7202,6 +7088,8 @@ mod tests {
             "m12_dxgi",
             "m12_winemetal",
             "m12_gpu_stubs",
+            "vcrun2019_x64",
+            "vcrun2019_x86",
             "corefonts",
             "d3d12_agility",
         ] {
