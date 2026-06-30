@@ -858,17 +858,29 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
         assets.push(RuntimeAsset { name: path.to_string(), present: p.is_dir(), path: p, required: true });
     }
 
-    if node.id == PipelineId::M12 {
-        let unix_dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
-        for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
-            let path = unix_dir.join(filename);
+    match node.id {
+        PipelineId::M12 => {
+            let unix_dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
+            for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+                let path = unix_dir.join(filename);
+                assets.push(RuntimeAsset {
+                    name: format!("lib/dxmt_m12/x86_64-unix/{filename}"),
+                    present: runtime_file_present(&path),
+                    path,
+                    required: true,
+                });
+            }
+        },
+        PipelineId::M11 => {
+            let path = ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
             assets.push(RuntimeAsset {
-                name: format!("lib/dxmt_m12/x86_64-unix/{filename}"),
+                name: "lib/dxmt/x86_64-unix/winemetal.so".into(),
                 present: runtime_file_present(&path),
                 path,
                 required: true,
             });
-        }
+        },
+        _ => {},
     }
 
     for deploy in &node.deploy_dlls {
@@ -931,6 +943,24 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn m11_validates_legacy_winemetal_so_without_changing_m12_sidecars() {
+        let ms_root = test_dir("runtime-assets-winemetal-lanes");
+        let m11 = super::super::engine::get_pipeline(PipelineId::M11);
+        let m12 = super::super::engine::get_pipeline(PipelineId::M12);
+
+        let m11_assets = runtime_assets_for_node(m11, &ms_root);
+        assert!(m11_assets.iter().any(|asset| asset.name == "lib/dxmt/x86_64-unix/winemetal.so"));
+        assert!(!m11_assets.iter().any(|asset| asset.name.starts_with("lib/dxmt_m12/x86_64-unix/")));
+
+        let m12_assets = runtime_assets_for_node(m12, &ms_root);
+        assert!(m12_assets.iter().any(|asset| asset.name == "lib/dxmt_m12/x86_64-unix/winemetal.so"));
+        assert!(m12_assets.iter().any(|asset| asset.name == "lib/dxmt_m12/x86_64-unix/libc++.1.dylib"));
+        assert!(!m12_assets.iter().any(|asset| asset.name == "lib/dxmt/x86_64-unix/winemetal.so"));
+
+        let _ = std::fs::remove_dir_all(ms_root);
+    }
 
     #[test]
     fn executable_scoring_rejects_launcher_when_real_game_exists() {

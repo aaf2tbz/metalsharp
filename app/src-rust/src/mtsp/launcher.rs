@@ -4572,7 +4572,9 @@ mod tests {
         std::fs::write(exe_dir.join("Game.exe"), b"exe").unwrap();
         std::fs::write(exe_dir.join("d3d12.dll"), b"stale m12 route").unwrap();
         std::fs::write(exe_dir.join("d3d11.dll"), b"stale d3dmetal route").unwrap();
+        std::fs::write(exe_dir.join("winemetal.dll"), b"stale winemetal route").unwrap();
         std::fs::write(source_dir.join("d3d11.dll"), b"legacy dxmt d3d11").unwrap();
+        std::fs::write(source_dir.join("winemetal.dll"), b"legacy dxmt winemetal").unwrap();
 
         let recipe = recipe::LaunchRecipe {
             appid: 42,
@@ -4584,25 +4586,94 @@ mod tests {
             exe_name: Some("Game.exe".into()),
             launch_args: Vec::new(),
             env: Vec::new(),
-            dlls: vec![recipe::RecipeDll {
-                source_subpath: "lib/dxmt/x86_64-windows".into(),
-                filename: "d3d11.dll".into(),
-                source_path: source_dir.join("d3d11.dll"),
-                dest_path: exe_dir.join("d3d11.dll"),
-                source_present: true,
-            }],
+            dlls: vec![
+                recipe::RecipeDll {
+                    source_subpath: "lib/dxmt/x86_64-windows".into(),
+                    filename: "d3d11.dll".into(),
+                    source_path: source_dir.join("d3d11.dll"),
+                    dest_path: exe_dir.join("d3d11.dll"),
+                    source_present: true,
+                },
+                recipe::RecipeDll {
+                    source_subpath: "lib/dxmt/x86_64-windows".into(),
+                    filename: "winemetal.dll".into(),
+                    source_path: source_dir.join("winemetal.dll"),
+                    dest_path: exe_dir.join("winemetal.dll"),
+                    source_present: true,
+                },
+            ],
             runtime_assets: Vec::new(),
             warnings: Vec::new(),
         };
 
         let moved = quarantine_route_conflicts_for_recipe(&recipe).expect("quarantine stale routes");
-        assert_eq!(moved, 2, "d3d12 and stale d3d11 should be quarantined before M11 deploy");
+        assert_eq!(moved, 3, "d3d12 plus stale d3d11/winemetal should be quarantined before M11 deploy");
         deploy_recipe_dlls(&recipe).expect("deploy M11 legacy DXMT route");
 
         assert!(!exe_dir.join("d3d12.dll").exists(), "M11 save must not leave stale d3d12.dll behind");
         assert_eq!(std::fs::read_to_string(exe_dir.join("d3d11.dll")).unwrap(), "legacy dxmt d3d11");
+        assert_eq!(std::fs::read_to_string(exe_dir.join("winemetal.dll")).unwrap(), "legacy dxmt winemetal");
         let marker = game_dir.join(".metalsharp").join("route-quarantine").join("latest-manifest.json");
         assert!(marker.is_file(), "quarantine marker should document moved route DLLs");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn m12_quarantines_stale_m11_route_dlls_before_deploying_isolated_dxmt_m12() {
+        let root = test_dir("m12-route-quarantine-switchback");
+        let game_dir = root.join("game");
+        let exe_dir = game_dir.join("Binaries").join("Win64");
+        let source_dir = root.join("runtime").join("wine").join("lib").join("dxmt_m12").join("x86_64-windows");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(exe_dir.join("Game.exe"), b"exe").unwrap();
+        std::fs::write(exe_dir.join("d3d11.dll"), b"stale m11 d3d11").unwrap();
+        std::fs::write(exe_dir.join("dxgi.dll"), b"stale m11 dxgi").unwrap();
+        std::fs::write(exe_dir.join("winemetal.dll"), b"stale m11 winemetal").unwrap();
+
+        let route_dlls = ["d3d12.dll", "d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"];
+        for dll in route_dlls {
+            std::fs::write(source_dir.join(dll), format!("isolated m12 {dll}")).unwrap();
+        }
+
+        let recipe = recipe::LaunchRecipe {
+            appid: 42,
+            pipeline: PipelineId::M12,
+            pipeline_name: "M12".into(),
+            backend: "dxmt".into(),
+            game_dir: Some(game_dir.clone()),
+            exe_path: Some(exe_dir.join("Game.exe")),
+            exe_name: Some("Game.exe".into()),
+            launch_args: Vec::new(),
+            env: Vec::new(),
+            dlls: route_dlls
+                .iter()
+                .map(|dll| recipe::RecipeDll {
+                    source_subpath: "lib/dxmt_m12/x86_64-windows".into(),
+                    filename: (*dll).into(),
+                    source_path: source_dir.join(dll),
+                    dest_path: exe_dir.join(dll),
+                    source_present: true,
+                })
+                .collect(),
+            runtime_assets: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let moved = quarantine_route_conflicts_for_recipe(&recipe).expect("quarantine stale M11 routes");
+        assert_eq!(moved, 3, "stale d3d11/dxgi/winemetal should be quarantined before M12 deploy");
+        deploy_recipe_dlls(&recipe).expect("deploy M12 isolated DXMT route");
+
+        for dll in route_dlls {
+            assert_eq!(
+                std::fs::read_to_string(exe_dir.join(dll)).unwrap(),
+                format!("isolated m12 {dll}"),
+                "M12 switch-back must deploy {dll} from dxmt_m12"
+            );
+        }
+        let marker = game_dir.join(".metalsharp").join("route-quarantine").join("latest-manifest.json");
+        assert!(marker.is_file(), "quarantine marker should document moved M11 route DLLs");
 
         let _ = std::fs::remove_dir_all(root);
     }

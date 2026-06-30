@@ -609,12 +609,10 @@ mod tests {
         assert_eq!(m12_env_values.get("DXMT_METALFX_TEMPORAL"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_CONFIG"), Some(&DXMT_M12_SAFE_CONFIG));
 
-        let m12_overrides = m12.wine_overrides.unwrap_or_default();
-        assert!(m12_overrides.contains("winemetal"));
-        assert!(m12_overrides.contains("d3d12"));
-        assert!(m12_overrides.contains("dxgi"));
-        assert!(m12_overrides.contains("dxgi_dxmt"));
-        assert!(m12_overrides.contains("gameoverlayrenderer"));
+        assert_eq!(
+            m12.wine_overrides,
+            Some("winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 

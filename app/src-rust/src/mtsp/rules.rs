@@ -530,23 +530,30 @@ mod tests {
     }
 
     #[test]
-    fn shipped_m12_rules_have_no_anticheat_and_include_pr230_diagnostics() {
+    fn shipped_m11_m12_rules_have_no_anticheat_and_include_route_diagnostics() {
         let shipped_rules = include_str!("../../../../configs/mtsp-rules.toml");
         assert!(!shipped_rules.contains("anticheat"), "shipped rules must not contain anti-cheat metadata");
         let (_, recipes) = parse_rules_full(shipped_rules);
-        let required = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"];
-        let m12_recipes = recipes.iter().filter(|(_, recipe)| recipe.pipeline == PipelineId::M12).collect::<Vec<_>>();
 
-        assert!(!m12_recipes.is_empty(), "expected shipped M12 rules");
-        for (appid, recipe) in m12_recipes {
-            for dll in required {
-                assert!(
-                    recipe.check_dlls.iter().any(|value| value == dll),
-                    "appid {} M12 diagnostics must include {} (got {:?})",
-                    appid,
-                    dll,
-                    recipe.check_dlls
-                );
+        let m12_required = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"];
+        let m11_required = ["d3d11.dll", "dxgi.dll", "winemetal.dll"];
+        let required_by_pipeline =
+            [(PipelineId::M12, m12_required.as_slice()), (PipelineId::M11, m11_required.as_slice())];
+
+        for (pipeline, required) in required_by_pipeline {
+            let matching_recipes = recipes.iter().filter(|(_, recipe)| recipe.pipeline == pipeline).collect::<Vec<_>>();
+            assert!(!matching_recipes.is_empty(), "expected shipped {:?} rules", pipeline);
+            for (appid, recipe) in matching_recipes {
+                for dll in required {
+                    assert!(
+                        recipe.check_dlls.iter().any(|value| value == dll),
+                        "appid {} {:?} diagnostics must include {} (got {:?})",
+                        appid,
+                        pipeline,
+                        dll,
+                        recipe.check_dlls
+                    );
+                }
             }
         }
     }
