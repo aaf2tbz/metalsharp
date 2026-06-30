@@ -29,6 +29,7 @@ except OSError:
 
 APP_PATH = "/Applications/MetalSharp.app"
 BACKEND_PORT = 9274
+UPDATE_DMG_PATH = None
 
 
 def write_status(status_file, phase, percent, message, error=None, new_version=None):
@@ -38,6 +39,7 @@ def write_status(status_file, phase, percent, message, error=None, new_version=N
         "message": message,
         "error": error,
         "new_version": new_version,
+        "dmg_path": UPDATE_DMG_PATH,
         "timestamp": time.time(),
     }
     try:
@@ -289,7 +291,9 @@ def main():
 
     sf = args.status_file
     tv = args.target_version
+    global UPDATE_DMG_PATH
     dmg = args.dmg
+    UPDATE_DMG_PATH = dmg
     bpid = args.backend_pid
     app_pid = args.app_pid
 

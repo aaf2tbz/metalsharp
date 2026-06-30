@@ -2487,11 +2487,16 @@ mod tests {
     }
 
     #[test]
-    fn install_steps_use_split_graphics_runtime_and_do_not_install_eac_toggle() {
+    fn install_steps_use_split_graphics_runtime_and_do_not_install_eac_toggle_or_gptk() {
         let names: Vec<&str> = install_steps().into_iter().map(|(name, _)| name).collect();
 
         assert!(names.contains(&"DXMT Graphics Runtimes"));
         assert!(!names.contains(&"Offline EAC Mode"));
+        assert!(
+            names.iter().all(|name| !name.to_ascii_lowercase().contains("gptk")),
+            "first-time setup must not install GPTK; D3DMetal bottles own Homebrew GPTK setup: {:?}",
+            names
+        );
     }
 
     #[test]

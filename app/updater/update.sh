@@ -24,9 +24,11 @@ write_status() {
         error_json="\"$safe_error\""
     fi
     mkdir -p "$(dirname "$STATUS_FILE")" 2>/dev/null || true
-    printf '{"phase":"%s","percent":%d,"message":"%s","error":%s,"new_version":"%s","timestamp":%s}\n' \
+    local safe_dmg="${DMG_PATH//\/\\}"
+    safe_dmg="${safe_dmg//"/\"}"
+    printf '{"phase":"%s","percent":%d,"message":"%s","error":%s,"new_version":"%s","dmg_path":"%s","timestamp":%s}\n' \
         "$safe_phase" "$percent" "$safe_message" "$error_json" \
-        "$safe_ver" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
+        "$safe_ver" "$safe_dmg" "$(date +%s)" > "$STATUS_FILE" 2>/dev/null || true
 }
 
 pid_alive() {

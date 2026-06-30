@@ -60,6 +60,7 @@ interface InstallStatus {
   message: string;
   error: string | null;
   new_version: string | null;
+  dmg_path?: string | null;
   timestamp: number;
 }
 
@@ -145,7 +146,7 @@ type MetalsharpAPI = {
   ) => Promise<BackendResponse>;
   isFirstLaunch: () => Promise<boolean>;
   isMigrationMode: () => Promise<boolean>;
-  restartAfterMigration: () => Promise<void>;
+  restartAfterMigration: () => Promise<{ ok: boolean; error?: string; deletedDmg?: string | null; launched?: string }>;
   ejectDmg: () => Promise<void>;
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
   installHomebrew: () => Promise<{ ok: boolean; error?: string }>;

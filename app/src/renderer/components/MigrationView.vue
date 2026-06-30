@@ -8,6 +8,7 @@ const total = ref(0);
 const message = ref("Checking migration status...");
 const error = ref<string | null>(null);
 const complete = ref(false);
+const launching = ref(false);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -100,7 +101,14 @@ function stopPolling() {
 }
 
 async function restartApp() {
-  await window.metalsharp.restartAfterMigration();
+  launching.value = true;
+  message.value = "Closing old MetalSharp, stopping the backend, and launching the updated app...";
+  const result = await window.metalsharp.restartAfterMigration();
+  if (!result?.ok) {
+    launching.value = false;
+    error.value = result?.error ?? "Failed to launch the updated MetalSharp app";
+    message.value = `Error: ${error.value}`;
+  }
 }
 
 onMounted(async () => {
@@ -117,8 +125,8 @@ onUnmounted(() => {
     <div class="migration-card">
       <div class="migration-header">
         <div class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
-        <h1 class="migration-title">MetalSharp Migration</h1>
-        <p class="migration-subtitle">Preparing Wine 11.5 runtime lanes</p>
+        <h1 class="migration-title">MetalSharp Update Migration</h1>
+        <p class="migration-subtitle">Preserving your settings and refreshing the runtime</p>
       </div>
 
       <div class="pipeline-vis">
@@ -142,7 +150,9 @@ onUnmounted(() => {
 
       <p class="status-message" :class="{ error: !!error, complete }">{{ message }}</p>
 
-      <button v-if="complete" class="restart-btn" @click="restartApp()">Restart MetalSharp</button>
+      <button v-if="complete" class="restart-btn" :disabled="launching" @click="restartApp()">
+        {{ launching ? "Launching..." : "Launch MetalSharp" }}
+      </button>
       <p v-if="error" class="error-hint">Try restarting the app. If the issue persists, check the logs.</p>
     </div>
   </div>
