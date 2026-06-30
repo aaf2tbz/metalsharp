@@ -1,6 +1,6 @@
 use serde_json::json;
-use serde_json::Value;
-use std::path::PathBuf;
+use serde_json::{Map, Value};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn launch(exe_path: &str, game_type: &str) -> Result<u32, Box<dyn std::error::Error>> {
@@ -191,12 +191,46 @@ fn spawn_and_reap(mut cmd: Command) -> Result<u32, Box<dyn std::error::Error>> {
 pub fn get_config() -> Value {
     let native_available = find_metalsharp_native().is_ok();
     let mono_available = find_mono().is_ok();
+    let graphics_runtime_logs = graphics_runtime_logs_enabled();
 
     json!({
         "ok": true,
         "native_available": native_available,
         "mono_available": mono_available,
+        "graphicsRuntimeLogs": graphics_runtime_logs,
+        "graphics_runtime_logs": graphics_runtime_logs,
     })
+}
+
+pub fn graphics_runtime_logs_enabled() -> bool {
+    if let Ok(value) = std::env::var("METALSHARP_GRAPHICS_RUNTIME_LOGS") {
+        return truthy(&value);
+    }
+    read_config_bool("graphicsRuntimeLogs").or_else(|| read_config_bool("graphics_runtime_logs")).unwrap_or(false)
+}
+
+fn read_config_bool(key: &str) -> Option<bool> {
+    let path = config_path_for_home(&dirs::home_dir()?);
+    let contents = std::fs::read_to_string(path).ok()?;
+    let value: Value = serde_json::from_str(&contents).ok()?;
+    value.get(key).and_then(json_bool)
+}
+
+fn json_bool(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(b) => Some(*b),
+        Value::Number(n) => n.as_i64().map(|v| v != 0),
+        Value::String(s) => Some(truthy(s)),
+        _ => None,
+    }
+}
+
+fn truthy(value: &str) -> bool {
+    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+}
+
+fn config_path_for_home(home: &Path) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home).join("configs").join("config.json")
 }
 
 fn find_metalsharp_native() -> Result<String, Box<dyn std::error::Error>> {
@@ -330,7 +364,29 @@ pub fn ensure_wine_prefix(prefix: &PathBuf) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-pub fn set_config(_mode: &str) -> Result<Value, Box<dyn std::error::Error>> {
+pub fn set_config(body: &Map<String, Value>) -> Result<Value, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let path = config_path_for_home(&home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut cfg: Map<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok())
+        .unwrap_or_default();
+
+    if let Some(value) = body
+        .get("graphicsRuntimeLogs")
+        .or_else(|| body.get("graphics_runtime_logs"))
+        .or_else(|| body.get("logs"))
+        .and_then(json_bool)
+    {
+        cfg.insert("graphicsRuntimeLogs".into(), json!(value));
+        cfg.insert("graphics_runtime_logs".into(), json!(value));
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&cfg)?)?;
     Ok(get_config())
 }
 

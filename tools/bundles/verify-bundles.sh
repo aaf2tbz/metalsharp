@@ -113,6 +113,12 @@ archive_contains_root() {
     <<< "$listing"
 }
 
+archive_not_contains() {
+  local path="$1"
+  local forbidden="$2"
+  ! tar --use-compress-program=unzstd -tf "$path" | grep -E "$forbidden" >/dev/null
+}
+
 verify_required_files() {
   local path="$1"
   local label="$2"
@@ -177,7 +183,6 @@ verify_graphics_core() {
 verify_assets_core() {
   local path="$1"
   verify_required_files "$path" "ASSETS" \
-    assets/eac-toggle/x86_64-windows/_winhttp.dll \
     assets/fna-kickstart/kick.bin.osx \
     assets/fna-kickstart/FNA.dll \
     assets/fna-kickstart/mscorlib.dll \
@@ -204,6 +209,7 @@ verify_assets_core() {
     assets/gptk/x86_64-windows/nvngx-on-metalfx.dll \
     assets/mono-arm64/bin/mono-sgen \
     assets/shims/libsteam_api.dylib &&
+    archive_not_contains "$path" '^assets/eac-toggle/' &&
     verify_fna_payloads "$path" "ASSETS" assets/fnalibs &&
     verify_fna_kickstart_payloads "$path" "ASSETS" assets/fna-kickstart/osx
 }

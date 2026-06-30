@@ -92,7 +92,7 @@ jobs:
           set -euo pipefail
           OWNER="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           PACKAGE="ghcr.io/$OWNER/metalsharp-d3d12-developer-sdk"
-          VERSION="$(node -p "require('./app/package.json').version")"
+          VERSION="${GITHUB_REF_NAME#v}"
           ARCHIVE="dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst"
           SHA="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
           echo "$GH_TOKEN" | oras login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -109,10 +109,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Publish developer SDK bundle
+      - name: Verify repaired release bundle layout
+        run: |
+          set -euo pipefail
+          tar --use-compress-program=unzstd -tf dist/bundles/metalsharp-graphics-dll.tar.zst \
+            | grep -E '^Graphics/dll/dxmt-m12/x86_64-unix/winemetal\.so$'
+          tar --use-compress-program=unzstd -tf dist/bundles/metalsharp-graphics-dll.tar.zst \
+            | grep -E '^Graphics/dll/dxmt-m12/x86_64-windows/d3d12\.dll$'
+          ! tar --use-compress-program=unzstd -tf dist/bundles/metalsharp-assets.tar.zst \
+            | grep -E '^assets/eac-toggle/'
+
+      - name: Publish release bundles
         run: |
           tools/bundles/publish-release-assets.sh bundles \
             dist/bundles/metalsharp-runtime.tar.zst \
+            dist/bundles/metalsharp-graphics-dll.tar.zst \
+            dist/bundles/metalsharp-assets.tar.zst \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
             dist/developer-sdk/metalsharp-bundle-manifest.tsv
         env:

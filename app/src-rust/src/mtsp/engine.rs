@@ -89,7 +89,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/dxmt_m12/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt_m12/x86_64-windows"],
@@ -644,8 +644,8 @@ mod tests {
         assert!(m12_overrides.contains("winemetal"));
         assert!(m12_overrides.contains("d3d12"));
         assert!(m12_overrides.contains("dxgi"));
+        assert!(m12_overrides.contains("dxgi_dxmt"));
         assert!(m12_overrides.contains("gameoverlayrenderer"));
-        assert!(!m12_overrides.contains("mscompatdb"));
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 

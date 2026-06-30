@@ -221,7 +221,6 @@ fn vcpp_prefix_has_x86(prefix: &Path) -> bool {
     has(&syswow64, "vcruntime140.dll") && has(&syswow64, "msvcp140.dll")
 }
 const MANIFEST_FILE: &str = "bottle.json";
-const COMPATDATA_MANIFEST_FILE: &str = "metalsharp-compatdata.json";
 const COMPATIBILITY_MATRIX_FILE: &str = "compatibility-matrix.json";
 const LAUNCH_WATCH_INTERVAL_SECS: u64 = 5;
 const LAUNCH_WATCH_MAX_POLLS: usize = 4320;
@@ -554,12 +553,11 @@ pub fn steam_compatdata_dir(appid: u32) -> PathBuf {
     compatdata_root().join(appid.to_string())
 }
 
-pub fn steam_compatdata_manifest_path(appid: u32) -> PathBuf {
-    steam_compatdata_dir(appid).join(COMPATDATA_MANIFEST_FILE)
-}
-
 pub fn steam_compatdata_launch_log_path(appid: u32) -> PathBuf {
-    steam_compatdata_dir(appid).join("logs").join(format!("launch-{}.log", timestamp_secs()))
+    // Deprecated compatdata route state is no longer written; keep the helper
+    // as a compatibility shim for callers that still identify Steam bottles by
+    // appid, but place launch logs under the bottle/global logs tree.
+    bottle_logs_dir(&format!("steam_{}", appid)).join(format!("launch-{}.log", timestamp_secs()))
 }
 
 fn validate_bottle_id(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -616,7 +614,7 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     validate_bottle_id(&manifest.id)?;
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
-    refresh_m12_runtime_before_save(&mut persisted);
+    refresh_dxmt_runtime_before_save(&mut persisted);
     let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
@@ -629,29 +627,42 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn refresh_m12_runtime_before_save(manifest: &mut BottleManifest) {
-    if !matches!(manifest.runtime_profile, RuntimeProfile::M12) {
-        return;
-    }
+fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
+    let (lane, components): (&str, &[&str]) = match manifest.runtime_profile {
+        RuntimeProfile::M11 => ("dxmt", &["d3d11", "dxgi"]),
+        RuntimeProfile::M12 => ("dxmt_m12", &["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"]),
+        _ => return,
+    };
 
     manifest.installed_components =
         merge_components(manifest.installed_components.clone(), default_components_for(manifest.runtime_profile));
 
-    let m12_runtime_ready = dirs::home_dir()
-        .map(|home| crate::installer::runtime_artifact_report_for(&home))
-        .and_then(|report| {
-            report.get("dxmt_m12").and_then(|m12| m12.get("all_present")).and_then(|value| value.as_bool())
+    #[cfg(not(test))]
+    let runtime_ready = dirs::home_dir()
+        .ok_or_else(|| "home directory could not be resolved".to_string())
+        .and_then(|home| match manifest.runtime_profile {
+            RuntimeProfile::M11 => crate::installer::ensure_dxmt_runtime_ready(&home).map(|_| true),
+            RuntimeProfile::M12 => crate::installer::ensure_dxmt_m12_runtime_ready(&home).map(|_| true),
+            _ => Ok(false),
         })
+        .unwrap_or_else(|e| {
+            eprintln!("bottle: {} shared runtime setup failed before save: {}", lane, e);
+            false
+        });
+    #[cfg(test)]
+    let runtime_ready = dirs::home_dir()
+        .map(|home| crate::installer::runtime_artifact_report_for(&home))
+        .and_then(|report| report.get(lane).and_then(|lane| lane.get("all_present")).and_then(|value| value.as_bool()))
         .unwrap_or(false);
 
-    if m12_runtime_ready {
-        eprintln!("bottle: M12 shared runtime is current before save");
-        for id in ["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"] {
+    if runtime_ready {
+        eprintln!("bottle: {} shared runtime is current before save", lane);
+        for id in components {
             mark_component_state(manifest, id, ComponentState::Installed);
         }
     } else {
-        eprintln!("bottle: M12 shared runtime is incomplete before save");
-        for id in ["d3d12", "d3d12_agility", "d3d11", "dxgi", "gpu_vendor_stubs"] {
+        eprintln!("bottle: {} shared runtime is incomplete before save", lane);
+        for id in components {
             mark_component_state(manifest, id, ComponentState::NeedsRepair);
         }
     }
@@ -774,26 +785,19 @@ pub fn steam_pipeline_defaults_offline(pipeline: crate::mtsp::engine::PipelineId
     matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
 }
 
-pub fn load_steam_compatdata(appid: u32) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
-    let data = fs::read_to_string(steam_compatdata_manifest_path(appid))?;
-    Ok(serde_json::from_str(&data)?)
-}
-
 pub fn save_steam_compatdata(
     manifest: &BottleManifest,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<SteamCompatdataRecord, Box<dyn std::error::Error>> {
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
-    refresh_m12_runtime_before_save(&mut persisted);
+    refresh_dxmt_runtime_before_save(&mut persisted);
     let appid = persisted.steam_app_id.ok_or("steam compatdata requires steam appid")?;
     let record = steam_compatdata_record(&persisted, pipeline);
-    let dir = steam_compatdata_dir(appid);
-    fs::create_dir_all(dir.join("logs"))?;
-    fs::create_dir_all(dir.join("assets"))?;
-    let data = serde_json::to_string_pretty(&record)?;
-    let manifest_path = steam_compatdata_manifest_path(appid);
-    write_bottle_manifest_atomic(&manifest_path, data.as_bytes())?;
+    eprintln!(
+        "bottle: compatdata write skipped for appid {} — route state is stored in bottle manifest {}",
+        appid, manifest.id
+    );
     Ok(record)
 }
 
@@ -807,7 +811,7 @@ fn steam_compatdata_record(
         appid,
         name: manifest.name.clone(),
         bottle_id: manifest.id.clone(),
-        compatdata_path: steam_compatdata_dir(appid).to_string_lossy().to_string(),
+        compatdata_path: bottle_dir(&manifest.id).to_string_lossy().to_string(),
         prefix_path: manifest.prefix_path.clone(),
         steam_prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
         game_install_path: manifest.game_install_path.clone(),
@@ -828,7 +832,7 @@ fn steam_compatdata_record(
                 pipeline_preference_id(pipeline)
             )
         },
-        log_dir: steam_compatdata_dir(appid).join("logs").to_string_lossy().to_string(),
+        log_dir: bottle_logs_dir(&manifest.id).to_string_lossy().to_string(),
         runtime_assets: manifest.runtime_assets.clone(),
         required_components: manifest.installed_components.clone(),
         last_launch_log: manifest.last_launch_log.clone(),
@@ -1082,6 +1086,20 @@ pub fn prepare_steam_game_launch(
     appid: u32,
     pipeline: crate::mtsp::engine::PipelineId,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    #[cfg(not(test))]
+    if let Some(home) = dirs::home_dir() {
+        match pipeline {
+            crate::mtsp::engine::PipelineId::M11 => {
+                crate::installer::ensure_dxmt_runtime_ready(&home)
+                    .map_err(|e| format!("M11 runtime setup failed before Steam launch: {}", e))?;
+            },
+            crate::mtsp::engine::PipelineId::M12 => {
+                crate::installer::ensure_dxmt_m12_runtime_ready(&home)
+                    .map_err(|e| format!("M12 runtime setup failed before Steam launch: {}", e))?;
+            },
+            _ => {},
+        }
+    }
     // Do not run legacy setup::prepare_game or installer restaging here for
     // MTSP routes. /steam/launch-game immediately calls
     // mtsp::launcher::prepare_steam_pipeline_env(), which validates the route
@@ -1467,20 +1485,11 @@ pub fn diagnose_bottle(id: &str) -> Result<BottleDiagnostic, Box<dyn std::error:
             ok: !runtime_assets.is_empty(),
             detail: format!("{} game runtime assets tracked", runtime_assets.len()),
         });
-        if let Some(appid) = manifest.steam_app_id {
-            let compatdata_manifest = steam_compatdata_manifest_path(appid);
-            let compatdata_logs = steam_compatdata_dir(appid).join("logs");
-            checks.push(BottleCheck {
-                id: "compatdata".to_string(),
-                ok: compatdata_manifest.exists(),
-                detail: compatdata_manifest.to_string_lossy().to_string(),
-            });
-            checks.push(BottleCheck {
-                id: "compatdata_logs".to_string(),
-                ok: compatdata_logs.exists(),
-                detail: compatdata_logs.to_string_lossy().to_string(),
-            });
-        }
+        checks.push(BottleCheck {
+            id: "bottle_route_state".to_string(),
+            ok: bottle_manifest_path(&manifest.id).exists(),
+            detail: bottle_manifest_path(&manifest.id).to_string_lossy().to_string(),
+        });
     }
 
     let actions = component_actions(&manifest.installed_components);
@@ -2835,7 +2844,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         .map(|manifest| inspect_components_for_manifest(manifest, &prefix, &default_components))
         .unwrap_or_else(|| inspect_components(&prefix, &default_components));
     let actions = component_actions(&components);
-    let compatdata = load_steam_compatdata(appid).ok();
+    let compatdata = bottle.as_ref().map(|manifest| steam_compatdata_record(manifest, pipeline));
     let recipe_deps = crate::mtsp::rules::game_missing_dependencies(appid, &prefix);
     let recipe = crate::mtsp::rules::get_game_recipe(appid);
     let missing_check_dlls = recipe
@@ -2882,22 +2891,13 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
     json!({"ok": true, "report": report})
 }
 
-pub fn handle_steam_compatdata(body: &serde_json::Map<String, Value>) -> Value {
-    let appid = match parse_steam_runtime_doctor_appid(body) {
-        Ok(appid) => appid,
-        Err(error) => return json!({"ok": false, "error": error}),
-    };
-    let requested_pipeline =
-        body.get("pipeline").and_then(|v| v.as_str()).and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
-    let pipeline = resolve_steam_pipeline_for_request(appid, requested_pipeline);
-    let dual = crate::scan::resolve_dual_game_dir(appid);
-    let name = crate::steam::get_game_name_from_manifest(appid).unwrap_or_else(|| format!("Game {}", appid));
-    match ensure_steam_game_bottle(appid, &name, dual.wine_dir.as_deref(), pipeline)
-        .and_then(|manifest| save_steam_compatdata(&manifest, pipeline))
-    {
-        Ok(record) => json!({"ok": true, "compatdata": record}),
-        Err(e) => json!({"ok": false, "error": e.to_string()}),
-    }
+pub fn handle_steam_compatdata(_body: &serde_json::Map<String, Value>) -> Value {
+    json!({
+        "ok": false,
+        "deprecated": true,
+        "replacement": "bottle manifest route state",
+        "error": "compatdata is deprecated and no longer written"
+    })
 }
 
 pub fn handle_install_recipe_deps(body: &serde_json::Map<String, Value>) -> Value {
@@ -6777,7 +6777,7 @@ mod tests {
     }
 
     #[test]
-    fn steam_compatdata_record_is_appid_scoped_and_launch_authoritative() {
+    fn deprecated_steam_compatdata_record_points_at_bottle_route_state() {
         let manifest = BottleManifest {
             id: steam_game_bottle_id(620),
             name: "Portal 2".into(),
@@ -6812,7 +6812,8 @@ mod tests {
 
         assert_eq!(record.appid, 620);
         assert_eq!(record.bottle_id, "steam_620");
-        assert!(record.compatdata_path.ends_with("/compatdata/620"));
+        assert!(record.compatdata_path.ends_with("/bottles/steam_620"));
+        assert!(record.log_dir.ends_with("/bottles/steam_620/logs"));
         assert_eq!(record.launch_pipeline, "m9");
         assert_eq!(record.steam_identity_mode, "wine_steam_background");
         assert_eq!(record.compat_tool_name, "MetalSharp");

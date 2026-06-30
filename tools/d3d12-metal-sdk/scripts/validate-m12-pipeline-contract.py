@@ -22,7 +22,6 @@ REQUIRED_ENV_KEYS = {
     "WINEDLLOVERRIDES",
     "WINEDLLPATH",
     "DXMT_WINEMETAL_UNIXLIB",
-    "DXMT_LOG_PATH",
     "METALSHARP_SHADER_CACHE_PATH",
     "DXMT_PIPELINE_CACHE_PATH",
 }
@@ -140,7 +139,7 @@ def validate_source_contract(data: dict[str, Any], errors: list[str]) -> None:
         "id: PipelineId::M12",
         "lib/dxmt_m12/x86_64-windows",
         "lib/dxmt_m12/x86_64-unix",
-        "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b",
+        "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b",
         'shader_cache_subdir: Some("m12")',
     ]:
         require(pattern in engine, f"engine missing `{pattern}`", errors)
@@ -184,7 +183,7 @@ def validate_m12_route_guards(data: dict[str, Any], errors: list[str]) -> None:
         require(pattern not in block, f"M12 engine block must not contain `{pattern}`", errors)
 
     for pattern in [
-        '!overrides.contains("mscompatdb")',
+        'assert!(m12_overrides.contains("dxgi_dxmt"))',
         '!m12.deploy_dlls.iter().any(|dll| dll.filename == "metalsharp_ntdll_hook.dll")',
         'winedllpath.contains("dxmt_m12/x86_64-windows")',
         'path.contains("dxmt_m12")',

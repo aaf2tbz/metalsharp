@@ -245,7 +245,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         copy_tree(m12_root / "x86_64-unix", roots["graphics"] / "dxmt-m12" / "x86_64-unix")
         copy_tree(m12_root / "x86_64-windows", roots["graphics"] / "dxmt-m12" / "x86_64-windows")
 
-    for name in ["mono-arm64", "goldberg", "eac-toggle", "shims", "shader-cache"]:
+    for name in ["mono-arm64", "goldberg", "shims", "shader-cache"]:
         copy_tree(source2 / name, roots["assets"] / name)
     copy_tree(source2 / "wine" / "etc", roots["assets"] / "wine" / "etc")
 

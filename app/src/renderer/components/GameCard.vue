@@ -112,7 +112,6 @@ const emit = defineEmits<{
 
 const toast = useToast();
 const goldbergActive = ref(false);
-const eacActive = ref(false);
 const pipelineName = ref("Auto");
 const pipelineResolvedLocally = ref(false);
 const selectedLaunchMode = ref("auto");
@@ -260,11 +259,6 @@ onMounted(async () => {
     );
     if (gs?.ok) goldbergActive.value = gs.goldberg_active;
 
-    const es = await api<{ ok: boolean; eac_toggle_active: boolean }>(
-      "GET",
-      `/eac-toggle/status?appid=${props.game.appid}`,
-    );
-    if (es?.ok) eacActive.value = es.eac_toggle_active;
   }
 });
 
@@ -327,19 +321,6 @@ async function toggleGoldberg(enable: boolean) {
     toast.show(enable ? "Steam Emu enabled" : "Steam Emu disabled", "success");
   } else {
     toast.show("Failed to toggle Steam Emu", "error");
-  }
-}
-
-async function toggleEac(enable: boolean) {
-  const result = await api<{ ok: boolean; eac_toggle_active: boolean }>("POST", "/eac-toggle/toggle", {
-    appid: props.game.appid,
-    enable,
-  });
-  if (result?.ok) {
-    eacActive.value = result.eac_toggle_active;
-    toast.show(enable ? "Offline EAC mode enabled" : "Offline EAC mode disabled", "success");
-  } else {
-    toast.show("Failed to toggle offline EAC mode", "error");
   }
 }
 
@@ -593,17 +574,6 @@ function formatBytes(bytes: number): string {
               />
               <span v-else class="spinner"></span>
             </button>
-          </div>
-          <div v-if="developerMode" class="secondary-action-grid">
-            <label class="tool-chip toggle-label" title="Offline EAC mode">
-              <input
-                type="checkbox"
-                :checked="eacActive"
-                @change="toggleEac(($event.target as HTMLInputElement).checked)"
-              />
-              <span class="toggle-switch"></span>
-              <span class="toggle-text">Offline EAC</span>
-            </label>
           </div>
           <button
             v-if="developerMode && game.can_uninstall !== false"

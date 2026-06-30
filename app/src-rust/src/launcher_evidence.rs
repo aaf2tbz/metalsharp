@@ -24,7 +24,6 @@ struct LauncherFacts {
     ea_msi_log_empty: bool,
     ubisoft_launcher_started: bool,
     ubisoft_version: Option<String>,
-    mscompatdb_errors: usize,
 }
 
 pub fn handle_launcher_evidence(body: &Map<String, Value>) -> Value {
@@ -77,7 +76,6 @@ pub fn handle_launcher_evidence(body: &Map<String, Value>) -> Value {
             "eaMsiLogEmpty": facts.ea_msi_log_empty,
             "ubisoftLauncherStarted": facts.ubisoft_launcher_started,
             "ubisoftVersion": facts.ubisoft_version,
-            "mscompatdbErrors": facts.mscompatdb_errors,
         },
         "detections": detections,
         "artifacts": artifacts,
@@ -317,7 +315,6 @@ fn summarize_launcher(
 
 fn parse_launcher_line(family: &str, line: &str, facts: &mut LauncherFacts) {
     let lower = line.to_ascii_lowercase();
-    facts.mscompatdb_errors += usize::from(lower.contains("mscompatdb:error"));
     match family {
         "ea" => {
             if lower.contains("inst-14-1603") {

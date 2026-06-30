@@ -27,9 +27,12 @@ interface LoginState {
 
 interface AppConfig {
   ok: boolean;
-  launch_mode: "native" | "wine";
-  wine_available: boolean;
+  launch_mode?: "native" | "wine";
+  wine_available?: boolean;
   native_available: boolean;
+  mono_available?: boolean;
+  graphicsRuntimeLogs?: boolean;
+  graphics_runtime_logs?: boolean;
 }
 
 interface UpdateStatus {

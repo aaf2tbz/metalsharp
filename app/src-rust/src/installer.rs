@@ -76,7 +76,6 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll",
 ];
 const ASSETS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
-    "assets/eac-toggle/x86_64-windows/_winhttp.dll",
     "assets/fna-kickstart/kick.bin.osx",
     "assets/fna-kickstart/FNA.dll",
     "assets/fna-kickstart/mscorlib.dll",
@@ -279,11 +278,10 @@ fn install_steps() -> Vec<InstallStep> {
         ("Host Runtime ABI", Box::new(install_host_runtime)),
         ("Support Assets", Box::new(install_split_assets_bundle)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
-        ("DXMT Metal Runtime", Box::new(install_dxmt_runtime)),
+        ("DXMT Graphics Runtimes", Box::new(|home| ensure_graphics_runtimes_ready(home))),
         ("GPTK D3DMetal Runtime", Box::new(install_gptk_runtime)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
         ("Steam Bridge Shim", Box::new(install_steam_bridge)),
-        ("Offline EAC Mode", Box::new(install_eac_toggle)),
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Mono Configs", Box::new(install_mono_configs)),
         ("Runtime Support", Box::new(|_| install_mono_arm64())),
@@ -500,8 +498,10 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
         let wine_dir = runtime_dir.join("wine");
         let source = tmp_extract.join("runtime").join("wine");
         if source.exists() {
+            let preserved_graphics = preserve_graphics_runtime_surfaces(&wine_dir, &tmp_extract)?;
             let _ = fs::remove_dir_all(&wine_dir);
             copy_dir_recursive(&source, &wine_dir)?;
+            restore_preserved_graphics_runtime_surfaces(&wine_dir, &preserved_graphics)?;
         }
 
         let source_host = tmp_extract.join("runtime").join("host");
@@ -548,6 +548,29 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
     }
 
     Err("MetalSharp runtime not found — no bundled metalsharp-runtime.tar.zst available".into())
+}
+
+fn preserve_graphics_runtime_surfaces(wine_dir: &Path, tmp_extract: &Path) -> Result<PathBuf, String> {
+    let preserve_dir = tmp_extract.join("preserved-graphics-runtimes");
+    let lib_dir = wine_dir.join("lib");
+    for surface in ["dxmt", "dxmt_m12"] {
+        let src = lib_dir.join(surface);
+        if src.exists() {
+            copy_dir_recursive(&src, &preserve_dir.join(surface))?;
+        }
+    }
+    Ok(preserve_dir)
+}
+
+fn restore_preserved_graphics_runtime_surfaces(wine_dir: &Path, preserve_dir: &Path) -> Result<(), String> {
+    for surface in ["dxmt", "dxmt_m12"] {
+        let preserved = preserve_dir.join(surface);
+        let dst = wine_dir.join("lib").join(surface);
+        if preserved.exists() && !dst.exists() {
+            copy_dir_recursive(&preserved, &dst)?;
+        }
+    }
+    Ok(())
 }
 
 fn metalsharp_wine_binary(home: &Path) -> PathBuf {
@@ -864,6 +887,8 @@ fn find_packaged_host_runtime() -> Option<PathBuf> {
 fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
     let archive = find_bundled_archive(ASSETS_BUNDLE)
         .ok_or_else(|| "Support assets not found — metalsharp-assets.tar.zst is missing".to_string())?;
+    let runtime_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
+    let _ = fs::remove_dir_all(runtime_dir.join("eac-toggle"));
     if split_bundle_current(home, ASSETS_BUNDLE, &archive) {
         return Ok(false);
     }
@@ -872,7 +897,6 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
     let _ = fs::create_dir_all(&tmp);
     extract_zst(&archive, &tmp, ASSETS_BUNDLE)?;
     let assets = tmp.join("assets");
-    let runtime_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime");
 
     let mut changed = false;
     for (src_name, dst_path) in [
@@ -880,7 +904,6 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
         ("mono-arm64", runtime_dir.join("mono-arm64")),
         ("dxvk-1.10.3", runtime_dir.join("dxvk-1.10.3")),
         ("goldberg", runtime_dir.join("goldberg")),
-        ("eac-toggle", runtime_dir.join("eac-toggle")),
         ("shims", runtime_dir.join("shims")),
         ("fnalibs", runtime_dir.join("fnalibs")),
         ("fna-kickstart", runtime_dir.join("fna-kickstart")),
@@ -1022,10 +1045,9 @@ fn install_metalsharp_wine(home: &PathBuf) -> Result<bool, String> {
     Err("MetalSharp Wine not found — no bundled wine.tar.zst available".into())
 }
 
-pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
+pub fn ensure_dxmt_runtime_ready(home: &Path) -> Result<bool, String> {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
-    let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
-    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_ready(&dxmt_m12_dir) {
+    if dxmt_runtime_current_for_dir(&dxmt_dir) {
         return Ok(false);
     }
 
@@ -1037,7 +1059,32 @@ pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
     changed |= install_scripts_tools_bundle(&home_buf)?;
     changed |= install_dxmt_runtime(&home_buf)?;
 
-    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_ready(&dxmt_m12_dir) {
+    if dxmt_runtime_current_for_dir(&dxmt_dir) {
+        Ok(changed)
+    } else {
+        Err(format!(
+            "DXMT runtime {} is not ready after setup; missing files under {}",
+            DXMT_BUNDLED_RUNTIME_VERSION,
+            dxmt_dir.display()
+        ))
+    }
+}
+
+pub fn ensure_dxmt_m12_runtime_ready(home: &Path) -> Result<bool, String> {
+    let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    if dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        return Ok(false);
+    }
+
+    let home_buf = home.to_path_buf();
+    let mut changed = false;
+    changed |= ensure_runtime_bundle_assets(&home_buf)?;
+    changed |= install_metalsharp_bundle(&home_buf)?;
+    changed |= install_host_runtime(&home_buf)?;
+    changed |= install_scripts_tools_bundle(&home_buf)?;
+    changed |= install_dxmt_m12_runtime(&home_buf)?;
+
+    if dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
         Ok(changed)
     } else {
         Err(format!(
@@ -1048,10 +1095,40 @@ pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
     }
 }
 
-fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
+pub fn ensure_graphics_runtimes_ready(home: &Path) -> Result<bool, String> {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        return Ok(false);
+    }
 
+    let home_buf = home.to_path_buf();
+    let mut changed = false;
+    changed |= ensure_runtime_bundle_assets(&home_buf)?;
+    changed |= install_metalsharp_bundle(&home_buf)?;
+    changed |= install_host_runtime(&home_buf)?;
+    changed |= install_scripts_tools_bundle(&home_buf)?;
+    changed |= install_dxmt_runtime(&home_buf)?;
+    changed |= install_dxmt_m12_runtime(&home_buf)?;
+
+    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        Ok(changed)
+    } else {
+        Err(format!(
+            "DXMT graphics runtimes {} are not ready after setup; legacy={} m12={}",
+            DXMT_BUNDLED_RUNTIME_VERSION,
+            dxmt_dir.display(),
+            dxmt_m12_dir.display()
+        ))
+    }
+}
+
+pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
+    ensure_dxmt_m12_runtime_ready(home)
+}
+
+fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
+    let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let bundled = find_bundled_archive(GRAPHICS_DLL_BUNDLE);
     if dxmt_runtime_current_for_dir(&dxmt_dir)
         && bundled.as_ref().is_some_and(|archive| split_bundle_current(home, GRAPHICS_DLL_BUNDLE, archive))
@@ -1059,68 +1136,78 @@ fn install_dxmt_runtime(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let _ = fs::create_dir_all(dxmt_dir.join("x86_64-unix"));
-    let _ = fs::create_dir_all(dxmt_dir.join("x86_64-windows"));
-    let _ = fs::create_dir_all(dxmt_m12_dir.join("x86_64-unix"));
-    let _ = fs::create_dir_all(dxmt_m12_dir.join("x86_64-windows"));
+    install_graphics_runtime_surface(
+        home,
+        "dxmt",
+        &dxmt_dir,
+        |dir| dxmt_runtime_ready(dir),
+        |dir| dxmt_runtime_current_for_dir(dir),
+        "fallback:~/metalsharp/runtime/dxmt",
+    )
+}
 
-    if let Some(archive) = bundled {
-        let tmp = std::env::temp_dir().join("metalsharp-dxmt-extract");
+fn install_dxmt_m12_runtime(home: &PathBuf) -> Result<bool, String> {
+    let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    let bundled = find_bundled_archive(GRAPHICS_DLL_BUNDLE);
+    if dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir)
+        && bundled.as_ref().is_some_and(|archive| split_bundle_current(home, GRAPHICS_DLL_BUNDLE, archive))
+    {
+        return Ok(false);
+    }
+
+    install_graphics_runtime_surface(
+        home,
+        "dxmt-m12",
+        &dxmt_m12_dir,
+        |dir| dxmt_m12_runtime_ready(dir),
+        |dir| dxmt_m12_runtime_current_for_dir(dir),
+        "fallback:~/metalsharp/runtime/dxmt-m12",
+    )
+}
+
+fn install_graphics_runtime_surface(
+    home: &PathBuf,
+    bundle_surface: &str,
+    dst_dir: &Path,
+    files_ready: fn(&Path) -> bool,
+    current: fn(&Path) -> bool,
+    fallback_source: &str,
+) -> Result<bool, String> {
+    let _ = fs::create_dir_all(dst_dir.join("x86_64-unix"));
+    let _ = fs::create_dir_all(dst_dir.join("x86_64-windows"));
+
+    if let Some(archive) = find_bundled_archive(GRAPHICS_DLL_BUNDLE) {
+        let tmp = std::env::temp_dir().join(format!("metalsharp-{}-extract", bundle_surface));
         let _ = fs::remove_dir_all(&tmp);
         let _ = fs::create_dir_all(&tmp);
         extract_zst(&archive, &tmp, GRAPHICS_DLL_BUNDLE)?;
 
-        let src_root = tmp.join("Graphics").join("dll");
-        copy_graphics_runtime_surface(&src_root.join("dxmt"), &dxmt_dir)?;
-        copy_graphics_runtime_surface(&src_root.join("dxmt-m12"), &dxmt_m12_dir)?;
-
-        ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
-        ensure_dxmt_runtime_compat_files(&dxmt_m12_dir)?;
-        write_dxmt_runtime_manifest(&dxmt_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
+        let src_root = tmp.join("Graphics").join("dll").join(bundle_surface);
+        copy_graphics_runtime_surface(&src_root, dst_dir)?;
+        ensure_dxmt_runtime_compat_files(dst_dir)?;
+        write_dxmt_runtime_manifest(dst_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
         mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
     } else {
-        let dxmt_src = home.join("metalsharp").join("runtime").join("dxmt");
-        let dxmt_m12_src = home.join("metalsharp").join("runtime").join("dxmt-m12");
-        if dxmt_src.join("x86_64-windows").join("d3d11.dll").exists() {
-            for subdir in &["x86_64-unix", "x86_64-windows"] {
-                let src = dxmt_src.join(subdir);
-                let dst = dxmt_dir.join(subdir);
-                if src.exists() {
-                    let _ = fs::create_dir_all(&dst);
-                    if let Ok(entries) = fs::read_dir(&src) {
-                        for entry in entries.flatten() {
-                            let _ = fs::copy(entry.path(), dst.join(entry.file_name()));
-                        }
-                    }
-                }
+        let fallback_surface = if bundle_surface == "dxmt-m12" { "dxmt-m12" } else { "dxmt" };
+        let src_root = home.join("metalsharp").join("runtime").join(fallback_surface);
+        if src_root.exists() {
+            copy_graphics_runtime_surface(&src_root, dst_dir)?;
+            ensure_dxmt_runtime_compat_files(dst_dir)?;
+            if files_ready(dst_dir) {
+                write_dxmt_runtime_manifest(dst_dir, fallback_source)?;
             }
-            if dxmt_m12_src.exists() {
-                for subdir in &["x86_64-unix", "x86_64-windows"] {
-                    let src = dxmt_m12_src.join(subdir);
-                    let dst = dxmt_m12_dir.join(subdir);
-                    if src.exists() {
-                        let _ = fs::create_dir_all(&dst);
-                        if let Ok(entries) = fs::read_dir(&src) {
-                            for entry in entries.flatten() {
-                                let _ = fs::copy(entry.path(), dst.join(entry.file_name()));
-                            }
-                        }
-                    }
-                }
-            }
-            ensure_dxmt_runtime_compat_files(&dxmt_dir)?;
-            ensure_dxmt_runtime_compat_files(&dxmt_m12_dir)?;
-            write_dxmt_runtime_manifest(&dxmt_dir, "fallback:~/metalsharp/runtime/dxmt")?;
         }
     }
 
-    if dxmt_runtime_current_for_dir(&dxmt_dir) {
+    if current(dst_dir) {
         Ok(true)
     } else {
         Err(format!(
-            "DXMT Metal runtime {} not installed — bundle metalsharp-graphics-dll.tar.zst or place files in ~/.metalsharp/runtime/dxmt/",
-            DXMT_BUNDLED_RUNTIME_VERSION
+            "DXMT runtime surface {} {} not installed — bundle metalsharp-graphics-dll.tar.zst or place files in ~/.metalsharp/runtime/{}/",
+            bundle_surface,
+            DXMT_BUNDLED_RUNTIME_VERSION,
+            bundle_surface
         ))
     }
 }
@@ -1145,30 +1232,64 @@ pub fn dxmt_runtime_current_for_ms_dir(ms_dir: &Path) -> bool {
     dxmt_runtime_current_for_dir(&ms_dir.join("runtime").join("wine").join("lib").join("dxmt"))
 }
 
+pub fn dxmt_m12_runtime_current_for_ms_dir(ms_dir: &Path) -> bool {
+    dxmt_m12_runtime_current_for_dir(&ms_dir.join("runtime").join("wine").join("lib").join("dxmt_m12"))
+}
+
+pub fn dxmt_graphics_runtimes_current_for_ms_dir(ms_dir: &Path) -> bool {
+    dxmt_runtime_current_for_ms_dir(ms_dir) && dxmt_m12_runtime_current_for_ms_dir(ms_dir)
+}
+
 pub fn dxmt_runtime_status() -> Value {
     let home = dirs::home_dir().unwrap_or_default();
     let dxmt_dir = dxmt_runtime_dir_for_home(&home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(&home);
     let installed_version = dxmt_runtime_installed_version(&dxmt_dir);
+    let m12_installed_version = dxmt_runtime_installed_version(&dxmt_m12_dir);
     let files_ready = dxmt_runtime_ready(&dxmt_dir);
     let m12_files_ready = dxmt_m12_runtime_ready(&dxmt_m12_dir);
-    let current = files_ready && m12_files_ready && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
+    let legacy_current = files_ready && installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
+    let m12_current = m12_files_ready && m12_installed_version.as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION);
 
     json!({
-        "current": current,
+        "current": legacy_current,
         "filesReady": files_ready,
+        "m12Current": m12_current,
         "m12FilesReady": m12_files_ready,
         "installedVersion": installed_version,
+        "m12InstalledVersion": m12_installed_version,
         "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
         "manifestPath": dxmt_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
+        "m12ManifestPath": dxmt_m12_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
+        "path": dxmt_dir.to_string_lossy(),
         "m12Path": dxmt_m12_dir.to_string_lossy(),
+        "dxmt": {
+            "current": legacy_current,
+            "filesReady": files_ready,
+            "installedVersion": installed_version,
+            "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
+            "manifestPath": dxmt_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
+            "path": dxmt_dir.to_string_lossy(),
+        },
+        "dxmt_m12": {
+            "current": m12_current,
+            "filesReady": m12_files_ready,
+            "installedVersion": m12_installed_version,
+            "requiredVersion": DXMT_BUNDLED_RUNTIME_VERSION,
+            "manifestPath": dxmt_m12_dir.join(DXMT_RUNTIME_MANIFEST).to_string_lossy(),
+            "path": dxmt_m12_dir.to_string_lossy(),
+        },
     })
 }
 
 fn dxmt_runtime_current_for_dir(dxmt_dir: &Path) -> bool {
     dxmt_runtime_ready(dxmt_dir)
-        && dxmt_m12_runtime_ready(&dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir))
         && dxmt_runtime_installed_version(dxmt_dir).as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION)
+}
+
+fn dxmt_m12_runtime_current_for_dir(dxmt_m12_dir: &Path) -> bool {
+    dxmt_m12_runtime_ready(dxmt_m12_dir)
+        && dxmt_runtime_installed_version(dxmt_m12_dir).as_deref() == Some(DXMT_BUNDLED_RUNTIME_VERSION)
 }
 
 fn dxmt_runtime_installed_version(dxmt_dir: &Path) -> Option<String> {
@@ -1531,41 +1652,6 @@ fn install_steam_bridge(home: &PathBuf) -> Result<bool, String> {
     }
 
     if shim_dst.exists() {
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
-fn install_eac_toggle(home: &PathBuf) -> Result<bool, String> {
-    let eac_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("eac-toggle");
-    let dll = eac_dir.join("x86_64-windows").join("_winhttp.dll");
-
-    if dll.exists() {
-        return Ok(false);
-    }
-
-    let _ = fs::create_dir_all(eac_dir.join("x86_64-windows"));
-
-    let bundled = find_bundled_archive("eac-toggle");
-    if let Some(archive) = bundled {
-        let tmp = std::env::temp_dir().join("metalsharp-eac-toggle-extract");
-        let _ = fs::remove_dir_all(&tmp);
-        let _ = fs::create_dir_all(&tmp);
-        extract_zst(&archive, &tmp, "eac-toggle")?;
-
-        let src_windows = tmp.join("x86_64-windows");
-        if src_windows.exists() {
-            for entry in fs::read_dir(&src_windows).map_err(|e| format!("read x86_64-windows: {}", e))? {
-                let entry = entry.map_err(|e| e.to_string())?;
-                let _ = fs::copy(entry.path(), eac_dir.join("x86_64-windows").join(entry.file_name()));
-            }
-        }
-
-        let _ = fs::remove_dir_all(&tmp);
-    }
-
-    if eac_dir.join("x86_64-windows").join("_winhttp.dll").exists() {
         Ok(true)
     } else {
         Ok(false)
@@ -2381,6 +2467,14 @@ mod tests {
     }
 
     #[test]
+    fn install_steps_use_split_graphics_runtime_and_do_not_install_eac_toggle() {
+        let names: Vec<&str> = install_steps().into_iter().map(|(name, _)| name).collect();
+
+        assert!(names.contains(&"DXMT Graphics Runtimes"));
+        assert!(!names.contains(&"Offline EAC Mode"));
+    }
+
+    #[test]
     fn graphics_bundle_layout_matches_release_manifest() {
         let manifest = include_str!("../../../tools/bundles/asset-manifest.tsv");
         let graphics_row = manifest
@@ -2431,6 +2525,40 @@ mod tests {
         fs::write(dxmt_dir.join(DXMT_RUNTIME_MANIFEST), br#"{"schema":"metalsharp.dxmt-runtime.v1","version":"old"}"#)
             .expect("write stale manifest");
         assert!(!dxmt_runtime_current_for_dir(&dxmt_dir));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_runtime_current_does_not_require_dxmt_m12_lane() {
+        let home = test_home("dxmt-current-no-m12");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        write_dxmt_runtime_files_only(&dxmt_dir);
+        write_dxmt_runtime_manifest(&dxmt_dir, "test").expect("write current DXMT manifest");
+
+        assert!(dxmt_runtime_current_for_dir(&dxmt_dir));
+        assert!(!dxmt_m12_runtime_current_for_dir(&dxmt_m12_runtime_dir_for_home(&home)));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn dxmt_m12_runtime_current_requires_its_own_manifest_and_sidecars() {
+        let home = test_home("dxmt-m12-own-manifest");
+        let dxmt_dir = dxmt_runtime_dir_for_home(&home);
+        let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(&home);
+        write_dxmt_runtime_files_only(&dxmt_dir);
+        write_dxmt_m12_runtime_files_only(&dxmt_m12_dir);
+        write_dxmt_runtime_manifest(&dxmt_dir, "legacy-test").expect("write legacy manifest");
+
+        assert!(dxmt_runtime_current_for_dir(&dxmt_dir));
+        assert!(!dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir));
+
+        write_dxmt_runtime_manifest(&dxmt_m12_dir, "m12-test").expect("write m12 manifest");
+        assert!(dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir));
+
+        fs::remove_file(dxmt_m12_dir.join("x86_64-unix").join("winemetal.so")).expect("remove m12 winemetal.so");
+        assert!(!dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir));
 
         let _ = fs::remove_dir_all(home);
     }
@@ -2568,6 +2696,11 @@ mod tests {
     }
 
     fn write_dxmt_runtime_files(dxmt_dir: &Path) {
+        write_dxmt_runtime_files_only(dxmt_dir);
+        write_dxmt_m12_runtime_files_only(&dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir));
+    }
+
+    fn write_dxmt_runtime_files_only(dxmt_dir: &Path) {
         let unix_dir = dxmt_dir.join("x86_64-unix");
         let pe_dir = dxmt_dir.join("x86_64-windows");
         fs::create_dir_all(&unix_dir).expect("create DXMT unix dir");
@@ -2576,10 +2709,11 @@ mod tests {
         for dll in DXMT_REQUIRED_PE {
             fs::write(pe_dir.join(dll), b"dll").expect("write DXMT DLL");
         }
+    }
 
-        let m12_dir = dxmt_m12_runtime_dir_from_dxmt_dir(dxmt_dir);
-        let m12_unix_dir = m12_dir.join("x86_64-unix");
-        let m12_pe_dir = m12_dir.join("x86_64-windows");
+    fn write_dxmt_m12_runtime_files_only(dxmt_m12_dir: &Path) {
+        let m12_unix_dir = dxmt_m12_dir.join("x86_64-unix");
+        let m12_pe_dir = dxmt_m12_dir.join("x86_64-windows");
         fs::create_dir_all(&m12_unix_dir).expect("create M12 Unix dir");
         fs::create_dir_all(&m12_pe_dir).expect("create M12 PE dir");
         for lib in DXMT_M12_REQUIRED_UNIX {

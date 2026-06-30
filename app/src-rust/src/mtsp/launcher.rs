@@ -528,6 +528,7 @@ pub fn prepare_steam_pipeline_env(
     }
     if let Some(game_dir) = recipe.game_dir.as_ref() {
         prepare_steam_api_for_game_dir(&home, game_dir, appid, pipeline_id);
+        cleanup_legacy_eac_toggle_artifacts(game_dir);
         cleanup_legacy_injections(game_dir)?;
         if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
             let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
@@ -1496,9 +1497,10 @@ fn write_runtime_identity(log: &mut dyn Write, prefix: &Path, appid: Option<u32>
     writeln!(log, "wine_runtime={}", metalsharp_home.join("runtime").join("wine").display())?;
     writeln!(log, "steam_bridge_port={}", bridge_port())?;
     if let Some(appid) = appid {
-        let compatdata_dir = crate::bottles::steam_compatdata_dir(appid);
-        writeln!(log, "compatdata={}", compatdata_dir.display())?;
-        writeln!(log, "compatdata_manifest={}", crate::bottles::steam_compatdata_manifest_path(appid).display())?;
+        let bottle_id = format!("steam_{}", appid);
+        writeln!(log, "route_state=bottle_manifest")?;
+        writeln!(log, "bottle_manifest={}", crate::bottles::bottle_manifest_path(&bottle_id).display())?;
+        writeln!(log, "bottle_logs={}", crate::bottles::bottle_logs_dir(&bottle_id).display())?;
     }
     if prefix == metalsharp_home.join("prefix-steam") {
         writeln!(log, "steam_identity_mode=wine_steam_background")?;
@@ -1856,12 +1858,12 @@ fn find_mono_binary_for_app(appid: u32) -> Result<PathBuf, Box<dyn std::error::E
 
 fn fna_launch_log_path(appid: u32) -> PathBuf {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    crate::bottles::steam_compatdata_dir(appid).join("logs").join(format!("fna-launch-{}.log", ts))
+    crate::bottles::bottle_logs_dir(&format!("steam_{}", appid)).join(format!("fna-launch-{}.log", ts))
 }
 
 fn mtsp_launch_log_path(appid: u32) -> PathBuf {
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    crate::bottles::steam_compatdata_dir(appid).join("logs").join(format!("mtsp-launch-{}.log", ts))
+    crate::bottles::bottle_logs_dir(&format!("steam_{}", appid)).join(format!("mtsp-launch-{}.log", ts))
 }
 
 fn tail_text(path: &Path, max_bytes: usize) -> String {
@@ -1931,6 +1933,30 @@ fn cleanup_m12_legacy_hook_artifacts(game_dir: &Path, prefix: &Path) {
     let windows = prefix.join("drive_c").join("windows");
     for system_dir in ["system32", "syswow64"] {
         let _ = std::fs::remove_file(windows.join(system_dir).join("metalsharp_ntdll_hook.dll"));
+    }
+}
+
+fn cleanup_legacy_eac_toggle_artifacts(game_dir: &Path) {
+    let targets = [
+        game_dir.to_path_buf(),
+        game_dir.join("Game"),
+        game_dir.join("bin"),
+        game_dir.join("Binaries").join("Win64"),
+        game_dir.join("win64"),
+    ];
+
+    for target in targets {
+        if !target.exists() {
+            continue;
+        }
+        let config = target.join("anti_cheat_toggler_config.ini");
+        let mod_list = target.join("anti_cheat_toggler_mod_list.txt");
+        let has_legacy_toggle_marker = config.exists() || mod_list.exists();
+        let _ = std::fs::remove_file(&config);
+        let _ = std::fs::remove_file(&mod_list);
+        if has_legacy_toggle_marker {
+            let _ = std::fs::remove_file(target.join("_winhttp.dll"));
+        }
     }
 }
 
@@ -2088,13 +2114,41 @@ fn steam_pipeline_env_pairs(home: &PathBuf, node: &PipelineNode, appid: u32) -> 
     env.extend(app_compat_env_pairs(appid, node.id));
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
-            env.push((key, value));
+            if !is_reserved_route_env_key(node.id, &key) {
+                env.push((key, value));
+            }
         }
     }
     env
 }
 
+fn is_reserved_route_env_key(pipeline_id: PipelineId, key: &str) -> bool {
+    if pipeline_id != PipelineId::M12 {
+        return false;
+    }
+    matches!(
+        key,
+        "WINEDLLOVERRIDES"
+            | "WINEDLLPATH"
+            | "DYLD_LIBRARY_PATH"
+            | "DYLD_FALLBACK_LIBRARY_PATH"
+            | "DXMT_WINEMETAL_UNIXLIB"
+            | "DXMT_CONFIG_FILE"
+            | "MS_GRAPHICS_BACKEND"
+            | "WINEMSYNC"
+            | "DXMT_LOG_PATH"
+    )
+}
+
 fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, String)> {
+    app_compat_env_pairs_with_logs(appid, pipeline_id, crate::launch::graphics_runtime_logs_enabled())
+}
+
+fn app_compat_env_pairs_with_logs(
+    appid: u32,
+    pipeline_id: PipelineId,
+    graphics_runtime_logs: bool,
+) -> Vec<(String, String)> {
     if pipeline_id == PipelineId::M9 && is_m9_stuck_loading_title(appid) {
         return vec![
             ("DXMT_ASYNC_PIPELINE_COMPILE".to_string(), "0".to_string()),
@@ -2107,26 +2161,30 @@ fn app_compat_env_pairs(appid: u32, pipeline_id: PipelineId) -> Vec<(String, Str
 
     if appid == 1962700 && pipeline_id == PipelineId::M12 {
         let mut env = vec![
-            ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
-            ("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
-            ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Device,Queue,SwapChain,Presenter,PSO".to_string()),
-            ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
-            ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
             ("DXMT_D3D12_ENABLE_GEOMETRY_MESH".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_SWAPCHAIN_BLIT".to_string(), "1".to_string()),
             ("DXMT_D3D12_AUTOPRESENT_SWAPCHAIN".to_string(), "1".to_string()),
             ("DXMT_D3D12_LIVE_PRESENT".to_string(), "1".to_string()),
             ("DXMT_D3D12_REASSERT_WINDOW_HANDOFF".to_string(), "1".to_string()),
-            ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
             ("DXMT_D3D12_DISABLE_RUNTIME_MSC".to_string(), "1".to_string()),
             ("DXMT_D3D12_FORCE_COLOR_WRITE_STATE".to_string(), "1".to_string()),
             ("DXMT_METALFX_SPATIAL_SWAPCHAIN".to_string(), "0".to_string()),
             ("DXMT_METALFX_SPATIAL".to_string(), "0".to_string()),
             ("DXMT_METALFX_TEMPORAL".to_string(), "0".to_string()),
             ("DXMT_CONFIG".to_string(), "d3d11.preferredMaxFrameRate=60".to_string()),
-            ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
         ];
+        if graphics_runtime_logs {
+            env.extend([
+                ("DXMT_DXGI_TRACE".to_string(), "1".to_string()),
+                ("DXMT_WINEMETAL_DEBUG".to_string(), "1".to_string()),
+                ("DXMT_D3D12_TRACE".to_string(), "1".to_string()),
+                ("DXMT_D3D12_TRACE_COMPONENTS".to_string(), "Device,Queue,SwapChain,Presenter,PSO".to_string()),
+                ("DXMT_D3D12_TRACE_MAX_MB".to_string(), "16".to_string()),
+                ("DXMT_D3D12_TIMING_MIN_MS".to_string(), "0".to_string()),
+                ("DXMT_D3D12_PRESENT_LOG_INTERVAL".to_string(), "120".to_string()),
+                ("DXMT_DUMP_MSL".to_string(), "1".to_string()),
+            ]);
+        }
         if std::env::var("METALSHARP_M12_DIAGNOSTIC_CAPTURE")
             .map(|value| !value.is_empty() && value != "0")
             .unwrap_or(false)
@@ -2181,7 +2239,9 @@ fn apply_app_launch_env(cmd: &mut Command, appid: u32, pipeline_id: PipelineId) 
     }
     if let Some(recipe) = super::rules::get_game_recipe(appid) {
         for (key, value) in recipe.env {
-            cmd.env(key, value);
+            if !is_reserved_route_env_key(pipeline_id, &key) {
+                cmd.env(key, value);
+            }
         }
     }
 }
@@ -2193,6 +2253,15 @@ fn apply_cache_env(cmd: &mut Command, node: &PipelineNode, cache_paths: Option<&
 }
 
 fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_root: &PathBuf) -> Vec<(String, String)> {
+    cache_env_pairs_with_logs(node, cache_paths, ms_root, crate::launch::graphics_runtime_logs_enabled())
+}
+
+fn cache_env_pairs_with_logs(
+    node: &PipelineNode,
+    cache_paths: Option<&CachePaths>,
+    ms_root: &PathBuf,
+    graphics_runtime_logs: bool,
+) -> Vec<(String, String)> {
     let Some(cache) = cache_paths else {
         return Vec::new();
     };
@@ -2211,7 +2280,9 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
         "dxmt" => {
             env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir));
             env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
-            env.push(("DXMT_LOG_PATH".to_string(), log_dir));
+            if graphics_runtime_logs {
+                env.push(("DXMT_LOG_PATH".to_string(), log_dir));
+            }
         },
         "dxvk" => {
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
@@ -2225,7 +2296,9 @@ fn cache_env_pairs(node: &PipelineNode, cache_paths: Option<&CachePaths>, ms_roo
             env.push(("DXMT_SHADER_CACHE_PATH".to_string(), shader_dir.clone()));
             env.push(("DXVK_STATE_CACHE_PATH".to_string(), shader_dir));
             env.push(("DXMT_PIPELINE_CACHE_PATH".to_string(), pipeline_dir.clone()));
-            env.push(("DXMT_LOG_PATH".to_string(), log_dir));
+            if graphics_runtime_logs {
+                env.push(("DXMT_LOG_PATH".to_string(), log_dir));
+            }
         },
         "mono" | "macos-steam" => {
             env.push(("FNA3D_SHADER_CACHE_PATH".to_string(), shader_dir));
@@ -4070,82 +4143,6 @@ pub fn deploy_steam_appid(game_dir: &Path, appid: u32) {
     }
 }
 
-pub fn deploy_eac_toggle(game_dir: &PathBuf) {
-    let home = dirs::home_dir().unwrap_or_default();
-    let eac_dir =
-        crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("eac-toggle").join("x86_64-windows");
-    if !eac_dir.exists() {
-        return;
-    }
-
-    let targets: Vec<PathBuf> = vec![
-        game_dir.join("Game"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("bin"),
-        game_dir.join("win64"),
-        game_dir.clone(),
-    ];
-
-    let dll = eac_dir.join("_winhttp.dll");
-    let config = eac_dir.join("anti_cheat_toggler_config.ini");
-    let mod_list = eac_dir.join("anti_cheat_toggler_mod_list.txt");
-    if !dll.exists() {
-        return;
-    }
-
-    for target in &targets {
-        if !target.exists() {
-            continue;
-        }
-        if !target.join("_winhttp.dll").exists() {
-            let _ = std::fs::copy(&dll, target.join("_winhttp.dll"));
-        }
-        if !target.join("anti_cheat_toggler_config.ini").exists() {
-            let _ = std::fs::copy(&config, target.join("anti_cheat_toggler_config.ini"));
-        }
-        if !target.join("anti_cheat_toggler_mod_list.txt").exists() {
-            let _ = std::fs::copy(&mod_list, target.join("anti_cheat_toggler_mod_list.txt"));
-        }
-        break;
-    }
-}
-
-pub fn cleanup_eac_toggle(game_dir: &PathBuf) {
-    let targets: Vec<PathBuf> = vec![
-        game_dir.clone(),
-        game_dir.join("Game"),
-        game_dir.join("bin"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("win64"),
-    ];
-
-    for target in &targets {
-        if !target.exists() {
-            continue;
-        }
-        let _ = std::fs::remove_file(target.join("_winhttp.dll"));
-        let _ = std::fs::remove_file(target.join("anti_cheat_toggler_config.ini"));
-        let _ = std::fs::remove_file(target.join("anti_cheat_toggler_mod_list.txt"));
-    }
-}
-
-pub fn eac_toggle_status(game_dir: &PathBuf) -> bool {
-    let targets: Vec<PathBuf> = vec![
-        game_dir.clone(),
-        game_dir.join("Game"),
-        game_dir.join("bin"),
-        game_dir.join("Binaries").join("Win64"),
-        game_dir.join("win64"),
-    ];
-
-    for target in &targets {
-        if target.exists() && target.join("_winhttp.dll").exists() {
-            return true;
-        }
-    }
-    false
-}
-
 fn spawn_metalshaderconverter_sidecar(appid: u32, home: &Path, cache_paths: Option<&CachePaths>) {
     let tool_candidates = [
         PathBuf::from("/usr/local/bin/metal-shaderconverter"),
@@ -4359,21 +4356,26 @@ mod tests {
         // d3d10core/winemetal) from the isolated lib/dxmt_m12 surface.
         let node = get_pipeline(PipelineId::M12);
         let filenames: Vec<&str> = node.deploy_dlls.iter().map(|d| d.filename).collect();
-        for required in ["d3d12.dll", "dxgi.dll", "d3d11.dll", "d3d10core.dll", "winemetal.dll"] {
+        let required = [
+            "d3d12.dll",
+            "d3d11.dll",
+            "dxgi.dll",
+            "dxgi_dxmt.dll",
+            "d3d10core.dll",
+            "winemetal.dll",
+            "nvapi64.dll",
+            "nvngx.dll",
+        ];
+        assert_eq!(filenames.len(), required.len(), "M12 deploy list must be the Elden-proven 8 DLL set");
+        for required in required {
             assert!(filenames.contains(&required), "M12 deploy list must include {} (got {:?})", required, filenames);
         }
         for deploy in &node.deploy_dlls {
-            if matches!(
-                deploy.filename,
-                "d3d12.dll" | "d3d11.dll" | "dxgi.dll" | "d3d10core.dll" | "winemetal.dll" | "dxgi_dxmt.dll"
-            ) {
-                assert!(
-                    deploy.source_subpath.starts_with("lib/dxmt_m12/"),
-                    "M12 DLL {} must come from lib/dxmt_m12, got {}",
-                    deploy.filename,
-                    deploy.source_subpath
-                );
-            }
+            assert_eq!(
+                deploy.source_subpath, "lib/dxmt_m12/x86_64-windows",
+                "M12 DLL {} must come from the isolated PR230 dxmt_m12 runtime surface",
+                deploy.filename
+            );
         }
     }
 
@@ -4516,19 +4518,28 @@ mod tests {
 
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
-        assert!(keys.contains("DXMT_LOG_PATH"));
+        assert!(!keys.contains("DXMT_LOG_PATH"));
         assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
+
+        let log_env = cache_env_pairs_with_logs(node, Some(&cache), &PathBuf::from("/tmp/metalsharp-runtime"), true);
+        assert!(log_env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value == "/tmp/m9-logs/"));
         assert!(!keys.contains("DXVK_STATE_CACHE_PATH"));
         assert!(!keys.contains("DXVK_LOG_PATH"));
         assert!(!keys.contains("VK_ICD_FILENAMES"));
     }
 
     #[test]
-    fn m12_dxmt_log_path_uses_shared_logs_folder() {
+    fn m12_dxmt_log_path_uses_shared_logs_folder_when_developer_logs_enabled() {
         let home = test_dir("m12-log-path");
         let node = get_pipeline(PipelineId::M12);
+        let cache = build_cache_paths(&home, node, 1583230).expect("m12 cache paths");
 
-        let env = steam_pipeline_env_pairs(&home, node, 1583230);
+        let env = cache_env_pairs_with_logs(
+            node,
+            Some(&cache),
+            &crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine"),
+            true,
+        );
         let dxmt_log_path =
             env.iter().find(|(key, _)| key == "DXMT_LOG_PATH").map(|(_, value)| value.as_str()).unwrap_or_default();
 
@@ -4552,7 +4563,7 @@ mod tests {
             assert!(config.unwrap_or_default().contains("d3d11.preferredMaxFrameRate=60"));
             assert!(summary.unwrap_or_default().contains("/shader-cache/"));
             assert!(summary.unwrap_or_default().contains("/pipeline-cache/"));
-            assert!(env.iter().any(|(key, value)| key == "DXMT_LOG_PATH" && value.ends_with('/')));
+            assert!(!env.iter().any(|(key, _)| key == "DXMT_LOG_PATH"));
             let _ = std::fs::remove_dir_all(home);
         }
     }
@@ -4606,6 +4617,25 @@ mod tests {
     }
 
     #[test]
+    fn m12_reserved_route_env_keys_cannot_be_overridden_by_rules() {
+        for key in [
+            "WINEDLLOVERRIDES",
+            "WINEDLLPATH",
+            "DYLD_LIBRARY_PATH",
+            "DYLD_FALLBACK_LIBRARY_PATH",
+            "DXMT_WINEMETAL_UNIXLIB",
+            "DXMT_CONFIG_FILE",
+            "MS_GRAPHICS_BACKEND",
+            "WINEMSYNC",
+            "DXMT_LOG_PATH",
+        ] {
+            assert!(is_reserved_route_env_key(PipelineId::M12, key), "{} must be reserved for M12", key);
+            assert!(!is_reserved_route_env_key(PipelineId::M11, key), "{} should remain overridable outside M12", key);
+        }
+        assert!(!is_reserved_route_env_key(PipelineId::M12, "DXMT_D3D12_UE_SM6_COMPAT"));
+    }
+
+    #[test]
     fn steam_pipeline_env_includes_route_overrides_and_cache_keys() {
         let home = test_dir("steam-env");
         let node = get_pipeline(PipelineId::M12);
@@ -4620,7 +4650,7 @@ mod tests {
         assert!(keys.contains("SteamOverlayGameId"));
         assert!(keys.contains("DXMT_SHADER_CACHE_PATH"));
         assert!(keys.contains("DXMT_PIPELINE_CACHE_PATH"));
-        assert!(keys.contains("DXMT_LOG_PATH"));
+        assert!(!keys.contains("DXMT_LOG_PATH"));
         assert!(keys.contains("METALSHARP_CACHE_SUMMARY"));
         assert!(keys.contains("DXMT_CONFIG"));
         assert_eq!(env_value(&env, "DXMT_D3D12_UE_SM6_COMPAT"), Some("1"));
@@ -4636,8 +4666,8 @@ mod tests {
         );
         let overrides = env.iter().find(|(key, _)| key == "WINEDLLOVERRIDES").map(|(_, value)| value).unwrap();
         assert!(overrides.contains("d3d12"));
+        assert!(overrides.contains("dxgi_dxmt"));
         assert!(overrides.contains("gameoverlayrenderer,gameoverlayrenderer64=d"));
-        assert!(!overrides.contains("mscompatdb"));
         assert!(!keys.contains("CX_ROOT"));
         assert!(!keys.contains("WINESERVER"));
         assert!(!keys.contains("WINELOADER"));
@@ -4649,6 +4679,18 @@ mod tests {
         assert!(env_value(&env, "DYLD_LIBRARY_PATH").unwrap_or_default().contains("dxmt_m12/x86_64-unix"));
         assert!(env_value(&env, "DYLD_FALLBACK_LIBRARY_PATH").unwrap_or_default().contains("dxmt_m12/x86_64-unix"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn subnautica2_m12_trace_env_is_opt_in_only() {
+        let default_env = app_compat_env_pairs_with_logs(1962700, PipelineId::M12, false);
+        assert!(default_env.iter().any(|(key, _)| key == "DXMT_D3D12_ENABLE_GEOMETRY_MESH"));
+        assert!(!default_env.iter().any(|(key, _)| key == "DXMT_D3D12_TRACE"));
+        assert!(!default_env.iter().any(|(key, _)| key == "DXMT_DUMP_MSL"));
+
+        let log_env = app_compat_env_pairs_with_logs(1962700, PipelineId::M12, true);
+        assert!(log_env.iter().any(|(key, value)| key == "DXMT_D3D12_TRACE" && value == "1"));
+        assert!(log_env.iter().any(|(key, value)| key == "DXMT_DUMP_MSL" && value == "1"));
     }
 
     #[test]
@@ -5286,7 +5328,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_log_identity_records_host_runtime_and_compatdata_paths() {
+    fn launch_log_identity_records_host_runtime_and_bottle_route_state_paths() {
         let mut log = Vec::new();
         let prefix = crate::platform::metalsharp_home_dir().join("prefix-steam");
 
@@ -5296,7 +5338,9 @@ mod tests {
         assert!(text.contains("host_abi=1.0"));
         assert!(text.contains("host_runtime="));
         assert!(text.contains("steam_bridge_port="));
-        assert!(text.contains("compatdata_manifest="));
+        assert!(text.contains("route_state=bottle_manifest"));
+        assert!(text.contains("bottle_manifest="));
+        assert!(text.contains("bottle_logs="));
         assert!(text.contains("steam_identity_mode=wine_steam_background"));
     }
 
@@ -5396,6 +5440,28 @@ mod tests {
 
         assert_eq!(std::fs::read(game_dir.join("start_protected_game.exe")).unwrap(), b"EAC_STUB");
         assert!(!game_dir.join("start_protected_game.old").exists());
+
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn legacy_eac_toggle_cleanup_removes_marked_files_only() {
+        let home = test_dir("legacy-eac-toggle-cleanup");
+        let marked = home.join("Binaries").join("Win64");
+        let unmarked = home.join("bin");
+        std::fs::create_dir_all(&marked).expect("create marked dir");
+        std::fs::create_dir_all(&unmarked).expect("create unmarked dir");
+        std::fs::write(marked.join("_winhttp.dll"), b"OLD_TOGGLE").expect("write toggle dll");
+        std::fs::write(marked.join("anti_cheat_toggler_config.ini"), b"config").expect("write toggle config");
+        std::fs::write(marked.join("anti_cheat_toggler_mod_list.txt"), b"mods").expect("write toggle mods");
+        std::fs::write(unmarked.join("_winhttp.dll"), b"OTHER").expect("write unrelated dll");
+
+        cleanup_legacy_eac_toggle_artifacts(&home);
+
+        assert!(!marked.join("_winhttp.dll").exists());
+        assert!(!marked.join("anti_cheat_toggler_config.ini").exists());
+        assert!(!marked.join("anti_cheat_toggler_mod_list.txt").exists());
+        assert_eq!(std::fs::read(unmarked.join("_winhttp.dll")).unwrap(), b"OTHER");
 
         let _ = std::fs::remove_dir_all(home);
     }

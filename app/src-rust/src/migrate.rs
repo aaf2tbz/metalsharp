@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
-const MIGRATE_SCHEMA_VERSION: u64 = 3;
+const MIGRATE_SCHEMA_VERSION: u64 = 4;
 const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "steamapps",
     "common",
@@ -34,7 +34,6 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
     "setup.json",
     "steam_config.json",
     "bottle.json",
-    "metalsharp-compatdata.json",
     "library.json",
     "apps.json",
     "routes.json",
@@ -381,13 +380,13 @@ fn runtime_core_ready(ms_dir: &Path) -> bool {
             .join("Resources"),
         ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
         ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
-        ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
         ms_dir.join("configs").join("mtsp-rules.toml"),
         runtime_wine.join("etc").join("dxmt.conf"),
     ]
     .iter()
     .all(|path| path.exists())
         && framework_has_resource_dylib(&runtime_wine.join("lib").join("external").join("D3DMetal.framework"))
+        && crate::installer::dxmt_graphics_runtimes_current_for_ms_dir(ms_dir)
 }
 
 fn framework_has_resource_dylib(framework: &Path) -> bool {
@@ -761,7 +760,6 @@ struct PreservedData {
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
-    compatdata_tmp: PathBuf,
     prefix_steam_dosdevice_links: Vec<(String, PathBuf)>,
     prefix_gptk_dosdevice_links: Vec<(String, PathBuf)>,
 }
@@ -913,28 +911,14 @@ fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
         report.record("preserve", "skipped", "bottles", None, "bottles directory absent");
     }
 
-    write_migrate_progress(
-        "running",
-        2,
-        MIGRATION_TOTAL_STEPS,
-        "Preserving user settings (compatdata metadata)...",
-        None,
-    );
-    let compatdata_tmp = tmp.join("compatdata");
     let compatdata = ms_dir.join("compatdata");
-    if compatdata.exists() {
-        let _ = fs::create_dir_all(&compatdata_tmp);
-        preserve_settings_only(&compatdata, &compatdata_tmp);
-        report.record(
-            "preserve",
-            "preserved",
-            "compatdata",
-            Some(compatdata.to_string_lossy().to_string()),
-            "compatdata manifests preserved (appid-scoped routes)",
-        );
-    } else {
-        report.record("preserve", "skipped", "compatdata", None, "compatdata directory absent");
-    }
+    report.record(
+        "preserve",
+        "skipped",
+        "compatdata",
+        if compatdata.exists() { Some(compatdata.to_string_lossy().to_string()) } else { None },
+        "compatdata is deprecated; route state is preserved from bottle manifests instead",
+    );
 
     let prefix_steam_dosdevice_links = collect_prefix_dosdevice_links(&ms_dir.join("prefix-steam"));
     report.record(
@@ -960,7 +944,6 @@ fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
             games_tmp,
             sharp_library_tmp,
             bottles_tmp,
-            compatdata_tmp,
             prefix_steam_dosdevice_links,
             prefix_gptk_dosdevice_links,
         },
@@ -1990,22 +1973,15 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
         report.record("restore", "skipped", "bottles", None, "no preserved bottles payload");
     }
 
-    if preserved.compatdata_tmp.exists() {
-        let dst = ms_dir.join("compatdata");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        preserve_settings_only(&preserved.compatdata_tmp, &dst);
-        report.record(
-            "restore",
-            "restored",
-            "compatdata",
-            Some(dst.to_string_lossy().to_string()),
-            "compatdata manifests restored (appid-scoped routes)",
-        );
-    } else {
-        report.record("restore", "skipped", "compatdata", None, "no preserved compatdata payload");
-    }
+    let compatdata = ms_dir.join("compatdata");
+    let _ = fs::remove_dir_all(&compatdata);
+    report.record(
+        "restore",
+        "removed",
+        "compatdata",
+        Some(compatdata.to_string_lossy().to_string()),
+        "compatdata is deprecated and was not restored; bottle manifests are launch-authoritative",
+    );
 
     if let Some(ref data) = preserved.setup_json {
         restore_setup_json(ms_dir, data, steam_api_key_restored);
@@ -2203,7 +2179,7 @@ mod tests {
             .collect();
 
         assert!(preserved_categories.contains(&"bottles"), "bottles must be reported preserved: {:?}", report.entries);
-        assert!(preserved_categories.contains(&"compatdata"), "compatdata must be reported preserved");
+        assert!(skipped_categories.contains(&"compatdata"), "compatdata must be reported deprecated/skipped");
         assert!(
             skipped_categories.contains(&"prefix-steam"),
             "absent prefix-steam must be reported skipped with a reason"
@@ -2226,6 +2202,10 @@ mod tests {
             .map(|e| e.category)
             .collect();
         assert!(restored_categories.contains(&"bottles"), "bottles must be reported restored");
+        assert!(
+            restore_report.entries.iter().any(|entry| entry.category == "compatdata" && entry.outcome == "removed"),
+            "compatdata removal must be reported"
+        );
 
         // The persisted report must round-trip through latest_migration_report_in()
         // without mutating the process-global METALSHARP_HOME (which would race
@@ -2377,21 +2357,21 @@ mod tests {
     }
 
     #[test]
-    fn migration_preserves_compatdata_across_runtime_cleanup() {
-        let home = test_dir("preserve-compatdata");
+    fn migration_removes_deprecated_compatdata_across_runtime_cleanup() {
+        let home = test_dir("remove-compatdata");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         let compat_manifest = ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json");
         fs::create_dir_all(compat_manifest.parent().unwrap()).expect("create compatdata dir");
         fs::write(&compat_manifest, br#"{"appid":620}"#).expect("write compatdata manifest");
 
         let (preserved, mut report) = preserve_user_data(&ms_dir);
-        fs::remove_dir_all(ms_dir.join("compatdata")).expect("remove live compatdata");
         remove_old_runtime(&ms_dir);
         restore_user_data(&ms_dir, &preserved, &mut report);
 
-        assert_eq!(
-            fs::read_to_string(ms_dir.join("compatdata").join("620").join("metalsharp-compatdata.json")).unwrap(),
-            r#"{"appid":620}"#
+        assert!(!ms_dir.join("compatdata").exists(), "compatdata must not be restored");
+        assert!(
+            report.entries.iter().any(|entry| entry.category == "compatdata" && entry.outcome == "removed"),
+            "compatdata removal must be recorded"
         );
         let _ = fs::remove_dir_all(home);
     }
@@ -2837,7 +2817,6 @@ mod tests {
                 .join("libD3DMetalHelper.dylib"),
             ms_dir.join("runtime").join("goldberg").join("x86").join("steam_api.dll"),
             ms_dir.join("runtime").join("goldberg").join("x64").join("steam_api64.dll"),
-            ms_dir.join("runtime").join("eac-toggle").join("x86_64-windows").join("_winhttp.dll"),
             ms_dir.join("configs").join("mtsp-rules.toml"),
             runtime_wine.join("etc").join("dxmt.conf"),
         ] {
@@ -2845,15 +2824,17 @@ mod tests {
             fs::write(path, b"test").expect("write runtime file");
         }
 
-        fs::write(
-            runtime_wine.join("lib").join("dxmt").join("metalsharp-dxmt-runtime.json"),
-            serde_json::to_string_pretty(&json!({
-                "schema": "metalsharp.dxmt-runtime.v1",
-                "version": crate::installer::DXMT_BUNDLED_RUNTIME_VERSION,
-            }))
-            .expect("serialize DXMT manifest"),
-        )
-        .expect("write DXMT manifest");
+        for lane in ["dxmt", "dxmt_m12"] {
+            fs::write(
+                runtime_wine.join("lib").join(lane).join("metalsharp-dxmt-runtime.json"),
+                serde_json::to_string_pretty(&json!({
+                    "schema": "metalsharp.dxmt-runtime.v1",
+                    "version": crate::installer::DXMT_BUNDLED_RUNTIME_VERSION,
+                }))
+                .expect("serialize DXMT manifest"),
+            )
+            .expect("write DXMT manifest");
+        }
     }
 
     fn write_host_runtime(ms_dir: &Path) {

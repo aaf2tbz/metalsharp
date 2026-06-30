@@ -9,7 +9,7 @@
   "required_env": [
     {
       "key": "WINEDLLOVERRIDES",
-      "value_contains": "winemetal,d3d12,dxgi,d3d11,d3d10core=n,b",
+      "value_contains": "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b",
       "proves": "Wine loads the M12 DXMT D3D12/DXGI/WineMetal surface and D3D11 fallback from the staged runtime before builtin DLLs while leaving Steam overlay renderers disabled."
     },
     {
@@ -23,11 +23,6 @@
       "proves": "The PE winemetal.dll bridge opens the app-local Unix WineMetal sidecar by basename, matching the cube-proven launch method."
     },
     {
-      "key": "DXMT_LOG_PATH",
-      "value_contains": "/.metalsharp/logs/m12-pipeline/",
-      "proves": "DXMT component logs and focused diagnostics write to the shared Open Logs M12 pipeline folder, not shader or pipeline cache directories."
-    },
-    {
       "key": "METALSHARP_SHADER_CACHE_PATH",
       "value_contains": "/shader-cache/m12/",
       "proves": "Shader outputs remain in the shader cache and are not conflated with logs."
@@ -36,6 +31,13 @@
       "key": "DXMT_PIPELINE_CACHE_PATH",
       "value_contains": "/pipeline-cache/m12/",
       "proves": "PSO/pipeline cache outputs remain separate from the shared diagnostic log."
+    }
+  ],
+  "developer_logging_env": [
+    {
+      "key": "DXMT_LOG_PATH",
+      "value_contains": "/.metalsharp/logs/m12-pipeline/",
+      "proves": "When developer graphics runtime logs are enabled, DXMT component logs and focused diagnostics write to the shared Open Logs M12 pipeline folder, not shader or pipeline cache directories."
     }
   ],
   "pipeline_stages": [
@@ -47,7 +49,7 @@
     {
       "id": "launch-env",
       "source": "app/src-rust/src/mtsp/launcher.rs",
-      "flow": "The launcher combines Steam identity, DLL overrides, Wine DLL paths, app-local sidecars, cache env, M12 log env, and per-game compatibility env."
+      "flow": "The launcher combines Steam identity, DLL overrides, Wine DLL paths, app-local sidecars, cache env, optional developer M12 log env, and per-game compatibility env."
     },
     {
       "id": "runtime-logging",
@@ -118,7 +120,6 @@
     }
   ],
   "forbidden_m12_launcher_patterns": [
-    "mscompatdb",
     "metalsharp_ntdll_hook.dll",
     "lib/metalsharp/x86_64-windows"
   ],
