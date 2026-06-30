@@ -366,7 +366,16 @@ function visibleD3DMetalActionsForBottle(bottleId: string) {
   return (d3dmetalActions.value[bottleId] ?? []).filter((action) => action.id !== "play_d3dmetal");
 }
 
+function clearD3DMetalBottleState(bottleId: string) {
+  d3dmetalStates.value[bottleId] = null;
+  d3dmetalActions.value[bottleId] = [];
+}
+
 async function loadD3DMetalStatus(bottle: BottleManifest) {
+  if (bottle.runtime_profile !== "d3dmetal") {
+    clearD3DMetalBottleState(bottle.id);
+    return;
+  }
   if (!bottle.steam_app_id) return;
   const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/status", {
     appid: bottle.steam_app_id,
@@ -376,8 +385,7 @@ async function loadD3DMetalStatus(bottle: BottleManifest) {
     d3dmetalStates.value[bottle.id] = result.state;
     d3dmetalActions.value[bottle.id] = result.actions ?? [];
   } else {
-    d3dmetalStates.value[bottle.id] = null;
-    d3dmetalActions.value[bottle.id] = [];
+    clearD3DMetalBottleState(bottle.id);
   }
 }
 
@@ -505,6 +513,7 @@ async function setBottleProfile(id: string, profile: string) {
   bottleLoading.value[id] = false;
   if (result?.ok && result.bottle) {
     upsertBottle(result.bottle);
+    if (result.bottle.runtime_profile !== "d3dmetal") clearD3DMetalBottleState(id);
     toast.show("Bottle profile updated", "success");
     await doctorBottle(id);
   } else {

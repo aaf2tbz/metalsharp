@@ -2981,7 +2981,10 @@ pub fn handle_set_runtime_profile(body: &serde_json::Map<String, Value>) -> Valu
         return json!({"ok": false, "error": "unknown runtime profile"});
     };
     match set_runtime_profile(id, profile) {
-        Ok(bottle) => json!({"ok": true, "bottle": bottle}),
+        Ok(bottle) => {
+            let preflight = preflight_bottle_after_edit(&bottle);
+            json!({"ok": true, "bottle": bottle, "preflight": preflight})
+        },
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }

@@ -290,17 +290,20 @@ function runtimeDoctorPipelineRequest() {
   return selectedLaunchMode.value === "auto" ? "auto" : selectedLaunchMode.value;
 }
 
+function reportIsD3DMetal(report: SteamRuntimeReport | null): report is SteamRuntimeReport {
+  return report?.preferred_pipeline === "d3dmetal" || report?.runtime_profile === "d3dmetal";
+}
+
 function isD3DMetalBottleSelected() {
-  if (bottlePreferredMode.value !== "auto" && bottlePreferredMode.value !== "d3dmetal") return false;
-  return bottlePreferredMode.value === "d3dmetal" || runtimeReport.value?.preferred_pipeline === "d3dmetal" || runtimeReport.value?.runtime_profile === "d3dmetal";
+  if (bottlePreferredMode.value !== "auto") return bottlePreferredMode.value === "d3dmetal";
+  if (runtimeReport.value) return reportIsD3DMetal(runtimeReport.value);
+  return props.game.preferred_pipeline === "d3dmetal" || props.game.launch_method === "d3dmetal";
 }
 
 function hasSavedD3DMetalRoute() {
-  if (bottlePreferredMode.value !== "auto" && bottlePreferredMode.value !== "d3dmetal") return false;
-  return runtimeReport.value?.preferred_pipeline === "d3dmetal"
-    || runtimeReport.value?.runtime_profile === "d3dmetal"
-    || props.game.preferred_pipeline === "d3dmetal"
-    || props.game.launch_method === "d3dmetal";
+  if (bottlePreferredMode.value !== "auto") return bottlePreferredMode.value === "d3dmetal";
+  if (runtimeReport.value) return reportIsD3DMetal(runtimeReport.value);
+  return props.game.preferred_pipeline === "d3dmetal" || props.game.launch_method === "d3dmetal";
 }
 
 function d3dmetalComponentState(state: string) {
@@ -347,16 +350,14 @@ function clearD3DMetalPanelState() {
 }
 
 function syncD3DMetalRuntimeReport() {
-  if (d3dmetalState.value && runtimeReport.value?.runtime_profile === "d3dmetal") {
+  if (d3dmetalState.value && runtimeReport.value?.runtime_profile === "d3dmetal" && isD3DMetalBottleSelected()) {
     runtimeReport.value = runtimeReportFromD3DMetalState(d3dmetalState.value, d3dmetalActions.value);
   }
 }
 
 function effectivePlayLaunchMode() {
   if (selectedLaunchMode.value !== "auto") return selectedLaunchMode.value;
-  const savedBottleD3DMetal = [runtimeReport.value?.preferred_pipeline, runtimeReport.value?.runtime_profile, props.game.preferred_pipeline, props.game.launch_method]
-    .some((id) => id === "d3dmetal");
-  return savedBottleD3DMetal ? "d3dmetal" : "auto";
+  return hasSavedD3DMetalRoute() ? "d3dmetal" : "auto";
 }
 
 onMounted(async () => {
@@ -400,6 +401,22 @@ watch(runtimeOpen, (open) => {
 
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
+});
+
+watch(bottlePreferredMode, (mode) => {
+  if (mode !== "d3dmetal") {
+    clearD3DMetalPanelState();
+    if (reportIsD3DMetal(runtimeReport.value)) {
+      runtimeReport.value = {
+        ...runtimeReport.value,
+        preferred_pipeline: mode,
+        pipeline: mode,
+        runtime_profile: mode,
+        components: [],
+        actions: [],
+      };
+    }
+  }
 });
 
 watch(
@@ -688,6 +705,16 @@ async function saveBottleEdit() {
 
   if (bottlePreferredMode.value !== "d3dmetal") {
     clearD3DMetalPanelState();
+    if (reportIsD3DMetal(runtimeReport.value)) {
+      runtimeReport.value = {
+        ...runtimeReport.value,
+        preferred_pipeline: bottlePreferredMode.value,
+        pipeline: bottlePreferredMode.value,
+        runtime_profile: bottlePreferredMode.value,
+        components: [],
+        actions: [],
+      };
+    }
   }
 
   const result = await api<BottleEditResponse>("POST", "/bottles/edit", {
