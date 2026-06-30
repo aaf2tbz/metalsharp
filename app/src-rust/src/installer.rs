@@ -44,6 +44,7 @@ const DXMT_REQUIRED_PE: &[&str] = &[
 ];
 const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so"];
 const DXMT_M12_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+#[cfg(not(test))]
 const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
     ("x86_64-windows/d3d10core.dll", "e6647486489473800a85e5ca8dff94e0beec63847138c72d9145297dd97de3c1"),
     ("x86_64-windows/d3d11.dll", "04f7573de3bdb6953b3df3b4521b8e8c9de2c1d81f62924eec4c9a0f1761471f"),
@@ -58,6 +59,30 @@ const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
     ("x86_64-unix/libc++abi.1.dylib", "9a95b4ce2be40951b688c394db99f79b7e0b81fa2372e5e49615319869e72e49"),
     ("x86_64-unix/libunwind.1.dylib", "964d4e5d6242163e4e8099efd08ba75540f253257b834bf5b7a45f8c84b4ea78"),
 ];
+#[cfg(test)]
+const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
+    ("x86_64-windows/d3d10core.dll", "e2dec232ddf836655d1aabd8600c02b1852a60832715fd2c2adaecfd484fe33f"),
+    ("x86_64-windows/d3d11.dll", "c9db49942a544685de29e7119061987cb001100195bddbcd858b7e4bb9d37a66"),
+    ("x86_64-windows/d3d12.dll", "383cd81087b22950a3ce4a99bd157e71a0b964950bb7f0bbc8171a405b72b4c8"),
+    ("x86_64-windows/dxgi.dll", "9b2fb52b2c2e247db98963e4702091a64d74b47219b9f400aa8470ddb94a50cc"),
+    ("x86_64-windows/dxgi_dxmt.dll", "3d47caa6f31ada10a138c7088c5a8335242a2e1acb651f17de36d152ccf513fd"),
+    ("x86_64-windows/winemetal.dll", "e104875e15a385f84e9697cfec7ecc6f9f1d3ea4fa94f7f51b09f429448f487e"),
+    ("x86_64-windows/nvapi64.dll", "9d60e35c8e6545a07a927ed74d9bb7c7ca7518dcf8a38a84451eaf4071b299a3"),
+    ("x86_64-windows/nvngx.dll", "55540a80dd2728cb2ffaa2f565489da1f83b2c3cb5db73eb9fff0ef79777137b"),
+    ("x86_64-unix/winemetal.so", "5f489f7f30b2534f01838bbdf4a763d6ceb799854d61c1f0f5212a076231953c"),
+    ("x86_64-unix/libc++.1.dylib", "f005326e267412dd6922159b6ce0443373f25b55803d519d0d2752d8dabe5436"),
+    ("x86_64-unix/libc++abi.1.dylib", "7687e592454cfd0bfc40ad03f734db734d8b7d7cbfb3f7d5277195d555306651"),
+    ("x86_64-unix/libunwind.1.dylib", "90330fb5d68017d4ca75aae86d6202a8313f298c695fce6685584fb131af3b43"),
+];
+#[cfg(test)]
+pub(crate) fn write_dxmt_m12_expected_test_files(dxmt_m12_dir: &Path) {
+    for (rel, _) in DXMT_M12_EXPECTED_HASHES {
+        let path = dxmt_m12_dir.join(rel);
+        fs::create_dir_all(path.parent().expect("M12 test fixture parent")).expect("create M12 test fixture parent");
+        fs::write(path, format!("test-m12:{rel}")).expect("write M12 test fixture payload");
+    }
+}
+
 const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/wine/bin/metalsharp-wine",
     "runtime/metalsharp-backend",

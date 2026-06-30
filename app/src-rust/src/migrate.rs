@@ -2745,10 +2745,15 @@ mod tests {
         );
 
         write_runtime_core(&ms_dir);
+        fs::write(
+            ms_dir.join("runtime").join("wine").join("lib").join("dxmt_m12").join("x86_64-windows").join("d3d12.dll"),
+            b"stale-m12-d3d12",
+        )
+        .expect("poison M12 hash-gated runtime file");
         assert_eq!(
             verify_migration_ready(&ms_dir, None).unwrap_err(),
             "runtime bundle is still incomplete after install",
-            "dummy runtime files with stale M12 hashes must not satisfy migration readiness"
+            "stale M12 hashes must not satisfy migration readiness"
         );
         let _ = fs::remove_dir_all(home);
     }
@@ -2827,6 +2832,8 @@ mod tests {
             fs::create_dir_all(path.parent().unwrap()).expect("create runtime parent");
             fs::write(path, b"test").expect("write runtime file");
         }
+
+        crate::installer::write_dxmt_m12_expected_test_files(&runtime_wine.join("lib").join("dxmt_m12"));
 
         for lane in ["dxmt", "dxmt_m12"] {
             fs::write(

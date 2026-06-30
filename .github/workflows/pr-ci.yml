@@ -158,6 +158,10 @@ jobs:
               fi
             done
 
+            tools/bundles/verify-bundles.sh --bundle-dir app/bundles \
+              metalsharp-runtime.tar.zst \
+              metalsharp-graphics-dll.tar.zst
+
             tmp_bundle="$(mktemp -d)"
             tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C "$tmp_bundle"
             wine_source="$tmp_bundle/runtime/wine"
@@ -166,10 +170,10 @@ jobs:
 
             tmp_dxmt="$(mktemp -d)"
             tar --use-compress-program=unzstd -xf app/bundles/metalsharp-graphics-dll.tar.zst -C "$tmp_dxmt"
-            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix"
-            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows"
-            cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-unix"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-unix/"
-            cp -R "$tmp_dxmt/Graphics/dll/dxmt/x86_64-windows"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/"
+            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt"
+            mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12"
+            cp -R "$tmp_dxmt/Graphics/dll/dxmt"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/"
+            cp -R "$tmp_dxmt/Graphics/dll/dxmt-m12"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12/"
           }
 
           python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py
