@@ -976,10 +976,13 @@ function registerIpc() {
       oauthWindow.webContents.on("will-navigate", (event, url) => {
         if (inspectUrl(url)) event.preventDefault();
       });
-      oauthWindow.webContents.session.webRequest.onBeforeRequest({ urls: ["https://embed.gog.com/on_login_success*"] }, (details, callback) => {
-        inspectUrl(details.url);
-        callback({ cancel: settled });
-      });
+      oauthWindow.webContents.session.webRequest.onBeforeRequest(
+        { urls: ["https://embed.gog.com/on_login_success*"] },
+        (details, callback) => {
+          inspectUrl(details.url);
+          callback({ cancel: settled });
+        },
+      );
       oauthWindow.on("closed", () => {
         if (!settled) finish({ ok: false, error: "GOG login was cancelled." });
       });
