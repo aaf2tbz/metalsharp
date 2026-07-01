@@ -189,6 +189,13 @@ const componentDisplayName: Record<string, string> = {
   "fna3d": "FNA3D",
   "faudio": "FAudio",
   "fmod": "FMOD Audio",
+  "m12_d3d12": "M12 d3d12.dll",
+  "m12_d3d11": "M12 d3d11.dll",
+  "m12_d3d10core": "M12 d3d10core.dll",
+  "m12_dxgi_dxmt": "M12 dxgi_dxmt.dll",
+  "m12_dxgi": "M12 dxgi.dll",
+  "m12_winemetal": "M12 winemetal.dll / .so",
+  "m12_gpu_stubs": "M12 GPU Stubs",
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
@@ -283,16 +290,20 @@ function runtimeDoctorPipelineRequest() {
   return selectedLaunchMode.value === "auto" ? "auto" : selectedLaunchMode.value;
 }
 
+function reportIsD3DMetal(report: SteamRuntimeReport | null): report is SteamRuntimeReport {
+  return report?.preferred_pipeline === "d3dmetal" || report?.runtime_profile === "d3dmetal";
+}
+
 function isD3DMetalBottleSelected() {
-  return bottlePreferredMode.value === "d3dmetal" || runtimeReport.value?.preferred_pipeline === "d3dmetal" || runtimeReport.value?.runtime_profile === "d3dmetal";
+  if (bottlePreferredMode.value !== "auto") return bottlePreferredMode.value === "d3dmetal";
+  if (runtimeReport.value) return reportIsD3DMetal(runtimeReport.value);
+  return props.game.preferred_pipeline === "d3dmetal" || props.game.launch_method === "d3dmetal";
 }
 
 function hasSavedD3DMetalRoute() {
-  if (bottlePreferredMode.value !== "auto" && bottlePreferredMode.value !== "d3dmetal") return false;
-  return runtimeReport.value?.preferred_pipeline === "d3dmetal"
-    || runtimeReport.value?.runtime_profile === "d3dmetal"
-    || props.game.preferred_pipeline === "d3dmetal"
-    || props.game.launch_method === "d3dmetal";
+  if (bottlePreferredMode.value !== "auto") return bottlePreferredMode.value === "d3dmetal";
+  if (runtimeReport.value) return reportIsD3DMetal(runtimeReport.value);
+  return props.game.preferred_pipeline === "d3dmetal" || props.game.launch_method === "d3dmetal";
 }
 
 function d3dmetalComponentState(state: string) {
@@ -329,17 +340,28 @@ function runtimeReportFromD3DMetalState(state: D3DMetalGptkState, actions: D3DMe
   };
 }
 
+const visibleD3DMetalActions = computed(() =>
+  d3dmetalActions.value.filter((action) => action.id !== "play_d3dmetal"),
+);
+
+function d3dmetalActionReady(action: D3DMetalGptkAction) {
+  return ["installed", "updated", "seeded"].includes(action.state);
+}
+
+function clearD3DMetalPanelState() {
+  d3dmetalState.value = null;
+  d3dmetalActions.value = [];
+}
+
 function syncD3DMetalRuntimeReport() {
-  if (d3dmetalState.value && runtimeReport.value?.runtime_profile === "d3dmetal") {
+  if (d3dmetalState.value && runtimeReport.value?.runtime_profile === "d3dmetal" && isD3DMetalBottleSelected()) {
     runtimeReport.value = runtimeReportFromD3DMetalState(d3dmetalState.value, d3dmetalActions.value);
   }
 }
 
 function effectivePlayLaunchMode() {
   if (selectedLaunchMode.value !== "auto") return selectedLaunchMode.value;
-  const savedBottleD3DMetal = [runtimeReport.value?.preferred_pipeline, runtimeReport.value?.runtime_profile, props.game.preferred_pipeline, props.game.launch_method]
-    .some((id) => id === "d3dmetal");
-  return savedBottleD3DMetal ? "d3dmetal" : "auto";
+  return hasSavedD3DMetalRoute() ? "d3dmetal" : "auto";
 }
 
 onMounted(async () => {
@@ -383,6 +405,22 @@ watch(runtimeOpen, (open) => {
 
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
+});
+
+watch(bottlePreferredMode, (mode) => {
+  if (mode !== "d3dmetal") {
+    clearD3DMetalPanelState();
+    if (reportIsD3DMetal(runtimeReport.value)) {
+      runtimeReport.value = {
+        ...runtimeReport.value,
+        preferred_pipeline: mode,
+        pipeline: mode,
+        runtime_profile: mode,
+        components: [],
+        actions: [],
+      };
+    }
+  }
 });
 
 watch(
@@ -461,6 +499,7 @@ async function runRuntimeDoctor() {
     runtimeLoading.value = false;
     return;
   }
+  clearD3DMetalPanelState();
   const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>(
     "POST",
     "/steam/runtime-doctor",
@@ -475,7 +514,11 @@ async function runRuntimeDoctor() {
     runtimeReport.value = result.report;
     bottleName.value = result.report.bottle_name || props.game.name;
     bottlePreferredMode.value = preferredBottlePipeline(result.report);
-    if (isD3DMetalBottleSelected()) await loadD3DMetalStatus();
+    if (isD3DMetalBottleSelected()) {
+      await loadD3DMetalStatus();
+    } else {
+      clearD3DMetalPanelState();
+    }
   } else {
     toast.show(result?.error ?? "Runtime Doctor failed", "error");
   }
@@ -533,15 +576,28 @@ async function runD3DMetalPanelAction(action: D3DMetalGptkAction) {
   if (action.id === "play_d3dmetal" && pid) emit('d3dmetalLaunched', pid);
 }
 
+function d3dmetalActionRoute(actionId: string) {
+  switch (actionId) {
+    case "install_homebrew_gptk":
+      return "/d3dmetal/bottles/install-homebrew-gptk";
+    case "install_rosetta":
+      return "/d3dmetal/bottles/install-rosetta";
+    case "repair_gptk_payload":
+      return "/d3dmetal/bottles/repair-gptk-payload";
+    case "install_x64_redist":
+      return "/d3dmetal/bottles/install-x64-redist";
+    case "seed_prefix":
+      return "/d3dmetal/bottles/seed-prefix";
+    default:
+      return "/d3dmetal/bottles/play";
+  }
+}
+
 async function runD3DMetalAction(action: D3DMetalGptkAction): Promise<number | null> {
   const bottleId = runtimeReport.value?.bottle_id ?? props.game.bottle_id ?? `steam_${props.game.appid}`;
   const gameDir = runtimeReport.value?.game_install_path;
   d3dmetalLoading.value = true;
-  const route = action.id === "install_x64_redist"
-    ? "/d3dmetal/bottles/install-x64-redist"
-    : action.id === "seed_prefix"
-      ? "/d3dmetal/bottles/seed-prefix"
-      : "/d3dmetal/bottles/play";
+  const route = d3dmetalActionRoute(action.id);
   const result = await api<D3DMetalGptkResponse>("POST", route, {
     appid: props.game.appid,
     bottleId,
@@ -661,7 +717,22 @@ async function saveBottleEdit() {
       return;
     }
     toast.show(d3dmetalResult?.error ?? "D3DMetal bottle save failed", "error");
+    await loadD3DMetalStatus();
     return;
+  }
+
+  if (bottlePreferredMode.value !== "d3dmetal") {
+    clearD3DMetalPanelState();
+    if (reportIsD3DMetal(runtimeReport.value)) {
+      runtimeReport.value = {
+        ...runtimeReport.value,
+        preferred_pipeline: bottlePreferredMode.value,
+        pipeline: bottlePreferredMode.value,
+        runtime_profile: bottlePreferredMode.value,
+        components: [],
+        actions: [],
+      };
+    }
   }
 
   const result = await api<BottleEditResponse>("POST", "/bottles/edit", {
@@ -860,7 +931,7 @@ function formatBytes(bytes: number): string {
               <button class="btn btn-secondary btn-sm" :disabled="bottleSaving" @click="saveBottleEdit">
                 {{ bottleSaving ? "Saving..." : "Save Bottle" }}
               </button>
-              <div v-if="d3dmetalState" class="doctor-notes d3dmetal-actions">
+              <div v-if="isD3DMetalBottleSelected() && d3dmetalState" class="doctor-notes d3dmetal-actions">
                 <strong>D3DMetal GPTK</strong>
                 <div class="runtime-action-row">
                   <span>Homebrew GPTK: {{ d3dmetalState.gptk_homebrew }} / Homebrew payload: {{ d3dmetalState.gptk_payload }}</span>
@@ -869,9 +940,14 @@ function formatBytes(bytes: number): string {
                   <span>VC runtimes: {{ d3dmetalState.x64_redist }} / Seed: {{ d3dmetalState.seed }}</span>
                 </div>
                 <div v-if="d3dmetalState.last_error" class="doctor-notes blocked">{{ d3dmetalState.last_error }}</div>
-                <div v-for="action in d3dmetalActions" :key="action.id" class="runtime-action-row">
+                <div v-for="action in visibleD3DMetalActions" :key="action.id" class="runtime-action-row">
                   <span>{{ action.detail }}</span>
+                  <span v-if="d3dmetalActionReady(action)" class="d3dmetal-ready-state">
+                    <span class="doctor-check-state">OK</span>
+                    <span>Ready</span>
+                  </span>
                   <button
+                    v-else
                     class="btn btn-secondary btn-sm"
                     :disabled="d3dmetalLoading || !action.enabled"
                     @click="runD3DMetalPanelAction(action)"
@@ -1371,6 +1447,14 @@ function formatBytes(bytes: number): string {
 }
 .runtime-action-row span {
   overflow-wrap: anywhere;
+}
+.d3dmetal-ready-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+  font-weight: 700;
+  white-space: nowrap;
 }
 .bottle-edit-row {
   display: grid;

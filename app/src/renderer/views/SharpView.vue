@@ -214,6 +214,13 @@ const componentDisplayName: Record<string, string> = {
   "fna3d": "FNA3D",
   "faudio": "FAudio",
   "fmod": "FMOD Audio",
+  "m12_d3d12": "M12 d3d12.dll",
+  "m12_d3d11": "M12 d3d11.dll",
+  "m12_d3d10core": "M12 d3d10core.dll",
+  "m12_dxgi_dxmt": "M12 dxgi_dxmt.dll",
+  "m12_dxgi": "M12 dxgi.dll",
+  "m12_winemetal": "M12 winemetal.dll / .so",
+  "m12_gpu_stubs": "M12 GPU Stubs",
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
@@ -245,6 +252,10 @@ function componentStateClass(state: string): string {
   if (state === "missing") return "pill-missing";
   if (state === "needs_repair" || state === "partial") return "pill-warn";
   return "pill-unknown";
+}
+
+function d3dmetalActionReady(action: D3DMetalGptkAction): boolean {
+  return ["installed", "updated", "seeded"].includes(action.state);
 }
 
 function isFnaProfile(profile: string): boolean {
@@ -355,7 +366,20 @@ async function prepareBottle(id: string) {
   }
 }
 
+function visibleD3DMetalActionsForBottle(bottleId: string) {
+  return (d3dmetalActions.value[bottleId] ?? []).filter((action) => action.id !== "play_d3dmetal");
+}
+
+function clearD3DMetalBottleState(bottleId: string) {
+  d3dmetalStates.value[bottleId] = null;
+  d3dmetalActions.value[bottleId] = [];
+}
+
 async function loadD3DMetalStatus(bottle: BottleManifest) {
+  if (bottle.runtime_profile !== "d3dmetal") {
+    clearD3DMetalBottleState(bottle.id);
+    return;
+  }
   if (!bottle.steam_app_id) return;
   const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/status", {
     appid: bottle.steam_app_id,
@@ -365,8 +389,7 @@ async function loadD3DMetalStatus(bottle: BottleManifest) {
     d3dmetalStates.value[bottle.id] = result.state;
     d3dmetalActions.value[bottle.id] = result.actions ?? [];
   } else {
-    d3dmetalStates.value[bottle.id] = null;
-    d3dmetalActions.value[bottle.id] = [];
+    clearD3DMetalBottleState(bottle.id);
   }
 }
 
@@ -389,6 +412,7 @@ async function saveD3DMetalBottle(bottle: BottleManifest) {
     toast.show("D3DMetal bottle saved; seed VC runtime DLLs and seed prefix when ready", "success");
   } else {
     toast.show(result?.error ?? "D3DMetal bottle save failed", "error");
+    await loadD3DMetalStatus(bottle);
   }
 }
 
@@ -397,14 +421,27 @@ function sharpAppExeAbsolute(app: SharpApp) {
   return `${app.install_dir.replace(/\/$/, "")}/${app.exe_path.replace(/^\.\//, "")}`;
 }
 
+function d3dmetalActionRoute(actionId: string) {
+  switch (actionId) {
+    case "install_homebrew_gptk":
+      return "/d3dmetal/bottles/install-homebrew-gptk";
+    case "install_rosetta":
+      return "/d3dmetal/bottles/install-rosetta";
+    case "repair_gptk_payload":
+      return "/d3dmetal/bottles/repair-gptk-payload";
+    case "install_x64_redist":
+      return "/d3dmetal/bottles/install-x64-redist";
+    case "seed_prefix":
+      return "/d3dmetal/bottles/seed-prefix";
+    default:
+      return "/d3dmetal/bottles/play";
+  }
+}
+
 async function runD3DMetalAction(bottle: BottleManifest, action: D3DMetalGptkAction, app?: SharpApp): Promise<number | null> {
   if (!bottle.steam_app_id) return null;
   bottleLoading.value[bottle.id] = true;
-  const route = action.id === "install_x64_redist"
-    ? "/d3dmetal/bottles/install-x64-redist"
-    : action.id === "seed_prefix"
-      ? "/d3dmetal/bottles/seed-prefix"
-      : "/d3dmetal/bottles/play";
+  const route = d3dmetalActionRoute(action.id);
   const result = await api<D3DMetalGptkResponse>("POST", route, {
     appid: bottle.steam_app_id,
     bottleId: bottle.id,
@@ -494,6 +531,7 @@ async function setBottleProfile(id: string, profile: string) {
   bottleLoading.value[id] = false;
   if (result?.ok && result.bottle) {
     upsertBottle(result.bottle);
+    if (result.bottle.runtime_profile !== "d3dmetal") clearD3DMetalBottleState(id);
     toast.show("Bottle profile updated", "success");
     await doctorBottle(id);
   } else {
@@ -933,9 +971,10 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     </div>
                     <div v-if="d3dmetalStates[bottle.id]?.last_error" class="doctor-notes blocked">{{ d3dmetalStates[bottle.id]?.last_error }}</div>
                   </template>
-                  <div v-for="action in d3dmetalActions[bottle.id] ?? []" :key="action.id" class="bottle-action-row">
+                  <div v-for="action in visibleD3DMetalActionsForBottle(bottle.id)" :key="action.id" class="bottle-action-row">
                     <span>{{ action.detail }}</span>
-                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id] || !action.enabled" @click="runD3DMetalAction(bottle, action)">{{ action.label }}</button>
+                    <span v-if="d3dmetalActionReady(action)" class="component-pill pill-ok">OK: Ready</span>
+                    <button v-else class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id] || !action.enabled" @click="runD3DMetalAction(bottle, action)">{{ action.label }}</button>
                   </div>
                 </div>
                 <div class="bottle-components">

@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.49.0",
+  "version": "0.49.5",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -168,6 +168,14 @@
     ],
     "directories": {
       "output": "../dist/electron"
+    }
+  },
+  "overrides": {
+    "form-data": "4.0.6",
+    "tar": "7.5.19",
+    "undici": "6.27.0",
+    "@electron/get": {
+      "undici": "7.28.0"
     }
   }
 }

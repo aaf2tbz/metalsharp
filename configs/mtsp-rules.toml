@@ -40,11 +40,24 @@ name = "Rain World"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.312520.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.375520]
 pipeline = "m9"
 name = "Taimumari: Definitive Edition"
+
+[overrides.475150]
+pipeline = "m9"
+name = "Titan Quest Anniversary Edition"
+
+[overrides.475150.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.475150.env]
+WINEDLLOVERRIDES = "d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+
+[overrides.475150.diagnostics]
+check_dlls = ["d3d9.dll", "dxgi.dll"]
 
 [overrides.848450]
 pipeline = "m11"
@@ -54,7 +67,7 @@ name = "Subnautica: Below Zero"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.848450.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1962700]
 pipeline = "m12"
@@ -62,7 +75,7 @@ name = "Subnautica 2"
 offline_capable = true
 
 [overrides.1962700.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.3164500]
 pipeline = "m11"
@@ -71,10 +84,14 @@ name = "Schedule I"
 [overrides.3164500.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
 
+[overrides.3164500.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.508440]
 pipeline = "m11"
 name = "Totally Accurate Battle Simulator"
 
+[overrides.508440.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.535520]
 pipeline = "m9"
 name = "Nidhogg 2"
@@ -105,10 +122,14 @@ name = "Undertale"
 pipeline = "m11"
 name = "Among Us"
 
+[overrides.945360.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1139900]
 pipeline = "m11"
 name = "Ghostrunner"
 
+[overrides.1139900.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1245620]
 pipeline = "m12"
 name = "ELDEN RING"
@@ -118,16 +139,20 @@ offline_capable = true
 components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
 
 [overrides.1245620.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.814380]
 pipeline = "m11"
 name = "Sekiro: Shadows Die Twice - GOTY Edition"
 
+[overrides.814380.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1593500]
 pipeline = "m11"
 name = "God of War"
 
+[overrides.1593500.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2050650]
 pipeline = "m12"
 name = "Resident Evil 4"
@@ -137,19 +162,21 @@ offline_capable = true
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.2050650.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1583230]
 pipeline = "m12"
 name = "High On Life"
 
 [overrides.1583230.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.397540]
 pipeline = "m11"
 name = "Borderlands 3"
 
+[overrides.397540.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.49520]
 pipeline = "m9"
 name = "Borderlands 2"
@@ -158,10 +185,14 @@ name = "Borderlands 2"
 pipeline = "m11"
 name = "Far Cry 4"
 
+[overrides.298110.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.552520]
 pipeline = "m11"
 name = "Far Cry 5"
 
+[overrides.552520.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1091500]
 pipeline = "m12"
 name = "Cyberpunk 2077"
@@ -171,7 +202,7 @@ offline_capable = true
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1091500.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1868140]
 pipeline = "m9"
@@ -190,7 +221,7 @@ offline_capable = true
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1551360.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1716740]
 pipeline = "m12"
@@ -200,7 +231,7 @@ name = "Starfield"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1716740.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1203620]
 pipeline = "wine_bare"
@@ -211,16 +242,20 @@ pipeline = "m12"
 name = "REMNANT II"
 
 [overrides.1282100.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.750920]
 pipeline = "m11"
 name = "Shadow of the Tomb Raider: Definitive Edition"
 
+[overrides.750920.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1172380]
 pipeline = "m11"
 name = "STAR WARS Jedi: Fallen Order"
 
+[overrides.1172380.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.271590]
 pipeline = "m11"
 name = "Grand Theft Auto V Legacy"
@@ -229,12 +264,14 @@ name = "Grand Theft Auto V Legacy"
 components = ["gecko", "webview2", "dotnet48", "vcrun2019_x64", "vcrun2019_x86", "vcrun2013", "directx_jun2010", "corefonts"]
 
 [overrides.271590.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll", "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll", "vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"]
 
 [overrides.870780]
 pipeline = "m11"
 name = "CONTROL Ultimate Edition"
 
+[overrides.870780.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1196590]
 pipeline = "m12"
 name = "Resident Evil Village"
@@ -243,14 +280,14 @@ name = "Resident Evil Village"
 components = ["vcrun2019", "directx_jun2010", "gpu_vendor_stubs"]
 
 [overrides.1196590.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"]
 
 [overrides.1236300]
 pipeline = "m12"
 name = "Resident Evil Re:Verse"
 
 [overrides.1236300.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1888160]
 pipeline = "m12"
@@ -261,12 +298,14 @@ offline_capable = true
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1888160.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.976310]
 pipeline = "m11"
 name = "Mortal Kombat 11"
 
+[overrides.976310.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2767030]
 pipeline = "m12"
 name = "Marvel Rivals"
@@ -275,12 +314,14 @@ name = "Marvel Rivals"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.2767030.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.292030]
 pipeline = "m11"
 name = "The Witcher 3: Wild Hunt"
 
+[overrides.292030.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.990080]
 pipeline = "m12"
 name = "Hogwarts Legacy"
@@ -289,31 +330,39 @@ name = "Hogwarts Legacy"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.990080.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1172470]
 pipeline = "m11"
 name = "Apex Legends"
 
+[overrides.1172470.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2290180]
 pipeline = "m12"
 name = "Riders Republic"
 
 [overrides.2290180.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.548430]
 pipeline = "m11"
 name = "Deep Rock Galactic"
 
+[overrides.548430.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.892970]
 pipeline = "m11"
 name = "Valheim"
 
+[overrides.892970.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1313140]
 pipeline = "m11"
 name = "Cult of the Lamb"
 
+[overrides.1313140.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1623730]
 pipeline = "m12"
 name = "Palworld"
@@ -322,7 +371,7 @@ name = "Palworld"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1623730.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1928870]
 pipeline = "m12"
@@ -332,7 +381,7 @@ name = "Minecraft Legends"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1928870.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.553850]
 pipeline = "m12"
@@ -342,12 +391,14 @@ name = "HELLDIVERS 2"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.553850.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.367520]
 pipeline = "m11"
 name = "Hollow Knight"
 
+[overrides.367520.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.413150]
 pipeline = "fna_arm64"
 name = "Stardew Valley"
@@ -356,6 +407,8 @@ name = "Stardew Valley"
 pipeline = "m11"
 name = "Hades"
 
+[overrides.1145360.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.588650]
 pipeline = "wine_bare"
 name = "Dead Cells"
@@ -372,26 +425,38 @@ name = "DREDGE"
 pipeline = "m11"
 name = "Inscryption"
 
+[overrides.1092790.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1229490]
 pipeline = "m11"
 name = "ULTRAKILL"
 
+[overrides.1229490.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1971650]
 pipeline = "m11"
 name = "OCTOPATH TRAVELER II"
 
+[overrides.1971650.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1809540]
 pipeline = "m11"
 name = "Nine Sols"
 
+[overrides.1809540.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1237320]
 pipeline = "m11"
 name = "Sonic Frontiers"
 
+[overrides.1237320.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1326470]
 pipeline = "m11"
 name = "Sons Of The Forest"
 
+[overrides.1326470.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2358720]
 pipeline = "m12"
 name = "Black Myth: Wukong"
@@ -400,7 +465,7 @@ name = "Black Myth: Wukong"
 components = ["vcrun2019", "directx_jun2010", "gpu_vendor_stubs"]
 
 [overrides.2358720.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"]
 
 [overrides.2456740]
 pipeline = "m12"
@@ -410,7 +475,7 @@ name = "inZOI"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.2456740.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.275850]
 pipeline = "wine_bare"
@@ -424,7 +489,7 @@ name = "S.T.A.L.K.E.R. 2: Heart of Chornobyl"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.1643320.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.379720]
 pipeline = "wine_bare"
@@ -438,6 +503,8 @@ name = "DOOM Eternal"
 pipeline = "m11"
 name = "Sid Meier's Civilization VI"
 
+[overrides.289070.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.3527290]
 pipeline = "m12"
 name = "PEAK"
@@ -446,32 +513,44 @@ name = "PEAK"
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.3527290.diagnostics]
-check_dlls = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1147560]
 pipeline = "m11"
 name = "Skul: The Hero Slayer"
 
+[overrides.1147560.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1222680]
 pipeline = "m11"
 name = "Need for Speed Heat"
 
+[overrides.1222680.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.252950]
 pipeline = "m11"
 name = "Rocket League"
 
+[overrides.252950.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.230410]
 pipeline = "m11"
 name = "Warframe"
 
+[overrides.230410.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.252490]
 pipeline = "m11"
 name = "Rust"
 
+[overrides.252490.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.284160]
 pipeline = "m11"
 name = "BeamNG.drive"
 
+[overrides.284160.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.220]
 pipeline = "m9"
 name = "Half-Life 2"
@@ -489,7 +568,7 @@ offline_capable = true
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.2552430.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.2552440]
 pipeline = "m11"
@@ -500,8 +579,11 @@ offline_capable = true
 components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.2552440.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.730]
 pipeline = "m11"
 name = "Counter-Strike 2"
+
+[overrides.730.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]

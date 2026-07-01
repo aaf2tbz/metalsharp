@@ -475,6 +475,7 @@ mod tests {
         for (appid, pipeline) in [
             (17410, PipelineId::M9),
             (312520, PipelineId::M11),
+            (475150, PipelineId::M9),
             (504230, PipelineId::FnaArm64),
             (49520, PipelineId::M9),
             (508440, PipelineId::M11),
@@ -530,23 +531,30 @@ mod tests {
     }
 
     #[test]
-    fn shipped_m12_rules_have_no_anticheat_and_include_pr230_diagnostics() {
+    fn shipped_m11_m12_rules_have_no_anticheat_and_include_route_diagnostics() {
         let shipped_rules = include_str!("../../../../configs/mtsp-rules.toml");
         assert!(!shipped_rules.contains("anticheat"), "shipped rules must not contain anti-cheat metadata");
         let (_, recipes) = parse_rules_full(shipped_rules);
-        let required = ["d3d12.dll", "dxgi.dll", "dxgi_dxmt.dll", "winemetal.dll"];
-        let m12_recipes = recipes.iter().filter(|(_, recipe)| recipe.pipeline == PipelineId::M12).collect::<Vec<_>>();
 
-        assert!(!m12_recipes.is_empty(), "expected shipped M12 rules");
-        for (appid, recipe) in m12_recipes {
-            for dll in required {
-                assert!(
-                    recipe.check_dlls.iter().any(|value| value == dll),
-                    "appid {} M12 diagnostics must include {} (got {:?})",
-                    appid,
-                    dll,
-                    recipe.check_dlls
-                );
+        let m12_required = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"];
+        let m11_required = ["d3d11.dll", "dxgi.dll", "winemetal.dll"];
+        let required_by_pipeline =
+            [(PipelineId::M12, m12_required.as_slice()), (PipelineId::M11, m11_required.as_slice())];
+
+        for (pipeline, required) in required_by_pipeline {
+            let matching_recipes = recipes.iter().filter(|(_, recipe)| recipe.pipeline == pipeline).collect::<Vec<_>>();
+            assert!(!matching_recipes.is_empty(), "expected shipped {:?} rules", pipeline);
+            for (appid, recipe) in matching_recipes {
+                for dll in required {
+                    assert!(
+                        recipe.check_dlls.iter().any(|value| value == dll),
+                        "appid {} {:?} diagnostics must include {} (got {:?})",
+                        appid,
+                        pipeline,
+                        dll,
+                        recipe.check_dlls
+                    );
+                }
             }
         }
     }
@@ -565,6 +573,20 @@ mod tests {
         assert!(goat.check_dlls.contains(&"mscoree.dll".to_string()));
         assert!(goat.check_dlls.contains(&"msvcr100.dll".to_string()));
         assert!(goat.check_dlls.contains(&"msvcp100.dll".to_string()));
+    }
+
+    #[test]
+    fn game_recipes_parse_titan_quest_m9_32_bit_route() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let titan_quest = recipes.get(&475150).expect("titan quest recipe");
+        assert_eq!(titan_quest.pipeline, PipelineId::M9);
+        assert_eq!(titan_quest.name, "Titan Quest Anniversary Edition");
+        assert_eq!(
+            titan_quest.env.get("WINEDLLOVERRIDES").map(String::as_str),
+            Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+        assert!(titan_quest.check_dlls.contains(&"d3d9.dll".to_string()));
+        assert!(titan_quest.check_dlls.contains(&"dxgi.dll".to_string()));
     }
 
     #[test]

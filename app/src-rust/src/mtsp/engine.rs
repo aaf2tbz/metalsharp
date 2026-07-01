@@ -298,6 +298,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "dxgi.dll", dest_filename: None },
                     DllDeploy {
                         source_subpath: "lib/dxmt/x86_64-windows",
                         filename: "nvapi64.dll",
@@ -609,12 +610,10 @@ mod tests {
         assert_eq!(m12_env_values.get("DXMT_METALFX_TEMPORAL"), Some(&"1"));
         assert_eq!(m12_env_values.get("DXMT_CONFIG"), Some(&DXMT_M12_SAFE_CONFIG));
 
-        let m12_overrides = m12.wine_overrides.unwrap_or_default();
-        assert!(m12_overrides.contains("winemetal"));
-        assert!(m12_overrides.contains("d3d12"));
-        assert!(m12_overrides.contains("dxgi"));
-        assert!(m12_overrides.contains("dxgi_dxmt"));
-        assert!(m12_overrides.contains("gameoverlayrenderer"));
+        assert_eq!(
+            m12.wine_overrides,
+            Some("winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
         assert!(m12.alternatives.contains(&PipelineId::M11));
     }
 
@@ -710,6 +709,7 @@ mod tests {
             m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
         assert!(m9_dlls.contains(&("lib/wine/x86_64-windows", "d3d9.dll")));
         assert!(m9_dlls.contains(&("lib/wine/i386-windows", "d3d9.dll")));
+        assert!(m9_dlls.contains(&("lib/wine/i386-windows", "dxgi.dll")));
         assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "nvapi64.dll")));
         assert!(m9.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxvk")));
         assert!(m9.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));

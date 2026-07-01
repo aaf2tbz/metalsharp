@@ -998,6 +998,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, d3dmetal_gptk::handle_status(&body))
         },
+        (Method::Post, "/d3dmetal/bottles/install-homebrew-gptk") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_install_homebrew_gptk(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/install-rosetta") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_install_rosetta(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/repair-gptk-payload") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_repair_gptk_payload(&body))
+        },
         (Method::Post, "/d3dmetal/bottles/install-x64-redist") => {
             let body = read_body(req);
             resp(200, d3dmetal_gptk::handle_install_x64_redist(&body))

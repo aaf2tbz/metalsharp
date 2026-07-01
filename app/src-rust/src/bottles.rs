@@ -607,7 +607,92 @@ pub fn load_bottle(id: &str) -> Result<BottleManifest, Box<dyn std::error::Error
         manifest.installed_components.sort_by(|a, b| a.id.cmp(&b.id));
         let _ = save_bottle(&manifest);
     }
+    normalize_loaded_runtime_profile_components(&mut manifest);
     Ok(manifest)
+}
+
+fn normalize_loaded_runtime_profile_components(manifest: &mut BottleManifest) {
+    let should_rebuild = match manifest.runtime_profile {
+        RuntimeProfile::M12 => {
+            let has_pr230_shape = M12_RUNTIME_COMPONENT_IDS
+                .iter()
+                .all(|id| manifest.installed_components.iter().any(|component| component.id == *id));
+            let has_stale_m12_shape = manifest.installed_components.iter().any(|component| {
+                matches!(
+                    component.id.as_str(),
+                    "d3d12" | "d3d11" | "dxgi" | "gpu_vendor_stubs" | "gptk" | "gptk_prefix" | "rosetta"
+                )
+            });
+            !has_pr230_shape || has_stale_m12_shape
+        },
+        RuntimeProfile::D3DMetal => {
+            manifest.installed_components.iter().any(|component| is_m12_runtime_component(&component.id))
+        },
+        _ => false,
+    };
+
+    if should_rebuild {
+        manifest.installed_components =
+            rebuild_components_for_profile(&manifest.installed_components, manifest.runtime_profile);
+    }
+}
+
+const M12_RUNTIME_COMPONENT_IDS: &[&str] =
+    &["m12_d3d12", "m12_d3d11", "m12_d3d10core", "m12_dxgi_dxmt", "m12_dxgi", "m12_winemetal", "m12_gpu_stubs"];
+
+fn m12_runtime_component_artifacts(component_id: &str) -> Option<&'static [&'static str]> {
+    match component_id {
+        "m12_d3d12" => Some(&["x86_64-windows/d3d12.dll"]),
+        "m12_d3d11" => Some(&["x86_64-windows/d3d11.dll"]),
+        "m12_d3d10core" => Some(&["x86_64-windows/d3d10core.dll"]),
+        "m12_dxgi_dxmt" => Some(&["x86_64-windows/dxgi_dxmt.dll"]),
+        "m12_dxgi" => Some(&["x86_64-windows/dxgi.dll"]),
+        "m12_winemetal" => Some(&[
+            "x86_64-windows/winemetal.dll",
+            "x86_64-unix/winemetal.so",
+            "x86_64-unix/libc++.1.dylib",
+            "x86_64-unix/libc++abi.1.dylib",
+            "x86_64-unix/libunwind.1.dylib",
+        ]),
+        "m12_gpu_stubs" => Some(&["x86_64-windows/nvapi64.dll", "x86_64-windows/nvngx.dll"]),
+        _ => None,
+    }
+}
+
+fn is_m12_runtime_component(component_id: &str) -> bool {
+    m12_runtime_component_artifacts(component_id).is_some()
+}
+
+fn inspect_m12_runtime_component(component_id: &str) -> Option<ComponentState> {
+    let artifacts = m12_runtime_component_artifacts(component_id)?;
+    let home = dirs::home_dir()?;
+    let valid_count = artifacts
+        .iter()
+        .filter(|artifact| crate::installer::dxmt_m12_runtime_artifact_valid_for_home(&home, artifact))
+        .count();
+    if valid_count == artifacts.len() {
+        Some(ComponentState::Installed)
+    } else if valid_count > 0 || crate::installer::dxmt_m12_runtime_current_for_home(&home) {
+        Some(ComponentState::NeedsRepair)
+    } else {
+        Some(ComponentState::Missing)
+    }
+}
+
+fn m12_runtime_component_detail(component_id: &str) -> String {
+    let artifacts = m12_runtime_component_artifacts(component_id).unwrap_or(&[]);
+    let home = dirs::home_dir().unwrap_or_default();
+    let paths = artifacts
+        .iter()
+        .map(|artifact| {
+            crate::installer::dxmt_m12_runtime_artifact_path_for_home(&home, artifact).to_string_lossy().to_string()
+        })
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        "M12 DXMT runtime artifact".to_string()
+    } else {
+        format!("PR230 M12 DXMT runtime artifact(s): {}", paths.join(", "))
+    }
 }
 
 pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::Error>> {
@@ -630,7 +715,7 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
 fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
     let (lane, components): (&str, &[&str]) = match manifest.runtime_profile {
         RuntimeProfile::M11 => ("dxmt", &["d3d11", "dxgi"]),
-        RuntimeProfile::M12 => ("dxmt_m12", &["d3d12", "d3d11", "dxgi", "gpu_vendor_stubs"]),
+        RuntimeProfile::M12 => ("dxmt_m12", M12_RUNTIME_COMPONENT_IDS),
         _ => return,
     };
 
@@ -642,7 +727,8 @@ fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
         .ok_or_else(|| "home directory could not be resolved".to_string())
         .and_then(|home| match manifest.runtime_profile {
             RuntimeProfile::M11 => crate::installer::ensure_dxmt_runtime_ready(&home).map(|_| true),
-            RuntimeProfile::M12 => crate::installer::ensure_dxmt_m12_runtime_ready(&home).map(|_| true),
+            RuntimeProfile::M12 => crate::installer::ensure_dxmt_m12_runtime_ready(&home)
+                .map(|_| crate::installer::dxmt_m12_runtime_current_for_home(&home)),
             _ => Ok(false),
         })
         .unwrap_or_else(|e| {
@@ -2297,6 +2383,60 @@ pub fn repair_component(
         });
     }
 
+    if matches!(manifest.runtime_profile, RuntimeProfile::M12) && is_m12_runtime_component(component_id) {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        if dry_run {
+            let state = inspect_m12_runtime_component(component_id).unwrap_or(ComponentState::Missing);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if state == ComponentState::Installed {
+                    "already_installed"
+                } else {
+                    "runtime_repair_available"
+                }
+                .to_string(),
+                detail: if state == ComponentState::Installed {
+                    format!("{} is already current", m12_runtime_component_detail(component_id))
+                } else {
+                    "Refreshes the bundled PR230 M12 DXMT runtime surface under runtime/wine/lib/dxmt_m12".to_string()
+                },
+                asset_path: Some(
+                    crate::installer::dxmt_m12_runtime_artifact_path_for_home(&home, "x86_64-windows/d3d12.dll")
+                        .to_string_lossy()
+                        .to_string(),
+                ),
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        crate::installer::ensure_dxmt_m12_runtime_ready(&home)?;
+        for id in M12_RUNTIME_COMPONENT_IDS {
+            let state = inspect_m12_runtime_component(id).unwrap_or(ComponentState::Missing);
+            mark_component_state(&mut manifest, id, state);
+        }
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        let state = inspect_m12_runtime_component(component_id).unwrap_or(ComponentState::Missing);
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: format!("Refreshed PR230 M12 DXMT runtime surface; {}", m12_runtime_component_detail(component_id)),
+            asset_path: Some(
+                crate::installer::dxmt_m12_runtime_artifact_path_for_home(&home, "x86_64-windows/d3d12.dll")
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if component_id == "d3d12_agility" {
         let home = dirs::home_dir().ok_or("no home dir")?;
         let appid = manifest.steam_app_id.ok_or("D3D12 Agility repair requires a Steam app id")?;
@@ -2731,7 +2871,10 @@ pub fn handle_set_runtime_profile(body: &serde_json::Map<String, Value>) -> Valu
         return json!({"ok": false, "error": "unknown runtime profile"});
     };
     match set_runtime_profile(id, profile) {
-        Ok(bottle) => json!({"ok": true, "bottle": bottle}),
+        Ok(bottle) => {
+            let preflight = preflight_bottle_after_edit(&bottle);
+            json!({"ok": true, "bottle": bottle, "preflight": preflight})
+        },
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
 }
@@ -3076,13 +3219,16 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             BottleArch::Win64,
             true,
             &[
-                "d3d12",
-                "d3d12_agility",
-                "d3d11",
-                "dxgi",
+                "m12_d3d12",
+                "m12_d3d11",
+                "m12_d3d10core",
+                "m12_dxgi_dxmt",
+                "m12_dxgi",
+                "m12_winemetal",
+                "m12_gpu_stubs",
                 "vcrun2019_x64",
                 "vcrun2019_x86",
-                "gpu_vendor_stubs",
+                "d3d12_agility",
                 "corefonts",
             ][..],
             crate::mtsp::engine::PipelineId::M12,
@@ -3512,22 +3658,25 @@ fn inspect_components_for_manifest(
         .iter()
         .map(|component| {
             let fallback = inspect_component_state(prefix, &component.id, component.state);
-            let state = if component.id == "d3d12_agility" {
-                inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
-            } else if matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod") {
-                inspect_mono_fna_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
-            } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-                && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
-            {
-                let home = dirs::home_dir().unwrap_or_default();
-                if crate::platform::gptk_vcrun_installed(&home) {
-                    ComponentState::Installed
+            let state =
+                if matches!(manifest.runtime_profile, RuntimeProfile::M12) && is_m12_runtime_component(&component.id) {
+                    inspect_m12_runtime_component(&component.id).unwrap_or(fallback)
+                } else if component.id == "d3d12_agility" {
+                    inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
+                } else if matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod") {
+                    inspect_mono_fna_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
+                } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
+                    && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+                {
+                    let home = dirs::home_dir().unwrap_or_default();
+                    if crate::platform::gptk_vcrun_installed(&home) {
+                        ComponentState::Installed
+                    } else {
+                        fallback
+                    }
                 } else {
                     fallback
-                }
-            } else {
-                fallback
-            };
+                };
             RuntimeComponent { id: component.id.clone(), state }
         })
         .collect()
@@ -3612,6 +3761,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
     }
 
     match id {
+        id if is_m12_runtime_component(id) => inspect_m12_runtime_component(id).unwrap_or(fallback),
         "wine-mono" => {
             if windows.join("mono").exists() {
                 ComponentState::Installed
@@ -4804,6 +4954,20 @@ fn component_source_policies_for_manifest(manifest: &BottleManifest) -> Vec<Comp
 }
 
 fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy {
+    if is_m12_runtime_component(id) {
+        let state = inspect_m12_runtime_component(id).unwrap_or(ComponentState::Unknown);
+        let home = dirs::home_dir().unwrap_or_default();
+        let path = m12_runtime_component_artifacts(id)
+            .and_then(|artifacts| artifacts.first().copied())
+            .map(|artifact| crate::installer::dxmt_m12_runtime_artifact_path_for_home(&home, artifact));
+        return ComponentSourcePolicy {
+            id: id.to_string(),
+            source: "metalsharp_pr230_dxmt_m12_runtime".to_string(),
+            available: state == ComponentState::Installed,
+            detail: m12_runtime_component_detail(id),
+            path: path.map(|p| p.to_string_lossy().to_string()),
+        };
+    }
     if matches!(id, "wine-mono" | "gecko") {
         return ComponentSourcePolicy {
             id: id.to_string(),
@@ -4935,6 +5099,13 @@ fn component_action_detail(id: &str) -> String {
         "mono-arm64" => "Install MetalSharp ARM64 Mono runtime".to_string(),
         "mono-x86" => "Install MetalSharp x86_64 Mono runtime".to_string(),
         "fna" => "Install FNA/XNA compatibility assemblies and native shims".to_string(),
+        "m12_d3d12" => "Refresh PR230 M12 d3d12.dll from the bundled dxmt_m12 runtime".to_string(),
+        "m12_d3d11" => "Refresh PR230 M12 d3d11.dll from the bundled dxmt_m12 runtime".to_string(),
+        "m12_d3d10core" => "Refresh PR230 M12 d3d10core.dll from the bundled dxmt_m12 runtime".to_string(),
+        "m12_dxgi_dxmt" => "Refresh PR230 M12 dxgi_dxmt.dll from the bundled dxmt_m12 runtime".to_string(),
+        "m12_dxgi" => "Refresh PR230 M12 dxgi.dll from the bundled dxmt_m12 runtime".to_string(),
+        "m12_winemetal" => "Refresh PR230 M12 winemetal.dll, winemetal.so, and required Unix sidecars".to_string(),
+        "m12_gpu_stubs" => "Refresh PR230 M12 NVAPI/NVNGX GPU stub DLLs".to_string(),
         "d3d12_agility" => "Download and stage the D3D12 Agility SDK payload".to_string(),
         "gecko" => "Install Wine Gecko for embedded browser surfaces".to_string(),
         "dotnet40" => "Install the native .NET Framework 4.0 runtime for CLR v4 titles".to_string(),
@@ -6113,12 +6284,14 @@ mod tests {
 
         let m12_existing = vec![
             RuntimeComponent { id: "d3d12_agility".into(), state: ComponentState::Installed },
-            RuntimeComponent { id: "m12_runtime".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "m12_winemetal".into(), state: ComponentState::Installed },
+            RuntimeComponent { id: "m12_gpu_stubs".into(), state: ComponentState::Installed },
             RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::NeedsRepair },
         ];
         let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetal);
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "d3d12_agility"));
-        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_runtime"));
+        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_winemetal"));
+        assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_gpu_stubs"));
         assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk"));
         assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk_prefix"));
         assert_eq!(
@@ -6907,15 +7080,42 @@ mod tests {
     fn gptk_profile_splits_amd_stub_from_dxmt_vendor_stubs() {
         let m12 = default_components_for(RuntimeProfile::M12);
         let m12_ids = m12.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
-        assert!(m12_ids.contains(&"gpu_vendor_stubs"));
-        assert!(m12_ids.contains(&"corefonts"));
-        assert!(m12_ids.contains(&"d3d12_agility"));
+        for required in [
+            "m12_d3d12",
+            "m12_d3d11",
+            "m12_d3d10core",
+            "m12_dxgi_dxmt",
+            "m12_dxgi",
+            "m12_winemetal",
+            "m12_gpu_stubs",
+            "vcrun2019_x64",
+            "vcrun2019_x86",
+            "corefonts",
+            "d3d12_agility",
+        ] {
+            assert!(m12_ids.contains(&required), "M12 profile should include {required}");
+        }
+        assert!(!m12_ids.contains(&"gpu_vendor_stubs"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
 
         let m13 = default_components_for(RuntimeProfile::M13);
         let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
         assert!(m13_ids.contains(&"gpu_vendor_stubs"));
         assert!(!m13_ids.contains(&"gptk_amd_stub"));
+    }
+
+    #[test]
+    fn m12_winemetal_component_tracks_required_unix_sidecars() {
+        let artifacts = m12_runtime_component_artifacts("m12_winemetal").expect("m12 winemetal artifacts");
+        for required in [
+            "x86_64-windows/winemetal.dll",
+            "x86_64-unix/winemetal.so",
+            "x86_64-unix/libc++.1.dylib",
+            "x86_64-unix/libc++abi.1.dylib",
+            "x86_64-unix/libunwind.1.dylib",
+        ] {
+            assert!(artifacts.contains(&required), "m12_winemetal must validate {required}");
+        }
     }
 
     #[test]

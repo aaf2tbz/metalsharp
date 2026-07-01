@@ -343,22 +343,22 @@ watch([library, search, filter], () => {
     </div>
 
     <div v-else class="game-grid">
-      <GameCard
-        v-for="game in filteredGames"
-        :key="game.appid"
-        :game="game"
-        :running="runningAppId === game.appid"
-        :launching="launchingAppId === game.appid"
-        :steam-installed="wineSteamInstalled"
-        :developer-mode="developerMode"
-        @play="launchGame(game, $event)"
-        @d3dmetal-launched="markD3DMetalLaunched(game, $event)"
-        @stop="stopGame(game)"
-        @install="installGame(game)"
-        @uninstall="uninstallGame(game)"
-        @expanded="onCardExpanded"
-        @artwork-missing="requestArtworkRetry"
-      />
+      <div v-for="game in filteredGames" :key="game.appid" class="game-grid-item">
+        <GameCard
+          :game="game"
+          :running="runningAppId === game.appid"
+          :launching="launchingAppId === game.appid"
+          :steam-installed="wineSteamInstalled"
+          :developer-mode="developerMode"
+          @play="launchGame(game, $event)"
+          @d3dmetal-launched="markD3DMetalLaunched(game, $event)"
+          @stop="stopGame(game)"
+          @install="installGame(game)"
+          @uninstall="uninstallGame(game)"
+          @expanded="onCardExpanded"
+          @artwork-missing="requestArtworkRetry"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -562,13 +562,32 @@ watch([library, search, filter], () => {
 }
 
 .game-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  align-items: start;
+  column-count: 2;
+  column-gap: 18px;
   min-width: 0;
   width: 100%;
   max-width: 100%;
+}
+
+.game-grid-item {
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 18px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  vertical-align: top;
+}
+
+@media (min-width: 1320px) {
+  .game-grid {
+    column-count: 3;
+  }
+}
+
+@media (max-width: 760px) {
+  .game-grid {
+    column-count: 1;
+  }
 }
 
 .empty-state {

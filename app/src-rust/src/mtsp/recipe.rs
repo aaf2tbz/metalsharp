@@ -699,6 +699,7 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
+        475150 => &["TQ.exe"],
         1196590 => &["re8.exe"],
         2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
         305620 => &["tld.exe"],
@@ -858,17 +859,29 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
         assets.push(RuntimeAsset { name: path.to_string(), present: p.is_dir(), path: p, required: true });
     }
 
-    if node.id == PipelineId::M12 {
-        let unix_dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
-        for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
-            let path = unix_dir.join(filename);
+    match node.id {
+        PipelineId::M12 => {
+            let unix_dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
+            for filename in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+                let path = unix_dir.join(filename);
+                assets.push(RuntimeAsset {
+                    name: format!("lib/dxmt_m12/x86_64-unix/{filename}"),
+                    present: runtime_file_present(&path),
+                    path,
+                    required: true,
+                });
+            }
+        },
+        PipelineId::M11 => {
+            let path = ms_root.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so");
             assets.push(RuntimeAsset {
-                name: format!("lib/dxmt_m12/x86_64-unix/{filename}"),
+                name: "lib/dxmt/x86_64-unix/winemetal.so".into(),
                 present: runtime_file_present(&path),
                 path,
                 required: true,
             });
-        }
+        },
+        _ => {},
     }
 
     for deploy in &node.deploy_dlls {
@@ -933,6 +946,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn m11_validates_legacy_winemetal_so_without_changing_m12_sidecars() {
+        let ms_root = test_dir("runtime-assets-winemetal-lanes");
+        let m11 = super::super::engine::get_pipeline(PipelineId::M11);
+        let m12 = super::super::engine::get_pipeline(PipelineId::M12);
+
+        let m11_assets = runtime_assets_for_node(m11, &ms_root);
+        assert!(m11_assets.iter().any(|asset| asset.name == "lib/dxmt/x86_64-unix/winemetal.so"));
+        assert!(!m11_assets.iter().any(|asset| asset.name.starts_with("lib/dxmt_m12/x86_64-unix/")));
+
+        let m12_assets = runtime_assets_for_node(m12, &ms_root);
+        assert!(m12_assets.iter().any(|asset| asset.name == "lib/dxmt_m12/x86_64-unix/winemetal.so"));
+        assert!(m12_assets.iter().any(|asset| asset.name == "lib/dxmt_m12/x86_64-unix/libc++.1.dylib"));
+        assert!(!m12_assets.iter().any(|asset| asset.name == "lib/dxmt/x86_64-unix/winemetal.so"));
+
+        let _ = std::fs::remove_dir_all(ms_root);
+    }
+
+    #[test]
     fn executable_scoring_rejects_launcher_when_real_game_exists() {
         let dir = test_dir("exe-score");
         std::fs::create_dir_all(&dir).expect("create test dir");
@@ -980,6 +1011,19 @@ mod tests {
 
         assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("start_protected_game.exe"));
 
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn titan_quest_prefers_main_game_exe() {
+        let dir = test_dir("titan-quest-exe");
+        std::fs::create_dir_all(&dir).expect("create tq dir");
+        std::fs::write(dir.join("TQ.exe"), b"game").expect("write tq exe");
+        std::fs::write(dir.join("TQLauncher.exe"), b"launcher").expect("write tq launcher");
+
+        let selected = resolve_game_exe(475150, &dir).expect("select titan quest exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("TQ.exe"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1277,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn m9_selects_i386_d3d9_for_32_bit_exes() {
+    fn m9_selects_i386_d3d9_and_dxgi_for_32_bit_exes() {
         let game_dir = test_dir("m9-32");
         let runtime = test_dir("runtime-32");
         std::fs::create_dir_all(&game_dir).expect("create test game dir");
@@ -1291,9 +1335,11 @@ mod tests {
             &runtime,
         );
         let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+        let filenames: std::collections::HashSet<_> = selected.iter().map(|dll| dll.filename.as_str()).collect();
 
         assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
-        assert_eq!(selected.len(), 1);
+        assert_eq!(filenames, std::collections::HashSet::from(["d3d9.dll", "dxgi.dll"]));
+        assert_eq!(selected.len(), 2);
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }

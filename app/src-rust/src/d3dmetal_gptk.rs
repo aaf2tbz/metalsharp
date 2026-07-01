@@ -91,6 +91,27 @@ pub fn handle_save(body: &serde_json::Map<String, Value>) -> Value {
     }
 }
 
+pub fn handle_install_homebrew_gptk(body: &serde_json::Map<String, Value>) -> Value {
+    match install_homebrew_gptk(body) {
+        Ok(state) => json!({"ok": true, "state": state, "actions": actions_for(&state)}),
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
+pub fn handle_install_rosetta(body: &serde_json::Map<String, Value>) -> Value {
+    match install_rosetta(body) {
+        Ok(state) => json!({"ok": true, "state": state, "actions": actions_for(&state)}),
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
+pub fn handle_repair_gptk_payload(body: &serde_json::Map<String, Value>) -> Value {
+    match repair_gptk_payload(body) {
+        Ok(state) => json!({"ok": true, "state": state, "actions": actions_for(&state)}),
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
 pub fn handle_install_x64_redist(body: &serde_json::Map<String, Value>) -> Value {
     match install_x64_redist(body) {
         Ok(state) => json!({"ok": true, "state": state, "actions": actions_for(&state)}),
@@ -234,6 +255,96 @@ fn refresh_status_state(mut state: D3DMetalGptkState) -> D3DMetalGptkState {
         persist_d3dmetal_bottle_manifest_best_effort(&state);
     }
     state
+}
+
+fn install_homebrew_gptk(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkState, String> {
+    let mut state = state_from_request(body)?;
+    state.gptk_homebrew = D3DMetalStepState::Installing;
+    state.gptk_payload = D3DMetalStepState::Updating;
+    state.play_ready = false;
+    state.last_error = None;
+    save_state(&state)?;
+
+    match ensure_homebrew_gptk_trusted_and_installed().and_then(|_| ensure_homebrew_gptk_payload_ready()) {
+        Ok(()) => {
+            state.gptk_homebrew = D3DMetalStepState::Installed;
+            state.gptk_payload = D3DMetalStepState::Updated;
+            state.last_error = None;
+        },
+        Err(e) => {
+            state.gptk_homebrew =
+                if homebrew_gptk_installed() { D3DMetalStepState::Installed } else { D3DMetalStepState::Failed };
+            state.gptk_payload = if state.gptk_homebrew == D3DMetalStepState::Installed {
+                D3DMetalStepState::RepairRequired
+            } else {
+                D3DMetalStepState::Missing
+            };
+            state.last_error = Some(e.clone());
+            save_state(&state)?;
+            persist_d3dmetal_bottle_manifest_best_effort(&state);
+            return Err(e);
+        },
+    }
+    state.updated_at = now_secs();
+    state = refresh_status_state(state);
+    save_state(&state)?;
+    persist_d3dmetal_bottle_manifest(&state)?;
+    Ok(state)
+}
+
+fn install_rosetta(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkState, String> {
+    let mut state = state_from_request(body)?;
+    state.rosetta = D3DMetalStepState::Installing;
+    state.play_ready = false;
+    state.last_error = None;
+    save_state(&state)?;
+
+    match ensure_rosetta() {
+        Ok(()) => {
+            state.rosetta = D3DMetalStepState::Installed;
+            state.last_error = None;
+        },
+        Err(e) => {
+            state.rosetta = D3DMetalStepState::Failed;
+            state.last_error = Some(e.clone());
+            save_state(&state)?;
+            persist_d3dmetal_bottle_manifest_best_effort(&state);
+            return Err(e);
+        },
+    }
+    state.updated_at = now_secs();
+    state = refresh_status_state(state);
+    save_state(&state)?;
+    persist_d3dmetal_bottle_manifest(&state)?;
+    Ok(state)
+}
+
+fn repair_gptk_payload(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkState, String> {
+    let mut state = state_from_request(body)?;
+    state.gptk_payload = D3DMetalStepState::Updating;
+    state.play_ready = false;
+    state.last_error = None;
+    save_state(&state)?;
+
+    match ensure_homebrew_gptk_payload_ready() {
+        Ok(()) => {
+            state.gptk_homebrew = D3DMetalStepState::Installed;
+            state.gptk_payload = D3DMetalStepState::Updated;
+            state.last_error = None;
+        },
+        Err(e) => {
+            state.gptk_payload = D3DMetalStepState::RepairRequired;
+            state.last_error = Some(e.clone());
+            save_state(&state)?;
+            persist_d3dmetal_bottle_manifest_best_effort(&state);
+            return Err(e);
+        },
+    }
+    state.updated_at = now_secs();
+    state = refresh_status_state(state);
+    save_state(&state)?;
+    persist_d3dmetal_bottle_manifest(&state)?;
+    Ok(state)
 }
 
 fn install_x64_redist(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkState, String> {
@@ -390,6 +501,28 @@ fn play_d3dmetal(body: &serde_json::Map<String, Value>) -> Result<Value, String>
 fn actions_for(state: &D3DMetalGptkState) -> Vec<D3DMetalAction> {
     let seed_repair = matches!(state.seed, D3DMetalStepState::RepairRequired | D3DMetalStepState::Failed);
     vec![
+        D3DMetalAction {
+            id: "install_homebrew_gptk".to_string(),
+            label: "Repair Homebrew GPTK".to_string(),
+            enabled: state.gptk_homebrew != D3DMetalStepState::Installed,
+            state: state.gptk_homebrew.clone(),
+            detail: "Tap gcenx/wine and install the Homebrew-owned game-porting-toolkit cask".to_string(),
+        },
+        D3DMetalAction {
+            id: "install_rosetta".to_string(),
+            label: "Repair Rosetta".to_string(),
+            enabled: state.rosetta != D3DMetalStepState::Installed,
+            state: state.rosetta.clone(),
+            detail: "Install or verify Apple Rosetta 2 for x86_64 GPTK Wine".to_string(),
+        },
+        D3DMetalAction {
+            id: "repair_gptk_payload".to_string(),
+            label: "Repair GPTK Payload".to_string(),
+            enabled: state.gptk_homebrew == D3DMetalStepState::Installed
+                && state.gptk_payload != D3DMetalStepState::Updated,
+            state: state.gptk_payload.clone(),
+            detail: "Verify Homebrew GPTK route DLLs and D3DMetal.framework payload files".to_string(),
+        },
         D3DMetalAction {
             id: "install_x64_redist".to_string(),
             label: "Repair Redist".to_string(),
@@ -687,6 +820,18 @@ fn ensure_homebrew_gptk_ready_for_actions() -> Result<(), String> {
 
 fn ensure_homebrew_gptk_trusted_and_installed() -> Result<(), String> {
     let brew = find_brew()?;
+    let tap = Command::new(&brew)
+        .args(["tap", "gcenx/wine"])
+        .output()
+        .map_err(|e| format!("brew tap gcenx/wine failed: {}", e))?;
+    let tap_text = command_text(&tap);
+    if !tap.status.success() && !tap_text.contains("already tapped") {
+        return Err(format!(
+            "brew tap gcenx/wine failed: {}",
+            tap_text.lines().last().unwrap_or("unknown brew tap error")
+        ));
+    }
+
     let trust = Command::new(&brew)
         .args(["trust", "--cask", "gcenx/wine/game-porting-toolkit"])
         .output()
@@ -700,22 +845,24 @@ fn ensure_homebrew_gptk_trusted_and_installed() -> Result<(), String> {
     }
 
     let output = Command::new(&brew)
-        .args(["install", "game-porting-toolkit"])
+        .args(["install", "--cask", "gcenx/wine/game-porting-toolkit"])
         .output()
-        .map_err(|e| format!("brew install game-porting-toolkit failed: {}", e))?;
+        .map_err(|e| format!("brew install --cask gcenx/wine/game-porting-toolkit failed: {}", e))?;
     let text = command_text(&output);
     if !output.status.success()
         && !text.contains("already installed")
         && !text.contains("Not upgrading game-porting-toolkit")
     {
         return Err(format!(
-            "brew install game-porting-toolkit failed: {}",
+            "brew install --cask gcenx/wine/game-porting-toolkit failed: {}",
             text.lines().last().unwrap_or("unknown brew install error")
         ));
     }
     if !homebrew_gptk_installed() {
-        return Err("brew install game-porting-toolkit completed but Homebrew GPTK wine64/wineserver were not found"
-            .to_string());
+        return Err(
+            "brew install --cask gcenx/wine/game-porting-toolkit completed but Homebrew GPTK wine64/wineserver were not found"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -1391,6 +1538,9 @@ mod tests {
         state.x64_redist = D3DMetalStepState::RepairRequired;
         state.seed = D3DMetalStepState::RepairRequired;
         let actions = actions_for(&state);
+        assert!(actions.iter().any(|a| a.id == "install_homebrew_gptk" && a.label == "Repair Homebrew GPTK"));
+        assert!(actions.iter().any(|a| a.id == "install_rosetta" && a.label == "Repair Rosetta"));
+        assert!(actions.iter().any(|a| a.id == "repair_gptk_payload" && a.label == "Repair GPTK Payload"));
         assert!(actions.iter().any(|a| a.id == "install_x64_redist" && a.label == "Repair Redist"));
         assert!(actions.iter().any(|a| a.id == "seed_prefix" && a.label == "Repair Seed"));
     }
@@ -1400,9 +1550,29 @@ mod tests {
         let mut state = new_state("steam_1", 1, "Game", Path::new("/tmp/game"));
         state.gptk_homebrew = D3DMetalStepState::Installed;
         state.gptk_payload = D3DMetalStepState::Updated;
+        state.rosetta = D3DMetalStepState::Installed;
         let actions = actions_for(&state);
+        assert!(actions.iter().any(|a| a.id == "install_homebrew_gptk" && !a.enabled));
+        assert!(actions.iter().any(|a| a.id == "install_rosetta" && !a.enabled));
+        assert!(actions.iter().any(|a| a.id == "repair_gptk_payload" && !a.enabled));
         assert!(actions.iter().any(|a| a.id == "install_x64_redist" && a.label == "Repair Redist"));
         assert!(actions.iter().any(|a| a.id == "seed_prefix" && a.label == "Seed Prefix"));
+    }
+
+    #[test]
+    fn manual_repair_actions_enable_for_missing_d3dmetal_prerequisites() {
+        let mut state = new_state("steam_1", 1, "Game", Path::new("/tmp/game"));
+        state.gptk_homebrew = D3DMetalStepState::Missing;
+        state.gptk_payload = D3DMetalStepState::Missing;
+        state.rosetta = D3DMetalStepState::Missing;
+        let actions = actions_for(&state);
+        assert!(actions.iter().any(|a| a.id == "install_homebrew_gptk" && a.enabled));
+        assert!(actions.iter().any(|a| a.id == "install_rosetta" && a.enabled));
+
+        state.gptk_homebrew = D3DMetalStepState::Installed;
+        state.gptk_payload = D3DMetalStepState::RepairRequired;
+        let actions = actions_for(&state);
+        assert!(actions.iter().any(|a| a.id == "repair_gptk_payload" && a.enabled));
     }
 
     #[test]
