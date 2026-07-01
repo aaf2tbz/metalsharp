@@ -155,6 +155,8 @@ interface LauncherState {
   authUrl?: string;
   binaryPath?: string | null;
   authConfigPath?: string | null;
+  winePrefix?: string | null;
+  prefixInitialized?: boolean;
   capabilities?: string[];
 }
 
@@ -1041,6 +1043,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   </button>
                   <div v-if="isGogdlLauncher(launcher)" class="launcher-diagnostic-section">
                     <small>Binary: {{ launcher.binaryPath || "Set METALSHARP_GOGDL_BIN or install gogdl" }}</small>
+                    <small>Prefix: {{ launcher.winePrefix }}{{ launcher.prefixInitialized ? "" : " (will initialize)" }}</small>
                     <small>Auth: {{ launcher.authConfigPath }}</small>
                     <small v-if="launcher.capabilities?.length">Capabilities: {{ launcher.capabilities.join(' · ') }}</small>
                   </div>

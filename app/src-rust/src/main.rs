@@ -37,7 +37,7 @@ mod sharp_library;
 mod steam;
 mod updater;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -1829,6 +1829,48 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/sharp-library/launchers/gogdl/diagnostics") => {
             app_log("[SHARP-LIB] launcher diagnostics: GOGDL");
             resp(200, sharp_library::handle_gogdl_diagnostics())
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/auth") => {
+            let body = read_body(req);
+            app_log("[SHARP-LIB] launcher auth: GOGDL");
+            resp(200, sharp_library::handle_gogdl_auth(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/info") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher info: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_info(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/download") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher download: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_download(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/import") => {
+            let body = read_body(req);
+            app_log("[SHARP-LIB] launcher import: GOGDL");
+            resp(200, sharp_library::handle_gogdl_import(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/launch") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher launch: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_launch(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/save-sync") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher save sync: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_save_sync(&Value::Object(body)))
         },
         (Method::Post, "/sharp-library/launchers/gog/show-card") => {
             app_log("[SHARP-LIB] launcher show card: GOG Galaxy");

@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
@@ -2147,6 +2147,7 @@ pub fn handle_get_library() -> Value {
 
 const GOG_GALAXY_INSTALLER_URL: &str = "https://webinstallers.gog-statics.com/download/GOG_Galaxy_2.0.exe";
 const GOGDL_AUTH_URL: &str = "https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=galaxy";
+const GOG_PREFIX_BOTTLE_ID: &str = "gog-prefix";
 
 fn gog_galaxy_cache_path() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("cache").join("gog-galaxy").join("GOG_Galaxy_2.0.exe")
@@ -2259,6 +2260,60 @@ fn gogdl_auth_config_path() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("gog_store").join("auth.json")
 }
 
+fn gogdl_support_dir() -> PathBuf {
+    gogdl_config_dir().join("gog-support")
+}
+
+fn gogdl_default_install_dir(product_id: &str) -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("gog-games").join(product_id)
+}
+
+fn gogdl_prefix_dir() -> PathBuf {
+    crate::bottles::bottle_dir(GOG_PREFIX_BOTTLE_ID).join("prefix")
+}
+
+fn gogdl_default_prefix_dir(_product_id: &str) -> PathBuf {
+    gogdl_prefix_dir()
+}
+
+fn gogdl_metalsharp_wine_root() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_default();
+    crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine")
+}
+
+fn gogdl_metalsharp_wine_binary() -> PathBuf {
+    crate::platform::runtime_wine_binary(&gogdl_metalsharp_wine_root())
+}
+
+fn ensure_gogdl_prefix(prefix: &Path) -> Result<(), String> {
+    fs::create_dir_all(prefix).map_err(|error| format!("failed to create GOG prefix directory: {}", error))?;
+    if prefix.join("drive_c").is_dir() {
+        return Ok(());
+    }
+
+    let wine = gogdl_metalsharp_wine_binary();
+    if !wine.is_file() {
+        return Err(format!("MetalSharp Wine binary not found: {}", wine.display()));
+    }
+    let ms_root = gogdl_metalsharp_wine_root();
+    let mut command = Command::new(&wine);
+    command
+        .arg("wineboot")
+        .arg("-u")
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEMSYNC", "1")
+        .env("WINEDEBUG", "-all")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::platform::set_runtime_library_env(&mut command, &ms_root);
+    let status = command.status().map_err(|error| format!("failed to initialize GOG prefix: {}", error))?;
+    if !status.success() {
+        return Err(format!("failed to initialize GOG prefix with wineboot: {:?}", status.code()));
+    }
+    Ok(())
+}
+
 fn gogdl_candidate_paths_from_path_env(path_env: Option<&str>) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(explicit) = std::env::var("METALSHARP_GOGDL_BIN") {
@@ -2314,14 +2369,357 @@ fn gogdl_status_value() -> Value {
         "binaryPath": binary.map(|path| path.to_string_lossy().to_string()),
         "configPath": gogdl_config_dir().to_string_lossy().to_string(),
         "authConfigPath": auth_config.to_string_lossy().to_string(),
+        "supportPath": gogdl_support_dir().to_string_lossy().to_string(),
+        "bottleId": GOG_PREFIX_BOTTLE_ID,
+        "winePrefix": gogdl_prefix_dir().to_string_lossy().to_string(),
+        "prefixInitialized": gogdl_prefix_dir().join("drive_c").is_dir(),
+        "winePath": gogdl_metalsharp_wine_binary().to_string_lossy().to_string(),
         "authUrl": GOGDL_AUTH_URL,
         "galaxyFallbackId": "gog_galaxy",
         "capabilities": ["auth", "metadata", "download", "launch", "cloud_saves", "redists"],
     })
 }
 
+fn valid_gogdl_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+}
+
+fn gogdl_product_id(body: &Value) -> Result<String, String> {
+    let product_id = body
+        .get("productId")
+        .or_else(|| body.get("id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .ok_or_else(|| "missing GOG productId".to_string())?;
+    if !valid_gogdl_token(product_id) {
+        return Err("invalid GOG productId".to_string());
+    }
+    Ok(product_id.to_string())
+}
+
+fn gogdl_platform(body: &Value) -> Result<String, String> {
+    let platform =
+        body.get("platform").or_else(|| body.get("os")).and_then(|value| value.as_str()).unwrap_or("windows");
+    match platform {
+        "windows" | "osx" | "linux" => Ok(platform.to_string()),
+        _ => Err("platform must be windows, osx, or linux".to_string()),
+    }
+}
+
+fn gogdl_string_field(body: &Value, name: &str) -> Option<String> {
+    body.get(name).and_then(|value| value.as_str()).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string)
+}
+
+fn gogdl_output_stdout_json(output: &Output) -> Option<Value> {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        None
+    } else {
+        serde_json::from_str(&stdout).ok()
+    }
+}
+
+fn gogdl_error_from_output(context: &str, output: &Output) -> Value {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    json!({
+        "ok": false,
+        "error": format!("{} failed", context),
+        "status": output.status.code(),
+        "stderr": truncate_gogdl_text(&stderr),
+        "stdout": truncate_gogdl_text(&stdout),
+        "launcher": gogdl_status_value(),
+    })
+}
+
+fn truncate_gogdl_text(value: &str) -> String {
+    const LIMIT: usize = 8_192;
+    if value.len() <= LIMIT {
+        value.to_string()
+    } else {
+        format!("{}…", &value[..LIMIT])
+    }
+}
+
+fn gogdl_command() -> Result<Command, String> {
+    let binary = find_gogdl_binary()
+        .ok_or_else(|| "gogdl binary not found; set METALSHARP_GOGDL_BIN or install gogdl".to_string())?;
+    let auth_config = gogdl_auth_config_path();
+    if let Some(parent) = auth_config.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("failed to create GOG auth directory: {}", error))?;
+    }
+    fs::create_dir_all(gogdl_config_dir())
+        .map_err(|error| format!("failed to create GOGDL config directory: {}", error))?;
+    fs::create_dir_all(gogdl_support_dir())
+        .map_err(|error| format!("failed to create GOG support directory: {}", error))?;
+
+    let mut command = Command::new(binary);
+    command
+        .arg("--auth-config-path")
+        .arg(auth_config)
+        .env("GOGDL_CONFIG_PATH", gogdl_config_dir())
+        .env("GOGDL_SUPPORT_PATH", gogdl_support_dir());
+    Ok(command)
+}
+
+fn run_gogdl_output(args: &[String]) -> Result<Output, String> {
+    let mut command = gogdl_command()?;
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("failed to run gogdl: {}", error))
+}
+
+fn spawn_gogdl(args: &[String]) -> Result<u32, String> {
+    let mut command = gogdl_command()?;
+    command.args(args).stdout(Stdio::null()).stderr(Stdio::null());
+    command.spawn().map(|child| child.id()).map_err(|error| format!("failed to spawn gogdl: {}", error))
+}
+
+fn gogdl_download_args(body: &Value) -> Result<(String, PathBuf, Vec<String>), String> {
+    let product_id = gogdl_product_id(body)?;
+    let platform = gogdl_platform(body)?;
+    let install_dir = gogdl_string_field(body, "installPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| gogdl_default_install_dir(&product_id));
+    let support_dir = gogdl_string_field(body, "supportPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| gogdl_support_dir().join(&product_id));
+    fs::create_dir_all(&install_dir).map_err(|error| format!("failed to create GOG install directory: {}", error))?;
+    fs::create_dir_all(&support_dir).map_err(|error| format!("failed to create GOG support directory: {}", error))?;
+
+    let mut args = vec![
+        "download".to_string(),
+        product_id.clone(),
+        "--platform".to_string(),
+        platform,
+        "--path".to_string(),
+        install_dir.to_string_lossy().to_string(),
+        "--support".to_string(),
+        support_dir.to_string_lossy().to_string(),
+    ];
+    if body.get("withDlcs").and_then(|value| value.as_bool()).unwrap_or(true) {
+        args.push("--with-dlcs".to_string());
+    } else {
+        args.push("--skip-dlcs".to_string());
+    }
+    if let Some(language) = gogdl_string_field(body, "language") {
+        args.extend(["--lang".to_string(), language]);
+    }
+    if let Some(build) = gogdl_string_field(body, "build") {
+        args.extend(["--build".to_string(), build]);
+    }
+    if let Some(branch) = gogdl_string_field(body, "branch") {
+        args.extend(["--branch".to_string(), branch]);
+    }
+    Ok((product_id, install_dir, args))
+}
+
+fn gogdl_info_args(body: &Value) -> Result<Vec<String>, String> {
+    let product_id = gogdl_product_id(body)?;
+    let platform = gogdl_platform(body)?;
+    let mut args = vec!["info".to_string(), product_id, "--platform".to_string(), platform];
+    if body.get("withDlcs").and_then(|value| value.as_bool()).unwrap_or(true) {
+        args.push("--with-dlcs".to_string());
+    } else {
+        args.push("--skip-dlcs".to_string());
+    }
+    if let Some(language) = gogdl_string_field(body, "language") {
+        args.extend(["--lang".to_string(), language]);
+    }
+    if let Some(build) = gogdl_string_field(body, "build") {
+        args.extend(["--build".to_string(), build]);
+    }
+    Ok(args)
+}
+
+fn gogdl_launch_args(body: &Value) -> Result<(String, PathBuf, PathBuf, Vec<String>), String> {
+    gogdl_launch_args_with_defaults(body, gogdl_default_prefix_dir, gogdl_metalsharp_wine_binary())
+}
+
+fn gogdl_launch_args_with_defaults(
+    body: &Value,
+    default_prefix: impl FnOnce(&str) -> PathBuf,
+    wine: PathBuf,
+) -> Result<(String, PathBuf, PathBuf, Vec<String>), String> {
+    let product_id = gogdl_product_id(body)?;
+    let platform = gogdl_platform(body)?;
+    let install_dir = gogdl_string_field(body, "installPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| gogdl_default_install_dir(&product_id));
+    if !install_dir.is_dir() {
+        return Err(format!("GOG install path does not exist: {}", install_dir.display()));
+    }
+    let prefix =
+        gogdl_string_field(body, "winePrefix").map(PathBuf::from).unwrap_or_else(|| default_prefix(&product_id));
+    if !wine.is_file() {
+        return Err(format!("MetalSharp Wine binary not found: {}", wine.display()));
+    }
+
+    let mut args = vec![
+        "launch".to_string(),
+        install_dir.to_string_lossy().to_string(),
+        product_id.clone(),
+        "--platform".to_string(),
+        platform,
+        "--wine".to_string(),
+        wine.to_string_lossy().to_string(),
+        "--wine-prefix".to_string(),
+        prefix.to_string_lossy().to_string(),
+    ];
+    if let Some(preferred_task) = gogdl_string_field(body, "preferredTask") {
+        args.extend(["--prefer-task".to_string(), preferred_task]);
+    }
+    if let Some(override_exe) = gogdl_string_field(body, "overrideExe") {
+        args.extend(["--override-exe".to_string(), override_exe]);
+    }
+    Ok((product_id, install_dir, prefix, args))
+}
+
 pub fn handle_gogdl_diagnostics() -> Value {
     json!({"ok": true, "launcher": gogdl_status_value(), "galaxyFallback": gog_launcher_status_value()})
+}
+
+pub fn handle_gogdl_auth(body: &Value) -> Value {
+    let Some(code) = gogdl_string_field(body, "code") else {
+        return json!({"ok": false, "error": "missing GOG authorization code", "launcher": gogdl_status_value()});
+    };
+    let args = vec!["auth".to_string(), "--code".to_string(), code];
+    match run_gogdl_output(&args) {
+        Ok(output) if output.status.success() => json!({
+            "ok": true,
+            "authenticated": gogdl_auth_config_path().is_file(),
+            "credentials": gogdl_output_stdout_json(&output).map(|_| json!({"redacted": true})),
+            "launcher": gogdl_status_value(),
+        }),
+        Ok(output) => gogdl_error_from_output("gogdl auth", &output),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_info(body: &Value) -> Value {
+    let args = match gogdl_info_args(body) {
+        Ok(args) => args,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    match run_gogdl_output(&args) {
+        Ok(output) if output.status.success() => json!({
+            "ok": true,
+            "info": gogdl_output_stdout_json(&output),
+            "stdout": truncate_gogdl_text(String::from_utf8_lossy(&output.stdout).trim()),
+            "launcher": gogdl_status_value(),
+        }),
+        Ok(output) => gogdl_error_from_output("gogdl info", &output),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_download(body: &Value) -> Value {
+    let (product_id, install_dir, args) = match gogdl_download_args(body) {
+        Ok(args) => args,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    match spawn_gogdl(&args) {
+        Ok(pid) => json!({
+            "ok": true,
+            "pid": pid,
+            "productId": product_id,
+            "installPath": install_dir.to_string_lossy().to_string(),
+            "message": "GOG download started",
+            "launcher": gogdl_status_value(),
+        }),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_import(body: &Value) -> Value {
+    let Some(path) = gogdl_string_field(body, "installPath").or_else(|| gogdl_string_field(body, "path")) else {
+        return json!({"ok": false, "error": "missing installPath", "launcher": gogdl_status_value()});
+    };
+    let args = vec!["import".to_string(), path.clone()];
+    match run_gogdl_output(&args) {
+        Ok(output) if output.status.success() => json!({
+            "ok": true,
+            "import": gogdl_output_stdout_json(&output),
+            "stdout": truncate_gogdl_text(String::from_utf8_lossy(&output.stdout).trim()),
+            "launcher": gogdl_status_value(),
+        }),
+        Ok(output) => gogdl_error_from_output("gogdl import", &output),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_launch(body: &Value) -> Value {
+    let (product_id, install_dir, prefix, args) = match gogdl_launch_args(body) {
+        Ok(args) => args,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    if let Err(error) = ensure_gogdl_prefix(&prefix) {
+        return json!({"ok": false, "error": error, "launcher": gogdl_status_value()});
+    }
+    match spawn_gogdl(&args) {
+        Ok(pid) => json!({
+            "ok": true,
+            "pid": pid,
+            "productId": product_id,
+            "installPath": install_dir.to_string_lossy().to_string(),
+            "winePrefix": prefix.to_string_lossy().to_string(),
+            "bottleId": GOG_PREFIX_BOTTLE_ID,
+            "winePath": gogdl_metalsharp_wine_binary().to_string_lossy().to_string(),
+            "message": "GOG game launch started",
+            "launcher": gogdl_status_value(),
+        }),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_save_sync(body: &Value) -> Value {
+    let product_id = match gogdl_product_id(body) {
+        Ok(product_id) => product_id,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    let platform = match gogdl_platform(body) {
+        Ok(platform) => platform,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    let Some(save_path) = gogdl_string_field(body, "savePath") else {
+        return json!({"ok": false, "error": "missing savePath", "launcher": gogdl_status_value()});
+    };
+    let timestamp = gogdl_string_field(body, "timestamp").unwrap_or_else(|| "0".to_string());
+    let save_name = gogdl_string_field(body, "name").unwrap_or_else(|| "__default".to_string());
+    let mut args = vec![
+        "save-sync".to_string(),
+        save_path,
+        product_id.clone(),
+        "--os".to_string(),
+        platform,
+        "--ts".to_string(),
+        timestamp,
+        "--name".to_string(),
+        save_name,
+    ];
+    if let Some(mode) = gogdl_string_field(body, "mode") {
+        let flag = match mode.as_str() {
+            "upload" => Some("--skip-download"),
+            "download" => Some("--skip-upload"),
+            "forceupload" | "force_upload" => Some("--force-upload"),
+            "forcedownload" | "force_download" => Some("--force-download"),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            args.push(flag.to_string());
+        }
+    }
+    match spawn_gogdl(&args) {
+        Ok(pid) => {
+            json!({"ok": true, "pid": pid, "productId": product_id, "message": "GOG save sync started", "launcher": gogdl_status_value()})
+        },
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
 }
 
 pub fn handle_launchers() -> Value {
@@ -2859,6 +3257,53 @@ mod tests {
         assert!(candidates.iter().any(|path| path.ends_with("tools/gogdl")));
         assert!(candidates.iter().any(|path| path.ends_with("runtime/gogdl")));
         assert!(candidates.iter().any(|path| path == &PathBuf::from("/usr/local/bin/gogdl")));
+    }
+
+    #[test]
+    fn gogdl_info_args_follow_heroic_command_shape() {
+        let args = gogdl_info_args(&json!({"productId": "1423049311", "platform": "windows"})).expect("args");
+        assert_eq!(args, ["info", "1423049311", "--platform", "windows", "--with-dlcs"]);
+    }
+
+    #[test]
+    fn gogdl_launch_args_use_metalsharp_wine_and_gog_scoped_prefix() {
+        let install_dir = test_dir("gogdl-launch-install");
+        let prefix_dir = test_dir("gog-prefix-launch").join("bottles").join("gog-prefix").join("prefix");
+        let wine = test_dir("gogdl-launch-wine").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+        fs::create_dir_all(&install_dir).expect("create install dir");
+        fs::create_dir_all(wine.parent().expect("wine parent")).expect("create wine bin dir");
+        fs::write(&wine, b"#!/bin/sh\n").expect("write wine");
+
+        let (_product_id, _install_dir, prefix, args) = gogdl_launch_args_with_defaults(
+            &json!({
+                "productId": "1423049311",
+                "installPath": install_dir.to_string_lossy(),
+                "platform": "windows",
+                "preferredTask": "1"
+            }),
+            |_| prefix_dir.clone(),
+            wine.clone(),
+        )
+        .expect("args");
+
+        assert!(prefix.ends_with("bottles/gog-prefix/prefix"));
+        assert!(args.contains(&"launch".to_string()));
+        assert!(args.contains(&"--wine".to_string()));
+        assert!(args.contains(&wine.to_string_lossy().to_string()));
+        assert!(args.contains(&"--wine-prefix".to_string()));
+        assert!(args.contains(&prefix.to_string_lossy().to_string()));
+        assert!(args.windows(2).any(|pair| pair == ["--prefer-task", "1"]));
+        let _ = fs::remove_dir_all(install_dir);
+        let _ = fs::remove_dir_all(prefix_dir.parent().and_then(|path| path.parent()).unwrap_or(&prefix_dir));
+        let _ = fs::remove_dir_all(
+            wine.parent().and_then(|path| path.parent()).and_then(|path| path.parent()).unwrap_or(&wine),
+        );
+    }
+
+    #[test]
+    fn gogdl_rejects_path_like_product_ids() {
+        assert!(gogdl_product_id(&json!({"productId": "../bad"})).is_err());
+        assert!(gogdl_product_id(&json!({"productId": "1423049311"})).is_ok());
     }
 
     #[test]
