@@ -609,6 +609,16 @@ mod tests {
     }
 
     #[test]
+    fn game_recipes_parse_resident_evil_4_exe_override() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let re4 = recipes.get(&2050650).expect("resident evil 4 recipe");
+        assert_eq!(re4.pipeline, PipelineId::M12);
+        assert_eq!(re4.name, "Resident Evil 4");
+        assert_eq!(re4.exe_names, vec!["re4.exe".to_string()]);
+        assert!(re4.offline_capable);
+    }
+
+    #[test]
     fn game_recipes_parse_gta_v_rockstar_runtime() {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let gta = recipes.get(&271590).expect("gta v recipe");

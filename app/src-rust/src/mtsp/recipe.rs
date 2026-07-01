@@ -1050,6 +1050,20 @@ mod tests {
     }
 
     #[test]
+    fn d3dmetal_resident_evil_4_rule_prefers_re4_exe() {
+        let dir = test_dir("re4-d3dmetal-exe");
+        std::fs::create_dir_all(&dir).expect("create re4 dir");
+        std::fs::write(dir.join("CrashReport.exe"), b"crash").expect("write crash reporter");
+        std::fs::write(dir.join("re4.exe"), b"game").expect("write re4 exe");
+
+        let selected =
+            resolve_game_exe_for_pipeline(2050650, &dir, Some(PipelineId::D3DMetal)).expect("select re4 exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("re4.exe"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn preferred_exes_skip_crash_reporters_for_known_half_working_titles() {
         let village_dir = test_dir("preferred-village-exe");
         std::fs::create_dir_all(&village_dir).expect("create village dir");

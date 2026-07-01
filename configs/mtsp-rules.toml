@@ -164,6 +164,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2050650]
 pipeline = "m12"
 name = "Resident Evil 4"
+exe_names = ["re4.exe"]
 offline_capable = true
 
 [overrides.2050650.dependencies]
