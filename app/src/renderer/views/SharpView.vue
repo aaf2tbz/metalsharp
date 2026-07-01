@@ -3,8 +3,6 @@ import { computed, ref, onMounted, onUnmounted } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { SharpApp } from "../api-types";
-import IconGlassWater from "~icons/lucide/glass-water";
-import IconLayoutGrid from "~icons/lucide/layout-grid";
 import IconDownload from "~icons/lucide/download";
 import IconUpload from "~icons/lucide/upload";
 import IconRefreshCcw from "~icons/lucide/refresh-ccw";
@@ -135,21 +133,6 @@ interface D3DMetalGptkResponse {
   error?: string;
 }
 
-interface CompatibilityCase {
-  id: string;
-  name: string;
-  case_type: string;
-  required_profile: string;
-  installer_opens: string;
-  final_app_detected: string;
-  final_app_launches: string;
-  known_missing_runtime: string;
-  bottle_id?: string | null;
-  notes?: string;
-  evidence_updated_at?: string | null;
-  per_game_prefix_recommendation?: string;
-}
-
 interface RedistSourceGuide {
   id: string;
   name: string;
@@ -173,13 +156,12 @@ function openDropdown(name: string, event: MouseEvent) {
   dropdownStyle.value = {
     top: `${btn.bottom + 6}px`,
     left: `${btn.left}px`,
-    width: name === 'compat' ? '680px' : '420px',
+    width: '420px',
   };
   dropdownOpen.value = name;
 }
 const bottles = ref<BottleManifest[]>([]);
 const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
-const compatibilityCases = ref<CompatibilityCase[]>([]);
 const redistSources = ref<RedistSourceGuide[]>([]);
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const d3dmetalStates = ref<Record<string, D3DMetalGptkState | null>>({});
@@ -279,11 +261,10 @@ function sharpAppNameSort(a: SharpApp, b: SharpApp) {
 }
 
 async function load() {
-  const [result, bottleResult, profileResult, matrixResult, redistResult] = await Promise.all([
+  const [result, bottleResult, profileResult, redistResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
     api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
-    api<{ ok: boolean; cases: CompatibilityCase[] }>("GET", "/bottles/compatibility-matrix"),
     api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
   ]);
   if (result?.ok) {
@@ -298,7 +279,6 @@ async function load() {
     bottles.value = bottleResult.bottles;
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
-  if (matrixResult?.ok) compatibilityCases.value = matrixResult.cases;
   if (redistResult?.ok) redistSources.value = redistResult.sources;
 }
 
@@ -567,28 +547,6 @@ async function relaunchBottleInstaller(bottle: BottleManifest) {
     await load();
   } else {
     toast.show(result?.error ?? "Failed to relaunch installer", "error");
-  }
-}
-
-async function recordCompatibility(item: CompatibilityCase, field: keyof CompatibilityCase, value: string) {
-  const updated = { ...item, [field]: value };
-  const result = await api<{ ok: boolean; cases?: CompatibilityCase[]; error?: string }>(
-    "POST",
-    "/bottles/record-compatibility",
-    {
-      id: item.id,
-      installerOpens: updated.installer_opens,
-      finalAppDetected: updated.final_app_detected,
-      finalAppLaunches: updated.final_app_launches,
-      knownMissingRuntime: updated.known_missing_runtime,
-      notes: updated.notes ?? "",
-    },
-  );
-  if (result?.ok && result.cases) {
-    compatibilityCases.value = result.cases;
-    toast.show("Compatibility evidence recorded", "success");
-  } else {
-    toast.show(result?.error ?? "Failed to record compatibility evidence", "error");
   }
 }
 
@@ -909,164 +867,30 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
     <div class="sharp-header">
       <h1>Sharp Library</h1>
       <div class="sharp-header-controls">
-      <div v-if="bottles.length" class="dropdown-wrap">
-          <button class="btn btn-secondary" @click="openDropdown('bottles', $event)">
-            <IconGlassWater class="btn-icon" width="14" height="14" style="transform:rotate(45deg)" />
-            <span class="btn-label-long">Runtime Bottles</span><span class="btn-label-short">Bottles</span> <span class="dropdown-count">{{ bottles.length }}</span>
-        </button>
-        <div v-if="dropdownOpen === 'bottles'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
-          <div class="dropdown-scroll">
-            <article v-for="bottle in bottles" :key="bottle.id" class="bottle-card-compact">
-              <div class="bottle-card-main">
-                <div class="bottle-identity">
-                  <div class="bottle-title">{{ bottle.name }}</div>
-                  <div class="bottle-meta">
-                    <span class="badge" :class="bottleBadgeClass(bottle.health)">{{ bottle.health }}</span>
-                    <span v-if="bottle.last_launch_status">
-                      {{ bottle.last_launch_status }}
-                      <template v-if="bottle.last_launch_pid">pid {{ bottle.last_launch_pid }}</template>
-                    </span>
-                  </div>
-                </div>
-                <div class="bottle-facts">
-                  <span><strong>Kind</strong> {{ bottle.bottle_type }}</span>
-                  <span><strong>Runtime</strong> {{ bottle.runtime_profile }}</span>
-                  <span><strong>Arch</strong> {{ bottle.arch }}</span>
-                  <span v-if="bottle.steam_app_id"><strong>Steam</strong> {{ bottle.steam_app_id }}</span>
-                </div>
-                <div class="bottle-actions">
-                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="doctorBottle(bottle.id)">
-                    {{ bottleLoading[bottle.id] ? "Checking" : "Doctor" }}
-                  </button>
-                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="refreshBottle(bottle.id)">Scan</button>
-                  <button class="btn btn-secondary btn-sm" @click="bottleAdvancedOpen[bottle.id] = !bottleAdvancedOpen[bottle.id]">
-                    {{ bottleAdvancedOpen[bottle.id] ? "Less" : "More" }}
-                  </button>
-                </div>
-              </div>
-              <div v-if="bottleAdvancedOpen[bottle.id]" class="bottle-control-surface">
-                <div class="bottle-control-grid">
-                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="prepareBottle(bottle.id)">Prepare</button>
-                  <button v-if="bottle.source_installer_path" class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="relaunchBottleInstaller(bottle)">Relaunch</button>
-                  <button class="btn btn-secondary btn-sm" @click="openBottleFolder(bottle)">Folder</button>
-                  <button class="btn btn-secondary btn-sm" :disabled="!bottle.last_launch_log" @click="openBottleLog(bottle)">Logs</button>
-                  <select class="control-input" :value="bottle.runtime_profile" :disabled="bottleLoading[bottle.id]" @change="setBottleProfile(bottle.id, ($event.target as HTMLSelectElement).value)">
-                    <option v-for="profile in visibleRuntimeProfiles" :key="profile.id" :value="profile.id">{{ profile.name }}</option>
-                  </select>
-                  <div class="windows-version-controls">
-                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win7')">Win7</button>
-                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win10')">Win10</button>
-                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="setBottleWindowsVersion(bottle.id, 'win11')">Win11</button>
-                  </div>
-                </div>
-                <div v-if="bottle.runtime_profile === 'd3dmetal'" class="doctor-notes d3dmetal-actions">
-                  <strong>D3DMetal GPTK</strong>
-                  <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="saveD3DMetalBottle(bottle)">Save D3DMetal</button>
-                  <template v-if="d3dmetalStates[bottle.id]">
-                    <div class="bottle-action-row">
-                      <span>Homebrew GPTK: {{ d3dmetalStates[bottle.id]?.gptk_homebrew }} / Homebrew payload: {{ d3dmetalStates[bottle.id]?.gptk_payload }}</span>
-                    </div>
-                    <div class="bottle-action-row">
-                      <span>VC runtimes: {{ d3dmetalStates[bottle.id]?.x64_redist }} / Seed: {{ d3dmetalStates[bottle.id]?.seed }}</span>
-                    </div>
-                    <div v-if="d3dmetalStates[bottle.id]?.last_error" class="doctor-notes blocked">{{ d3dmetalStates[bottle.id]?.last_error }}</div>
-                  </template>
-                  <div v-for="action in visibleD3DMetalActionsForBottle(bottle.id)" :key="action.id" class="bottle-action-row">
-                    <span>{{ action.detail }}</span>
-                    <span v-if="d3dmetalActionReady(action)" class="component-pill pill-ok">OK: Ready</span>
-                    <button v-else class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id] || !action.enabled" @click="runD3DMetalAction(bottle, action)">{{ action.label }}</button>
-                  </div>
-                </div>
-                <div class="bottle-components">
-                  <template v-if="isFnaProfile(bottle.runtime_profile)">
-                    <div class="fna-component-header">Mono/FNA Runtime</div>
-                    <span v-for="component in bottle.installed_components.filter(c => fnaComponentIds.has(c.id))" :key="component.id" class="component-pill" :class="componentStateClass(component.state)">{{ componentLabel(component.id) }}: {{ component.state }}</span>
-                    <span v-for="component in bottle.installed_components.filter(c => !fnaComponentIds.has(c.id))" :key="component.id" class="component-pill">{{ componentLabel(component.id) }}: {{ component.state }}</span>
-                  </template>
-                  <template v-else>
-                    <span v-for="component in bottle.installed_components" :key="component.id" class="component-pill" :class="componentStateClass(component.state)">{{ componentLabel(component.id) }}: {{ component.state }}</span>
-                  </template>
-                  <span v-if="bottle.runtime_assets?.length" class="component-pill">runtime assets: {{ bottle.runtime_assets.length }}</span>
-                </div>
-                <div v-if="bottle.installed_app_detections?.length" class="bottle-detections">
-                  <button v-for="candidate in bottle.installed_app_detections.slice(0, 3)" :key="candidate.exe_path" class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="addBottleApp(bottle, candidate)">Add {{ candidate.name }}</button>
-                </div>
-              </div>
-              <div v-if="bottleReports[bottle.id]" class="bottle-report">
-                <div class="doctor-summary">
-                  <span class="badge" :class="bottleReports[bottle.id]?.ready ? 'badge-ok' : 'badge-warn'">{{ bottleReports[bottle.id]?.ready ? "Ready" : "Repair" }}</span>
-                  <span>{{ bottleReports[bottle.id]?.summary }}</span>
-                </div>
-                <div v-if="bottleReports[bottle.id]?.actions.length && bottle.runtime_profile !== 'd3dmetal'" class="doctor-notes blocked">
-                  <div v-for="action in bottleReports[bottle.id]?.actions" :key="action.id" class="bottle-action-row">
-                    <span>{{ componentLabel(action.id) }}: {{ action.detail }}</span>
-                    <button class="btn btn-secondary btn-sm" :disabled="bottleLoading[bottle.id]" @click="repairBottleComponent(bottle.id, action.id)">Repair</button>
-                  </div>
-                </div>
-                <div v-if="bottleReports[bottle.id]?.component_sources?.length" class="doctor-notes">
-                  <div v-for="source in bottleReports[bottle.id]?.component_sources" :key="source.id" class="component-source-row">
-                    <span class="source-label">{{ componentLabel(source.id) }}</span>
-                    <span class="source-status" :class="source.available ? 'source-ok' : 'source-missing'">{{ source.available ? source.source : "missing source" }}</span>
-                    <span v-if="source.detail" class="source-detail">{{ source.detail }}</span>
-                  </div>
-                </div>
-              </div>
-            </article>
-          </div>
-        </div>
-      </div>
-      <div v-if="compatibilityCases.length" class="dropdown-wrap">
-          <button class="btn btn-secondary" @click="openDropdown('compat', $event)">
-            <IconLayoutGrid class="btn-icon" width="14" height="14" />
-            <span class="btn-label-long">Compatibility</span><span class="btn-label-short">Compat</span> <span class="dropdown-count">{{ compatibilityCases.length }}</span>
-        </button>
-        <div v-if="dropdownOpen === 'compat'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
-          <div class="dropdown-scroll">
-            <div class="compatibility-row compatibility-header">
-              <span>Case</span><span>Profile</span><span>Installer</span><span>Detected</span><span>Launch</span><span>Runtime</span><span>Prefix</span>
-            </div>
-            <div v-for="item in compatibilityCases" :key="item.id" class="compatibility-row">
-              <span><strong>{{ item.name }}</strong><small>{{ item.case_type }}<template v-if="item.bottle_id"> · {{ item.bottle_id }}</template></small></span>
-              <span>{{ item.required_profile }}</span>
-              <select class="compatibility-select" :value="item.installer_opens" @change="recordCompatibility(item, 'installer_opens', ($event.target as HTMLSelectElement).value)">
-                <option value="untested">untested</option><option value="needs_real_trace">needs trace</option><option value="yes">yes</option><option value="no">no</option><option value="not_applicable">n/a</option>
-              </select>
-              <select class="compatibility-select" :value="item.final_app_detected" @change="recordCompatibility(item, 'final_app_detected', ($event.target as HTMLSelectElement).value)">
-                <option value="pending">pending</option><option value="yes">yes</option><option value="no">no</option><option value="not_applicable">n/a</option>
-              </select>
-              <select class="compatibility-select" :value="item.final_app_launches" @change="recordCompatibility(item, 'final_app_launches', ($event.target as HTMLSelectElement).value)">
-                <option value="pending">pending</option><option value="unknown">unknown</option><option value="yes">yes</option><option value="no">no</option><option value="not_applicable">n/a</option>
-              </select>
-              <input class="compatibility-input" :value="item.known_missing_runtime" @change="recordCompatibility(item, 'known_missing_runtime', ($event.target as HTMLInputElement).value)" />
-              <span>{{ item.per_game_prefix_recommendation }}<small v-if="item.evidence_updated_at">updated {{ item.evidence_updated_at }}</small></span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-if="redistSources.length" class="dropdown-wrap">
+        <div v-if="redistSources.length" class="dropdown-wrap">
           <button class="btn btn-secondary" @click="openDropdown('redist', $event)">
             <IconDownload class="btn-icon" width="14" height="14" />
             <span class="btn-label-long">Redist Sources</span><span class="btn-label-short">Redist</span> <span class="dropdown-count">{{ redistSources.length }}</span>
-        </button>
-        <div v-if="dropdownOpen === 'redist'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
-          <div class="dropdown-scroll">
-            <article v-for="source in redistSources" :key="source.id" class="redist-source-compact">
-              <div><strong>{{ source.name }}</strong><small>{{ source.policy }}</small></div>
-              <p>{{ source.notes }}</p>
-              <div class="redist-targets"><span v-for="target in source.local_targets" :key="target">{{ target }}</span></div>
-              <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
-            </article>
+          </button>
+          <div v-if="dropdownOpen === 'redist'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
+            <div class="dropdown-scroll">
+              <article v-for="source in redistSources" :key="source.id" class="redist-source-compact">
+                <div><strong>{{ source.name }}</strong><small>{{ source.policy }}</small></div>
+                <p>{{ source.notes }}</p>
+                <div class="redist-targets"><span v-for="target in source.local_targets" :key="target">{{ target }}</span></div>
+                <button class="btn btn-secondary btn-sm" @click="openRedistSource(source)">Copy Source URL</button>
+              </article>
+            </div>
           </div>
         </div>
-      </div>
-      <button class="btn btn-primary" @click="installExe">
-        <IconUpload class="btn-icon" width="14" height="14" />
-        <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
-      </button>
-      <button class="btn btn-secondary" @click="refreshSharpLibrary">
-        <IconRefreshCcw class="btn-icon" width="14" height="14" />
-        <span class="btn-label-long">Refresh</span><span class="btn-label-short">Refresh</span>
-      </button>
+        <button class="btn btn-primary" @click="installExe">
+          <IconUpload class="btn-icon" width="14" height="14" />
+          <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
+        </button>
+        <button class="btn btn-secondary" @click="refreshSharpLibrary">
+          <IconRefreshCcw class="btn-icon" width="14" height="14" />
+          <span class="btn-label-long">Refresh</span><span class="btn-label-short">Refresh</span>
+        </button>
       </div>
     </div>
 

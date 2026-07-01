@@ -582,10 +582,27 @@ fn verify_migration_ready(ms_dir: &Path, marker: Option<&PostUpdateMigrationMark
     }
 
     if !runtime_core_ready(ms_dir) {
+        log_to_file("Migration verify: runtime incomplete or stale; repairing graphics runtime hashes");
+        if let Err(error) = repair_runtime_for_migration_verify(ms_dir) {
+            log_to_file(&format!("Migration verify: runtime repair failed: {}", error));
+        }
+    }
+
+    if !runtime_core_ready(ms_dir) {
         return Err("runtime bundle is still incomplete after install".into());
     }
 
     Ok(())
+}
+
+fn repair_runtime_for_migration_verify(ms_dir: &Path) -> Result<bool, String> {
+    let home = dirs::home_dir().ok_or_else(|| "no home directory for runtime repair".to_string())?;
+    let active_ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+    if ms_dir != active_ms_dir {
+        return Ok(false);
+    }
+
+    crate::installer::ensure_graphics_runtimes_ready(&home)
 }
 
 fn migration_metadata_current(ms_dir: &Path) -> bool {

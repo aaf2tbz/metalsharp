@@ -15,6 +15,7 @@ pub struct GameRecipe {
     pub env: HashMap<String, String>,
     pub check_dlls: Vec<String>,
     pub offline_capable: bool,
+    pub exe_names: Vec<String>,
 }
 
 impl Default for GameRecipe {
@@ -26,6 +27,7 @@ impl Default for GameRecipe {
             env: HashMap::new(),
             check_dlls: Vec::new(),
             offline_capable: false,
+            exe_names: Vec::new(),
         }
     }
 }
@@ -132,8 +134,12 @@ fn parse_rules_full(toml_str: &str) -> (HashMap<u32, PipelineId>, HashMap<u32, G
             .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
         let offline_capable = entry.get("offline_capable").and_then(|v| v.as_bool()).unwrap_or(false);
-
-        recipes.insert(appid, GameRecipe { pipeline, name, components, env, check_dlls, offline_capable });
+        let exe_names = entry
+            .get("exe_names")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        recipes.insert(appid, GameRecipe { pipeline, name, components, env, check_dlls, offline_capable, exe_names });
     }
 
     (pipelines, recipes)
@@ -475,6 +481,7 @@ mod tests {
         for (appid, pipeline) in [
             (17410, PipelineId::M9),
             (312520, PipelineId::M11),
+            (387290, PipelineId::M11),
             (475150, PipelineId::M9),
             (504230, PipelineId::FnaArm64),
             (49520, PipelineId::M9),
@@ -587,6 +594,28 @@ mod tests {
         );
         assert!(titan_quest.check_dlls.contains(&"d3d9.dll".to_string()));
         assert!(titan_quest.check_dlls.contains(&"dxgi.dll".to_string()));
+    }
+
+    #[test]
+    fn game_recipes_parse_ori_m11_exe_override() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let ori = recipes.get(&387290).expect("ori recipe");
+        assert_eq!(ori.pipeline, PipelineId::M11);
+        assert_eq!(ori.name, "Ori and the Blind Forest: Definitive Edition");
+        assert_eq!(ori.exe_names, vec!["oriDE.exe".to_string()]);
+        assert!(ori.check_dlls.contains(&"d3d11.dll".to_string()));
+        assert!(ori.check_dlls.contains(&"dxgi.dll".to_string()));
+        assert!(ori.check_dlls.contains(&"winemetal.dll".to_string()));
+    }
+
+    #[test]
+    fn game_recipes_parse_resident_evil_4_exe_override() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let re4 = recipes.get(&2050650).expect("resident evil 4 recipe");
+        assert_eq!(re4.pipeline, PipelineId::M12);
+        assert_eq!(re4.name, "Resident Evil 4");
+        assert_eq!(re4.exe_names, vec!["re4.exe".to_string()]);
+        assert!(re4.offline_capable);
     }
 
     #[test]

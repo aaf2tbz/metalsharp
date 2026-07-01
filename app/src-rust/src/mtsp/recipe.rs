@@ -316,6 +316,27 @@ fn resolve_game_exe_for_pipeline(
         }
     }
 
+    // D3DMetal/GPTK launches the game executable directly instead of using
+    // Steam's launcher/protected-game wrappers. Prefer the real binaries for
+    // known D3D11/D3D12 titles that otherwise advertise start_protected_game.exe
+    // or a bootstrapper before their renderer-bearing executable.
+    if matches!(pipeline, Some(PipelineId::D3DMetal | PipelineId::M13)) {
+        for preferred in d3dmetal_direct_exe_names(appid) {
+            if let Some(path) = find_case_insensitive(game_dir, preferred) {
+                return Ok(path);
+            }
+        }
+    }
+
+    if let Some(recipe) = super::rules::get_game_recipe(appid) {
+        for preferred in recipe.exe_names {
+            let path = find_case_insensitive(game_dir, &preferred);
+            if let Some(path) = path {
+                return Ok(path);
+            }
+        }
+    }
+
     for preferred in preferred_exe_names(appid) {
         let path = find_case_insensitive(game_dir, preferred);
         if let Some(path) = path {
@@ -694,6 +715,15 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
     deduped
 }
 
+fn d3dmetal_direct_exe_names(appid: u32) -> &'static [&'static str] {
+    match appid {
+        1245620 => &["eldenring.exe"],
+        1888160 => &["armoredcore6.exe"],
+        1962700 => &["Subnautica2.exe"],
+        _ => &[],
+    }
+}
+
 fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
     match appid {
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
@@ -1015,6 +1045,33 @@ mod tests {
     }
 
     #[test]
+    fn d3dmetal_protected_games_prefer_real_exe() {
+        let elden_dir = test_dir("d3dmetal-elden-real-exe");
+        let elden_game_dir = elden_dir.join("Game");
+        std::fs::create_dir_all(&elden_game_dir).expect("create elden dir");
+        std::fs::write(elden_game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB")
+            .expect("write protected exe");
+        std::fs::write(elden_game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write elden exe");
+
+        let elden = resolve_game_exe_for_pipeline(1245620, &elden_dir, Some(PipelineId::D3DMetal))
+            .expect("select elden real exe");
+        assert_eq!(elden.file_name().and_then(|name| name.to_str()), Some("eldenring.exe"));
+
+        let ac6_dir = test_dir("d3dmetal-ac6-real-exe");
+        let ac6_game_dir = ac6_dir.join("Game");
+        std::fs::create_dir_all(&ac6_game_dir).expect("create ac6 dir");
+        std::fs::write(ac6_game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write protected exe");
+        std::fs::write(ac6_game_dir.join("armoredcore6.exe"), b"REAL_GAME").expect("write ac6 exe");
+
+        let ac6 =
+            resolve_game_exe_for_pipeline(1888160, &ac6_dir, Some(PipelineId::D3DMetal)).expect("select ac6 real exe");
+        assert_eq!(ac6.file_name().and_then(|name| name.to_str()), Some("armoredcore6.exe"));
+
+        let _ = std::fs::remove_dir_all(elden_dir);
+        let _ = std::fs::remove_dir_all(ac6_dir);
+    }
+
+    #[test]
     fn titan_quest_prefers_main_game_exe() {
         let dir = test_dir("titan-quest-exe");
         std::fs::create_dir_all(&dir).expect("create tq dir");
@@ -1025,6 +1082,50 @@ mod tests {
 
         assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("TQ.exe"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ori_rule_prefers_oride_exe() {
+        let dir = test_dir("ori-exe");
+        std::fs::create_dir_all(&dir).expect("create ori dir");
+        std::fs::write(dir.join("UnityCrashHandler32.exe"), b"crash").expect("write crash handler");
+        std::fs::write(dir.join("oriDE.exe"), b"game").expect("write ori exe");
+
+        let selected = resolve_game_exe(387290, &dir).expect("select ori exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("oriDE.exe"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn d3dmetal_resident_evil_4_rule_prefers_re4_exe() {
+        let dir = test_dir("re4-d3dmetal-exe");
+        std::fs::create_dir_all(&dir).expect("create re4 dir");
+        std::fs::write(dir.join("CrashReport.exe"), b"crash").expect("write crash reporter");
+        std::fs::write(dir.join("re4.exe"), b"game").expect("write re4 exe");
+
+        let selected =
+            resolve_game_exe_for_pipeline(2050650, &dir, Some(PipelineId::D3DMetal)).expect("select re4 exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("re4.exe"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn d3dmetal_uses_configured_route_exe_overrides() {
+        for (appid, exe_name) in [(387290, "oriDE.exe"), (2050650, "re4.exe")] {
+            let dir = test_dir(&format!("d3dmetal-rule-exe-{appid}"));
+            std::fs::create_dir_all(&dir).expect("create game dir");
+            std::fs::write(dir.join("CrashReport.exe"), b"crash").expect("write crash reporter");
+            std::fs::write(dir.join("Launcher.exe"), b"launcher").expect("write launcher");
+            std::fs::write(dir.join(exe_name), b"game").expect("write route exe");
+
+            let selected = resolve_game_exe_for_pipeline(appid, &dir, Some(PipelineId::D3DMetal))
+                .expect("select configured route exe");
+            assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some(exe_name));
+
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     #[test]

@@ -562,32 +562,17 @@ watch([library, search, filter], () => {
 }
 
 .game-grid {
-  column-count: 2;
-  column-gap: 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 18px;
+  align-items: start;
   min-width: 0;
   width: 100%;
   max-width: 100%;
 }
 
 .game-grid-item {
-  display: inline-block;
-  width: 100%;
-  margin: 0 0 18px;
-  break-inside: avoid;
-  page-break-inside: avoid;
-  vertical-align: top;
-}
-
-@media (min-width: 1320px) {
-  .game-grid {
-    column-count: 3;
-  }
-}
-
-@media (max-width: 760px) {
-  .game-grid {
-    column-count: 1;
-  }
+  min-width: 0;
 }
 
 .empty-state {
