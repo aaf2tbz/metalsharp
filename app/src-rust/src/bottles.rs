@@ -6353,7 +6353,7 @@ mod tests {
         let classification = classify_installer(&exe);
 
         assert_eq!(classification.installer_kind, InstallerKind::Squirrel);
-        assert_eq!(classification.runtime_profile, RuntimeProfile::GogGalaxy);
+        assert_eq!(classification.runtime_profile, RuntimeProfile::Launcher);
         assert!(classification.hints.iter().any(|hint| hint.starts_with("installer_kind:")));
         let _ = fs::remove_dir_all(dir);
     }
