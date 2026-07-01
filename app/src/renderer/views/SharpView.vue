@@ -412,6 +412,7 @@ async function saveD3DMetalBottle(bottle: BottleManifest) {
     toast.show("D3DMetal bottle saved; seed VC runtime DLLs and seed prefix when ready", "success");
   } else {
     toast.show(result?.error ?? "D3DMetal bottle save failed", "error");
+    await loadD3DMetalStatus(bottle);
   }
 }
 
@@ -420,14 +421,27 @@ function sharpAppExeAbsolute(app: SharpApp) {
   return `${app.install_dir.replace(/\/$/, "")}/${app.exe_path.replace(/^\.\//, "")}`;
 }
 
+function d3dmetalActionRoute(actionId: string) {
+  switch (actionId) {
+    case "install_homebrew_gptk":
+      return "/d3dmetal/bottles/install-homebrew-gptk";
+    case "install_rosetta":
+      return "/d3dmetal/bottles/install-rosetta";
+    case "repair_gptk_payload":
+      return "/d3dmetal/bottles/repair-gptk-payload";
+    case "install_x64_redist":
+      return "/d3dmetal/bottles/install-x64-redist";
+    case "seed_prefix":
+      return "/d3dmetal/bottles/seed-prefix";
+    default:
+      return "/d3dmetal/bottles/play";
+  }
+}
+
 async function runD3DMetalAction(bottle: BottleManifest, action: D3DMetalGptkAction, app?: SharpApp): Promise<number | null> {
   if (!bottle.steam_app_id) return null;
   bottleLoading.value[bottle.id] = true;
-  const route = action.id === "install_x64_redist"
-    ? "/d3dmetal/bottles/install-x64-redist"
-    : action.id === "seed_prefix"
-      ? "/d3dmetal/bottles/seed-prefix"
-      : "/d3dmetal/bottles/play";
+  const route = d3dmetalActionRoute(action.id);
   const result = await api<D3DMetalGptkResponse>("POST", route, {
     appid: bottle.steam_app_id,
     bottleId: bottle.id,

@@ -576,15 +576,28 @@ async function runD3DMetalPanelAction(action: D3DMetalGptkAction) {
   if (action.id === "play_d3dmetal" && pid) emit('d3dmetalLaunched', pid);
 }
 
+function d3dmetalActionRoute(actionId: string) {
+  switch (actionId) {
+    case "install_homebrew_gptk":
+      return "/d3dmetal/bottles/install-homebrew-gptk";
+    case "install_rosetta":
+      return "/d3dmetal/bottles/install-rosetta";
+    case "repair_gptk_payload":
+      return "/d3dmetal/bottles/repair-gptk-payload";
+    case "install_x64_redist":
+      return "/d3dmetal/bottles/install-x64-redist";
+    case "seed_prefix":
+      return "/d3dmetal/bottles/seed-prefix";
+    default:
+      return "/d3dmetal/bottles/play";
+  }
+}
+
 async function runD3DMetalAction(action: D3DMetalGptkAction): Promise<number | null> {
   const bottleId = runtimeReport.value?.bottle_id ?? props.game.bottle_id ?? `steam_${props.game.appid}`;
   const gameDir = runtimeReport.value?.game_install_path;
   d3dmetalLoading.value = true;
-  const route = action.id === "install_x64_redist"
-    ? "/d3dmetal/bottles/install-x64-redist"
-    : action.id === "seed_prefix"
-      ? "/d3dmetal/bottles/seed-prefix"
-      : "/d3dmetal/bottles/play";
+  const route = d3dmetalActionRoute(action.id);
   const result = await api<D3DMetalGptkResponse>("POST", route, {
     appid: props.game.appid,
     bottleId,
@@ -704,6 +717,7 @@ async function saveBottleEdit() {
       return;
     }
     toast.show(d3dmetalResult?.error ?? "D3DMetal bottle save failed", "error");
+    await loadD3DMetalStatus();
     return;
   }
 

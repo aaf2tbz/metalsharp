@@ -475,6 +475,7 @@ mod tests {
         for (appid, pipeline) in [
             (17410, PipelineId::M9),
             (312520, PipelineId::M11),
+            (475150, PipelineId::M11),
             (504230, PipelineId::FnaArm64),
             (49520, PipelineId::M9),
             (508440, PipelineId::M11),

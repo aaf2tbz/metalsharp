@@ -46,6 +46,16 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 pipeline = "m9"
 name = "Taimumari: Definitive Edition"
 
+[overrides.475150]
+pipeline = "m11"
+name = "Titan Quest Anniversary Edition"
+
+[overrides.475150.dependencies]
+components = ["vcrun2019", "directx_jun2010"]
+
+[overrides.475150.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
 [overrides.848450]
 pipeline = "m11"
 name = "Subnautica: Below Zero"

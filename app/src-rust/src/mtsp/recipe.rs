@@ -699,6 +699,7 @@ fn preferred_exe_names(appid: u32) -> &'static [&'static str] {
         379720 => &["DOOMx64vk.exe", "DOOMx64.exe"],
         782330 => &["DOOMEternalx64vk.exe", "DOOMEternalx64.exe"],
         105600 => &["TerrariaLauncher.exe", "Terraria.exe"],
+        475150 => &["TQ.exe"],
         1196590 => &["re8.exe"],
         2358720 => &["b1-Win64-Shipping.exe", "b1.exe"],
         305620 => &["tld.exe"],
@@ -1010,6 +1011,19 @@ mod tests {
 
         assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("start_protected_game.exe"));
 
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn titan_quest_prefers_main_game_exe() {
+        let dir = test_dir("titan-quest-exe");
+        std::fs::create_dir_all(&dir).expect("create tq dir");
+        std::fs::write(dir.join("TQ.exe"), b"game").expect("write tq exe");
+        std::fs::write(dir.join("TQLauncher.exe"), b"launcher").expect("write tq launcher");
+
+        let selected = resolve_game_exe(475150, &dir).expect("select titan quest exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("TQ.exe"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
