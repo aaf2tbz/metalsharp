@@ -780,8 +780,6 @@ mod tests {
 
     #[test]
     fn test_ipc_header_roundtrip() {
-        VIRTUAL_HANDLES.lock().unwrap().clear();
-
         let mut req = Vec::new();
         req.extend_from_slice(&MS_IPC_MAGIC.to_le_bytes());
         req.extend_from_slice(&MS_IPC_VERSION.to_le_bytes());
