@@ -261,6 +261,7 @@ pub enum RuntimeProfile {
     Dotnet,
     Win32Dotnet,
     Webview,
+    GogGalaxy,
     JavaLauncher,
     FnaArm64,
     FnaX86,
@@ -1402,6 +1403,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             _ => RuntimeProfile::Plain,
         }
     };
+    let arch = if matches!(runtime_profile, RuntimeProfile::GogGalaxy) { BottleArch::Wow64 } else { arch };
 
     InstallerClassification { arch, installer_kind, runtime_profile, pipeline, hints }
 }
@@ -3204,6 +3206,7 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::Dotnet,
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
+        RuntimeProfile::GogGalaxy,
         RuntimeProfile::JavaLauncher,
         RuntimeProfile::FnaArm64,
         RuntimeProfile::FnaX86,
@@ -3316,6 +3319,20 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             ][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
+        RuntimeProfile::GogGalaxy => (
+            "GOG Galaxy",
+            BottleArch::Wow64,
+            true,
+            &[
+                "windows_version_win10",
+                "corefonts",
+                "vcrun2019_x86",
+                "vcrun2019_x64",
+                "d3dcompiler_47_x86",
+                "d3dcompiler_47_x64",
+            ][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
         RuntimeProfile::JavaLauncher => (
             "Java Launcher",
             BottleArch::Wow64,
@@ -3423,6 +3440,7 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
+        "gog_galaxy" | "goggalaxy" => Some(RuntimeProfile::GogGalaxy),
         "java_launcher" | "javalauncher" => Some(RuntimeProfile::JavaLauncher),
         "fna_arm64" | "xna_fna_arm64" | "native_mono_arm64" => Some(RuntimeProfile::FnaArm64),
         "fna_x86" | "xna_fna_x86" | "native_mono_x86" | "mono_x86" => Some(RuntimeProfile::FnaX86),
@@ -3507,7 +3525,7 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
             label: "GOG Galaxy",
             tokens: &["gog galaxy", "goggalaxy", "galaxyclient", "gog_galaxy"],
             installer_kind: InstallerKind::Electron,
-            runtime_profile: RuntimeProfile::Launcher,
+            runtime_profile: RuntimeProfile::GogGalaxy,
             forced_pipeline: None,
         },
     ]
@@ -3860,6 +3878,20 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Installed
             } else if has(&syswow64, "vcruntime140.dll") || has(&syswow64, "msvcp140.dll") {
                 ComponentState::NeedsRepair
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "d3dcompiler_47_x64" => {
+            if system32.join("d3dcompiler_47.dll").is_file() {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "d3dcompiler_47_x86" => {
+            if syswow64.join("d3dcompiler_47.dll").is_file() {
+                ComponentState::Installed
             } else {
                 ComponentState::Missing
             }
@@ -5109,6 +5141,8 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "rosetta" => "Apple Rosetta 2 x86_64 emulation layer — required for GPTK Wine (softwareupdate --install-rosetta)",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
+            "d3dcompiler_47_x64" => "Requires d3dcompiler_47.dll in system32 for Chromium/Galaxy rendering",
+            "d3dcompiler_47_x86" => "Requires d3dcompiler_47.dll in syswow64 for 32-bit Galaxy helper processes",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
             "d3d12_agility" => "Uses NuGet Microsoft.Direct3D.D3D12 x64 runtime payload for the game-declared D3D12SDKVersion",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
@@ -5160,6 +5194,8 @@ fn component_action_detail(id: &str) -> String {
         "rosetta" => "Install Apple Rosetta 2 for x86_64 emulation".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
+        "d3dcompiler_47_x64" => "Install or stage d3dcompiler_47.dll in system32".to_string(),
+        "d3dcompiler_47_x86" => "Install or stage d3dcompiler_47.dll in syswow64".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
         "openal" => "Install OpenAL audio runtime".to_string(),
         "xna" => "Install XNA Framework 4.0 runtime".to_string(),
@@ -6151,6 +6187,7 @@ mod tests {
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::M10));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GogGalaxy));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaArm64));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaX86));
 
@@ -6159,6 +6196,17 @@ mod tests {
         assert!(webview.components.contains(&"dotnet48".to_string()));
         assert!(webview.components.contains(&"directx_jun2010".to_string()));
         assert!(webview.components.contains(&"openal".to_string()));
+
+        let gog = runtime_profile_definition(RuntimeProfile::GogGalaxy);
+        assert_eq!(gog.arch, BottleArch::Wow64);
+        assert_eq!(gog.launch_pipeline, crate::mtsp::engine::PipelineId::WineBare);
+        assert!(gog.components.contains(&"windows_version_win10".to_string()));
+        assert!(gog.components.contains(&"corefonts".to_string()));
+        assert!(gog.components.contains(&"vcrun2019_x86".to_string()));
+        assert!(gog.components.contains(&"vcrun2019_x64".to_string()));
+        assert!(gog.components.contains(&"d3dcompiler_47_x86".to_string()));
+        assert!(gog.components.contains(&"d3dcompiler_47_x64".to_string()));
+        assert!(!gog.components.contains(&"dotnet48".to_string()));
     }
 
     #[test]
@@ -6261,7 +6309,7 @@ mod tests {
             ("EpicGamesLauncherInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("EpicInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("Rockstar-Games-Launcher.exe", RuntimeProfile::Webview, "known_launcher:rockstar"),
-            ("GOG_Galaxy_2.0.exe", RuntimeProfile::Launcher, "known_launcher:gog_galaxy"),
+            ("GOG_Galaxy_2.0.exe", RuntimeProfile::GogGalaxy, "known_launcher:gog_galaxy"),
         ];
 
         for (name, profile, hint) in cases {
@@ -6305,7 +6353,7 @@ mod tests {
         let classification = classify_installer(&exe);
 
         assert_eq!(classification.installer_kind, InstallerKind::Squirrel);
-        assert_eq!(classification.runtime_profile, RuntimeProfile::Launcher);
+        assert_eq!(classification.runtime_profile, RuntimeProfile::GogGalaxy);
         assert!(classification.hints.iter().any(|hint| hint.starts_with("installer_kind:")));
         let _ = fs::remove_dir_all(dir);
     }
