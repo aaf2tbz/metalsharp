@@ -162,7 +162,40 @@ pub fn vcpp_ensure_and_install_x86(prefix: &Path) -> Result<(), String> {
     }
 }
 
+pub fn vcpp_ensure_and_install_x86_quiet(prefix: &Path) -> Result<(), String> {
+    let (_x64, x86) = vcpp_ensure_downloaded()?;
+    run_quiet_vcpp_installer(prefix, &x86, "x86")?;
+    if vcpp_prefix_has_x86(prefix) {
+        eprintln!("vcredist: VC++ x86 verified in {}", prefix.display());
+        Ok(())
+    } else {
+        Err("VC++ x86 installer completed, but runtime DLLs were not found in syswow64".into())
+    }
+}
+
 fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -> Result<(), String> {
+    run_vcpp_installer(prefix, installer, arch, &vcpp_setup_install_args(), true)
+}
+
+fn run_quiet_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -> Result<(), String> {
+    run_vcpp_installer(prefix, installer, arch, &vcpp_quiet_install_args(), false)
+}
+
+fn vcpp_setup_install_args() -> [&'static str; 1] {
+    ["/install"]
+}
+
+fn vcpp_quiet_install_args() -> [&'static str; 3] {
+    ["/install", "/quiet", "/norestart"]
+}
+
+fn run_vcpp_installer(
+    prefix: &Path,
+    installer: &Path,
+    arch: &str,
+    args: &[&str],
+    inherit_stdio: bool,
+) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -170,19 +203,22 @@ fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -
         return Err("MetalSharp Wine not found".into());
     }
     let prefix_str = prefix.to_string_lossy().to_string();
-    eprintln!("vcredist: launching interactive VC++ 2015-2022 {} installer into {} ...", arch, prefix.display());
+    let mode = if inherit_stdio { "interactive" } else { "quiet" };
+    eprintln!("vcredist: launching {} VC++ 2015-2022 {} installer into {} ...", mode, arch, prefix.display());
     let mut cmd = Command::new(&wine);
     cmd.arg("start")
         .arg("/wait")
         .arg("/unix")
         .arg(installer)
-        .args(vcpp_setup_install_args())
+        .args(args)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEARCH", "win64")
-        .env("WINEDEBUG", "-all")
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .env("WINEDEBUG", "-all");
+    if inherit_stdio {
+        cmd.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    }
     if let Some(parent) = installer.parent() {
         cmd.current_dir(parent);
     }
@@ -193,10 +229,6 @@ fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -
     } else {
         Err(format!("VC++ {} installer exited with status {:?}", arch, status.code()))
     }
-}
-
-fn vcpp_setup_install_args() -> [&'static str; 1] {
-    ["/install"]
 }
 
 fn vcpp_installer_status_ok(code: Option<i32>) -> bool {
@@ -1038,6 +1070,18 @@ pub fn create_fresh_installer_bottle(
     classification: &InstallerClassification,
 ) -> Result<BottleManifest, Box<dyn std::error::Error>> {
     ensure_installer_bottle_with_id(source_installer, classification, fresh_installer_bottle_id(source_installer))
+}
+
+pub fn ensure_gog_galaxy_bottle(
+    source_installer: &Path,
+    classification: &InstallerClassification,
+    fresh: bool,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let id = "gog-prefix".to_string();
+    if fresh {
+        let _ = fs::remove_dir_all(bottle_dir(&id));
+    }
+    ensure_installer_bottle_with_id(source_installer, classification, id)
 }
 
 fn ensure_installer_bottle_with_id(

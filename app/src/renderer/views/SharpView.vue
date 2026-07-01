@@ -146,7 +146,7 @@ interface RedistSourceGuide {
 interface LauncherState {
   id: string;
   name: string;
-  status: "not_installed" | "installing" | "installed" | "needs_repair";
+  status: "not_installed" | "installing" | "installed" | "running" | "needs_repair";
   statusLabel: string;
   appId?: string | null;
   bottleId?: string | null;
@@ -307,7 +307,7 @@ async function load() {
 }
 
 function launcherBadgeClass(status: LauncherState["status"]): string {
-  if (status === "installed") return "badge-ok";
+  if (status === "installed" || status === "running") return "badge-ok";
   if (status === "installing") return "badge-warn";
   if (status === "needs_repair") return "badge-warn";
   return "badge-muted";
@@ -337,7 +337,7 @@ async function loadLauncherDiagnostics(launcher: LauncherState) {
   }
 }
 
-async function runLauncherAction(launcher: LauncherState, action: "install" | "open" | "repair" | "show-card") {
+async function runLauncherAction(launcher: LauncherState, action: "install" | "open" | "stop" | "repair" | "show-card") {
   launcherActionLoading.value[`${launcher.id}:${action}`] = true;
   const result = await api<{ ok: boolean; app?: SharpApp; installing?: boolean; pid?: number; message?: string; error?: string; launcher?: LauncherState }>(
     "POST",
@@ -354,9 +354,11 @@ async function runLauncherAction(launcher: LauncherState, action: "install" | "o
       ? (result.message ?? `${launcher.name} installer started`)
       : action === "open"
         ? `${launcher.name} launched`
-        : action === "show-card"
-          ? `${launcher.name} card is visible`
-          : `${launcher.name} action complete`;
+        : action === "stop"
+          ? `${launcher.name} stopped`
+          : action === "show-card"
+            ? `${launcher.name} card is visible`
+            : `${launcher.name} action complete`;
     toast.show(msg, "success");
     await load();
   } else {
@@ -980,7 +982,15 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     :disabled="launcherActionLoading[`${launcher.id}:open`]"
                     @click="runLauncherAction(launcher, 'open')"
                   >
-                    Open GOG Galaxy
+                    {{ launcherActionLoading[`${launcher.id}:open`] ? "Starting…" : "Start GOG" }}
+                  </button>
+                  <button
+                    v-if="launcher.status === 'running'"
+                    class="btn btn-stop btn-sm"
+                    :disabled="launcherActionLoading[`${launcher.id}:stop`]"
+                    @click="runLauncherAction(launcher, 'stop')"
+                  >
+                    {{ launcherActionLoading[`${launcher.id}:stop`] ? "Stopping…" : "Stop GOG" }}
                   </button>
                   <button
                     v-if="launcher.status === 'needs_repair'"

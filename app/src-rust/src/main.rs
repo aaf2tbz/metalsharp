@@ -1814,6 +1814,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             app_log("[SHARP-LIB] launcher open: GOG Galaxy");
             resp(200, sharp_library::handle_open_gog_galaxy())
         },
+        (Method::Post, "/sharp-library/launchers/gog/stop") => {
+            app_log("[SHARP-LIB] launcher stop: GOG Galaxy");
+            resp(200, sharp_library::handle_stop_gog_galaxy())
+        },
         (Method::Post, "/sharp-library/launchers/gog/repair") => {
             app_log("[SHARP-LIB] launcher repair: GOG Galaxy");
             resp(200, sharp_library::handle_repair_gog_galaxy())
