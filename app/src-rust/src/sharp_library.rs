@@ -462,6 +462,12 @@ fn default_installer_launch_args(src: &Path, classification: &crate::bottles::In
     let Some(kind) = store_launcher_kind_for_installer(src, classification) else {
         return Vec::new();
     };
+    if kind == StoreLauncherKind::Gog {
+        // GOG's /runWithoutUpdating /deelevated flags are client launch flags;
+        // passing them to GOG_Galaxy_2.0.exe or GalaxySetup.exe can perturb the
+        // bootstrapper/setup flow.
+        return Vec::new();
+    }
     default_launcher_launch_args(kind).iter().map(|arg| arg.to_string()).collect()
 }
 
@@ -2358,7 +2364,7 @@ mod tests {
                     "--disable-gpu-sandbox",
                 ],
             ),
-            ("GOG_Galaxy_2.0.exe", vec!["/runWithoutUpdating", "/deelevated"]),
+            ("GOG_Galaxy_2.0.exe", vec![]),
         ];
 
         for (filename, expected) in cases {
