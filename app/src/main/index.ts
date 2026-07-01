@@ -930,6 +930,7 @@ function registerIpc() {
 
     return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
       let settled = false;
+      const oauthWindows = new Set<BrowserWindow>();
       const oauthWindow = new BrowserWindow({
         width: 620,
         height: 760,
@@ -942,10 +943,19 @@ function registerIpc() {
         },
       });
 
+      oauthWindows.add(oauthWindow);
+
+      const closeOauthWindows = () => {
+        for (const win of oauthWindows) {
+          if (!win.isDestroyed()) win.close();
+        }
+        oauthWindows.clear();
+      };
+
       const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
         if (settled) return;
         settled = true;
-        if (!oauthWindow.isDestroyed()) oauthWindow.close();
+        closeOauthWindows();
         resolve(result);
       };
 
@@ -965,17 +975,60 @@ function registerIpc() {
         }
       };
 
-      oauthWindow.webContents.setWindowOpenHandler(({ url }) => {
-        if (inspectUrl(url)) return { action: "deny" };
-        shell.openExternal(url).catch(() => undefined);
-        return { action: "deny" };
-      });
-      oauthWindow.webContents.on("will-redirect", (event, url) => {
-        if (inspectUrl(url)) event.preventDefault();
-      });
-      oauthWindow.webContents.on("will-navigate", (event, url) => {
-        if (inspectUrl(url)) event.preventDefault();
-      });
+      const isAllowedOauthUrl = (url: string) => {
+        try {
+          const target = new URL(url);
+          if (target.protocol !== "https:") return false;
+          const host = target.hostname.toLowerCase();
+          return [
+            "gog.com",
+            "gog-statics.com",
+            "google.com",
+            "gstatic.com",
+            "discord.com",
+            "steamcommunity.com",
+            "steampowered.com",
+            "live.com",
+            "microsoft.com",
+            "microsoftonline.com",
+            "xbox.com",
+          ].some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+        } catch {
+          return false;
+        }
+      };
+
+      const attachOauthHandlers = (win: BrowserWindow) => {
+        win.webContents.setWindowOpenHandler(({ url }) => {
+          if (inspectUrl(url)) return { action: "deny" };
+          if (!isAllowedOauthUrl(url)) return { action: "deny" };
+
+          const child = new BrowserWindow({
+            width: 620,
+            height: 760,
+            title: "Login to GOG",
+            parent: win,
+            modal: false,
+            webPreferences: {
+              contextIsolation: true,
+              nodeIntegration: false,
+            },
+          });
+          oauthWindows.add(child);
+          attachOauthHandlers(child);
+          child.on("closed", () => oauthWindows.delete(child));
+          child.loadURL(url).catch((error) => finish({ ok: false, error: error.message }));
+          return { action: "deny" };
+        });
+        win.webContents.on("will-redirect", (event, url) => {
+          if (inspectUrl(url)) event.preventDefault();
+        });
+        win.webContents.on("will-navigate", (event, url) => {
+          if (inspectUrl(url)) event.preventDefault();
+        });
+      };
+
+      attachOauthHandlers(oauthWindow);
       oauthWindow.webContents.session.webRequest.onBeforeRequest(
         { urls: ["https://embed.gog.com/on_login_success*"] },
         (details, callback) => {
