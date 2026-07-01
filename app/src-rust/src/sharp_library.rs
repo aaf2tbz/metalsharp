@@ -391,6 +391,9 @@ fn is_hidden_sharp_library_app(app: &SharpApp) -> bool {
     if matches!(exe.as_str(), "lobby_connect.exe" | "experimental_steamclient.exe" | "tools.exe") {
         return true;
     }
+    if store_launcher_kind_for_app(app) == Some(StoreLauncherKind::Gog) && exe != "galaxyclient.exe" {
+        return true;
+    }
 
     path_has_component(&app.install_dir, "lobby_connect")
         || path_has_component(&app.install_dir, "experimental_steamclient")
@@ -467,7 +470,8 @@ fn default_launcher_launch_args(kind: StoreLauncherKind) -> &'static [&'static s
         StoreLauncherKind::Epic => {
             &["-SkipBuildPatchPrereq", "-OpenGL", "--disable-gpu-sandbox", "--disable-direct-composition"]
         },
-        StoreLauncherKind::Gog | StoreLauncherKind::Rockstar | StoreLauncherKind::Ubisoft => {
+        StoreLauncherKind::Gog => &["/runWithoutUpdating", "/deelevated"],
+        StoreLauncherKind::Rockstar | StoreLauncherKind::Ubisoft => {
             &["--disable-gpu", "--disable-gpu-compositing", "--disable-direct-composition", "--disable-gpu-sandbox"]
         },
     }
@@ -938,7 +942,9 @@ pub fn import_bottle_app(
     if let Some(existing) =
         library.iter_mut().find(|existing| existing.id == app.id || app_absolute_exe_path(existing) == absolute)
     {
-        existing.name = app.name.clone();
+        if !should_preserve_imported_bottle_app_name(existing, &app) {
+            existing.name = app.name.clone();
+        }
         existing.exe_path = app.exe_path.clone();
         existing.install_dir = app.install_dir.clone();
         existing.bottle_id = app.bottle_id.clone();
@@ -952,6 +958,14 @@ pub fn import_bottle_app(
     library.push(app.clone());
     save_library(&library)?;
     Ok(app)
+}
+
+fn should_preserve_imported_bottle_app_name(existing: &SharpApp, incoming: &SharpApp) -> bool {
+    existing.bottle_id.is_some()
+        && existing.bottle_id == incoming.bottle_id
+        && app_absolute_exe_path(existing) == app_absolute_exe_path(incoming)
+        && !existing.name.trim().is_empty()
+        && existing.name != incoming.name
 }
 
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1542,6 +1556,7 @@ fn is_setup_exe(name: &str) -> bool {
 fn is_valid_app_exe(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.ends_with(".exe")
+        && !is_ignored_gog_galaxy_exe_name(&lower)
         && !lower.contains("setup")
         && !lower.contains("redist")
         && !lower.contains("dotnet")
@@ -1600,10 +1615,24 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
 fn known_launcher_exe_score(lower_name: &str) -> i32 {
     match lower_name {
         "epicgameslauncher.exe" | "epicgameslauncher_real.exe" => 90,
+        "galaxyclient.exe" => 150,
         "ubisoftconnect.exe" | "ubisoftconnect_real.exe" => 140,
         "ubisoftgamelauncher.exe" | "ubisoftgamelauncher_real.exe" => 40,
         _ => 0,
     }
+}
+
+fn is_ignored_gog_galaxy_exe_name(lower_name: &str) -> bool {
+    matches!(
+        lower_name,
+        "gog_galaxy_2.0.exe"
+            | "galaxyinstaller.exe"
+            | "galaxysetup.exe"
+            | "galaxyclientservice.exe"
+            | "galaxyoverlay.exe"
+            | "galaxyclient_helper.exe"
+            | "galaxyclient_real.exe"
+    ) || lower_name.ends_with("_real.exe") && lower_name.contains("galaxy")
 }
 
 fn dir_size(dir: &PathBuf) -> u64 {
@@ -2004,13 +2033,16 @@ mod tests {
         for app in [
             test_app("Ubisoft Connect", "UbisoftConnect.exe", "/tmp/Ubisoft/Ubisoft Game Launcher"),
             test_app("Rockstar Games Launcher", "Launcher.exe", "/tmp/Rockstar Games/Launcher"),
-            test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/GOG Galaxy"),
         ] {
             assert_eq!(
                 default_launcher_launch_args_for_app(&app),
                 ["--disable-gpu", "--disable-gpu-compositing", "--disable-direct-composition", "--disable-gpu-sandbox"]
             );
         }
+        assert_eq!(
+            default_launcher_launch_args_for_app(&test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/GOG Galaxy")),
+            ["/runWithoutUpdating", "/deelevated"]
+        );
     }
 
     #[test]
@@ -2040,15 +2072,7 @@ mod tests {
                     "--disable-gpu-sandbox",
                 ],
             ),
-            (
-                "GOG_Galaxy_2.0.exe",
-                vec![
-                    "--disable-gpu",
-                    "--disable-gpu-compositing",
-                    "--disable-direct-composition",
-                    "--disable-gpu-sandbox",
-                ],
-            ),
+            ("GOG_Galaxy_2.0.exe", vec!["/runWithoutUpdating", "/deelevated"]),
         ];
 
         for (filename, expected) in cases {
@@ -2079,6 +2103,38 @@ mod tests {
             "UbisoftConnect.exe",
             "/tmp/prefix/drive_c/Program Files/Ubisoft"
         )));
+    }
+
+    #[test]
+    fn gog_galaxy_hides_installers_and_internal_helpers() {
+        assert!(!is_hidden_sharp_library_app(&test_app(
+            "GOG Galaxy",
+            "GalaxyClient.exe",
+            "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy"
+        )));
+        for exe in [
+            "GOG_Galaxy_2.0.exe",
+            "GalaxyInstaller.exe",
+            "GalaxySetup.exe",
+            "GalaxyClientService.exe",
+            "GalaxyOverlay.exe",
+            "GalaxyClient_real.exe",
+        ] {
+            assert!(is_hidden_sharp_library_app(&test_app(
+                "GOG Galaxy",
+                exe,
+                "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy"
+            )));
+            assert!(!is_valid_app_exe(exe));
+        }
+    }
+
+    #[test]
+    fn gog_galaxy_client_gets_play_launch_args() {
+        let mut app = test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy");
+        assert!(apply_default_launcher_launch_args_to_app(&mut app));
+        assert_eq!(app.launch_args, vec!["/runWithoutUpdating", "/deelevated"]);
+        assert!(!apply_default_launcher_launch_args_to_app(&mut app));
     }
 
     #[test]

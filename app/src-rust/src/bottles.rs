@@ -5752,6 +5752,7 @@ fn is_probable_app_exe(name: &str) -> bool {
     ];
     lower.ends_with(".exe")
         && !builtins.contains(&lower.as_str())
+        && !is_ignored_gog_galaxy_exe_name(&lower)
         && !lower.starts_with("microsoftedgewebview_")
         && !lower.contains("setup")
         && !lower.contains("install")
@@ -5765,6 +5766,19 @@ fn is_probable_app_exe(name: &str) -> bool {
         && !lower.contains("update")
         && !lower.contains("webcore")
         && !lower.contains("cefsubprocess")
+}
+
+fn is_ignored_gog_galaxy_exe_name(lower_name: &str) -> bool {
+    matches!(
+        lower_name,
+        "gog_galaxy_2.0.exe"
+            | "galaxyinstaller.exe"
+            | "galaxysetup.exe"
+            | "galaxyclientservice.exe"
+            | "galaxyoverlay.exe"
+            | "galaxyclient_helper.exe"
+            | "galaxyclient_real.exe"
+    ) || lower_name.ends_with("_real.exe") && lower_name.contains("galaxy")
 }
 
 fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
@@ -5854,6 +5868,21 @@ mod tests {
 
         assert_ne!(fresh, stable);
         assert!(fresh.starts_with(&format!("{}_fresh_", stable)));
+    }
+
+    #[test]
+    fn gog_galaxy_detection_only_accepts_client_exe() {
+        assert!(is_probable_app_exe("GalaxyClient.exe"));
+        for exe in [
+            "GOG_Galaxy_2.0.exe",
+            "GalaxyInstaller.exe",
+            "GalaxySetup.exe",
+            "GalaxyClientService.exe",
+            "GalaxyOverlay.exe",
+            "GalaxyClient_real.exe",
+        ] {
+            assert!(!is_probable_app_exe(exe), "{exe} should not import as the installed launcher app");
+        }
     }
 
     #[test]
