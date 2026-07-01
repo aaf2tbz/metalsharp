@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use walkdir::WalkDir;
 
 const LIBRARY_DIR: &str = "sharp-library";
@@ -391,6 +391,9 @@ fn is_hidden_sharp_library_app(app: &SharpApp) -> bool {
     if matches!(exe.as_str(), "lobby_connect.exe" | "experimental_steamclient.exe" | "tools.exe") {
         return true;
     }
+    if store_launcher_kind_for_app(app) == Some(StoreLauncherKind::Gog) && exe != "galaxyclient.exe" {
+        return true;
+    }
 
     path_has_component(&app.install_dir, "lobby_connect")
         || path_has_component(&app.install_dir, "experimental_steamclient")
@@ -459,6 +462,21 @@ fn default_installer_launch_args(src: &Path, classification: &crate::bottles::In
     let Some(kind) = store_launcher_kind_for_installer(src, classification) else {
         return Vec::new();
     };
+    if kind == StoreLauncherKind::Gog {
+        // GOG's /runWithoutUpdating /deelevated flags are client launch flags;
+        // passing them to GOG_Galaxy_2.0.exe or GalaxySetup.exe can perturb the
+        // bootstrapper/setup flow. GalaxySetup.exe is an Inno installer; give
+        // it an explicit install dir so its previous-install detection never
+        // falls back to the Wine drive root ("Found GalaxyClientExePath under \\").
+        if is_gog_galaxy_setup_installer(src) {
+            return vec![
+                "/DIR=C:\\Program Files (x86)\\GOG Galaxy".to_string(),
+                "/CLOSEAPPLICATIONS".to_string(),
+                "/FORCECLOSEAPPLICATIONS".to_string(),
+            ];
+        }
+        return Vec::new();
+    }
     default_launcher_launch_args(kind).iter().map(|arg| arg.to_string()).collect()
 }
 
@@ -467,7 +485,24 @@ fn default_launcher_launch_args(kind: StoreLauncherKind) -> &'static [&'static s
         StoreLauncherKind::Epic => {
             &["-SkipBuildPatchPrereq", "-OpenGL", "--disable-gpu-sandbox", "--disable-direct-composition"]
         },
-        StoreLauncherKind::Gog | StoreLauncherKind::Rockstar | StoreLauncherKind::Ubisoft => {
+        StoreLauncherKind::Gog => &[
+            "/runWithoutUpdating",
+            "/deelevated",
+            "--disable-gpu",
+            "--disable-gpu-compositing",
+            "--disable-direct-composition",
+            "--disable-gpu-sandbox",
+            "--disable-accelerated-2d-canvas",
+            "--disable-accelerated-video-decode",
+            "--disable-zero-copy",
+            "--disable-native-gpu-memory-buffers",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--disable-features=NetworkService,VizDisplayCompositor,UseSkiaRenderer,CalculateNativeWinOcclusion",
+            "--disable-breakpad",
+            "--disable-crash-reporter",
+        ],
+        StoreLauncherKind::Rockstar | StoreLauncherKind::Ubisoft => {
             &["--disable-gpu", "--disable-gpu-compositing", "--disable-direct-composition", "--disable-gpu-sandbox"]
         },
     }
@@ -771,6 +806,8 @@ fn should_run_as_wine_installer(src: &Path) -> bool {
         || name.contains("launcher")
         || name.contains("bootstrap")
         || name.contains("update")
+        || name.contains("gog_galaxy")
+        || name == "galaxysetup.exe"
 }
 
 fn is_supported_windows_program(src: &Path) -> bool {
@@ -784,6 +821,9 @@ fn is_supported_windows_program(src: &Path) -> bool {
 
 fn start_wine_installer(src: &Path, fresh_bottle: bool) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
     let classification = crate::bottles::classify_installer(src);
+    if classification.runtime_profile == crate::bottles::RuntimeProfile::GogGalaxy {
+        return start_gog_galaxy_installer(src, &classification, fresh_bottle);
+    }
     let pipeline = classification.pipeline;
     let bottle = if fresh_bottle {
         crate::bottles::create_fresh_installer_bottle(src, &classification)?
@@ -791,6 +831,241 @@ fn start_wine_installer(src: &Path, fresh_bottle: bool) -> Result<SharpInstallOu
         crate::bottles::ensure_installer_bottle(src, &classification)?
     };
     start_wine_installer_in_bottle(src, &classification, &bottle, pipeline)
+}
+
+fn start_gog_galaxy_installer(
+    src: &Path,
+    classification: &crate::bottles::InstallerClassification,
+    fresh_bottle: bool,
+) -> Result<SharpInstallOutcome, Box<dyn std::error::Error>> {
+    let bottle = crate::bottles::ensure_gog_galaxy_bottle(src, classification, fresh_bottle)?;
+    kill_stale_gog_galaxy_processes(&PathBuf::from(&bottle.prefix_path));
+    let outcome = start_wine_installer_in_bottle(src, classification, &bottle, classification.pipeline)?;
+    if let SharpInstallOutcome::InstallerStarted { pid, .. } = &outcome {
+        spawn_gog_galaxy_install_watcher(bottle.id.clone(), *pid, src.to_path_buf());
+    }
+    Ok(outcome)
+}
+
+const GOG_GALAXY_SETUP_MIN_BYTES: u64 = 240 * 1024 * 1024;
+
+fn gog_galaxy_setup_cache_path() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("cache").join("gog-galaxy").join("GalaxySetup.exe")
+}
+
+fn valid_gog_galaxy_setup(path: &Path) -> bool {
+    path.is_file() && path.metadata().map(|meta| meta.len() >= GOG_GALAXY_SETUP_MIN_BYTES).unwrap_or(false)
+}
+
+fn remove_invalid_gog_galaxy_setup_cache() {
+    let cache = gog_galaxy_setup_cache_path();
+    if cache.exists() && !valid_gog_galaxy_setup(&cache) {
+        let _ = fs::remove_file(cache);
+    }
+}
+
+fn spawn_gog_galaxy_install_watcher(bottle_id: String, mut watched_pid: u32, source_installer: PathBuf) {
+    std::thread::spawn(move || {
+        let mut retried_cached_setup = false;
+        for _ in 0..360 {
+            let Ok(bottle) = crate::bottles::load_bottle(&bottle_id) else {
+                break;
+            };
+            let prefix = PathBuf::from(&bottle.prefix_path);
+            if let Some(client) = gog_galaxy_client_in_prefix(&prefix) {
+                let _ = crate::bottles::refresh_app_detections(&bottle_id);
+                let _ = import_bottle_app(&bottle_id, &client.to_string_lossy(), Some("GOG Galaxy"));
+                break;
+            }
+            cache_downloaded_gog_galaxy_setup(&prefix);
+            let running = crate::launch::is_process_active(watched_pid as i32);
+            if !running && !retried_cached_setup && !is_gog_galaxy_setup_installer(&source_installer) {
+                let cached_setup = gog_galaxy_setup_cache_path();
+                if valid_gog_galaxy_setup(&cached_setup) {
+                    let classification = crate::bottles::classify_installer(&cached_setup);
+                    kill_stale_gog_galaxy_processes(&prefix);
+                    if let Ok(SharpInstallOutcome::InstallerStarted { pid, .. }) =
+                        start_wine_installer_in_bottle(&cached_setup, &classification, &bottle, classification.pipeline)
+                    {
+                        watched_pid = pid;
+                        retried_cached_setup = true;
+                    } else {
+                        retried_cached_setup = true;
+                    }
+                } else {
+                    retried_cached_setup = true;
+                }
+            }
+            if !running && retried_cached_setup {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
+}
+
+fn is_gog_galaxy_setup_installer(path: &Path) -> bool {
+    path.file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .map(|name| name.starts_with("setup_galaxy") || name == "galaxysetup.exe")
+        .unwrap_or(false)
+}
+
+fn gog_galaxy_client_in_prefix(prefix: &Path) -> Option<PathBuf> {
+    [
+        prefix.join("drive_c").join("Program Files (x86)").join("GOG Galaxy").join("GalaxyClient.exe"),
+        prefix.join("drive_c").join("Program Files").join("GOG Galaxy").join("GalaxyClient.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn gog_galaxy_setup_candidates(prefix: &Path) -> Vec<PathBuf> {
+    let users = prefix.join("drive_c").join("users");
+    let mut candidates = Vec::new();
+    if !users.exists() {
+        return candidates;
+    }
+    for entry in WalkDir::new(&users).max_depth(7).into_iter().flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+        if !name.eq_ignore_ascii_case("GalaxySetup.exe") {
+            continue;
+        }
+        let parent = path.parent().and_then(|parent| parent.file_name()).map(|name| name.to_string_lossy());
+        if parent.map(|name| name.starts_with("GalaxyInstaller_")).unwrap_or(false) {
+            candidates.push(path.to_path_buf());
+        }
+    }
+    candidates.sort();
+    candidates
+}
+
+fn cache_downloaded_gog_galaxy_setup(prefix: &Path) {
+    let Some(candidate) = gog_galaxy_setup_candidates(prefix).into_iter().find(|path| {
+        let Ok(before) = path.metadata() else {
+            return false;
+        };
+        if before.len() < GOG_GALAXY_SETUP_MIN_BYTES {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        path.metadata()
+            .map(|after| after.len() == before.len() && after.len() >= GOG_GALAXY_SETUP_MIN_BYTES)
+            .unwrap_or(false)
+    }) else {
+        return;
+    };
+    let cache = gog_galaxy_setup_cache_path();
+    if cache.exists() && same_file_hash(&candidate, &cache) {
+        return;
+    }
+    if let Some(parent) = cache.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let tmp = cache.with_extension("exe.download");
+    if fs::copy(&candidate, &tmp).is_ok() {
+        let _ = fs::rename(tmp, cache);
+    }
+}
+
+fn same_file_hash(a: &Path, b: &Path) -> bool {
+    matches!((crate::diagnostics::file_sha256(a), crate::diagnostics::file_sha256(b)), (Some(left), Some(right)) if left == right)
+}
+
+fn kill_stale_gog_galaxy_processes(prefix: &Path) {
+    for pid in gog_galaxy_related_process_pids(Some(prefix), true) {
+        let _ = Command::new("/bin/kill").arg(pid.to_string()).status();
+    }
+    kill_gog_galaxy_wineserver(prefix);
+}
+
+fn kill_gog_galaxy_wineserver(prefix: &Path) {
+    let wineserver =
+        crate::platform::runtime_wine_binary(&crate::platform::metalsharp_home_dir().join("runtime").join("wine"))
+            .with_file_name("wineserver");
+    let _ = Command::new(wineserver).env("WINEPREFIX", prefix).arg("-k").status();
+}
+
+fn gog_galaxy_process_pids(prefix: Option<&Path>) -> Vec<u32> {
+    gog_galaxy_related_process_pids(prefix, false)
+}
+
+fn gog_galaxy_related_process_pids(prefix: Option<&Path>, include_installers: bool) -> Vec<u32> {
+    let prefix_text = prefix.map(|path| path.to_string_lossy().to_string());
+    process_lines()
+        .iter()
+        .filter_map(|line| parse_process_line(line))
+        .filter_map(|(pid, command)| {
+            if is_gog_galaxy_process_command(pid, &command, prefix_text.as_deref(), include_installers) {
+                Some(pid)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn is_gog_galaxy_running(prefix: Option<&Path>) -> bool {
+    !gog_galaxy_process_pids(prefix).is_empty()
+}
+
+fn is_gog_galaxy_process_command(pid: u32, command: &str, prefix: Option<&str>, include_installers: bool) -> bool {
+    if command.contains(" rg ") || command.contains("rg -i") || command.contains("ps axo") {
+        return false;
+    }
+    let lower = command.to_ascii_lowercase();
+    let is_client_process = lower.contains("galaxyclient.exe")
+        || lower.contains("galaxyclient_real.exe")
+        || lower.contains("galaxyclient helper.exe")
+        || lower.contains("galaxyclient helper_real.exe")
+        || lower.contains("galaxyclientservice.exe")
+        || lower.contains("galaxyoverlay.exe")
+        || lower.contains("galaxycommunication.exe")
+        || lower.contains("gog galaxy notifications renderer.exe");
+    let is_installer_process = include_installers
+        && (lower.contains("galaxysetup.exe")
+            || lower.contains("galaxyinstaller.exe")
+            || lower.contains("gog_galaxy_2.0.exe"));
+    if !is_client_process && !is_installer_process {
+        return false;
+    }
+    prefix.map(|prefix| command.contains(prefix) || process_open_files_contain_prefix(pid, prefix)).unwrap_or(true)
+}
+
+fn process_open_files_contain_prefix(pid: u32, prefix: &str) -> bool {
+    Command::new("/usr/sbin/lsof")
+        .arg("-p")
+        .arg(pid.to_string())
+        .arg("-Fn")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| stdout.contains(prefix))
+        .unwrap_or(false)
+}
+
+fn process_lines() -> Vec<String> {
+    Command::new("ps")
+        .args(["axo", "pid=,command="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|stdout| stdout.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn parse_process_line(line: &str) -> Option<(u32, String)> {
+    let trimmed = line.trim_start();
+    let split = trimmed.find(char::is_whitespace)?;
+    let (pid, command) = trimmed.split_at(split);
+    let pid = pid.parse::<u32>().ok()?;
+    Some((pid, command.trim_start().to_string()))
 }
 
 fn start_wine_installer_in_bottle(
@@ -938,7 +1213,9 @@ pub fn import_bottle_app(
     if let Some(existing) =
         library.iter_mut().find(|existing| existing.id == app.id || app_absolute_exe_path(existing) == absolute)
     {
-        existing.name = app.name.clone();
+        if !should_preserve_imported_bottle_app_name(existing, &app) {
+            existing.name = app.name.clone();
+        }
         existing.exe_path = app.exe_path.clone();
         existing.install_dir = app.install_dir.clone();
         existing.bottle_id = app.bottle_id.clone();
@@ -952,6 +1229,14 @@ pub fn import_bottle_app(
     library.push(app.clone());
     save_library(&library)?;
     Ok(app)
+}
+
+fn should_preserve_imported_bottle_app_name(existing: &SharpApp, incoming: &SharpApp) -> bool {
+    existing.bottle_id.is_some()
+        && existing.bottle_id == incoming.bottle_id
+        && app_absolute_exe_path(existing) == app_absolute_exe_path(incoming)
+        && !existing.name.trim().is_empty()
+        && existing.name != incoming.name
 }
 
 pub fn uninstall_app(id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1028,6 +1313,10 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
         return Err(format!("EXE not found: {}", exe_path.display()).into());
     }
 
+    if is_gog_galaxy_client_app(&app, &exe_path) {
+        return launch_gog_galaxy_client_app(&app, &exe_path);
+    }
+
     let cef_compat_deployed = maybe_deploy_cef_compat_wrapper(&app, &exe_path)?;
     let pipeline = resolve_sharp_pipeline(engine, &exe_path);
     let launch_id = stable_launch_id(&app.id);
@@ -1060,6 +1349,222 @@ pub fn launch_app(id: &str, engine: &str) -> Result<SharpLaunchResult, Box<dyn s
     }
 
     Ok(SharpLaunchResult { pid, game_type, pipeline, exe_path: exe_path.to_string_lossy().to_string(), warnings })
+}
+
+fn is_gog_galaxy_client_app(app: &SharpApp, exe_path: &Path) -> bool {
+    store_launcher_kind_for_app(app) == Some(StoreLauncherKind::Gog)
+        && exe_path
+            .file_name()
+            .map(|name| name.to_string_lossy().eq_ignore_ascii_case("GalaxyClient.exe"))
+            .unwrap_or(false)
+        && app.bottle_id.is_some()
+}
+
+fn restore_gog_galaxy_client_wrapper_artifacts(install_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let client = install_dir.join("GalaxyClient.exe");
+    let client_real = install_dir.join("GalaxyClient_real.exe");
+    let helper = install_dir.join("GalaxyClient Helper.exe");
+    let helper_real = install_dir.join("GalaxyClient Helper_real.exe");
+    let generic_marker = install_dir.join(".ms_cef_compat_GalaxyClient");
+    let gog_marker = install_dir.join(".ms_gog_helper_wrapper_deployed");
+    let old_gog_marker = install_dir.join(".ms_gog_wrapper_deployed");
+    let hook = install_dir.join("metalsharp-cefchildhook.dll");
+
+    restore_small_wrapper_to_real_exe(&client, &client_real)?;
+    restore_small_wrapper_to_real_exe(&helper, &helper_real)?;
+
+    let _ = fs::remove_file(generic_marker);
+    let _ = fs::remove_file(gog_marker);
+    let _ = fs::remove_file(old_gog_marker);
+    let _ = fs::remove_file(hook);
+    Ok(())
+}
+
+fn prepare_gog_galaxy_cef_render_files(install_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // WineHQ AppDB notes that GOG Galaxy's bundled libGLESv2.dll can leave the
+    // login surface black under Wine. Hide only that ANGLE GLES DLL; keep
+    // libEGL.dll and d3dcompiler_47.dll available because hiding either made
+    // the renderer crash or fail to create a window in MetalSharp testing.
+    restore_disabled_gog_render_file(install_dir, "libEGL.dll")?;
+    restore_disabled_gog_render_file(install_dir, "d3dcompiler_47.dll")?;
+    let gles = install_dir.join("libGLESv2.dll");
+    let disabled = install_dir.join("libGLESv2.dll.metalsharp-disabled");
+    if gles.exists() && !disabled.exists() {
+        fs::rename(&gles, &disabled)?;
+    }
+    Ok(())
+}
+
+fn restore_disabled_gog_render_file(install_dir: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let file = install_dir.join(name);
+    let disabled = install_dir.join(format!("{}.metalsharp-disabled", name));
+    if disabled.exists() && !file.exists() {
+        fs::rename(disabled, file)?;
+    }
+    Ok(())
+}
+
+fn restore_small_wrapper_to_real_exe(target: &Path, real: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if real.exists() {
+        let target_size = fs::metadata(target).map(|meta| meta.len()).unwrap_or(0);
+        let real_size = fs::metadata(real).map(|meta| meta.len()).unwrap_or(0);
+        if target_size <= 512 * 1024 && real_size > 512 * 1024 {
+            let _ = fs::remove_file(target);
+            fs::rename(real, target)?;
+        }
+    }
+    Ok(())
+}
+
+fn prepare_gog_galaxy_client_launch(install_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    restore_gog_galaxy_client_wrapper_artifacts(install_dir)?;
+    prepare_gog_galaxy_cef_render_files(install_dir)?;
+    let client = install_dir.join("GalaxyClient.exe");
+    if !client.exists() {
+        return Err(format!("GalaxyClient.exe not found: {}", client.display()).into());
+    }
+    Ok(())
+}
+
+fn clear_gog_galaxy_lock_files(prefix: &Path) {
+    let lock_dir = prefix.join("drive_c").join("ProgramData").join("GOG.com").join("Galaxy").join("lock-files");
+    if let Ok(entries) = fs::read_dir(lock_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+}
+
+fn launch_gog_galaxy_client_app(
+    app: &SharpApp,
+    _exe_path: &Path,
+) -> Result<SharpLaunchResult, Box<dyn std::error::Error>> {
+    let bottle_id = app.bottle_id.as_deref().ok_or("GOG Galaxy app is not linked to a bottle")?;
+    let bottle = crate::bottles::load_bottle(bottle_id)?;
+    let prefix = PathBuf::from(&bottle.prefix_path);
+    let install_dir = PathBuf::from(&app.install_dir);
+    prepare_gog_galaxy_client_launch(&install_dir)?;
+    let exe_path = install_dir.join("GalaxyClient.exe");
+    let running_pids = gog_galaxy_process_pids(Some(&prefix));
+    if let Some(pid) = running_pids.first().copied() {
+        return Ok(SharpLaunchResult {
+            pid,
+            game_type: "gog_galaxy",
+            pipeline: crate::mtsp::engine::PipelineId::WineBare,
+            exe_path: exe_path.to_string_lossy().to_string(),
+            warnings: vec!["GOG Galaxy is already running".to_string()],
+        });
+    }
+    kill_gog_galaxy_wineserver(&prefix);
+    clear_gog_galaxy_lock_files(&prefix);
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    let log_path = crate::bottles::next_launch_log_path(bottle_id);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    writeln!(log, "launcher=gog_galaxy")?;
+    writeln!(log, "prefix={}", prefix.display())?;
+    writeln!(log, "cwd={}", install_dir.display())?;
+    writeln!(log, "exe=GalaxyClient.exe")?;
+    ensure_gog_galaxy_vcredist(&prefix, &mut log)?;
+    let launch_args = gog_galaxy_launch_args(app);
+    writeln!(log, "args={:?}", launch_args)?;
+    writeln!(log, "--- wine output ---")?;
+    let stdout = log.try_clone()?;
+
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(&install_dir)
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEDEBUG", "-all")
+        .env("WINEDEBUGGER", "none")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .env("WINEMSYNC", "1")
+        .env("WINEDLLOVERRIDES", "winedbg=d;gameoverlayrenderer,gameoverlayrenderer64=d;GalaxyOverlay.exe=d")
+        .arg(&exe_path)
+        .args(&launch_args)
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(log));
+    crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+    cmd.env(
+        "WINEDLLPATH",
+        format!(
+            "{}:{}",
+            ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy(),
+            ms_root.join("lib").join("wine").join("i386-windows").to_string_lossy()
+        ),
+    );
+
+    let child = cmd.spawn()?;
+    let pid = child.id();
+    let _ = crate::bottles::set_launch_started(bottle_id, pid, &log_path);
+    crate::bottles::watch_bottle_launch(bottle_id.to_string(), pid);
+
+    Ok(SharpLaunchResult {
+        pid,
+        game_type: "gog_galaxy",
+        pipeline: crate::mtsp::engine::PipelineId::WineBare,
+        exe_path: exe_path.to_string_lossy().to_string(),
+        warnings: vec![],
+    })
+}
+
+fn ensure_gog_galaxy_vcredist(prefix: &Path, log: &mut std::fs::File) -> Result<(), Box<dyn std::error::Error>> {
+    if gog_galaxy_has_vcredist_x86(prefix) {
+        writeln!(log, "vcredist_x86=present")?;
+        return Ok(());
+    }
+
+    writeln!(log, "vcredist_x86=installing")?;
+    crate::bottles::vcpp_ensure_and_install_x86_quiet(prefix)
+        .map_err(|error| format!("GOG Galaxy VC++ x86 runtime install failed: {}", error))?;
+    if !gog_galaxy_has_vcredist_x86(prefix) {
+        return Err("GOG Galaxy VC++ x86 runtime install completed but mfc140u.dll is still missing".into());
+    }
+    writeln!(log, "vcredist_x86=installed")?;
+    Ok(())
+}
+
+fn gog_galaxy_has_vcredist_x86(prefix: &Path) -> bool {
+    let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
+    ["mfc140u.dll", "msvcp140.dll", "vcruntime140.dll"].iter().all(|dll| {
+        let path = syswow64.join(dll);
+        path.is_file() && path.metadata().map(|metadata| metadata.len() > 10_000).unwrap_or(false)
+    })
+}
+
+fn gog_galaxy_launch_args(app: &SharpApp) -> Vec<String> {
+    let mut args =
+        default_launcher_launch_args(StoreLauncherKind::Gog).iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+    let app_args = app
+        .launch_args
+        .iter()
+        .map(String::as_str)
+        .filter(|arg| !is_deprecated_gog_galaxy_launch_arg(arg))
+        .collect::<Vec<_>>();
+    append_unique_launch_args(&mut args, app_args.as_slice());
+    let user_args = app
+        .user_launch_args
+        .iter()
+        .map(String::as_str)
+        .filter(|arg| !is_deprecated_gog_galaxy_launch_arg(arg))
+        .collect::<Vec<_>>();
+    append_unique_launch_args(&mut args, user_args.as_slice());
+    args
+}
+
+fn is_deprecated_gog_galaxy_launch_arg(arg: &str) -> bool {
+    arg.eq_ignore_ascii_case("--single-process") || arg.eq_ignore_ascii_case("--disable-software-rasterizer")
 }
 
 fn maybe_deploy_cef_compat_wrapper(app: &SharpApp, exe_path: &Path) -> Result<bool, Box<dyn std::error::Error>> {
@@ -1542,6 +2047,7 @@ fn is_setup_exe(name: &str) -> bool {
 fn is_valid_app_exe(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.ends_with(".exe")
+        && !is_ignored_gog_galaxy_exe_name(&lower)
         && !lower.contains("setup")
         && !lower.contains("redist")
         && !lower.contains("dotnet")
@@ -1600,10 +2106,24 @@ fn find_real_exe(dir: &PathBuf) -> Option<PathBuf> {
 fn known_launcher_exe_score(lower_name: &str) -> i32 {
     match lower_name {
         "epicgameslauncher.exe" | "epicgameslauncher_real.exe" => 90,
+        "galaxyclient.exe" => 150,
         "ubisoftconnect.exe" | "ubisoftconnect_real.exe" => 140,
         "ubisoftgamelauncher.exe" | "ubisoftgamelauncher_real.exe" => 40,
         _ => 0,
     }
+}
+
+fn is_ignored_gog_galaxy_exe_name(lower_name: &str) -> bool {
+    matches!(
+        lower_name,
+        "gog_galaxy_2.0.exe"
+            | "galaxyinstaller.exe"
+            | "galaxysetup.exe"
+            | "galaxyclientservice.exe"
+            | "galaxyoverlay.exe"
+            | "galaxyclient_helper.exe"
+            | "galaxyclient_real.exe"
+    ) || lower_name.ends_with("_real.exe") && lower_name.contains("galaxy")
 }
 
 fn dir_size(dir: &PathBuf) -> u64 {
@@ -1623,6 +2143,832 @@ pub fn handle_get_library() -> Value {
         Ok(apps) => json!({"ok": true, "apps": apps}),
         Err(e) => json!({"ok": false, "error": e.to_string()}),
     }
+}
+
+const GOG_GALAXY_INSTALLER_URL: &str = "https://webinstallers.gog-statics.com/download/GOG_Galaxy_2.0.exe";
+const GOGDL_AUTH_URL: &str = "https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=galaxy";
+const GOG_PREFIX_BOTTLE_ID: &str = "gog-prefix";
+
+fn gog_galaxy_cache_path() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("cache").join("gog-galaxy").join("GOG_Galaxy_2.0.exe")
+}
+
+fn find_gog_galaxy_app(apps: &[SharpApp]) -> Option<&SharpApp> {
+    let is_gog_client = |app: &&SharpApp| {
+        store_launcher_kind_for_app(app) == Some(StoreLauncherKind::Gog)
+            && Path::new(&app.exe_path)
+                .file_name()
+                .map(|name| name.to_string_lossy().eq_ignore_ascii_case("GalaxyClient.exe"))
+                .unwrap_or(false)
+    };
+    apps.iter()
+        .find(|app| is_gog_client(app) && app.bottle_id.as_deref() == Some("gog-prefix"))
+        .or_else(|| apps.iter().find(is_gog_client))
+}
+
+fn find_gog_galaxy_bottle() -> Option<crate::bottles::BottleManifest> {
+    let cache_path = gog_galaxy_cache_path().to_string_lossy().to_string();
+    let mut candidates = crate::bottles::list_bottles()
+        .ok()?
+        .into_iter()
+        .filter(|bottle| {
+            bottle.id == "gog-prefix"
+                || bottle
+                    .source_installer_path
+                    .as_deref()
+                    .map(|path| path == cache_path || path.to_ascii_lowercase().contains("gog_galaxy"))
+                    .unwrap_or(false)
+                || bottle.name.to_ascii_lowercase().contains("gog galaxy")
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(dedicated) = candidates.iter().find(|bottle| bottle.id == "gog-prefix").cloned() {
+        return Some(dedicated);
+    }
+
+    candidates.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| b.id.cmp(&a.id)));
+    candidates
+        .iter()
+        .find(|bottle| gog_galaxy_client_in_bottle(bottle).is_some())
+        .cloned()
+        .or_else(|| candidates.into_iter().next())
+}
+
+fn find_gog_galaxy_bottle_for_app(app: Option<&SharpApp>) -> Option<crate::bottles::BottleManifest> {
+    find_gog_galaxy_bottle()
+        .filter(|bottle| bottle.id == "gog-prefix")
+        .or_else(|| {
+            app.and_then(|app| app.bottle_id.as_deref())
+                .and_then(|bottle_id| crate::bottles::load_bottle(bottle_id).ok())
+        })
+        .or_else(find_gog_galaxy_bottle)
+}
+
+fn gog_galaxy_client_in_bottle(bottle: &crate::bottles::BottleManifest) -> Option<PathBuf> {
+    let prefix = Path::new(&bottle.prefix_path);
+    [
+        prefix.join("drive_c").join("Program Files (x86)").join("GOG Galaxy").join("GalaxyClient.exe"),
+        prefix.join("drive_c").join("Program Files").join("GOG Galaxy").join("GalaxyClient.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn gog_launcher_status_value() -> Value {
+    let apps = load_library().unwrap_or_default();
+    let app = find_gog_galaxy_app(&apps);
+    let bottle = find_gog_galaxy_bottle_for_app(app);
+    let running =
+        bottle.as_ref().map(|bottle| is_gog_galaxy_running(Some(Path::new(&bottle.prefix_path)))).unwrap_or(false);
+    let installing = !running
+        && bottle
+            .as_ref()
+            .and_then(|bottle| bottle.last_launch_pid)
+            .map(|pid| crate::launch::is_process_active(pid as i32))
+            .unwrap_or(false);
+    let client_exists = app.map(|app| app_absolute_exe_path(app).exists()).unwrap_or(false)
+        || bottle.as_ref().and_then(gog_galaxy_client_in_bottle).is_some();
+    let (status, detail) = if running {
+        ("running", "Running")
+    } else if installing {
+        ("installing", "Installing…")
+    } else if client_exists {
+        ("installed", "Installed")
+    } else if bottle.is_some() {
+        ("needs_repair", "Needs repair")
+    } else {
+        ("not_installed", "Not installed")
+    };
+
+    json!({
+        "id": "gog_galaxy",
+        "name": "GOG Galaxy",
+        "status": status,
+        "statusLabel": detail,
+        "appId": app.map(|app| app.id.clone()),
+        "bottleId": bottle.as_ref().map(|bottle| bottle.id.clone()),
+        "installerUrl": GOG_GALAXY_INSTALLER_URL,
+        "running": running,
+    })
+}
+
+fn gogdl_config_dir() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("gogdl")
+}
+
+fn gogdl_auth_config_path() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("gog_store").join("auth.json")
+}
+
+fn gogdl_support_dir() -> PathBuf {
+    gogdl_config_dir().join("gog-support")
+}
+
+fn gogdl_default_install_dir(product_id: &str) -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("gog-games").join(product_id)
+}
+
+fn gogdl_prefix_dir() -> PathBuf {
+    crate::bottles::bottle_dir(GOG_PREFIX_BOTTLE_ID).join("prefix")
+}
+
+fn gogdl_default_prefix_dir(_product_id: &str) -> PathBuf {
+    gogdl_prefix_dir()
+}
+
+fn gogdl_metalsharp_wine_root() -> PathBuf {
+    let home = dirs::home_dir().unwrap_or_default();
+    crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine")
+}
+
+fn gogdl_metalsharp_wine_binary() -> PathBuf {
+    crate::platform::runtime_wine_binary(&gogdl_metalsharp_wine_root())
+}
+
+fn ensure_gogdl_prefix(prefix: &Path) -> Result<(), String> {
+    fs::create_dir_all(prefix).map_err(|error| format!("failed to create GOG prefix directory: {}", error))?;
+    if prefix.join("drive_c").is_dir() {
+        return Ok(());
+    }
+
+    let wine = gogdl_metalsharp_wine_binary();
+    if !wine.is_file() {
+        return Err(format!("MetalSharp Wine binary not found: {}", wine.display()));
+    }
+    let ms_root = gogdl_metalsharp_wine_root();
+    let mut command = Command::new(&wine);
+    command
+        .arg("wineboot")
+        .arg("-u")
+        .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+        .env("WINEMSYNC", "1")
+        .env("WINEDEBUG", "-all")
+        .env("MS_FWD_COMPAT_GL_CTX", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    crate::platform::set_runtime_library_env(&mut command, &ms_root);
+    let status = command.status().map_err(|error| format!("failed to initialize GOG prefix: {}", error))?;
+    if !status.success() {
+        return Err(format!("failed to initialize GOG prefix with wineboot: {:?}", status.code()));
+    }
+    Ok(())
+}
+
+fn gogdl_candidate_paths_from_path_env(path_env: Option<&str>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(explicit) = std::env::var("METALSHARP_GOGDL_BIN") {
+        let explicit = explicit.trim();
+        if !explicit.is_empty() {
+            candidates.push(PathBuf::from(explicit));
+        }
+    }
+
+    let home = crate::platform::metalsharp_home_dir();
+    candidates.push(home.join("tools").join("gogdl"));
+    candidates.push(home.join("runtime").join("gogdl"));
+
+    if let Some(path_env) = path_env {
+        for path in std::env::split_paths(path_env) {
+            candidates.push(path.join("gogdl"));
+        }
+    }
+    candidates
+}
+
+fn find_gogdl_binary() -> Option<PathBuf> {
+    gogdl_candidate_paths_from_path_env(std::env::var("PATH").ok().as_deref()).into_iter().find(|path| path.is_file())
+}
+
+fn gogdl_status_value() -> Value {
+    let binary = find_gogdl_binary();
+    let auth_config = gogdl_auth_config_path();
+    let authenticated = auth_config.is_file();
+    let status = if binary.is_some() {
+        if authenticated {
+            "ready"
+        } else {
+            "needs_login"
+        }
+    } else {
+        "not_configured"
+    };
+    let status_label = match status {
+        "ready" => "Ready",
+        "needs_login" => "Needs login",
+        _ => "gogdl not found",
+    };
+
+    json!({
+        "id": "gogdl",
+        "name": "GOG",
+        "backend": "gogdl",
+        "status": status,
+        "statusLabel": status_label,
+        "available": binary.is_some(),
+        "authenticated": authenticated,
+        "binaryPath": binary.map(|path| path.to_string_lossy().to_string()),
+        "configPath": gogdl_config_dir().to_string_lossy().to_string(),
+        "authConfigPath": auth_config.to_string_lossy().to_string(),
+        "supportPath": gogdl_support_dir().to_string_lossy().to_string(),
+        "bottleId": GOG_PREFIX_BOTTLE_ID,
+        "winePrefix": gogdl_prefix_dir().to_string_lossy().to_string(),
+        "prefixInitialized": gogdl_prefix_dir().join("drive_c").is_dir(),
+        "winePath": gogdl_metalsharp_wine_binary().to_string_lossy().to_string(),
+        "authUrl": GOGDL_AUTH_URL,
+        "galaxyFallbackId": "gog_galaxy",
+        "capabilities": ["auth", "metadata", "download", "launch", "cloud_saves", "redists"],
+    })
+}
+
+fn valid_gogdl_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 160
+        && value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+}
+
+fn gogdl_product_id(body: &Value) -> Result<String, String> {
+    let product_id = body
+        .get("productId")
+        .or_else(|| body.get("id"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .ok_or_else(|| "missing GOG productId".to_string())?;
+    if !valid_gogdl_token(product_id) {
+        return Err("invalid GOG productId".to_string());
+    }
+    Ok(product_id.to_string())
+}
+
+fn gogdl_platform(body: &Value) -> Result<String, String> {
+    let platform =
+        body.get("platform").or_else(|| body.get("os")).and_then(|value| value.as_str()).unwrap_or("windows");
+    match platform {
+        "windows" | "osx" | "linux" => Ok(platform.to_string()),
+        _ => Err("platform must be windows, osx, or linux".to_string()),
+    }
+}
+
+fn gogdl_string_field(body: &Value, name: &str) -> Option<String> {
+    body.get(name).and_then(|value| value.as_str()).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string)
+}
+
+fn gogdl_output_stdout_json(output: &Output) -> Option<Value> {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        None
+    } else {
+        serde_json::from_str(&stdout).ok()
+    }
+}
+
+fn gogdl_error_from_output(context: &str, output: &Output) -> Value {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    json!({
+        "ok": false,
+        "error": format!("{} failed", context),
+        "status": output.status.code(),
+        "stderr": truncate_gogdl_text(&stderr),
+        "stdout": truncate_gogdl_text(&stdout),
+        "launcher": gogdl_status_value(),
+    })
+}
+
+fn truncate_gogdl_text(value: &str) -> String {
+    const LIMIT: usize = 8_192;
+    if value.len() <= LIMIT {
+        value.to_string()
+    } else {
+        format!("{}…", &value[..LIMIT])
+    }
+}
+
+fn gogdl_command() -> Result<Command, String> {
+    let binary = find_gogdl_binary()
+        .ok_or_else(|| "gogdl binary not found; set METALSHARP_GOGDL_BIN or install gogdl".to_string())?;
+    let auth_config = gogdl_auth_config_path();
+    if let Some(parent) = auth_config.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("failed to create GOG auth directory: {}", error))?;
+    }
+    fs::create_dir_all(gogdl_config_dir())
+        .map_err(|error| format!("failed to create GOGDL config directory: {}", error))?;
+    fs::create_dir_all(gogdl_support_dir())
+        .map_err(|error| format!("failed to create GOG support directory: {}", error))?;
+
+    let mut command = Command::new(binary);
+    command
+        .arg("--auth-config-path")
+        .arg(auth_config)
+        .env("GOGDL_CONFIG_PATH", gogdl_config_dir())
+        .env("GOGDL_SUPPORT_PATH", gogdl_support_dir());
+    Ok(command)
+}
+
+fn run_gogdl_output(args: &[String]) -> Result<Output, String> {
+    let mut command = gogdl_command()?;
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("failed to run gogdl: {}", error))
+}
+
+fn spawn_gogdl(args: &[String]) -> Result<u32, String> {
+    let mut command = gogdl_command()?;
+    command.args(args).stdout(Stdio::null()).stderr(Stdio::null());
+    command.spawn().map(|child| child.id()).map_err(|error| format!("failed to spawn gogdl: {}", error))
+}
+
+fn gogdl_download_args(body: &Value) -> Result<(String, PathBuf, Vec<String>), String> {
+    let product_id = gogdl_product_id(body)?;
+    let platform = gogdl_platform(body)?;
+    let install_dir = gogdl_string_field(body, "installPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| gogdl_default_install_dir(&product_id));
+    let support_dir = gogdl_string_field(body, "supportPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| gogdl_support_dir().join(&product_id));
+    fs::create_dir_all(&install_dir).map_err(|error| format!("failed to create GOG install directory: {}", error))?;
+    fs::create_dir_all(&support_dir).map_err(|error| format!("failed to create GOG support directory: {}", error))?;
+
+    let mut args = vec![
+        "download".to_string(),
+        product_id.clone(),
+        "--platform".to_string(),
+        platform,
+        "--path".to_string(),
+        install_dir.to_string_lossy().to_string(),
+        "--support".to_string(),
+        support_dir.to_string_lossy().to_string(),
+    ];
+    if body.get("withDlcs").and_then(|value| value.as_bool()).unwrap_or(true) {
+        args.push("--with-dlcs".to_string());
+    } else {
+        args.push("--skip-dlcs".to_string());
+    }
+    if let Some(language) = gogdl_string_field(body, "language") {
+        args.extend(["--lang".to_string(), language]);
+    }
+    if let Some(build) = gogdl_string_field(body, "build") {
+        args.extend(["--build".to_string(), build]);
+    }
+    if let Some(branch) = gogdl_string_field(body, "branch") {
+        args.extend(["--branch".to_string(), branch]);
+    }
+    Ok((product_id, install_dir, args))
+}
+
+fn gogdl_info_args(body: &Value) -> Result<Vec<String>, String> {
+    let product_id = gogdl_product_id(body)?;
+    let platform = gogdl_platform(body)?;
+    let mut args = vec!["info".to_string(), product_id, "--platform".to_string(), platform];
+    if body.get("withDlcs").and_then(|value| value.as_bool()).unwrap_or(true) {
+        args.push("--with-dlcs".to_string());
+    } else {
+        args.push("--skip-dlcs".to_string());
+    }
+    if let Some(language) = gogdl_string_field(body, "language") {
+        args.extend(["--lang".to_string(), language]);
+    }
+    if let Some(build) = gogdl_string_field(body, "build") {
+        args.extend(["--build".to_string(), build]);
+    }
+    Ok(args)
+}
+
+fn gogdl_launch_args(body: &Value) -> Result<(String, PathBuf, PathBuf, Vec<String>), String> {
+    gogdl_launch_args_with_defaults(body, gogdl_default_prefix_dir, gogdl_metalsharp_wine_binary())
+}
+
+fn gogdl_launch_args_with_defaults(
+    body: &Value,
+    default_prefix: impl FnOnce(&str) -> PathBuf,
+    wine: PathBuf,
+) -> Result<(String, PathBuf, PathBuf, Vec<String>), String> {
+    let product_id = gogdl_product_id(body)?;
+    let platform = gogdl_platform(body)?;
+    let install_dir = gogdl_string_field(body, "installPath")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| gogdl_default_install_dir(&product_id));
+    if !install_dir.is_dir() {
+        return Err(format!("GOG install path does not exist: {}", install_dir.display()));
+    }
+    let prefix =
+        gogdl_string_field(body, "winePrefix").map(PathBuf::from).unwrap_or_else(|| default_prefix(&product_id));
+    if !wine.is_file() {
+        return Err(format!("MetalSharp Wine binary not found: {}", wine.display()));
+    }
+
+    let mut args = vec![
+        "launch".to_string(),
+        install_dir.to_string_lossy().to_string(),
+        product_id.clone(),
+        "--platform".to_string(),
+        platform,
+        "--wine".to_string(),
+        wine.to_string_lossy().to_string(),
+        "--wine-prefix".to_string(),
+        prefix.to_string_lossy().to_string(),
+    ];
+    if let Some(preferred_task) = gogdl_string_field(body, "preferredTask") {
+        args.extend(["--prefer-task".to_string(), preferred_task]);
+    }
+    if let Some(override_exe) = gogdl_string_field(body, "overrideExe") {
+        args.extend(["--override-exe".to_string(), override_exe]);
+    }
+    Ok((product_id, install_dir, prefix, args))
+}
+
+pub fn handle_gogdl_diagnostics() -> Value {
+    json!({"ok": true, "launcher": gogdl_status_value(), "galaxyFallback": gog_launcher_status_value()})
+}
+
+pub fn handle_gogdl_auth(body: &Value) -> Value {
+    let Some(code) = gogdl_string_field(body, "code") else {
+        return json!({"ok": false, "error": "missing GOG authorization code", "launcher": gogdl_status_value()});
+    };
+    let args = vec!["auth".to_string(), "--code".to_string(), code];
+    match run_gogdl_output(&args) {
+        Ok(output) if output.status.success() => json!({
+            "ok": true,
+            "authenticated": gogdl_auth_config_path().is_file(),
+            "credentials": gogdl_output_stdout_json(&output).map(|_| json!({"redacted": true})),
+            "launcher": gogdl_status_value(),
+        }),
+        Ok(output) => gogdl_error_from_output("gogdl auth", &output),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_info(body: &Value) -> Value {
+    let args = match gogdl_info_args(body) {
+        Ok(args) => args,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    match run_gogdl_output(&args) {
+        Ok(output) if output.status.success() => json!({
+            "ok": true,
+            "info": gogdl_output_stdout_json(&output),
+            "stdout": truncate_gogdl_text(String::from_utf8_lossy(&output.stdout).trim()),
+            "launcher": gogdl_status_value(),
+        }),
+        Ok(output) => gogdl_error_from_output("gogdl info", &output),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_download(body: &Value) -> Value {
+    let (product_id, install_dir, args) = match gogdl_download_args(body) {
+        Ok(args) => args,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    match spawn_gogdl(&args) {
+        Ok(pid) => json!({
+            "ok": true,
+            "pid": pid,
+            "productId": product_id,
+            "installPath": install_dir.to_string_lossy().to_string(),
+            "message": "GOG download started",
+            "launcher": gogdl_status_value(),
+        }),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_import(body: &Value) -> Value {
+    let Some(path) = gogdl_string_field(body, "installPath").or_else(|| gogdl_string_field(body, "path")) else {
+        return json!({"ok": false, "error": "missing installPath", "launcher": gogdl_status_value()});
+    };
+    let args = vec!["import".to_string(), path.clone()];
+    match run_gogdl_output(&args) {
+        Ok(output) if output.status.success() => json!({
+            "ok": true,
+            "import": gogdl_output_stdout_json(&output),
+            "stdout": truncate_gogdl_text(String::from_utf8_lossy(&output.stdout).trim()),
+            "launcher": gogdl_status_value(),
+        }),
+        Ok(output) => gogdl_error_from_output("gogdl import", &output),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_launch(body: &Value) -> Value {
+    let (product_id, install_dir, prefix, args) = match gogdl_launch_args(body) {
+        Ok(args) => args,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    if let Err(error) = ensure_gogdl_prefix(&prefix) {
+        return json!({"ok": false, "error": error, "launcher": gogdl_status_value()});
+    }
+    match spawn_gogdl(&args) {
+        Ok(pid) => json!({
+            "ok": true,
+            "pid": pid,
+            "productId": product_id,
+            "installPath": install_dir.to_string_lossy().to_string(),
+            "winePrefix": prefix.to_string_lossy().to_string(),
+            "bottleId": GOG_PREFIX_BOTTLE_ID,
+            "winePath": gogdl_metalsharp_wine_binary().to_string_lossy().to_string(),
+            "message": "GOG game launch started",
+            "launcher": gogdl_status_value(),
+        }),
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_gogdl_save_sync(body: &Value) -> Value {
+    let product_id = match gogdl_product_id(body) {
+        Ok(product_id) => product_id,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    let platform = match gogdl_platform(body) {
+        Ok(platform) => platform,
+        Err(error) => return json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    };
+    let Some(save_path) = gogdl_string_field(body, "savePath") else {
+        return json!({"ok": false, "error": "missing savePath", "launcher": gogdl_status_value()});
+    };
+    let timestamp = gogdl_string_field(body, "timestamp").unwrap_or_else(|| "0".to_string());
+    let save_name = gogdl_string_field(body, "name").unwrap_or_else(|| "__default".to_string());
+    let mut args = vec![
+        "save-sync".to_string(),
+        save_path,
+        product_id.clone(),
+        "--os".to_string(),
+        platform,
+        "--ts".to_string(),
+        timestamp,
+        "--name".to_string(),
+        save_name,
+    ];
+    if let Some(mode) = gogdl_string_field(body, "mode") {
+        let flag = match mode.as_str() {
+            "upload" => Some("--skip-download"),
+            "download" => Some("--skip-upload"),
+            "forceupload" | "force_upload" => Some("--force-upload"),
+            "forcedownload" | "force_download" => Some("--force-download"),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            args.push(flag.to_string());
+        }
+    }
+    match spawn_gogdl(&args) {
+        Ok(pid) => {
+            json!({"ok": true, "pid": pid, "productId": product_id, "message": "GOG save sync started", "launcher": gogdl_status_value()})
+        },
+        Err(error) => json!({"ok": false, "error": error, "launcher": gogdl_status_value()}),
+    }
+}
+
+pub fn handle_launchers() -> Value {
+    json!({"ok": true, "launchers": [gogdl_status_value(), gog_launcher_status_value()]})
+}
+
+fn ensure_gog_galaxy_installer_cached() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let path = gog_galaxy_cache_path();
+    if path.exists() && path.metadata().map(|meta| meta.len() > 1_000_000).unwrap_or(false) {
+        return Ok(path);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("exe.download");
+    let _ = fs::remove_file(&tmp);
+    let status = Command::new("/usr/bin/curl")
+        .arg("--fail")
+        .arg("--location")
+        .arg("--silent")
+        .arg("--show-error")
+        .arg("--output")
+        .arg(&tmp)
+        .arg(GOG_GALAXY_INSTALLER_URL)
+        .status()?;
+    if !status.success() {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("failed to download GOG Galaxy installer from {}", GOG_GALAXY_INSTALLER_URL).into());
+    }
+    fs::rename(&tmp, &path)?;
+    Ok(path)
+}
+
+pub fn handle_install_gog_galaxy() -> Value {
+    handle_install_gog_galaxy_with_fresh(false)
+}
+
+fn handle_install_gog_galaxy_fresh() -> Value {
+    handle_install_gog_galaxy_with_fresh(true)
+}
+
+fn handle_install_gog_galaxy_with_fresh(fresh_bottle: bool) -> Value {
+    remove_invalid_gog_galaxy_setup_cache();
+    match ensure_gog_galaxy_installer_cached()
+        .and_then(|path| install_exe_with_options(path.to_string_lossy().as_ref(), Some("GOG Galaxy"), fresh_bottle))
+    {
+        Ok(SharpInstallOutcome::Imported(app)) => {
+            json!({"ok": true, "app": *app, "launcher": gog_launcher_status_value()})
+        },
+        Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
+            json!({"ok": true, "installing": true, "pid": pid, "message": message, "launcher": gog_launcher_status_value()})
+        },
+        Err(e) => json!({"ok": false, "error": e.to_string(), "launcher": gog_launcher_status_value()}),
+    }
+}
+
+fn import_installed_gog_galaxy_card() -> Result<SharpApp, Box<dyn std::error::Error>> {
+    let apps = load_library()?;
+    if let Some(app) = find_gog_galaxy_app(&apps).filter(|app| app.bottle_id.as_deref() == Some("gog-prefix")) {
+        return Ok(app.clone());
+    }
+    if let Some(dedicated) = find_gog_galaxy_bottle().filter(|bottle| bottle.id == "gog-prefix") {
+        if let Some(client) = gog_galaxy_client_in_bottle(&dedicated) {
+            return import_bottle_app(&dedicated.id, &client.to_string_lossy(), Some("GOG Galaxy"));
+        }
+    }
+    if let Some(app) = find_gog_galaxy_app(&apps) {
+        return Ok(app.clone());
+    }
+    let bottle = find_gog_galaxy_bottle().ok_or("GOG Galaxy bottle not found")?;
+    let client = gog_galaxy_client_in_bottle(&bottle).ok_or("GalaxyClient.exe not found in GOG Galaxy bottle")?;
+    import_bottle_app(&bottle.id, &client.to_string_lossy(), Some("GOG Galaxy"))
+}
+
+pub fn handle_show_gog_galaxy_card() -> Value {
+    match import_installed_gog_galaxy_card() {
+        Ok(app) => json!({"ok": true, "app": app, "launcher": gog_launcher_status_value()}),
+        Err(e) => json!({"ok": false, "error": e.to_string(), "launcher": gog_launcher_status_value()}),
+    }
+}
+
+pub fn handle_open_gog_galaxy() -> Value {
+    match import_installed_gog_galaxy_card().and_then(|app| launch_app(&app.id, &app.engine)) {
+        Ok(result) => {
+            json!({"ok": true, "pid": result.pid, "pipeline": result.pipeline, "exePath": result.exe_path, "launcher": gog_launcher_status_value()})
+        },
+        Err(e) => json!({"ok": false, "error": e.to_string(), "launcher": gog_launcher_status_value()}),
+    }
+}
+
+pub fn handle_stop_gog_galaxy() -> Value {
+    let apps = load_library().unwrap_or_default();
+    let app = find_gog_galaxy_app(&apps);
+    let Some(prefix) = find_gog_galaxy_bottle_for_app(app).map(|bottle| PathBuf::from(bottle.prefix_path)) else {
+        return json!({"ok": true, "stoppedPids": [], "launcher": gog_launcher_status_value()});
+    };
+    let pids = gog_galaxy_process_pids(Some(&prefix));
+    for pid in &pids {
+        let _ = Command::new("/bin/kill").arg(pid.to_string()).status();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    for pid in gog_galaxy_process_pids(Some(&prefix)) {
+        let _ = Command::new("/bin/kill").arg("-9").arg(pid.to_string()).status();
+    }
+    kill_gog_galaxy_wineserver(&prefix);
+    clear_gog_galaxy_lock_files(&prefix);
+    json!({"ok": true, "stoppedPids": pids, "launcher": gog_launcher_status_value()})
+}
+
+pub fn handle_repair_gog_galaxy() -> Value {
+    if let Some(bottle) = find_gog_galaxy_bottle() {
+        let _ = crate::bottles::refresh_app_detections(&bottle.id);
+        if import_installed_gog_galaxy_card().is_ok() {
+            return json!({"ok": true, "launcher": gog_launcher_status_value()});
+        }
+    }
+    handle_install_gog_galaxy_fresh()
+}
+
+pub fn handle_gog_galaxy_diagnostics() -> Value {
+    json!({"ok": true, "diagnostics": gog_galaxy_diagnostics_value(), "launcher": gog_launcher_status_value()})
+}
+
+fn gog_galaxy_diagnostics_value() -> Value {
+    let bottle = find_gog_galaxy_bottle();
+    let mut issues: Vec<Value> = Vec::new();
+    let mut logs: Vec<Value> = Vec::new();
+    let mut actions: Vec<Value> = Vec::new();
+
+    if bottle.is_none() {
+        issues.push(
+            json!({"id": "no_bottle", "severity": "error", "detail": "No dedicated GOG Galaxy bottle exists yet"}),
+        );
+        actions.push(gog_repair_action("install_gog_galaxy", "Install GOG Galaxy"));
+        return json!({"status": "not_installed", "issues": issues, "actions": actions, "logs": logs});
+    }
+
+    let bottle = bottle.expect("checked");
+    let prefix = PathBuf::from(&bottle.prefix_path);
+    let client = gog_galaxy_client_in_prefix(&prefix);
+    let cached_setup = gog_galaxy_setup_cache_path();
+    let setup_candidates = gog_galaxy_setup_candidates(&prefix);
+    let report = crate::bottles::diagnose_bottle(&bottle.id).ok();
+
+    for log_path in gog_galaxy_log_paths(&prefix) {
+        let text = read_text_lossy_limited(&log_path, 256 * 1024);
+        if text.is_empty() {
+            continue;
+        }
+        let lower = text.to_ascii_lowercase();
+        logs.push(json!({"path": log_path.to_string_lossy(), "size": text.len()}));
+        if lower.contains("client setup finished with return code: 1") || lower.contains("return code: 1") {
+            issues.push(json!({"id": "setup_return_code_1", "severity": "error", "detail": "GOG Galaxy setup exited with return code 1"}));
+        }
+        if lower.contains("setup files are corrupted")
+            || lower.contains("obtain a new copy")
+            || lower.contains("corrupt")
+        {
+            issues.push(json!({"id": "corrupt_setup_payload", "severity": "error", "detail": "GOG setup reported a corrupt installer payload"}));
+        }
+        if lower.contains("already running") || lower.contains("galaxy already running") {
+            issues.push(json!({"id": "stale_galaxy_process", "severity": "error", "detail": "Installer reported that GOG Galaxy is already running"}));
+        }
+        if lower.contains("vcruntime") || lower.contains("msvcp") || lower.contains("visual c++") {
+            issues.push(
+                json!({"id": "vc_runtime", "severity": "warn", "detail": "Installer log mentions VC runtime state"}),
+            );
+        }
+        if lower.contains("d3dcompiler_47") || lower.contains("d3dcompiler") {
+            issues.push(json!({"id": "d3dcompiler_47", "severity": "warn", "detail": "Installer log mentions D3DCompiler state"}));
+        }
+        if lower.contains("font") {
+            issues.push(json!({"id": "fonts", "severity": "warn", "detail": "Installer log mentions font state"}));
+        }
+    }
+
+    if client.is_none() {
+        issues.push(json!({"id": "no_final_client", "severity": "error", "detail": "GalaxyClient.exe is not present in the GOG Galaxy bottle"}));
+    }
+    if setup_candidates.is_empty() && !cached_setup.exists() && client.is_none() {
+        issues.push(json!({"id": "installer_temp_missing", "severity": "warn", "detail": "No GalaxyInstaller_* temp setup or cached GalaxySetup.exe is available for retry"}));
+    }
+    if let Some(report) = report.as_ref() {
+        for component in &report.actions {
+            issues.push(json!({"id": format!("missing_component:{}", component.id), "severity": "warn", "detail": component.detail}));
+        }
+    }
+
+    if valid_gog_galaxy_setup(&cached_setup) {
+        actions.push(gog_repair_action("retry_cached_setup", "Retry with cached GalaxySetup.exe"));
+    }
+    actions.push(gog_repair_action("recreate_clean_bottle", "Recreate clean GOG bottle"));
+    actions.push(gog_repair_action("install_launcher_dependencies", "Install launcher dependencies"));
+    actions.push(gog_repair_action("disable_overlay", "Disable Galaxy overlay"));
+    actions.push(gog_repair_action("kill_stale_processes", "Kill stale Galaxy processes"));
+    actions.push(gog_repair_action("clear_installer_temp", "Clear GOG installer temp state"));
+    actions.push(gog_repair_action("use_offline_setup", "Use full/offline setup_galaxy installer"));
+
+    json!({
+        "status": if client.is_some() { "installed" } else { "needs_repair" },
+        "bottleId": bottle.id,
+        "clientPath": client.map(|path| path.to_string_lossy().to_string()),
+        "cachedSetupPath": if valid_gog_galaxy_setup(&cached_setup) { Some(cached_setup.to_string_lossy().to_string()) } else { None },
+        "setupCandidates": setup_candidates.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "issues": dedupe_json_issues(issues),
+        "actions": actions,
+        "logs": logs,
+    })
+}
+
+fn gog_repair_action(id: &str, label: &str) -> Value {
+    json!({"id": id, "label": label})
+}
+
+fn gog_galaxy_log_paths(prefix: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![
+        prefix.join("drive_c/ProgramData/GOG.com/Galaxy/logs/InstallerBootstrapper.log"),
+        prefix.join("drive_c/ProgramData/GOG.com/Galaxy/logs/InstallerWebinstaller.log"),
+    ];
+    let users = prefix.join("drive_c/users");
+    if users.exists() {
+        for entry in WalkDir::new(users).max_depth(8).into_iter().flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+            if name.starts_with("Setup Log ") && name.ends_with(".txt") {
+                paths.push(path.to_path_buf());
+            }
+        }
+    }
+    paths
+}
+
+fn read_text_lossy_limited(path: &Path, limit: usize) -> String {
+    let Ok(data) = fs::read(path) else {
+        return String::new();
+    };
+    let start = data.len().saturating_sub(limit);
+    String::from_utf8_lossy(&data[start..]).to_string()
+}
+
+fn dedupe_json_issues(issues: Vec<Value>) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    issues
+        .into_iter()
+        .filter(|issue| seen.insert(issue.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string()))
+        .collect()
 }
 
 pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
@@ -1853,13 +3199,111 @@ mod tests {
         for app in [
             test_app("Ubisoft Connect", "UbisoftConnect.exe", "/tmp/Ubisoft/Ubisoft Game Launcher"),
             test_app("Rockstar Games Launcher", "Launcher.exe", "/tmp/Rockstar Games/Launcher"),
-            test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/GOG Galaxy"),
         ] {
             assert_eq!(
                 default_launcher_launch_args_for_app(&app),
                 ["--disable-gpu", "--disable-gpu-compositing", "--disable-direct-composition", "--disable-gpu-sandbox"]
             );
         }
+        assert_eq!(
+            default_launcher_launch_args_for_app(&test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/GOG Galaxy")),
+            [
+                "/runWithoutUpdating",
+                "/deelevated",
+                "--disable-gpu",
+                "--disable-gpu-compositing",
+                "--disable-direct-composition",
+                "--disable-gpu-sandbox",
+                "--disable-accelerated-2d-canvas",
+                "--disable-accelerated-video-decode",
+                "--disable-zero-copy",
+                "--disable-native-gpu-memory-buffers",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-features=NetworkService,VizDisplayCompositor,UseSkiaRenderer,CalculateNativeWinOcclusion",
+                "--disable-breakpad",
+                "--disable-crash-reporter",
+            ]
+        );
+    }
+
+    #[test]
+    fn launchers_include_gogdl_backend_before_galaxy_fallback() {
+        let value = handle_launchers();
+        let launchers = value.get("launchers").and_then(|value| value.as_array()).expect("launchers array");
+
+        assert_eq!(launchers.first().and_then(|launcher| launcher.get("id")).and_then(|id| id.as_str()), Some("gogdl"));
+        assert_eq!(
+            launchers.get(1).and_then(|launcher| launcher.get("id")).and_then(|id| id.as_str()),
+            Some("gog_galaxy")
+        );
+        assert_eq!(
+            launchers.first().and_then(|launcher| launcher.get("backend")).and_then(|backend| backend.as_str()),
+            Some("gogdl")
+        );
+        assert_eq!(
+            launchers.first().and_then(|launcher| launcher.get("galaxyFallbackId")).and_then(|id| id.as_str()),
+            Some("gog_galaxy")
+        );
+    }
+
+    #[test]
+    fn gogdl_path_candidates_prefer_explicit_env_then_metalsharp_and_path() {
+        std::env::set_var("METALSHARP_GOGDL_BIN", "/tmp/custom-gogdl");
+        let candidates = gogdl_candidate_paths_from_path_env(Some("/bin:/usr/local/bin"));
+        std::env::remove_var("METALSHARP_GOGDL_BIN");
+
+        assert_eq!(candidates.first(), Some(&PathBuf::from("/tmp/custom-gogdl")));
+        assert!(candidates.iter().any(|path| path.ends_with("tools/gogdl")));
+        assert!(candidates.iter().any(|path| path.ends_with("runtime/gogdl")));
+        assert!(candidates.iter().any(|path| path == &PathBuf::from("/usr/local/bin/gogdl")));
+    }
+
+    #[test]
+    fn gogdl_info_args_follow_heroic_command_shape() {
+        let args = gogdl_info_args(&json!({"productId": "1423049311", "platform": "windows"})).expect("args");
+        assert_eq!(args, ["info", "1423049311", "--platform", "windows", "--with-dlcs"]);
+    }
+
+    #[test]
+    fn gogdl_launch_args_use_metalsharp_wine_and_gog_scoped_prefix() {
+        let install_dir = test_dir("gogdl-launch-install");
+        let prefix_dir = test_dir("gog-prefix-launch").join("bottles").join("gog-prefix").join("prefix");
+        let wine = test_dir("gogdl-launch-wine").join("runtime").join("wine").join("bin").join("metalsharp-wine");
+        fs::create_dir_all(&install_dir).expect("create install dir");
+        fs::create_dir_all(wine.parent().expect("wine parent")).expect("create wine bin dir");
+        fs::write(&wine, b"#!/bin/sh\n").expect("write wine");
+
+        let (_product_id, _install_dir, prefix, args) = gogdl_launch_args_with_defaults(
+            &json!({
+                "productId": "1423049311",
+                "installPath": install_dir.to_string_lossy(),
+                "platform": "windows",
+                "preferredTask": "1"
+            }),
+            |_| prefix_dir.clone(),
+            wine.clone(),
+        )
+        .expect("args");
+
+        assert!(prefix.ends_with("bottles/gog-prefix/prefix"));
+        assert!(args.contains(&"launch".to_string()));
+        assert!(args.contains(&"--wine".to_string()));
+        assert!(args.contains(&wine.to_string_lossy().to_string()));
+        assert!(args.contains(&"--wine-prefix".to_string()));
+        assert!(args.contains(&prefix.to_string_lossy().to_string()));
+        assert!(args.windows(2).any(|pair| pair == ["--prefer-task", "1"]));
+        let _ = fs::remove_dir_all(install_dir);
+        let _ = fs::remove_dir_all(prefix_dir.parent().and_then(|path| path.parent()).unwrap_or(&prefix_dir));
+        let _ = fs::remove_dir_all(
+            wine.parent().and_then(|path| path.parent()).and_then(|path| path.parent()).unwrap_or(&wine),
+        );
+    }
+
+    #[test]
+    fn gogdl_rejects_path_like_product_ids() {
+        assert!(gogdl_product_id(&json!({"productId": "../bad"})).is_err());
+        assert!(gogdl_product_id(&json!({"productId": "1423049311"})).is_ok());
     }
 
     #[test]
@@ -1889,14 +3333,10 @@ mod tests {
                     "--disable-gpu-sandbox",
                 ],
             ),
+            ("GOG_Galaxy_2.0.exe", vec![]),
             (
-                "GOG_Galaxy_2.0.exe",
-                vec![
-                    "--disable-gpu",
-                    "--disable-gpu-compositing",
-                    "--disable-direct-composition",
-                    "--disable-gpu-sandbox",
-                ],
+                "GalaxySetup.exe",
+                vec!["/DIR=C:\\Program Files (x86)\\GOG Galaxy", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS"],
             ),
         ];
 
@@ -1928,6 +3368,220 @@ mod tests {
             "UbisoftConnect.exe",
             "/tmp/prefix/drive_c/Program Files/Ubisoft"
         )));
+    }
+
+    #[test]
+    fn gog_galaxy_hides_installers_and_internal_helpers() {
+        assert!(!is_hidden_sharp_library_app(&test_app(
+            "GOG Galaxy",
+            "GalaxyClient.exe",
+            "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy"
+        )));
+        for exe in [
+            "GOG_Galaxy_2.0.exe",
+            "GalaxyInstaller.exe",
+            "GalaxySetup.exe",
+            "GalaxyClientService.exe",
+            "GalaxyOverlay.exe",
+            "GalaxyClient_real.exe",
+        ] {
+            assert!(is_hidden_sharp_library_app(&test_app(
+                "GOG Galaxy",
+                exe,
+                "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy"
+            )));
+            assert!(!is_valid_app_exe(exe));
+        }
+    }
+
+    #[test]
+    fn gog_galaxy_client_gets_play_launch_args() {
+        let mut app = test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy");
+        assert!(apply_default_launcher_launch_args_to_app(&mut app));
+        assert_eq!(
+            app.launch_args,
+            vec![
+                "/runWithoutUpdating",
+                "/deelevated",
+                "--disable-gpu",
+                "--disable-gpu-compositing",
+                "--disable-direct-composition",
+                "--disable-gpu-sandbox",
+                "--disable-accelerated-2d-canvas",
+                "--disable-accelerated-video-decode",
+                "--disable-zero-copy",
+                "--disable-native-gpu-memory-buffers",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-features=NetworkService,VizDisplayCompositor,UseSkiaRenderer,CalculateNativeWinOcclusion",
+                "--disable-breakpad",
+                "--disable-crash-reporter",
+            ]
+        );
+        assert!(!apply_default_launcher_launch_args_to_app(&mut app));
+    }
+
+    #[test]
+    fn gog_galaxy_launch_args_drop_deprecated_persisted_defaults() {
+        let mut app = test_app("GOG Galaxy", "GalaxyClient.exe", "/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy");
+        app.launch_args = vec!["--single-process".into(), "--disable-software-rasterizer".into(), "--custom".into()];
+        app.user_launch_args = vec!["--single-process".into(), "--user-custom".into()];
+
+        let args = gog_galaxy_launch_args(&app);
+
+        assert!(!args.iter().any(|arg| arg == "--single-process"));
+        assert!(!args.iter().any(|arg| arg == "--disable-software-rasterizer"));
+        assert!(args.iter().any(|arg| arg == "--custom"));
+        assert!(args.iter().any(|arg| arg == "--user-custom"));
+    }
+
+    #[test]
+    fn gog_galaxy_client_does_not_use_generic_cef_wrapper() {
+        let dir = test_dir("gog-no-generic-cef-wrapper");
+        fs::create_dir_all(&dir).expect("create app dir");
+        let exe = dir.join("GalaxyClient.exe");
+        fs::write(&exe, b"MZ").expect("write client");
+        fs::write(dir.join("libcef.dll"), b"cef").expect("write cef marker");
+        let mut app = test_app("GOG Galaxy", "GalaxyClient.exe", &dir.to_string_lossy());
+        app.bottle_id = Some("installer_gog".into());
+
+        assert!(!should_apply_cef_compat(&app, &exe));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gog_galaxy_restore_removes_accidental_wrapper_artifacts() {
+        let dir = test_dir("gog-restore-wrapper");
+        fs::create_dir_all(&dir).expect("create app dir");
+        let client = dir.join("GalaxyClient.exe");
+        let real = dir.join("GalaxyClient_real.exe");
+        fs::write(&client, vec![0u8; 16 * 1024]).expect("write wrapper");
+        fs::write(&real, vec![1u8; 2 * 1024 * 1024]).expect("write real client");
+        let helper = dir.join("GalaxyClient Helper.exe");
+        let helper_real = dir.join("GalaxyClient Helper_real.exe");
+        fs::write(&helper, vec![0u8; 16 * 1024]).expect("write helper wrapper");
+        fs::write(&helper_real, vec![2u8; 3 * 1024 * 1024]).expect("write real helper");
+        fs::write(dir.join("metalsharp-cefchildhook.dll"), b"hook").expect("write hook");
+        fs::write(dir.join(".ms_cef_compat_GalaxyClient"), b"deployed").expect("write marker");
+        fs::write(dir.join(".ms_gog_helper_wrapper_deployed"), b"deployed").expect("write gog marker");
+
+        restore_gog_galaxy_client_wrapper_artifacts(&dir).expect("restore client");
+
+        assert_eq!(fs::metadata(&client).expect("client exists").len(), 2 * 1024 * 1024);
+        assert_eq!(fs::metadata(&helper).expect("helper exists").len(), 3 * 1024 * 1024);
+        assert!(!real.exists());
+        assert!(!helper_real.exists());
+        assert!(!dir.join("metalsharp-cefchildhook.dll").exists());
+        assert!(!dir.join(".ms_cef_compat_GalaxyClient").exists());
+        assert!(!dir.join(".ms_gog_helper_wrapper_deployed").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gog_galaxy_prepare_hides_only_problematic_bundled_gles() {
+        let dir = test_dir("gog-render-files");
+        fs::create_dir_all(&dir).expect("create app dir");
+        fs::write(dir.join("libGLESv2.dll"), b"gles").expect("write gles");
+        fs::write(dir.join("libEGL.dll.metalsharp-disabled"), b"egl").expect("write disabled egl");
+        fs::write(dir.join("d3dcompiler_47.dll.metalsharp-disabled"), b"d3d").expect("write disabled d3d");
+
+        prepare_gog_galaxy_cef_render_files(&dir).expect("prepare render files");
+
+        assert!(!dir.join("libGLESv2.dll").exists());
+        assert!(dir.join("libGLESv2.dll.metalsharp-disabled").exists());
+        assert!(dir.join("libEGL.dll").exists());
+        assert!(!dir.join("libEGL.dll.metalsharp-disabled").exists());
+        assert!(dir.join("d3dcompiler_47.dll").exists());
+        assert!(!dir.join("d3dcompiler_47.dll.metalsharp-disabled").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gog_galaxy_process_matching_separates_running_client_from_installer() {
+        assert!(is_gog_galaxy_process_command(
+            0,
+            "C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe /runWithoutUpdating",
+            None,
+            false
+        ));
+        assert!(is_gog_galaxy_process_command(
+            0,
+            "C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient Helper.exe --type=renderer",
+            None,
+            false
+        ));
+        assert!(!is_gog_galaxy_process_command(
+            0,
+            "GalaxySetup.exe /DIR=C:\\Program Files (x86)\\GOG Galaxy",
+            None,
+            false
+        ));
+        assert!(is_gog_galaxy_process_command(
+            0,
+            "GalaxySetup.exe /DIR=C:\\Program Files (x86)\\GOG Galaxy",
+            None,
+            true
+        ));
+        assert!(!is_gog_galaxy_process_command(
+            0,
+            "C:\\Program Files (x86)\\GOG Galaxy\\GalaxyClient.exe",
+            Some("/tmp/other-prefix"),
+            false
+        ));
+    }
+
+    #[test]
+    fn gog_galaxy_vcredist_check_requires_mfc_x86() {
+        let prefix = test_dir("gog-vcredist-x86");
+        let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
+        fs::create_dir_all(&syswow64).expect("create syswow64");
+        fs::write(syswow64.join("msvcp140.dll"), vec![1u8; 16 * 1024]).expect("write msvcp");
+        fs::write(syswow64.join("vcruntime140.dll"), vec![1u8; 16 * 1024]).expect("write vcruntime");
+        assert!(!gog_galaxy_has_vcredist_x86(&prefix));
+        fs::write(syswow64.join("mfc140u.dll"), vec![1u8; 16 * 1024]).expect("write mfc");
+        assert!(gog_galaxy_has_vcredist_x86(&prefix));
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gog_galaxy_setup_watcher_finds_second_stage_installer() {
+        let prefix = test_dir("gog-setup-watcher");
+        let setup_dir = prefix
+            .join("drive_c")
+            .join("users")
+            .join("tester")
+            .join("AppData")
+            .join("Local")
+            .join("Temp")
+            .join("GalaxyInstaller_123");
+        fs::create_dir_all(&setup_dir).expect("create setup temp");
+        let setup = setup_dir.join("GalaxySetup.exe");
+        fs::write(&setup, b"setup").expect("write setup");
+
+        assert_eq!(gog_galaxy_setup_candidates(&prefix), vec![setup]);
+        let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gog_galaxy_setup_cache_rejects_partial_payloads() {
+        let dir = test_dir("gog-partial-cache");
+        fs::create_dir_all(&dir).expect("create cache dir");
+        let partial = dir.join("GalaxySetup.exe");
+        fs::write(&partial, vec![0u8; 1024]).expect("write partial setup");
+
+        assert!(!valid_gog_galaxy_setup(&partial));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn imported_bottle_apps_preserve_custom_names() {
+        let install_dir = PathBuf::from("/tmp/prefix/drive_c/Program Files (x86)/GOG Galaxy");
+        let mut existing = test_app("My Galaxy", "GalaxyClient.exe", &install_dir.to_string_lossy());
+        existing.bottle_id = Some("installer_gog".into());
+        let mut incoming = test_app("GOG Galaxy", "GalaxyClient.exe", &install_dir.to_string_lossy());
+        incoming.bottle_id = Some("installer_gog".into());
+
+        assert!(should_preserve_imported_bottle_app_name(&existing, &incoming));
     }
 
     #[test]
@@ -2231,6 +3885,8 @@ mod tests {
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftInstaller.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/DemoSetup.msi")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/GOG_Galaxy_2.0.exe")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/GalaxySetup.exe")));
         assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
     }
 

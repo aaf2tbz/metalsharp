@@ -162,7 +162,40 @@ pub fn vcpp_ensure_and_install_x86(prefix: &Path) -> Result<(), String> {
     }
 }
 
+pub fn vcpp_ensure_and_install_x86_quiet(prefix: &Path) -> Result<(), String> {
+    let (_x64, x86) = vcpp_ensure_downloaded()?;
+    run_quiet_vcpp_installer(prefix, &x86, "x86")?;
+    if vcpp_prefix_has_x86(prefix) {
+        eprintln!("vcredist: VC++ x86 verified in {}", prefix.display());
+        Ok(())
+    } else {
+        Err("VC++ x86 installer completed, but runtime DLLs were not found in syswow64".into())
+    }
+}
+
 fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -> Result<(), String> {
+    run_vcpp_installer(prefix, installer, arch, &vcpp_setup_install_args(), true)
+}
+
+fn run_quiet_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -> Result<(), String> {
+    run_vcpp_installer(prefix, installer, arch, &vcpp_quiet_install_args(), false)
+}
+
+fn vcpp_setup_install_args() -> [&'static str; 1] {
+    ["/install"]
+}
+
+fn vcpp_quiet_install_args() -> [&'static str; 3] {
+    ["/install", "/quiet", "/norestart"]
+}
+
+fn run_vcpp_installer(
+    prefix: &Path,
+    installer: &Path,
+    arch: &str,
+    args: &[&str],
+    inherit_stdio: bool,
+) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("no home dir")?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
@@ -170,19 +203,22 @@ fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -
         return Err("MetalSharp Wine not found".into());
     }
     let prefix_str = prefix.to_string_lossy().to_string();
-    eprintln!("vcredist: launching interactive VC++ 2015-2022 {} installer into {} ...", arch, prefix.display());
+    let mode = if inherit_stdio { "interactive" } else { "quiet" };
+    eprintln!("vcredist: launching {} VC++ 2015-2022 {} installer into {} ...", mode, arch, prefix.display());
     let mut cmd = Command::new(&wine);
     cmd.arg("start")
         .arg("/wait")
         .arg("/unix")
         .arg(installer)
-        .args(vcpp_setup_install_args())
+        .args(args)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEARCH", "win64")
-        .env("WINEDEBUG", "-all")
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .env("WINEDEBUG", "-all");
+    if inherit_stdio {
+        cmd.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    } else {
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    }
     if let Some(parent) = installer.parent() {
         cmd.current_dir(parent);
     }
@@ -193,10 +229,6 @@ fn run_interactive_vcpp_installer(prefix: &Path, installer: &Path, arch: &str) -
     } else {
         Err(format!("VC++ {} installer exited with status {:?}", arch, status.code()))
     }
-}
-
-fn vcpp_setup_install_args() -> [&'static str; 1] {
-    ["/install"]
 }
 
 fn vcpp_installer_status_ok(code: Option<i32>) -> bool {
@@ -261,6 +293,7 @@ pub enum RuntimeProfile {
     Dotnet,
     Win32Dotnet,
     Webview,
+    GogGalaxy,
     JavaLauncher,
     FnaArm64,
     FnaX86,
@@ -1039,6 +1072,18 @@ pub fn create_fresh_installer_bottle(
     ensure_installer_bottle_with_id(source_installer, classification, fresh_installer_bottle_id(source_installer))
 }
 
+pub fn ensure_gog_galaxy_bottle(
+    source_installer: &Path,
+    classification: &InstallerClassification,
+    fresh: bool,
+) -> Result<BottleManifest, Box<dyn std::error::Error>> {
+    let id = "gog-prefix".to_string();
+    if fresh {
+        let _ = fs::remove_dir_all(bottle_dir(&id));
+    }
+    ensure_installer_bottle_with_id(source_installer, classification, id)
+}
+
 fn ensure_installer_bottle_with_id(
     source_installer: &Path,
     classification: &InstallerClassification,
@@ -1402,6 +1447,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             _ => RuntimeProfile::Plain,
         }
     };
+    let arch = if matches!(runtime_profile, RuntimeProfile::GogGalaxy) { BottleArch::Wow64 } else { arch };
 
     InstallerClassification { arch, installer_kind, runtime_profile, pipeline, hints }
 }
@@ -3204,6 +3250,7 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::Dotnet,
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
+        RuntimeProfile::GogGalaxy,
         RuntimeProfile::JavaLauncher,
         RuntimeProfile::FnaArm64,
         RuntimeProfile::FnaX86,
@@ -3316,6 +3363,20 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             ][..],
             crate::mtsp::engine::PipelineId::WineBare,
         ),
+        RuntimeProfile::GogGalaxy => (
+            "GOG Galaxy",
+            BottleArch::Wow64,
+            true,
+            &[
+                "windows_version_win10",
+                "corefonts",
+                "vcrun2019_x86",
+                "vcrun2019_x64",
+                "d3dcompiler_47_x86",
+                "d3dcompiler_47_x64",
+            ][..],
+            crate::mtsp::engine::PipelineId::WineBare,
+        ),
         RuntimeProfile::JavaLauncher => (
             "Java Launcher",
             BottleArch::Wow64,
@@ -3423,6 +3484,7 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
+        "gog_galaxy" | "goggalaxy" => Some(RuntimeProfile::GogGalaxy),
         "java_launcher" | "javalauncher" => Some(RuntimeProfile::JavaLauncher),
         "fna_arm64" | "xna_fna_arm64" | "native_mono_arm64" => Some(RuntimeProfile::FnaArm64),
         "fna_x86" | "xna_fna_x86" | "native_mono_x86" | "mono_x86" => Some(RuntimeProfile::FnaX86),
@@ -3505,9 +3567,9 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
         KnownLauncherRecipe {
             id: "gog_galaxy",
             label: "GOG Galaxy",
-            tokens: &["gog galaxy", "goggalaxy", "galaxyclient", "gog_galaxy"],
+            tokens: &["gog galaxy", "goggalaxy", "galaxyclient", "gog_galaxy", "setup_galaxy", "galaxysetup"],
             installer_kind: InstallerKind::Electron,
-            runtime_profile: RuntimeProfile::Launcher,
+            runtime_profile: RuntimeProfile::GogGalaxy,
             forced_pipeline: None,
         },
     ]
@@ -3860,6 +3922,20 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Installed
             } else if has(&syswow64, "vcruntime140.dll") || has(&syswow64, "msvcp140.dll") {
                 ComponentState::NeedsRepair
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "d3dcompiler_47_x64" => {
+            if system32.join("d3dcompiler_47.dll").is_file() {
+                ComponentState::Installed
+            } else {
+                ComponentState::Missing
+            }
+        },
+        "d3dcompiler_47_x86" => {
+            if syswow64.join("d3dcompiler_47.dll").is_file() {
+                ComponentState::Installed
             } else {
                 ComponentState::Missing
             }
@@ -5109,6 +5185,8 @@ fn component_source_policy(id: &str, arch: BottleArch) -> ComponentSourcePolicy 
             "rosetta" => "Apple Rosetta 2 x86_64 emulation layer — required for GPTK Wine (softwareupdate --install-rosetta)",
             "corefonts" => "Requires a local core fonts payload or a mapped font installation strategy",
             "webview2" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist WebView2 evergreen installer",
+            "d3dcompiler_47_x64" => "Requires d3dcompiler_47.dll in system32 for Chromium/Galaxy rendering",
+            "d3dcompiler_47_x86" => "Requires d3dcompiler_47.dll in syswow64 for 32-bit Galaxy helper processes",
             "directx_jun2010" => "DirectX June 2010 — checks d3dx9_43, d3dx10_43, d3dx11_43, xinput1_3, xaudio2_7, x3daudio1_7, D3DCompiler_43",
             "d3d12_agility" => "Uses NuGet Microsoft.Direct3D.D3D12 x64 runtime payload for the game-declared D3D12SDKVersion",
             "openal" => "Uses Steam CommonRedist or ~/.metalsharp/runtime/redist OpenAL installer",
@@ -5160,6 +5238,8 @@ fn component_action_detail(id: &str) -> String {
         "rosetta" => "Install Apple Rosetta 2 for x86_64 emulation".to_string(),
         "corefonts" => "Install core Windows fonts".to_string(),
         "webview2" => "Install or emulate Microsoft Edge WebView2 runtime".to_string(),
+        "d3dcompiler_47_x64" => "Install or stage d3dcompiler_47.dll in system32".to_string(),
+        "d3dcompiler_47_x86" => "Install or stage d3dcompiler_47.dll in syswow64".to_string(),
         "directx_jun2010" => "Install DirectX June 2010 runtime payloads".to_string(),
         "openal" => "Install OpenAL audio runtime".to_string(),
         "xna" => "Install XNA Framework 4.0 runtime".to_string(),
@@ -5752,6 +5832,7 @@ fn is_probable_app_exe(name: &str) -> bool {
     ];
     lower.ends_with(".exe")
         && !builtins.contains(&lower.as_str())
+        && !is_ignored_gog_galaxy_exe_name(&lower)
         && !lower.starts_with("microsoftedgewebview_")
         && !lower.contains("setup")
         && !lower.contains("install")
@@ -5765,6 +5846,19 @@ fn is_probable_app_exe(name: &str) -> bool {
         && !lower.contains("update")
         && !lower.contains("webcore")
         && !lower.contains("cefsubprocess")
+}
+
+fn is_ignored_gog_galaxy_exe_name(lower_name: &str) -> bool {
+    matches!(
+        lower_name,
+        "gog_galaxy_2.0.exe"
+            | "galaxyinstaller.exe"
+            | "galaxysetup.exe"
+            | "galaxyclientservice.exe"
+            | "galaxyoverlay.exe"
+            | "galaxyclient_helper.exe"
+            | "galaxyclient_real.exe"
+    ) || lower_name.ends_with("_real.exe") && lower_name.contains("galaxy")
 }
 
 fn is_probable_app_exe_path(name: &str, path: &Path) -> bool {
@@ -5854,6 +5948,21 @@ mod tests {
 
         assert_ne!(fresh, stable);
         assert!(fresh.starts_with(&format!("{}_fresh_", stable)));
+    }
+
+    #[test]
+    fn gog_galaxy_detection_only_accepts_client_exe() {
+        assert!(is_probable_app_exe("GalaxyClient.exe"));
+        for exe in [
+            "GOG_Galaxy_2.0.exe",
+            "GalaxyInstaller.exe",
+            "GalaxySetup.exe",
+            "GalaxyClientService.exe",
+            "GalaxyOverlay.exe",
+            "GalaxyClient_real.exe",
+        ] {
+            assert!(!is_probable_app_exe(exe), "{exe} should not import as the installed launcher app");
+        }
     }
 
     #[test]
@@ -6122,6 +6231,7 @@ mod tests {
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GameInstall));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::M10));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::Webview));
+        assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::GogGalaxy));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaArm64));
         assert!(profiles.iter().any(|profile| profile.id == RuntimeProfile::FnaX86));
 
@@ -6130,6 +6240,17 @@ mod tests {
         assert!(webview.components.contains(&"dotnet48".to_string()));
         assert!(webview.components.contains(&"directx_jun2010".to_string()));
         assert!(webview.components.contains(&"openal".to_string()));
+
+        let gog = runtime_profile_definition(RuntimeProfile::GogGalaxy);
+        assert_eq!(gog.arch, BottleArch::Wow64);
+        assert_eq!(gog.launch_pipeline, crate::mtsp::engine::PipelineId::WineBare);
+        assert!(gog.components.contains(&"windows_version_win10".to_string()));
+        assert!(gog.components.contains(&"corefonts".to_string()));
+        assert!(gog.components.contains(&"vcrun2019_x86".to_string()));
+        assert!(gog.components.contains(&"vcrun2019_x64".to_string()));
+        assert!(gog.components.contains(&"d3dcompiler_47_x86".to_string()));
+        assert!(gog.components.contains(&"d3dcompiler_47_x64".to_string()));
+        assert!(!gog.components.contains(&"dotnet48".to_string()));
     }
 
     #[test]
@@ -6232,7 +6353,7 @@ mod tests {
             ("EpicGamesLauncherInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("EpicInstaller.exe", RuntimeProfile::Webview, "known_launcher:epic_games"),
             ("Rockstar-Games-Launcher.exe", RuntimeProfile::Webview, "known_launcher:rockstar"),
-            ("GOG_Galaxy_2.0.exe", RuntimeProfile::Launcher, "known_launcher:gog_galaxy"),
+            ("GOG_Galaxy_2.0.exe", RuntimeProfile::GogGalaxy, "known_launcher:gog_galaxy"),
         ];
 
         for (name, profile, hint) in cases {

@@ -37,7 +37,7 @@ mod sharp_library;
 mod steam;
 mod updater;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -1804,6 +1804,77 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))
+        },
+        (Method::Get, "/sharp-library/launchers") => resp(200, sharp_library::handle_launchers()),
+        (Method::Post, "/sharp-library/launchers/gog/install") => {
+            app_log("[SHARP-LIB] launcher install: GOG Galaxy");
+            resp(200, sharp_library::handle_install_gog_galaxy())
+        },
+        (Method::Post, "/sharp-library/launchers/gog/open") => {
+            app_log("[SHARP-LIB] launcher open: GOG Galaxy");
+            resp(200, sharp_library::handle_open_gog_galaxy())
+        },
+        (Method::Post, "/sharp-library/launchers/gog/stop") => {
+            app_log("[SHARP-LIB] launcher stop: GOG Galaxy");
+            resp(200, sharp_library::handle_stop_gog_galaxy())
+        },
+        (Method::Post, "/sharp-library/launchers/gog/repair") => {
+            app_log("[SHARP-LIB] launcher repair: GOG Galaxy");
+            resp(200, sharp_library::handle_repair_gog_galaxy())
+        },
+        (Method::Get, "/sharp-library/launchers/gog/diagnostics") => {
+            app_log("[SHARP-LIB] launcher diagnostics: GOG Galaxy");
+            resp(200, sharp_library::handle_gog_galaxy_diagnostics())
+        },
+        (Method::Get, "/sharp-library/launchers/gogdl/diagnostics") => {
+            app_log("[SHARP-LIB] launcher diagnostics: GOGDL");
+            resp(200, sharp_library::handle_gogdl_diagnostics())
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/auth") => {
+            let body = read_body(req);
+            app_log("[SHARP-LIB] launcher auth: GOGDL");
+            resp(200, sharp_library::handle_gogdl_auth(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/info") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher info: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_info(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/download") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher download: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_download(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/import") => {
+            let body = read_body(req);
+            app_log("[SHARP-LIB] launcher import: GOGDL");
+            resp(200, sharp_library::handle_gogdl_import(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/launch") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher launch: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_launch(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gogdl/save-sync") => {
+            let body = read_body(req);
+            app_log(&format!(
+                "[SHARP-LIB] launcher save sync: GOGDL {}",
+                body.get("productId").or_else(|| body.get("id")).and_then(|v| v.as_str()).unwrap_or("?")
+            ));
+            resp(200, sharp_library::handle_gogdl_save_sync(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/launchers/gog/show-card") => {
+            app_log("[SHARP-LIB] launcher show card: GOG Galaxy");
+            resp(200, sharp_library::handle_show_gog_galaxy_card())
         },
         (Method::Post, "/sharp-library/install") => {
             let body = read_body(req);
