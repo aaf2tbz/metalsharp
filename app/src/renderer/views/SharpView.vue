@@ -4,6 +4,7 @@ import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { SharpApp } from "../api-types";
 import IconDownload from "~icons/lucide/download";
+import IconRocket from "~icons/lucide/rocket";
 import IconUpload from "~icons/lucide/upload";
 import IconRefreshCcw from "~icons/lucide/refresh-ccw";
 import IconMonitor from "~icons/lucide/monitor";
@@ -142,6 +143,16 @@ interface RedistSourceGuide {
   notes: string;
 }
 
+interface LauncherState {
+  id: string;
+  name: string;
+  status: "not_installed" | "installing" | "installed" | "needs_repair";
+  statusLabel: string;
+  appId?: string | null;
+  bottleId?: string | null;
+  installerUrl?: string;
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
 const dropdownOpen = ref<string | null>(null);
@@ -163,6 +174,8 @@ function openDropdown(name: string, event: MouseEvent) {
 const bottles = ref<BottleManifest[]>([]);
 const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
 const redistSources = ref<RedistSourceGuide[]>([]);
+const launchers = ref<LauncherState[]>([]);
+const launcherActionLoading = ref<Record<string, boolean>>({});
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const d3dmetalStates = ref<Record<string, D3DMetalGptkState | null>>({});
 const d3dmetalActions = ref<Record<string, D3DMetalGptkAction[]>>({});
@@ -261,11 +274,12 @@ function sharpAppNameSort(a: SharpApp, b: SharpApp) {
 }
 
 async function load() {
-  const [result, bottleResult, profileResult, redistResult] = await Promise.all([
+  const [result, bottleResult, profileResult, redistResult, launcherResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
     api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
     api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
+    api<{ ok: boolean; launchers: LauncherState[] }>("GET", "/sharp-library/launchers"),
   ]);
   if (result?.ok) {
     apps.value = [...result.apps].sort(sharpAppNameSort);
@@ -280,6 +294,46 @@ async function load() {
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
   if (redistResult?.ok) redistSources.value = redistResult.sources;
+  if (launcherResult?.ok) launchers.value = launcherResult.launchers;
+}
+
+function launcherBadgeClass(status: LauncherState["status"]): string {
+  if (status === "installed") return "badge-ok";
+  if (status === "installing") return "badge-warn";
+  if (status === "needs_repair") return "badge-warn";
+  return "badge-muted";
+}
+
+function isGogGalaxyApp(app: SharpApp): boolean {
+  const exe = app.exe_path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  return exe === "galaxyclient.exe" || app.name.toLowerCase().includes("gog galaxy");
+}
+
+async function runLauncherAction(launcher: LauncherState, action: "install" | "open" | "repair" | "show-card") {
+  launcherActionLoading.value[`${launcher.id}:${action}`] = true;
+  const result = await api<{ ok: boolean; app?: SharpApp; installing?: boolean; pid?: number; message?: string; error?: string; launcher?: LauncherState }>(
+    "POST",
+    `/sharp-library/launchers/gog/${action}`,
+  );
+  launcherActionLoading.value[`${launcher.id}:${action}`] = false;
+  if (result?.launcher) {
+    const idx = launchers.value.findIndex((item) => item.id === result.launcher?.id);
+    if (idx >= 0) launchers.value[idx] = result.launcher;
+  }
+  if (result?.ok) {
+    if (result.pid && result.app?.id) runningSharpPids.value[result.app.id] = result.pid;
+    const msg = result.installing
+      ? (result.message ?? `${launcher.name} installer started`)
+      : action === "open"
+        ? `${launcher.name} launched`
+        : action === "show-card"
+          ? `${launcher.name} card is visible`
+          : `${launcher.name} action complete`;
+    toast.show(msg, "success");
+    await load();
+  } else {
+    toast.show(result?.error ?? `Failed to ${action.replace("-", " ")} ${launcher.name}`, "error");
+  }
 }
 
 async function refreshSharpLibrary() {
@@ -867,6 +921,59 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
     <div class="sharp-header">
       <h1>Sharp Library</h1>
       <div class="sharp-header-controls">
+        <div v-if="launchers.length" class="dropdown-wrap">
+          <button class="btn btn-secondary" @click="openDropdown('launchers', $event)">
+            <IconRocket class="btn-icon" width="14" height="14" />
+            <span class="btn-label-long">Launchers</span><span class="btn-label-short">Launchers</span>
+            <span class="dropdown-count">{{ launchers.length }}</span>
+          </button>
+          <div v-if="dropdownOpen === 'launchers'" class="dropdown-panel" :style="dropdownStyle" @click.stop>
+            <div class="dropdown-scroll launcher-list">
+              <article v-for="launcher in launchers" :key="launcher.id" class="launcher-card-compact">
+                <div class="launcher-card-header">
+                  <div>
+                    <strong>{{ launcher.name }}</strong>
+                    <small>{{ launcher.installerUrl }}</small>
+                  </div>
+                  <span class="badge" :class="launcherBadgeClass(launcher.status)">{{ launcher.statusLabel }}</span>
+                </div>
+                <div class="launcher-actions">
+                  <button
+                    v-if="launcher.status === 'not_installed'"
+                    class="btn btn-primary btn-sm"
+                    :disabled="launcherActionLoading[`${launcher.id}:install`]"
+                    @click="runLauncherAction(launcher, 'install')"
+                  >
+                    {{ launcherActionLoading[`${launcher.id}:install`] ? "Installing…" : "Install GOG Galaxy" }}
+                  </button>
+                  <button
+                    v-if="launcher.status === 'installed'"
+                    class="btn btn-primary btn-sm"
+                    :disabled="launcherActionLoading[`${launcher.id}:open`]"
+                    @click="runLauncherAction(launcher, 'open')"
+                  >
+                    Open GOG Galaxy
+                  </button>
+                  <button
+                    v-if="launcher.status === 'needs_repair'"
+                    class="btn btn-secondary btn-sm"
+                    :disabled="launcherActionLoading[`${launcher.id}:repair`]"
+                    @click="runLauncherAction(launcher, 'repair')"
+                  >
+                    Repair GOG Galaxy
+                  </button>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    :disabled="launcher.status === 'not_installed' || launcherActionLoading[`${launcher.id}:show-card`]"
+                    @click="runLauncherAction(launcher, 'show-card')"
+                  >
+                    Show launcher card
+                  </button>
+                </div>
+              </article>
+            </div>
+          </div>
+        </div>
         <div v-if="redistSources.length" class="dropdown-wrap">
           <button class="btn btn-secondary" @click="openDropdown('redist', $event)">
             <IconDownload class="btn-icon" width="14" height="14" />
@@ -930,7 +1037,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
           <div class="sharp-card-actions">
             <div class="sharp-card-actions-row">
               <button v-if="runningSharpPids[app.id]" class="btn btn-stop" @click="stopSharpApp(app)">Stop</button>
-              <button v-else class="btn btn-play" @click="launchApp(app.id, app.engine)">Play</button>
+              <button v-else class="btn btn-play" @click="launchApp(app.id, app.engine)">{{ isGogGalaxyApp(app) ? "Play GOG Galaxy" : "Play" }}</button>
               <select
                 class="control-input"
                 :value="app.engine"
@@ -1194,6 +1301,42 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 }
 .redist-source-compact:last-child {
   margin-bottom: 0;
+}
+.launcher-card-compact {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.launcher-card-compact:last-child {
+  margin-bottom: 0;
+}
+.launcher-card-header,
+.launcher-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.launcher-card-header small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+.launcher-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.badge-muted {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
 }
 .bottle-list {
   display: flex;

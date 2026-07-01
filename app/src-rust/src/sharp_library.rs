@@ -1625,6 +1625,157 @@ pub fn handle_get_library() -> Value {
     }
 }
 
+const GOG_GALAXY_INSTALLER_URL: &str = "https://webinstallers.gog-statics.com/download/GOG_Galaxy_2.0.exe";
+
+fn gog_galaxy_cache_path() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("cache").join("gog-galaxy").join("GOG_Galaxy_2.0.exe")
+}
+
+fn find_gog_galaxy_app(apps: &[SharpApp]) -> Option<&SharpApp> {
+    apps.iter().find(|app| {
+        store_launcher_kind_for_app(app) == Some(StoreLauncherKind::Gog)
+            && Path::new(&app.exe_path)
+                .file_name()
+                .map(|name| name.to_string_lossy().eq_ignore_ascii_case("GalaxyClient.exe"))
+                .unwrap_or(false)
+    })
+}
+
+fn find_gog_galaxy_bottle() -> Option<crate::bottles::BottleManifest> {
+    let cache_path = gog_galaxy_cache_path().to_string_lossy().to_string();
+    crate::bottles::list_bottles().ok()?.into_iter().find(|bottle| {
+        bottle
+            .source_installer_path
+            .as_deref()
+            .map(|path| path == cache_path || path.to_ascii_lowercase().contains("gog_galaxy"))
+            .unwrap_or(false)
+            || bottle.name.to_ascii_lowercase().contains("gog galaxy")
+    })
+}
+
+fn gog_galaxy_client_in_bottle(bottle: &crate::bottles::BottleManifest) -> Option<PathBuf> {
+    let prefix = Path::new(&bottle.prefix_path);
+    [
+        prefix.join("drive_c").join("Program Files (x86)").join("GOG Galaxy").join("GalaxyClient.exe"),
+        prefix.join("drive_c").join("Program Files").join("GOG Galaxy").join("GalaxyClient.exe"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn gog_launcher_status_value() -> Value {
+    let apps = load_library().unwrap_or_default();
+    let app = find_gog_galaxy_app(&apps);
+    let bottle = find_gog_galaxy_bottle();
+    let installing = bottle
+        .as_ref()
+        .and_then(|bottle| bottle.last_launch_pid)
+        .map(|pid| crate::launch::is_process_active(pid as i32))
+        .unwrap_or(false);
+    let client_exists = app.map(|app| app_absolute_exe_path(app).exists()).unwrap_or(false)
+        || bottle.as_ref().and_then(gog_galaxy_client_in_bottle).is_some();
+    let (status, detail) = if installing {
+        ("installing", "Installing…")
+    } else if client_exists {
+        ("installed", "Installed")
+    } else if bottle.is_some() {
+        ("needs_repair", "Needs repair")
+    } else {
+        ("not_installed", "Not installed")
+    };
+
+    json!({
+        "id": "gog_galaxy",
+        "name": "GOG Galaxy",
+        "status": status,
+        "statusLabel": detail,
+        "appId": app.map(|app| app.id.clone()),
+        "bottleId": bottle.as_ref().map(|bottle| bottle.id.clone()),
+        "installerUrl": GOG_GALAXY_INSTALLER_URL,
+    })
+}
+
+pub fn handle_launchers() -> Value {
+    json!({"ok": true, "launchers": [gog_launcher_status_value()]})
+}
+
+fn ensure_gog_galaxy_installer_cached() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let path = gog_galaxy_cache_path();
+    if path.exists() && path.metadata().map(|meta| meta.len() > 1_000_000).unwrap_or(false) {
+        return Ok(path);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("exe.download");
+    let _ = fs::remove_file(&tmp);
+    let status = Command::new("/usr/bin/curl")
+        .arg("--fail")
+        .arg("--location")
+        .arg("--silent")
+        .arg("--show-error")
+        .arg("--output")
+        .arg(&tmp)
+        .arg(GOG_GALAXY_INSTALLER_URL)
+        .status()?;
+    if !status.success() {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("failed to download GOG Galaxy installer from {}", GOG_GALAXY_INSTALLER_URL).into());
+    }
+    fs::rename(&tmp, &path)?;
+    Ok(path)
+}
+
+pub fn handle_install_gog_galaxy() -> Value {
+    match ensure_gog_galaxy_installer_cached()
+        .and_then(|path| install_exe_with_options(path.to_string_lossy().as_ref(), Some("GOG Galaxy"), false))
+    {
+        Ok(SharpInstallOutcome::Imported(app)) => {
+            json!({"ok": true, "app": *app, "launcher": gog_launcher_status_value()})
+        },
+        Ok(SharpInstallOutcome::InstallerStarted { pid, message }) => {
+            json!({"ok": true, "installing": true, "pid": pid, "message": message, "launcher": gog_launcher_status_value()})
+        },
+        Err(e) => json!({"ok": false, "error": e.to_string(), "launcher": gog_launcher_status_value()}),
+    }
+}
+
+fn import_installed_gog_galaxy_card() -> Result<SharpApp, Box<dyn std::error::Error>> {
+    let apps = load_library()?;
+    if let Some(app) = find_gog_galaxy_app(&apps) {
+        return Ok(app.clone());
+    }
+    let bottle = find_gog_galaxy_bottle().ok_or("GOG Galaxy bottle not found")?;
+    let client = gog_galaxy_client_in_bottle(&bottle).ok_or("GalaxyClient.exe not found in GOG Galaxy bottle")?;
+    import_bottle_app(&bottle.id, &client.to_string_lossy(), Some("GOG Galaxy"))
+}
+
+pub fn handle_show_gog_galaxy_card() -> Value {
+    match import_installed_gog_galaxy_card() {
+        Ok(app) => json!({"ok": true, "app": app, "launcher": gog_launcher_status_value()}),
+        Err(e) => json!({"ok": false, "error": e.to_string(), "launcher": gog_launcher_status_value()}),
+    }
+}
+
+pub fn handle_open_gog_galaxy() -> Value {
+    match import_installed_gog_galaxy_card().and_then(|app| launch_app(&app.id, &app.engine)) {
+        Ok(result) => {
+            json!({"ok": true, "pid": result.pid, "pipeline": result.pipeline, "exePath": result.exe_path, "launcher": gog_launcher_status_value()})
+        },
+        Err(e) => json!({"ok": false, "error": e.to_string(), "launcher": gog_launcher_status_value()}),
+    }
+}
+
+pub fn handle_repair_gog_galaxy() -> Value {
+    if let Some(bottle) = find_gog_galaxy_bottle() {
+        let _ = crate::bottles::refresh_app_detections(&bottle.id);
+        if import_installed_gog_galaxy_card().is_ok() {
+            return json!({"ok": true, "launcher": gog_launcher_status_value()});
+        }
+    }
+    handle_install_gog_galaxy()
+}
+
 pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
     let src_path = body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("");
     let custom_name = body.get("name").and_then(|v| v.as_str());

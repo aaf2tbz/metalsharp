@@ -1805,6 +1805,23 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))
         },
+        (Method::Get, "/sharp-library/launchers") => resp(200, sharp_library::handle_launchers()),
+        (Method::Post, "/sharp-library/launchers/gog/install") => {
+            app_log("[SHARP-LIB] launcher install: GOG Galaxy");
+            resp(200, sharp_library::handle_install_gog_galaxy())
+        },
+        (Method::Post, "/sharp-library/launchers/gog/open") => {
+            app_log("[SHARP-LIB] launcher open: GOG Galaxy");
+            resp(200, sharp_library::handle_open_gog_galaxy())
+        },
+        (Method::Post, "/sharp-library/launchers/gog/repair") => {
+            app_log("[SHARP-LIB] launcher repair: GOG Galaxy");
+            resp(200, sharp_library::handle_repair_gog_galaxy())
+        },
+        (Method::Post, "/sharp-library/launchers/gog/show-card") => {
+            app_log("[SHARP-LIB] launcher show card: GOG Galaxy");
+            resp(200, sharp_library::handle_show_gog_galaxy_card())
+        },
         (Method::Post, "/sharp-library/install") => {
             let body = read_body(req);
             app_log(&format!("[SHARP-LIB] install: {}", body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("?")));
