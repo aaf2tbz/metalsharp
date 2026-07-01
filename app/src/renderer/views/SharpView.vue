@@ -353,8 +353,16 @@ async function initializeGogPrefix() {
   gogLoading.value.setup = true;
   const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/initialize-prefix", {}, 5 * 60 * 1000);
   gogLoading.value.setup = false;
-  if (result?.ok && result.status) {
-    gogStatus.value = result.status;
+  if (result?.ok) {
+    if (result.status) {
+      gogStatus.value = {
+        ...result.status,
+        prefixInitialized: true,
+        status: result.status.authenticated ? "ready" : "needs_login",
+        ready: result.status.authenticated,
+      };
+    }
+    await refreshGog();
     toast.show("GOG prefix initialized", "success");
   } else {
     toast.show(result?.error ?? "Failed to initialize GOG prefix", "error");
@@ -1271,8 +1279,8 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
             <small v-if="gogStatus">Prefix: {{ gogStatus.winePrefix }}</small>
           </div>
           <div class="gog-setup-actions">
-            <button class="btn btn-secondary" :disabled="gogLoading.setup || gogStatus?.prefixInitialized" @click="initializeGogPrefix">
-              {{ gogStatus?.prefixInitialized ? "GOG prefix ready" : gogLoading.setup ? "Initializing…" : "Initialize GOG prefix" }}
+            <button v-if="!gogStatus?.prefixInitialized" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
+              {{ gogLoading.setup ? "Initializing…" : "Initialize GOG prefix" }}
             </button>
             <button class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized || gogStatus?.authenticated" @click="loginGog">
               {{ gogStatus?.authenticated ? "GOG connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}
