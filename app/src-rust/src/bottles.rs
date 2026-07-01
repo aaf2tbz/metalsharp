@@ -1497,12 +1497,44 @@ pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleMa
     }
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
+        manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
+        manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
+        manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+    }
     if let Some(appid) = manifest.steam_app_id {
         let pipeline =
             manifest_preferred_pipeline(&manifest).unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
         let _ = save_steam_compatdata(&manifest, pipeline);
     }
     Ok(manifest)
+}
+
+fn stage_m12_dlls_for_saved_steam_bottle(
+    manifest: &BottleManifest,
+) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if !matches!(manifest.runtime_profile, RuntimeProfile::M12) {
+        return Ok(None);
+    }
+    let Some(appid) = manifest.steam_app_id else {
+        return Ok(None);
+    };
+
+    let manifest_game_dir = manifest.game_install_path.as_ref().map(PathBuf::from).filter(|path| path.exists());
+    let scan_game_dir = crate::scan::resolve_dual_game_dir(appid).wine_dir.filter(|path| path.exists());
+    if manifest_game_dir.is_none() && scan_game_dir.is_none() {
+        return Ok(None);
+    }
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    crate::installer::ensure_dxmt_m12_runtime_ready(&home)
+        .map_err(|e| format!("M12 runtime setup failed while saving bottle: {}", e))?;
+
+    let (_env, recipe) = crate::mtsp::launcher::prepare_steam_pipeline_env(appid, crate::mtsp::engine::PipelineId::M12)
+        .map_err(|e| format!("M12 DLL deployment failed while saving bottle: {}", e))?;
+    Ok(recipe.game_dir)
 }
 
 pub fn edit_bottle(
@@ -1550,6 +1582,13 @@ pub fn edit_bottle(
     }
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
+    if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
+        manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
+        manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
+        manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+    }
     if let Some(appid) = manifest.steam_app_id {
         let pipeline =
             manifest_preferred_pipeline(&manifest).unwrap_or_else(|| crate::mtsp::rules::resolve_pipeline(appid));
