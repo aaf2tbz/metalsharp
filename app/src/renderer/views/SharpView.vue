@@ -378,6 +378,7 @@ async function loginGog() {
     toast.show(login.error ?? "GOG login cancelled", "error");
     return;
   }
+  toast.show("GOG login code captured; finishing connection…", "success");
   const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/auth-code", { code: login.code }, 90 * 1000);
   gogLoading.value.login = false;
   if (result?.ok && result.status) {

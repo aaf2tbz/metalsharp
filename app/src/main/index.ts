@@ -959,13 +959,38 @@ function registerIpc() {
         resolve(result);
       };
 
-      const inspectUrl = (url: string) => {
+      const gogCodeFromUrl = (redirect: URL) => {
+        const queryCode = redirect.searchParams.get("code");
+        if (queryCode) return queryCode;
+        const hash = redirect.hash.startsWith("#") ? redirect.hash.slice(1) : redirect.hash;
+        return new URLSearchParams(hash).get("code");
+      };
+
+      const isGogHost = (redirect: URL) => {
+        const host = redirect.hostname.toLowerCase();
+        return host === "gog.com" || host.endsWith(".gog.com");
+      };
+
+      const isGogCallbackUrl = (redirect: URL) => {
+        if (!isGogHost(redirect)) return false;
+        const path = redirect.pathname.toLowerCase().replace(/\/+$/, "");
+        return path.includes("on_login_success") || Boolean(gogCodeFromUrl(redirect));
+      };
+
+      const inspectUrl = (url: string, source = "navigation") => {
         try {
           const redirect = new URL(url);
-          if (redirect.hostname !== "embed.gog.com" || redirect.pathname !== "/on_login_success") return false;
-          const code = redirect.searchParams.get("code");
+          if (!isGogCallbackUrl(redirect)) return false;
+          const code = gogCodeFromUrl(redirect);
+          const callbackError = redirect.searchParams.get("error") ?? redirect.searchParams.get("error_description");
           if (!code) {
-            finish({ ok: false, error: "GOG redirect did not include an authorization code.", redirectUrl: url });
+            finish({
+              ok: false,
+              error: callbackError
+                ? `GOG login callback failed: ${callbackError}`
+                : `GOG login reached the callback URL but did not include an authorization code (${source}).`,
+              redirectUrl: url,
+            });
             return true;
           }
           finish({ ok: true, code, redirectUrl: url });
@@ -1000,7 +1025,7 @@ function registerIpc() {
 
       const attachOauthHandlers = (win: BrowserWindow) => {
         win.webContents.setWindowOpenHandler(({ url }) => {
-          if (inspectUrl(url)) return { action: "deny" };
+          if (inspectUrl(url, "popup")) return { action: "deny" };
           if (!isAllowedOauthUrl(url)) return { action: "deny" };
 
           const child = new BrowserWindow({
@@ -1017,25 +1042,36 @@ function registerIpc() {
           oauthWindows.add(child);
           attachOauthHandlers(child);
           child.on("closed", () => oauthWindows.delete(child));
-          child.loadURL(url).catch((error) => finish({ ok: false, error: error.message }));
+          child.loadURL(url).catch((error) => {
+            if (!inspectUrl(url, "popup-load-failure")) finish({ ok: false, error: error.message, redirectUrl: url });
+          });
           return { action: "deny" };
         });
+        win.webContents.on("did-start-navigation", (event, url) => {
+          if (inspectUrl(url, "navigation-start")) event.preventDefault();
+        });
         win.webContents.on("will-redirect", (event, url) => {
-          if (inspectUrl(url)) event.preventDefault();
+          if (inspectUrl(url, "redirect")) event.preventDefault();
         });
         win.webContents.on("will-navigate", (event, url) => {
-          if (inspectUrl(url)) event.preventDefault();
+          if (inspectUrl(url, "navigation")) event.preventDefault();
+        });
+        win.webContents.on("did-redirect-navigation", (_event, url) => {
+          inspectUrl(url, "redirect-complete");
+        });
+        win.webContents.on("did-navigate", (_event, url) => {
+          inspectUrl(url, "navigation-complete");
+        });
+        win.webContents.on("did-fail-load", (_event, _errorCode, _errorDescription, validatedURL) => {
+          if (validatedURL) inspectUrl(validatedURL, "load-failure");
         });
       };
 
       attachOauthHandlers(oauthWindow);
-      oauthWindow.webContents.session.webRequest.onBeforeRequest(
-        { urls: ["https://embed.gog.com/on_login_success*"] },
-        (details, callback) => {
-          inspectUrl(details.url);
-          callback({ cancel: settled });
-        },
-      );
+      oauthWindow.webContents.session.webRequest.onBeforeRequest({ urls: ["*://*.gog.com/*"] }, (details, callback) => {
+        inspectUrl(details.url, "request");
+        callback({ cancel: settled });
+      });
       oauthWindow.on("closed", () => {
         if (!settled) finish({ ok: false, error: "GOG login was cancelled." });
       });
