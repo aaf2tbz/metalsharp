@@ -465,7 +465,12 @@ fn default_installer_launch_args(src: &Path, classification: &crate::bottles::In
     if kind == StoreLauncherKind::Gog {
         // GOG's /runWithoutUpdating /deelevated flags are client launch flags;
         // passing them to GOG_Galaxy_2.0.exe or GalaxySetup.exe can perturb the
-        // bootstrapper/setup flow.
+        // bootstrapper/setup flow. GalaxySetup.exe is an Inno installer; give
+        // it an explicit install dir so its previous-install detection never
+        // falls back to the Wine drive root ("Found GalaxyClientExePath under \\").
+        if is_gog_galaxy_setup_installer(src) {
+            return vec!["/DIR=C:\\Program Files (x86)\\GOG Galaxy".to_string()];
+        }
         return Vec::new();
     }
     default_launcher_launch_args(kind).iter().map(|arg| arg.to_string()).collect()
@@ -2365,6 +2370,7 @@ mod tests {
                 ],
             ),
             ("GOG_Galaxy_2.0.exe", vec![]),
+            ("GalaxySetup.exe", vec!["/DIR=C:\\Program Files (x86)\\GOG Galaxy"]),
         ];
 
         for (filename, expected) in cases {
