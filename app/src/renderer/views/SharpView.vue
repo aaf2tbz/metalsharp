@@ -146,11 +146,16 @@ interface RedistSourceGuide {
 interface LauncherState {
   id: string;
   name: string;
-  status: "not_installed" | "installing" | "installed" | "running" | "needs_repair";
+  backend?: "gogdl" | string;
+  status: "not_installed" | "installing" | "installed" | "running" | "needs_repair" | "not_configured" | "needs_login" | "ready";
   statusLabel: string;
   appId?: string | null;
   bottleId?: string | null;
   installerUrl?: string;
+  authUrl?: string;
+  binaryPath?: string | null;
+  authConfigPath?: string | null;
+  capabilities?: string[];
 }
 
 interface LauncherDiagnostics {
@@ -307,10 +312,13 @@ async function load() {
 }
 
 function launcherBadgeClass(status: LauncherState["status"]): string {
-  if (status === "installed" || status === "running") return "badge-ok";
-  if (status === "installing") return "badge-warn";
-  if (status === "needs_repair") return "badge-warn";
+  if (status === "installed" || status === "running" || status === "ready") return "badge-ok";
+  if (status === "installing" || status === "needs_repair" || status === "needs_login") return "badge-warn";
   return "badge-muted";
+}
+
+function isGogdlLauncher(launcher: LauncherState): boolean {
+  return launcher.id === "gogdl" || launcher.backend === "gogdl";
 }
 
 function isGogGalaxyApp(app: SharpApp): boolean {
@@ -320,9 +328,10 @@ function isGogGalaxyApp(app: SharpApp): boolean {
 
 async function loadLauncherDiagnostics(launcher: LauncherState) {
   launcherActionLoading.value[`${launcher.id}:diagnostics`] = true;
+  const diagnosticsUrl = isGogdlLauncher(launcher) ? "/sharp-library/launchers/gogdl/diagnostics" : "/sharp-library/launchers/gog/diagnostics";
   const result = await api<{ ok: boolean; diagnostics?: LauncherDiagnostics; error?: string; launcher?: LauncherState }>(
     "GET",
-    "/sharp-library/launchers/gog/diagnostics",
+    diagnosticsUrl,
   );
   launcherActionLoading.value[`${launcher.id}:diagnostics`] = false;
   if (result?.launcher) {
@@ -332,9 +341,17 @@ async function loadLauncherDiagnostics(launcher: LauncherState) {
   if (result?.ok && result.diagnostics) {
     launcherDiagnostics.value[launcher.id] = result.diagnostics;
     toast.show(`${launcher.name} diagnostics refreshed`, "success");
+  } else if (result?.ok) {
+    toast.show(`${launcher.name} status refreshed`, "success");
   } else {
     toast.show(result?.error ?? `Failed to inspect ${launcher.name}`, "error");
   }
+}
+
+async function copyLauncherAuthUrl(launcher: LauncherState) {
+  if (!launcher.authUrl) return;
+  const result = await getAPI().copyText(launcher.authUrl);
+  toast.show(result?.ok ? `${launcher.name} login URL copied` : (result?.error ?? `Failed to copy ${launcher.name} login URL`), result?.ok ? "success" : "error");
 }
 
 async function runLauncherAction(launcher: LauncherState, action: "install" | "open" | "stop" | "repair" | "show-card") {
@@ -963,13 +980,13 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                 <div class="launcher-card-header">
                   <div>
                     <strong>{{ launcher.name }}</strong>
-                    <small>{{ launcher.installerUrl }}</small>
+                    <small>{{ launcher.backend === "gogdl" ? "Heroic-style gogdl backend" : launcher.installerUrl }}</small>
                   </div>
                   <span class="badge" :class="launcherBadgeClass(launcher.status)">{{ launcher.statusLabel }}</span>
                 </div>
                 <div class="launcher-actions">
                   <button
-                    v-if="launcher.status === 'not_installed'"
+                    v-if="!isGogdlLauncher(launcher) && launcher.status === 'not_installed'"
                     class="btn btn-primary btn-sm"
                     :disabled="launcherActionLoading[`${launcher.id}:install`]"
                     @click="runLauncherAction(launcher, 'install')"
@@ -977,7 +994,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     {{ launcherActionLoading[`${launcher.id}:install`] ? "Installing…" : "Install GOG Galaxy" }}
                   </button>
                   <button
-                    v-if="launcher.status === 'installed'"
+                    v-if="!isGogdlLauncher(launcher) && launcher.status === 'installed'"
                     class="btn btn-primary btn-sm"
                     :disabled="launcherActionLoading[`${launcher.id}:open`]"
                     @click="runLauncherAction(launcher, 'open')"
@@ -985,7 +1002,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     {{ launcherActionLoading[`${launcher.id}:open`] ? "Starting…" : "Start GOG" }}
                   </button>
                   <button
-                    v-if="launcher.status === 'running'"
+                    v-if="!isGogdlLauncher(launcher) && launcher.status === 'running'"
                     class="btn btn-stop btn-sm"
                     :disabled="launcherActionLoading[`${launcher.id}:stop`]"
                     @click="runLauncherAction(launcher, 'stop')"
@@ -993,7 +1010,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     {{ launcherActionLoading[`${launcher.id}:stop`] ? "Stopping…" : "Stop GOG" }}
                   </button>
                   <button
-                    v-if="launcher.status === 'needs_repair'"
+                    v-if="!isGogdlLauncher(launcher) && launcher.status === 'needs_repair'"
                     class="btn btn-secondary btn-sm"
                     :disabled="launcherActionLoading[`${launcher.id}:repair`]"
                     @click="runLauncherAction(launcher, 'repair')"
@@ -1008,12 +1025,25 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                     Diagnostics
                   </button>
                   <button
+                    v-if="isGogdlLauncher(launcher) && launcher.authUrl"
+                    class="btn btn-secondary btn-sm"
+                    @click="copyLauncherAuthUrl(launcher)"
+                  >
+                    Copy login URL
+                  </button>
+                  <button
+                    v-if="!isGogdlLauncher(launcher)"
                     class="btn btn-secondary btn-sm"
                     :disabled="launcher.status === 'not_installed' || launcherActionLoading[`${launcher.id}:show-card`]"
                     @click="runLauncherAction(launcher, 'show-card')"
                   >
                     Show launcher card
                   </button>
+                  <div v-if="isGogdlLauncher(launcher)" class="launcher-diagnostic-section">
+                    <small>Binary: {{ launcher.binaryPath || "Set METALSHARP_GOGDL_BIN or install gogdl" }}</small>
+                    <small>Auth: {{ launcher.authConfigPath }}</small>
+                    <small v-if="launcher.capabilities?.length">Capabilities: {{ launcher.capabilities.join(' · ') }}</small>
+                  </div>
                 </div>
                 <div v-if="launcherDiagnostics[launcher.id]" class="launcher-diagnostics">
                   <strong>Diagnostics: {{ launcherDiagnostics[launcher.id]?.status }}</strong>

@@ -2146,6 +2146,7 @@ pub fn handle_get_library() -> Value {
 }
 
 const GOG_GALAXY_INSTALLER_URL: &str = "https://webinstallers.gog-statics.com/download/GOG_Galaxy_2.0.exe";
+const GOGDL_AUTH_URL: &str = "https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=galaxy";
 
 fn gog_galaxy_cache_path() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("cache").join("gog-galaxy").join("GOG_Galaxy_2.0.exe")
@@ -2250,8 +2251,81 @@ fn gog_launcher_status_value() -> Value {
     })
 }
 
+fn gogdl_config_dir() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("gogdl")
+}
+
+fn gogdl_auth_config_path() -> PathBuf {
+    crate::platform::metalsharp_home_dir().join("gog_store").join("auth.json")
+}
+
+fn gogdl_candidate_paths_from_path_env(path_env: Option<&str>) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(explicit) = std::env::var("METALSHARP_GOGDL_BIN") {
+        let explicit = explicit.trim();
+        if !explicit.is_empty() {
+            candidates.push(PathBuf::from(explicit));
+        }
+    }
+
+    let home = crate::platform::metalsharp_home_dir();
+    candidates.push(home.join("tools").join("gogdl"));
+    candidates.push(home.join("runtime").join("gogdl"));
+
+    if let Some(path_env) = path_env {
+        for path in std::env::split_paths(path_env) {
+            candidates.push(path.join("gogdl"));
+        }
+    }
+    candidates
+}
+
+fn find_gogdl_binary() -> Option<PathBuf> {
+    gogdl_candidate_paths_from_path_env(std::env::var("PATH").ok().as_deref()).into_iter().find(|path| path.is_file())
+}
+
+fn gogdl_status_value() -> Value {
+    let binary = find_gogdl_binary();
+    let auth_config = gogdl_auth_config_path();
+    let authenticated = auth_config.is_file();
+    let status = if binary.is_some() {
+        if authenticated {
+            "ready"
+        } else {
+            "needs_login"
+        }
+    } else {
+        "not_configured"
+    };
+    let status_label = match status {
+        "ready" => "Ready",
+        "needs_login" => "Needs login",
+        _ => "gogdl not found",
+    };
+
+    json!({
+        "id": "gogdl",
+        "name": "GOG",
+        "backend": "gogdl",
+        "status": status,
+        "statusLabel": status_label,
+        "available": binary.is_some(),
+        "authenticated": authenticated,
+        "binaryPath": binary.map(|path| path.to_string_lossy().to_string()),
+        "configPath": gogdl_config_dir().to_string_lossy().to_string(),
+        "authConfigPath": auth_config.to_string_lossy().to_string(),
+        "authUrl": GOGDL_AUTH_URL,
+        "galaxyFallbackId": "gog_galaxy",
+        "capabilities": ["auth", "metadata", "download", "launch", "cloud_saves", "redists"],
+    })
+}
+
+pub fn handle_gogdl_diagnostics() -> Value {
+    json!({"ok": true, "launcher": gogdl_status_value(), "galaxyFallback": gog_launcher_status_value()})
+}
+
 pub fn handle_launchers() -> Value {
-    json!({"ok": true, "launchers": [gog_launcher_status_value()]})
+    json!({"ok": true, "launchers": [gogdl_status_value(), gog_launcher_status_value()]})
 }
 
 fn ensure_gog_galaxy_installer_cached() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -2753,6 +2827,38 @@ mod tests {
                 "--disable-crash-reporter",
             ]
         );
+    }
+
+    #[test]
+    fn launchers_include_gogdl_backend_before_galaxy_fallback() {
+        let value = handle_launchers();
+        let launchers = value.get("launchers").and_then(|value| value.as_array()).expect("launchers array");
+
+        assert_eq!(launchers.first().and_then(|launcher| launcher.get("id")).and_then(|id| id.as_str()), Some("gogdl"));
+        assert_eq!(
+            launchers.get(1).and_then(|launcher| launcher.get("id")).and_then(|id| id.as_str()),
+            Some("gog_galaxy")
+        );
+        assert_eq!(
+            launchers.first().and_then(|launcher| launcher.get("backend")).and_then(|backend| backend.as_str()),
+            Some("gogdl")
+        );
+        assert_eq!(
+            launchers.first().and_then(|launcher| launcher.get("galaxyFallbackId")).and_then(|id| id.as_str()),
+            Some("gog_galaxy")
+        );
+    }
+
+    #[test]
+    fn gogdl_path_candidates_prefer_explicit_env_then_metalsharp_and_path() {
+        std::env::set_var("METALSHARP_GOGDL_BIN", "/tmp/custom-gogdl");
+        let candidates = gogdl_candidate_paths_from_path_env(Some("/bin:/usr/local/bin"));
+        std::env::remove_var("METALSHARP_GOGDL_BIN");
+
+        assert_eq!(candidates.first(), Some(&PathBuf::from("/tmp/custom-gogdl")));
+        assert!(candidates.iter().any(|path| path.ends_with("tools/gogdl")));
+        assert!(candidates.iter().any(|path| path.ends_with("runtime/gogdl")));
+        assert!(candidates.iter().any(|path| path == &PathBuf::from("/usr/local/bin/gogdl")));
     }
 
     #[test]
