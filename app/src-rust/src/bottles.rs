@@ -3523,7 +3523,7 @@ fn known_launcher_recipes() -> &'static [KnownLauncherRecipe] {
         KnownLauncherRecipe {
             id: "gog_galaxy",
             label: "GOG Galaxy",
-            tokens: &["gog galaxy", "goggalaxy", "galaxyclient", "gog_galaxy"],
+            tokens: &["gog galaxy", "goggalaxy", "galaxyclient", "gog_galaxy", "setup_galaxy", "galaxysetup"],
             installer_kind: InstallerKind::Electron,
             runtime_profile: RuntimeProfile::GogGalaxy,
             forced_pipeline: None,
