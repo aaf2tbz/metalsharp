@@ -316,6 +316,15 @@ fn resolve_game_exe_for_pipeline(
         }
     }
 
+    if let Some(recipe) = super::rules::get_game_recipe(appid) {
+        for preferred in recipe.exe_names {
+            let path = find_case_insensitive(game_dir, &preferred);
+            if let Some(path) = path {
+                return Ok(path);
+            }
+        }
+    }
+
     for preferred in preferred_exe_names(appid) {
         let path = find_case_insensitive(game_dir, preferred);
         if let Some(path) = path {
@@ -1024,6 +1033,19 @@ mod tests {
         let selected = resolve_game_exe(475150, &dir).expect("select titan quest exe");
 
         assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("TQ.exe"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ori_rule_prefers_oride_exe() {
+        let dir = test_dir("ori-exe");
+        std::fs::create_dir_all(&dir).expect("create ori dir");
+        std::fs::write(dir.join("UnityCrashHandler32.exe"), b"crash").expect("write crash handler");
+        std::fs::write(dir.join("oriDE.exe"), b"game").expect("write ori exe");
+
+        let selected = resolve_game_exe(387290, &dir).expect("select ori exe");
+
+        assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("oriDE.exe"));
         let _ = std::fs::remove_dir_all(dir);
     }
 

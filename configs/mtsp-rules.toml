@@ -46,6 +46,14 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 pipeline = "m9"
 name = "Taimumari: Definitive Edition"
 
+[overrides.387290]
+pipeline = "m11"
+name = "Ori and the Blind Forest: Definitive Edition"
+exe_names = ["oriDE.exe"]
+
+[overrides.387290.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
 [overrides.475150]
 pipeline = "m9"
 name = "Titan Quest Anniversary Edition"
