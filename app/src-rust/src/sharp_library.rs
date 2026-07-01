@@ -775,6 +775,8 @@ fn should_run_as_wine_installer(src: &Path) -> bool {
         || name.contains("launcher")
         || name.contains("bootstrap")
         || name.contains("update")
+        || name.contains("gog_galaxy")
+        || name == "galaxysetup.exe"
 }
 
 fn is_supported_windows_program(src: &Path) -> bool {
@@ -1812,14 +1814,24 @@ fn find_gog_galaxy_app(apps: &[SharpApp]) -> Option<&SharpApp> {
 
 fn find_gog_galaxy_bottle() -> Option<crate::bottles::BottleManifest> {
     let cache_path = gog_galaxy_cache_path().to_string_lossy().to_string();
-    crate::bottles::list_bottles().ok()?.into_iter().find(|bottle| {
-        bottle
-            .source_installer_path
-            .as_deref()
-            .map(|path| path == cache_path || path.to_ascii_lowercase().contains("gog_galaxy"))
-            .unwrap_or(false)
-            || bottle.name.to_ascii_lowercase().contains("gog galaxy")
-    })
+    let mut candidates = crate::bottles::list_bottles()
+        .ok()?
+        .into_iter()
+        .filter(|bottle| {
+            bottle
+                .source_installer_path
+                .as_deref()
+                .map(|path| path == cache_path || path.to_ascii_lowercase().contains("gog_galaxy"))
+                .unwrap_or(false)
+                || bottle.name.to_ascii_lowercase().contains("gog galaxy")
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then_with(|| b.id.cmp(&a.id)));
+    candidates
+        .iter()
+        .find(|bottle| gog_galaxy_client_in_bottle(bottle).is_some())
+        .cloned()
+        .or_else(|| candidates.into_iter().next())
 }
 
 fn gog_galaxy_client_in_bottle(bottle: &crate::bottles::BottleManifest) -> Option<PathBuf> {
@@ -1896,8 +1908,16 @@ fn ensure_gog_galaxy_installer_cached() -> Result<PathBuf, Box<dyn std::error::E
 }
 
 pub fn handle_install_gog_galaxy() -> Value {
+    handle_install_gog_galaxy_with_fresh(false)
+}
+
+fn handle_install_gog_galaxy_fresh() -> Value {
+    handle_install_gog_galaxy_with_fresh(true)
+}
+
+fn handle_install_gog_galaxy_with_fresh(fresh_bottle: bool) -> Value {
     match ensure_gog_galaxy_installer_cached()
-        .and_then(|path| install_exe_with_options(path.to_string_lossy().as_ref(), Some("GOG Galaxy"), false))
+        .and_then(|path| install_exe_with_options(path.to_string_lossy().as_ref(), Some("GOG Galaxy"), fresh_bottle))
     {
         Ok(SharpInstallOutcome::Imported(app)) => {
             json!({"ok": true, "app": *app, "launcher": gog_launcher_status_value()})
@@ -1942,7 +1962,7 @@ pub fn handle_repair_gog_galaxy() -> Value {
             return json!({"ok": true, "launcher": gog_launcher_status_value()});
         }
     }
-    handle_install_gog_galaxy()
+    handle_install_gog_galaxy_fresh()
 }
 
 pub fn handle_gog_galaxy_diagnostics() -> Value {
@@ -2734,6 +2754,8 @@ mod tests {
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftInstaller.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/MinecraftLauncher.exe")));
         assert!(should_run_as_wine_installer(Path::new("/tmp/DemoSetup.msi")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/GOG_Galaxy_2.0.exe")));
+        assert!(should_run_as_wine_installer(Path::new("/tmp/GalaxySetup.exe")));
         assert!(!should_run_as_wine_installer(Path::new("/tmp/TJoC_SM.exe")));
     }
 
