@@ -831,8 +831,21 @@ fn start_gog_galaxy_installer(
     Ok(outcome)
 }
 
+const GOG_GALAXY_SETUP_MIN_BYTES: u64 = 240 * 1024 * 1024;
+
 fn gog_galaxy_setup_cache_path() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("cache").join("gog-galaxy").join("GalaxySetup.exe")
+}
+
+fn valid_gog_galaxy_setup(path: &Path) -> bool {
+    path.is_file() && path.metadata().map(|meta| meta.len() >= GOG_GALAXY_SETUP_MIN_BYTES).unwrap_or(false)
+}
+
+fn remove_invalid_gog_galaxy_setup_cache() {
+    let cache = gog_galaxy_setup_cache_path();
+    if cache.exists() && !valid_gog_galaxy_setup(&cache) {
+        let _ = fs::remove_file(cache);
+    }
 }
 
 fn spawn_gog_galaxy_install_watcher(bottle_id: String, mut watched_pid: u32, source_installer: PathBuf) {
@@ -852,7 +865,7 @@ fn spawn_gog_galaxy_install_watcher(bottle_id: String, mut watched_pid: u32, sou
             let running = crate::launch::is_process_active(watched_pid as i32);
             if !running && !retried_cached_setup && !is_gog_galaxy_setup_installer(&source_installer) {
                 let cached_setup = gog_galaxy_setup_cache_path();
-                if cached_setup.exists() {
+                if valid_gog_galaxy_setup(&cached_setup) {
                     let classification = crate::bottles::classify_installer(&cached_setup);
                     kill_stale_gog_galaxy_processes(&prefix);
                     if let Ok(SharpInstallOutcome::InstallerStarted { pid, .. }) =
@@ -916,10 +929,18 @@ fn gog_galaxy_setup_candidates(prefix: &Path) -> Vec<PathBuf> {
 }
 
 fn cache_downloaded_gog_galaxy_setup(prefix: &Path) {
-    let Some(candidate) = gog_galaxy_setup_candidates(prefix)
-        .into_iter()
-        .find(|path| path.metadata().map(|meta| meta.len() > 1_000_000).unwrap_or(false))
-    else {
+    let Some(candidate) = gog_galaxy_setup_candidates(prefix).into_iter().find(|path| {
+        let Ok(before) = path.metadata() else {
+            return false;
+        };
+        if before.len() < GOG_GALAXY_SETUP_MIN_BYTES {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        path.metadata()
+            .map(|after| after.len() == before.len() && after.len() >= GOG_GALAXY_SETUP_MIN_BYTES)
+            .unwrap_or(false)
+    }) else {
         return;
     };
     let cache = gog_galaxy_setup_cache_path();
@@ -1927,6 +1948,7 @@ fn handle_install_gog_galaxy_fresh() -> Value {
 }
 
 fn handle_install_gog_galaxy_with_fresh(fresh_bottle: bool) -> Value {
+    remove_invalid_gog_galaxy_setup_cache();
     match ensure_gog_galaxy_installer_cached()
         .and_then(|path| install_exe_with_options(path.to_string_lossy().as_ref(), Some("GOG Galaxy"), fresh_bottle))
     {
@@ -2011,6 +2033,12 @@ fn gog_galaxy_diagnostics_value() -> Value {
         if lower.contains("client setup finished with return code: 1") || lower.contains("return code: 1") {
             issues.push(json!({"id": "setup_return_code_1", "severity": "error", "detail": "GOG Galaxy setup exited with return code 1"}));
         }
+        if lower.contains("setup files are corrupted")
+            || lower.contains("obtain a new copy")
+            || lower.contains("corrupt")
+        {
+            issues.push(json!({"id": "corrupt_setup_payload", "severity": "error", "detail": "GOG setup reported a corrupt installer payload"}));
+        }
         if lower.contains("already running") || lower.contains("galaxy already running") {
             issues.push(json!({"id": "stale_galaxy_process", "severity": "error", "detail": "Installer reported that GOG Galaxy is already running"}));
         }
@@ -2039,7 +2067,7 @@ fn gog_galaxy_diagnostics_value() -> Value {
         }
     }
 
-    if cached_setup.exists() {
+    if valid_gog_galaxy_setup(&cached_setup) {
         actions.push(gog_repair_action("retry_cached_setup", "Retry with cached GalaxySetup.exe"));
     }
     actions.push(gog_repair_action("recreate_clean_bottle", "Recreate clean GOG bottle"));
@@ -2053,7 +2081,7 @@ fn gog_galaxy_diagnostics_value() -> Value {
         "status": if client.is_some() { "installed" } else { "needs_repair" },
         "bottleId": bottle.id,
         "clientPath": client.map(|path| path.to_string_lossy().to_string()),
-        "cachedSetupPath": if cached_setup.exists() { Some(cached_setup.to_string_lossy().to_string()) } else { None },
+        "cachedSetupPath": if valid_gog_galaxy_setup(&cached_setup) { Some(cached_setup.to_string_lossy().to_string()) } else { None },
         "setupCandidates": setup_candidates.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
         "issues": dedupe_json_issues(issues),
         "actions": actions,
@@ -2452,6 +2480,17 @@ mod tests {
 
         assert_eq!(gog_galaxy_setup_candidates(&prefix), vec![setup]);
         let _ = fs::remove_dir_all(prefix);
+    }
+
+    #[test]
+    fn gog_galaxy_setup_cache_rejects_partial_payloads() {
+        let dir = test_dir("gog-partial-cache");
+        fs::create_dir_all(&dir).expect("create cache dir");
+        let partial = dir.join("GalaxySetup.exe");
+        fs::write(&partial, vec![0u8; 1024]).expect("write partial setup");
+
+        assert!(!valid_gog_galaxy_setup(&partial));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
