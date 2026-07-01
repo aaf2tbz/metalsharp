@@ -469,7 +469,11 @@ fn default_installer_launch_args(src: &Path, classification: &crate::bottles::In
         // it an explicit install dir so its previous-install detection never
         // falls back to the Wine drive root ("Found GalaxyClientExePath under \\").
         if is_gog_galaxy_setup_installer(src) {
-            return vec!["/DIR=C:\\Program Files (x86)\\GOG Galaxy".to_string()];
+            return vec![
+                "/DIR=C:\\Program Files (x86)\\GOG Galaxy".to_string(),
+                "/CLOSEAPPLICATIONS".to_string(),
+                "/FORCECLOSEAPPLICATIONS".to_string(),
+            ];
         }
         return Vec::new();
     }
@@ -2398,7 +2402,10 @@ mod tests {
                 ],
             ),
             ("GOG_Galaxy_2.0.exe", vec![]),
-            ("GalaxySetup.exe", vec!["/DIR=C:\\Program Files (x86)\\GOG Galaxy"]),
+            (
+                "GalaxySetup.exe",
+                vec!["/DIR=C:\\Program Files (x86)\\GOG Galaxy", "/CLOSEAPPLICATIONS", "/FORCECLOSEAPPLICATIONS"],
+            ),
         ];
 
         for (filename, expected) in cases {
