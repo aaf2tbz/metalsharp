@@ -178,4 +178,6 @@ type MetalsharpAPI = {
   uninstallApp: () => void;
   pickExeFile: () => Promise<string | null>;
   pickImageFile: () => Promise<string | null>;
+  pickDirectory: (title?: string) => Promise<string | null>;
+  gogOAuthLogin: (authUrl: string) => Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>;
 };

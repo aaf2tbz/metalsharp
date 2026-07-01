@@ -24,6 +24,7 @@ mod d3d12_runtime_doctor;
 mod d3dmetal_gptk;
 mod diagnostics;
 mod fna_profile;
+mod gog;
 mod installer;
 mod kernel_translation;
 mod launch;
@@ -37,7 +38,7 @@ mod sharp_library;
 mod steam;
 mod updater;
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -1804,6 +1805,39 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))
+        },
+        (Method::Get, "/sharp-library/gog/status") => resp(200, gog::handle_status()),
+        (Method::Post, "/sharp-library/gog/initialize-prefix") => resp(200, gog::handle_initialize_prefix()),
+        (Method::Post, "/sharp-library/gog/auth-code") => {
+            let body = read_body(req);
+            resp(200, gog::handle_auth_code(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/gog/logout") => resp(200, gog::handle_logout()),
+        (Method::Post, "/sharp-library/gog/sync") => resp(200, gog::handle_sync()),
+        (Method::Get, "/sharp-library/gog/games") => resp(200, gog::handle_games()),
+        (Method::Post, "/sharp-library/gog/install") => {
+            let body = read_body(req);
+            resp(200, gog::handle_install(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/gog/import") => {
+            let body = read_body(req);
+            resp(200, gog::handle_import(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/gog/progress") => {
+            let body = read_body(req);
+            resp(200, gog::handle_progress(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/gog/play") => {
+            let body = read_body(req);
+            resp(200, gog::handle_play(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/gog/stop") => {
+            let body = read_body(req);
+            resp(200, gog::handle_stop(&Value::Object(body)))
+        },
+        (Method::Post, "/sharp-library/gog/uninstall") => {
+            let body = read_body(req);
+            resp(200, gog::handle_uninstall(&Value::Object(body)))
         },
         (Method::Post, "/sharp-library/install") => {
             let body = read_body(req);
