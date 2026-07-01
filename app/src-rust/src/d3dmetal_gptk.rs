@@ -23,6 +23,18 @@ const VC_REDIST_SEED_DLLS: &[&str] = &[
 ];
 const GPTK_ROUTE_DLLS: &[&str] =
     &["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"];
+const GAME_LOCAL_ROUTE_DLLS: &[&str] = &[
+    "d3d10.dll",
+    "d3d10core.dll",
+    "d3d11.dll",
+    "d3d12.dll",
+    "dxgi.dll",
+    "dxgi_dxmt.dll",
+    "nvapi64.dll",
+    "nvngx.dll",
+    "nvngx-on-metalfx.dll",
+    "winemetal.dll",
+];
 const GPTK_EXTERNAL_PAYLOAD_FILES: &[&str] = &["libd3dshared.dylib", "D3DMetal.framework/Versions/A/D3DMetal"];
 const GPTK_OVERRIDES: &str =
     "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d";
@@ -398,7 +410,7 @@ fn seed_prefix(body: &serde_json::Map<String, Value>) -> Result<D3DMetalGptkStat
         ensure_homebrew_gptk_ready_for_actions()?;
         ensure_gptk_prefix_winebooted()?;
         seed_homebrew_gptk_route_dlls_into_prefix()?;
-        quarantine_game_local_route_dlls(&state)?;
+        stage_game_local_d3dmetal_route_dlls(&state)?;
         seed_steam_user_and_game_files(&state)?;
         verify_seed(&state)?;
         Ok(())
@@ -433,9 +445,9 @@ fn play_d3dmetal(body: &serde_json::Map<String, Value>) -> Result<Value, String>
     }
     let game_exe = request_play_exe(body, &state)?;
     state.game_exe = Some(game_exe.to_string_lossy().to_string());
-    quarantine_game_local_route_dlls_for_exe(&state, &game_exe)?;
+    stage_game_local_d3dmetal_route_dlls_for_exe(&state, &game_exe)?;
     verify_seed(&state)?;
-    verify_no_game_local_route_conflicts_for_exe(&state, &game_exe)?;
+    verify_game_local_d3dmetal_route_dlls_for_exe(&state, &game_exe)?;
     verify_vc_redist_seeded()?;
     if !rosetta_installed() {
         return Err(
@@ -941,62 +953,80 @@ fn verify_prefix_route_dlls() -> Result<(), String> {
     }
 }
 
-fn quarantine_game_local_route_dlls(state: &D3DMetalGptkState) -> Result<(), String> {
+fn stage_game_local_d3dmetal_route_dlls(state: &D3DMetalGptkState) -> Result<(), String> {
     let game_exe = state
         .game_exe
         .as_ref()
         .map(PathBuf::from)
-        .ok_or_else(|| "no game exe detected for D3DMetal shim quarantine".to_string())?;
-    quarantine_game_local_route_dlls_for_exe(state, &game_exe)
+        .ok_or_else(|| "no game exe detected for D3DMetal route DLL staging".to_string())?;
+    stage_game_local_d3dmetal_route_dlls_for_exe(state, &game_exe)
 }
 
-fn quarantine_game_local_route_dlls_for_exe(state: &D3DMetalGptkState, game_exe: &Path) -> Result<(), String> {
+fn stage_game_local_d3dmetal_route_dlls_for_exe(state: &D3DMetalGptkState, game_exe: &Path) -> Result<(), String> {
+    ensure_homebrew_gptk_payload_ready()?;
     let exe_dir =
         game_exe.parent().ok_or_else(|| format!("game exe has no parent directory: {}", game_exe.display()))?;
     if !exe_dir.is_dir() {
         return Err(format!("game exe directory missing: {}", exe_dir.display()));
     }
 
+    let src_dir = homebrew_gptk_route_dll_dir();
+    let quarantine_root =
+        Path::new(&state.game_dir).join(".metalsharp").join("d3dmetal-quarantine").join(now_secs().to_string());
     let mut moved = Vec::new();
-    for entry in fs::read_dir(exe_dir).map_err(|e| format!("read {}: {}", exe_dir.display(), e))? {
-        let entry = entry.map_err(|e| format!("read {} entry: {}", exe_dir.display(), e))?;
-        let path = entry.path();
-        if !path.is_file() || !is_d3dmetal_route_conflict(&path) {
-            continue;
+    let mut deployed = Vec::new();
+
+    for dll in GAME_LOCAL_ROUTE_DLLS {
+        let path = exe_dir.join(dll);
+        let is_gptk_route_dll = GPTK_ROUTE_DLLS.iter().any(|candidate| candidate.eq_ignore_ascii_case(dll));
+        if is_gptk_route_dll {
+            let src = src_dir.join(dll);
+            if path.exists() && !same_file_hash(&src, &path) {
+                let target = unique_quarantine_target(&quarantine_root.join(quarantine_relative_path(state, &path)));
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
+                }
+                fs::rename(&path, &target).map_err(|e| {
+                    format!("quarantine stale app-local route DLL {} -> {}: {}", path.display(), target.display(), e)
+                })?;
+                moved.push(json!({"from": path.to_string_lossy(), "to": target.to_string_lossy()}));
+            }
+            copy_file_checked(&src, &path)?;
+            deployed.push(json!({"filename": dll, "source": src.to_string_lossy(), "dest": path.to_string_lossy()}));
+        } else if path.exists() {
+            let target = unique_quarantine_target(&quarantine_root.join(quarantine_relative_path(state, &path)));
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
+            }
+            fs::rename(&path, &target).map_err(|e| {
+                format!("quarantine stale app-local M12 route DLL {} -> {}: {}", path.display(), target.display(), e)
+            })?;
+            moved.push(json!({"from": path.to_string_lossy(), "to": target.to_string_lossy()}));
         }
-        let quarantine_root =
-            Path::new(&state.game_dir).join(".metalsharp").join("d3dmetal-quarantine").join(now_secs().to_string());
-        let rel = quarantine_relative_path(state, &path);
-        let target = quarantine_root.join(rel);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|e| format!("create {}: {}", parent.display(), e))?;
-        }
-        fs::rename(&path, &target).map_err(|e| {
-            format!("quarantine app-local D3DMetal shim {} -> {}: {}", path.display(), target.display(), e)
-        })?;
-        moved.push(json!({"from": path.to_string_lossy(), "to": target.to_string_lossy()}));
     }
 
-    if !moved.is_empty() {
-        let quarantine_root = Path::new(&state.game_dir).join(".metalsharp").join("d3dmetal-quarantine");
-        fs::create_dir_all(&quarantine_root).map_err(|e| format!("create {}: {}", quarantine_root.display(), e))?;
-        let marker = quarantine_root.join("latest-manifest.json");
+    if !moved.is_empty() || !deployed.is_empty() {
+        let marker_root = Path::new(&state.game_dir).join(".metalsharp").join("d3dmetal-quarantine");
+        fs::create_dir_all(&marker_root).map_err(|e| format!("create {}: {}", marker_root.display(), e))?;
+        let marker = marker_root.join("latest-manifest.json");
         let manifest = json!({
             "quarantined_at": now_secs(),
-            "reason": "explicit D3DMetal/GPTK lane uses Homebrew-matched route DLLs from the GPTK prefix, not app-local shims",
-            "moved": moved
+            "reason": "D3DMetal/GPTK lane replaces app-local M12/DXMT route DLLs with Homebrew-matched D3DMetal route DLLs",
+            "moved": moved,
+            "deployed": deployed,
         });
         fs::write(&marker, serde_json::to_string_pretty(&manifest).unwrap_or_default())
             .map_err(|e| format!("write {}: {}", marker.display(), e))?;
     }
-    Ok(())
+
+    verify_game_local_d3dmetal_route_dlls_for_exe(state, game_exe)
 }
 
-fn verify_no_game_local_route_conflicts(state: &D3DMetalGptkState) -> Result<(), String> {
+fn verify_game_local_d3dmetal_route_dlls(state: &D3DMetalGptkState) -> Result<(), String> {
     let Some(game_exe) = state.game_exe.as_ref().map(PathBuf::from) else {
         return Err("D3DMetal seed game exe missing".to_string());
     };
-    verify_no_game_local_route_conflicts_for_exe(state, &game_exe)
+    verify_game_local_d3dmetal_route_dlls_for_exe(state, &game_exe)
 }
 
 fn quarantine_relative_path(state: &D3DMetalGptkState, path: &Path) -> PathBuf {
@@ -1015,34 +1045,59 @@ fn quarantine_relative_path(state: &D3DMetalGptkState, path: &Path) -> PathBuf {
     path.file_name().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("route-dll"))
 }
 
-fn verify_no_game_local_route_conflicts_for_exe(_state: &D3DMetalGptkState, game_exe: &Path) -> Result<(), String> {
+fn unique_quarantine_target(path: &Path) -> PathBuf {
+    if !path.exists() {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "route-dll".to_string());
+    let ext = path.extension().map(|s| s.to_string_lossy().to_string());
+    for i in 1..1000 {
+        let candidate_name = match ext.as_deref() {
+            Some(ext) if !ext.is_empty() => format!("{}-{}.{}", stem, i, ext),
+            _ => format!("{}-{}", stem, i),
+        };
+        let candidate = path.with_file_name(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    path.with_file_name(format!("{}-fallback", stem))
+}
+
+fn verify_game_local_d3dmetal_route_dlls_for_exe(_state: &D3DMetalGptkState, game_exe: &Path) -> Result<(), String> {
     let Some(exe_dir) = game_exe.parent() else {
         return Err(format!("game exe has no parent directory: {}", game_exe.display()));
     };
-    let conflicts: Vec<String> = fs::read_dir(exe_dir)
-        .map_err(|e| format!("read {}: {}", exe_dir.display(), e))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file() && is_d3dmetal_route_conflict(path))
+    let src_dir = homebrew_gptk_route_dll_dir();
+    let mut bad = Vec::new();
+    for dll in GPTK_ROUTE_DLLS {
+        let src = src_dir.join(dll);
+        let dst = exe_dir.join(dll);
+        if !same_file_hash(&src, &dst) {
+            bad.push((*dll).to_string());
+        }
+    }
+    let stale_m12: Vec<String> = GAME_LOCAL_ROUTE_DLLS
+        .iter()
+        .filter(|dll| !GPTK_ROUTE_DLLS.iter().any(|candidate| candidate.eq_ignore_ascii_case(dll)))
+        .map(|dll| exe_dir.join(dll))
+        .filter(|path| path.is_file())
         .map(|path| path.to_string_lossy().to_string())
         .collect();
-    if conflicts.is_empty() {
+    if bad.is_empty() && stale_m12.is_empty() {
         Ok(())
     } else {
-        Err(format!("app-local D3DMetal route DLL conflicts remain near game exe: {}", conflicts.join(", ")))
+        Err(format!(
+            "app-local D3DMetal route DLLs are not current; mismatched=[{}] stale_m12=[{}]",
+            bad.join(", "),
+            stale_m12.join(", ")
+        ))
     }
 }
 
 fn is_d3dmetal_route_conflict(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-    name == "d3d10.dll"
-        || name == "d3d11.dll"
-        || name == "d3d12.dll"
-        || (name.starts_with("dxgi") && name.ends_with(".dll"))
-        || (name.starts_with("nvapi") && name.ends_with(".dll"))
-        || name == "nvngx.dll"
-        || name == "nvngx-on-metalfx.dll"
-        || name == "winemetal.dll"
+    GAME_LOCAL_ROUTE_DLLS.iter().any(|dll| dll.eq_ignore_ascii_case(&name))
 }
 
 fn ensure_gptk_prefix_winebooted() -> Result<(), String> {
@@ -1273,7 +1328,7 @@ fn seed_steam_user_and_game_files(state: &D3DMetalGptkState) -> Result<(), Strin
 fn verify_seed(state: &D3DMetalGptkState) -> Result<(), String> {
     ensure_homebrew_gptk_payload_ready()?;
     verify_prefix_route_dlls()?;
-    verify_no_game_local_route_conflicts(state)?;
+    verify_game_local_d3dmetal_route_dlls(state)?;
     let prefix = gptk_prefix();
     for rel in ["drive_c", "system.reg", "user.reg", "dosdevices"] {
         if !prefix.join(rel).exists() {
@@ -1615,7 +1670,7 @@ mod tests {
         assert!(is_d3dmetal_route_conflict(Path::new("dxgi.dll")));
         assert!(is_d3dmetal_route_conflict(Path::new("dxgi_dxmt.dll")));
         assert!(is_d3dmetal_route_conflict(Path::new("d3d12.dll")));
-        assert!(!is_d3dmetal_route_conflict(Path::new("d3d10core.dll")));
+        assert!(is_d3dmetal_route_conflict(Path::new("d3d10core.dll")));
         assert!(!is_d3dmetal_route_conflict(Path::new("d3dcompiler_47.dll")));
         assert!(!is_d3dmetal_route_conflict(Path::new("d3dx9_43.dll")));
         assert!(is_d3dmetal_route_conflict(Path::new("nvapi64.dll")));
