@@ -1945,6 +1945,132 @@ pub fn handle_repair_gog_galaxy() -> Value {
     handle_install_gog_galaxy()
 }
 
+pub fn handle_gog_galaxy_diagnostics() -> Value {
+    json!({"ok": true, "diagnostics": gog_galaxy_diagnostics_value(), "launcher": gog_launcher_status_value()})
+}
+
+fn gog_galaxy_diagnostics_value() -> Value {
+    let bottle = find_gog_galaxy_bottle();
+    let mut issues: Vec<Value> = Vec::new();
+    let mut logs: Vec<Value> = Vec::new();
+    let mut actions: Vec<Value> = Vec::new();
+
+    if bottle.is_none() {
+        issues.push(
+            json!({"id": "no_bottle", "severity": "error", "detail": "No dedicated GOG Galaxy bottle exists yet"}),
+        );
+        actions.push(gog_repair_action("install_gog_galaxy", "Install GOG Galaxy"));
+        return json!({"status": "not_installed", "issues": issues, "actions": actions, "logs": logs});
+    }
+
+    let bottle = bottle.expect("checked");
+    let prefix = PathBuf::from(&bottle.prefix_path);
+    let client = gog_galaxy_client_in_prefix(&prefix);
+    let cached_setup = gog_galaxy_setup_cache_path();
+    let setup_candidates = gog_galaxy_setup_candidates(&prefix);
+    let report = crate::bottles::diagnose_bottle(&bottle.id).ok();
+
+    for log_path in gog_galaxy_log_paths(&prefix) {
+        let text = read_text_lossy_limited(&log_path, 256 * 1024);
+        if text.is_empty() {
+            continue;
+        }
+        let lower = text.to_ascii_lowercase();
+        logs.push(json!({"path": log_path.to_string_lossy(), "size": text.len()}));
+        if lower.contains("client setup finished with return code: 1") || lower.contains("return code: 1") {
+            issues.push(json!({"id": "setup_return_code_1", "severity": "error", "detail": "GOG Galaxy setup exited with return code 1"}));
+        }
+        if lower.contains("already running") || lower.contains("galaxy already running") {
+            issues.push(json!({"id": "stale_galaxy_process", "severity": "error", "detail": "Installer reported that GOG Galaxy is already running"}));
+        }
+        if lower.contains("vcruntime") || lower.contains("msvcp") || lower.contains("visual c++") {
+            issues.push(
+                json!({"id": "vc_runtime", "severity": "warn", "detail": "Installer log mentions VC runtime state"}),
+            );
+        }
+        if lower.contains("d3dcompiler_47") || lower.contains("d3dcompiler") {
+            issues.push(json!({"id": "d3dcompiler_47", "severity": "warn", "detail": "Installer log mentions D3DCompiler state"}));
+        }
+        if lower.contains("font") {
+            issues.push(json!({"id": "fonts", "severity": "warn", "detail": "Installer log mentions font state"}));
+        }
+    }
+
+    if client.is_none() {
+        issues.push(json!({"id": "no_final_client", "severity": "error", "detail": "GalaxyClient.exe is not present in the GOG Galaxy bottle"}));
+    }
+    if setup_candidates.is_empty() && !cached_setup.exists() && client.is_none() {
+        issues.push(json!({"id": "installer_temp_missing", "severity": "warn", "detail": "No GalaxyInstaller_* temp setup or cached GalaxySetup.exe is available for retry"}));
+    }
+    if let Some(report) = report.as_ref() {
+        for component in &report.actions {
+            issues.push(json!({"id": format!("missing_component:{}", component.id), "severity": "warn", "detail": component.detail}));
+        }
+    }
+
+    if cached_setup.exists() {
+        actions.push(gog_repair_action("retry_cached_setup", "Retry with cached GalaxySetup.exe"));
+    }
+    actions.push(gog_repair_action("recreate_clean_bottle", "Recreate clean GOG bottle"));
+    actions.push(gog_repair_action("install_launcher_dependencies", "Install launcher dependencies"));
+    actions.push(gog_repair_action("disable_overlay", "Disable Galaxy overlay"));
+    actions.push(gog_repair_action("kill_stale_processes", "Kill stale Galaxy processes"));
+    actions.push(gog_repair_action("clear_installer_temp", "Clear GOG installer temp state"));
+    actions.push(gog_repair_action("use_offline_setup", "Use full/offline setup_galaxy installer"));
+
+    json!({
+        "status": if client.is_some() { "installed" } else { "needs_repair" },
+        "bottleId": bottle.id,
+        "clientPath": client.map(|path| path.to_string_lossy().to_string()),
+        "cachedSetupPath": if cached_setup.exists() { Some(cached_setup.to_string_lossy().to_string()) } else { None },
+        "setupCandidates": setup_candidates.iter().map(|path| path.to_string_lossy().to_string()).collect::<Vec<_>>(),
+        "issues": dedupe_json_issues(issues),
+        "actions": actions,
+        "logs": logs,
+    })
+}
+
+fn gog_repair_action(id: &str, label: &str) -> Value {
+    json!({"id": id, "label": label})
+}
+
+fn gog_galaxy_log_paths(prefix: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![
+        prefix.join("drive_c/ProgramData/GOG.com/Galaxy/logs/InstallerBootstrapper.log"),
+        prefix.join("drive_c/ProgramData/GOG.com/Galaxy/logs/InstallerWebinstaller.log"),
+    ];
+    let users = prefix.join("drive_c/users");
+    if users.exists() {
+        for entry in WalkDir::new(users).max_depth(8).into_iter().flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default();
+            if name.starts_with("Setup Log ") && name.ends_with(".txt") {
+                paths.push(path.to_path_buf());
+            }
+        }
+    }
+    paths
+}
+
+fn read_text_lossy_limited(path: &Path, limit: usize) -> String {
+    let Ok(data) = fs::read(path) else {
+        return String::new();
+    };
+    let start = data.len().saturating_sub(limit);
+    String::from_utf8_lossy(&data[start..]).to_string()
+}
+
+fn dedupe_json_issues(issues: Vec<Value>) -> Vec<Value> {
+    let mut seen = HashSet::new();
+    issues
+        .into_iter()
+        .filter(|issue| seen.insert(issue.get("id").and_then(|id| id.as_str()).unwrap_or("").to_string()))
+        .collect()
+}
+
 pub fn handle_install(body: &serde_json::Map<String, Value>) -> Value {
     let src_path = body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("");
     let custom_name = body.get("name").and_then(|v| v.as_str());

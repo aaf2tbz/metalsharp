@@ -1818,6 +1818,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             app_log("[SHARP-LIB] launcher repair: GOG Galaxy");
             resp(200, sharp_library::handle_repair_gog_galaxy())
         },
+        (Method::Get, "/sharp-library/launchers/gog/diagnostics") => {
+            app_log("[SHARP-LIB] launcher diagnostics: GOG Galaxy");
+            resp(200, sharp_library::handle_gog_galaxy_diagnostics())
+        },
         (Method::Post, "/sharp-library/launchers/gog/show-card") => {
             app_log("[SHARP-LIB] launcher show card: GOG Galaxy");
             resp(200, sharp_library::handle_show_gog_galaxy_card())

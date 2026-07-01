@@ -153,6 +153,14 @@ interface LauncherState {
   installerUrl?: string;
 }
 
+interface LauncherDiagnostics {
+  status: string;
+  issues: { id: string; severity: string; detail: string }[];
+  actions: { id: string; label: string }[];
+  logs: { path: string; size: number }[];
+  cachedSetupPath?: string | null;
+}
+
 const toast = useToast();
 const apps = ref<SharpApp[]>([]);
 const dropdownOpen = ref<string | null>(null);
@@ -176,6 +184,7 @@ const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
 const redistSources = ref<RedistSourceGuide[]>([]);
 const launchers = ref<LauncherState[]>([]);
 const launcherActionLoading = ref<Record<string, boolean>>({});
+const launcherDiagnostics = ref<Record<string, LauncherDiagnostics | null>>({});
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const d3dmetalStates = ref<Record<string, D3DMetalGptkState | null>>({});
 const d3dmetalActions = ref<Record<string, D3DMetalGptkAction[]>>({});
@@ -307,6 +316,25 @@ function launcherBadgeClass(status: LauncherState["status"]): string {
 function isGogGalaxyApp(app: SharpApp): boolean {
   const exe = app.exe_path.split(/[\\/]/).pop()?.toLowerCase() ?? "";
   return exe === "galaxyclient.exe" || app.name.toLowerCase().includes("gog galaxy");
+}
+
+async function loadLauncherDiagnostics(launcher: LauncherState) {
+  launcherActionLoading.value[`${launcher.id}:diagnostics`] = true;
+  const result = await api<{ ok: boolean; diagnostics?: LauncherDiagnostics; error?: string; launcher?: LauncherState }>(
+    "GET",
+    "/sharp-library/launchers/gog/diagnostics",
+  );
+  launcherActionLoading.value[`${launcher.id}:diagnostics`] = false;
+  if (result?.launcher) {
+    const idx = launchers.value.findIndex((item) => item.id === result.launcher?.id);
+    if (idx >= 0) launchers.value[idx] = result.launcher;
+  }
+  if (result?.ok && result.diagnostics) {
+    launcherDiagnostics.value[launcher.id] = result.diagnostics;
+    toast.show(`${launcher.name} diagnostics refreshed`, "success");
+  } else {
+    toast.show(result?.error ?? `Failed to inspect ${launcher.name}`, "error");
+  }
 }
 
 async function runLauncherAction(launcher: LauncherState, action: "install" | "open" | "repair" | "show-card") {
@@ -964,11 +992,30 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   </button>
                   <button
                     class="btn btn-secondary btn-sm"
+                    :disabled="launcherActionLoading[`${launcher.id}:diagnostics`]"
+                    @click="loadLauncherDiagnostics(launcher)"
+                  >
+                    Diagnostics
+                  </button>
+                  <button
+                    class="btn btn-secondary btn-sm"
                     :disabled="launcher.status === 'not_installed' || launcherActionLoading[`${launcher.id}:show-card`]"
                     @click="runLauncherAction(launcher, 'show-card')"
                   >
                     Show launcher card
                   </button>
+                </div>
+                <div v-if="launcherDiagnostics[launcher.id]" class="launcher-diagnostics">
+                  <strong>Diagnostics: {{ launcherDiagnostics[launcher.id]?.status }}</strong>
+                  <div v-if="launcherDiagnostics[launcher.id]?.issues.length" class="launcher-diagnostic-section">
+                    <span v-for="issue in launcherDiagnostics[launcher.id]?.issues" :key="issue.id" class="component-pill" :class="issue.severity === 'error' ? 'pill-missing' : 'pill-warn'">{{ issue.detail }}</span>
+                  </div>
+                  <div v-if="launcherDiagnostics[launcher.id]?.actions.length" class="launcher-diagnostic-section">
+                    <small>Repair actions: {{ launcherDiagnostics[launcher.id]?.actions.map(action => action.label).join(' · ') }}</small>
+                  </div>
+                  <div v-if="launcherDiagnostics[launcher.id]?.cachedSetupPath" class="launcher-diagnostic-section">
+                    <small>Cached setup: {{ launcherDiagnostics[launcher.id]?.cachedSetupPath }}</small>
+                  </div>
                 </div>
               </article>
             </div>
@@ -1333,6 +1380,18 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
   justify-content: flex-start;
   flex-wrap: wrap;
   margin-top: 10px;
+}
+.launcher-diagnostics {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.launcher-diagnostic-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-dim);
 }
 .badge-muted {
   background: rgba(255, 255, 255, 0.08);
