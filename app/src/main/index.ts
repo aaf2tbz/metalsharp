@@ -916,6 +916,87 @@ function registerIpc() {
     app.quit();
   });
 
+  ipcMain.handle("gog:oauth-login", async (_e, authUrl: string) => {
+    if (!mainWindow) return { ok: false, error: "Main window is not ready." };
+    let parsed: URL;
+    try {
+      parsed = new URL(authUrl);
+    } catch {
+      return { ok: false, error: "Invalid GOG auth URL." };
+    }
+    if (parsed.hostname !== "auth.gog.com") {
+      return { ok: false, error: "Refusing to open non-GOG auth URL." };
+    }
+
+    return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
+      let settled = false;
+      const oauthWindow = new BrowserWindow({
+        width: 620,
+        height: 760,
+        title: "Login to GOG",
+        parent: mainWindow ?? undefined,
+        modal: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+        },
+      });
+
+      const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        if (!oauthWindow.isDestroyed()) oauthWindow.close();
+        resolve(result);
+      };
+
+      const inspectUrl = (url: string) => {
+        try {
+          const redirect = new URL(url);
+          if (redirect.hostname !== "embed.gog.com" || redirect.pathname !== "/on_login_success") return false;
+          const code = redirect.searchParams.get("code");
+          if (!code) {
+            finish({ ok: false, error: "GOG redirect did not include an authorization code.", redirectUrl: url });
+            return true;
+          }
+          finish({ ok: true, code, redirectUrl: url });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      oauthWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (inspectUrl(url)) return { action: "deny" };
+        shell.openExternal(url).catch(() => undefined);
+        return { action: "deny" };
+      });
+      oauthWindow.webContents.on("will-redirect", (event, url) => {
+        if (inspectUrl(url)) event.preventDefault();
+      });
+      oauthWindow.webContents.on("will-navigate", (event, url) => {
+        if (inspectUrl(url)) event.preventDefault();
+      });
+      oauthWindow.webContents.session.webRequest.onBeforeRequest({ urls: ["https://embed.gog.com/on_login_success*"] }, (details, callback) => {
+        inspectUrl(details.url);
+        callback({ cancel: settled });
+      });
+      oauthWindow.on("closed", () => {
+        if (!settled) finish({ ok: false, error: "GOG login was cancelled." });
+      });
+      oauthWindow.loadURL(authUrl).catch((error) => finish({ ok: false, error: error.message }));
+    });
+  });
+
+  ipcMain.handle("app:pick-directory", async (_e, title?: string) => {
+    if (!mainWindow) return null;
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: title || "Select a folder",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle("app:pick-exe-file", async () => {
     if (!mainWindow) return null;
     const result = await dialog.showOpenDialog(mainWindow, {
