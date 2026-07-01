@@ -1321,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn m9_selects_i386_d3d9_for_32_bit_exes() {
+    fn m9_selects_i386_d3d9_and_dxgi_for_32_bit_exes() {
         let game_dir = test_dir("m9-32");
         let runtime = test_dir("runtime-32");
         std::fs::create_dir_all(&game_dir).expect("create test game dir");
@@ -1335,9 +1335,11 @@ mod tests {
             &runtime,
         );
         let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+        let filenames: std::collections::HashSet<_> = selected.iter().map(|dll| dll.filename.as_str()).collect();
 
         assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
-        assert_eq!(selected.len(), 1);
+        assert_eq!(filenames, std::collections::HashSet::from(["d3d9.dll", "dxgi.dll"]));
+        assert_eq!(selected.len(), 2);
         let _ = std::fs::remove_dir_all(game_dir);
         let _ = std::fs::remove_dir_all(runtime);
     }

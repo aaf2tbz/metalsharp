@@ -576,6 +576,20 @@ mod tests {
     }
 
     #[test]
+    fn game_recipes_parse_titan_quest_m9_32_bit_route() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let titan_quest = recipes.get(&475150).expect("titan quest recipe");
+        assert_eq!(titan_quest.pipeline, PipelineId::M9);
+        assert_eq!(titan_quest.name, "Titan Quest Anniversary Edition");
+        assert_eq!(
+            titan_quest.env.get("WINEDLLOVERRIDES").map(String::as_str),
+            Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
+        assert!(titan_quest.check_dlls.contains(&"d3d9.dll".to_string()));
+        assert!(titan_quest.check_dlls.contains(&"dxgi.dll".to_string()));
+    }
+
+    #[test]
     fn game_recipes_parse_gta_v_rockstar_runtime() {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let gta = recipes.get(&271590).expect("gta v recipe");

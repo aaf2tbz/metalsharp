@@ -298,6 +298,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d9.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "dxgi.dll", dest_filename: None },
                     DllDeploy {
                         source_subpath: "lib/dxmt/x86_64-windows",
                         filename: "nvapi64.dll",
@@ -708,6 +709,7 @@ mod tests {
             m9.deploy_dlls.iter().map(|dll| (dll.source_subpath, dll.filename)).collect();
         assert!(m9_dlls.contains(&("lib/wine/x86_64-windows", "d3d9.dll")));
         assert!(m9_dlls.contains(&("lib/wine/i386-windows", "d3d9.dll")));
+        assert!(m9_dlls.contains(&("lib/wine/i386-windows", "dxgi.dll")));
         assert!(m9_dlls.contains(&("lib/dxmt/x86_64-windows", "nvapi64.dll")));
         assert!(m9.deploy_dlls.iter().all(|dll| !dll.source_subpath.contains("dxvk")));
         assert!(m9.dyld_paths.contains(&"lib/dxmt/x86_64-unix"));

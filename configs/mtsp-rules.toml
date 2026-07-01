@@ -47,14 +47,17 @@ pipeline = "m9"
 name = "Taimumari: Definitive Edition"
 
 [overrides.475150]
-pipeline = "m11"
+pipeline = "m9"
 name = "Titan Quest Anniversary Edition"
 
 [overrides.475150.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
 
+[overrides.475150.env]
+WINEDLLOVERRIDES = "d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+
 [overrides.475150.diagnostics]
-check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+check_dlls = ["d3d9.dll", "dxgi.dll"]
 
 [overrides.848450]
 pipeline = "m11"
