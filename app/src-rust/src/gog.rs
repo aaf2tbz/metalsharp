@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -10,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const GOG_PREFIX_BOTTLE_ID: &str = "gog-prefix";
 const GOG_AUTH_URL: &str = "https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=galaxy";
 const GOG_CLIENT_ID: &str = "46899977096215655";
+const HEROIC_GOGDL_REPO_URL: &str = "https://github.com/Heroic-Games-Launcher/heroic-gogdl.git";
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -151,6 +154,150 @@ fn gogdl_candidates() -> Vec<PathBuf> {
 
 fn gogdl_binary() -> Option<PathBuf> {
     gogdl_candidates().into_iter().find(|path| path.is_file())
+}
+
+fn tools_dir() -> PathBuf {
+    ms_home().join("tools")
+}
+
+fn gogdl_wrapper_path() -> PathBuf {
+    tools_dir().join("gogdl")
+}
+
+fn gogdl_venv_dir() -> PathBuf {
+    tools_dir().join("gogdl-venv")
+}
+
+fn gogdl_venv_bin() -> PathBuf {
+    gogdl_venv_dir().join("bin").join("gogdl")
+}
+
+fn gogdl_source_dir() -> PathBuf {
+    tools_dir().join("heroic-gogdl")
+}
+
+fn command_from_path(name: &str) -> Option<PathBuf> {
+    let direct = PathBuf::from(name);
+    if direct.is_absolute() && direct.is_file() {
+        return Some(direct);
+    }
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths).map(|path| path.join(name)).find(|candidate| candidate.is_file())
+    })
+}
+
+fn python3_binary() -> Option<PathBuf> {
+    ["/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+        .or_else(|| command_from_path("python3"))
+}
+
+fn git_binary() -> Option<PathBuf> {
+    ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"]
+        .into_iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+        .or_else(|| command_from_path("git"))
+}
+
+fn command_failure_text(output: &Output) -> String {
+    let stderr = truncate_text(String::from_utf8_lossy(&output.stderr).trim());
+    if !stderr.is_empty() {
+        stderr
+    } else {
+        truncate_text(String::from_utf8_lossy(&output.stdout).trim())
+    }
+}
+
+fn run_bootstrap_command(command: &mut Command, context: &str) -> Result<(), String> {
+    let output = command.output().map_err(|error| format!("{} failed to start: {}", context, error))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let details = command_failure_text(&output);
+        if details.is_empty() {
+            Err(format!("{} failed with {:?}", context, output.status.code()))
+        } else {
+            Err(format!("{} failed: {}", context, details))
+        }
+    }
+}
+
+fn shell_single_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+fn write_gogdl_wrapper() -> Result<(), String> {
+    let wrapper = gogdl_wrapper_path();
+    ensure_parent(&wrapper)?;
+    let target = gogdl_venv_bin();
+    let script = format!("#!/bin/sh\nexec {} \"$@\"\n", shell_single_quote(&target));
+    fs::write(&wrapper, script).map_err(|error| format!("failed to write {}: {}", wrapper.display(), error))?;
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&wrapper)
+            .map_err(|error| format!("failed to stat {}: {}", wrapper.display(), error))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&wrapper, permissions)
+            .map_err(|error| format!("failed to mark {} executable: {}", wrapper.display(), error))?;
+    }
+    Ok(())
+}
+
+fn ensure_gogdl_available() -> Result<(), String> {
+    if gogdl_binary().is_some() {
+        return Ok(());
+    }
+    if gogdl_venv_bin().is_file() {
+        write_gogdl_wrapper()?;
+        if gogdl_binary().is_some() {
+            return Ok(());
+        }
+    }
+
+    fs::create_dir_all(tools_dir()).map_err(|error| format!("failed to create GOG tools dir: {}", error))?;
+    let python = python3_binary().ok_or_else(|| "python3 is required to prepare GOG support".to_string())?;
+    let git = git_binary().ok_or_else(|| "git is required to prepare GOG support".to_string())?;
+    let venv = gogdl_venv_dir();
+    let venv_python = venv.join("bin").join("python");
+    if !venv_python.is_file() {
+        let mut command = Command::new(&python);
+        command.arg("-m").arg("venv").arg(&venv);
+        run_bootstrap_command(&mut command, "GOG support environment setup")?;
+    }
+
+    let source = gogdl_source_dir();
+    if !source.join(".git").is_dir() {
+        if source.exists() {
+            fs::remove_dir_all(&source).map_err(|error| format!("failed to reset GOG support source: {}", error))?;
+        }
+        let mut command = Command::new(&git);
+        command
+            .arg("clone")
+            .arg("--depth")
+            .arg("1")
+            .arg("--recurse-submodules")
+            .arg(HEROIC_GOGDL_REPO_URL)
+            .arg(&source);
+        run_bootstrap_command(&mut command, "GOG support source setup")?;
+    } else {
+        let mut command = Command::new(&git);
+        command.arg("-C").arg(&source).arg("submodule").arg("update").arg("--init").arg("--recursive");
+        run_bootstrap_command(&mut command, "GOG support source refresh")?;
+    }
+
+    let mut command = Command::new(&venv_python);
+    command.arg("-m").arg("pip").arg("install").arg("--upgrade").arg(&source).env("PIP_DISABLE_PIP_VERSION_CHECK", "1");
+    run_bootstrap_command(&mut command, "GOG support install")?;
+    write_gogdl_wrapper()?;
+
+    let mut command = Command::new(gogdl_wrapper_path());
+    command.arg("--version");
+    run_bootstrap_command(&mut command, "GOG support verification")?;
+    Ok(())
 }
 
 fn gogdl_command() -> Result<Command, String> {
@@ -380,6 +527,7 @@ pub fn handle_initialize_prefix() -> Value {
 }
 
 fn initialize_prefix() -> Result<(), String> {
+    ensure_gogdl_available()?;
     let prefix = gog_prefix();
     fs::create_dir_all(&prefix).map_err(|error| format!("failed to create GOG prefix: {}", error))?;
     if prefix.join("drive_c").is_dir() {
