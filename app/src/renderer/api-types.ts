@@ -179,6 +179,12 @@ interface RuntimeManifestResponse {
   ok: boolean;
   schema: "metalsharp.runtime.manifest.v1";
   manifestPath: string;
+  runtimeInfoHelper?: {
+    path: string;
+    present: boolean;
+    invokesWine: false;
+    prints: string;
+  };
   expected: Record<string, unknown>;
   persisted: Record<string, unknown>;
   validation: { ok?: boolean; checks?: unknown[] };

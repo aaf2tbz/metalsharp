@@ -14,6 +14,7 @@ The manifest report covers:
 
 - MetalSharp backend version;
 - Wine version when `metalsharp-wine --version` is available;
+- runtime info helper path and presence;
 - runtime root;
 - Wine root;
 - host architecture/translation note;
@@ -65,12 +66,22 @@ artifacts.planned.vkd3d.d12.entries[]
 
 Each entry includes `filename`, `subdir`, `path`, `present`, `sha256`, and `size_bytes`, matching the required DXMT/M12 artifact-report shape.
 
+## Runtime Info Helper
+
+When the backend writes the persisted manifest it also installs a filesystem-only helper:
+
+```text
+~/.metalsharp/runtime/wine/bin/metalsharp-runtime-info
+```
+
+The helper is the command-line equivalent of `metalsharp-wine --metalsharp-runtime-info` without requiring the Wine binary to support that flag. It prints the persisted `metalsharp-runtime-manifest.json` with `/bin/cat`, supports `--json`, `--path`, and `--help`, and intentionally does not invoke Wine or launch any Windows process.
+
 ## Writer Helper
 
-The backend includes an atomic writer helper for future installer integration:
+The backend includes an atomic writer helper for installer integration:
 
 ```text
 write_expected_runtime_manifest_for(home)
 ```
 
-The endpoint itself is read-only. Installer/migration work can call the writer later after runtime installation or repair completes.
+The endpoint itself is read-only. Installer/migration work calls the writer after runtime installation or repair completes.

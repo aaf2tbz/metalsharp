@@ -6,6 +6,7 @@ use std::process::Command;
 
 const RUNTIME_MANIFEST_SCHEMA: &str = "metalsharp.runtime.manifest.v1";
 const RUNTIME_MANIFEST_FILE: &str = "metalsharp-runtime-manifest.json";
+const RUNTIME_INFO_HELPER: &str = "metalsharp-runtime-info";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeManifest {
@@ -51,10 +52,17 @@ fn runtime_manifest_report_for_with_wine_probe(home: &Path, probe_wine_version: 
     let persisted = read_persisted_manifest(&manifest_path);
     let validation = validate_runtime_manifest_for(home, &manifest);
 
+    let runtime_info_helper = runtime_info_helper_path_for(home);
     json!({
         "ok": validation.get("ok").and_then(|value| value.as_bool()).unwrap_or(false),
         "schema": RUNTIME_MANIFEST_SCHEMA,
         "manifestPath": manifest_path.to_string_lossy(),
+        "runtimeInfoHelper": {
+            "path": runtime_info_helper.to_string_lossy(),
+            "present": runtime_info_helper.is_file(),
+            "invokesWine": false,
+            "prints": "persisted runtime manifest JSON"
+        },
         "expected": manifest,
         "persisted": persisted,
         "validation": validation,
@@ -118,7 +126,48 @@ pub fn write_expected_runtime_manifest_for(home: &Path) -> Result<PathBuf, Strin
         serde_json::to_vec_pretty(&manifest).map_err(|error| format!("encode runtime manifest: {}", error))?;
     fs::write(&tmp, payload).map_err(|error| format!("write runtime manifest temp: {}", error))?;
     fs::rename(&tmp, &path).map_err(|error| format!("publish runtime manifest: {}", error))?;
+    write_runtime_info_helper_for(home)?;
     Ok(path)
+}
+
+pub fn runtime_info_helper_path_for(home: &Path) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(&home.to_path_buf())
+        .join("runtime")
+        .join("wine")
+        .join("bin")
+        .join(RUNTIME_INFO_HELPER)
+}
+
+pub fn write_runtime_info_helper_for(home: &Path) -> Result<PathBuf, String> {
+    let helper = runtime_info_helper_path_for(home);
+    let manifest = manifest_path_for(home);
+    if let Some(parent) = helper.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("create runtime info helper dir: {}", error))?;
+    }
+    let script = format!(
+        r#"#!/bin/sh
+set -eu
+manifest={manifest}
+case "${{1:---json}}" in
+  --json|--metalsharp-runtime-info) exec /bin/cat "$manifest" ;;
+  --path) printf '%s\n' "$manifest" ;;
+  --help|-h) printf '%s\n' 'usage: metalsharp-runtime-info [--json|--path|--help]' ;;
+  *) printf '%s\n' 'usage: metalsharp-runtime-info [--json|--path|--help]' >&2; exit 64 ;;
+esac
+"#,
+        manifest = shell_quote(&manifest.to_string_lossy())
+    );
+    fs::write(&helper, script).map_err(|error| format!("write runtime info helper: {}", error))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&helper)
+            .map_err(|error| format!("read runtime info helper metadata: {}", error))?
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&helper, permissions).map_err(|error| format!("chmod runtime info helper: {}", error))?;
+    }
+    Ok(helper)
 }
 
 pub fn validate_runtime_manifest_for(home: &Path, manifest: &RuntimeManifest) -> Value {
@@ -188,6 +237,10 @@ fn file_nonempty(path: &Path) -> bool {
     path.metadata().map(|meta| meta.is_file() && meta.len() > 0).unwrap_or(false)
 }
 
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +298,29 @@ mod tests {
         let parsed: RuntimeManifest = serde_json::from_str(&data).expect("parse manifest");
         assert_eq!(parsed.schema, RUNTIME_MANIFEST_SCHEMA);
         assert_eq!(parsed.canonical_m12_surface, "dxmt_m12");
+        let helper = runtime_info_helper_path_for(&home);
+        assert!(helper.is_file());
+        let helper_script = fs::read_to_string(&helper).expect("read helper");
+        assert!(helper_script.contains("/bin/cat"));
+        assert!(!helper_script.contains("metalsharp-wine"));
+        assert!(!helper_script.contains("wine --version"));
+        let helper_path_output = Command::new(&helper).arg("--path").output().expect("run helper --path");
+        assert!(helper_path_output.status.success());
+        assert_eq!(String::from_utf8_lossy(&helper_path_output.stdout).trim(), path.to_string_lossy());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn runtime_manifest_report_exposes_runtime_info_helper_without_invoking_wine() {
+        let home = test_home("helper-report");
+        let helper = write_runtime_info_helper_for(&home).expect("write helper");
+        let report = runtime_manifest_filesystem_report_for(&home);
+        assert_eq!(
+            report.pointer("/runtimeInfoHelper/path").and_then(|value| value.as_str()),
+            Some(helper.to_string_lossy().as_ref())
+        );
+        assert_eq!(report.pointer("/runtimeInfoHelper/present").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(report.pointer("/runtimeInfoHelper/invokesWine").and_then(|value| value.as_bool()), Some(false));
         let _ = fs::remove_dir_all(home);
     }
 }

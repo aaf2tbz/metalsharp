@@ -38,9 +38,13 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 2,
             title: "MetalSharp Wine Runtime Manifest",
-            status: "implemented_with_open_followups",
-            evidence: &["GET /runtime/manifest", "GET /runtime/diagnostics runtime.manifestOk"],
-            remaining: &["Expose a command-line metalsharp-wine --metalsharp-runtime-info equivalent if still desired."],
+            status: "implemented",
+            evidence: &[
+                "GET /runtime/manifest",
+                "GET /runtime/diagnostics runtime.manifestOk",
+                "~/.metalsharp/runtime/wine/bin/metalsharp-runtime-info prints persisted manifest without invoking Wine",
+            ],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 3,
