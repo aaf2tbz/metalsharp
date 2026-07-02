@@ -31,4 +31,8 @@ export function getRuntimeDiagnostics() {
   return api<RuntimeDiagnosticsResponse>("GET", "/runtime/diagnostics");
 }
 
+export function getLaunchValidation() {
+  return api<LaunchValidationResponse>("GET", "/diagnostics/launch-validation");
+}
+
 export { getAPI };

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api, getAPI, getRuntimeDiagnostics } from "../composables/useApi";
-import type { AppConfig, RuntimeDiagnosticsResponse, UpdateStatus } from "../api-types";
+import { api, getAPI, getLaunchValidation, getRuntimeDiagnostics } from "../composables/useApi";
+import type { AppConfig, LaunchValidationEntry, LaunchValidationResponse, RuntimeDiagnosticsResponse, UpdateStatus } from "../api-types";
 import IconTrash2 from "~icons/lucide/trash-2";
 
 interface CacheSummary {
@@ -39,6 +39,7 @@ const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
 const pipelineCache = ref<CacheSummary | null>(null);
 const runtimeDiagnostics = ref<RuntimeDiagnosticsResponse | null>(null);
+const launchValidation = ref<LaunchValidationResponse | null>(null);
 const runtimeDiagnosticsLoading = ref(false);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
@@ -48,6 +49,7 @@ onMounted(async () => {
   await refreshConfig();
   await refreshCacheSizes();
   await refreshRuntimeDiagnostics();
+  await refreshLaunchValidation();
 });
 
 async function refreshConfig() {
@@ -76,6 +78,12 @@ async function refreshRuntimeDiagnostics() {
   runtimeDiagnostics.value = result;
   runtimeDiagnosticsLoading.value = false;
   if (!result) toast.show("Runtime diagnostics unavailable", "error");
+}
+
+async function refreshLaunchValidation() {
+  const result = await getLaunchValidation();
+  launchValidation.value = result;
+  if (!result) toast.show("Launch validation matrix unavailable", "error");
 }
 
 function formatBytes(bytes: number): string {
@@ -301,6 +309,25 @@ function runtimeLaneStatusText(lane: RuntimeDiagnosticsResponse["lanes"]["entrie
   return lane.blockers.length ? lane.blockers.join(", ") : "Blocked";
 }
 
+function launchValidationBadgeClass(status?: LaunchValidationEntry["status"]): string {
+  if (status === "proven") return "badge-ok";
+  if (status === "filesystem_validated") return "badge-muted";
+  return "badge-warn";
+}
+
+function launchValidationStatusText(status?: LaunchValidationEntry["status"]): string {
+  if (status === "proven") return "Proven";
+  if (status === "filesystem_validated") return "Filesystem";
+  if (status === "policy_blocked") return "Policy Blocked";
+  return "Needs Proof";
+}
+
+function launchValidationTitle(entry: LaunchValidationEntry): string {
+  const limitations = entry.limitations.length ? entry.limitations.join(" · ") : "No limitations reported";
+  const next = entry.nextActions.length ? entry.nextActions[0] : "No next action reported";
+  return `${limitations}; next: ${next}`;
+}
+
 function toggleDeveloperMode(enabled: boolean) {
   developerMode.value = enabled;
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
@@ -520,6 +547,50 @@ function uninstallMetalsharp() {
           <button class="btn btn-secondary btn-sm" :disabled="runtimeDiagnosticsLoading" @click="refreshRuntimeDiagnostics">
             {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
           </button>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
+          <div class="settings-label">Launch Validation Matrix</div>
+          <div class="settings-desc">
+            Read-only proof matrix: receipts count as proven; filesystem checks still need controlled launch proof.
+          </div>
+          <div v-if="launchValidation?.invariants?.length" class="settings-desc runtime-next-actions">
+            {{ launchValidation.invariants[0] }}
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="runtimeDiagnosticBadgeClass(launchValidation?.ok)">
+            {{ launchValidation?.ok ? "Green" : "Proof Needed" }}
+          </span>
+          <span v-if="launchValidation" class="badge badge-ok">Proven {{ launchValidation.summary.proven }}</span>
+          <span v-if="launchValidation" class="badge badge-muted">Filesystem {{ launchValidation.summary.filesystemValidated }}</span>
+          <span v-if="launchValidation" class="badge badge-warn">Pending {{ launchValidation.summary.pending }}</span>
+          <button class="btn btn-secondary btn-sm" @click="refreshLaunchValidation">Refresh Matrix</button>
+        </div>
+      </div>
+      <div v-if="launchValidation" class="runtime-lane-grid" aria-label="Launch validation proof matrix">
+        <div
+          v-for="entry in launchValidation.entries"
+          :key="entry.id"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': entry.status === 'proven' }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">{{ entry.route }}</span>
+            <span class="badge" :class="launchValidationBadgeClass(entry.status)" :title="launchValidationTitle(entry)">
+              {{ launchValidationStatusText(entry.status) }}
+            </span>
+          </div>
+          <div class="runtime-lane-meta">
+            {{ entry.source }} · {{ entry.runtimeContractId }} · {{ entry.requiredEvidence.join(", ") }}
+          </div>
+          <div v-if="entry.limitations.length" class="runtime-lane-artifacts">
+            {{ entry.limitations[0] }}
+          </div>
+          <div v-if="entry.nextActions.length" class="runtime-lane-blockers">
+            {{ entry.nextActions[0] }}
+          </div>
         </div>
       </div>
       <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Native Mono/FNA platform readiness">

@@ -217,6 +217,36 @@ interface NativeMonoPlatformDoctor {
   next_actions: string[];
 }
 
+type LaunchValidationStatus = "proven" | "filesystem_validated" | "pending_launch_proof" | "policy_blocked";
+
+interface LaunchValidationEntry {
+  schema: "metalsharp.launch.validation.entry.v1";
+  id: string;
+  source: string;
+  route: string;
+  runtimeContractId: string;
+  status: LaunchValidationStatus;
+  requiredEvidence: string[];
+  evidence: Record<string, unknown>;
+  limitations: string[];
+  nextActions: string[];
+}
+
+interface LaunchValidationResponse {
+  ok: boolean;
+  schema: "metalsharp.launch.validation.matrix.v1";
+  readOnly: true;
+  summary: {
+    total: number;
+    proven: number;
+    pending: number;
+    filesystemValidated: number;
+    policyBlocked: number;
+  };
+  entries: LaunchValidationEntry[];
+  invariants: string[];
+}
+
 interface RuntimeDiagnosticsResponse {
   ok: boolean;
   schema: "metalsharp.runtime.diagnostics.v1";
