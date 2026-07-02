@@ -70,6 +70,29 @@ pub fn write_prefix_metadata(
     owner: &str,
     last_wineboot_update: Option<&Value>,
 ) -> Result<PathBuf, String> {
+    write_prefix_metadata_with_components(prefix, owner, last_wineboot_update, None)
+}
+
+pub fn record_installed_components(prefix: &Path, owner: &str, components: &[Value]) -> Result<PathBuf, String> {
+    let current = read_metadata(prefix).unwrap_or_else(|| json!({}));
+    let mut installed =
+        current.get("installedComponents").and_then(|value| value.as_array()).cloned().unwrap_or_default();
+    for component in components {
+        let component_id = component.get("id").and_then(|value| value.as_str());
+        if let Some(component_id) = component_id {
+            installed.retain(|existing| existing.get("id").and_then(|value| value.as_str()) != Some(component_id));
+        }
+        installed.push(component.clone());
+    }
+    write_prefix_metadata_with_components(prefix, owner, None, Some(Value::Array(installed)))
+}
+
+fn write_prefix_metadata_with_components(
+    prefix: &Path,
+    owner: &str,
+    last_wineboot_update: Option<&Value>,
+    installed_components: Option<Value>,
+) -> Result<PathBuf, String> {
     let path = metadata_path(prefix);
     let current = read_metadata(prefix).unwrap_or_else(|| json!({}));
     let metadata = json!({
@@ -86,6 +109,9 @@ pub fn write_prefix_metadata(
         "preservePolicy": preserve_policy_for(prefix, owner),
         "gamePayloadPolicy": game_payload_policy_for(prefix, owner),
         "lastWinebootUpdate": last_wineboot_update.cloned().or_else(|| current.get("lastWinebootUpdate").cloned()).unwrap_or(Value::Null),
+        "installedComponents": installed_components
+            .or_else(|| current.get("installedComponents").cloned())
+            .unwrap_or_else(|| json!([])),
         "receiptsDir": receipts_dir(prefix).to_string_lossy(),
     });
     if let Some(parent) = path.parent() {
@@ -176,6 +202,29 @@ mod tests {
         assert_eq!(metadata.get("schema").and_then(|value| value.as_str()), Some(PREFIX_SCHEMA));
         assert_eq!(metadata.pointer("/lastWinebootUpdate/outcome").and_then(|value| value.as_str()), Some("success"));
         assert!(latest_wineboot_receipt(&prefix).is_some());
+        let _ = fs::remove_dir_all(&prefix);
+    }
+
+    #[test]
+    fn records_and_preserves_installed_components() {
+        let prefix = temp_prefix("components");
+        record_installed_components(
+            &prefix,
+            "steam",
+            &[json!({
+                "id": "route-dll:d3d12.dll",
+                "kind": "route_dll",
+                "filename": "d3d12.dll",
+                "runtimeContractId": "m12_dxmt_m12",
+            })],
+        )
+        .expect("record component");
+        write_prefix_metadata(&prefix, "steam", None).expect("rewrite metadata");
+        let metadata = read_metadata(&prefix).expect("metadata");
+        assert_eq!(
+            metadata.pointer("/installedComponents/0/id").and_then(|value| value.as_str()),
+            Some("route-dll:d3d12.dll")
+        );
         let _ = fs::remove_dir_all(&prefix);
     }
 }

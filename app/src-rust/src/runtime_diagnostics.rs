@@ -584,6 +584,8 @@ fn prefix_metadata_entry(
     let latest_wineboot = crate::prefix_metadata::latest_wineboot_receipt(path)
         .or_else(|| persisted.as_ref().and_then(|value| value.get("lastWinebootUpdate").cloned()))
         .unwrap_or(serde_json::Value::Null);
+    let installed_components =
+        persisted.as_ref().and_then(|value| value.get("installedComponents").cloned()).unwrap_or_else(|| json!([]));
     json!({
         "schema": "metalsharp.prefix.v2",
         "id": id,
@@ -600,7 +602,7 @@ fn prefix_metadata_entry(
         "metadataPersisted": persisted.is_some(),
         "persisted": persisted,
         "lastWinebootUpdate": latest_wineboot,
-        "installedComponents": [],
+        "installedComponents": installed_components,
         "preservePolicy": preserve_policy,
         "gamePayloadPolicy": game_payload_policy,
         "notes": notes,

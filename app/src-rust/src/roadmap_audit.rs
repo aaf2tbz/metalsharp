@@ -49,9 +49,10 @@ fn phases() -> Vec<PhaseAudit> {
                 "GET /runtime/diagnostics prefixMetadata schema metalsharp.prefix.metadata.v2.preview",
                 "<prefix>/.metalsharp/prefix-metadata-v2.json",
                 "<prefix>/.metalsharp/receipts/wineboot-*.json",
+                "prefix metadata installedComponents records route-DLL staging",
                 "GET /update/migrate/policy",
             ],
-            remaining: &["Broaden prefix metadata installedComponents persistence beyond wineboot decisions."],
+            remaining: &["Broaden installedComponents persistence to additional source-owned prefix mutations as they become mutating paths."],
         },
         PhaseAudit {
             phase: 4,

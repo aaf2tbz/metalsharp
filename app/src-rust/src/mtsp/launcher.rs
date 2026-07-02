@@ -1343,12 +1343,13 @@ fn persist_prefix_route_dll_staging_receipt(
     let dir = prefix.join(".metalsharp").join("receipts");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("route-dll-staging-{}-{}.json", now, recipe.pipeline.to_legacy_method()));
+    let runtime_contract_id = crate::runtime_contracts::runtime_contract_id_for_pipeline(recipe.pipeline);
     let receipt = serde_json::json!({
         "schema": "metalsharp.prefix.route_dll_staging.receipt.v1",
         "timestamp": now,
         "prefix": prefix.to_string_lossy(),
         "pipeline": recipe.pipeline,
-        "runtimeContractId": crate::runtime_contracts::runtime_contract_id_for_pipeline(recipe.pipeline),
+        "runtimeContractId": runtime_contract_id,
         "appId": recipe.appid,
         "gameDir": recipe.game_dir.as_ref().map(|path| path.to_string_lossy().to_string()),
         "exePath": recipe.exe_path.as_ref().map(|path| path.to_string_lossy().to_string()),
@@ -1357,7 +1358,40 @@ fn persist_prefix_route_dll_staging_receipt(
         "dlls": staged,
     });
     std::fs::write(&path, serde_json::to_string_pretty(&receipt)?)?;
+    let components: Vec<serde_json::Value> = staged
+        .iter()
+        .filter_map(|dll| {
+            let filename = dll.get("filename")?.as_str()?;
+            Some(serde_json::json!({
+                "id": format!("route-dll:{}", filename),
+                "kind": "route_dll",
+                "filename": filename,
+                "pipeline": recipe.pipeline,
+                "runtimeContractId": runtime_contract_id,
+                "path": dll.get("destPath").cloned().unwrap_or(serde_json::Value::Null),
+                "sha256": dll.get("destSha256").cloned().unwrap_or(serde_json::Value::Null),
+                "installedAt": now,
+                "receipt": path.to_string_lossy(),
+            }))
+        })
+        .collect();
+    if !components.is_empty() {
+        crate::prefix_metadata::record_installed_components(prefix, prefix_route_metadata_owner(prefix), &components)
+            .map_err(std::io::Error::other)?;
+    }
     Ok(path)
+}
+
+fn prefix_route_metadata_owner(prefix: &Path) -> &'static str {
+    if prefix.ends_with(Path::new("prefix-steam")) {
+        "steam"
+    } else if prefix.ends_with(Path::new("bottles/gog-prefix/prefix")) {
+        "gog"
+    } else if prefix.ends_with(Path::new("prefix-gptk")) {
+        "gptk"
+    } else {
+        "mtsp"
+    }
 }
 
 fn wine_debug_value() -> String {
@@ -5987,6 +6021,14 @@ mod tests {
             Some("metalsharp.prefix.route_dll_staging.receipt.v1")
         );
         assert_eq!(receipt_json.get("stagedCount").and_then(|value| value.as_u64()), Some(6));
+        let metadata = crate::prefix_metadata::read_metadata(&prefix).expect("prefix metadata");
+        assert_eq!(metadata.get("schema").and_then(|value| value.as_str()), Some("metalsharp.prefix.v2"));
+        let components = metadata.get("installedComponents").and_then(|value| value.as_array()).unwrap();
+        assert_eq!(components.len(), 6);
+        assert!(components.iter().any(|component| {
+            component.get("id").and_then(|value| value.as_str()) == Some("route-dll:d3d12.dll")
+                && component.get("runtimeContractId").and_then(|value| value.as_str()) == Some("m12_dxmt_m12")
+        }));
 
         let _ = std::fs::remove_dir_all(root);
     }
