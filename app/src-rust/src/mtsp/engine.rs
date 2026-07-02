@@ -339,7 +339,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "vulkan",
                 experimental: true,
                 requires_wine: true,
-                wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                wine_overrides: Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxvk/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxvk/x86_64-windows", "lib/dxvk/i386-windows"],
                 deploy_dlls: vec![
@@ -908,6 +908,7 @@ mod tests {
         assert!(dxvk9.experimental);
         assert!(dxvk9.requires_wine);
         assert_eq!(dxvk9.shader_cache_subdir, Some("dxvk-d9"));
+        assert_eq!(dxvk9.wine_overrides, Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
         assert!(dxvk9.deploy_dlls.iter().any(|dll| dll.filename == "d3d9.dll"));
         assert!(dxvk9.deploy_dlls.iter().any(|dll| dll.filename == "dxgi.dll"));
         assert!(dxvk9.deploy_dlls.iter().all(|dll| dll.source_subpath.contains("dxvk")));

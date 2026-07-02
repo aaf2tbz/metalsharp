@@ -325,6 +325,45 @@ pub enum InstallerKind {
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BottleRouteEnv {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BottleRouteDll {
+    pub source_subpath: String,
+    pub filename: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest_filename: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BottleRouteRule {
+    pub schema_version: u32,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appid: Option<u32>,
+    pub pipeline: String,
+    pub pipeline_name: String,
+    pub runtime_profile: RuntimeProfile,
+    pub graphics_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wine_overrides: Option<String>,
+    #[serde(default)]
+    pub winedllpath_dirs: Vec<String>,
+    #[serde(default)]
+    pub dyld_paths: Vec<String>,
+    #[serde(default)]
+    pub deploy_dlls: Vec<BottleRouteDll>,
+    #[serde(default)]
+    pub env: Vec<BottleRouteEnv>,
+    #[serde(default)]
+    pub launch_args: Vec<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BottleManifest {
     pub id: String,
     pub name: String,
@@ -337,6 +376,8 @@ pub struct BottleManifest {
     pub runtime_profile: RuntimeProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_pipeline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_rule: Option<BottleRouteRule>,
     #[serde(default)]
     pub installed_components: Vec<RuntimeComponent>,
     pub source_installer_path: Option<String>,
@@ -484,6 +525,8 @@ pub struct SteamRuntimeDiagnostic {
     pub bottle_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_rule: Option<BottleRouteRule>,
     pub pipeline: crate::mtsp::engine::PipelineId,
     pub runtime_profile: RuntimeProfile,
     pub prefix_path: String,
@@ -703,6 +746,7 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
     refresh_dxmt_runtime_before_save(&mut persisted);
+    refresh_bottle_route_rule_before_save(&mut persisted);
     let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
@@ -815,7 +859,13 @@ fn refresh_mono_fna_components_before_save(manifest: &mut BottleManifest) {
 }
 
 fn manifest_preferred_pipeline(manifest: &BottleManifest) -> Option<crate::mtsp::engine::PipelineId> {
-    match manifest.preferred_pipeline.as_deref().and_then(crate::mtsp::engine::PipelineId::from_str_flexible) {
+    let saved_route_pipeline = manifest
+        .route_rule
+        .as_ref()
+        .and_then(|rule| crate::mtsp::engine::PipelineId::from_str_flexible(&rule.pipeline));
+    let legacy_preference =
+        manifest.preferred_pipeline.as_deref().and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+    match saved_route_pipeline.or(legacy_preference) {
         Some(crate::mtsp::engine::PipelineId::Dxmt) | None => None,
         Some(pipeline) => Some(pipeline),
     }
@@ -839,6 +889,78 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::MacSteam => "mac_steam",
         crate::mtsp::engine::PipelineId::WineBare => "wine_bare",
     }
+}
+
+fn build_bottle_route_rule(
+    appid: Option<u32>,
+    pipeline: crate::mtsp::engine::PipelineId,
+    runtime_profile: RuntimeProfile,
+    updated_at: &str,
+) -> BottleRouteRule {
+    let node = crate::mtsp::engine::get_pipeline(pipeline);
+    BottleRouteRule {
+        schema_version: 1,
+        source: "bottle_saved_preference".to_string(),
+        appid,
+        pipeline: pipeline_preference_id(pipeline).to_string(),
+        pipeline_name: node.name.to_string(),
+        runtime_profile,
+        graphics_backend: node.graphics_backend.to_string(),
+        wine_overrides: node.wine_overrides.map(|overrides| overrides.to_string()),
+        winedllpath_dirs: node.winedllpath_dirs.iter().map(|path| path.to_string()).collect(),
+        dyld_paths: node.dyld_paths.iter().map(|path| path.to_string()).collect(),
+        deploy_dlls: node
+            .deploy_dlls
+            .iter()
+            .map(|dll| BottleRouteDll {
+                source_subpath: dll.source_subpath.to_string(),
+                filename: dll.filename.to_string(),
+                dest_filename: dll.dest_filename.map(|name| name.to_string()),
+            })
+            .collect(),
+        env: node
+            .env_vars
+            .iter()
+            .map(|var| BottleRouteEnv { key: var.key.to_string(), value: var.value.to_string() })
+            .collect(),
+        launch_args: appid
+            .map(|id| crate::mtsp::recipe::effective_launch_args(id, node))
+            .unwrap_or_else(|| node.launch_args.iter().map(|arg| arg.to_string()).collect()),
+        updated_at: if updated_at.is_empty() { timestamp_secs() } else { updated_at.to_string() },
+    }
+}
+
+fn refresh_bottle_route_rule_before_save(manifest: &mut BottleManifest) {
+    let preferred_pipeline = manifest
+        .preferred_pipeline
+        .as_deref()
+        .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
+        .filter(|pipeline| *pipeline != crate::mtsp::engine::PipelineId::Dxmt);
+
+    let (appid, pipeline, runtime_profile) = if manifest.bottle_type == BottleType::Steam {
+        let Some(appid) = manifest.steam_app_id else {
+            manifest.route_rule = None;
+            return;
+        };
+        let Some(pipeline) = preferred_pipeline else {
+            // Steam "Auto" means shipped/static rules are authoritative again;
+            // do not keep a stale saved overlay from a previous explicit
+            // selection.
+            manifest.route_rule = None;
+            return;
+        };
+        (Some(appid), pipeline, runtime_profile_for_app_pipeline(appid, pipeline))
+    } else {
+        // Non-Steam bottles do not have appid TOML fallback rules. Their saved
+        // runtime profile is the dynamic route rule, covering installer,
+        // Sharp-app, GOG/imported, WineBare, FNA/Mono, DXMT, DXVK, VKD3D, and
+        // D3DMetal bottle choices with the same persisted launch-shape snapshot.
+        let pipeline =
+            preferred_pipeline.unwrap_or_else(|| runtime_profile_definition(manifest.runtime_profile).launch_pipeline);
+        (manifest.steam_app_id, pipeline, manifest.runtime_profile)
+    };
+
+    manifest.route_rule = Some(build_bottle_route_rule(appid, pipeline, runtime_profile, &manifest.updated_at));
 }
 
 fn effective_pipeline_for_bottle_refresh(
@@ -995,6 +1117,9 @@ pub fn steam_route_contracts() -> Vec<SteamRouteContract> {
         steam_route_contract_for(M10),
         steam_route_contract_for(M11),
         steam_route_contract_for(M12),
+        steam_route_contract_for(DxvkD9),
+        steam_route_contract_for(DxvkD11),
+        steam_route_contract_for(Vkd3dD12),
         steam_route_contract_for(M13),
         steam_route_contract_for(FnaArm64),
         steam_route_contract_for(WineBare),
@@ -1067,6 +1192,7 @@ fn ensure_installer_bottle_with_id(
         arch: classification.arch,
         runtime_profile: classification.runtime_profile,
         preferred_pipeline: None,
+        route_rule: None,
         installed_components: default_components_for(classification.runtime_profile),
         source_installer_path: Some(source_installer.to_string_lossy().to_string()),
         installer_kind: Some(classification.installer_kind),
@@ -1138,6 +1264,7 @@ fn ensure_steam_game_bottle_inner(
         arch: BottleArch::Wow64,
         runtime_profile,
         preferred_pipeline: None,
+        route_rule: None,
         installed_components: default_components_for(runtime_profile),
         source_installer_path: None,
         installer_kind: None,
@@ -1169,6 +1296,7 @@ fn ensure_steam_game_bottle_inner(
     manifest.health =
         if game_dir.map(|dir| dir.exists()).unwrap_or(false) { BottleHealth::Ready } else { BottleHealth::New };
     manifest.updated_at = now;
+    refresh_bottle_route_rule_before_save(&mut manifest);
     save_bottle(&manifest)?;
     let _ = save_steam_compatdata(&manifest, effective_pipeline);
     Ok(manifest)
@@ -1505,12 +1633,14 @@ pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleMa
         manifest.preferred_pipeline = pipeline.user_selectable_id().map(|id| id.to_string());
     }
     manifest.updated_at = timestamp_secs();
+    refresh_bottle_route_rule_before_save(&mut manifest);
     save_bottle(&manifest)?;
     if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
         manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
         manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
         manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
         manifest.updated_at = timestamp_secs();
+        refresh_bottle_route_rule_before_save(&mut manifest);
         save_bottle(&manifest)?;
     }
     if let Some(appid) = manifest.steam_app_id {
@@ -1590,12 +1720,14 @@ pub fn edit_bottle(
             rebuild_components_for_profile(&manifest.installed_components, manifest.runtime_profile);
     }
     manifest.updated_at = timestamp_secs();
+    refresh_bottle_route_rule_before_save(&mut manifest);
     save_bottle(&manifest)?;
     if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
         manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
         manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
         manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
         manifest.updated_at = timestamp_secs();
+        refresh_bottle_route_rule_before_save(&mut manifest);
         save_bottle(&manifest)?;
     }
     if let Some(appid) = manifest.steam_app_id {
@@ -3188,6 +3320,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
         bottle_name: bottle.as_ref().map(|b| b.name.clone()),
         preferred_pipeline: bottle.as_ref().and_then(|b| b.preferred_pipeline.clone()),
+        route_rule: bottle.as_ref().and_then(|b| b.route_rule.clone()),
         pipeline,
         runtime_profile: profile,
         prefix_path: prefix.to_string_lossy().to_string(),
@@ -6158,6 +6291,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M11,
             preferred_pipeline: Some("dxmt".into()),
+            route_rule: None,
             installed_components: Vec::new(),
             source_installer_path: None,
             installer_kind: None,
@@ -6194,6 +6328,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M9,
             preferred_pipeline: Some("m9".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
@@ -6234,6 +6369,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M11,
             preferred_pipeline: Some("m11".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M11),
             source_installer_path: None,
             installer_kind: None,
@@ -6276,6 +6412,7 @@ mod tests {
             arch: BottleArch::Win64,
             runtime_profile: RuntimeProfile::M12,
             preferred_pipeline: Some("m12".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M12),
             source_installer_path: None,
             installer_kind: None,
@@ -6323,6 +6460,7 @@ mod tests {
                 arch: BottleArch::Win64,
                 runtime_profile: contract.runtime_profile,
                 preferred_pipeline: Some(contract.pipeline.to_string()),
+                route_rule: None,
                 installed_components: default_components_for(contract.runtime_profile),
                 source_installer_path: None,
                 installer_kind: None,
@@ -6367,9 +6505,102 @@ mod tests {
         // The contract table is the protected-lane gate. These ids must all be
         // present so a future refactor cannot silently drop a lane.
         let ids: Vec<&'static str> = steam_route_contracts().iter().map(|c| c.pipeline).collect();
-        for required in ["m9", "m10", "m11", "m12", "fna_arm64", "wine_bare", "d3dmetal"] {
+        for required in
+            ["m9", "m10", "m11", "m12", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "fna_arm64", "wine_bare", "d3dmetal"]
+        {
             assert!(ids.contains(&required), "route contract table must cover {} (got {:?})", required, ids);
         }
+    }
+
+    #[test]
+    fn saved_dxvk_d9_route_rule_carries_dxgi_override_and_deploy() {
+        let rule = build_bottle_route_rule(
+            Some(387290),
+            crate::mtsp::engine::PipelineId::DxvkD9,
+            RuntimeProfile::DxvkD9,
+            "123",
+        );
+
+        assert_eq!(rule.pipeline, "dxvk_d9");
+        assert_eq!(rule.wine_overrides.as_deref(), Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+        let dlls = rule.deploy_dlls.iter().map(|dll| dll.filename.as_str()).collect::<Vec<_>>();
+        assert!(dlls.contains(&"d3d9.dll"));
+        assert!(dlls.contains(&"dxgi.dll"));
+    }
+
+    #[test]
+    fn auto_preference_clears_stale_bottle_route_overlay() {
+        let mut manifest = BottleManifest {
+            id: steam_game_bottle_id(387290),
+            name: "Ori".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(387290),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            preferred_pipeline: None,
+            route_rule: Some(build_bottle_route_rule(
+                Some(387290),
+                crate::mtsp::engine::PipelineId::DxvkD11,
+                RuntimeProfile::DxvkD11,
+                "123",
+            )),
+            installed_components: default_components_for(RuntimeProfile::M11),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        refresh_bottle_route_rule_before_save(&mut manifest);
+        assert!(manifest.route_rule.is_none());
+    }
+
+    #[test]
+    fn non_steam_saved_runtime_profile_persists_route_overlay() {
+        let mut manifest = BottleManifest {
+            id: "installer_dxvk_probe".into(),
+            name: "DXVK Probe".into(),
+            custom_name: None,
+            bottle_type: BottleType::Installer,
+            steam_app_id: None,
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::DxvkD11,
+            preferred_pipeline: None,
+            route_rule: None,
+            installed_components: default_components_for(RuntimeProfile::DxvkD11),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        refresh_bottle_route_rule_before_save(&mut manifest);
+        let rule = manifest.route_rule.expect("non-Steam bottle profile should create saved route rule");
+        assert_eq!(rule.pipeline, "dxvk_d11");
+        assert_eq!(rule.runtime_profile, RuntimeProfile::DxvkD11);
+        assert_eq!(
+            rule.wine_overrides.as_deref(),
+            Some("d3d10,d3d10_1,d3d11,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
     }
 
     #[test]
@@ -6798,6 +7029,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::FnaX86,
             preferred_pipeline: Some("fna_arm64".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::FnaX86),
             source_installer_path: None,
             installer_kind: None,
@@ -6855,6 +7087,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::Plain,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: Vec::new(),
             source_installer_path: None,
             installer_kind: Some(InstallerKind::Msi),
@@ -6895,6 +7128,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::FnaX86,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: vec![RuntimeComponent { id: "xna".into(), state: ComponentState::Missing }],
             source_installer_path: None,
             installer_kind: None,
@@ -7086,6 +7320,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M9,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
@@ -7117,6 +7352,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M9,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
@@ -7166,6 +7402,7 @@ mod tests {
             arch: BottleArch::Win64,
             runtime_profile: RuntimeProfile::D3DMetal,
             preferred_pipeline: Some("d3dmetal".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::D3DMetal),
             source_installer_path: None,
             installer_kind: None,
@@ -7201,6 +7438,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::GameInstall,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::GameInstall),
             source_installer_path: None,
             installer_kind: Some(InstallerKind::Exe),
