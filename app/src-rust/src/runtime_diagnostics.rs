@@ -16,6 +16,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
     let wine_root = runtime_root.join("wine");
     let steam_prefix = ms_home.join("prefix-steam");
     let gog_prefix = ms_home.join("bottles").join("gog-prefix").join("prefix");
+    let gptk_prefix = ms_home.join("prefix-gptk");
 
     let contracts = crate::runtime_contracts::runtime_lane_contracts();
     let available_lanes: Vec<_> = contracts
@@ -100,6 +101,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
             "manifest": manifest,
         },
         "prefixes": prefix_report,
+        "prefixMetadata": prefix_metadata_report(&manifest, &steam_prefix, &gog_prefix, &gptk_prefix),
         "sources": source_report,
         "nativeMono": native_mono_report.clone(),
         "vulkan": vulkan_report,
@@ -527,6 +529,77 @@ fn vulkan_icd_report(icd_dir: &Path, moltenvk_runtime: &Path) -> Value {
     })
 }
 
+fn prefix_metadata_report(manifest: &Value, steam_prefix: &Path, gog_prefix: &Path, gptk_prefix: &Path) -> Value {
+    let wine_runtime_version = manifest
+        .get("expected")
+        .and_then(|expected| expected.get("wineVersion"))
+        .or_else(|| manifest.get("persisted").and_then(|persisted| persisted.get("wineVersion")))
+        .and_then(|value| value.as_str())
+        .map(str::to_owned);
+    json!({
+        "schema": "metalsharp.prefix.metadata.v2.preview",
+        "readOnly": true,
+        "entries": [
+            prefix_metadata_entry(
+                "steam",
+                "steam",
+                steam_prefix,
+                wine_runtime_version.as_deref(),
+                "steam-metadata-only",
+                "external",
+                "Wine Steam shared session prefix; preserve metadata/manifests/config/registry/DLLs and exclude game payloads during migration."
+            ),
+            prefix_metadata_entry(
+                "gog",
+                "gog",
+                gog_prefix,
+                wine_runtime_version.as_deref(),
+                "preserve-if-present",
+                "source-owned-prefix",
+                "Dedicated GOGDL source prefix; preserve full prefix only when present and never alias prefix-steam."
+            ),
+            prefix_metadata_entry(
+                "gptk",
+                "gptk",
+                gptk_prefix,
+                None,
+                "preserve-if-present",
+                "external-gptk-prefix",
+                "Homebrew GPTK-owned prefix; managed separately from DXMT/Wine surfaces and never silently mixed with prefix-steam."
+            ),
+        ],
+    })
+}
+
+fn prefix_metadata_entry(
+    id: &str,
+    owner: &str,
+    path: &Path,
+    wine_runtime_version: Option<&str>,
+    preserve_policy: &str,
+    game_payload_policy: &str,
+    notes: &str,
+) -> Value {
+    json!({
+        "schema": "metalsharp.prefix.v2",
+        "id": id,
+        "owner": owner,
+        "path": path.to_string_lossy(),
+        "present": path.is_dir(),
+        "driveCPresent": path.join("drive_c").is_dir(),
+        "systemRegPresent": path.join("system.reg").is_file(),
+        "userRegPresent": path.join("user.reg").is_file(),
+        "canonicalPath": fs_canonicalize_if_exists(path).as_ref().map(|path| path.to_string_lossy().to_string()),
+        "containsSymlink": path_contains_symlink_below(path.parent().unwrap_or(Path::new("/")), path),
+        "wineRuntimeVersion": wine_runtime_version,
+        "lastWinebootUpdate": serde_json::Value::Null,
+        "installedComponents": [],
+        "preservePolicy": preserve_policy,
+        "gamePayloadPolicy": game_payload_policy,
+        "notes": notes,
+    })
+}
+
 fn prefix_policy_report(steam_prefix: &Path, gog_prefix: &Path) -> Value {
     let steam_prefix = normalize_path(steam_prefix);
     let gog_prefix = normalize_path(gog_prefix);
@@ -763,6 +836,49 @@ mod tests {
             .and_then(|value| value.as_str())
             .expect("gog path")
             .ends_with(".metalsharp/bottles/gog-prefix/prefix"));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_report_prefix_metadata_v2_preview() {
+        let home = test_home("prefix-metadata");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_home.join("prefix-steam/drive_c")).expect("create steam drive_c");
+        fs::write(ms_home.join("prefix-steam/system.reg"), b"registry").expect("write system reg");
+        fs::create_dir_all(ms_home.join("bottles/gog-prefix/prefix/drive_c")).expect("create gog drive_c");
+        let report = runtime_diagnostics_report_for(&home);
+        let metadata = report.get("prefixMetadata").expect("prefix metadata");
+        assert_eq!(
+            metadata.get("schema").and_then(|value| value.as_str()),
+            Some("metalsharp.prefix.metadata.v2.preview")
+        );
+        assert_eq!(metadata.get("readOnly").and_then(|value| value.as_bool()), Some(true));
+        let entries = metadata.get("entries").and_then(|value| value.as_array()).expect("prefix entries");
+        let steam = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("steam"))
+            .expect("steam metadata");
+        assert_eq!(steam.get("schema").and_then(|value| value.as_str()), Some("metalsharp.prefix.v2"));
+        assert_eq!(steam.get("owner").and_then(|value| value.as_str()), Some("steam"));
+        assert_eq!(steam.get("present").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(steam.get("driveCPresent").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(steam.get("preservePolicy").and_then(|value| value.as_str()), Some("steam-metadata-only"));
+        assert_eq!(steam.get("gamePayloadPolicy").and_then(|value| value.as_str()), Some("external"));
+        let gog = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("gog"))
+            .expect("gog metadata");
+        assert_eq!(gog.get("preservePolicy").and_then(|value| value.as_str()), Some("preserve-if-present"));
+        assert!(gog
+            .get("path")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .ends_with("bottles/gog-prefix/prefix"));
+        let gptk = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("gptk"))
+            .expect("gptk metadata");
+        assert_eq!(gptk.get("gamePayloadPolicy").and_then(|value| value.as_str()), Some("external-gptk-prefix"));
         let _ = fs::remove_dir_all(home);
     }
 

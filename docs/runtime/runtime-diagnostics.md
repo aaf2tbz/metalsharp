@@ -86,6 +86,7 @@ Top-level fields:
 - `contracts` — contract counts and canonical M12 contract summary.
 - `runtime` — Wine/DXMT/M12/manifest readiness.
 - `prefixes` — Steam/GOG prefix separation report.
+- `prefixMetadata` — read-only Phase 3 prefix-v2 preview for Steam, GOG, and GPTK prefixes. Entries report owner, path, presence, `drive_c`/registry state, canonical path, preserve policy, game payload policy, and notes without creating or winebooting prefixes.
 - `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
 - `nativeMono` — filesystem-only Native Mono/FNA platform doctor. It reports `native_mono_arm64` and `native_mono_x86` Mono binary presence, Mach-O architecture match, required FNA/FNA3D/FAudio/SDL2/Carbon/HiView/Kernel32 support inventory, optional shims, and non-mutating next actions.
 - `vulkan` — filesystem-only Vulkan-family doctor. It checks canonical `runtime/wine/lib/dxvk`, `runtime/wine/lib/vkd3d`, required MoltenVK/VKD3D sidecars, MoltenVK ICD JSON paths, and DXVK state-cache path writability inferred from permission bits without launching Wine/Vulkan or creating probe files. It also reports non-blocking `limitations` for filesystem-only coverage, unproven MoltenVK feature level, and the rule that VKD3D-Proton must remain a fallback below M12/dxmt_m12 until game proof exists.
