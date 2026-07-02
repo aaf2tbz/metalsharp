@@ -13,7 +13,7 @@
 
 ---
 
-MetalSharp is an application designed to run Windows Steam and Windows Steam games natively on Apple Silicon macOS. MetalSharp builds and includes its own custom Wine 11.5 runtime, game launch rules, custom DXMT build, runtime bottles, and repair tooling.
+MetalSharp is an application designed to run Windows Steam and Windows Steam games natively on Apple Silicon macOS. MetalSharp builds and includes its own custom Wine 11.5 runtime, game launch rules, custom DXMT build, runtime bottles, and repair tooling. New: GOG compatability! Metalsharp can now install/manage/launch GOG games, all from within the sharp library. 
 
 <img width="1012" height="912" alt="Screenshot 2026-07-01 at 4 23 37 AM" src="https://github.com/user-attachments/assets/2ebc2664-a847-437c-a10e-076dc2beb599" />
 
