@@ -521,6 +521,51 @@ pub fn handle_runtime_contracts() -> Value {
     })
 }
 
+pub fn handle_runtime_contract_reference() -> Value {
+    let contracts = runtime_lane_contracts();
+    json!({
+        "ok": true,
+        "schema": "metalsharp.runtime.contracts.reference.v1",
+        "readOnly": true,
+        "generatedFrom": "/runtime/contracts",
+        "columns": ["id", "status", "family", "sources", "prefixPolicy", "runtimeSurfaces", "shaderCache", "fallbacks"],
+        "markdown": runtime_contract_reference_markdown(&contracts),
+        "rows": contracts.iter().map(runtime_contract_reference_row).collect::<Vec<_>>(),
+    })
+}
+
+fn runtime_contract_reference_row(contract: &RuntimeLaneContract) -> Value {
+    json!({
+        "id": contract.id,
+        "name": contract.name,
+        "status": contract.status,
+        "family": contract.family,
+        "sources": contract.source_scopes,
+        "prefixPolicy": contract.prefix_policy,
+        "runtimeSurfaces": contract.runtime_surface_paths,
+        "shaderCache": contract.shader_cache_lane,
+        "fallbacks": contract.fallback_lanes,
+    })
+}
+
+fn runtime_contract_reference_markdown(contracts: &[RuntimeLaneContract]) -> String {
+    let mut out = String::from("| id | status | family | sources | prefix policy | runtime surfaces | shader cache | fallbacks |\n|---|---|---|---|---|---|---|---|\n");
+    for contract in contracts {
+        out.push_str(&format!(
+            "| `{}` | {:?} | {} | {} | {} | {} | {} | {} |\n",
+            contract.id,
+            contract.status,
+            contract.family,
+            contract.source_scopes.join(", "),
+            contract.prefix_policy,
+            contract.runtime_surface_paths.join("<br>"),
+            contract.shader_cache_lane.unwrap_or(""),
+            contract.fallback_lanes.join(", "),
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,6 +621,28 @@ mod tests {
             );
         }
         assert!(docs.contains("Backend consistency guard"));
+    }
+
+    #[test]
+    fn runtime_contract_reference_is_generated_from_backend_contracts() {
+        let reference = handle_runtime_contract_reference();
+        assert_eq!(
+            reference.get("schema").and_then(|value| value.as_str()),
+            Some("metalsharp.runtime.contracts.reference.v1")
+        );
+        assert_eq!(reference.get("readOnly").and_then(|value| value.as_bool()), Some(true));
+        let rows = reference.get("rows").and_then(|value| value.as_array()).expect("rows");
+        let contracts = runtime_lane_contracts();
+        assert_eq!(rows.len(), contracts.len());
+        let markdown = reference.get("markdown").and_then(|value| value.as_str()).expect("markdown");
+        for contract in contracts {
+            assert!(markdown.contains(&format!("`{}`", contract.id)), "missing {} in markdown", contract.id);
+            assert!(
+                rows.iter().any(|row| row.get("id").and_then(|value| value.as_str()) == Some(contract.id)),
+                "missing {} row",
+                contract.id
+            );
+        }
     }
 
     #[test]

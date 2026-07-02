@@ -23,6 +23,10 @@ export function getRuntimeContracts() {
   return api<RuntimeContractsResponse>("GET", "/runtime/contracts");
 }
 
+export function getRuntimeContractReference() {
+  return api<RuntimeContractReferenceResponse>("GET", "/runtime/contracts/reference");
+}
+
 export function getRuntimeManifest() {
   return api<RuntimeManifestResponse>("GET", "/runtime/manifest");
 }

@@ -175,6 +175,26 @@ interface RuntimeContractsResponse {
   contracts: RuntimeLaneContract[];
 }
 
+interface RuntimeContractReferenceResponse {
+  ok: boolean;
+  schema: "metalsharp.runtime.contracts.reference.v1";
+  readOnly: true;
+  generatedFrom: "/runtime/contracts";
+  columns: string[];
+  markdown: string;
+  rows: Array<{
+    id: string;
+    name: string;
+    status: string;
+    family: string;
+    sources: string[];
+    prefixPolicy: string;
+    runtimeSurfaces: string[];
+    shaderCache?: string | null;
+    fallbacks: string[];
+  }>;
+}
+
 interface RuntimeManifestResponse {
   ok: boolean;
   schema: "metalsharp.runtime.manifest.v1";

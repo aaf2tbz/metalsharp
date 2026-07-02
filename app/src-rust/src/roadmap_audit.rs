@@ -26,14 +26,15 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 1,
             title: "Runtime Contract Unification",
-            status: "implemented_with_open_followups",
+            status: "implemented",
             evidence: &[
                 "GET /runtime/contracts",
+                "GET /runtime/contracts/reference backend-generated full reference table",
                 "GET /mtsp/pipelines includes runtimeContractId",
                 "GET /source-adapters maps source routes to runtimeContractIds",
                 "runtime_contracts::tests::public_runtime_contract_docs_list_every_backend_lane",
             ],
-            remaining: &["Generate a full reference table from backend contracts if desired."],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 2,

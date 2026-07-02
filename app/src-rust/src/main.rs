@@ -1042,6 +1042,9 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             resp(200, json!({ "ok": true, "contracts": bottles::steam_route_contracts() }))
         },
         (Method::Get, "/runtime/contracts") => resp(200, runtime_contracts::handle_runtime_contracts()),
+        (Method::Get, "/runtime/contracts/reference") => {
+            resp(200, runtime_contracts::handle_runtime_contract_reference())
+        },
         (Method::Get, "/runtime/manifest") => resp(200, runtime_manifest::handle_runtime_manifest()),
         (Method::Get, "/runtime/diagnostics") => resp(200, runtime_diagnostics::handle_runtime_diagnostics()),
         (Method::Get, "/diagnostics/gog") => resp(200, gog::handle_doctor()),

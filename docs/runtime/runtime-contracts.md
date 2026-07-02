@@ -1,12 +1,13 @@
 # Runtime Contracts
 
-MetalSharp exposes a read-only runtime lane contract endpoint:
+MetalSharp exposes read-only runtime lane contract endpoints:
 
 ```http
 GET /runtime/contracts
+GET /runtime/contracts/reference
 ```
 
-This endpoint is the foundation for MetalSharp Wine 2.0. It reports the canonical runtime surfaces and launch lanes that the backend understands, without mutating runtime state or launching anything.
+`/runtime/contracts` is the foundation for MetalSharp Wine 2.0. It reports the canonical runtime surfaces and launch lanes that the backend understands, without mutating runtime state or launching anything. `/runtime/contracts/reference` returns `metalsharp.runtime.contracts.reference.v1`, a backend-generated reference table and Markdown table derived from the same canonical contract list.
 
 ## Purpose
 
@@ -79,7 +80,7 @@ Available lanes:
 
 Planned lanes: none in the current Wine 2.0 private fork contract.
 
-Backend consistency guard: `runtime_contracts::tests::public_runtime_contract_docs_list_every_backend_lane` fails if this document omits a backend runtime lane id from the canonical `/runtime/contracts` table.
+Backend consistency guard: `runtime_contracts::tests::public_runtime_contract_docs_list_every_backend_lane` fails if this document omits a backend runtime lane id from the canonical `/runtime/contracts` table. `runtime_contracts::tests::runtime_contract_reference_is_generated_from_backend_contracts` verifies the generated reference endpoint includes every backend lane.
 
 As of the Wine 2.0 private fork, `dxvk_d9`, `dxvk_d11`, and `vkd3d_d12` are available experimental MTSP pipeline definitions. They reserve route parsing, environment shape, cache buckets, `WINEDLLPATH` directories, DLL deployment manifests, and Vulkan filesystem doctors. They remain fallback lanes, not defaults.
 
