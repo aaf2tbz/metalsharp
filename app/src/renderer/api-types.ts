@@ -137,6 +137,82 @@ interface DependenciesResponse {
   dependencies: Dependency[];
 }
 
+type RuntimeLaneStatus = "available" | "external" | "planned";
+
+interface RuntimeLaneContract {
+  id: string;
+  name: string;
+  family: string;
+  status: RuntimeLaneStatus;
+  source_scopes: string[];
+  requires_wine: boolean;
+  supports_win32: boolean;
+  supports_win64: boolean;
+  host_arch: string;
+  windows_arch: string;
+  graphics_apis: string[];
+  prefix_policy: string;
+  runtime_surfaces: string[];
+  runtime_surface_paths: string[];
+  required_pe_dlls: string[];
+  required_unix_sidecars: string[];
+  dyld_paths: string[];
+  winedllpath_dirs: string[];
+  shader_cache_lane?: string | null;
+  fallback_lanes: string[];
+  doctor_checks: string[];
+  repair_actions: string[];
+  notes: string;
+}
+
+interface RuntimeContractsResponse {
+  ok: boolean;
+  schema: "metalsharp.runtime.contracts.v1";
+  canonicalM12Surface: "dxmt_m12";
+  canonicalM12InstalledPath: "runtime/wine/lib/dxmt_m12";
+  surfaces: { id: string; installedPath?: string | null }[];
+  contracts: RuntimeLaneContract[];
+}
+
+interface RuntimeManifestResponse {
+  ok: boolean;
+  schema: "metalsharp.runtime.manifest.v1";
+  manifestPath: string;
+  expected: Record<string, unknown>;
+  persisted: Record<string, unknown>;
+  validation: { ok?: boolean; checks?: unknown[] };
+  artifacts: Record<string, unknown>;
+}
+
+interface RuntimeDiagnosticsResponse {
+  ok: boolean;
+  schema: "metalsharp.runtime.diagnostics.v1";
+  readOnly: true;
+  summary: string;
+  paths: Record<string, string>;
+  contracts: {
+    schema: "metalsharp.runtime.contracts.v1";
+    canonicalM12Surface: "dxmt_m12";
+    canonicalM12InstalledPath: "runtime/wine/lib/dxmt_m12";
+    canonicalM12Ok: boolean;
+    total: number;
+    available: string[];
+    planned: string[];
+    external: string[];
+  };
+  runtime: {
+    ready: boolean;
+    wineBinaryPresent: boolean;
+    dxmtCurrent: boolean;
+    dxmtM12Current: boolean;
+    manifestOk: boolean;
+    manifest: RuntimeManifestResponse;
+  };
+  prefixes: Record<string, unknown>;
+  installReplacementGuard: { allowedNow: false; reason: string };
+  nextActions: string[];
+}
+
 type MetalsharpAPI = {
   request: (
     method: string,

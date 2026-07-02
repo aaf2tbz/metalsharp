@@ -19,4 +19,16 @@ export async function api<T = unknown>(
   }
 }
 
+export function getRuntimeContracts() {
+  return api<RuntimeContractsResponse>("GET", "/runtime/contracts");
+}
+
+export function getRuntimeManifest() {
+  return api<RuntimeManifestResponse>("GET", "/runtime/manifest");
+}
+
+export function getRuntimeDiagnostics() {
+  return api<RuntimeDiagnosticsResponse>("GET", "/runtime/diagnostics");
+}
+
 export { getAPI };
