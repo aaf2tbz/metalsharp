@@ -247,6 +247,69 @@ interface LaunchValidationResponse {
   invariants: string[];
 }
 
+interface LauncherProfile {
+  schema: "metalsharp.launcher.profile.v1";
+  id: string;
+  displayName: string;
+  family: string;
+  runtimeProfile: string;
+  installerKind: string;
+  arch: string;
+  launchPipeline: string;
+  components: string[];
+  detectionHints: string[];
+  wrapperPolicy: string;
+  repairControls: string[];
+  knownLaunchers: string[];
+  limitations: string[];
+}
+
+interface LauncherProfilesResponse {
+  ok: boolean;
+  schema: "metalsharp.launcher.profiles.v1";
+  readOnly: true;
+  profiles: LauncherProfile[];
+  invariants: string[];
+}
+
+interface LauncherEvidenceResponse {
+  ok: boolean;
+  schema: "metalsharp.launcher.evidence.v1";
+  readOnly: true;
+  id: string;
+  family: string;
+  status: string;
+  summary: string;
+  bottle: Record<string, unknown>;
+  facts: Record<string, unknown>;
+  detections: Record<string, unknown>[];
+  artifacts: Record<string, unknown>[];
+  nextActions: string[];
+}
+
+interface LauncherEvidenceTarget {
+  family: string;
+  status: string;
+  bottleId?: string | null;
+  evidenceStatus?: string | null;
+  summary: string;
+  nextActions: string[];
+  report?: LauncherEvidenceResponse;
+}
+
+interface LauncherEvidenceInventoryResponse {
+  ok: boolean;
+  schema: "metalsharp.launcher.evidence.inventory.v1";
+  readOnly: true;
+  summary: {
+    total: number;
+    controlledProofRecorded: number;
+    pendingControlledProof: number;
+  };
+  targets: LauncherEvidenceTarget[];
+  invariants: string[];
+}
+
 interface SourceAdapter {
   id: "steam" | "gog" | "sharp" | string;
   schema: "metalsharp.source.adapter.v1";

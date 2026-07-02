@@ -35,6 +35,18 @@ export function getLaunchValidation() {
   return api<LaunchValidationResponse>("GET", "/diagnostics/launch-validation");
 }
 
+export function getLauncherProfiles() {
+  return api<LauncherProfilesResponse>("GET", "/launcher/profiles");
+}
+
+export function getLauncherEvidenceInventory() {
+  return api<LauncherEvidenceInventoryResponse>("GET", "/launcher/evidence");
+}
+
+export function getLauncherEvidence(body: { id?: string; family?: string }) {
+  return api<LauncherEvidenceResponse>("POST", "/launcher/evidence", body);
+}
+
 export function getSourceAdapters() {
   return api<SourceAdaptersResponse>("GET", "/source-adapters");
 }
