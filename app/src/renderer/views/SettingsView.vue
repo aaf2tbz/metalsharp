@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api, getAPI } from "../composables/useApi";
-import type { AppConfig, UpdateStatus } from "../api-types";
+import { api, getAPI, getRuntimeDiagnostics } from "../composables/useApi";
+import type { AppConfig, RuntimeDiagnosticsResponse, UpdateStatus } from "../api-types";
 import IconTrash2 from "~icons/lucide/trash-2";
 
 interface CacheSummary {
@@ -38,6 +38,8 @@ const lowPerformanceMode = inject<Ref<boolean>>("lowPerformanceMode")!;
 const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
 const pipelineCache = ref<CacheSummary | null>(null);
+const runtimeDiagnostics = ref<RuntimeDiagnosticsResponse | null>(null);
+const runtimeDiagnosticsLoading = ref(false);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
 
@@ -45,6 +47,7 @@ onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
   await refreshConfig();
   await refreshCacheSizes();
+  await refreshRuntimeDiagnostics();
 });
 
 async function refreshConfig() {
@@ -65,6 +68,14 @@ async function refreshCacheSizes() {
     shaderCache.value = result.shader_cache;
     pipelineCache.value = result.pipeline_cache;
   }
+}
+
+async function refreshRuntimeDiagnostics() {
+  runtimeDiagnosticsLoading.value = true;
+  const result = await getRuntimeDiagnostics();
+  runtimeDiagnostics.value = result;
+  runtimeDiagnosticsLoading.value = false;
+  if (!result) toast.show("Runtime diagnostics unavailable", "error");
 }
 
 function formatBytes(bytes: number): string {
@@ -245,6 +256,14 @@ function cacheStatusText(cache: CacheSummary | null): string {
   return `${formatBytes(cache.bytes)} · ${cache.files} files`;
 }
 
+function runtimeDiagnosticBadgeClass(value?: boolean): string {
+  return value ? "badge-ok" : "badge-warn";
+}
+
+function runtimeDiagnosticStatus(value?: boolean): string {
+  return value ? "Ready" : "Needs Attention";
+}
+
 function toggleDeveloperMode(enabled: boolean) {
   developerMode.value = enabled;
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
@@ -383,6 +402,47 @@ function uninstallMetalsharp() {
             {{ backendConnected ? "Connected" : "Offline" }}
           </span>
           <span v-if="backendVersion" class="settings-version">v{{ backendVersion }}</span>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
+          <div class="settings-label">Wine 2.0 Runtime Diagnostics</div>
+          <div class="settings-desc">
+            {{ runtimeDiagnostics?.summary ?? "Read-only check for Wine, DXMT, dxmt_m12, manifest, and prefix policy." }}
+          </div>
+          <div v-if="runtimeDiagnostics?.nextActions?.length" class="settings-desc runtime-next-actions">
+            Next: {{ runtimeDiagnostics.nextActions[0] }}
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics?.ok)">
+            {{ runtimeDiagnostics?.ok ? "Ready" : runtimeDiagnosticsLoading ? "Checking..." : "Check Needed" }}
+          </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.contracts.canonicalM12Ok)"
+            title="Canonical installed M12 runtime surface"
+          >
+            dxmt_m12
+          </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.dxmtM12Current)"
+          >
+            M12 {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.dxmtM12Current) }}
+          </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.manifestOk)"
+          >
+            Manifest {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.manifestOk) }}
+          </span>
+          <button class="btn btn-secondary btn-sm" :disabled="runtimeDiagnosticsLoading" @click="refreshRuntimeDiagnostics">
+            {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
+          </button>
         </div>
       </div>
       <div class="settings-row">
@@ -647,6 +707,12 @@ function uninstallMetalsharp() {
 .settings-version {
   font-size: 12px;
   color: var(--text-dim);
+}
+.runtime-diagnostics-value {
+  max-width: 420px;
+}
+.runtime-next-actions {
+  margin-top: 4px;
 }
 .update-progress-bar {
   width: 140px;
