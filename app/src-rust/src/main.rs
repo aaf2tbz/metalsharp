@@ -37,6 +37,7 @@ mod mtsp;
 mod platform;
 mod prefix_metadata;
 mod receipt_inventory;
+mod roadmap_audit;
 mod runtime_contracts;
 mod runtime_diagnostics;
 mod runtime_manifest;
@@ -1045,6 +1046,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/diagnostics/gog") => resp(200, gog::handle_doctor()),
         (Method::Get, "/diagnostics/launch-validation") => resp(200, launch_validation::report()),
         (Method::Get, "/diagnostics/receipts") => resp(200, receipt_inventory::report()),
+        (Method::Get, "/diagnostics/wine20-roadmap") => resp(200, roadmap_audit::report()),
         (Method::Get, "/source-adapters") => resp(200, source_adapters::report()),
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
