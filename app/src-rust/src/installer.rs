@@ -564,6 +564,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
                 Ok(o) if o.status.success() => {
                     fix_moltenvk_icd_paths(&runtime_dir.join("wine"));
                     mark_split_bundle_installed(home, RUNTIME_BUNDLE, &archive);
+                    record_runtime_manifest_after_setup(home);
                     return Ok(true);
                 },
                 Ok(o) => {
@@ -706,6 +707,12 @@ fn fix_moltenvk_icd_paths(wine_dir: &Path) {
                 }
             }
         }
+    }
+}
+
+fn record_runtime_manifest_after_setup(home: &Path) {
+    if let Err(error) = crate::runtime_manifest::write_expected_runtime_manifest_for(home) {
+        eprintln!("runtime-manifest: failed to write runtime manifest: {}", error);
     }
 }
 
@@ -1077,6 +1084,7 @@ pub fn ensure_dxmt_runtime_ready(home: &Path) -> Result<bool, String> {
     changed |= install_dxmt_runtime(&home_buf)?;
 
     if dxmt_runtime_current_for_dir(&dxmt_dir) {
+        record_runtime_manifest_after_setup(home);
         Ok(changed)
     } else {
         Err(format!(
@@ -1102,6 +1110,7 @@ pub fn ensure_dxmt_m12_runtime_ready(home: &Path) -> Result<bool, String> {
     changed |= install_dxmt_m12_runtime(&home_buf)?;
 
     if dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        record_runtime_manifest_after_setup(home);
         Ok(changed)
     } else {
         Err(format!(
@@ -1129,6 +1138,7 @@ pub fn ensure_graphics_runtimes_ready(home: &Path) -> Result<bool, String> {
     changed |= install_dxmt_m12_runtime(&home_buf)?;
 
     if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        record_runtime_manifest_after_setup(home);
         Ok(changed)
     } else {
         Err(format!(
