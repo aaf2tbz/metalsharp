@@ -70,7 +70,12 @@ fn phases() -> Vec<PhaseAudit> {
             phase: 5,
             title: "Harden DXMT Lanes, Especially M12 / dxmt_m12",
             status: "implemented_with_open_followups",
-            evidence: &["GET /runtime/contracts m9/m10/m11/m12_dxmt_m12", "GET /runtime/diagnostics lane readiness", "GET /diagnostics/launch-validation m12_dxmt_m12"],
+            evidence: &[
+                "GET /runtime/contracts m9/m10/m11/m12_dxmt_m12",
+                "GET /runtime/diagnostics lane readiness",
+                "GET /diagnostics/launch-validation m12_dxmt_m12",
+                "metalsharp.prefix.route_dll_staging.receipt.v1 for M12 prefix route DLL staging",
+            ],
             remaining: &["Controlled per-game launch proof remains pending until user approval."],
         },
         PhaseAudit {

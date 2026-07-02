@@ -75,6 +75,13 @@ fn receipt_buckets(ms_home: &Path) -> Vec<ReceiptBucket> {
             recursive_depth: 0,
         },
         ReceiptBucket {
+            id: "steam_prefix_route_dll_staging",
+            label: "Steam prefix route DLL staging receipts",
+            root: ms_home.join("prefix-steam").join(".metalsharp").join("receipts"),
+            pattern: "route-dll-staging-*.json",
+            recursive_depth: 0,
+        },
+        ReceiptBucket {
             id: "gog_prefix_wineboot",
             label: "GOG prefix wineboot receipts",
             root: ms_home.join("bottles").join("gog-prefix").join("prefix").join(".metalsharp").join("receipts"),
@@ -82,10 +89,24 @@ fn receipt_buckets(ms_home: &Path) -> Vec<ReceiptBucket> {
             recursive_depth: 0,
         },
         ReceiptBucket {
+            id: "gog_prefix_route_dll_staging",
+            label: "GOG prefix route DLL staging receipts",
+            root: ms_home.join("bottles").join("gog-prefix").join("prefix").join(".metalsharp").join("receipts"),
+            pattern: "route-dll-staging-*.json",
+            recursive_depth: 0,
+        },
+        ReceiptBucket {
             id: "gptk_prefix_wineboot",
             label: "GPTK prefix wineboot receipts",
             root: ms_home.join("prefix-gptk").join(".metalsharp").join("receipts"),
             pattern: "wineboot-*.json",
+            recursive_depth: 0,
+        },
+        ReceiptBucket {
+            id: "gptk_prefix_route_dll_staging",
+            label: "GPTK prefix route DLL staging receipts",
+            root: ms_home.join("prefix-gptk").join(".metalsharp").join("receipts"),
+            pattern: "route-dll-staging-*.json",
             recursive_depth: 0,
         },
         ReceiptBucket {

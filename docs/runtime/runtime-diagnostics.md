@@ -33,7 +33,7 @@ These endpoints are intentionally non-mutating. They do not install assets, laun
 
 `/diagnostics/launch-validation` returns `metalsharp.launch.validation.matrix.v1`, a filesystem-only proof matrix. It distinguishes receipt-backed `proven` routes from `filesystem_validated` routes that still need controlled launch proof.
 
-`/diagnostics/receipts` returns `metalsharp.receipts.inventory.v1`, a read-only inventory of Steam/Sharp/native-Mono/GOG launch receipts, prefix wineboot receipts, and FNA staging receipts. It enumerates evidence files without executing launchers or repairs.
+`/diagnostics/receipts` returns `metalsharp.receipts.inventory.v1`, a read-only inventory of Steam/Sharp/native-Mono/GOG launch receipts, prefix wineboot receipts, prefix route-DLL staging receipts, and FNA staging receipts. It enumerates evidence files without executing launchers or repairs.
 
 `/diagnostics/wine20-roadmap` returns `metalsharp.wine20.roadmap.audit.v1`, a read-only evidence map for roadmap Phases 0–10. It intentionally reports `complete: false` while controlled launch proof and source-orchestrator followups remain open.
 

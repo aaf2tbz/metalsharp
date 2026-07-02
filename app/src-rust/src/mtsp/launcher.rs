@@ -1309,6 +1309,7 @@ fn deploy_prefix_route_dlls(
 
     let system32 = prefix.join("drive_c").join("windows").join("system32");
     std::fs::create_dir_all(&system32)?;
+    let mut staged = Vec::new();
     for deploy in &recipe.dlls {
         if !deploy.source_present {
             continue;
@@ -1319,9 +1320,44 @@ fn deploy_prefix_route_dlls(
         ) {
             continue;
         }
-        std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
+        let dest = system32.join(&deploy.filename);
+        std::fs::copy(&deploy.source_path, &dest)?;
+        staged.push(serde_json::json!({
+            "filename": deploy.filename,
+            "sourcePath": deploy.source_path.to_string_lossy(),
+            "destPath": dest.to_string_lossy(),
+            "sourceSha256": crate::diagnostics::file_sha256(&deploy.source_path),
+            "destSha256": crate::diagnostics::file_sha256(&dest),
+        }));
     }
+    persist_prefix_route_dll_staging_receipt(prefix, recipe, &staged)?;
     Ok(())
+}
+
+fn persist_prefix_route_dll_staging_receipt(
+    prefix: &Path,
+    recipe: &super::recipe::LaunchRecipe,
+    staged: &[serde_json::Value],
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let dir = prefix.join(".metalsharp").join("receipts");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("route-dll-staging-{}-{}.json", now, recipe.pipeline.to_legacy_method()));
+    let receipt = serde_json::json!({
+        "schema": "metalsharp.prefix.route_dll_staging.receipt.v1",
+        "timestamp": now,
+        "prefix": prefix.to_string_lossy(),
+        "pipeline": recipe.pipeline,
+        "runtimeContractId": crate::runtime_contracts::runtime_contract_id_for_pipeline(recipe.pipeline),
+        "appId": recipe.appid,
+        "gameDir": recipe.game_dir.as_ref().map(|path| path.to_string_lossy().to_string()),
+        "exePath": recipe.exe_path.as_ref().map(|path| path.to_string_lossy().to_string()),
+        "system32": prefix.join("drive_c").join("windows").join("system32").to_string_lossy(),
+        "stagedCount": staged.len(),
+        "dlls": staged,
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&receipt)?)?;
+    Ok(path)
 }
 
 fn wine_debug_value() -> String {
@@ -5936,6 +5972,21 @@ mod tests {
         for dll in dlls {
             assert_eq!(std::fs::read_to_string(system32.join(dll)).unwrap(), format!("m12-{dll}"));
         }
+        let receipt_dir = prefix.join(".metalsharp").join("receipts");
+        let receipt = std::fs::read_dir(&receipt_dir)
+            .expect("receipt dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name().and_then(|name| name.to_str()).unwrap_or_default().starts_with("route-dll-staging-")
+            })
+            .expect("route dll staging receipt");
+        let receipt_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt).unwrap()).unwrap();
+        assert_eq!(
+            receipt_json.get("schema").and_then(|value| value.as_str()),
+            Some("metalsharp.prefix.route_dll_staging.receipt.v1")
+        );
+        assert_eq!(receipt_json.get("stagedCount").and_then(|value| value.as_u64()), Some(6));
 
         let _ = std::fs::remove_dir_all(root);
     }
