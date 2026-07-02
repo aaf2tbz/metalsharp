@@ -381,7 +381,28 @@ fn vulkan_runtime_doctor_report(wine_root: &Path, ms_home: &Path) -> Value {
         "vkd3d": vkd3d_report,
         "icd": icd_report,
         "dxvkStateCache": dxvk_state_cache,
+        "limitations": vulkan_limitations_report(),
     })
+}
+
+fn vulkan_limitations_report() -> Value {
+    json!([
+        {
+            "id": "filesystem_only",
+            "severity": "info",
+            "detail": "This doctor verifies files, ICD paths, and cache permissions only; it does not execute Wine, Vulkan, DXVK, VKD3D-Proton, or MoltenVK."
+        },
+        {
+            "id": "moltenvk_feature_level_unproven",
+            "severity": "warning",
+            "detail": "MoltenVK feature support is not proven by filesystem readiness. VKD3D-Proton remains an experimental fallback until per-game launch validation confirms required Vulkan features."
+        },
+        {
+            "id": "m12_not_replaced",
+            "severity": "info",
+            "detail": "VKD3D-Proton is reported as a fallback lane and must not silently replace M12/dxmt_m12 for D3D12 games."
+        }
+    ])
 }
 
 fn dxvk_state_cache_report(ms_home: &Path) -> Value {
@@ -993,6 +1014,13 @@ mod tests {
         assert_eq!(state_cache.get("ok").and_then(|value| value.as_bool()), Some(true));
         assert_eq!(state_cache.get("method").and_then(|value| value.as_str()), Some("permission_bits_no_probe_file"));
         assert_eq!(state_cache.get("entries").and_then(|value| value.as_array()).map(Vec::len), Some(2));
+        let limitations = vulkan.get("limitations").and_then(|value| value.as_array()).expect("vulkan limitations");
+        assert!(limitations.iter().any(|limitation| {
+            limitation.get("id").and_then(|value| value.as_str()) == Some("moltenvk_feature_level_unproven")
+        }));
+        assert!(limitations
+            .iter()
+            .any(|limitation| { limitation.get("id").and_then(|value| value.as_str()) == Some("m12_not_replaced") }));
         let _ = fs::remove_dir_all(home);
     }
 

@@ -264,6 +264,7 @@ interface RuntimeDiagnosticsResponse {
       method: "permission_bits_no_probe_file";
       entries: { lane: string; path: string; exists: boolean; writableByMode: boolean; checkedPath?: string | null; reason?: string | null }[];
     };
+    limitations: { id: string; severity: "info" | "warning" | "error"; detail: string }[];
   };
   lanes: {
     total: number;
