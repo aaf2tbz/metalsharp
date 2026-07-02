@@ -311,14 +311,7 @@ const navItems: NavItem[] = [
 :global(:root[data-theme="developer"] .sidebar::before) {
   background:
     linear-gradient(180deg, rgba(255, 46, 247, 0.16) 0%, transparent 34%),
-    linear-gradient(115deg, rgba(185, 255, 77, 0.10), transparent 42%, rgba(0, 245, 255, 0.08)),
-    radial-gradient(circle at 24% 18%, rgba(185, 255, 77, 0.08) 0 1px, transparent 1.7px),
-    repeating-linear-gradient(180deg, rgba(152, 242, 255, 0.035) 0 1px, transparent 1px 28px);
-  background-size:
-    auto,
-    auto,
-    34px 34px,
-    auto;
+    linear-gradient(115deg, rgba(185, 255, 77, 0.10), transparent 42%, rgba(0, 245, 255, 0.08));
 }
 
 :global(:root[data-theme="developer"] .sidebar-nav-item.active) {

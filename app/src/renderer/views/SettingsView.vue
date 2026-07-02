@@ -33,6 +33,7 @@ const reloadLibrary = inject<() => Promise<void>>("loadLibrary")!;
 const library =
   inject<Ref<{ ok: boolean; total: number; installed_count: number; games: unknown[] } | null>>("library")!;
 const developerMode = inject<Ref<boolean>>("developerMode")!;
+const lowPerformanceMode = inject<Ref<boolean>>("lowPerformanceMode")!;
 
 const toast = useToast();
 const shaderCache = ref<CacheSummary | null>(null);
@@ -249,6 +250,32 @@ function toggleDeveloperMode(enabled: boolean) {
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
 }
 
+function toggleLowPerformanceMode(enabled: boolean) {
+  lowPerformanceMode.value = enabled;
+  toast.show(enabled ? "Low Performance Mode enabled" : "Low Performance Mode disabled", "success");
+}
+
+async function forceKillProcesses() {
+  if (!confirm("Force kill MetalSharp Wine/runtime processes? This can stop active games, installers, and downloads.")) return;
+  const result = await api<{
+    ok: boolean;
+    terminated?: unknown[];
+    killed?: unknown[];
+    errors?: unknown[];
+    error?: string;
+  }>("POST", "/processes/force-kill", {}, 15000);
+  if (!result) {
+    toast.show("Force kill request failed", "error");
+    return;
+  }
+  const count = (result.terminated?.length ?? 0) + (result.killed?.length ?? 0);
+  if (result.ok) {
+    toast.show(count > 0 ? `Force killed ${count} process${count === 1 ? "" : "es"}` : "No MetalSharp runtime processes found", "success");
+  } else {
+    toast.show(result.error ?? `Force kill completed with ${result.errors?.length ?? 0} error(s)`, "error");
+  }
+}
+
 async function toggleGraphicsRuntimeLogs(enabled: boolean) {
   const previous = graphicsRuntimeLogs.value;
   graphicsRuntimeLogs.value = enabled;
@@ -365,6 +392,34 @@ function uninstallMetalsharp() {
         </div>
         <div class="settings-value">
           <button class="btn btn-secondary btn-sm" @click="restartBackend">Restart Backend</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Force Kill Processes</div>
+          <div class="settings-desc">Destructively stops MetalSharp Wine/runtime helper processes while keeping this app and backend alive.</div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-danger btn-sm" @click="forceKillProcesses">Force Kill Processes</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Low Performance Mode</div>
+          <div class="settings-desc">Disables blur, glass, glow, and heavy motion while preserving layout and essential progress updates.</div>
+        </div>
+        <div class="settings-value">
+          <span class="badge" :class="lowPerformanceMode ? 'badge-warn' : 'badge-ok'">
+            {{ lowPerformanceMode ? "Reduced Effects" : "Full Effects" }}
+          </span>
+          <label class="settings-toggle toggle-label" aria-label="Low Performance Mode">
+            <input
+              type="checkbox"
+              :checked="lowPerformanceMode"
+              @change="toggleLowPerformanceMode(($event.target as HTMLInputElement).checked)"
+            />
+            <span class="toggle-switch"></span>
+          </label>
         </div>
       </div>
       <div class="settings-row">

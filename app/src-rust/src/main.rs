@@ -2041,6 +2041,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 }),
             )
         },
+        (Method::Post, "/processes/force-kill") => resp(200, force_kill_metalsharp_processes()),
         (Method::Post, "/kill") => {
             let body = read_body(req);
             let pid_param = body.get("pid").and_then(|v| v.as_u64()).unwrap_or(0) as i32;
@@ -2148,6 +2149,126 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
 
 fn resp(code: u16, body: serde_json::Value) -> RouteResponse {
     RouteResponse::Json(code, body.to_string().into_bytes())
+}
+
+fn force_kill_metalsharp_processes() -> Value {
+    let this_pid = std::process::id();
+    let home = crate::platform::metalsharp_home_dir();
+    let targets: Vec<(u32, String)> = process_lines()
+        .into_iter()
+        .filter_map(|line| parse_process_line_owned(&line))
+        .filter(|(pid, command)| *pid != this_pid && is_force_kill_target(command, &home))
+        .collect();
+
+    let mut terminated = Vec::new();
+    let mut errors = Vec::new();
+    for (pid, command) in &targets {
+        match std::process::Command::new("/bin/kill").arg("-TERM").arg(pid.to_string()).status() {
+            Ok(status) if status.success() => terminated.push(json!({"pid": pid, "command": command})),
+            Ok(status) => {
+                errors.push(json!({"pid": pid, "signal": "TERM", "status": status.code(), "command": command}))
+            },
+            Err(error) => {
+                errors.push(json!({"pid": pid, "signal": "TERM", "error": error.to_string(), "command": command}))
+            },
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(350));
+
+    let survivors: Vec<(u32, String)> = process_lines()
+        .into_iter()
+        .filter_map(|line| parse_process_line_owned(&line))
+        .filter(|(pid, command)| {
+            targets.iter().any(|(target_pid, _)| target_pid == pid) && is_force_kill_target(command, &home)
+        })
+        .collect();
+
+    let mut killed = Vec::new();
+    for (pid, command) in &survivors {
+        match std::process::Command::new("/bin/kill").arg("-KILL").arg(pid.to_string()).status() {
+            Ok(status) if status.success() => killed.push(json!({"pid": pid, "command": command})),
+            Ok(status) => {
+                errors.push(json!({"pid": pid, "signal": "KILL", "status": status.code(), "command": command}))
+            },
+            Err(error) => {
+                errors.push(json!({"pid": pid, "signal": "KILL", "error": error.to_string(), "command": command}))
+            },
+        }
+    }
+
+    app_log(&format!(
+        "Force killed MetalSharp processes: {} TERM, {} KILL, {} errors",
+        terminated.len(),
+        killed.len(),
+        errors.len()
+    ));
+
+    json!({
+        "ok": errors.is_empty(),
+        "terminated": terminated,
+        "killed": killed,
+        "errors": errors,
+        "backendPid": this_pid,
+    })
+}
+
+fn process_lines() -> Vec<String> {
+    std::process::Command::new("/bin/ps")
+        .args(["axo", "pid=,command="])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|output| output.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn parse_process_line_owned(line: &str) -> Option<(u32, String)> {
+    let line = line.trim_start();
+    let mut parts = line.splitn(2, char::is_whitespace);
+    let pid = parts.next()?.parse::<u32>().ok()?;
+    let command = parts.next().unwrap_or("").trim_start().to_string();
+    Some((pid, command))
+}
+
+fn is_force_kill_target(command: &str, home: &std::path::Path) -> bool {
+    if command.is_empty() {
+        return false;
+    }
+    let lower = command.to_lowercase();
+    if lower.contains("metalsharp-backend")
+        || lower.contains("/contents/macos/metalsharp")
+        || lower.contains("/electron.app/contents/macos/electron")
+        || lower.contains(" ps axo")
+        || lower.contains(" rg ")
+        || lower.contains("grep ")
+    {
+        return false;
+    }
+
+    let home_text = home.to_string_lossy();
+    let under_metalsharp_home = !home_text.is_empty() && command.contains(home_text.as_ref());
+    let wine_process = lower.contains("metalsharp-wine")
+        || lower.contains("wineserver")
+        || lower.contains("wineloader")
+        || lower.contains("wineboot")
+        || lower.contains("wine64")
+        || lower.contains("winedevice.exe")
+        || lower.contains("steamwebhelper")
+        || lower.contains("c:\\windows\\")
+        || lower.contains(".exe");
+
+    if wine_process && (under_metalsharp_home || lower.contains("wine") || lower.contains("steamwebhelper")) {
+        return true;
+    }
+
+    under_metalsharp_home
+        && (lower.contains("/runtime/")
+            || lower.contains("/bottles/")
+            || lower.contains("/prefix-steam/")
+            || lower.contains("gogdl")
+            || lower.contains("heroic_gogdl"))
 }
 
 /// Minimal percent-decoding for URL query values (e.g. gameDir paths with
