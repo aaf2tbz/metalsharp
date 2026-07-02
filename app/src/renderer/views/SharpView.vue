@@ -178,6 +178,12 @@ interface GogGame {
 
 const toast = useToast();
 const sourceMode = ref<"installers" | "gog">("installers");
+const headerTitle = computed(() => sourceMode.value === "gog" ? "GOG Games Library" : "Sharp Library");
+const headerSubtitle = computed(() =>
+  sourceMode.value === "gog"
+    ? "Connect, sync, install, and play GOG games through MetalSharp."
+    : "Install and manage Windows applications outside Steam.",
+);
 const apps = ref<SharpApp[]>([]);
 const dropdownOpen = ref<string | null>(null);
 const dropdownStyle = ref<Record<string, string>>({});
@@ -369,9 +375,38 @@ async function initializeGogPrefix() {
       };
     }
     await refreshGog();
-    toast.show("GOG prefix initialized", "success");
+    toast.show("GOG prefix ready", "success");
+    return;
+  }
+
+  await refreshGog();
+  const transientHangup = !result || result.error?.toLowerCase().includes("socket hang up");
+  if (transientHangup && gogStatus.value?.prefixInitialized) {
+    toast.show("GOG prefix ready", "success");
+    return;
+  }
+  toast.show(result?.error ?? "Failed to initialize GOG prefix", "error");
+}
+
+async function disconnectGog() {
+  if (!confirm("Disconnect GOG and show Login again? Installed games will stay on disk.")) return;
+  gogLoading.value.login = true;
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/logout", {}, 30 * 1000);
+  gogLoading.value.login = false;
+  if (result?.ok) {
+    if (result.status) gogStatus.value = result.status;
+    await refreshGog();
+    toast.show("GOG disconnected", "success");
   } else {
-    toast.show(result?.error ?? "Failed to initialize GOG prefix", "error");
+    toast.show(result?.error ?? "Failed to disconnect GOG", "error");
+  }
+}
+
+async function handleGogAuthButton() {
+  if (gogStatus.value?.authenticated) {
+    await disconnectGog();
+  } else {
+    await loginGog();
   }
 }
 
@@ -483,6 +518,19 @@ async function uninstallGogGame(game: GogGame) {
 async function refreshSharpLibrary() {
   await load();
   toast.show("Sharp Library refreshed", "success");
+}
+
+async function refreshCurrentSource() {
+  if (sourceMode.value === "gog") {
+    if (gogStatus.value?.authenticated) {
+      await syncGogLibrary();
+    } else {
+      await refreshGog();
+      toast.show("GOG status refreshed", "success");
+    }
+    return;
+  }
+  await refreshSharpLibrary();
 }
 
 async function installExe() {
@@ -1063,7 +1111,10 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 <template>
   <div class="sharp-view">
     <div class="sharp-header">
-      <h1>Sharp Library</h1>
+      <div class="sharp-header-title">
+        <h1>{{ headerTitle }}</h1>
+        <p>{{ headerSubtitle }}</p>
+      </div>
       <div class="sharp-header-controls">
         <div class="source-switch">
           <button class="btn btn-secondary btn-sm" :class="{ active: sourceMode === 'installers' }" @click="sourceMode = 'installers'">Installers</button>
@@ -1089,9 +1140,15 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
           <IconUpload class="btn-icon" width="14" height="14" />
           <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
         </button>
-        <button class="btn btn-secondary" @click="refreshSharpLibrary">
+        <button v-if="sourceMode === 'gog'" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
+          <span class="btn-label-long">{{ gogLoading.setup ? "Initializing…" : gogStatus?.prefixInitialized ? "Prefix Ready" : "Initialize GOG Prefix" }}</span><span class="btn-label-short">Prefix</span>
+        </button>
+        <button v-if="sourceMode === 'gog'" class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized" @click="handleGogAuthButton">
+          <span class="btn-label-long">{{ gogStatus?.authenticated ? "GOG Connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}</span><span class="btn-label-short">{{ gogStatus?.authenticated ? "Connected" : "Login" }}</span>
+        </button>
+        <button class="btn btn-secondary" :disabled="sourceMode === 'gog' && gogLoading.sync" @click="refreshCurrentSource">
           <IconRefreshCcw class="btn-icon" width="14" height="14" />
-          <span class="btn-label-long">Refresh</span><span class="btn-label-short">Refresh</span>
+          <span class="btn-label-long">{{ sourceMode === 'gog' ? gogLoading.sync ? "Syncing…" : "Sync GOG" : "Refresh" }}</span><span class="btn-label-short">{{ sourceMode === 'gog' ? "Sync" : "Refresh" }}</span>
         </button>
       </div>
     </div>
@@ -1280,25 +1337,6 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 
     <template v-else>
       <section class="gog-panel">
-        <div class="gog-setup-card">
-          <div>
-            <h2>GOG Games Library</h2>
-            <p>Connect GOG, download your games with gogdl, and launch them through MetalSharp's isolated GOG prefix.</p>
-            <small v-if="gogStatus">Prefix: {{ gogStatus.winePrefix }}</small>
-          </div>
-          <div class="gog-setup-actions">
-            <button v-if="!gogStatus?.prefixInitialized" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
-              {{ gogLoading.setup ? "Initializing…" : "Initialize GOG prefix" }}
-            </button>
-            <button class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized || gogStatus?.authenticated" @click="loginGog">
-              {{ gogStatus?.authenticated ? "GOG connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}
-            </button>
-            <button class="btn btn-secondary" :disabled="gogLoading.sync || !gogStatus?.authenticated" @click="syncGogLibrary">
-              {{ gogLoading.sync ? "Syncing…" : "Sync Library" }}
-            </button>
-          </div>
-        </div>
-
         <div v-if="!gogStatus?.gogdlAvailable" class="empty-state compact">
           <h2>gogdl is not installed</h2>
           <p>Install gogdl under ~/.metalsharp/tools/gogdl or set METALSHARP_GOGDL_BIN.</p>
@@ -1409,17 +1447,30 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 .btn-icon {
   flex-shrink: 0;
 }
+.sharp-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
 .sharp-header h1 {
   font-size: 24px;
   font-weight: 750;
   line-height: 1.1;
 }
+.sharp-header-title p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+}
 .sharp-header-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  overflow: visible;
   -webkit-app-region: no-drag;
 }
 .source-switch {
