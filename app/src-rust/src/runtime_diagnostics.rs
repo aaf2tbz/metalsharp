@@ -194,6 +194,12 @@ fn lane_readiness_entry(
         "native_mono_x86" if !context.runtime_root.join("mono-x86").exists() => blockers.push("mono_x86_runtime"),
         "m9" | "m10" | "m11" if !context.dxmt_current => blockers.push("dxmt_runtime"),
         "m12_dxmt_m12" if !context.dxmt_m12_current => blockers.push("dxmt_m12_runtime"),
+        "dxvk_d9" | "dxvk_d11" if !lane_artifacts_all_present(contract.id, context.artifacts) => {
+            blockers.push("dxvk_runtime");
+        },
+        "vkd3d_d12" if !lane_artifacts_all_present(contract.id, context.artifacts) => {
+            blockers.push("vkd3d_runtime");
+        },
         "steam_background" => {
             if !context
                 .sources
@@ -234,6 +240,13 @@ fn lane_readiness_entry(
         "runtimeSurfacePaths": &contract.runtime_surface_paths,
         "artifactSummary": lane_artifact_summary(contract.id, context.artifacts),
     })
+}
+
+fn lane_artifacts_all_present(lane_id: &str, artifacts: &Value) -> bool {
+    lane_artifact_report(lane_id, artifacts)
+        .and_then(|report| report.get("all_present"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 fn lane_artifact_summary(lane_id: &str, artifacts: &Value) -> Value {
@@ -605,12 +618,9 @@ mod tests {
             .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("dxvk_d11"))
             .expect("dxvk d11 lane");
         assert_eq!(dxvk.get("ready").and_then(|value| value.as_bool()), Some(false));
-        assert!(dxvk
-            .get("blockers")
-            .and_then(|value| value.as_array())
-            .expect("dxvk blockers")
-            .iter()
-            .any(|blocker| blocker.as_str() == Some("lane_planned")));
+        let dxvk_blockers = dxvk.get("blockers").and_then(|value| value.as_array()).expect("dxvk blockers");
+        assert!(dxvk_blockers.iter().any(|blocker| blocker.as_str() == Some("lane_planned")));
+        assert!(dxvk_blockers.iter().any(|blocker| blocker.as_str() == Some("dxvk_runtime")));
         let dxvk_artifacts = dxvk.get("artifactSummary").expect("dxvk artifact summary");
         assert_eq!(dxvk_artifacts.get("total").and_then(|value| value.as_u64()), Some(7));
         assert_eq!(dxvk_artifacts.get("present").and_then(|value| value.as_u64()), Some(0));
@@ -620,6 +630,9 @@ mod tests {
             .iter()
             .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("vkd3d_d12"))
             .expect("vkd3d lane");
+        let vkd3d_blockers = vkd3d.get("blockers").and_then(|value| value.as_array()).expect("vkd3d blockers");
+        assert!(vkd3d_blockers.iter().any(|blocker| blocker.as_str() == Some("lane_planned")));
+        assert!(vkd3d_blockers.iter().any(|blocker| blocker.as_str() == Some("vkd3d_runtime")));
         let vkd3d_artifacts = vkd3d.get("artifactSummary").expect("vkd3d artifact summary");
         assert_eq!(vkd3d_artifacts.get("total").and_then(|value| value.as_u64()), Some(4));
         assert_eq!(vkd3d_artifacts.get("present").and_then(|value| value.as_u64()), Some(0));
