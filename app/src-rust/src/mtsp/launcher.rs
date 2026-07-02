@@ -863,6 +863,66 @@ fn launch_receipt_preview_common(input: LaunchReceiptPreviewInput<'_>) -> serde_
     })
 }
 
+fn command_env_pairs(cmd: &Command) -> Vec<(String, String)> {
+    cmd.get_envs()
+        .filter_map(|(key, value)| {
+            value.map(|value| (key.to_string_lossy().to_string(), value.to_string_lossy().to_string()))
+        })
+        .collect()
+}
+
+fn actual_launch_receipt_path_for_home(home: &Path, appid: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home)
+        .join("launch-receipts")
+        .join("steam")
+        .join(format!("{}-launch.json", appid))
+}
+
+struct ActualLaunchReceiptInput<'a> {
+    appid: u32,
+    node: &'a PipelineNode,
+    recipe: &'a super::recipe::LaunchRecipe,
+    env: &'a [(String, String)],
+    pid: u32,
+    log_path: Option<&'a Path>,
+    prefix: &'a Path,
+    home: &'a Path,
+}
+
+fn persist_actual_launch_receipt(input: ActualLaunchReceiptInput<'_>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let mut receipt =
+        launch_receipt_preview_for_recipe(input.appid, input.node, input.recipe, input.env, false, Some(input.home));
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("preview".to_string(), serde_json::Value::Bool(false));
+        object.insert("pid".to_string(), serde_json::json!(input.pid));
+        object.insert("prefix".to_string(), serde_json::json!(input.prefix.to_string_lossy().to_string()));
+        object.insert(
+            "logPath".to_string(),
+            input
+                .log_path
+                .map(|path| serde_json::json!(path.to_string_lossy().to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert("receiptPath".to_string(), serde_json::Value::Null);
+    }
+    let path = actual_launch_receipt_path_for_home(input.home, input.appid);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("receiptPath".to_string(), serde_json::json!(path.to_string_lossy().to_string()));
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&receipt)?)?;
+    Ok(path)
+}
+
+fn persist_actual_launch_receipt_best_effort(input: ActualLaunchReceiptInput<'_>) {
+    let appid = input.appid;
+    if let Err(error) = persist_actual_launch_receipt(input) {
+        eprintln!("launch receipt persist failed for appid {}: {}", appid, error);
+    }
+}
+
 fn quarantine_route_conflicts_for_recipe(
     recipe: &super::recipe::LaunchRecipe,
 ) -> Result<usize, Box<dyn std::error::Error>> {
@@ -1621,7 +1681,18 @@ fn launch_d3dmetal_gptk_with_context(
             cache_paths: cache_paths.as_ref(),
         },
     )?;
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_actual_launch_receipt_best_effort(ActualLaunchReceiptInput {
+        appid,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path,
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
@@ -1734,7 +1805,18 @@ fn launch_dxmt_metal_with_context(
             cache_paths: cache_paths.as_ref(),
         },
     )?;
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_actual_launch_receipt_best_effort(ActualLaunchReceiptInput {
+        appid,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path,
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
@@ -1820,7 +1902,18 @@ fn launch_wine_bare_with_context(
             cache_paths: cache_paths.as_ref(),
         },
     )?;
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_actual_launch_receipt_best_effort(ActualLaunchReceiptInput {
+        appid,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path,
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
@@ -5064,6 +5157,18 @@ mod tests {
         assert!(receipt_dlls.iter().any(|dll| dll.get("filename").and_then(|v| v.as_str()) == Some("d3d12.dll")));
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn actual_launch_receipt_helpers_use_stable_paths_and_env_keys() {
+        let home = std::env::temp_dir().join("ms-actual-launch-receipt-helper");
+        let mut cmd = Command::new("/usr/bin/true");
+        cmd.env("SteamAppId", "620").env("WINEDLLOVERRIDES", "d3d12=n");
+        let env = command_env_pairs(&cmd);
+        assert!(env.iter().any(|(key, value)| key == "SteamAppId" && value == "620"));
+        assert!(env.iter().any(|(key, _)| key == "WINEDLLOVERRIDES"));
+        let path = actual_launch_receipt_path_for_home(&home, 620);
+        assert!(path.ends_with(Path::new(".metalsharp/launch-receipts/steam/620-launch.json")));
     }
 
     #[test]
