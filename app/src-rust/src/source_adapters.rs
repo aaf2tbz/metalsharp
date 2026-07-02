@@ -26,7 +26,7 @@ fn steam_adapter() -> Value {
         "libraryEndpoint": "/games",
         "statusEndpoint": "/steam/status",
         "launchEndpoint": "/mtsp/launch",
-        "prepareEndpoint": "/mtsp/prepare",
+        "prepareEndpoint": "/source-adapters/prepare",
         "runtimeContractIds": ["dxmt_m12", "dxvk_d9", "dxvk_d11", "vkd3d_d12"],
         "prefixPolicy": {
             "id": "steam",
@@ -62,7 +62,7 @@ fn gog_adapter() -> Value {
         "libraryEndpoint": "/sharp-library/gog/games",
         "statusEndpoint": "/sharp-library/gog/status",
         "launchEndpoint": "/sharp-library/gog/play",
-        "prepareEndpoint": null,
+        "prepareEndpoint": "/source-adapters/prepare",
         "runtimeContractIds": ["gogdl_wine"],
         "prefixPolicy": {
             "id": "gog",
@@ -78,12 +78,12 @@ fn gog_adapter() -> Value {
         "capabilities": {
             "scan": true,
             "install": true,
-            "prepare": false,
+            "prepare": true,
             "launch": true,
             "stop": true,
             "receipts": "runtime"
         },
-        "limitations": ["GOG launches currently use the dedicated gogdl endpoint instead of /mtsp/prepare"]
+        "limitations": ["GOG launches still use the dedicated gogdl endpoint; /source-adapters/prepare is preview-only"]
     })
 }
 
@@ -106,7 +106,7 @@ fn sharp_adapter() -> Value {
         "libraryEndpoint": "/sharp-library",
         "statusEndpoint": "/sharp-library",
         "launchEndpoint": "/sharp-library/launch",
-        "prepareEndpoint": null,
+        "prepareEndpoint": "/source-adapters/prepare",
         "runtimeContractIds": ["dxmt_m12", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "native_mono_arm64", "native_mono_x86"],
         "prefixPolicy": {
             "id": "sharp",
@@ -124,12 +124,12 @@ fn sharp_adapter() -> Value {
         "capabilities": {
             "scan": true,
             "install": true,
-            "prepare": false,
+            "prepare": true,
             "launch": true,
             "stop": true,
             "receipts": "runtime"
         },
-        "limitations": ["Sharp Library prepare remains source-local until all sources use /mtsp/prepare"]
+        "limitations": ["Sharp Library launches still use the dedicated endpoint; /source-adapters/prepare is preview-only"]
     })
 }
 

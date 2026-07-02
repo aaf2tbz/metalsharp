@@ -103,8 +103,14 @@ fn phases() -> Vec<PhaseAudit> {
             phase: 9,
             title: "Store Adapter Unification",
             status: "implemented_with_open_followups",
-            evidence: &["GET /source-adapters", "GET /diagnostics/gog", "GOG dedicated prefix policy", "Steam/GOG/Sharp launch receipts"],
-            remaining: &["Finish fully shared prepare/orchestrator flow for GOG and Sharp sources."],
+            evidence: &[
+                "GET /source-adapters",
+                "POST /source-adapters/prepare metalsharp.source.prepare.preview.v1",
+                "GET /diagnostics/gog",
+                "GOG dedicated prefix policy",
+                "Steam/GOG/Sharp launch receipts",
+            ],
+            remaining: &["Actual GOG and Sharp launches still use source-specific endpoints; unified prepare is preview-only."],
         },
         PhaseAudit {
             phase: 10,
