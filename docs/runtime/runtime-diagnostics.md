@@ -90,10 +90,27 @@ Top-level fields:
 - `installReplacementGuard` — destructive replacement guard.
 - `nextActions` — suggested non-destructive next steps.
 
+## Local readiness script
+
+With a backend already running, use:
+
+```bash
+tools/runtime/check-wine20-runtime-readiness.sh
+```
+
+or point it at a temporary backend:
+
+```bash
+tools/runtime/check-wine20-runtime-readiness.sh --url http://127.0.0.1:9284
+```
+
+The script only reads `/runtime/diagnostics`; it does not launch Wine, repair assets, mutate prefixes, or authorize install replacement. It exits non-zero when diagnostics are not green or if the install replacement guard is unexpectedly enabled.
+
 ## Intended workflow
 
 1. Check `/runtime/contracts` for stable lane IDs and planned/available status.
 2. Check `/runtime/manifest` for exact installed runtime surfaces and artifacts.
 3. Check `/runtime/diagnostics` for a single aggregate readiness answer.
-4. If green, proceed to per-route doctors or game-specific launch diagnostics.
-5. Do not wipe the existing install until the final replacement step is explicitly confirmed.
+4. Optionally run `tools/runtime/check-wine20-runtime-readiness.sh` for a terminal preflight summary.
+5. If green, proceed to per-route doctors or game-specific launch diagnostics.
+6. Do not wipe the existing install until the final replacement step is explicitly confirmed.
