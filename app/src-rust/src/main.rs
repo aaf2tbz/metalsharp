@@ -29,6 +29,7 @@ mod installer;
 mod kernel_translation;
 mod launch;
 mod launcher_evidence;
+mod launcher_profiles;
 mod migrate;
 mod mtsp;
 mod platform;
@@ -1830,6 +1831,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::es_live::handle_es_live_processes(&body))
         },
+        (Method::Get, "/launcher/profiles") => resp(200, launcher_profiles::report()),
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))

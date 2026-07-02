@@ -24,7 +24,7 @@ Use this page as the repo map before changing launch/runtime code.
 - [Runtime Bundles and Steam Routing](runtime/runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.
 - [Mono Runtime Lanes](runtime/mono-runtime-lanes.md) - Mono/FNA/XNA route boundaries and native Mono lane details.
 - [Wine Architecture](runtime/wine-architecture.md) - Wine prefix/runtime layout and wrapper behavior.
-- [Launcher Runtime](runtime/launcher-runtime.md) - Sharp Library launcher and CEF/WebView runtime handling.
+- [Launcher Runtime](runtime/launcher-runtime.md) - Sharp Library launcher profile contracts and CEF/WebView runtime handling.
 - [Compatdata Architecture](runtime/compatdata-architecture.md) - Steam game compatdata ownership.
 - [Host Runtime ABI](runtime/host-runtime-abi.md) - host shim ABI boundaries.
 - [Redistributable Runtime](runtime/redistributable-runtime.md) - redistributable source and repair policy.
