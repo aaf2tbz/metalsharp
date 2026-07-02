@@ -26,6 +26,17 @@ Runtime contracts give one backend-owned source of truth for:
 
 The frontend, docs, Runtime Doctor, migration, and release gates should converge on this contract instead of each hardcoding route metadata independently.
 
+## User-Selectable Route Options
+
+The UI-facing route selector endpoint is:
+
+```http
+GET /mtsp/pipelines
+GET /mtsp/pipelines?appid=<steam appid>
+```
+
+It is backend-owned and derived from MTSP pipeline metadata that is expected to stay aligned with `/runtime/contracts`. Steam cards use it for app-specific recommendations and alternatives; Sharp Library uses it for bottle/runtime selectors with a static frontend fallback only for backend-unavailable states. Route selectors should not introduce new hardcoded runtime lanes without adding the corresponding backend pipeline and runtime contract.
+
 ## Canonical M12 Naming
 
 The installed modern M12 runtime surface is canonicalized as:
