@@ -80,6 +80,7 @@ jobs:
             | grep -E '^assets/eac-toggle/'
 
       - name: Publish developer SDK bundle
+        continue-on-error: true
         run: |
           tools/bundles/publish-release-assets.sh bundles \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
