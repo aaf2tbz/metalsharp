@@ -33,6 +33,7 @@ mod migrate;
 mod mtsp;
 mod platform;
 mod runtime_contracts;
+mod runtime_manifest;
 mod scan;
 mod setup;
 mod sharp_library;
@@ -1030,6 +1031,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             resp(200, json!({ "ok": true, "contracts": bottles::steam_route_contracts() }))
         },
         (Method::Get, "/runtime/contracts") => resp(200, runtime_contracts::handle_runtime_contracts()),
+        (Method::Get, "/runtime/manifest") => resp(200, runtime_manifest::handle_runtime_manifest()),
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
         (Method::Post, "/bottles/record-compatibility") => {
