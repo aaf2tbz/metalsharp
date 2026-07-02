@@ -273,6 +273,51 @@ interface LaunchValidationResponse {
   invariants: string[];
 }
 
+interface InventoryEntry {
+  id: string;
+  label: string;
+  path: string;
+  present: boolean;
+  required: boolean;
+  kind?: string;
+}
+
+interface SupportInventoryResponse {
+  ok: boolean;
+  schema: "metalsharp.support.inventory.v1";
+  readOnly: true;
+  metalsharpHome: string;
+  summary: { total: number; requiredTotal: number; requiredPresent: number; optionalPresent: number };
+  entries: InventoryEntry[];
+  invariants: string[];
+}
+
+interface ToolchainInventoryResponse {
+  ok: boolean;
+  schema: "metalsharp.toolchain.inventory.v1";
+  readOnly: true;
+  llvmRoot: string;
+  summary: { total: number; requiredTotal: number; requiredPresent: number; optionalPresent: number };
+  entries: InventoryEntry[];
+  invariants: string[];
+}
+
+interface ReleaseGateEntry {
+  id: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface ReleaseGatesResponse {
+  ok: boolean;
+  schema: "metalsharp.release.gates.v1";
+  readOnly: true;
+  summary: { total: number; passed: number; failed: number };
+  gates: ReleaseGateEntry[];
+  commands: string[];
+  invariants: string[];
+}
+
 interface Wine20RoadmapPhase {
   phase: number;
   title: string;

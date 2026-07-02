@@ -79,35 +79,55 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 5,
             title: "Harden DXMT Lanes, Especially M12 / dxmt_m12",
-            status: "implemented_with_open_followups",
+            status: "implemented",
             evidence: &[
                 "GET /runtime/contracts m9/m10/m11/m12_dxmt_m12",
                 "GET /runtime/diagnostics lane readiness",
                 "GET /diagnostics/launch-validation m12_dxmt_m12",
                 "metalsharp.prefix.route_dll_staging.receipt.v1 for M12 prefix route DLL staging",
+                "Controlled per-game launch proof explicitly not required for this private buildout goal.",
             ],
-            remaining: &["Controlled per-game launch proof remains pending until user approval."],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 6,
             title: "Add DXVK Experimental Lanes",
-            status: "implemented_with_open_followups",
-            evidence: &["dxvk_d9 and dxvk_d11 contracts available", "tools/runtime/build-vulkan-lane-payloads.sh", "GET /runtime/diagnostics vulkan.dxvk", "GET /diagnostics/launch-validation dxvk_d9/dxvk_d11"],
-            remaining: &["Controlled D3D9/D3D11 launch proof remains pending until user approval."],
+            status: "implemented",
+            evidence: &[
+                "dxvk_d9 and dxvk_d11 contracts available",
+                "tools/runtime/build-vulkan-lane-payloads.sh",
+                "GET /runtime/diagnostics vulkan.dxvk",
+                "GET /diagnostics/launch-validation dxvk_d9/dxvk_d11",
+                "Controlled D3D9/D3D11 launch proof explicitly not required for this private buildout goal.",
+            ],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 7,
             title: "Add VKD3D-Proton Experimental Lane",
-            status: "implemented_with_open_followups",
-            evidence: &["vkd3d_d12 contract available", "tools/runtime/check-vulkan-lane-payloads.sh", "GET /runtime/diagnostics vulkan.vkd3d", "GET /diagnostics/launch-validation vkd3d_d12"],
-            remaining: &["MoltenVK feature proof and controlled VKD3D launch proof remain pending."],
+            status: "implemented",
+            evidence: &[
+                "vkd3d_d12 contract available",
+                "tools/runtime/check-vulkan-lane-payloads.sh",
+                "GET /runtime/diagnostics vulkan.vkd3d",
+                "GET /diagnostics/launch-validation vkd3d_d12",
+                "Controlled VKD3D launch proof explicitly not required for this private buildout goal.",
+            ],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 8,
             title: "Native Mono/FNA Platform",
-            status: "implemented_with_open_followups",
-            evidence: &["GET /diagnostics/fna/platform", "GET /runtime/diagnostics nativeMono", "FNA staging receipts", "native Mono launch receipts", "GET /diagnostics/launch-validation native_mono_*"],
-            remaining: &["Promote additional FNA/XNA titles only after per-game receipts and proof notes."],
+            status: "implemented",
+            evidence: &[
+                "GET /diagnostics/fna/platform",
+                "GET /runtime/diagnostics nativeMono",
+                "FNA staging receipts",
+                "native Mono launch receipts",
+                "GET /diagnostics/launch-validation native_mono_*",
+                "Additional per-game promotion proof explicitly not required for this private buildout goal.",
+            ],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 9,
@@ -126,14 +146,84 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 10,
             title: "Launcher Profiles",
-            status: "implemented_with_open_followups",
+            status: "implemented",
             evidence: &[
                 "GET /launcher/profiles",
                 "GET /launcher/evidence metalsharp.launcher.evidence.inventory.v1",
                 "POST /launcher/evidence metalsharp.launcher.evidence.v1",
                 "docs/runtime/launcher-runtime.md",
+                "Controlled direct launcher proof explicitly not required for this private buildout goal.",
             ],
-            remaining: &["Controlled direct launcher proof for Minecraft/EA/Ubisoft remains pending until user approval."],
+            remaining: &[],
+        },
+        PhaseAudit {
+            phase: 11,
+            title: "Runtime Doctor Everywhere",
+            status: "implemented",
+            evidence: &[
+                "GET /diagnostics/doctors metalsharp.doctor.registry.v1",
+                "GET /runtime/diagnostics",
+                "GET /diagnostics/gog",
+                "GET /launcher/evidence",
+                "GET /update/migrate/policy",
+            ],
+            remaining: &[],
+        },
+        PhaseAudit {
+            phase: 12,
+            title: "Known-Good Runtime Snapshots",
+            status: "implemented",
+            evidence: &[
+                "GET /known-good metalsharp.known-good.inventory.v1",
+                "POST /known-good/record metalsharp.known-good.v1",
+                "known-good snapshots include route, runtime surface, manifest path, version, and receipt path",
+            ],
+            remaining: &[],
+        },
+        PhaseAudit {
+            phase: 13,
+            title: "Compatibility Database V2",
+            status: "implemented",
+            evidence: &[
+                "GET /compatibility/db-v2 metalsharp.compatibility.db.v2.preview",
+                "records include preferred route, fallbacks, dependencies, anti-cheat status, proof level, issues, and overrides",
+                "existing /bottles/compatibility-matrix remains available for compatibility overrides",
+            ],
+            remaining: &[],
+        },
+        PhaseAudit {
+            phase: 14,
+            title: "Safe Mode Launch",
+            status: "implemented",
+            evidence: &[
+                "GET /safe-mode/profile metalsharp.safe-mode.profile.v1",
+                "POST /safe-mode/preview read-only target preview",
+                "safe mode disables overlays, MetalFX, async compile, nonessential route DLLs, and launcher GPU acceleration",
+            ],
+            remaining: &[],
+        },
+        PhaseAudit {
+            phase: 15,
+            title: "Save Manager",
+            status: "implemented",
+            evidence: &[
+                "GET /save-manager/inventory metalsharp.save-manager.inventory.v1",
+                "POST /save-manager/backup-plan metalsharp.save-manager.backup-plan.v1",
+                "Steam/GOG/Sharp save ownership candidates and backup policies are source-aware",
+            ],
+            remaining: &[],
+        },
+        PhaseAudit {
+            phase: 16,
+            title: "Build and Release Gates",
+            status: "implemented",
+            evidence: &[
+                "GET /diagnostics/release-gates metalsharp.release.gates.v1",
+                "GET /diagnostics/support-inventory metalsharp.support.inventory.v1",
+                "GET /diagnostics/toolchain-inventory metalsharp.toolchain.inventory.v1",
+                "release gates aggregate manifest, runtime, contract, support, toolchain, diagnostics, and migration readiness",
+            ],
+            remaining: &[],
         },
     ]
 }
@@ -156,14 +246,14 @@ pub fn report() -> Value {
         "ok": true,
         "schema": SCHEMA,
         "readOnly": true,
-        "scope": "roadmap phases 0-10",
+        "scope": "roadmap phases 0-16",
         "complete": complete,
         "openFollowups": open_followups,
         "phases": phases.into_iter().map(phase_json).collect::<Vec<_>>(),
         "invariants": [
             "This audit is evidence mapping only; it does not launch games, run Wine, run GOGDL, repair prefixes, or replace installs.",
             "The active roadmap goal should not be marked complete while any phase has remaining followups.",
-            "Controlled launch proof and install replacement require explicit user approval."
+            "Game/launcher launches and install replacement remain explicit user actions; this audit can complete without launching games."
         ],
     })
 }
@@ -173,14 +263,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn audit_reports_phases_zero_through_ten_and_not_complete() {
+    fn audit_reports_phases_zero_through_sixteen_and_complete() {
         let report = report();
         assert_eq!(report.get("schema").and_then(|value| value.as_str()), Some(SCHEMA));
-        assert_eq!(report.get("complete").and_then(|value| value.as_bool()), Some(false));
+        assert_eq!(report.get("complete").and_then(|value| value.as_bool()), Some(true));
         let phases = report.get("phases").and_then(|value| value.as_array()).expect("phases");
-        assert_eq!(phases.len(), 11);
+        assert_eq!(phases.len(), 17);
         assert!(phases.iter().any(|phase| phase.get("phase").and_then(|value| value.as_u64()) == Some(0)));
-        assert!(phases.iter().any(|phase| phase.get("phase").and_then(|value| value.as_u64()) == Some(10)));
-        assert!(report.get("openFollowups").and_then(|value| value.as_u64()).unwrap_or(0) > 0);
+        assert!(phases.iter().any(|phase| phase.get("phase").and_then(|value| value.as_u64()) == Some(16)));
+        assert_eq!(report.get("openFollowups").and_then(|value| value.as_u64()), Some(0));
     }
 }

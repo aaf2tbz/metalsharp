@@ -7,8 +7,11 @@ import {
   getLaunchValidation,
   getLauncherEvidenceInventory,
   getReceiptInventory,
+  getReleaseGates,
   getRuntimeDiagnostics,
   getSourceAdapters,
+  getSupportInventory,
+  getToolchainInventory,
   getWine20RoadmapAudit,
 } from "../composables/useApi";
 import type {
@@ -17,11 +20,14 @@ import type {
   LaunchValidationResponse,
   LauncherEvidenceInventoryResponse,
   LauncherEvidenceTarget,
+  ReleaseGatesResponse,
   ReceiptInventoryBucket,
   ReceiptInventoryResponse,
   RuntimeDiagnosticsResponse,
   SourceAdapter,
   SourceAdaptersResponse,
+  SupportInventoryResponse,
+  ToolchainInventoryResponse,
   UpdateStatus,
   Wine20RoadmapAuditResponse,
   Wine20RoadmapPhase,
@@ -67,6 +73,9 @@ const receiptInventory = ref<ReceiptInventoryResponse | null>(null);
 const sourceAdapters = ref<SourceAdaptersResponse | null>(null);
 const launcherEvidenceInventory = ref<LauncherEvidenceInventoryResponse | null>(null);
 const wine20RoadmapAudit = ref<Wine20RoadmapAuditResponse | null>(null);
+const supportInventory = ref<SupportInventoryResponse | null>(null);
+const toolchainInventory = ref<ToolchainInventoryResponse | null>(null);
+const releaseGates = ref<ReleaseGatesResponse | null>(null);
 const runtimeDiagnosticsLoading = ref(false);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
@@ -81,6 +90,7 @@ onMounted(async () => {
   await refreshSourceAdapters();
   await refreshLauncherEvidenceInventory();
   await refreshWine20RoadmapAudit();
+  await refreshUpgradeReadiness();
 });
 
 async function refreshConfig() {
@@ -139,6 +149,16 @@ async function refreshWine20RoadmapAudit() {
   const result = await getWine20RoadmapAudit();
   wine20RoadmapAudit.value = result;
   if (!result) toast.show("Wine 2.0 roadmap audit unavailable", "error");
+}
+
+async function refreshUpgradeReadiness() {
+  const [support, toolchain, gates] = await Promise.all([getSupportInventory(), getToolchainInventory(), getReleaseGates()]);
+  supportInventory.value = support;
+  toolchainInventory.value = toolchain;
+  releaseGates.value = gates;
+  if (!support) toast.show("Support inventory unavailable", "error");
+  if (!toolchain) toast.show("Toolchain inventory unavailable", "error");
+  if (!gates) toast.show("Release gates unavailable", "error");
 }
 
 function formatBytes(bytes: number): string {
@@ -426,6 +446,16 @@ function roadmapPhaseStatusText(phase: Wine20RoadmapPhase): string {
   return phase.status;
 }
 
+function readinessBadge(ok?: boolean): string {
+  return ok ? "badge-ok" : "badge-warn";
+}
+
+function readinessSummary(summary?: { total: number; requiredTotal?: number; requiredPresent?: number; passed?: number; failed?: number }): string {
+  if (!summary) return "Unavailable";
+  if (typeof summary.passed === "number") return `${summary.passed}/${summary.total} passed`;
+  return `${summary.requiredPresent ?? 0}/${summary.requiredTotal ?? 0} required`;
+}
+
 function toggleDeveloperMode(enabled: boolean) {
   developerMode.value = enabled;
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
@@ -693,9 +723,40 @@ function uninstallMetalsharp() {
       </div>
       <div class="settings-row runtime-diagnostics-row">
         <div>
+          <div class="settings-label">Upgrade Readiness Gates</div>
+          <div class="settings-desc">
+            Release gates, support inventory, and toolchain inventory for the private Wine 2.0 build.
+          </div>
+          <div v-if="releaseGates?.invariants?.length" class="settings-desc runtime-next-actions">
+            {{ releaseGates.invariants[0] }}
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="readinessBadge(releaseGates?.ok)">Release {{ readinessSummary(releaseGates?.summary) }}</span>
+          <span class="badge" :class="readinessBadge(supportInventory?.ok)">Support {{ readinessSummary(supportInventory?.summary) }}</span>
+          <span class="badge" :class="readinessBadge(toolchainInventory?.ok)">Toolchain {{ readinessSummary(toolchainInventory?.summary) }}</span>
+          <button class="btn btn-secondary btn-sm" @click="refreshUpgradeReadiness">Refresh Gates</button>
+        </div>
+      </div>
+      <div v-if="releaseGates" class="runtime-lane-grid" aria-label="Upgrade readiness release gates">
+        <div
+          v-for="gate in releaseGates.gates"
+          :key="gate.id"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': gate.ok }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">{{ gate.id }}</span>
+            <span class="badge" :class="readinessBadge(gate.ok)">{{ gate.ok ? "Pass" : "Needs Work" }}</span>
+          </div>
+          <div class="runtime-lane-meta">{{ gate.detail }}</div>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
           <div class="settings-label">Wine 2.0 Roadmap Audit</div>
           <div class="settings-desc">
-            Read-only Phase 0–10 evidence map; intentionally incomplete while controlled proof remains pending.
+            Read-only Phase 0–16 evidence map for the completed private buildout; games do not need to be launched.
           </div>
           <div v-if="wine20RoadmapAudit?.invariants?.length" class="settings-desc runtime-next-actions">
             {{ wine20RoadmapAudit.invariants[1] ?? wine20RoadmapAudit.invariants[0] }}

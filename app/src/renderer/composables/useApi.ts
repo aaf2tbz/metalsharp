@@ -43,6 +43,18 @@ export function getWine20RoadmapAudit() {
   return api<Wine20RoadmapAuditResponse>("GET", "/diagnostics/wine20-roadmap");
 }
 
+export function getSupportInventory() {
+  return api<SupportInventoryResponse>("GET", "/diagnostics/support-inventory");
+}
+
+export function getToolchainInventory() {
+  return api<ToolchainInventoryResponse>("GET", "/diagnostics/toolchain-inventory");
+}
+
+export function getReleaseGates() {
+  return api<ReleaseGatesResponse>("GET", "/diagnostics/release-gates");
+}
+
 export function getLauncherProfiles() {
   return api<LauncherProfilesResponse>("GET", "/launcher/profiles");
 }

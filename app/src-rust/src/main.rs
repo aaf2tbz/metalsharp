@@ -20,13 +20,16 @@
 mod binding_contract;
 mod bottles;
 mod command_contract;
+mod compat_db_v2;
 mod d3d12_runtime_doctor;
 mod d3dmetal_gptk;
 mod diagnostics;
+mod doctor_registry;
 mod fna_profile;
 mod gog;
 mod installer;
 mod kernel_translation;
+mod known_good;
 mod launch;
 mod launch_validation;
 mod launcher_evidence;
@@ -37,10 +40,13 @@ mod mtsp;
 mod platform;
 mod prefix_metadata;
 mod receipt_inventory;
+mod release_gates;
 mod roadmap_audit;
 mod runtime_contracts;
 mod runtime_diagnostics;
 mod runtime_manifest;
+mod safe_mode;
+mod save_manager;
 mod scan;
 mod setup;
 mod sharp_library;
@@ -48,6 +54,8 @@ mod source_adapters;
 mod source_launch;
 mod source_prepare;
 mod steam;
+mod support_inventory;
+mod toolchain_inventory;
 mod updater;
 
 use serde_json::{json, Value};
@@ -1052,6 +1060,26 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/diagnostics/launch-validation") => resp(200, launch_validation::report()),
         (Method::Get, "/diagnostics/receipts") => resp(200, receipt_inventory::report()),
         (Method::Get, "/diagnostics/wine20-roadmap") => resp(200, roadmap_audit::report()),
+        (Method::Get, "/diagnostics/doctors") => resp(200, doctor_registry::report()),
+        (Method::Get, "/diagnostics/support-inventory") => resp(200, support_inventory::report()),
+        (Method::Get, "/diagnostics/toolchain-inventory") => resp(200, toolchain_inventory::report()),
+        (Method::Get, "/diagnostics/release-gates") => resp(200, release_gates::report()),
+        (Method::Get, "/known-good") => resp(200, known_good::inventory()),
+        (Method::Post, "/known-good/record") => {
+            let body = read_body(req);
+            resp(200, known_good::handle_record(&body))
+        },
+        (Method::Get, "/compatibility/db-v2") => resp(200, compat_db_v2::report()),
+        (Method::Get, "/safe-mode/profile") => resp(200, safe_mode::report()),
+        (Method::Post, "/safe-mode/preview") => {
+            let body = read_body(req);
+            resp(200, safe_mode::preview(&body))
+        },
+        (Method::Get, "/save-manager/inventory") => resp(200, save_manager::inventory()),
+        (Method::Post, "/save-manager/backup-plan") => {
+            let body = read_body(req);
+            resp(200, save_manager::backup_plan(&body))
+        },
         (Method::Get, "/source-adapters") => resp(200, source_adapters::report()),
         (Method::Post, "/source-adapters/prepare") => {
             let body = read_body(req);
