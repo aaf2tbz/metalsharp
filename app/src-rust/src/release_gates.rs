@@ -23,6 +23,16 @@ pub fn report_for(home: &Path) -> Value {
             "DXMT M12 artifact report",
         ),
         gate(
+            "dxvk_runtime_valid_if_shipped",
+            bool_at(&runtime_manifest, "/artifacts/planned/dxvk/all_present"),
+            "DXVK shipped experimental fallback artifacts are staged and complete",
+        ),
+        gate(
+            "vkd3d_runtime_valid_if_shipped",
+            bool_at(&runtime_manifest, "/artifacts/planned/vkd3d/all_present"),
+            "VKD3D-Proton shipped experimental fallback artifacts are staged and complete",
+        ),
+        gate(
             "runtime_contracts_match_ui",
             contracts
                 .get("contracts")
@@ -32,9 +42,9 @@ pub fn report_for(home: &Path) -> Value {
         ),
         gate("support_inventory_complete", bool_at(&support, "/ok"), "Required support inventory is present"),
         gate(
-            "toolchain_inventory_checked",
-            toolchain.get("entries").and_then(|value| value.as_array()).is_some_and(|entries| !entries.is_empty()),
-            "Toolchain inventory was generated",
+            "toolchain_inventory_complete",
+            bool_at(&toolchain, "/ok"),
+            "Required toolchain inventory entries are present",
         ),
         gate("diagnostic_endpoints_work", true, "Diagnostics are backend-local read-only reports"),
         gate("migration_preservation_tests", true, "Migration tests are part of cargo test suite"),
@@ -86,9 +96,11 @@ mod tests {
             "wine_manifest_valid",
             "dxmt_runtime_valid",
             "dxmt_m12_runtime_valid",
+            "dxvk_runtime_valid_if_shipped",
+            "vkd3d_runtime_valid_if_shipped",
             "runtime_contracts_match_ui",
             "support_inventory_complete",
-            "toolchain_inventory_checked",
+            "toolchain_inventory_complete",
         ] {
             assert!(
                 gates.iter().any(|gate| gate.get("id").and_then(|value| value.as_str()) == Some(id)),

@@ -208,7 +208,7 @@ fn surface_manifest(id: &str, path: &Path, role: &str) -> RuntimeSurfaceManifest
     }
 }
 
-fn manifest_path_for(home: &Path) -> PathBuf {
+pub(crate) fn manifest_path_for(home: &Path) -> PathBuf {
     crate::platform::metalsharp_home_dir_for(&home.to_path_buf()).join("runtime").join(RUNTIME_MANIFEST_FILE)
 }
 

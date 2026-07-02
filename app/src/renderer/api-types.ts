@@ -439,7 +439,11 @@ interface SourcePreparePreviewResponse {
   source: string;
   appId: string;
   route: string;
-  launchReceiptPreview: Record<string, unknown> & { schema: "metalsharp.launch.receipt.v1"; preview: true; dryRun: true };
+  launchReceiptPreview: Record<string, unknown> & {
+    schema: "metalsharp.launch.receipt.v1";
+    preview: true;
+    dryRun: true;
+  };
   mutates: false;
   launches: false;
   next: string;
@@ -531,7 +535,14 @@ interface RuntimeDiagnosticsResponse {
       readOnly: true;
       cacheRoot: string;
       method: "permission_bits_no_probe_file";
-      entries: { lane: string; path: string; exists: boolean; writableByMode: boolean; checkedPath?: string | null; reason?: string | null }[];
+      entries: {
+        lane: string;
+        path: string;
+        exists: boolean;
+        writableByMode: boolean;
+        checkedPath?: string | null;
+        reason?: string | null;
+      }[];
     };
     limitations: { id: string; severity: "info" | "warning" | "error"; detail: string }[];
   };

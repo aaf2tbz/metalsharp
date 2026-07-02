@@ -221,7 +221,7 @@ fn phases() -> Vec<PhaseAudit> {
                 "GET /diagnostics/release-gates metalsharp.release.gates.v1",
                 "GET /diagnostics/support-inventory metalsharp.support.inventory.v1",
                 "GET /diagnostics/toolchain-inventory metalsharp.toolchain.inventory.v1",
-                "release gates aggregate manifest, runtime, contract, support, toolchain, diagnostics, and migration readiness",
+                "release gates aggregate manifest, DXMT, dxmt_m12, shipped DXVK, shipped VKD3D, contract, support, toolchain, diagnostics, and migration readiness",
             ],
             remaining: &[],
         },

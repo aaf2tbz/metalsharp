@@ -145,7 +145,8 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
       ok: true,
       schema: "metalsharp.runtime.diagnostics.v1",
       readOnly: true,
-      summary: "UI preview runtime diagnostics: Wine 2.0 contracts, dxmt_m12 naming, and prefix policy are mocked ready.",
+      summary:
+        "UI preview runtime diagnostics: Wine 2.0 contracts, dxmt_m12 naming, and prefix policy are mocked ready.",
       paths: {
         metalsharpHome,
         runtimeRoot: path.join(metalsharpHome, "runtime"),
@@ -227,7 +228,15 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
         icd: {
           ok: false,
           icdDir: path.join(metalsharpHome, "runtime", "wine", "etc", "vulkan", "icd.d"),
-          moltenvkRuntimePath: path.join(metalsharpHome, "runtime", "wine", "lib", "wine", "x86_64-unix", "libMoltenVK.dylib"),
+          moltenvkRuntimePath: path.join(
+            metalsharpHome,
+            "runtime",
+            "wine",
+            "lib",
+            "wine",
+            "x86_64-unix",
+            "libMoltenVK.dylib",
+          ),
           moltenvkRuntimePresent: false,
           present: false,
           allPointToRuntimeMoltenVK: false,

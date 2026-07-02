@@ -71,11 +71,29 @@ export function getSourceAdapters() {
   return api<SourceAdaptersResponse>("GET", "/source-adapters");
 }
 
-export function previewSourcePrepare(body: { source: string; appId?: string | number; id?: string; productId?: string; route?: string; launchMethod?: string }) {
+export function previewSourcePrepare(body: {
+  source: string;
+  appId?: string | number;
+  id?: string;
+  productId?: string;
+  route?: string;
+  launchMethod?: string;
+}) {
   return api<SourcePreparePreviewResponse>("POST", "/source-adapters/prepare", body);
 }
 
-export function dispatchSourceLaunch(body: { source: string; confirmed?: boolean; appId?: string | number; appid?: number; id?: string; productId?: string; route?: string; pipeline?: string; launchMethod?: string; engine?: string }) {
+export function dispatchSourceLaunch(body: {
+  source: string;
+  confirmed?: boolean;
+  appId?: string | number;
+  appid?: number;
+  id?: string;
+  productId?: string;
+  route?: string;
+  pipeline?: string;
+  launchMethod?: string;
+  engine?: string;
+}) {
   return api<SourceLaunchDispatchResponse>("POST", "/source-adapters/launch", body);
 }
 

@@ -14,8 +14,13 @@ pub fn report_for(home: &Path) -> Value {
     let wine = runtime.join("wine");
     let entries = vec![
         entry("wine_binary", "Wine runtime", wine.join("bin/metalsharp-wine"), true),
-        entry("runtime_manifest", "Runtime manifest", runtime.join("metalsharp-runtime-manifest.json"), true),
-        entry("runtime_info_helper", "Runtime info helper", wine.join("bin/metalsharp-runtime-info"), true),
+        entry("runtime_manifest", "Runtime manifest", crate::runtime_manifest::manifest_path_for(home), true),
+        entry(
+            "runtime_info_helper",
+            "Runtime info helper",
+            crate::runtime_manifest::runtime_info_helper_path_for(home),
+            true,
+        ),
         entry("dxmt_m12_surface", "DXMT M12 surface", wine.join("lib/dxmt_m12"), true),
         entry("dxvk_surface", "DXVK surface", wine.join("lib/dxvk"), false),
         entry("vkd3d_surface", "VKD3D-Proton surface", wine.join("lib/vkd3d"), false),
