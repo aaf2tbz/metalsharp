@@ -314,6 +314,7 @@ fn install_steps() -> Vec<InstallStep> {
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("Host Runtime ABI", Box::new(install_host_runtime)),
         ("Support Assets", Box::new(install_split_assets_bundle)),
+        ("DXVK Runtime Surface", Box::new(install_dxvk_runtime_surface)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Graphics Runtimes", Box::new(|home| ensure_graphics_runtimes_ready(home))),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
@@ -1021,8 +1022,73 @@ fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
     Err("mono x86 fallback not found".into())
 }
 
+fn install_dxvk_runtime_surface(home: &PathBuf) -> Result<bool, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let legacy = ms_home.join("runtime").join("dxvk-1.10.3");
+    let canonical = ms_home.join("runtime").join("wine").join("lib").join("dxvk");
+    if dxvk_canonical_surface_has_payload(&canonical) {
+        return Ok(false);
+    }
+    if !legacy.join("x64").join("d3d11.dll").is_file() {
+        if find_bundled_archive("dxvk").is_some() {
+            let _ = install_dxvk_fallback(home)?;
+        } else {
+            // DXVK/VKD3D lanes are still planned. Missing DXVK payloads should
+            // remain visible in diagnostics, but setup must not fail here.
+            return Ok(false);
+        }
+    }
+    if !legacy.join("x64").join("d3d11.dll").is_file() {
+        return Ok(false);
+    }
+
+    let x64_dst = canonical.join("x86_64-windows");
+    let x32_dst = canonical.join("i386-windows");
+    let unix_dst = canonical.join("x86_64-unix");
+    fs::create_dir_all(&x64_dst).map_err(|error| format!("create DXVK x64 surface: {error}"))?;
+    fs::create_dir_all(&x32_dst).map_err(|error| format!("create DXVK x32 surface: {error}"))?;
+    fs::create_dir_all(&unix_dst).map_err(|error| format!("create DXVK unix surface: {error}"))?;
+
+    let mut changed = false;
+    changed |= copy_runtime_dlls(&legacy.join("x64"), &x64_dst)?;
+    changed |= copy_runtime_dlls(&legacy.join("x32"), &x32_dst)?;
+
+    let moltenvk =
+        ms_home.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+    if moltenvk.is_file() {
+        let dest = unix_dst.join("libMoltenVK.dylib");
+        fs::copy(&moltenvk, &dest).map_err(|error| format!("copy MoltenVK into DXVK surface: {error}"))?;
+        changed = true;
+    }
+
+    Ok(changed)
+}
+
+fn dxvk_canonical_surface_has_payload(surface: &Path) -> bool {
+    surface.join("x86_64-windows").join("d3d11.dll").is_file()
+        && surface.join("i386-windows").join("d3d11.dll").is_file()
+}
+
+fn copy_runtime_dlls(src: &Path, dst: &Path) -> Result<bool, String> {
+    if !src.is_dir() {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for entry in fs::read_dir(src).map_err(|error| format!("read runtime dll dir {}: {error}", src.display()))? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.extension().map(|extension| extension.to_string_lossy().eq_ignore_ascii_case("dll")) != Some(true) {
+            continue;
+        }
+        fs::copy(&path, dst.join(entry.file_name()))
+            .map_err(|error| format!("copy runtime DLL {}: {error}", path.display()))?;
+        changed = true;
+    }
+    Ok(changed)
+}
+
 fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
-    let dxvk_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("dxvk-1.10.3");
+    let dxvk_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("dxvk-1.10.3");
     if dxvk_dir.join("x32").join("d3d11.dll").exists() {
         return Ok(false);
     }
@@ -2554,6 +2620,34 @@ mod tests {
             entry.get("filename").and_then(|value| value.as_str()) == Some("d3d12.dll")
                 && entry.get("subdir").and_then(|value| value.as_str()) == Some("x86_64-windows")
         }));
+    }
+
+    #[test]
+    fn dxvk_runtime_surface_stages_from_legacy_payload() {
+        let home = test_home("dxvk-canonical-surface");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let legacy = ms_home.join("runtime").join("dxvk-1.10.3");
+        for subdir in ["x64", "x32"] {
+            fs::create_dir_all(legacy.join(subdir)).expect("create legacy dxvk dir");
+            for dll in ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"] {
+                fs::write(legacy.join(subdir).join(dll), format!("{subdir}-{dll}")).expect("write legacy dxvk dll");
+            }
+        }
+        let moltenvk =
+            ms_home.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        fs::create_dir_all(moltenvk.parent().unwrap()).expect("create MoltenVK parent");
+        fs::write(&moltenvk, b"moltenvk").expect("write MoltenVK");
+
+        assert!(install_dxvk_runtime_surface(&home).expect("stage dxvk surface"));
+        let canonical = ms_home.join("runtime").join("wine").join("lib").join("dxvk");
+        assert!(canonical.join("x86_64-windows").join("d3d11.dll").is_file());
+        assert!(canonical.join("i386-windows").join("d3d11.dll").is_file());
+        assert!(canonical.join("x86_64-unix").join("libMoltenVK.dylib").is_file());
+
+        let report = runtime_artifact_report_for(&home);
+        let dxvk = report.get("planned").and_then(|planned| planned.get("dxvk")).expect("dxvk report");
+        assert_eq!(dxvk.get("all_present").and_then(|value| value.as_bool()), Some(true));
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
