@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, type Ref } from "vue";
+import { ref, inject, onMounted, watch, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import {
   api,
@@ -84,6 +84,18 @@ onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
   await refreshConfig();
   await refreshCacheSizes();
+  if (developerMode.value) {
+    await refreshDeveloperDiagnostics();
+  }
+});
+
+watch(developerMode, async (enabled) => {
+  if (enabled) {
+    await refreshDeveloperDiagnostics();
+  }
+});
+
+async function refreshDeveloperDiagnostics() {
   await refreshRuntimeDiagnostics();
   await refreshLaunchValidation();
   await refreshReceiptInventory();
@@ -91,7 +103,7 @@ onMounted(async () => {
   await refreshLauncherEvidenceInventory();
   await refreshWine20RoadmapAudit();
   await refreshUpgradeReadiness();
-});
+}
 
 async function refreshConfig() {
   const result = await api<AppConfig>("GET", "/config");
@@ -152,7 +164,11 @@ async function refreshWine20RoadmapAudit() {
 }
 
 async function refreshUpgradeReadiness() {
-  const [support, toolchain, gates] = await Promise.all([getSupportInventory(), getToolchainInventory(), getReleaseGates()]);
+  const [support, toolchain, gates] = await Promise.all([
+    getSupportInventory(),
+    getToolchainInventory(),
+    getReleaseGates(),
+  ]);
   supportInventory.value = support;
   toolchainInventory.value = toolchain;
   releaseGates.value = gates;
@@ -367,7 +383,8 @@ function nativeMonoMissingRequired(diagnostics: RuntimeDiagnosticsResponse | nul
 }
 
 function nativeMonoLaneBlockers(diagnostics: RuntimeDiagnosticsResponse | null): string {
-  const blockers = diagnostics?.nativeMono.lanes.flatMap((lane) => lane.blockers.map((blocker) => `${lane.id}: ${blocker}`)) ?? [];
+  const blockers =
+    diagnostics?.nativeMono.lanes.flatMap((lane) => lane.blockers.map((blocker) => `${lane.id}: ${blocker}`)) ?? [];
   return blockers.length ? blockers.join(" · ") : "Mono binaries and architectures match lane contracts";
 }
 
@@ -450,7 +467,13 @@ function readinessBadge(ok?: boolean): string {
   return ok ? "badge-ok" : "badge-warn";
 }
 
-function readinessSummary(summary?: { total: number; requiredTotal?: number; requiredPresent?: number; passed?: number; failed?: number }): string {
+function readinessSummary(summary?: {
+  total: number;
+  requiredTotal?: number;
+  requiredPresent?: number;
+  passed?: number;
+  failed?: number;
+}): string {
   if (!summary) return "Unavailable";
   if (typeof summary.passed === "number") return `${summary.passed}/${summary.total} passed`;
   return `${summary.requiredPresent ?? 0}/${summary.requiredTotal ?? 0} required`;
@@ -467,7 +490,8 @@ function toggleLowPerformanceMode(enabled: boolean) {
 }
 
 async function forceKillProcesses() {
-  if (!confirm("Force kill MetalSharp Wine/runtime processes? This can stop active games, installers, and downloads.")) return;
+  if (!confirm("Force kill MetalSharp Wine/runtime processes? This can stop active games, installers, and downloads."))
+    return;
   const result = await api<{
     ok: boolean;
     terminated?: unknown[];
@@ -481,7 +505,10 @@ async function forceKillProcesses() {
   }
   const count = (result.terminated?.length ?? 0) + (result.killed?.length ?? 0);
   if (result.ok) {
-    toast.show(count > 0 ? `Force killed ${count} process${count === 1 ? "" : "es"}` : "No MetalSharp runtime processes found", "success");
+    toast.show(
+      count > 0 ? `Force killed ${count} process${count === 1 ? "" : "es"}` : "No MetalSharp runtime processes found",
+      "success",
+    );
   } else {
     toast.show(result.error ?? `Force kill completed with ${result.errors?.length ?? 0} error(s)`, "error");
   }
@@ -495,7 +522,9 @@ async function toggleGraphicsRuntimeLogs(enabled: boolean) {
     config.value = result;
     graphicsRuntimeLogs.value = Boolean(result.graphicsRuntimeLogs ?? result.graphics_runtime_logs);
     toast.show(
-      graphicsRuntimeLogs.value ? "Graphics runtime logs enabled for future launches" : "Graphics runtime logs disabled",
+      graphicsRuntimeLogs.value
+        ? "Graphics runtime logs enabled for future launches"
+        : "Graphics runtime logs disabled",
       "success",
     );
   } else {
@@ -596,348 +625,383 @@ function uninstallMetalsharp() {
           <span v-if="backendVersion" class="settings-version">v{{ backendVersion }}</span>
         </div>
       </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Wine 2.0 Runtime Diagnostics</div>
-          <div class="settings-desc">
-            {{ runtimeDiagnostics?.summary ?? "Read-only check for Wine, DXMT, dxmt_m12, manifest, and prefix policy." }}
+      <template v-if="developerMode">
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Wine 2.0 Runtime Diagnostics</div>
+            <div class="settings-desc">
+              {{
+                runtimeDiagnostics?.summary ?? "Read-only check for Wine, DXMT, dxmt_m12, manifest, and prefix policy."
+              }}
+            </div>
+            <div v-if="runtimeDiagnostics?.nextActions?.length" class="settings-desc runtime-next-actions">
+              Next: {{ runtimeDiagnostics.nextActions[0] }}
+            </div>
           </div>
-          <div v-if="runtimeDiagnostics?.nextActions?.length" class="settings-desc runtime-next-actions">
-            Next: {{ runtimeDiagnostics.nextActions[0] }}
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics?.ok)">
-            {{ runtimeDiagnostics?.ok ? "Ready" : runtimeDiagnosticsLoading ? "Checking..." : "Check Needed" }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.contracts.canonicalM12Ok)"
-            title="Canonical installed M12 runtime surface"
-          >
-            dxmt_m12
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.lanes.availableReady === runtimeDiagnostics.lanes.availableTotal)"
-            :title="`${runtimeDiagnostics.lanes.planned} planned, ${runtimeDiagnostics.lanes.external} external`"
-          >
-            Available Lanes {{ runtimeDiagnostics.lanes.availableReady }}/{{ runtimeDiagnostics.lanes.availableTotal }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.dxmtM12Current)"
-          >
-            M12 {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.dxmtM12Current) }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.manifestOk)"
-          >
-            Manifest {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.manifestOk) }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.sources.gog.ok)"
-            title="GOGDL binary, auth, and dedicated gog-prefix readiness"
-          >
-            GOGDL {{ runtimeDiagnosticStatus(runtimeDiagnostics.sources.gog.ok) }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.nativeMono.ok)"
-            :title="`${nativeMonoLaneSummary(runtimeDiagnostics)}; ${nativeMonoSupportSummary(runtimeDiagnostics)}`"
-          >
-            Mono/FNA {{ runtimeDiagnosticStatus(runtimeDiagnostics.nativeMono.ok) }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.vulkan.ok)"
-            :title="`DXVK ${runtimeDiagnostics.vulkan.dxvk.present}/${runtimeDiagnostics.vulkan.dxvk.total}; VKD3D ${runtimeDiagnostics.vulkan.vkd3d.present}/${runtimeDiagnostics.vulkan.vkd3d.total}; ICD ${runtimeDiagnostics.vulkan.icd.present ? 'present' : 'missing'}; state cache ${runtimeDiagnostics.vulkan.dxvkStateCache.ok ? 'writable' : 'blocked'}`"
-          >
-            Vulkan {{ runtimeDiagnosticStatus(runtimeDiagnostics.vulkan.ok) }}
-          </span>
-          <span
-            v-if="runtimeDiagnostics"
-            class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.updateGuard.ok)"
-            :title="runtimeDiagnostics.updateGuard.reason"
-          >
-            Updates {{ runtimeDiagnostics.updateGuard.releaseFeed }}
-          </span>
-          <button class="btn btn-secondary btn-sm" :disabled="runtimeDiagnosticsLoading" @click="refreshRuntimeDiagnostics">
-            {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
-          </button>
-        </div>
-      </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Launch Validation Matrix</div>
-          <div class="settings-desc">
-            Read-only proof matrix: receipts count as proven; filesystem checks still need controlled launch proof.
-          </div>
-          <div v-if="launchValidation?.invariants?.length" class="settings-desc runtime-next-actions">
-            {{ launchValidation.invariants[0] }}
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="runtimeDiagnosticBadgeClass(launchValidation?.ok)">
-            {{ launchValidation?.ok ? "Green" : "Proof Needed" }}
-          </span>
-          <span v-if="launchValidation" class="badge badge-ok">Proven {{ launchValidation.summary.proven }}</span>
-          <span v-if="launchValidation" class="badge badge-muted">Filesystem {{ launchValidation.summary.filesystemValidated }}</span>
-          <span v-if="launchValidation" class="badge badge-warn">Pending {{ launchValidation.summary.pending }}</span>
-          <button class="btn btn-secondary btn-sm" @click="refreshLaunchValidation">Refresh Matrix</button>
-        </div>
-      </div>
-      <div v-if="launchValidation" class="runtime-lane-grid" aria-label="Launch validation proof matrix">
-        <div
-          v-for="entry in launchValidation.entries"
-          :key="entry.id"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': entry.status === 'proven' }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">{{ entry.route }}</span>
-            <span class="badge" :class="launchValidationBadgeClass(entry.status)" :title="launchValidationTitle(entry)">
-              {{ launchValidationStatusText(entry.status) }}
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics?.ok)">
+              {{ runtimeDiagnostics?.ok ? "Ready" : runtimeDiagnosticsLoading ? "Checking..." : "Check Needed" }}
             </span>
-          </div>
-          <div class="runtime-lane-meta">
-            {{ entry.source }} · {{ entry.runtimeContractId }} · {{ entry.requiredEvidence.join(", ") }}
-          </div>
-          <div v-if="entry.limitations.length" class="runtime-lane-artifacts">
-            {{ entry.limitations[0] }}
-          </div>
-          <div v-if="entry.nextActions.length" class="runtime-lane-blockers">
-            {{ entry.nextActions[0] }}
-          </div>
-        </div>
-      </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Upgrade Readiness Gates</div>
-          <div class="settings-desc">
-            Release gates, support inventory, and toolchain inventory for the private Wine 2.0 build.
-          </div>
-          <div v-if="releaseGates?.invariants?.length" class="settings-desc runtime-next-actions">
-            {{ releaseGates.invariants[0] }}
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="readinessBadge(releaseGates?.ok)">Release {{ readinessSummary(releaseGates?.summary) }}</span>
-          <span class="badge" :class="readinessBadge(supportInventory?.ok)">Support {{ readinessSummary(supportInventory?.summary) }}</span>
-          <span class="badge" :class="readinessBadge(toolchainInventory?.ok)">Toolchain {{ readinessSummary(toolchainInventory?.summary) }}</span>
-          <button class="btn btn-secondary btn-sm" @click="refreshUpgradeReadiness">Refresh Gates</button>
-        </div>
-      </div>
-      <div v-if="releaseGates" class="runtime-lane-grid" aria-label="Upgrade readiness release gates">
-        <div
-          v-for="gate in releaseGates.gates"
-          :key="gate.id"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': gate.ok }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">{{ gate.id }}</span>
-            <span class="badge" :class="readinessBadge(gate.ok)">{{ gate.ok ? "Pass" : "Needs Work" }}</span>
-          </div>
-          <div class="runtime-lane-meta">{{ gate.detail }}</div>
-        </div>
-      </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Wine 2.0 Roadmap Audit</div>
-          <div class="settings-desc">
-            Read-only Phase 0–16 evidence map for the completed private buildout; games do not need to be launched.
-          </div>
-          <div v-if="wine20RoadmapAudit?.invariants?.length" class="settings-desc runtime-next-actions">
-            {{ wine20RoadmapAudit.invariants[1] ?? wine20RoadmapAudit.invariants[0] }}
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="wine20RoadmapAudit?.complete ? 'badge-ok' : 'badge-warn'">
-            {{ wine20RoadmapAudit?.complete ? "Complete" : "Open" }}
-          </span>
-          <span v-if="wine20RoadmapAudit" class="badge badge-warn">
-            Followups {{ wine20RoadmapAudit.openFollowups }}
-          </span>
-          <button class="btn btn-secondary btn-sm" @click="refreshWine20RoadmapAudit">Refresh Audit</button>
-        </div>
-      </div>
-      <div v-if="wine20RoadmapAudit" class="runtime-lane-grid" aria-label="Wine 2.0 roadmap audit">
-        <div
-          v-for="phase in wine20RoadmapAudit.phases"
-          :key="phase.phase"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': phase.status === 'implemented' && phase.remaining.length === 0 }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">Phase {{ phase.phase }} · {{ phase.title }}</span>
-            <span class="badge" :class="roadmapPhaseBadgeClass(phase)">{{ roadmapPhaseStatusText(phase) }}</span>
-          </div>
-          <div class="runtime-lane-meta">{{ phase.evidence[0] ?? "No evidence recorded" }}</div>
-          <div v-if="phase.remaining.length" class="runtime-lane-blockers">
-            {{ phase.remaining[0] }}
-          </div>
-        </div>
-      </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Source Adapter Contracts</div>
-          <div class="settings-desc">
-            Backend-owned Steam/GOG/Sharp adapter contracts with read-only prepare preview endpoints.
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="sourceAdapters?.ok ? 'badge-ok' : 'badge-muted'">
-            Sources {{ sourceAdapters?.adapters.length ?? 0 }}
-          </span>
-          <button class="btn btn-secondary btn-sm" @click="refreshSourceAdapters">Refresh Sources</button>
-        </div>
-      </div>
-      <div v-if="sourceAdapters" class="runtime-lane-grid" aria-label="Source adapter contracts">
-        <div
-          v-for="adapter in sourceAdapters.adapters"
-          :key="adapter.id"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': adapter.ready }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">{{ adapter.displayName }}</span>
-            <span class="badge" :class="sourceAdapterBadgeClass(adapter)">{{ adapter.ready ? "Ready" : adapter.status }}</span>
-          </div>
-          <div class="runtime-lane-meta">{{ sourceAdapterSummary(adapter) }}</div>
-          <div class="runtime-lane-artifacts">
-            {{ adapter.launchEndpoint }} · {{ adapter.prepareEndpoint ?? "source-local prepare" }}
-          </div>
-          <div v-if="adapter.limitations.length" class="runtime-lane-blockers">
-            {{ adapter.limitations[0] }}
-          </div>
-        </div>
-      </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Launcher Evidence Inventory</div>
-          <div class="settings-desc">
-            Read-only Minecraft/EA/Ubisoft launcher proof inventory from existing bottle evidence.
-          </div>
-          <div v-if="launcherEvidenceInventory?.invariants?.length" class="settings-desc runtime-next-actions">
-            {{ launcherEvidenceInventory.invariants[0] }}
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="launcherEvidenceInventory?.ok ? 'badge-ok' : 'badge-muted'">
-            Targets {{ launcherEvidenceInventory?.summary.total ?? 0 }}
-          </span>
-          <span v-if="launcherEvidenceInventory" class="badge badge-warn">
-            Pending {{ launcherEvidenceInventory.summary.pendingControlledProof }}
-          </span>
-          <button class="btn btn-secondary btn-sm" @click="refreshLauncherEvidenceInventory">Refresh Launchers</button>
-        </div>
-      </div>
-      <div v-if="launcherEvidenceInventory" class="runtime-lane-grid" aria-label="Launcher evidence inventory">
-        <div
-          v-for="target in launcherEvidenceInventory.targets"
-          :key="target.family"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': target.status === 'controlled_proof_recorded' || target.status === 'filesystem_validated' }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">{{ target.family }}</span>
-            <span class="badge" :class="launcherEvidenceBadgeClass(target)">
-              {{ launcherEvidenceStatusText(target) }}
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.contracts.canonicalM12Ok)"
+              title="Canonical installed M12 runtime surface"
+            >
+              dxmt_m12
             </span>
-          </div>
-          <div class="runtime-lane-meta">
-            {{ target.bottleId ?? "No bottle evidence" }} · {{ target.evidenceStatus ?? target.status }}
-          </div>
-          <div class="runtime-lane-artifacts">{{ target.summary }}</div>
-          <div v-if="target.nextActions.length" class="runtime-lane-blockers">
-            {{ target.nextActions[0] }}
-          </div>
-        </div>
-      </div>
-      <div class="settings-row runtime-diagnostics-row">
-        <div>
-          <div class="settings-label">Runtime Receipt Inventory</div>
-          <div class="settings-desc">
-            Read-only inventory of launch, wineboot, prefix DLL staging, and FNA staging receipts.
-          </div>
-          <div v-if="receiptInventory?.invariants?.length" class="settings-desc runtime-next-actions">
-            {{ receiptInventory.invariants[0] }}
-          </div>
-        </div>
-        <div class="settings-value runtime-diagnostics-value">
-          <span class="badge" :class="receiptInventory && receiptInventory.total > 0 ? 'badge-ok' : 'badge-muted'">
-            Receipts {{ receiptInventory?.total ?? 0 }}
-          </span>
-          <button class="btn btn-secondary btn-sm" @click="refreshReceiptInventory">Refresh Receipts</button>
-        </div>
-      </div>
-      <div v-if="receiptInventory" class="runtime-lane-grid" aria-label="Runtime receipt inventory">
-        <div
-          v-for="bucket in receiptInventory.buckets"
-          :key="bucket.id"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': bucket.count > 0 }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">{{ bucket.label }}</span>
-            <span class="badge" :class="receiptBucketBadgeClass(bucket)" :title="receiptBucketTitle(bucket)">
-              {{ bucket.count }}
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="
+                runtimeDiagnosticBadgeClass(
+                  runtimeDiagnostics.lanes.availableReady === runtimeDiagnostics.lanes.availableTotal,
+                )
+              "
+              :title="`${runtimeDiagnostics.lanes.planned} planned, ${runtimeDiagnostics.lanes.external} external`"
+            >
+              Available Lanes {{ runtimeDiagnostics.lanes.availableReady }}/{{
+                runtimeDiagnostics.lanes.availableTotal
+              }}
             </span>
-          </div>
-          <div class="runtime-lane-meta">{{ bucket.pattern }} · {{ bucket.present ? "present" : "missing" }}</div>
-          <div v-if="bucket.latest" class="runtime-lane-artifacts">
-            Latest {{ bucket.latest.schema ?? "receipt" }} {{ bucket.latest.runtimeContractId ? `· ${bucket.latest.runtimeContractId}` : "" }}
-          </div>
-        </div>
-      </div>
-      <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Native Mono/FNA platform readiness">
-        <div class="runtime-lane-card" :class="{ 'runtime-lane-ready': runtimeDiagnostics.nativeMono.ok }">
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">Native Mono/FNA Platform</span>
-            <span class="badge" :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.nativeMono.ok)">
-              {{ runtimeDiagnostics.nativeMono.ok ? "Ready" : "Needs Attention" }}
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.dxmtM12Current)"
+            >
+              M12 {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.dxmtM12Current) }}
             </span>
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.manifestOk)"
+            >
+              Manifest {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.manifestOk) }}
+            </span>
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.sources.gog.ok)"
+              title="GOGDL binary, auth, and dedicated gog-prefix readiness"
+            >
+              GOGDL {{ runtimeDiagnosticStatus(runtimeDiagnostics.sources.gog.ok) }}
+            </span>
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.nativeMono.ok)"
+              :title="`${nativeMonoLaneSummary(runtimeDiagnostics)}; ${nativeMonoSupportSummary(runtimeDiagnostics)}`"
+            >
+              Mono/FNA {{ runtimeDiagnosticStatus(runtimeDiagnostics.nativeMono.ok) }}
+            </span>
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.vulkan.ok)"
+              :title="`DXVK ${runtimeDiagnostics.vulkan.dxvk.present}/${runtimeDiagnostics.vulkan.dxvk.total}; VKD3D ${runtimeDiagnostics.vulkan.vkd3d.present}/${runtimeDiagnostics.vulkan.vkd3d.total}; ICD ${runtimeDiagnostics.vulkan.icd.present ? 'present' : 'missing'}; state cache ${runtimeDiagnostics.vulkan.dxvkStateCache.ok ? 'writable' : 'blocked'}`"
+            >
+              Vulkan {{ runtimeDiagnosticStatus(runtimeDiagnostics.vulkan.ok) }}
+            </span>
+            <span
+              v-if="runtimeDiagnostics"
+              class="badge"
+              :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.updateGuard.ok)"
+              :title="runtimeDiagnostics.updateGuard.reason"
+            >
+              Updates {{ runtimeDiagnostics.updateGuard.releaseFeed }}
+            </span>
+            <button
+              class="btn btn-secondary btn-sm"
+              :disabled="runtimeDiagnosticsLoading"
+              @click="refreshRuntimeDiagnostics"
+            >
+              {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
+            </button>
           </div>
-          <div class="runtime-lane-meta">
-            {{ nativeMonoLaneSummary(runtimeDiagnostics) }} · {{ nativeMonoSupportSummary(runtimeDiagnostics) }} · read-only
-          </div>
-          <div class="runtime-lane-artifacts">{{ nativeMonoLaneBlockers(runtimeDiagnostics) }}</div>
-          <div class="runtime-lane-blockers">{{ nativeMonoMissingRequired(runtimeDiagnostics) }}</div>
         </div>
-      </div>
-      <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Runtime lane readiness">
-        <div
-          v-for="lane in runtimeDiagnostics.lanes.entries"
-          :key="lane.id"
-          class="runtime-lane-card"
-          :class="{ 'runtime-lane-ready': lane.ready }"
-        >
-          <div class="runtime-lane-header">
-            <span class="runtime-lane-name">{{ lane.name }}</span>
-            <span class="badge" :class="runtimeLaneBadgeClass(lane)">{{ runtimeLaneStatusText(lane) }}</span>
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Launch Validation Matrix</div>
+            <div class="settings-desc">
+              Read-only proof matrix: receipts count as proven; filesystem checks still need controlled launch proof.
+            </div>
+            <div v-if="launchValidation?.invariants?.length" class="settings-desc runtime-next-actions">
+              {{ launchValidation.invariants[0] }}
+            </div>
           </div>
-          <div class="runtime-lane-meta">
-            {{ lane.family }} · {{ lane.requiresWine ? "Wine" : "Native" }} · {{ lane.sourceScopes.join(", ") }}
-          </div>
-          <div v-if="lane.artifactSummary" class="runtime-lane-artifacts">
-            Artifacts {{ lane.artifactSummary.present }}/{{ lane.artifactSummary.total }}
-          </div>
-          <div v-if="lane.blockers.length" class="runtime-lane-blockers">
-            {{ lane.blockers.join(" · ") }}
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="runtimeDiagnosticBadgeClass(launchValidation?.ok)">
+              {{ launchValidation?.ok ? "Green" : "Proof Needed" }}
+            </span>
+            <span v-if="launchValidation" class="badge badge-ok">Proven {{ launchValidation.summary.proven }}</span>
+            <span v-if="launchValidation" class="badge badge-muted"
+              >Filesystem {{ launchValidation.summary.filesystemValidated }}</span
+            >
+            <span v-if="launchValidation" class="badge badge-warn">Pending {{ launchValidation.summary.pending }}</span>
+            <button class="btn btn-secondary btn-sm" @click="refreshLaunchValidation">Refresh Matrix</button>
           </div>
         </div>
-      </div>
+        <div v-if="launchValidation" class="runtime-lane-grid" aria-label="Launch validation proof matrix">
+          <div
+            v-for="entry in launchValidation.entries"
+            :key="entry.id"
+            class="runtime-lane-card"
+            :class="{ 'runtime-lane-ready': entry.status === 'proven' }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">{{ entry.route }}</span>
+              <span
+                class="badge"
+                :class="launchValidationBadgeClass(entry.status)"
+                :title="launchValidationTitle(entry)"
+              >
+                {{ launchValidationStatusText(entry.status) }}
+              </span>
+            </div>
+            <div class="runtime-lane-meta">
+              {{ entry.source }} · {{ entry.runtimeContractId }} · {{ entry.requiredEvidence.join(", ") }}
+            </div>
+            <div v-if="entry.limitations.length" class="runtime-lane-artifacts">
+              {{ entry.limitations[0] }}
+            </div>
+            <div v-if="entry.nextActions.length" class="runtime-lane-blockers">
+              {{ entry.nextActions[0] }}
+            </div>
+          </div>
+        </div>
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Upgrade Readiness Gates</div>
+            <div class="settings-desc">
+              Release gates, support inventory, and toolchain inventory for the private Wine 2.0 build.
+            </div>
+            <div v-if="releaseGates?.invariants?.length" class="settings-desc runtime-next-actions">
+              {{ releaseGates.invariants[0] }}
+            </div>
+          </div>
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="readinessBadge(releaseGates?.ok)"
+              >Release {{ readinessSummary(releaseGates?.summary) }}</span
+            >
+            <span class="badge" :class="readinessBadge(supportInventory?.ok)"
+              >Support {{ readinessSummary(supportInventory?.summary) }}</span
+            >
+            <span class="badge" :class="readinessBadge(toolchainInventory?.ok)"
+              >Toolchain {{ readinessSummary(toolchainInventory?.summary) }}</span
+            >
+            <button class="btn btn-secondary btn-sm" @click="refreshUpgradeReadiness">Refresh Gates</button>
+          </div>
+        </div>
+        <div v-if="releaseGates" class="runtime-lane-grid" aria-label="Upgrade readiness release gates">
+          <div
+            v-for="gate in releaseGates.gates"
+            :key="gate.id"
+            class="runtime-lane-card"
+            :class="{ 'runtime-lane-ready': gate.ok }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">{{ gate.id }}</span>
+              <span class="badge" :class="readinessBadge(gate.ok)">{{ gate.ok ? "Pass" : "Needs Work" }}</span>
+            </div>
+            <div class="runtime-lane-meta">{{ gate.detail }}</div>
+          </div>
+        </div>
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Wine 2.0 Roadmap Audit</div>
+            <div class="settings-desc">
+              Read-only Phase 0–16 evidence map for the completed private buildout; games do not need to be launched.
+            </div>
+            <div v-if="wine20RoadmapAudit?.invariants?.length" class="settings-desc runtime-next-actions">
+              {{ wine20RoadmapAudit.invariants[1] ?? wine20RoadmapAudit.invariants[0] }}
+            </div>
+          </div>
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="wine20RoadmapAudit?.complete ? 'badge-ok' : 'badge-warn'">
+              {{ wine20RoadmapAudit?.complete ? "Complete" : "Open" }}
+            </span>
+            <span v-if="wine20RoadmapAudit" class="badge badge-warn">
+              Followups {{ wine20RoadmapAudit.openFollowups }}
+            </span>
+            <button class="btn btn-secondary btn-sm" @click="refreshWine20RoadmapAudit">Refresh Audit</button>
+          </div>
+        </div>
+        <div v-if="wine20RoadmapAudit" class="runtime-lane-grid" aria-label="Wine 2.0 roadmap audit">
+          <div
+            v-for="phase in wine20RoadmapAudit.phases"
+            :key="phase.phase"
+            class="runtime-lane-card"
+            :class="{ 'runtime-lane-ready': phase.status === 'implemented' && phase.remaining.length === 0 }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">Phase {{ phase.phase }} · {{ phase.title }}</span>
+              <span class="badge" :class="roadmapPhaseBadgeClass(phase)">{{ roadmapPhaseStatusText(phase) }}</span>
+            </div>
+            <div class="runtime-lane-meta">{{ phase.evidence[0] ?? "No evidence recorded" }}</div>
+            <div v-if="phase.remaining.length" class="runtime-lane-blockers">
+              {{ phase.remaining[0] }}
+            </div>
+          </div>
+        </div>
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Source Adapter Contracts</div>
+            <div class="settings-desc">
+              Backend-owned Steam/GOG/Sharp adapter contracts with read-only prepare preview endpoints.
+            </div>
+          </div>
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="sourceAdapters?.ok ? 'badge-ok' : 'badge-muted'">
+              Sources {{ sourceAdapters?.adapters.length ?? 0 }}
+            </span>
+            <button class="btn btn-secondary btn-sm" @click="refreshSourceAdapters">Refresh Sources</button>
+          </div>
+        </div>
+        <div v-if="sourceAdapters" class="runtime-lane-grid" aria-label="Source adapter contracts">
+          <div
+            v-for="adapter in sourceAdapters.adapters"
+            :key="adapter.id"
+            class="runtime-lane-card"
+            :class="{ 'runtime-lane-ready': adapter.ready }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">{{ adapter.displayName }}</span>
+              <span class="badge" :class="sourceAdapterBadgeClass(adapter)">{{
+                adapter.ready ? "Ready" : adapter.status
+              }}</span>
+            </div>
+            <div class="runtime-lane-meta">{{ sourceAdapterSummary(adapter) }}</div>
+            <div class="runtime-lane-artifacts">
+              {{ adapter.launchEndpoint }} · {{ adapter.prepareEndpoint ?? "source-local prepare" }}
+            </div>
+            <div v-if="adapter.limitations.length" class="runtime-lane-blockers">
+              {{ adapter.limitations[0] }}
+            </div>
+          </div>
+        </div>
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Launcher Evidence Inventory</div>
+            <div class="settings-desc">
+              Read-only Minecraft/EA/Ubisoft launcher proof inventory from existing bottle evidence.
+            </div>
+            <div v-if="launcherEvidenceInventory?.invariants?.length" class="settings-desc runtime-next-actions">
+              {{ launcherEvidenceInventory.invariants[0] }}
+            </div>
+          </div>
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="launcherEvidenceInventory?.ok ? 'badge-ok' : 'badge-muted'">
+              Targets {{ launcherEvidenceInventory?.summary.total ?? 0 }}
+            </span>
+            <span v-if="launcherEvidenceInventory" class="badge badge-warn">
+              Pending {{ launcherEvidenceInventory.summary.pendingControlledProof }}
+            </span>
+            <button class="btn btn-secondary btn-sm" @click="refreshLauncherEvidenceInventory">
+              Refresh Launchers
+            </button>
+          </div>
+        </div>
+        <div v-if="launcherEvidenceInventory" class="runtime-lane-grid" aria-label="Launcher evidence inventory">
+          <div
+            v-for="target in launcherEvidenceInventory.targets"
+            :key="target.family"
+            class="runtime-lane-card"
+            :class="{
+              'runtime-lane-ready':
+                target.status === 'controlled_proof_recorded' || target.status === 'filesystem_validated',
+            }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">{{ target.family }}</span>
+              <span class="badge" :class="launcherEvidenceBadgeClass(target)">
+                {{ launcherEvidenceStatusText(target) }}
+              </span>
+            </div>
+            <div class="runtime-lane-meta">
+              {{ target.bottleId ?? "No bottle evidence" }} · {{ target.evidenceStatus ?? target.status }}
+            </div>
+            <div class="runtime-lane-artifacts">{{ target.summary }}</div>
+            <div v-if="target.nextActions.length" class="runtime-lane-blockers">
+              {{ target.nextActions[0] }}
+            </div>
+          </div>
+        </div>
+        <div class="settings-row runtime-diagnostics-row">
+          <div>
+            <div class="settings-label">Runtime Receipt Inventory</div>
+            <div class="settings-desc">
+              Read-only inventory of launch, wineboot, prefix DLL staging, and FNA staging receipts.
+            </div>
+            <div v-if="receiptInventory?.invariants?.length" class="settings-desc runtime-next-actions">
+              {{ receiptInventory.invariants[0] }}
+            </div>
+          </div>
+          <div class="settings-value runtime-diagnostics-value">
+            <span class="badge" :class="receiptInventory && receiptInventory.total > 0 ? 'badge-ok' : 'badge-muted'">
+              Receipts {{ receiptInventory?.total ?? 0 }}
+            </span>
+            <button class="btn btn-secondary btn-sm" @click="refreshReceiptInventory">Refresh Receipts</button>
+          </div>
+        </div>
+        <div v-if="receiptInventory" class="runtime-lane-grid" aria-label="Runtime receipt inventory">
+          <div
+            v-for="bucket in receiptInventory.buckets"
+            :key="bucket.id"
+            class="runtime-lane-card"
+            :class="{ 'runtime-lane-ready': bucket.count > 0 }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">{{ bucket.label }}</span>
+              <span class="badge" :class="receiptBucketBadgeClass(bucket)" :title="receiptBucketTitle(bucket)">
+                {{ bucket.count }}
+              </span>
+            </div>
+            <div class="runtime-lane-meta">{{ bucket.pattern }} · {{ bucket.present ? "present" : "missing" }}</div>
+            <div v-if="bucket.latest" class="runtime-lane-artifacts">
+              Latest {{ bucket.latest.schema ?? "receipt" }}
+              {{ bucket.latest.runtimeContractId ? `· ${bucket.latest.runtimeContractId}` : "" }}
+            </div>
+          </div>
+        </div>
+        <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Native Mono/FNA platform readiness">
+          <div class="runtime-lane-card" :class="{ 'runtime-lane-ready': runtimeDiagnostics.nativeMono.ok }">
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">Native Mono/FNA Platform</span>
+              <span class="badge" :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.nativeMono.ok)">
+                {{ runtimeDiagnostics.nativeMono.ok ? "Ready" : "Needs Attention" }}
+              </span>
+            </div>
+            <div class="runtime-lane-meta">
+              {{ nativeMonoLaneSummary(runtimeDiagnostics) }} · {{ nativeMonoSupportSummary(runtimeDiagnostics) }} ·
+              read-only
+            </div>
+            <div class="runtime-lane-artifacts">{{ nativeMonoLaneBlockers(runtimeDiagnostics) }}</div>
+            <div class="runtime-lane-blockers">{{ nativeMonoMissingRequired(runtimeDiagnostics) }}</div>
+          </div>
+        </div>
+        <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Runtime lane readiness">
+          <div
+            v-for="lane in runtimeDiagnostics.lanes.entries"
+            :key="lane.id"
+            class="runtime-lane-card"
+            :class="{ 'runtime-lane-ready': lane.ready }"
+          >
+            <div class="runtime-lane-header">
+              <span class="runtime-lane-name">{{ lane.name }}</span>
+              <span class="badge" :class="runtimeLaneBadgeClass(lane)">{{ runtimeLaneStatusText(lane) }}</span>
+            </div>
+            <div class="runtime-lane-meta">
+              {{ lane.family }} · {{ lane.requiresWine ? "Wine" : "Native" }} · {{ lane.sourceScopes.join(", ") }}
+            </div>
+            <div v-if="lane.artifactSummary" class="runtime-lane-artifacts">
+              Artifacts {{ lane.artifactSummary.present }}/{{ lane.artifactSummary.total }}
+            </div>
+            <div v-if="lane.blockers.length" class="runtime-lane-blockers">
+              {{ lane.blockers.join(" · ") }}
+            </div>
+          </div>
+        </div>
+      </template>
       <div class="settings-row">
         <div>
           <div class="settings-label">Restart Backend</div>
@@ -950,7 +1014,9 @@ function uninstallMetalsharp() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Force Kill Processes</div>
-          <div class="settings-desc">Destructively stops MetalSharp Wine/runtime helper processes while keeping this app and backend alive.</div>
+          <div class="settings-desc">
+            Destructively stops MetalSharp Wine/runtime helper processes while keeping this app and backend alive.
+          </div>
         </div>
         <div class="settings-value">
           <button class="btn btn-danger btn-sm" @click="forceKillProcesses">Force Kill Processes</button>
@@ -959,7 +1025,9 @@ function uninstallMetalsharp() {
       <div class="settings-row">
         <div>
           <div class="settings-label">Low Performance Mode</div>
-          <div class="settings-desc">Disables blur, glass, glow, and heavy motion while preserving layout and essential progress updates.</div>
+          <div class="settings-desc">
+            Disables blur, glass, glow, and heavy motion while preserving layout and essential progress updates.
+          </div>
         </div>
         <div class="settings-value">
           <span class="badge" :class="lowPerformanceMode ? 'badge-warn' : 'badge-ok'">
@@ -995,7 +1063,8 @@ function uninstallMetalsharp() {
         <div>
           <div class="settings-label">Graphics Runtime Logs</div>
           <div class="settings-desc">
-            Opt in to DXMT graphics logs for future launches. Off by default so M12 games do not emit runtime logs unless requested.
+            Opt in to DXMT graphics logs for future launches. Off by default so M12 games do not emit runtime logs
+            unless requested.
           </div>
         </div>
         <div class="settings-value">
@@ -1092,7 +1161,10 @@ function uninstallMetalsharp() {
           <button v-if="!updateDownloading" class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
         </div>
       </div>
-      <div v-if="updateStatus?.ok && updateStatus?.available && !updateStatus?.updates_disabled && !updateDownloading" class="settings-row">
+      <div
+        v-if="updateStatus?.ok && updateStatus?.available && !updateStatus?.updates_disabled && !updateDownloading"
+        class="settings-row"
+      >
         <div>
           <div class="settings-label">Download Update</div>
           <div class="settings-desc">v{{ updateStatus.latest_version }} is ready to download</div>
@@ -1121,7 +1193,8 @@ function uninstallMetalsharp() {
         <div>
           <div class="settings-label">Uninstall MetalSharp</div>
           <div class="settings-desc">
-            Permanently deletes all Wine prefixes, bottles, Steam installation, Wine runtime, shader caches, and settings. The app will close after cleanup.
+            Permanently deletes all Wine prefixes, bottles, Steam installation, Wine runtime, shader caches, and
+            settings. The app will close after cleanup.
           </div>
         </div>
         <div class="settings-value">
