@@ -641,12 +641,26 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         }
     }
 
-    // For the isolated M12/M13 lane, also verify the x86_64-unix sidecars that
-    // winemetal requires at runtime.
+    // Verify required Unix sidecars for routes whose PE DLLs depend on runtime
+    // dylibs/so files. This stays read-only and mirrors the filesystem paths
+    // launch envs will expose via DYLD/LD library path.
     let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
-    let unix_lib_dir = if pipeline == PipelineId::M12 {
-        let dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
-        for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+    let (unix_lib_dir, required_sidecars): (Option<PathBuf>, &[&str]) = match pipeline {
+        PipelineId::M12 => (
+            Some(ms_root.join("lib").join("dxmt_m12").join("x86_64-unix")),
+            &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"],
+        ),
+        PipelineId::DxvkD9 | PipelineId::DxvkD11 => {
+            (Some(ms_root.join("lib").join("dxvk").join("x86_64-unix")), &["libMoltenVK.dylib"])
+        },
+        PipelineId::Vkd3dD12 => (
+            Some(ms_root.join("lib").join("vkd3d").join("x86_64-unix")),
+            &["libvkd3d-shader.dylib", "libMoltenVK.dylib"],
+        ),
+        _ => (None, &[]),
+    };
+    if let Some(dir) = unix_lib_dir.as_ref() {
+        for sidecar in required_sidecars {
             let path = dir.join(sidecar);
             let present = path.exists();
             let sha = if present { crate::diagnostics::file_sha256(&path) } else { None };
@@ -664,10 +678,7 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
                 }));
             }
         }
-        Some(dir)
-    } else {
-        None
-    };
+    }
 
     serde_json::json!({
         "ok": missing.is_empty(),
@@ -4801,6 +4812,56 @@ mod tests {
             missing_filenames
         );
         assert_eq!(dry.get("ok").and_then(|v| v.as_bool()), Some(false), "empty home must yield ok=false");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn vulkan_dry_runs_verify_unix_sidecars_and_missing_artifacts() {
+        let home = std::env::temp_dir().join("ms-vulkan-dryrun-empty");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+
+        let dxvk = pipeline_dry_run_for(&home, 17300, Some(PipelineId::DxvkD11));
+        let dxvk_sidecars: Vec<String> = dxvk
+            .get("unix_sidecars")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|sidecar| sidecar.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(dxvk_sidecars, vec!["libMoltenVK.dylib".to_string()]);
+        let dxvk_missing: Vec<String> = dxvk
+            .get("missing")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|missing| missing.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert!(dxvk_missing.contains(&"d3d11.dll".to_string()));
+        assert!(dxvk_missing.contains(&"libMoltenVK.dylib".to_string()));
+        assert_eq!(dxvk.get("ok").and_then(|value| value.as_bool()), Some(false));
+
+        let vkd3d = pipeline_dry_run_for(&home, 2379780, Some(PipelineId::Vkd3dD12));
+        let vkd3d_sidecars: Vec<String> = vkd3d
+            .get("unix_sidecars")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|sidecar| sidecar.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(vkd3d_sidecars, vec!["libvkd3d-shader.dylib".to_string(), "libMoltenVK.dylib".to_string()]);
+        let vkd3d_missing: Vec<String> = vkd3d
+            .get("missing")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|missing| missing.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert!(vkd3d_missing.contains(&"d3d12.dll".to_string()));
+        assert!(vkd3d_missing.contains(&"libvkd3d-shader.dylib".to_string()));
+        assert!(vkd3d_missing.contains(&"libMoltenVK.dylib".to_string()));
+        assert_eq!(vkd3d.get("ok").and_then(|value| value.as_bool()), Some(false));
 
         let _ = std::fs::remove_dir_all(&home);
     }
