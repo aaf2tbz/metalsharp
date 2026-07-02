@@ -297,7 +297,7 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             id: "dxvk_d9",
             name: "DXVK D3D9",
             family: "wine-vulkan",
-            status: RuntimeLaneStatus::Planned,
+            status: RuntimeLaneStatus::Available,
             source_scopes: vec!["steam", "sharp_library"],
             requires_wine: true,
             supports_win32: true,
@@ -316,13 +316,13 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             fallback_lanes: vec!["m9", "wine_bare"],
             doctor_checks: vec!["dxvk_dlls", "moltenvk", "vulkan_icd", "state_cache"],
             repair_actions: vec!["install_dxvk_runtime", "fix_moltenvk_icd"],
-            notes: "Planned advanced fallback for D3D9 games where M9 regresses.",
+            notes: "Available experimental fallback for D3D9 games where M9 regresses.",
         },
         RuntimeLaneContract {
             id: "dxvk_d11",
             name: "DXVK D3D10/D3D11",
             family: "wine-vulkan",
-            status: RuntimeLaneStatus::Planned,
+            status: RuntimeLaneStatus::Available,
             source_scopes: vec!["steam", "sharp_library"],
             requires_wine: true,
             supports_win32: true,
@@ -341,13 +341,13 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             fallback_lanes: vec!["m11", "m10", "wine_bare"],
             doctor_checks: vec!["dxvk_dlls", "moltenvk", "vulkan_icd", "state_cache"],
             repair_actions: vec!["install_dxvk_runtime", "fix_moltenvk_icd"],
-            notes: "Planned advanced fallback for D3D10/D3D11 games where DXMT regresses.",
+            notes: "Available experimental fallback for D3D10/D3D11 games where DXMT regresses.",
         },
         RuntimeLaneContract {
             id: "vkd3d_d12",
             name: "VKD3D-Proton D3D12",
             family: "wine-vulkan",
-            status: RuntimeLaneStatus::Planned,
+            status: RuntimeLaneStatus::Available,
             source_scopes: vec!["steam", "sharp_library"],
             requires_wine: true,
             supports_win32: false,
@@ -358,15 +358,15 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             prefix_policy: "source-owned-prefix",
             runtime_surfaces: vec![RuntimeSurfaceId::Wine, RuntimeSurfaceId::Vkd3d],
             runtime_surface_paths: paths_for(&[RuntimeSurfaceId::Wine, RuntimeSurfaceId::Vkd3d]),
-            required_pe_dlls: vec!["d3d12.dll", "dxgi.dll"],
-            required_unix_sidecars: vec!["libvkd3d-shader.dylib", "libMoltenVK.dylib", "Vulkan ICD"],
+            required_pe_dlls: vec!["d3d12.dll", "d3d12core.dll", "dxgi.dll"],
+            required_unix_sidecars: vec!["libMoltenVK.dylib", "Vulkan ICD"],
             dyld_paths: vec!["runtime/wine/lib/wine/x86_64-unix", "runtime/wine/lib/vkd3d/x86_64-unix"],
             winedllpath_dirs: vec!["runtime/wine/lib/vkd3d/x86_64-windows"],
             shader_cache_lane: Some("vkd3d-d12"),
             fallback_lanes: vec!["m12_dxmt_m12", "d3dmetal_gptk", "m11"],
             doctor_checks: vec!["vkd3d_dlls", "vkd3d_sidecars", "moltenvk", "vulkan_icd", "feature_limits"],
             repair_actions: vec!["install_vkd3d_runtime", "fix_moltenvk_icd"],
-            notes: "Planned experimental D3D12 escape hatch below M12/dxmt_m12 and D3DMetal priority.",
+            notes: "Available experimental D3D12 escape hatch below M12/dxmt_m12 and D3DMetal priority.",
         },
         RuntimeLaneContract {
             id: "d3dmetal_gptk",
@@ -549,10 +549,11 @@ mod tests {
     }
 
     #[test]
-    fn planned_vulkan_lanes_are_not_marked_available_yet() {
+    fn vulkan_lanes_are_available_experimental_fallbacks() {
         for contract in runtime_lane_contracts().into_iter().filter(|contract| contract.family == "wine-vulkan") {
-            assert_eq!(contract.status, RuntimeLaneStatus::Planned);
+            assert_eq!(contract.status, RuntimeLaneStatus::Available);
             assert!(contract.doctor_checks.iter().any(|check| check.contains("vulkan") || check.contains("moltenvk")));
+            assert!(contract.notes.contains("experimental"));
         }
     }
 

@@ -87,7 +87,7 @@ Top-level fields:
 - `prefixes` — Steam/GOG prefix separation report.
 - `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
 - `vulkan` — filesystem-only Vulkan-family doctor. It checks canonical `runtime/wine/lib/dxvk`, `runtime/wine/lib/vkd3d`, required MoltenVK/VKD3D sidecars, and MoltenVK ICD JSON paths without launching Wine or Vulkan.
-- `lanes` — one read-only readiness row per runtime contract, with `availableReady`/`availableTotal` for implemented lanes plus `planned` and `external` counts for roadmap/external lanes. Each graphics runtime lane may include `artifactSummary` with `present`, `missing`, `total`, and `allPresent` counts derived from the filesystem-only manifest artifact report. Stable blocker ids include `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `dxvk_runtime`, `vkd3d_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
+- `lanes` — one read-only readiness row per runtime contract, with `availableReady`/`availableTotal` for implemented lanes plus `planned` and `external` counts when present. Each graphics runtime lane may include `artifactSummary` with `present`, `missing`, `total`, and `allPresent` counts derived from the filesystem-only manifest artifact report. Stable blocker ids include `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `dxvk_runtime`, `vkd3d_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
 - `updateGuard` — read-only private-fork update-source safety. It reports whether public MetalSharp updates are disabled, a custom feed is configured, or the public release feed is in use.
 - `installReplacementGuard` — destructive replacement guard.
 - `nextActions` — suggested non-destructive next steps.
@@ -114,7 +114,7 @@ tools/runtime/check-wine20-runtime-readiness-local.sh
 # or from app/: npm run wine20:readiness:local
 ```
 
-The scripts only read `/runtime/diagnostics`; they do not launch Wine, repair assets, mutate prefixes, or authorize install replacement. They print both implemented-lane readiness (`availableReady`/`availableTotal`) and all-lane coverage, where planned/external lanes are informational rather than required blockers. They also enforce `updateGuard.ok`, so a private Wine 2.0 build fails preflight if it is configured to use the public MetalSharp update feed. They exit non-zero when diagnostics are not green, update guard is unsafe, or the install replacement guard is unexpectedly enabled.
+The scripts only read `/runtime/diagnostics`; they do not launch Wine, repair assets, mutate prefixes, or authorize install replacement. They print both implemented-lane readiness (`availableReady`/`availableTotal`) and all-lane coverage; external lanes remain informational rather than required blockers, and planned lanes are reported if future roadmap lanes are added. They also enforce `updateGuard.ok`, so a private Wine 2.0 build fails preflight if it is configured to use the public MetalSharp update feed. They exit non-zero when diagnostics are not green, update guard is unsafe, or the install replacement guard is unexpectedly enabled.
 
 ## Intended workflow
 

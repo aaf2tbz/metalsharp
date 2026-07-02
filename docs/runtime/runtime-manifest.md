@@ -21,7 +21,7 @@ The manifest report covers:
 - canonical M12 runtime surface: `dxmt_m12`;
 - known runtime surfaces and installed paths;
 - required artifact report for `dxmt` and `dxmt_m12`;
-- planned artifact reports for `dxvk` and `vkd3d` surfaces, so missing future-lane payloads are visible by filename before those lanes are promoted.
+- Vulkan-family artifact reports for `dxvk` and `vkd3d` surfaces, so missing payloads are visible by filename before fallback lanes are used.
 
 ## Canonical M12 Surface
 
@@ -55,7 +55,7 @@ The read-only report validates:
 - canonical installed `dxmt_m12` path;
 - required M12 sidecars and PE DLLs via the existing installer artifact checks.
 
-Planned Vulkan-family surfaces are reported under `artifacts.planned` and are intentionally not part of the current overall runtime `ok` gate while their lane status remains `planned`:
+Vulkan-family surfaces are reported under the legacy-compatible `artifacts.planned` bucket. The bucket name is schema history; lane availability is determined by `/runtime/contracts` and `/runtime/diagnostics`:
 
 ```text
 artifacts.planned.dxvk.d9.entries[]

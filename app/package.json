@@ -17,6 +17,7 @@
     "rust:dev": "cd src-rust && cargo build",
     "wine20:readiness": "../tools/runtime/check-wine20-runtime-readiness.sh",
     "wine20:readiness:local": "../tools/runtime/check-wine20-runtime-readiness-local.sh",
+    "wine20:vulkan-build": "../tools/runtime/build-vulkan-lane-payloads.sh",
     "wine20:vulkan-payloads": "../tools/runtime/check-vulkan-lane-payloads.sh",
     "build:all": "npm run rust:build && npm run build",
     "pack": "npm run build:all && electron-builder --dir",

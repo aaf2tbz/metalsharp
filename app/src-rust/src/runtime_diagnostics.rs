@@ -308,6 +308,8 @@ fn vulkan_runtime_doctor_report(wine_root: &Path) -> Value {
         &[
             "x86_64-windows/d3d9.dll",
             "i386-windows/d3d9.dll",
+            "i386-windows/d3d10core.dll",
+            "i386-windows/d3d11.dll",
             "i386-windows/dxgi.dll",
             "x86_64-windows/d3d10core.dll",
             "x86_64-windows/d3d11.dll",
@@ -319,8 +321,8 @@ fn vulkan_runtime_doctor_report(wine_root: &Path) -> Value {
         &vkd3d_root,
         &[
             "x86_64-windows/d3d12.dll",
+            "x86_64-windows/d3d12core.dll",
             "x86_64-windows/dxgi.dll",
-            "x86_64-unix/libvkd3d-shader.dylib",
             "x86_64-unix/libMoltenVK.dylib",
         ],
     );
@@ -711,8 +713,8 @@ mod tests {
         let report = runtime_diagnostics_report_for(&home);
         let lanes = report.get("lanes").expect("lanes");
         assert_eq!(lanes.get("total").and_then(|value| value.as_u64()), Some(13));
-        assert_eq!(lanes.get("availableTotal").and_then(|value| value.as_u64()), Some(9));
-        assert_eq!(lanes.get("planned").and_then(|value| value.as_u64()), Some(3));
+        assert_eq!(lanes.get("availableTotal").and_then(|value| value.as_u64()), Some(12));
+        assert_eq!(lanes.get("planned").and_then(|value| value.as_u64()), Some(0));
         assert_eq!(lanes.get("external").and_then(|value| value.as_u64()), Some(1));
         let entries = lanes.get("entries").and_then(|entries| entries.as_array()).expect("lane entries");
         let m12 = entries
@@ -732,7 +734,7 @@ mod tests {
             .expect("dxvk d11 lane");
         assert_eq!(dxvk.get("ready").and_then(|value| value.as_bool()), Some(false));
         let dxvk_blockers = dxvk.get("blockers").and_then(|value| value.as_array()).expect("dxvk blockers");
-        assert!(dxvk_blockers.iter().any(|blocker| blocker.as_str() == Some("lane_planned")));
+        assert!(!dxvk_blockers.iter().any(|blocker| blocker.as_str() == Some("lane_planned")));
         assert!(dxvk_blockers.iter().any(|blocker| blocker.as_str() == Some("dxvk_runtime")));
         let dxvk_artifacts = dxvk.get("artifactSummary").expect("dxvk artifact summary");
         assert_eq!(dxvk_artifacts.get("total").and_then(|value| value.as_u64()), Some(7));
@@ -744,7 +746,7 @@ mod tests {
             .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("vkd3d_d12"))
             .expect("vkd3d lane");
         let vkd3d_blockers = vkd3d.get("blockers").and_then(|value| value.as_array()).expect("vkd3d blockers");
-        assert!(vkd3d_blockers.iter().any(|blocker| blocker.as_str() == Some("lane_planned")));
+        assert!(!vkd3d_blockers.iter().any(|blocker| blocker.as_str() == Some("lane_planned")));
         assert!(vkd3d_blockers.iter().any(|blocker| blocker.as_str() == Some("vkd3d_runtime")));
         let vkd3d_artifacts = vkd3d.get("artifactSummary").expect("vkd3d artifact summary");
         assert_eq!(vkd3d_artifacts.get("total").and_then(|value| value.as_u64()), Some(4));
@@ -766,6 +768,8 @@ mod tests {
         for relative in [
             "x86_64-windows/d3d9.dll",
             "i386-windows/d3d9.dll",
+            "i386-windows/d3d10core.dll",
+            "i386-windows/d3d11.dll",
             "i386-windows/dxgi.dll",
             "x86_64-windows/d3d10core.dll",
             "x86_64-windows/d3d11.dll",
@@ -778,8 +782,8 @@ mod tests {
         }
         for relative in [
             "x86_64-windows/d3d12.dll",
+            "x86_64-windows/d3d12core.dll",
             "x86_64-windows/dxgi.dll",
-            "x86_64-unix/libvkd3d-shader.dylib",
             "x86_64-unix/libMoltenVK.dylib",
         ] {
             let path = vkd3d_root.join(relative);
@@ -799,7 +803,7 @@ mod tests {
         let vulkan = report.get("vulkan").expect("vulkan doctor");
         assert_eq!(vulkan.get("readOnly").and_then(|value| value.as_bool()), Some(true));
         assert_eq!(vulkan.get("ok").and_then(|value| value.as_bool()), Some(true));
-        assert_eq!(vulkan.get("dxvk").and_then(|value| value.get("present")).and_then(|value| value.as_u64()), Some(7));
+        assert_eq!(vulkan.get("dxvk").and_then(|value| value.get("present")).and_then(|value| value.as_u64()), Some(9));
         assert_eq!(
             vulkan.get("vkd3d").and_then(|value| value.get("present")).and_then(|value| value.as_u64()),
             Some(4)

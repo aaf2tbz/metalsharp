@@ -653,10 +653,7 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         PipelineId::DxvkD9 | PipelineId::DxvkD11 => {
             (Some(ms_root.join("lib").join("dxvk").join("x86_64-unix")), &["libMoltenVK.dylib"])
         },
-        PipelineId::Vkd3dD12 => (
-            Some(ms_root.join("lib").join("vkd3d").join("x86_64-unix")),
-            &["libvkd3d-shader.dylib", "libMoltenVK.dylib"],
-        ),
+        PipelineId::Vkd3dD12 => (Some(ms_root.join("lib").join("vkd3d").join("x86_64-unix")), &["libMoltenVK.dylib"]),
         _ => (None, &[]),
     };
     if let Some(dir) = unix_lib_dir.as_ref() {
@@ -4850,7 +4847,7 @@ mod tests {
             .iter()
             .map(|sidecar| sidecar.get("filename").unwrap().as_str().unwrap().to_string())
             .collect();
-        assert_eq!(vkd3d_sidecars, vec!["libvkd3d-shader.dylib".to_string(), "libMoltenVK.dylib".to_string()]);
+        assert_eq!(vkd3d_sidecars, vec!["libMoltenVK.dylib".to_string()]);
         let vkd3d_missing: Vec<String> = vkd3d
             .get("missing")
             .and_then(|value| value.as_array())
@@ -4859,7 +4856,6 @@ mod tests {
             .map(|missing| missing.get("filename").unwrap().as_str().unwrap().to_string())
             .collect();
         assert!(vkd3d_missing.contains(&"d3d12.dll".to_string()));
-        assert!(vkd3d_missing.contains(&"libvkd3d-shader.dylib".to_string()));
         assert!(vkd3d_missing.contains(&"libMoltenVK.dylib".to_string()));
         assert_eq!(vkd3d.get("ok").and_then(|value| value.as_bool()), Some(false));
 

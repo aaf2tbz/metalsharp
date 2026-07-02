@@ -48,8 +48,8 @@ const DXVK_REQUIRED_UNIX: &[&str] = &["libMoltenVK.dylib"];
 const DXVK_D9_REQUIRED_PE_X64: &[&str] = &["d3d9.dll"];
 const DXVK_D9_REQUIRED_PE_I386: &[&str] = &["d3d9.dll", "dxgi.dll"];
 const DXVK_D11_REQUIRED_PE_X64: &[&str] = &["d3d10core.dll", "d3d11.dll", "dxgi.dll"];
-const VKD3D_REQUIRED_UNIX: &[&str] = &["libvkd3d-shader.dylib", "libMoltenVK.dylib"];
-const VKD3D_REQUIRED_PE_X64: &[&str] = &["d3d12.dll", "dxgi.dll"];
+const VKD3D_REQUIRED_UNIX: &[&str] = &["libMoltenVK.dylib"];
+const VKD3D_REQUIRED_PE_X64: &[&str] = &["d3d12.dll", "d3d12core.dll", "dxgi.dll"];
 #[cfg(not(test))]
 const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
     ("x86_64-windows/d3d10core.dll", "11c9610770cb0e3f6476d2bde2a3b1afa36a41bd00a2fffc6ea61d2e62c6258d"),
@@ -1103,8 +1103,8 @@ fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
             || candidate.join("x86_64-windows").join("d3d12.dll").is_file()
     });
     let Some(source) = source else {
-        // VKD3D remains planned. Missing payloads are visible in diagnostics,
-        // but setup should not fail until the lane is intentionally promoted.
+        // Missing payloads are visible in diagnostics/readiness. Keep setup
+        // non-fatal so unrelated Wine/DXMT repair paths do not regress.
         return Ok(false);
     };
 
@@ -2729,7 +2729,7 @@ mod tests {
         fs::create_dir_all(source.join("x64")).expect("create vkd3d x64 dir");
         fs::create_dir_all(source.join("x86_64-unix")).expect("create vkd3d unix dir");
         fs::write(source.join("x64").join("d3d12.dll"), b"d3d12").expect("write vkd3d d3d12");
-        fs::write(source.join("x86_64-unix").join("libvkd3d-shader.dylib"), b"shader").expect("write vkd3d shader");
+        fs::write(source.join("x64").join("d3d12core.dll"), b"d3d12core").expect("write vkd3d d3d12core");
 
         let dxvk_dxgi = runtime_root.join("wine").join("lib").join("dxvk").join("x86_64-windows").join("dxgi.dll");
         fs::create_dir_all(dxvk_dxgi.parent().unwrap()).expect("create dxvk dxgi parent");
@@ -2741,8 +2741,8 @@ mod tests {
         assert!(install_vkd3d_runtime_surface(&home).expect("stage vkd3d surface"));
         let canonical = runtime_root.join("wine").join("lib").join("vkd3d");
         assert!(canonical.join("x86_64-windows").join("d3d12.dll").is_file());
+        assert!(canonical.join("x86_64-windows").join("d3d12core.dll").is_file());
         assert!(canonical.join("x86_64-windows").join("dxgi.dll").is_file());
-        assert!(canonical.join("x86_64-unix").join("libvkd3d-shader.dylib").is_file());
         assert!(canonical.join("x86_64-unix").join("libMoltenVK.dylib").is_file());
 
         let report = runtime_artifact_report_for(&home);

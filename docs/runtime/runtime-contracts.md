@@ -58,20 +58,17 @@ Available lanes:
 - `m10`
 - `m11`
 - `m12_dxmt_m12`
+- `dxvk_d9` experimental fallback
+- `dxvk_d11` experimental fallback
+- `vkd3d_d12` experimental fallback
 - `d3dmetal_gptk` externally provisioned through Homebrew GPTK
 - `wine_bare`
 - `steam_background`
 - `gogdl_wine`
 
-Planned lanes:
+Planned lanes: none in the current Wine 2.0 private fork contract.
 
-- `dxvk_d9`
-- `dxvk_d11`
-- `vkd3d_d12`
-
-Planned lanes are intentionally visible in the contract so UI, docs, doctors, and migration can reserve stable IDs before the actual launch implementations are promoted.
-
-As of the Wine 2.0 private fork, `dxvk_d9`, `dxvk_d11`, and `vkd3d_d12` also have hidden MTSP pipeline definitions. These definitions reserve route parsing, environment shape, cache buckets, `WINEDLLPATH` directories, and DLL deployment manifests, but they are not user-selectable and remain `planned` until the actual DXVK/VKD3D/MoltenVK runtime payloads and doctors are staged.
+As of the Wine 2.0 private fork, `dxvk_d9`, `dxvk_d11`, and `vkd3d_d12` are available experimental MTSP pipeline definitions. They reserve route parsing, environment shape, cache buckets, `WINEDLLPATH` directories, DLL deployment manifests, and Vulkan filesystem doctors. They remain fallback lanes, not defaults.
 
 ## Compatibility Priority Model
 

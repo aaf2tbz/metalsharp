@@ -399,6 +399,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                         filename: "d3d12.dll",
                         dest_filename: None,
                     },
+                    DllDeploy {
+                        source_subpath: "lib/vkd3d/x86_64-windows",
+                        filename: "d3d12core.dll",
+                        dest_filename: None,
+                    },
                     DllDeploy { source_subpath: "lib/vkd3d/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
                 ],
                 env_vars: vec![EnvVar { key: "VKD3D_CONFIG", value: "dxr" }],

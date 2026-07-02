@@ -113,6 +113,8 @@ check_archive \
   "dxvk" \
   "x86_64-windows/d3d9.dll" \
   "i386-windows/d3d9.dll" \
+  "i386-windows/d3d10core.dll" \
+  "i386-windows/d3d11.dll" \
   "i386-windows/dxgi.dll" \
   "x86_64-windows/d3d10core.dll" \
   "x86_64-windows/d3d11.dll" \
@@ -123,8 +125,8 @@ check_archive \
   "vkd3d-proton.tar.zst" \
   "vkd3d-proton" \
   "x86_64-windows/d3d12.dll" \
+  "x86_64-windows/d3d12core.dll" \
   "x86_64-windows/dxgi.dll" \
-  "x86_64-unix/libvkd3d-shader.dylib" \
   "x86_64-unix/libMoltenVK.dylib" || failures=1
 
 if [[ "$failures" == "0" ]]; then

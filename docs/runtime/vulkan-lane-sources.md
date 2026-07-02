@@ -37,7 +37,22 @@ The fetch step does **not** build, install, launch Wine, mutate prefixes, or rep
 
 ## Runtime payload archive contract
 
-The split-bundle builder stages Vulkan-family runtime payloads only when these optional binary/runtime archives exist under `app/bundles/`:
+Build the Vulkan-family runtime payload archives from pinned sources with:
+
+```bash
+tools/runtime/build-vulkan-lane-payloads.sh --refresh
+# or from app/: npm run wine20:vulkan-build -- --refresh
+```
+
+To also stage the validated payloads into the local runtime for filesystem diagnostics, use:
+
+```bash
+tools/runtime/build-vulkan-lane-payloads.sh --stage-runtime
+```
+
+The staging mode copies only Vulkan runtime files under `~/.metalsharp/runtime/wine/lib/{dxvk,vkd3d}` and refreshes the MoltenVK ICD JSON. It does not launch Wine, launch games, or replace the installed app.
+
+The split-bundle builder stages Vulkan-family runtime payloads when these binary/runtime archives exist under `app/bundles/`:
 
 ```text
 app/bundles/dxvk.tar.zst
@@ -57,6 +72,8 @@ Expected DXVK runtime payload layout:
 dxvk/
   x86_64-windows/d3d9.dll
   i386-windows/d3d9.dll
+  i386-windows/d3d10core.dll
+  i386-windows/d3d11.dll
   i386-windows/dxgi.dll
   x86_64-windows/d3d10core.dll
   x86_64-windows/d3d11.dll
@@ -69,9 +86,11 @@ Expected VKD3D-Proton runtime payload layout:
 ```text
 vkd3d-proton/
   x86_64-windows/d3d12.dll
+  x86_64-windows/d3d12core.dll
   x86_64-windows/dxgi.dll
-  x86_64-unix/libvkd3d-shader.dylib
   x86_64-unix/libMoltenVK.dylib
 ```
+
+`dxgi.dll` is supplied from the matching DXVK build because VKD3D-Proton does not ship DXGI. `vkd3d-shader` is statically linked into VKD3D-Proton's Windows DLLs on this path; there is no macOS `libvkd3d-shader.dylib` runtime sidecar to package.
 
 These archives are runtime payloads, not source snapshots. Source checkouts under `.cache/runtime-sources/` prove provenance but do not by themselves make DXVK/VKD3D lanes ready.
