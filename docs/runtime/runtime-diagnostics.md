@@ -23,6 +23,8 @@ These endpoints are intentionally non-mutating. They do not install assets, laun
 
 `/diagnostics/gog` returns `metalsharp.gog.diagnostics.v1` for the dedicated GOGDL source. It reports GOGDL binary/auth state, the dedicated `gog-prefix` policy, cached library counts, and persisted launch receipt counts without invoking GOGDL or Wine.
 
+`prefixMetadata.entries[]` uses `metalsharp.prefix.v2`. Existing mutating prefix operations now persist metadata at `<prefix>/.metalsharp/prefix-metadata-v2.json` and wineboot receipts under `<prefix>/.metalsharp/receipts/`. The diagnostics endpoint only reads those files and surfaces `metadataPersisted`, `metadataPath`, `persisted`, and `lastWinebootUpdate` when present.
+
 The endpoint exists so the app can answer “is the Wine 2.0 runtime shape coherent?” before deeper per-game doctors or launch experiments run.
 
 ## Important invariants

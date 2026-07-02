@@ -580,6 +580,10 @@ fn prefix_metadata_entry(
     game_payload_policy: &str,
     notes: &str,
 ) -> Value {
+    let persisted = crate::prefix_metadata::read_metadata(path);
+    let latest_wineboot = crate::prefix_metadata::latest_wineboot_receipt(path)
+        .or_else(|| persisted.as_ref().and_then(|value| value.get("lastWinebootUpdate").cloned()))
+        .unwrap_or(serde_json::Value::Null);
     json!({
         "schema": "metalsharp.prefix.v2",
         "id": id,
@@ -592,7 +596,10 @@ fn prefix_metadata_entry(
         "canonicalPath": fs_canonicalize_if_exists(path).as_ref().map(|path| path.to_string_lossy().to_string()),
         "containsSymlink": path_contains_symlink_below(path.parent().unwrap_or(Path::new("/")), path),
         "wineRuntimeVersion": wine_runtime_version,
-        "lastWinebootUpdate": serde_json::Value::Null,
+        "metadataPath": crate::prefix_metadata::metadata_path(path).to_string_lossy(),
+        "metadataPersisted": persisted.is_some(),
+        "persisted": persisted,
+        "lastWinebootUpdate": latest_wineboot,
         "installedComponents": [],
         "preservePolicy": preserve_policy,
         "gamePayloadPolicy": game_payload_policy,
@@ -846,6 +853,16 @@ mod tests {
         fs::create_dir_all(ms_home.join("prefix-steam/drive_c")).expect("create steam drive_c");
         fs::write(ms_home.join("prefix-steam/system.reg"), b"registry").expect("write system reg");
         fs::create_dir_all(ms_home.join("bottles/gog-prefix/prefix/drive_c")).expect("create gog drive_c");
+        crate::prefix_metadata::record_wineboot_decision(
+            &ms_home.join("bottles/gog-prefix/prefix"),
+            "gog",
+            "wineboot -u",
+            &["metalsharp-wine", "wineboot", "-u"],
+            "success",
+            "test receipt",
+            Some(0),
+        )
+        .expect("record gog wineboot receipt");
         let report = runtime_diagnostics_report_for(&home);
         let metadata = report.get("prefixMetadata").expect("prefix metadata");
         assert_eq!(
@@ -869,6 +886,8 @@ mod tests {
             .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("gog"))
             .expect("gog metadata");
         assert_eq!(gog.get("preservePolicy").and_then(|value| value.as_str()), Some("preserve-if-present"));
+        assert_eq!(gog.get("metadataPersisted").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(gog.pointer("/lastWinebootUpdate/outcome").and_then(|value| value.as_str()), Some("success"));
         assert!(gog
             .get("path")
             .and_then(|value| value.as_str())

@@ -967,10 +967,20 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
         // Pre-check: dosdevices must exist and be a directory.
         let dosdevices = prefix.join("dosdevices");
         if dosdevices.exists() && !dosdevices.is_dir() {
-            log_to_file(&format!(
+            let detail = format!(
                 "Migration: dosdevices exists but is not a directory for {} — skipping wineboot",
                 prefix.display()
-            ));
+            );
+            log_to_file(&detail);
+            let _ = crate::prefix_metadata::record_wineboot_decision(
+                &prefix,
+                prefix_metadata_owner(&prefix),
+                "wineboot -u",
+                &["metalsharp-wine", "wineboot", "-u"],
+                "skipped",
+                &detail,
+                None,
+            );
             continue;
         }
 
@@ -1007,6 +1017,16 @@ fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
 
 fn gog_bottle_prefix_path(ms_dir: &Path) -> PathBuf {
     ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("prefix")
+}
+
+fn prefix_metadata_owner(prefix: &Path) -> &'static str {
+    if prefix.ends_with(Path::new("bottles/gog-prefix/prefix")) {
+        "gog"
+    } else if prefix.ends_with(Path::new("prefix-gptk")) {
+        "gptk"
+    } else {
+        "steam"
+    }
 }
 
 fn preserve_steam_bottle_metadata(bottles: &Path, bottles_tmp: &Path, report: &mut MigrationReport) {
@@ -1122,10 +1142,23 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
 
     log_to_file(&format!("Starting wineboot -u for prefix: {}", prefix.display()));
 
-    let mut child = cmd.spawn().map_err(|e| {
-        log_to_file(&format!("Failed to spawn wineboot for {}: {}", prefix.display(), e));
-        format!("spawn wineboot for {}: {}", prefix.display(), e)
-    })?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let detail = format!("spawn wineboot for {}: {}", prefix.display(), e);
+            log_to_file(&format!("Failed to spawn wineboot for {}: {}", prefix.display(), e));
+            let _ = crate::prefix_metadata::record_wineboot_decision(
+                prefix,
+                prefix_metadata_owner(prefix),
+                "wineboot -u",
+                &["metalsharp-wine", "wineboot", "-u"],
+                "spawn_failed",
+                &detail,
+                None,
+            );
+            return Err(detail);
+        },
+    };
 
     for attempt in 0..240 {
         if let Some(status) = child.try_wait().map_err(|e| {
@@ -1133,11 +1166,30 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
             format!("wait wineboot for {}: {}", prefix.display(), e)
         })? {
             if status.success() {
-                log_to_file(&format!("wineboot -u completed successfully for prefix: {}", prefix.display()));
+                let detail = format!("wineboot -u completed successfully for prefix: {}", prefix.display());
+                log_to_file(&detail);
+                let _ = crate::prefix_metadata::record_wineboot_decision(
+                    prefix,
+                    prefix_metadata_owner(prefix),
+                    "wineboot -u",
+                    &["metalsharp-wine", "wineboot", "-u"],
+                    "success",
+                    &detail,
+                    status.code(),
+                );
                 return Ok(());
             }
             let error_msg = format!("wineboot -u failed for {} with exit code: {:?}", prefix.display(), status.code());
             log_to_file(&error_msg);
+            let _ = crate::prefix_metadata::record_wineboot_decision(
+                prefix,
+                prefix_metadata_owner(prefix),
+                "wineboot -u",
+                &["metalsharp-wine", "wineboot", "-u"],
+                "failed",
+                &error_msg,
+                status.code(),
+            );
             return Err(error_msg);
         }
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -1149,6 +1201,15 @@ fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Resul
 
     let error_msg = format!("wineboot -u timed out (120 seconds) for {}", prefix.display());
     log_to_file(&error_msg);
+    let _ = crate::prefix_metadata::record_wineboot_decision(
+        prefix,
+        prefix_metadata_owner(prefix),
+        "wineboot -u",
+        &["metalsharp-wine", "wineboot", "-u"],
+        "timed_out",
+        &error_msg,
+        None,
+    );
     let _ = child.kill();
     let _ = child.wait();
     Err(error_msg)

@@ -32,6 +32,7 @@ mod launcher_evidence;
 mod migrate;
 mod mtsp;
 mod platform;
+mod prefix_metadata;
 mod runtime_contracts;
 mod runtime_diagnostics;
 mod runtime_manifest;

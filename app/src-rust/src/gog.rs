@@ -721,11 +721,30 @@ fn initialize_prefix() -> Result<(), String> {
     let prefix = gog_prefix();
     fs::create_dir_all(&prefix).map_err(|error| format!("failed to create GOG prefix: {}", error))?;
     if prefix.join("drive_c").is_dir() {
+        let _ = crate::prefix_metadata::record_wineboot_decision(
+            &prefix,
+            "gog",
+            "wineboot -u",
+            &["metalsharp-wine", "wineboot", "-u"],
+            "skipped",
+            "GOG prefix already initialized",
+            None,
+        );
         return Ok(());
     }
     let wine = wine_binary();
     if !wine.is_file() {
-        return Err(format!("MetalSharp Wine not found: {}", wine.display()));
+        let error = format!("MetalSharp Wine not found: {}", wine.display());
+        let _ = crate::prefix_metadata::record_wineboot_decision(
+            &prefix,
+            "gog",
+            "wineboot -u",
+            &["metalsharp-wine", "wineboot", "-u"],
+            "blocked",
+            &error,
+            None,
+        );
+        return Err(error);
     }
     let mut command = Command::new(&wine);
     command
@@ -738,11 +757,45 @@ fn initialize_prefix() -> Result<(), String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     crate::platform::set_runtime_library_env(&mut command, &wine_root());
-    let status = command.status().map_err(|error| format!("failed to initialize GOG prefix: {}", error))?;
+    let status = match command.status() {
+        Ok(status) => status,
+        Err(error) => {
+            let detail = format!("failed to initialize GOG prefix: {}", error);
+            let _ = crate::prefix_metadata::record_wineboot_decision(
+                &prefix,
+                "gog",
+                "wineboot -u",
+                &["metalsharp-wine", "wineboot", "-u"],
+                "spawn_failed",
+                &detail,
+                None,
+            );
+            return Err(detail);
+        },
+    };
     if status.success() {
+        let _ = crate::prefix_metadata::record_wineboot_decision(
+            &prefix,
+            "gog",
+            "wineboot -u",
+            &["metalsharp-wine", "wineboot", "-u"],
+            "success",
+            "GOG prefix initialized",
+            status.code(),
+        );
         Ok(())
     } else {
-        Err(format!("wineboot failed with {:?}", status.code()))
+        let detail = format!("wineboot failed with {:?}", status.code());
+        let _ = crate::prefix_metadata::record_wineboot_decision(
+            &prefix,
+            "gog",
+            "wineboot -u",
+            &["metalsharp-wine", "wineboot", "-u"],
+            "failed",
+            &detail,
+            status.code(),
+        );
+        Err(detail)
     }
 }
 
