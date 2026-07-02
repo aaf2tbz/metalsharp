@@ -139,6 +139,75 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
     const version = uiOnlyVersion();
     return { ok: true, available: false, current_version: version, latest_version: version };
   }
+  if (url === "/runtime/diagnostics") {
+    const metalsharpHome = getMetalsharpDir();
+    return {
+      ok: true,
+      schema: "metalsharp.runtime.diagnostics.v1",
+      readOnly: true,
+      summary: "UI preview runtime diagnostics: Wine 2.0 contracts, dxmt_m12 naming, and prefix policy are mocked ready.",
+      paths: {
+        metalsharpHome,
+        runtimeRoot: path.join(metalsharpHome, "runtime"),
+        wineRoot: path.join(metalsharpHome, "runtime", "wine"),
+        wineBinary: path.join(metalsharpHome, "runtime", "wine", "bin", "metalsharp-wine"),
+        steamPrefix: path.join(metalsharpHome, "prefix-steam"),
+        gogPrefix: path.join(metalsharpHome, "bottles", "gog-prefix", "prefix"),
+      },
+      contracts: {
+        schema: "metalsharp.runtime.contracts.v1",
+        canonicalM12Surface: "dxmt_m12",
+        canonicalM12InstalledPath: "runtime/wine/lib/dxmt_m12",
+        canonicalM12Ok: true,
+        total: 13,
+        available: [
+          "native_mono_arm64",
+          "native_mono_x86",
+          "m9",
+          "m10",
+          "m11",
+          "m12_dxmt_m12",
+          "wine_bare",
+          "steam_background",
+          "gogdl_wine",
+        ],
+        planned: ["dxvk_d9", "dxvk_d11", "vkd3d_d12"],
+        external: ["d3dmetal_gptk"],
+      },
+      runtime: {
+        ready: true,
+        wineBinaryPresent: true,
+        dxmtCurrent: true,
+        dxmtM12Current: true,
+        manifestOk: true,
+        manifest: {
+          ok: true,
+          schema: "metalsharp.runtime.manifest.v1",
+          manifestPath: path.join(metalsharpHome, "runtime", "metalsharp-runtime-manifest.json"),
+          expected: {},
+          persisted: { present: false },
+          validation: { ok: true, checks: [] },
+          artifacts: {},
+        },
+      },
+      prefixes: {
+        ok: true,
+        steam: { id: "steam_background", path: path.join(metalsharpHome, "prefix-steam"), present: true },
+        gog: {
+          id: "gogdl_wine",
+          path: path.join(metalsharpHome, "bottles", "gog-prefix", "prefix"),
+          present: true,
+          dedicatedPathOk: true,
+          usesPrefixSteam: false,
+        },
+      },
+      installReplacementGuard: {
+        allowedNow: false,
+        reason: "UI-only preview cannot authorize wiping or replacing an installed app.",
+      },
+      nextActions: ["Use a real backend build for runtime verification before replacing the current install."],
+    };
+  }
   if (url === "/steam/watch-steamapps") {
     return { ok: true, new_appids: [] };
   }
