@@ -323,12 +323,16 @@ async function load() {
   if (redistResult?.ok) redistSources.value = redistResult.sources;
   if (gogStatusResult?.ok) gogStatus.value = gogStatusResult.status;
   if (gogGamesResult?.ok) {
-    gogGames.value = gogGamesResult.games;
+    setGogGames(gogGamesResult.games ?? []);
     gogStatus.value = gogGamesResult.status;
     for (const game of gogGames.value) {
       if (game.status === "downloading") void monitorGogProgress(game.productId);
     }
   }
+}
+
+function setGogGames(games: GogGame[]) {
+  gogGames.value = [...games].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true }));
 }
 
 async function refreshGog() {
@@ -338,15 +342,17 @@ async function refreshGog() {
   ]);
   if (statusResult?.ok) gogStatus.value = statusResult.status;
   if (gamesResult?.ok) {
-    gogGames.value = gamesResult.games;
+    setGogGames(gamesResult.games ?? []);
     gogStatus.value = gamesResult.status;
   }
 }
 
 function upsertGogGame(game: GogGame) {
   const idx = gogGames.value.findIndex((item) => item.productId === game.productId);
-  if (idx >= 0) gogGames.value[idx] = game;
-  else gogGames.value.push(game);
+  const games = [...gogGames.value];
+  if (idx >= 0) games[idx] = game;
+  else games.push(game);
+  setGogGames(games);
 }
 
 async function initializeGogPrefix() {
@@ -395,8 +401,9 @@ async function syncGogLibrary() {
   const result = await api<{ ok: boolean; games?: GogGame[]; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/sync", {}, 5 * 60 * 1000);
   gogLoading.value.sync = false;
   if (result?.ok) {
-    if (result.games) gogGames.value = result.games;
+    if (result.games) setGogGames(result.games);
     if (result.status) gogStatus.value = result.status;
+    await refreshGog();
     toast.show("GOG library synced", "success");
   } else {
     toast.show(result?.error ?? "Failed to sync GOG library", "error");
@@ -1310,7 +1317,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
         </div>
 
         <div v-else class="sharp-grid">
-          <div v-for="game in gogGames" :key="game.productId" class="sharp-card" :class="{ running: game.running }">
+          <div v-for="game in gogGames" :key="game.productId" class="sharp-card gog-card" :class="{ running: game.running }">
             <div class="sharp-card-banner">
               <img v-if="game.imageUrl" :src="game.imageUrl" :alt="game.title" />
               <span v-else class="sharp-icon-placeholder">{{ game.title.charAt(0) }}</span>
@@ -1815,6 +1822,39 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
     0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent),
     0 0 34px color-mix(in srgb, var(--accent) 28%, transparent),
     0 20px 42px color-mix(in srgb, var(--bg-deep) 42%, transparent);
+}
+.gog-card {
+  border-color: color-mix(in srgb, var(--border) 84%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border) 58%, transparent),
+    0 10px 26px color-mix(in srgb, var(--bg-deep) 34%, transparent);
+}
+.gog-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 14px 30px color-mix(in srgb, var(--bg-deep) 38%, transparent);
+}
+.gog-card .sharp-card-banner {
+  isolation: isolate;
+  background: color-mix(in srgb, var(--bg-deep) 94%, black);
+}
+.gog-card .sharp-card-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, rgba(5, 10, 14, 0.06) 0%, rgba(5, 10, 14, 0.18) 45%, rgba(5, 10, 14, 0.62) 100%),
+    linear-gradient(to right, rgba(5, 10, 14, 0.2), transparent 28%, transparent 72%, rgba(5, 10, 14, 0.2));
+  mix-blend-mode: multiply;
+}
+.gog-card .sharp-card-banner img {
+  position: relative;
+  z-index: 0;
+  object-position: center top;
+  filter: brightness(0.68) contrast(1.55) saturate(1.22);
 }
 .sharp-card.running {
   border-color: var(--success);
