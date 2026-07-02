@@ -50,15 +50,16 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 3,
             title: "Prefix Manager V2",
-            status: "implemented_with_open_followups",
+            status: "implemented",
             evidence: &[
                 "GET /runtime/diagnostics prefixMetadata schema metalsharp.prefix.metadata.v2.preview",
                 "<prefix>/.metalsharp/prefix-metadata-v2.json",
                 "<prefix>/.metalsharp/receipts/wineboot-*.json",
                 "prefix metadata installedComponents records route-DLL staging",
+                "prefix metadata installedComponents records successful bottle component mutations",
                 "GET /update/migrate/policy",
             ],
-            remaining: &["Broaden installedComponents persistence to additional source-owned prefix mutations as they become mutating paths."],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 4,

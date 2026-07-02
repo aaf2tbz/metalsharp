@@ -35,7 +35,7 @@ These endpoints are intentionally non-mutating. They do not install assets, laun
 
 `/diagnostics/receipts` returns `metalsharp.receipts.inventory.v1`, a read-only inventory of Steam/Sharp/native-Mono/GOG launch receipts, prefix wineboot receipts, prefix route-DLL staging receipts, and FNA staging receipts. It enumerates evidence files without executing launchers or repairs.
 
-Prefix metadata v2 persists at `<prefix>/.metalsharp/prefix-metadata-v2.json`. Wineboot decisions are mirrored as `lastWinebootUpdate`; prefix route-DLL staging records `installedComponents` entries with runtime contract ids, destination hashes, and the staging receipt path.
+Prefix metadata v2 persists at `<prefix>/.metalsharp/prefix-metadata-v2.json`. Wineboot decisions are mirrored as `lastWinebootUpdate`; prefix route-DLL staging records `installedComponents` entries with runtime contract ids, destination hashes, and the staging receipt path. Successful bottle component mutations, including corefonts, VC++ runtime repair, and post-wineboot seed configuration, also append stable `installedComponents` entries with component ids, logs/paths where available, and install timestamps.
 
 `/diagnostics/wine20-roadmap` returns `metalsharp.wine20.roadmap.audit.v1`, a read-only evidence map for roadmap Phases 0–10. It intentionally reports `complete: false` while controlled launch proof and source-orchestrator followups remain open.
 

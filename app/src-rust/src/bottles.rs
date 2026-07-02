@@ -2010,6 +2010,16 @@ pub fn repair_component(
         }
 
         let installed = install_host_core_fonts(&prefix, &log_path)?;
+        if installed {
+            record_prefix_component_metadata(
+                &prefix,
+                component_id,
+                "font_component",
+                "Mapped host system fonts into the bottle font directory",
+                Some(&prefix.join("drive_c").join("windows").join("Fonts")),
+                Some(&log_path),
+            );
+        }
         mark_component_state(
             &mut manifest,
             component_id,
@@ -2695,6 +2705,14 @@ pub fn repair_component(
             });
         }
         if vcpp_prefix_has_runtime(&prefix) {
+            record_prefix_component_metadata(
+                &prefix,
+                component_id,
+                "redist_component",
+                &format!("VC++ 2015-2022 ({}) already installed", arch_label),
+                None,
+                None,
+            );
             mark_component_state(&mut manifest, component_id, ComponentState::Installed);
             manifest.health = if components_ready(&manifest.installed_components) {
                 BottleHealth::Ready
@@ -2718,7 +2736,18 @@ pub fn repair_component(
         thread::spawn(move || {
             match vcpp_install_into_prefix(&prefix_owned) {
                 Ok(()) => {
-                    eprintln!("{}: VC++ 2015-2022 installed, verified={}", cid, vcpp_prefix_has_runtime(&prefix_owned));
+                    let verified = vcpp_prefix_has_runtime(&prefix_owned);
+                    eprintln!("{}: VC++ 2015-2022 installed, verified={}", cid, verified);
+                    if verified {
+                        record_prefix_component_metadata(
+                            &prefix_owned,
+                            &cid,
+                            "redist_component",
+                            "VC++ 2015-2022 runtime installed into prefix",
+                            None,
+                            None,
+                        );
+                    }
                 },
                 Err(e) => {
                     eprintln!("{}: VC++ 2015-2022 install failed: {}", cid, e);
@@ -4987,6 +5016,14 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
     if exit_status.success() {
         let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
         let _ = fs::write(&marker, timestamp_secs().as_bytes());
+        record_prefix_component_metadata(
+            prefix,
+            "post_wineboot_config",
+            "prefix_seed_component",
+            "Post-wineboot registry overrides, font substitutions, and MetalSharp hook were seeded",
+            Some(&marker),
+            Some(log_path),
+        );
     }
     Ok(pid)
 }
@@ -5842,9 +5879,73 @@ fn timestamp_secs() -> String {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string()
 }
 
+fn record_prefix_component_metadata(
+    prefix: &Path,
+    component_id: &str,
+    kind: &str,
+    detail: &str,
+    path: Option<&Path>,
+    log_path: Option<&Path>,
+) {
+    let installed_at = timestamp_secs().parse::<u64>().unwrap_or_default();
+    let component = json!({
+        "id": format!("component:{}", component_id),
+        "kind": kind,
+        "componentId": component_id,
+        "detail": detail,
+        "path": path.map(|path| path.to_string_lossy().to_string()),
+        "logPath": log_path.map(|path| path.to_string_lossy().to_string()),
+        "installedAt": installed_at,
+    });
+    let _ = crate::prefix_metadata::record_installed_components(
+        prefix,
+        prefix_metadata_owner_for_bottle_prefix(prefix),
+        &[component],
+    );
+}
+
+fn prefix_metadata_owner_for_bottle_prefix(prefix: &Path) -> &'static str {
+    if prefix.ends_with(Path::new("prefix-steam")) {
+        "steam"
+    } else if prefix.ends_with(Path::new("bottles/gog-prefix/prefix")) {
+        "gog"
+    } else if prefix.ends_with(Path::new("prefix-gptk")) {
+        "gptk"
+    } else {
+        "bottle"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottle_component_metadata_records_prefix_installed_components() {
+        let prefix = test_dir("bottle-component-metadata");
+        std::fs::create_dir_all(prefix.join("drive_c/windows/Fonts")).expect("create prefix");
+        let log = prefix.join("component-corefonts.log");
+        record_prefix_component_metadata(
+            &prefix,
+            "corefonts",
+            "font_component",
+            "Mapped host fonts",
+            Some(&prefix.join("drive_c/windows/Fonts")),
+            Some(&log),
+        );
+        let metadata = crate::prefix_metadata::read_metadata(&prefix).expect("metadata");
+        assert_eq!(metadata.get("schema").and_then(|value| value.as_str()), Some("metalsharp.prefix.v2"));
+        assert_eq!(metadata.get("owner").and_then(|value| value.as_str()), Some("bottle"));
+        assert_eq!(
+            metadata.pointer("/installedComponents/0/id").and_then(|value| value.as_str()),
+            Some("component:corefonts")
+        );
+        assert_eq!(
+            metadata.pointer("/installedComponents/0/kind").and_then(|value| value.as_str()),
+            Some("font_component")
+        );
+        let _ = std::fs::remove_dir_all(prefix);
+    }
 
     #[test]
     fn wineboot_state_prefix_missing_when_prefix_absent() {
