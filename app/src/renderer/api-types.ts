@@ -210,6 +210,21 @@ interface RuntimeDiagnosticsResponse {
     manifest: RuntimeManifestResponse;
   };
   prefixes: Record<string, unknown>;
+  lanes: {
+    total: number;
+    ready: number;
+    entries: {
+      id: string;
+      name: string;
+      family: string;
+      status: RuntimeLaneStatus;
+      ready: boolean;
+      blockers: string[];
+      requiresWine: boolean;
+      sourceScopes: string[];
+      runtimeSurfacePaths: string[];
+    }[];
+  };
   sources: {
     steam: {
       id: "steam_background";

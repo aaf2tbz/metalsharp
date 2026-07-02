@@ -430,6 +430,13 @@ function uninstallMetalsharp() {
           <span
             v-if="runtimeDiagnostics"
             class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.lanes.ready === runtimeDiagnostics.lanes.total)"
+          >
+            Lanes {{ runtimeDiagnostics.lanes.ready }}/{{ runtimeDiagnostics.lanes.total }}
+          </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
             :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.runtime.dxmtM12Current)"
           >
             M12 {{ runtimeDiagnosticStatus(runtimeDiagnostics.runtime.dxmtM12Current) }}

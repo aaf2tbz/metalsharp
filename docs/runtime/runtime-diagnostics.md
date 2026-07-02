@@ -86,6 +86,7 @@ Top-level fields:
 - `runtime` — Wine/DXMT/M12/manifest readiness.
 - `prefixes` — Steam/GOG prefix separation report.
 - `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
+- `lanes` — one read-only readiness row per runtime contract, with stable blocker ids such as `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
 - `installReplacementGuard` — destructive replacement guard.
 - `nextActions` — suggested non-destructive next steps.
 

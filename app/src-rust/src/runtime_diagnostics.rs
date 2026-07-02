@@ -42,6 +42,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
         .unwrap_or(false);
     let prefix_report = prefix_policy_report(&steam_prefix, &gog_prefix);
     let prefix_ok = prefix_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let source_report = source_readiness_report(&ms_home, &steam_prefix, &gog_prefix);
     let canonical_m12_ok = contracts.iter().any(|contract| {
         contract.id == "m12_dxmt_m12"
             && contract.runtime_surface_paths.iter().any(|path| path.ends_with("runtime/wine/lib/dxmt_m12"))
@@ -86,12 +87,114 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
             "manifest": manifest,
         },
         "prefixes": prefix_report,
-        "sources": source_readiness_report(&ms_home, &steam_prefix, &gog_prefix),
+        "sources": source_report,
+        "lanes": lane_readiness_report(
+            &contracts,
+            &LaneReadinessContext {
+                runtime_root: &runtime_root,
+                wine_binary_present,
+                dxmt_current,
+                dxmt_m12_current,
+                manifest_ok,
+                prefix_ok,
+                sources: &source_report,
+            },
+        ),
         "installReplacementGuard": {
             "allowedNow": false,
             "reason": "Do not wipe or replace the current MetalSharp install from diagnostics. Replacement must be a final, explicit user-confirmed step after Wine 2.0 runtime validation passes."
         },
         "nextActions": next_actions(runtime_ready, manifest_ok, dxmt_current, dxmt_m12_current, prefix_ok),
+    })
+}
+
+struct LaneReadinessContext<'a> {
+    runtime_root: &'a Path,
+    wine_binary_present: bool,
+    dxmt_current: bool,
+    dxmt_m12_current: bool,
+    manifest_ok: bool,
+    prefix_ok: bool,
+    sources: &'a Value,
+}
+
+fn lane_readiness_report(
+    contracts: &[crate::runtime_contracts::RuntimeLaneContract],
+    context: &LaneReadinessContext<'_>,
+) -> Value {
+    let entries: Vec<Value> = contracts.iter().map(|contract| lane_readiness_entry(contract, context)).collect();
+    let ready =
+        entries.iter().filter(|entry| entry.get("ready").and_then(|value| value.as_bool()) == Some(true)).count();
+
+    json!({
+        "total": entries.len(),
+        "ready": ready,
+        "entries": entries,
+    })
+}
+
+fn lane_readiness_entry(
+    contract: &crate::runtime_contracts::RuntimeLaneContract,
+    context: &LaneReadinessContext<'_>,
+) -> Value {
+    let mut blockers = Vec::new();
+
+    match contract.status {
+        crate::runtime_contracts::RuntimeLaneStatus::Planned => blockers.push("lane_planned"),
+        crate::runtime_contracts::RuntimeLaneStatus::External => blockers.push("external_runtime"),
+        crate::runtime_contracts::RuntimeLaneStatus::Available => {},
+    }
+
+    if contract.requires_wine && !context.wine_binary_present {
+        blockers.push("wine_binary");
+    }
+    if contract.requires_wine && !context.manifest_ok {
+        blockers.push("runtime_manifest");
+    }
+
+    match contract.id {
+        "native_mono_arm64" if !context.runtime_root.join("mono-arm64").exists() => blockers.push("mono_arm64_runtime"),
+        "native_mono_x86" if !context.runtime_root.join("mono-x86").exists() => blockers.push("mono_x86_runtime"),
+        "m9" | "m10" | "m11" if !context.dxmt_current => blockers.push("dxmt_runtime"),
+        "m12_dxmt_m12" if !context.dxmt_m12_current => blockers.push("dxmt_m12_runtime"),
+        "steam_background" => {
+            if !context
+                .sources
+                .get("steam")
+                .and_then(|steam| steam.get("prefixPresent"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                blockers.push("steam_prefix");
+            }
+        },
+        "gogdl_wine" => {
+            if !context.prefix_ok {
+                blockers.push("gog_prefix_policy");
+            }
+            if !context
+                .sources
+                .get("gog")
+                .and_then(|gog| gog.get("ok"))
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+            {
+                blockers.push("gogdl_source");
+            }
+        },
+        _ => {},
+    }
+
+    json!({
+        "id": contract.id,
+        "name": contract.name,
+        "family": contract.family,
+        "status": contract.status,
+        "ready": blockers.is_empty(),
+        "blockers": blockers,
+        "requiresWine": contract.requires_wine,
+        "sourceScopes": &contract.source_scopes,
+        "runtimeSurfacePaths": &contract.runtime_surface_paths,
     })
 }
 
@@ -381,6 +484,76 @@ mod tests {
         let report = runtime_diagnostics_report_for(&home);
         assert_eq!(report.get("readOnly").and_then(|value| value.as_bool()), Some(true));
         assert!(!marker.exists(), "runtime diagnostics must not execute the Wine wrapper");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_report_lane_readiness_blockers() {
+        let home = test_home("lane-blockers");
+        let report = runtime_diagnostics_report_for(&home);
+        let entries = report
+            .get("lanes")
+            .and_then(|lanes| lanes.get("entries"))
+            .and_then(|entries| entries.as_array())
+            .expect("lane entries");
+        let m12 = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("m12_dxmt_m12"))
+            .expect("m12 lane");
+        assert_eq!(m12.get("ready").and_then(|value| value.as_bool()), Some(false));
+        assert!(m12
+            .get("blockers")
+            .and_then(|value| value.as_array())
+            .expect("m12 blockers")
+            .iter()
+            .any(|blocker| blocker.as_str() == Some("dxmt_m12_runtime")));
+        let dxvk = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("dxvk_d11"))
+            .expect("dxvk d11 lane");
+        assert_eq!(dxvk.get("ready").and_then(|value| value.as_bool()), Some(false));
+        assert!(dxvk
+            .get("blockers")
+            .and_then(|value| value.as_array())
+            .expect("dxvk blockers")
+            .iter()
+            .any(|blocker| blocker.as_str() == Some("lane_planned")));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_clear_gog_source_blocker_when_source_is_ready() {
+        let home = test_home("gog-source-ready");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let gogdl = ms_home.join("tools").join("gogdl");
+        let auth = ms_home.join("gog_store").join("auth.json");
+        let gog_prefix = ms_home.join("bottles").join("gog-prefix").join("prefix");
+        let wine = ms_home.join("runtime").join("wine").join("bin").join("metalsharp-wine");
+        fs::create_dir_all(gogdl.parent().unwrap()).expect("create gogdl parent");
+        fs::create_dir_all(auth.parent().unwrap()).expect("create auth parent");
+        fs::create_dir_all(&gog_prefix).expect("create gog prefix");
+        fs::create_dir_all(wine.parent().unwrap()).expect("create wine parent");
+        fs::write(&gogdl, b"#!/bin/sh\necho gogdl\n").expect("write gogdl");
+        fs::write(&auth, br#"{"access_token":"test-token"}"#).expect("write auth");
+        fs::write(&wine, b"#!/bin/sh\necho wine\n").expect("write wine");
+
+        let report = runtime_diagnostics_report_for(&home);
+        let entries = report
+            .get("lanes")
+            .and_then(|lanes| lanes.get("entries"))
+            .and_then(|entries| entries.as_array())
+            .expect("lane entries");
+        let gog = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("gogdl_wine"))
+            .expect("gog lane");
+        assert_eq!(gog.get("ready").and_then(|value| value.as_bool()), Some(false));
+        assert!(!gog
+            .get("blockers")
+            .and_then(|value| value.as_array())
+            .expect("gog blockers")
+            .iter()
+            .any(|blocker| blocker.as_str() == Some("gogdl_source")));
         let _ = fs::remove_dir_all(home);
     }
 

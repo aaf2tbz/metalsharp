@@ -201,6 +201,23 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
           usesPrefixSteam: false,
         },
       },
+      lanes: {
+        total: 13,
+        ready: 9,
+        entries: [
+          {
+            id: "m12_dxmt_m12",
+            name: "M12",
+            family: "wine-dxmt",
+            status: "available",
+            ready: true,
+            blockers: [],
+            requiresWine: true,
+            sourceScopes: ["steam", "sharp_library"],
+            runtimeSurfacePaths: ["runtime/wine", "runtime/wine/lib/dxmt_m12"],
+          },
+        ],
+      },
       sources: {
         steam: {
           id: "steam_background",
