@@ -487,6 +487,8 @@ pub fn prepare_pipeline_with_request(
 
     let readiness_ok = readiness.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
     let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
+    let launch_receipt_preview =
+        launch_receipt_preview_for_recipe(appid, node, &recipe, &env, false, dirs::home_dir().as_deref());
 
     Ok(serde_json::json!({
         "ok": readiness_ok,
@@ -499,6 +501,7 @@ pub fn prepare_pipeline_with_request(
         "recipe": recipe,
         "launch_env": env.iter().map(|(key, value)| serde_json::json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "readiness": readiness,
+        "launch_receipt_preview": launch_receipt_preview,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
         "timing": timing.to_json(),
@@ -677,6 +680,16 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         }
     }
 
+    let launch_receipt_preview = launch_receipt_preview_for_dry_run(
+        appid,
+        node,
+        &env,
+        &deploy_dlls,
+        &unix_sidecars,
+        missing.is_empty(),
+        Some(&home),
+    );
+
     serde_json::json!({
         "ok": missing.is_empty(),
         "schema_version": 1,
@@ -692,6 +705,7 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         "deploy_dlls": deploy_dlls,
         "unix_sidecars": unix_sidecars,
         "env_pairs": env_pairs_json,
+        "launch_receipt_preview": launch_receipt_preview,
         "env_keys_present": {
             "WINEDLLOVERRIDES": env_keys.contains("WINEDLLOVERRIDES"),
             "DXMT_SHADER_CACHE_PATH": env_keys.contains("DXMT_SHADER_CACHE_PATH"),
@@ -700,6 +714,152 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
             "DXMT_WINEMETAL_UNIXLIB": env_keys.contains("DXMT_WINEMETAL_UNIXLIB"),
         },
         "missing": missing,
+    })
+}
+
+fn launch_receipt_preview_for_recipe(
+    appid: u32,
+    node: &PipelineNode,
+    recipe: &super::recipe::LaunchRecipe,
+    env: &[(String, String)],
+    dry_run: bool,
+    home_override: Option<&Path>,
+) -> serde_json::Value {
+    let dlls: Vec<serde_json::Value> = recipe
+        .dlls
+        .iter()
+        .map(|dll| {
+            serde_json::json!({
+                "filename": dll.filename,
+                "sourcePath": dll.source_path.to_string_lossy(),
+                "destPath": dll.dest_path.to_string_lossy(),
+                "sourcePresent": dll.source_present,
+            })
+        })
+        .collect();
+    let dylibs: Vec<serde_json::Value> = recipe
+        .runtime_assets
+        .iter()
+        .filter(|asset| {
+            asset.path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| matches!(ext, "dylib" | "so"))
+        })
+        .map(|asset| {
+            serde_json::json!({
+                "name": asset.name,
+                "path": asset.path.to_string_lossy(),
+                "required": asset.required,
+                "present": asset.present,
+            })
+        })
+        .collect();
+    launch_receipt_preview_common(LaunchReceiptPreviewInput {
+        appid,
+        node,
+        game_dir: recipe.game_dir.as_ref(),
+        exe_path: recipe.exe_path.as_ref(),
+        env,
+        dlls,
+        dylibs,
+        dry_run,
+        warnings: recipe.warnings.clone(),
+        home_override,
+    })
+}
+
+fn launch_receipt_preview_for_dry_run(
+    appid: u32,
+    node: &PipelineNode,
+    env: &[(String, String)],
+    deploy_dlls: &[serde_json::Value],
+    unix_sidecars: &[serde_json::Value],
+    ok: bool,
+    home_override: Option<&Path>,
+) -> serde_json::Value {
+    let dlls: Vec<serde_json::Value> = deploy_dlls
+        .iter()
+        .map(|dll| {
+            serde_json::json!({
+                "filename": dll.get("filename").cloned().unwrap_or(serde_json::Value::Null),
+                "sourcePath": dll.get("source_path").cloned().unwrap_or(serde_json::Value::Null),
+                "destPath": serde_json::Value::Null,
+                "sourcePresent": dll.get("present").cloned().unwrap_or(serde_json::Value::Bool(false)),
+                "optional": dll.get("optional").cloned().unwrap_or(serde_json::Value::Bool(false)),
+            })
+        })
+        .collect();
+    let dylibs: Vec<serde_json::Value> = unix_sidecars
+        .iter()
+        .map(|sidecar| {
+            serde_json::json!({
+                "name": sidecar.get("filename").cloned().unwrap_or(serde_json::Value::Null),
+                "path": sidecar.get("path").cloned().unwrap_or(serde_json::Value::Null),
+                "required": true,
+                "present": sidecar.get("present").cloned().unwrap_or(serde_json::Value::Bool(false)),
+            })
+        })
+        .collect();
+    launch_receipt_preview_common(LaunchReceiptPreviewInput {
+        appid,
+        node,
+        game_dir: None,
+        exe_path: None,
+        env,
+        dlls,
+        dylibs,
+        dry_run: true,
+        warnings: if ok { Vec::new() } else { vec!["dry-run has missing required route artifacts".into()] },
+        home_override,
+    })
+}
+
+struct LaunchReceiptPreviewInput<'a> {
+    appid: u32,
+    node: &'a PipelineNode,
+    game_dir: Option<&'a PathBuf>,
+    exe_path: Option<&'a PathBuf>,
+    env: &'a [(String, String)],
+    dlls: Vec<serde_json::Value>,
+    dylibs: Vec<serde_json::Value>,
+    dry_run: bool,
+    warnings: Vec<String>,
+    home_override: Option<&'a Path>,
+}
+
+fn launch_receipt_preview_common(input: LaunchReceiptPreviewInput<'_>) -> serde_json::Value {
+    let default_home = dirs::home_dir().unwrap_or_default();
+    let home = input.home_override.unwrap_or(default_home.as_path());
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let wine_root = ms_home.join("runtime").join("wine");
+    let prefix = ms_home.join("prefix-steam");
+    let env_keys: Vec<String> = input.env.iter().map(|(key, _)| key.clone()).collect();
+    let log_path = input
+        .env
+        .iter()
+        .find(|(key, _)| key == "DXMT_LOG_PATH")
+        .or_else(|| input.env.iter().find(|(key, _)| key == "METALSHARP_PIPELINE_CACHE_PATH"))
+        .map(|(_, value)| value.trim_end_matches('/').to_string());
+
+    serde_json::json!({
+        "schema": "metalsharp.launch.receipt.v1",
+        "preview": true,
+        "dryRun": input.dry_run,
+        "source": "steam",
+        "appId": input.appid,
+        "route": input.node.id.user_selectable_id().unwrap_or_else(|| input.node.id.to_legacy_method()),
+        "runtimeContractId": crate::runtime_contracts::runtime_contract_id_for_pipeline(input.node.id),
+        "pipeline": input.node.id,
+        "pipelineName": input.node.name,
+        "backend": input.node.backend,
+        "prefix": prefix.to_string_lossy(),
+        "wine": crate::platform::runtime_wine_binary(&wine_root).to_string_lossy(),
+        "gameDir": input.game_dir.map(|path| path.to_string_lossy().to_string()),
+        "exePath": input.exe_path.map(|path| path.to_string_lossy().to_string()),
+        "dllsStaged": input.dlls,
+        "dylibsUsed": input.dylibs,
+        "envKeys": env_keys,
+        "logPath": log_path,
+        "pid": serde_json::Value::Null,
+        "warnings": input.warnings,
     })
 }
 
@@ -4891,6 +5051,17 @@ mod tests {
         assert_eq!(m12_env.get("WINEDLLOVERRIDES").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12_env.get("SteamAppId").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+        let receipt = m12.get("launch_receipt_preview").expect("launch receipt preview");
+        assert_eq!(receipt.get("schema").and_then(|v| v.as_str()), Some("metalsharp.launch.receipt.v1"));
+        assert_eq!(receipt.get("preview").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(receipt.get("dryRun").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(receipt.get("route").and_then(|v| v.as_str()), Some("m12"));
+        assert_eq!(receipt.get("runtimeContractId").and_then(|v| v.as_str()), Some("m12_dxmt_m12"));
+        let receipt_env_keys = receipt.get("envKeys").and_then(|v| v.as_array()).expect("receipt env keys");
+        assert!(receipt_env_keys.iter().any(|key| key.as_str() == Some("WINEDLLOVERRIDES")));
+        assert!(receipt_env_keys.iter().any(|key| key.as_str() == Some("SteamAppId")));
+        let receipt_dlls = receipt.get("dllsStaged").and_then(|v| v.as_array()).expect("receipt dlls");
+        assert!(receipt_dlls.iter().any(|dll| dll.get("filename").and_then(|v| v.as_str()) == Some("d3d12.dll")));
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -4987,6 +5158,13 @@ mod tests {
         assert!(vkd3d_missing.contains(&"d3d12.dll".to_string()));
         assert!(vkd3d_missing.contains(&"libMoltenVK.dylib".to_string()));
         assert_eq!(vkd3d.get("ok").and_then(|value| value.as_bool()), Some(false));
+        let receipt = vkd3d.get("launch_receipt_preview").expect("vkd3d receipt preview");
+        assert_eq!(receipt.get("route").and_then(|value| value.as_str()), Some("vkd3d_d12"));
+        assert_eq!(receipt.get("runtimeContractId").and_then(|value| value.as_str()), Some("vkd3d_d12"));
+        let dylibs = receipt.get("dylibsUsed").and_then(|value| value.as_array()).expect("vkd3d dylibs");
+        assert!(dylibs
+            .iter()
+            .any(|dylib| dylib.get("name").and_then(|value| value.as_str()) == Some("libMoltenVK.dylib")));
 
         let _ = std::fs::remove_dir_all(&home);
     }

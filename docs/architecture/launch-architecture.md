@@ -19,6 +19,11 @@ The launch recipe is the backend contract for click-to-play. It records the appi
 selected executable, launch arguments, environment, DLL placement, runtime asset status, anti-cheat markers, and warnings.
 Manual launch methods still work; they force the pipeline before the recipe is built.
 
+`POST /mtsp/prepare` and `GET /diagnostics/pipeline/dry-run` also emit `launch_receipt_preview` with schema
+`metalsharp.launch.receipt.v1`. It is a non-spawned receipt preview containing source, app id, route, runtime contract id,
+prefix, Wine path, staged DLL list, dylibs/sidecars, env keys, log path, and warnings. Dry-run previews use the same env
+builder as launch but do not spawn Wine/Steam/the game; prepare previews describe the already-staged handoff state.
+
 Runtime bottles add the user-facing readiness contract. Sharp Library installer/app bottles own their own prefixes under
 `~/.metalsharp/bottles/<id>/prefix`. Steam game bottles use ids like `steam_620` and are launch-authoritative preflight
 records over the shared Wine Steam prefix, so Steam remains the running launcher/session owner while MetalSharp checks
