@@ -265,6 +265,19 @@ function runtimeDiagnosticStatus(value?: boolean): string {
   return value ? "Ready" : "Needs Attention";
 }
 
+function runtimeLaneBadgeClass(lane: RuntimeDiagnosticsResponse["lanes"]["entries"][number]): string {
+  if (lane.ready) return "badge-ok";
+  if (lane.status === "planned" || lane.status === "external") return "badge-muted";
+  return "badge-warn";
+}
+
+function runtimeLaneStatusText(lane: RuntimeDiagnosticsResponse["lanes"]["entries"][number]): string {
+  if (lane.ready) return "Ready";
+  if (lane.status === "planned") return "Planned";
+  if (lane.status === "external") return "External";
+  return lane.blockers.length ? lane.blockers.join(", ") : "Blocked";
+}
+
 function toggleDeveloperMode(enabled: boolean) {
   developerMode.value = enabled;
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
@@ -459,6 +472,25 @@ function uninstallMetalsharp() {
           <button class="btn btn-secondary btn-sm" :disabled="runtimeDiagnosticsLoading" @click="refreshRuntimeDiagnostics">
             {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
           </button>
+        </div>
+      </div>
+      <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Runtime lane readiness">
+        <div
+          v-for="lane in runtimeDiagnostics.lanes.entries"
+          :key="lane.id"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': lane.ready }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">{{ lane.name }}</span>
+            <span class="badge" :class="runtimeLaneBadgeClass(lane)">{{ runtimeLaneStatusText(lane) }}</span>
+          </div>
+          <div class="runtime-lane-meta">
+            {{ lane.family }} · {{ lane.requiresWine ? "Wine" : "Native" }} · {{ lane.sourceScopes.join(", ") }}
+          </div>
+          <div v-if="lane.blockers.length" class="runtime-lane-blockers">
+            {{ lane.blockers.join(" · ") }}
+          </div>
         </div>
       </div>
       <div class="settings-row">
@@ -731,6 +763,46 @@ function uninstallMetalsharp() {
 }
 .runtime-next-actions {
   margin-top: 4px;
+}
+.runtime-lane-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+.runtime-lane-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.runtime-lane-ready {
+  border-color: rgba(74, 222, 128, 0.28);
+}
+.runtime-lane-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.runtime-lane-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.runtime-lane-meta,
+.runtime-lane-blockers {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.35;
+}
+.runtime-lane-blockers {
+  margin-top: 4px;
+  color: var(--text-muted, var(--text-dim));
+}
+.badge-muted {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim);
 }
 .update-progress-bar {
   width: 140px;
