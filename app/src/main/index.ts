@@ -219,6 +219,7 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
             requiresWine: true,
             sourceScopes: ["steam", "sharp_library"],
             runtimeSurfacePaths: ["runtime/wine", "runtime/wine/lib/dxmt_m12"],
+            artifactSummary: { total: 12, present: 12, missing: 0, allPresent: true },
           },
           {
             id: "gogdl_wine",
@@ -230,6 +231,7 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
             requiresWine: true,
             sourceScopes: ["gog"],
             runtimeSurfacePaths: ["runtime/wine", "bottles/gog-prefix/prefix"],
+            artifactSummary: null,
           },
           {
             id: "dxvk_d11",
@@ -241,6 +243,7 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
             requiresWine: true,
             sourceScopes: ["steam", "gog"],
             runtimeSurfacePaths: ["runtime/wine/lib/dxvk"],
+            artifactSummary: { total: 7, present: 0, missing: 7, allPresent: false },
           },
           {
             id: "d3dmetal_gptk",
@@ -252,6 +255,7 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
             requiresWine: true,
             sourceScopes: ["steam"],
             runtimeSurfacePaths: ["external/gptk"],
+            artifactSummary: null,
           },
         ],
       },

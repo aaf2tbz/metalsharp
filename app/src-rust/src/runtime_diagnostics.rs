@@ -108,6 +108,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
                 manifest_ok,
                 prefix_ok,
                 sources: &source_report,
+                artifacts: manifest.get("artifacts").unwrap_or(&Value::Null),
             },
         ),
         "updateGuard": update_guard,
@@ -127,6 +128,7 @@ struct LaneReadinessContext<'a> {
     manifest_ok: bool,
     prefix_ok: bool,
     sources: &'a Value,
+    artifacts: &'a Value,
 }
 
 fn lane_readiness_report(
@@ -230,7 +232,54 @@ fn lane_readiness_entry(
         "requiresWine": contract.requires_wine,
         "sourceScopes": &contract.source_scopes,
         "runtimeSurfacePaths": &contract.runtime_surface_paths,
+        "artifactSummary": lane_artifact_summary(contract.id, context.artifacts),
     })
+}
+
+fn lane_artifact_summary(lane_id: &str, artifacts: &Value) -> Value {
+    let Some(report) = lane_artifact_report(lane_id, artifacts) else {
+        return Value::Null;
+    };
+    let mut total = 0_u64;
+    let mut present = 0_u64;
+    collect_artifact_counts(report, &mut total, &mut present);
+    json!({
+        "total": total,
+        "present": present,
+        "missing": total.saturating_sub(present),
+        "allPresent": total > 0 && present == total,
+    })
+}
+
+fn lane_artifact_report<'a>(lane_id: &str, artifacts: &'a Value) -> Option<&'a Value> {
+    match lane_id {
+        "m9" | "m10" | "m11" => artifacts.get("dxmt"),
+        "m12_dxmt_m12" => artifacts.get("dxmt_m12"),
+        "dxvk_d9" => artifacts.get("planned").and_then(|planned| planned.get("dxvk")).and_then(|dxvk| dxvk.get("d9")),
+        "dxvk_d11" => artifacts.get("planned").and_then(|planned| planned.get("dxvk")).and_then(|dxvk| dxvk.get("d11")),
+        "vkd3d_d12" => {
+            artifacts.get("planned").and_then(|planned| planned.get("vkd3d")).and_then(|vkd3d| vkd3d.get("d12"))
+        },
+        _ => None,
+    }
+}
+
+fn collect_artifact_counts(value: &Value, total: &mut u64, present: &mut u64) {
+    if let Some(entries) = value.get("entries").and_then(|entries| entries.as_array()) {
+        for entry in entries {
+            *total += 1;
+            if entry.get("present").and_then(|present| present.as_bool()).unwrap_or(false) {
+                *present += 1;
+            }
+        }
+    }
+    if let Some(object) = value.as_object() {
+        for child in object.values() {
+            if child.is_object() {
+                collect_artifact_counts(child, total, present);
+            }
+        }
+    }
 }
 
 fn prefix_policy_report(steam_prefix: &Path, gog_prefix: &Path) -> Value {
@@ -562,6 +611,19 @@ mod tests {
             .expect("dxvk blockers")
             .iter()
             .any(|blocker| blocker.as_str() == Some("lane_planned")));
+        let dxvk_artifacts = dxvk.get("artifactSummary").expect("dxvk artifact summary");
+        assert_eq!(dxvk_artifacts.get("total").and_then(|value| value.as_u64()), Some(7));
+        assert_eq!(dxvk_artifacts.get("present").and_then(|value| value.as_u64()), Some(0));
+        assert_eq!(dxvk_artifacts.get("missing").and_then(|value| value.as_u64()), Some(7));
+
+        let vkd3d = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("vkd3d_d12"))
+            .expect("vkd3d lane");
+        let vkd3d_artifacts = vkd3d.get("artifactSummary").expect("vkd3d artifact summary");
+        assert_eq!(vkd3d_artifacts.get("total").and_then(|value| value.as_u64()), Some(4));
+        assert_eq!(vkd3d_artifacts.get("present").and_then(|value| value.as_u64()), Some(0));
+        assert_eq!(vkd3d_artifacts.get("missing").and_then(|value| value.as_u64()), Some(4));
         let _ = fs::remove_dir_all(home);
     }
 

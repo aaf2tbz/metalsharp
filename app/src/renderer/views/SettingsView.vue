@@ -497,6 +497,9 @@ function uninstallMetalsharp() {
           <div class="runtime-lane-meta">
             {{ lane.family }} · {{ lane.requiresWine ? "Wine" : "Native" }} · {{ lane.sourceScopes.join(", ") }}
           </div>
+          <div v-if="lane.artifactSummary" class="runtime-lane-artifacts">
+            Artifacts {{ lane.artifactSummary.present }}/{{ lane.artifactSummary.total }}
+          </div>
           <div v-if="lane.blockers.length" class="runtime-lane-blockers">
             {{ lane.blockers.join(" · ") }}
           </div>
@@ -800,10 +803,14 @@ function uninstallMetalsharp() {
   font-weight: 600;
 }
 .runtime-lane-meta,
+.runtime-lane-artifacts,
 .runtime-lane-blockers {
   font-size: 11px;
   color: var(--text-dim);
   line-height: 1.35;
+}
+.runtime-lane-artifacts {
+  margin-top: 4px;
 }
 .runtime-lane-blockers {
   margin-top: 4px;

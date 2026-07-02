@@ -227,6 +227,12 @@ interface RuntimeDiagnosticsResponse {
       requiresWine: boolean;
       sourceScopes: string[];
       runtimeSurfacePaths: string[];
+      artifactSummary: null | {
+        total: number;
+        present: number;
+        missing: number;
+        allPresent: boolean;
+      };
     }[];
   };
   sources: {
