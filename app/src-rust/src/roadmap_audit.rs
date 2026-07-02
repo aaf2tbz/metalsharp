@@ -64,16 +64,17 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 4,
             title: "Unified Launch Orchestrator",
-            status: "implemented_with_open_followups",
+            status: "implemented",
             evidence: &[
                 "POST /mtsp/prepare launch_receipt_preview",
                 "POST /source-adapters/prepare source prepare preview for Steam/GOG/Sharp",
+                "POST /source-adapters/launch explicit-confirmation dispatcher for Steam/GOG/Sharp",
                 "GET /diagnostics/pipeline/dry-run launch_receipt_preview",
                 "Steam/Sharp/native-Mono launch receipts under ~/.metalsharp/launch-receipts/",
                 "GOG launch receipts under ~/.metalsharp/gog/receipts/",
                 "GET /diagnostics/receipts",
             ],
-            remaining: &["Actual GOG and Sharp launches still use source-specific endpoints; unified source prepare is preview-only."],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 5,
@@ -111,15 +112,16 @@ fn phases() -> Vec<PhaseAudit> {
         PhaseAudit {
             phase: 9,
             title: "Store Adapter Unification",
-            status: "implemented_with_open_followups",
+            status: "implemented",
             evidence: &[
                 "GET /source-adapters",
                 "POST /source-adapters/prepare metalsharp.source.prepare.preview.v1",
+                "POST /source-adapters/launch metalsharp.source.launch.dispatch.v1",
                 "GET /diagnostics/gog",
                 "GOG dedicated prefix policy",
                 "Steam/GOG/Sharp launch receipts",
             ],
-            remaining: &["Actual GOG and Sharp launches still use source-specific endpoints; unified prepare is preview-only."],
+            remaining: &[],
         },
         PhaseAudit {
             phase: 10,

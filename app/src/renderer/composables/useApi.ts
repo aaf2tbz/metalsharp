@@ -63,6 +63,10 @@ export function previewSourcePrepare(body: { source: string; appId?: string | nu
   return api<SourcePreparePreviewResponse>("POST", "/source-adapters/prepare", body);
 }
 
+export function dispatchSourceLaunch(body: { source: string; confirmed?: boolean; appId?: string | number; appid?: number; id?: string; productId?: string; route?: string; pipeline?: string; launchMethod?: string; engine?: string }) {
+  return api<SourceLaunchDispatchResponse>("POST", "/source-adapters/launch", body);
+}
+
 export function getReceiptInventory() {
   return api<ReceiptInventoryResponse>("GET", "/diagnostics/receipts");
 }

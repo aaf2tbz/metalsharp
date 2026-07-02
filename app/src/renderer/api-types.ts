@@ -363,6 +363,7 @@ interface SourceAdapter {
   libraryEndpoint: string;
   statusEndpoint: string;
   launchEndpoint: string;
+  delegateLaunchEndpoint?: string | null;
   prepareEndpoint?: string | null;
   runtimeContractIds: string[];
   prefixPolicy: {
@@ -397,6 +398,21 @@ interface SourcePreparePreviewResponse {
   mutates: false;
   launches: false;
   next: string;
+}
+
+interface SourceLaunchDispatchResponse {
+  ok: boolean;
+  schema: "metalsharp.source.launch.dispatch.v1";
+  readOnly: boolean;
+  status: "confirmation_required" | "dispatched" | string;
+  source: string;
+  launches: boolean;
+  mutates: boolean;
+  wouldLaunch?: Record<string, unknown>;
+  required?: { confirmed: true };
+  result?: Record<string, unknown>;
+  next?: string;
+  error?: string;
 }
 
 interface ReceiptInventoryBucket {

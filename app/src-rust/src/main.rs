@@ -45,6 +45,7 @@ mod scan;
 mod setup;
 mod sharp_library;
 mod source_adapters;
+mod source_launch;
 mod source_prepare;
 mod steam;
 mod updater;
@@ -1055,6 +1056,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/source-adapters/prepare") => {
             let body = read_body(req);
             resp(200, source_prepare::handle_prepare(&body))
+        },
+        (Method::Post, "/source-adapters/launch") => {
+            let body = read_body(req);
+            resp(200, source_launch::handle_launch(&body))
         },
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),

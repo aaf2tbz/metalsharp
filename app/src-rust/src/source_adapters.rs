@@ -25,7 +25,8 @@ fn steam_adapter() -> Value {
         "kind": "storefront",
         "libraryEndpoint": "/games",
         "statusEndpoint": "/steam/status",
-        "launchEndpoint": "/mtsp/launch",
+        "launchEndpoint": "/source-adapters/launch",
+        "delegateLaunchEndpoint": "/steam/launch-game",
         "prepareEndpoint": "/source-adapters/prepare",
         "runtimeContractIds": ["dxmt_m12", "dxvk_d9", "dxvk_d11", "vkd3d_d12"],
         "prefixPolicy": {
@@ -61,7 +62,8 @@ fn gog_adapter() -> Value {
         "kind": "storefront",
         "libraryEndpoint": "/sharp-library/gog/games",
         "statusEndpoint": "/sharp-library/gog/status",
-        "launchEndpoint": "/sharp-library/gog/play",
+        "launchEndpoint": "/source-adapters/launch",
+        "delegateLaunchEndpoint": "/sharp-library/gog/play",
         "prepareEndpoint": "/source-adapters/prepare",
         "runtimeContractIds": ["gogdl_wine"],
         "prefixPolicy": {
@@ -83,7 +85,7 @@ fn gog_adapter() -> Value {
             "stop": true,
             "receipts": "runtime"
         },
-        "limitations": ["GOG launches still use the dedicated gogdl endpoint; /source-adapters/prepare is preview-only"]
+        "limitations": ["Unified launch dispatch requires explicit confirmed=true and delegates to the dedicated gogdl endpoint"]
     })
 }
 
@@ -105,7 +107,8 @@ fn sharp_adapter() -> Value {
         "kind": "local_library",
         "libraryEndpoint": "/sharp-library",
         "statusEndpoint": "/sharp-library",
-        "launchEndpoint": "/sharp-library/launch",
+        "launchEndpoint": "/source-adapters/launch",
+        "delegateLaunchEndpoint": "/sharp-library/launch",
         "prepareEndpoint": "/source-adapters/prepare",
         "runtimeContractIds": ["dxmt_m12", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "native_mono_arm64", "native_mono_x86"],
         "prefixPolicy": {
@@ -129,7 +132,7 @@ fn sharp_adapter() -> Value {
             "stop": true,
             "receipts": "runtime"
         },
-        "limitations": ["Sharp Library launches still use the dedicated endpoint; /source-adapters/prepare is preview-only"]
+        "limitations": ["Unified launch dispatch requires explicit confirmed=true and delegates to the Sharp Library launch endpoint"]
     })
 }
 
