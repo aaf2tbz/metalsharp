@@ -930,6 +930,13 @@ fn custom_launch_receipt_path_for_home(home: &Path, launch_id: u32) -> PathBuf {
         .join(format!("{}-launch.json", launch_id))
 }
 
+fn native_mono_launch_receipt_path_for_home(home: &Path, appid: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home)
+        .join("launch-receipts")
+        .join("native-mono")
+        .join(format!("{}-launch.json", appid))
+}
+
 struct CustomLaunchReceiptInput<'a> {
     launch_id: u32,
     node: &'a PipelineNode,
@@ -974,6 +981,66 @@ fn persist_custom_launch_receipt_best_effort(input: CustomLaunchReceiptInput<'_>
         .and_then(|data| std::fs::write(&path, data).map_err(|error| error.to_string()))
     {
         eprintln!("custom launch receipt persist failed for launch {}: {}", input.launch_id, error);
+    }
+}
+
+struct NativeMonoLaunchReceiptInput<'a> {
+    appid: u32,
+    profile: &'a FnaGameProfile,
+    node: &'a PipelineNode,
+    game_dir: &'a Path,
+    exe_path: &'a Path,
+    env: &'a [(String, String)],
+    pid: u32,
+    log_path: &'a Path,
+    home: &'a Path,
+}
+
+fn native_mono_runtime_contract_id(profile: &FnaGameProfile) -> &'static str {
+    if profile.mono_arch == MonoArch::X86 {
+        "native_mono_x86"
+    } else {
+        "native_mono_arm64"
+    }
+}
+
+fn persist_native_mono_launch_receipt_best_effort(input: NativeMonoLaunchReceiptInput<'_>) {
+    let path = native_mono_launch_receipt_path_for_home(input.home, input.appid);
+    let env_keys: Vec<String> = input.env.iter().map(|(key, _)| key.clone()).collect();
+    let receipt = serde_json::json!({
+        "schema": "metalsharp.launch.receipt.v1",
+        "preview": false,
+        "dryRun": false,
+        "source": "native_mono",
+        "appId": input.appid,
+        "route": input.profile.method_label,
+        "runtimeContractId": native_mono_runtime_contract_id(input.profile),
+        "pipeline": input.node.id,
+        "pipelineName": input.node.name,
+        "backend": input.node.backend,
+        "prefix": serde_json::Value::Null,
+        "wine": serde_json::Value::Null,
+        "gameDir": input.game_dir.to_string_lossy(),
+        "exePath": input.exe_path.to_string_lossy(),
+        "dllsStaged": [],
+        "dylibsUsed": [
+            {"name": "mono", "path": input.env.iter().find(|(key, _)| key == "MONO_PATH").map(|(_, value)| value.clone()), "required": true, "present": true}
+        ],
+        "envKeys": env_keys,
+        "logPath": input.log_path.to_string_lossy(),
+        "pid": input.pid,
+        "receiptPath": path.to_string_lossy(),
+        "warnings": [],
+    });
+    if let Err(error) = path.parent().map(std::fs::create_dir_all).transpose() {
+        eprintln!("native mono launch receipt directory failed for appid {}: {}", input.appid, error);
+        return;
+    }
+    if let Err(error) = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| error.to_string())
+        .and_then(|data| std::fs::write(&path, data).map_err(|error| error.to_string()))
+    {
+        eprintln!("native mono launch receipt persist failed for appid {}: {}", input.appid, error);
     }
 }
 
@@ -2140,12 +2207,24 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
 
     cmd.arg(&exe);
 
+    let launch_env = command_env_pairs(&cmd);
     let mut child = cmd.spawn()?;
     std::thread::sleep(Duration::from_millis(900));
     if let Some(status) = child.try_wait()? {
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/Mono/XNA launch exited early with status {}. Log: {}", status, log_tail).into());
     }
+    persist_native_mono_launch_receipt_best_effort(NativeMonoLaunchReceiptInput {
+        appid,
+        profile,
+        node,
+        game_dir: dir,
+        exe_path: &exe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path: &log_path,
+        home: &home,
+    });
     let method = profile.method_label;
     Ok((child.id(), method, log_path))
 }
@@ -2334,6 +2413,7 @@ fn launch_fna_kickstart(
         arch_cmd.env("SteamAppId", appid.to_string());
         arch_cmd.env("SteamGameId", appid.to_string());
         arch_cmd.env("MONO_DISABLE_SHARED_AREA", "1");
+        let launch_env = command_env_pairs(&arch_cmd);
         let mut child = arch_cmd.spawn()?;
         std::thread::sleep(Duration::from_millis(900));
         if let Some(status) = child.try_wait()? {
@@ -2342,15 +2422,38 @@ fn launch_fna_kickstart(
                 format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into()
             );
         }
+        persist_native_mono_launch_receipt_best_effort(NativeMonoLaunchReceiptInput {
+            appid,
+            profile,
+            node,
+            game_dir: dir,
+            exe_path: &game_kick,
+            env: &launch_env,
+            pid: child.id(),
+            log_path: &log_path,
+            home,
+        });
         return Ok((child.id(), profile.method_label, log_path));
     }
 
+    let launch_env = command_env_pairs(&cmd);
     let mut child = cmd.spawn()?;
     std::thread::sleep(Duration::from_millis(900));
     if let Some(status) = child.try_wait()? {
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into());
     }
+    persist_native_mono_launch_receipt_best_effort(NativeMonoLaunchReceiptInput {
+        appid,
+        profile,
+        node,
+        game_dir: dir,
+        exe_path: &game_kick,
+        env: &launch_env,
+        pid: child.id(),
+        log_path: &log_path,
+        home,
+    });
     Ok((child.id(), profile.method_label, log_path))
 }
 
@@ -5236,6 +5339,8 @@ mod tests {
         assert!(path.ends_with(Path::new(".metalsharp/launch-receipts/steam/620-launch.json")));
         let sharp_path = custom_launch_receipt_path_for_home(&home, 12345);
         assert!(sharp_path.ends_with(Path::new(".metalsharp/launch-receipts/sharp/12345-launch.json")));
+        let native_mono_path = native_mono_launch_receipt_path_for_home(&home, 504230);
+        assert!(native_mono_path.ends_with(Path::new(".metalsharp/launch-receipts/native-mono/504230-launch.json")));
     }
 
     #[test]

@@ -180,10 +180,11 @@ fn gog_entry(ms_home: &Path) -> ValidationEntry {
 
 fn native_mono_entry(ms_home: &Path, id: &'static str, route: &'static str, mono_rel: &'static str) -> ValidationEntry {
     let mono = ms_home.join(mono_rel);
-    let receipts = fna_staging_receipts(ms_home);
-    let status = if !receipts.is_empty() && mono.is_file() {
+    let staging_receipts = fna_staging_receipts(ms_home);
+    let launch_receipt = latest_native_mono_receipt_for_contract(ms_home, id);
+    let status = if launch_receipt.is_some() && mono.is_file() {
         ProofStatus::Proven
-    } else if mono.is_file() {
+    } else if mono.is_file() || !staging_receipts.is_empty() {
         ProofStatus::FilesystemValidated
     } else {
         ProofStatus::PendingLaunchProof
@@ -198,13 +199,15 @@ fn native_mono_entry(ms_home: &Path, id: &'static str, route: &'static str, mono
         evidence: json!({
             "monoPath": mono.to_string_lossy(),
             "monoPresent": mono.is_file(),
-            "stagingReceipts": receipts,
+            "launchReceiptPath": launch_receipt.as_ref().map(|(path, _)| path.to_string_lossy().to_string()),
+            "launchReceipt": launch_receipt.map(|(_, value)| value),
+            "stagingReceipts": staging_receipts,
         }),
         limitations: vec!["Native Mono/FNA applies only to known FNA/XNA targets or approved proof targets.".into()],
         next_actions: if matches!(status, ProofStatus::Proven) {
-            vec!["Keep FNA staging receipt with per-game launch notes.".into()]
+            vec!["Keep native Mono launch and FNA staging receipts with per-game proof notes.".into()]
         } else {
-            vec!["Stage native FNA assets and capture launch proof only for an approved target.".into()]
+            vec!["Stage native FNA assets and capture native Mono launch proof only for an approved target.".into()]
         },
     }
 }
@@ -265,8 +268,15 @@ fn entry_json(entry: ValidationEntry) -> Value {
 }
 
 fn latest_steam_receipt_for_contract(ms_home: &Path, contract_id: &str) -> Option<(PathBuf, Value)> {
-    let dir = ms_home.join("launch-receipts").join("steam");
-    let mut matches = json_files_in(&dir)
+    latest_receipt_for_contract(&ms_home.join("launch-receipts").join("steam"), contract_id)
+}
+
+fn latest_native_mono_receipt_for_contract(ms_home: &Path, contract_id: &str) -> Option<(PathBuf, Value)> {
+    latest_receipt_for_contract(&ms_home.join("launch-receipts").join("native-mono"), contract_id)
+}
+
+fn latest_receipt_for_contract(dir: &Path, contract_id: &str) -> Option<(PathBuf, Value)> {
+    let mut matches = json_files_in(dir)
         .into_iter()
         .filter_map(|path| {
             let value = read_json(&path)?;
@@ -357,6 +367,31 @@ mod tests {
             .expect("m12 entry");
         assert_eq!(m12.get("status").and_then(|value| value.as_str()), Some("proven"));
         assert_eq!(m12.pointer("/evidence/receipt/preview").and_then(|value| value.as_bool()), Some(false));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn matrix_promotes_native_mono_launch_receipt_to_proven() {
+        let home = temp_home("native-mono-receipt");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let receipts = ms_home.join("launch-receipts").join("native-mono");
+        fs::create_dir_all(&receipts).expect("create native receipts");
+        fs::create_dir_all(ms_home.join("runtime/mono-x86/bin")).expect("create mono bin");
+        fs::write(ms_home.join("runtime/mono-x86/bin/mono"), b"mono").expect("write mono");
+        fs::write(
+            receipts.join("504230-launch.json"),
+            br#"{"schema":"metalsharp.launch.receipt.v1","runtimeContractId":"native_mono_x86","preview":false,"pid":99}"#,
+        )
+        .expect("write native receipt");
+
+        let report = report_for_home(&home);
+        let entries = report.get("entries").and_then(|value| value.as_array()).expect("entries");
+        let native = entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("native_mono_x86"))
+            .expect("native mono entry");
+        assert_eq!(native.get("status").and_then(|value| value.as_str()), Some("proven"));
+        assert_eq!(native.pointer("/evidence/launchReceipt/pid").and_then(|value| value.as_u64()), Some(99));
         let _ = fs::remove_dir_all(&home);
     }
 

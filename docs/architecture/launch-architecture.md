@@ -26,8 +26,10 @@ builder as launch but do not spawn Wine/Steam/the game; prepare previews describ
 Actual MTSP Steam launches persist the same schema after a successful child-process spawn under
 `~/.metalsharp/launch-receipts/steam/<appid>-launch.json` with `preview: false`, the PID, prefix, log path, staged DLLs,
 dylibs/sidecars, and env keys. Sharp Library custom launches persist matching receipts under
-`~/.metalsharp/launch-receipts/sharp/<launch-id>-launch.json`. GOGDL launches persist the schema as a real
-`launchReceipt` under `~/.metalsharp/gog/receipts/` and return it from `POST /sharp-library/gog/play`.
+`~/.metalsharp/launch-receipts/sharp/<launch-id>-launch.json`. Native Mono/FNA launches persist receipts under
+`~/.metalsharp/launch-receipts/native-mono/<appid>-launch.json`, in addition to game-local FNA staging receipts.
+GOGDL launches persist the schema as a real `launchReceipt` under `~/.metalsharp/gog/receipts/` and return it from
+`POST /sharp-library/gog/play`.
 
 `GET /diagnostics/launch-validation` returns `metalsharp.launch.validation.matrix.v1`, a filesystem-only proof matrix.
 It reports whether M12, DXVK D3D9/D3D11, VKD3D D3D12, GOGDL, native Mono/FNA, and launcher profiles are proven by
