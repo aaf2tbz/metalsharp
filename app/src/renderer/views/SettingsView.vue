@@ -1,8 +1,28 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api, getAPI, getLaunchValidation, getReceiptInventory, getRuntimeDiagnostics } from "../composables/useApi";
-import type { AppConfig, LaunchValidationEntry, LaunchValidationResponse, ReceiptInventoryBucket, ReceiptInventoryResponse, RuntimeDiagnosticsResponse, UpdateStatus } from "../api-types";
+import {
+  api,
+  getAPI,
+  getLaunchValidation,
+  getLauncherEvidenceInventory,
+  getReceiptInventory,
+  getRuntimeDiagnostics,
+  getSourceAdapters,
+} from "../composables/useApi";
+import type {
+  AppConfig,
+  LaunchValidationEntry,
+  LaunchValidationResponse,
+  LauncherEvidenceInventoryResponse,
+  LauncherEvidenceTarget,
+  ReceiptInventoryBucket,
+  ReceiptInventoryResponse,
+  RuntimeDiagnosticsResponse,
+  SourceAdapter,
+  SourceAdaptersResponse,
+  UpdateStatus,
+} from "../api-types";
 import IconTrash2 from "~icons/lucide/trash-2";
 
 interface CacheSummary {
@@ -41,6 +61,8 @@ const pipelineCache = ref<CacheSummary | null>(null);
 const runtimeDiagnostics = ref<RuntimeDiagnosticsResponse | null>(null);
 const launchValidation = ref<LaunchValidationResponse | null>(null);
 const receiptInventory = ref<ReceiptInventoryResponse | null>(null);
+const sourceAdapters = ref<SourceAdaptersResponse | null>(null);
+const launcherEvidenceInventory = ref<LauncherEvidenceInventoryResponse | null>(null);
 const runtimeDiagnosticsLoading = ref(false);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
@@ -52,6 +74,8 @@ onMounted(async () => {
   await refreshRuntimeDiagnostics();
   await refreshLaunchValidation();
   await refreshReceiptInventory();
+  await refreshSourceAdapters();
+  await refreshLauncherEvidenceInventory();
 });
 
 async function refreshConfig() {
@@ -92,6 +116,18 @@ async function refreshReceiptInventory() {
   const result = await getReceiptInventory();
   receiptInventory.value = result;
   if (!result) toast.show("Receipt inventory unavailable", "error");
+}
+
+async function refreshSourceAdapters() {
+  const result = await getSourceAdapters();
+  sourceAdapters.value = result;
+  if (!result) toast.show("Source adapter contracts unavailable", "error");
+}
+
+async function refreshLauncherEvidenceInventory() {
+  const result = await getLauncherEvidenceInventory();
+  launcherEvidenceInventory.value = result;
+  if (!result) toast.show("Launcher evidence inventory unavailable", "error");
 }
 
 function formatBytes(bytes: number): string {
@@ -342,6 +378,29 @@ function receiptBucketBadgeClass(bucket: ReceiptInventoryBucket): string {
 
 function receiptBucketTitle(bucket: ReceiptInventoryBucket): string {
   return bucket.latest?.path ?? bucket.root;
+}
+
+function sourceAdapterBadgeClass(adapter: SourceAdapter): string {
+  return adapter.ready ? "badge-ok" : "badge-warn";
+}
+
+function sourceAdapterSummary(adapter: SourceAdapter): string {
+  const prepare = adapter.prepareEndpoint ? "prepare preview" : "no prepare preview";
+  return `${adapter.kind} · ${adapter.runtimeContractIds.join(", ")} · ${prepare}`;
+}
+
+function launcherEvidenceBadgeClass(target: LauncherEvidenceTarget): string {
+  if (target.status === "controlled_proof_recorded" || target.status === "filesystem_validated") return "badge-ok";
+  if (target.status === "known_blocker_recorded") return "badge-muted";
+  return "badge-warn";
+}
+
+function launcherEvidenceStatusText(target: LauncherEvidenceTarget): string {
+  if (target.status === "controlled_proof_recorded") return "Proven";
+  if (target.status === "filesystem_validated") return "Filesystem";
+  if (target.status === "known_blocker_recorded") return "Known Blocker";
+  if (target.status === "pending_no_bottle_evidence") return "No Evidence";
+  return "Needs Proof";
 }
 
 function toggleDeveloperMode(enabled: boolean) {
@@ -606,6 +665,82 @@ function uninstallMetalsharp() {
           </div>
           <div v-if="entry.nextActions.length" class="runtime-lane-blockers">
             {{ entry.nextActions[0] }}
+          </div>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
+          <div class="settings-label">Source Adapter Contracts</div>
+          <div class="settings-desc">
+            Backend-owned Steam/GOG/Sharp adapter contracts with read-only prepare preview endpoints.
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="sourceAdapters?.ok ? 'badge-ok' : 'badge-muted'">
+            Sources {{ sourceAdapters?.adapters.length ?? 0 }}
+          </span>
+          <button class="btn btn-secondary btn-sm" @click="refreshSourceAdapters">Refresh Sources</button>
+        </div>
+      </div>
+      <div v-if="sourceAdapters" class="runtime-lane-grid" aria-label="Source adapter contracts">
+        <div
+          v-for="adapter in sourceAdapters.adapters"
+          :key="adapter.id"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': adapter.ready }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">{{ adapter.displayName }}</span>
+            <span class="badge" :class="sourceAdapterBadgeClass(adapter)">{{ adapter.ready ? "Ready" : adapter.status }}</span>
+          </div>
+          <div class="runtime-lane-meta">{{ sourceAdapterSummary(adapter) }}</div>
+          <div class="runtime-lane-artifacts">
+            {{ adapter.launchEndpoint }} · {{ adapter.prepareEndpoint ?? "source-local prepare" }}
+          </div>
+          <div v-if="adapter.limitations.length" class="runtime-lane-blockers">
+            {{ adapter.limitations[0] }}
+          </div>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
+          <div class="settings-label">Launcher Evidence Inventory</div>
+          <div class="settings-desc">
+            Read-only Minecraft/EA/Ubisoft launcher proof inventory from existing bottle evidence.
+          </div>
+          <div v-if="launcherEvidenceInventory?.invariants?.length" class="settings-desc runtime-next-actions">
+            {{ launcherEvidenceInventory.invariants[0] }}
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="launcherEvidenceInventory?.ok ? 'badge-ok' : 'badge-muted'">
+            Targets {{ launcherEvidenceInventory?.summary.total ?? 0 }}
+          </span>
+          <span v-if="launcherEvidenceInventory" class="badge badge-warn">
+            Pending {{ launcherEvidenceInventory.summary.pendingControlledProof }}
+          </span>
+          <button class="btn btn-secondary btn-sm" @click="refreshLauncherEvidenceInventory">Refresh Launchers</button>
+        </div>
+      </div>
+      <div v-if="launcherEvidenceInventory" class="runtime-lane-grid" aria-label="Launcher evidence inventory">
+        <div
+          v-for="target in launcherEvidenceInventory.targets"
+          :key="target.family"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': target.status === 'controlled_proof_recorded' || target.status === 'filesystem_validated' }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">{{ target.family }}</span>
+            <span class="badge" :class="launcherEvidenceBadgeClass(target)">
+              {{ launcherEvidenceStatusText(target) }}
+            </span>
+          </div>
+          <div class="runtime-lane-meta">
+            {{ target.bottleId ?? "No bottle evidence" }} · {{ target.evidenceStatus ?? target.status }}
+          </div>
+          <div class="runtime-lane-artifacts">{{ target.summary }}</div>
+          <div v-if="target.nextActions.length" class="runtime-lane-blockers">
+            {{ target.nextActions[0] }}
           </div>
         </div>
       </div>
