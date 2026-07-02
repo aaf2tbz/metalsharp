@@ -751,11 +751,13 @@ fn fna_support_assets_current(home: &Path) -> bool {
     let kick_faudio = runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib");
     let fmod = runtime.join("fnalibs").join("fmod").join("libfmod.dylib");
     let fmodstudio = runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib");
+    let fna = runtime.join("fna").join("FNA.dll");
     fna_dylib_uses_sdl2(&fna3d)
         && fna_dylib_uses_sdl2(&kick_fna3d)
         && fna_dylib_uses_sdl2(&faudio)
         && fna_dylib_uses_sdl2(&kick_faudio)
         && sdl2.exists()
+        && file_nonempty(&fna)
         && fmod_dylib_has_payload(&fmod)
         && fmod_dylib_has_payload(&fmodstudio)
 }
@@ -812,7 +814,7 @@ fn repair_fna_support_assets_from_assets_archive(archive: &Path, runtime_dir: &P
     extract_zst(&archive.to_path_buf(), &tmp, ASSETS_BUNDLE)?;
     let assets = tmp.join("assets");
     let mut copied = refresh_fna_support_assets_from_fnalibs_dir(&assets.join("fnalibs"), runtime_dir)?;
-    copied += refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart").join("osx"), runtime_dir)?;
+    copied += refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart"), runtime_dir)?;
     let _ = fs::remove_dir_all(&tmp);
     Ok(copied)
 }
@@ -847,9 +849,10 @@ fn refresh_fna_support_assets_from_fnalibs_dir(source: &Path, runtime_dir: &Path
 }
 
 fn refresh_fna_kickstart_from_dir(source: &Path, runtime_dir: &Path) -> Result<usize, String> {
-    if !fna_dylib_uses_sdl2(&source.join("libFNA3D.0.dylib"))
-        || !fna_dylib_uses_sdl2(&source.join("libFAudio.0.dylib"))
-        || !source.join("libSDL2-2.0.0.dylib").exists()
+    let osx = source.join("osx");
+    if !fna_dylib_uses_sdl2(&osx.join("libFNA3D.0.dylib"))
+        || !fna_dylib_uses_sdl2(&osx.join("libFAudio.0.dylib"))
+        || !osx.join("libSDL2-2.0.0.dylib").exists()
     {
         return Ok(0);
     }
@@ -857,8 +860,15 @@ fn refresh_fna_kickstart_from_dir(source: &Path, runtime_dir: &Path) -> Result<u
     let kick_osx = runtime_dir.join("fna-kickstart").join("osx");
     fs::create_dir_all(&kick_osx).map_err(|e| format!("create {}: {}", kick_osx.display(), e))?;
     let mut copied = 0usize;
-    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib"] {
-        copy_file_overwrite(&source.join(name), &kick_osx.join(name))?;
+    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib", "libtheorafile.dylib"] {
+        let src = osx.join(name);
+        if src.is_file() {
+            copy_file_overwrite(&src, &kick_osx.join(name))?;
+            copied += 1;
+        }
+    }
+    if source.join("FNA.dll").is_file() {
+        copy_file_overwrite(&source.join("FNA.dll"), &runtime_dir.join("fna").join("FNA.dll"))?;
         copied += 1;
     }
     Ok(copied)
@@ -962,6 +972,9 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
             changed = true;
         }
     }
+    if assets.join("fna-kickstart").exists() {
+        changed |= refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart"), &runtime_dir)? > 0;
+    }
 
     // GPTK is Homebrew-owned. Ignore stale assets/gptk payloads that may exist
     // in old cached assets bundles so MetalSharp never stages or mixes GPTK
@@ -1053,12 +1066,30 @@ fn install_dxvk_runtime_surface(home: &PathBuf) -> Result<bool, String> {
     fs::create_dir_all(&unix_dst).map_err(|error| format!("create DXVK unix surface: {error}"))?;
 
     let mut changed = false;
+    if let Some(archive) = find_bundled_archive("dxvk") {
+        let tmp = std::env::temp_dir().join("metalsharp-dxvk-canonical-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).map_err(|error| format!("create DXVK canonical extract dir: {error}"))?;
+        extract_zst(&archive, &tmp, "dxvk")?;
+        let source = tmp.join("dxvk");
+        changed |= copy_runtime_dlls(&source.join("x86_64-windows"), &x64_dst)?;
+        changed |= copy_runtime_dlls(&source.join("i386-windows"), &x32_dst)?;
+        for sidecar in DXVK_REQUIRED_UNIX {
+            let src = source.join("x86_64-unix").join(sidecar);
+            if src.is_file() {
+                fs::copy(&src, unix_dst.join(sidecar))
+                    .map_err(|error| format!("copy DXVK sidecar {}: {error}", src.display()))?;
+                changed = true;
+            }
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
     changed |= copy_runtime_dlls(&legacy.join("x64"), &x64_dst)?;
     changed |= copy_runtime_dlls(&legacy.join("x32"), &x32_dst)?;
 
     let moltenvk =
         ms_home.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
-    if moltenvk.is_file() {
+    if !unix_dst.join("libMoltenVK.dylib").is_file() && moltenvk.is_file() {
         let dest = unix_dst.join("libMoltenVK.dylib");
         fs::copy(&moltenvk, &dest).map_err(|error| format!("copy MoltenVK into DXVK surface: {error}"))?;
         changed = true;
@@ -1070,6 +1101,7 @@ fn install_dxvk_runtime_surface(home: &PathBuf) -> Result<bool, String> {
 fn dxvk_canonical_surface_has_payload(surface: &Path) -> bool {
     surface.join("x86_64-windows").join("d3d11.dll").is_file()
         && surface.join("i386-windows").join("d3d11.dll").is_file()
+        && surface.join("x86_64-unix").join("libMoltenVK.dylib").is_file()
 }
 
 fn copy_runtime_dlls(src: &Path, dst: &Path) -> Result<bool, String> {
@@ -1098,10 +1130,23 @@ fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
-    let source = [runtime_root.join("vkd3d"), runtime_root.join("vkd3d-proton")].into_iter().find(|candidate| {
-        candidate.join("x64").join("d3d12.dll").is_file()
-            || candidate.join("x86_64-windows").join("d3d12.dll").is_file()
-    });
+    let mut extracted_source = None;
+    if let Some(archive) = find_bundled_archive("vkd3d-proton") {
+        let tmp = std::env::temp_dir().join("metalsharp-vkd3d-canonical-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).map_err(|error| format!("create VKD3D canonical extract dir: {error}"))?;
+        extract_zst(&archive, &tmp, "vkd3d-proton")?;
+        extracted_source = Some(tmp.join("vkd3d-proton"));
+    }
+    let source = extracted_source
+        .as_ref()
+        .cloned()
+        .into_iter()
+        .chain([runtime_root.join("vkd3d"), runtime_root.join("vkd3d-proton")])
+        .find(|candidate| {
+            candidate.join("x64").join("d3d12.dll").is_file()
+                || candidate.join("x86_64-windows").join("d3d12.dll").is_file()
+        });
     let Some(source) = source else {
         // Missing payloads are visible in diagnostics/readiness. Keep setup
         // non-fatal so unrelated Wine/DXMT repair paths do not regress.
@@ -1149,12 +1194,17 @@ fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
+    if source.starts_with(std::env::temp_dir()) {
+        let _ = fs::remove_dir_all(source.parent().unwrap_or_else(|| Path::new("")));
+    }
+
     Ok(changed)
 }
 
 fn vkd3d_canonical_surface_has_payload(surface: &Path) -> bool {
     surface.join("x86_64-windows").join("d3d12.dll").is_file()
         && surface.join("x86_64-windows").join("dxgi.dll").is_file()
+        && surface.join("x86_64-unix").join("libMoltenVK.dylib").is_file()
 }
 
 fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {

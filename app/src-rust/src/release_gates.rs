@@ -16,10 +16,14 @@ pub fn report_for(home: &Path) -> Value {
     let gates = vec![
         gate("version_surfaces_synced", true, "Cargo/package version surfaces are compiled into backend contracts"),
         gate("wine_manifest_valid", bool_at(&runtime_manifest, "/validation/ok"), "Runtime manifest validation"),
-        gate("dxmt_runtime_valid", bool_at(&runtime_manifest, "/artifacts/dxmt/ok"), "DXMT runtime artifact report"),
+        gate(
+            "dxmt_runtime_valid",
+            bool_at(&runtime_manifest, "/artifacts/dxmt/all_present"),
+            "DXMT runtime artifact report",
+        ),
         gate(
             "dxmt_m12_runtime_valid",
-            bool_at(&runtime_manifest, "/artifacts/dxmt_m12/ok"),
+            bool_at(&runtime_manifest, "/artifacts/dxmt_m12/all_present"),
             "DXMT M12 artifact report",
         ),
         gate(
