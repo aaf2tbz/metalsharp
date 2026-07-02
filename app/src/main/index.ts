@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "child_process";
+import { execFile, execFileSync, spawn } from "child_process";
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
@@ -930,33 +930,65 @@ function registerIpc() {
 
     return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
       let settled = false;
-      const oauthWindows = new Set<BrowserWindow>();
-      const oauthWindow = new BrowserWindow({
-        width: 620,
-        height: 760,
-        title: "Login to GOG",
-        parent: mainWindow ?? undefined,
-        modal: false,
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-        },
-      });
+      let safariPoll: ReturnType<typeof setInterval> | null = null;
+      const safariDeadline = Date.now() + 5 * 60 * 1000;
 
-      oauthWindows.add(oauthWindow);
-
-      const closeOauthWindows = () => {
-        for (const win of oauthWindows) {
-          if (!win.isDestroyed()) win.close();
-        }
-        oauthWindows.clear();
+      const stopSafariPolling = () => {
+        if (safariPoll) clearInterval(safariPoll);
+        safariPoll = null;
       };
 
       const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
         if (settled) return;
         settled = true;
-        closeOauthWindows();
+        stopSafariPolling();
         resolve(result);
+      };
+
+      const runAppleScript = (script: string, args: string[] = []) =>
+        new Promise<string>((resolveScript, rejectScript) => {
+          execFile("/usr/bin/osascript", ["-e", script, ...args], { timeout: 5000 }, (error, stdout) => {
+            if (error) rejectScript(error);
+            else resolveScript(stdout.toString());
+          });
+        });
+
+      const safariUrlsScript = `
+tell application "Safari"
+  if (count of windows) = 0 then return ""
+  set output to ""
+  repeat with w in windows
+    repeat with t in tabs of w
+      try
+        set output to output & (URL of t as text) & linefeed
+      end try
+    end repeat
+  end repeat
+  return output
+end tell`;
+
+      const closeSafariUrlScript = `
+on run argv
+  set targetUrl to item 1 of argv
+  tell application "Safari"
+    repeat with w in windows
+      repeat with i from (count of tabs of w) to 1 by -1
+        set t to tab i of w
+        try
+          if (URL of t as text) is targetUrl then
+            close t
+            if (count of tabs of w) is 0 then close w
+            return "closed"
+          end if
+        end try
+      end repeat
+    end repeat
+  end tell
+  return "not_found"
+end run`;
+
+      const closeSafariUrl = (url: string) => {
+        runAppleScript(closeSafariUrlScript, [url]).catch(() => undefined);
       };
 
       const gogCodeFromUrl = (redirect: URL) => {
@@ -977,22 +1009,18 @@ function registerIpc() {
         return path.includes("on_login_success") || Boolean(gogCodeFromUrl(redirect));
       };
 
-      const inspectUrl = (url: string, source = "navigation") => {
+      const inspectUrl = (url: string) => {
         try {
           const redirect = new URL(url);
           if (!isGogCallbackUrl(redirect)) return false;
           const code = gogCodeFromUrl(redirect);
           const callbackError = redirect.searchParams.get("error") ?? redirect.searchParams.get("error_description");
-          if (!code) {
-            finish({
-              ok: false,
-              error: callbackError
-                ? `GOG login callback failed: ${callbackError}`
-                : `GOG login reached the callback URL but did not include an authorization code (${source}).`,
-              redirectUrl: url,
-            });
+          if (callbackError) {
+            finish({ ok: false, error: `GOG login callback failed: ${callbackError}`, redirectUrl: url });
             return true;
           }
+          if (!code) return true;
+          closeSafariUrl(url);
           finish({ ok: true, code, redirectUrl: url });
           return true;
         } catch {
@@ -1000,82 +1028,30 @@ function registerIpc() {
         }
       };
 
-      const isAllowedOauthUrl = (url: string) => {
-        try {
-          const target = new URL(url);
-          if (target.protocol !== "https:") return false;
-          const host = target.hostname.toLowerCase();
-          return [
-            "gog.com",
-            "gog-statics.com",
-            "google.com",
-            "gstatic.com",
-            "discord.com",
-            "steamcommunity.com",
-            "steampowered.com",
-            "live.com",
-            "microsoft.com",
-            "microsoftonline.com",
-            "xbox.com",
-          ].some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
-        } catch {
-          return false;
+      const pollSafari = async () => {
+        if (settled) return;
+        if (Date.now() > safariDeadline) {
+          finish({ ok: false, error: "Timed out waiting for the GOG login callback in Safari." });
+          return;
         }
+        try {
+          const output = await runAppleScript(safariUrlsScript);
+          for (const url of output
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)) {
+            if (inspectUrl(url)) return;
+          }
+        } catch {}
       };
 
-      const attachOauthHandlers = (win: BrowserWindow) => {
-        win.webContents.setWindowOpenHandler(({ url }) => {
-          if (inspectUrl(url, "popup")) return { action: "deny" };
-          if (!isAllowedOauthUrl(url)) return { action: "deny" };
-
-          const child = new BrowserWindow({
-            width: 620,
-            height: 760,
-            title: "Login to GOG",
-            parent: win,
-            modal: false,
-            webPreferences: {
-              contextIsolation: true,
-              nodeIntegration: false,
-            },
-          });
-          oauthWindows.add(child);
-          attachOauthHandlers(child);
-          child.on("closed", () => oauthWindows.delete(child));
-          child.loadURL(url).catch((error) => {
-            if (!inspectUrl(url, "popup-load-failure")) finish({ ok: false, error: error.message, redirectUrl: url });
-          });
-          return { action: "deny" };
-        });
-        win.webContents.on("did-start-navigation", (event, url) => {
-          if (inspectUrl(url, "navigation-start")) event.preventDefault();
-        });
-        win.webContents.on("will-redirect", (event, url) => {
-          if (inspectUrl(url, "redirect")) event.preventDefault();
-        });
-        win.webContents.on("will-navigate", (event, url) => {
-          if (inspectUrl(url, "navigation")) event.preventDefault();
-        });
-        win.webContents.on("did-redirect-navigation", (_event, url) => {
-          inspectUrl(url, "redirect-complete");
-        });
-        win.webContents.on("did-navigate", (_event, url) => {
-          inspectUrl(url, "navigation-complete");
-        });
-        win.webContents.on("did-fail-load", (_event, _errorCode, _errorDescription, validatedURL) => {
-          if (validatedURL) inspectUrl(validatedURL, "load-failure");
-        });
-      };
-
-      attachOauthHandlers(oauthWindow);
-      oauthWindow.webContents.session.webRequest.onBeforeRequest({ urls: ["*://*.gog.com/*"] }, (details, callback) => {
-        inspectUrl(details.url, "request");
-        callback({ cancel: settled });
-      });
-      oauthWindow.on("closed", () => {
-        if (!settled) finish({ ok: false, error: "GOG login was cancelled." });
-      });
-      oauthWindow.loadURL(authUrl).catch((error) => finish({ ok: false, error: error.message }));
+      safariPoll = setInterval(() => {
+        pollSafari().catch(() => undefined);
+      }, 500);
+      shell
+        .openExternal(authUrl)
+        .then(() => pollSafari().catch(() => undefined))
+        .catch((error) => finish({ ok: false, error: error.message, redirectUrl: authUrl }));
     });
   });
 
