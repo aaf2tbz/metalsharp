@@ -680,6 +680,29 @@ pub fn moltenvk_ready(wine_dir: &Path) -> bool {
     wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib").is_file()
 }
 
+fn moltenvk_icd_ready(wine_dir: &Path) -> bool {
+    let actual_lib = wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+    if !actual_lib.is_file() {
+        return false;
+    }
+    let expected = actual_lib.to_string_lossy().to_string();
+    let icd_dir = wine_dir.join("etc").join("vulkan").join("icd.d");
+    let Ok(entries) = fs::read_dir(&icd_dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("MoltenVK") || !name.ends_with(".json") {
+            return false;
+        }
+        fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|value| value.pointer("/ICD/library_path").and_then(|path| path.as_str()).map(str::to_string))
+            .is_some_and(|library_path| library_path == expected)
+    })
+}
+
 fn fix_moltenvk_icd_paths(wine_dir: &Path) {
     let actual_lib = wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
     if !actual_lib.exists() {
@@ -1038,6 +1061,27 @@ fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
     Err("mono x86 fallback not found".into())
 }
 
+pub fn ensure_vulkan_runtime_surfaces_ready(home: &Path) -> Result<bool, String> {
+    let home_buf = home.to_path_buf();
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home_buf);
+    let wine_dir = ms_home.join("runtime").join("wine");
+    let mut changed = false;
+
+    let runtime_bundle_repair_needed =
+        !metalsharp_wine_binary(home).is_file() || !moltenvk_ready(&wine_dir) || !moltenvk_icd_ready(&wine_dir);
+    if runtime_bundle_repair_needed {
+        changed |= ensure_runtime_bundle_assets(&home_buf)?;
+        let _ = fs::remove_file(split_bundle_marker_path(home, RUNTIME_BUNDLE));
+        changed |= install_metalsharp_bundle(&home_buf)?;
+    }
+
+    fix_moltenvk_icd_paths(&wine_dir);
+    changed |= install_dxvk_runtime_surface(&home_buf)?;
+    changed |= install_vkd3d_runtime_surface(&home_buf)?;
+    record_runtime_manifest_after_setup(home);
+    Ok(changed)
+}
+
 fn install_dxvk_runtime_surface(home: &PathBuf) -> Result<bool, String> {
     let ms_home = crate::platform::metalsharp_home_dir_for(home);
     let legacy = ms_home.join("runtime").join("dxvk-1.10.3");
@@ -1130,6 +1174,7 @@ fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
         return Ok(false);
     }
 
+    let mut extracted_tmp = None;
     let mut extracted_source = None;
     if let Some(archive) = find_bundled_archive("vkd3d-proton") {
         let tmp = std::env::temp_dir().join("metalsharp-vkd3d-canonical-extract");
@@ -1137,6 +1182,7 @@ fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
         fs::create_dir_all(&tmp).map_err(|error| format!("create VKD3D canonical extract dir: {error}"))?;
         extract_zst(&archive, &tmp, "vkd3d-proton")?;
         extracted_source = Some(tmp.join("vkd3d-proton"));
+        extracted_tmp = Some(tmp);
     }
     let source = extracted_source
         .as_ref()
@@ -1194,8 +1240,8 @@ fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
         }
     }
 
-    if source.starts_with(std::env::temp_dir()) {
-        let _ = fs::remove_dir_all(source.parent().unwrap_or_else(|| Path::new("")));
+    if let Some(tmp) = extracted_tmp {
+        let _ = fs::remove_dir_all(tmp);
     }
 
     Ok(changed)

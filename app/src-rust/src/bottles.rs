@@ -2495,6 +2495,64 @@ pub fn repair_component(
         });
     }
 
+    if matches!(component_id, "dxvk_runtime" | "vkd3d_runtime" | "vulkan_icd") {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        if dry_run {
+            let state = inspect_vulkan_runtime_component(component_id).unwrap_or(ComponentState::Missing);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if state == ComponentState::Installed {
+                    "already_installed"
+                } else {
+                    "runtime_repair_available"
+                }
+                .to_string(),
+                detail: if state == ComponentState::Installed {
+                    format!(
+                        "{} is already staged in the MetalSharp Wine runtime",
+                        vulkan_runtime_component_label(component_id)
+                    )
+                } else {
+                    "Repairs packaged DXVK/VKD3D-Proton runtime surfaces and MoltenVK ICD metadata from bundled assets"
+                        .to_string()
+                },
+                asset_path: Some(
+                    vulkan_runtime_component_asset_path(&home, component_id).to_string_lossy().to_string(),
+                ),
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        crate::installer::ensure_vulkan_runtime_surfaces_ready(&home)?;
+        for cid in ["dxvk_runtime", "vkd3d_runtime", "vulkan_icd"] {
+            if manifest.installed_components.iter().any(|component| component.id == cid) || cid == component_id {
+                let state = inspect_vulkan_runtime_component(cid).unwrap_or(ComponentState::Missing);
+                mark_component_state(&mut manifest, cid, state);
+            }
+        }
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        let state = inspect_vulkan_runtime_component(component_id).unwrap_or(ComponentState::Missing);
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: format!(
+                "Repaired packaged Vulkan fallback runtime surfaces; {} is {}",
+                vulkan_runtime_component_label(component_id),
+                if state == ComponentState::Installed { "ready" } else { "still incomplete" }
+            ),
+            asset_path: Some(vulkan_runtime_component_asset_path(&home, component_id).to_string_lossy().to_string()),
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if component_id == "d3d12_agility" {
         let home = dirs::home_dir().ok_or("no home dir")?;
         let appid = manifest.steam_app_id.ok_or("D3D12 Agility repair requires a Steam app id")?;
@@ -3978,6 +4036,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "d3d9" | "d3d10" | "d3d10_1" | "d3d11" | "d3d12" | "dxgi" => {
             inspect_runtime_dll_component(id).unwrap_or(fallback)
         },
+        "dxvk_runtime" | "vkd3d_runtime" | "vulkan_icd" => inspect_vulkan_runtime_component(id).unwrap_or(fallback),
         "webview2" => {
             if drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
                 || drive_c.join("Program Files").join("Microsoft").join("EdgeWebView").exists()
@@ -4376,10 +4435,101 @@ fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
     let candidates = [
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join(&filename),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join(&filename),
-        runtime_wine.join("lib").join("dxvk").join("x64-windows").join(&filename),
+        runtime_wine.join("lib").join("dxvk").join("x86_64-windows").join(&filename),
         runtime_wine.join("lib").join("dxvk").join("i386-windows").join(&filename),
     ];
     Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn inspect_vulkan_runtime_component(id: &str) -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let runtime_wine = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let required = match id {
+        "dxvk_runtime" => vec![
+            runtime_wine.join("lib/dxvk/x86_64-unix/libMoltenVK.dylib"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/d3d9.dll"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/d3d10core.dll"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/d3d11.dll"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/dxgi.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/d3d9.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/d3d10core.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/d3d11.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/dxgi.dll"),
+        ],
+        "vkd3d_runtime" => vec![
+            runtime_wine.join("lib/vkd3d/x86_64-unix/libMoltenVK.dylib"),
+            runtime_wine.join("lib/vkd3d/x86_64-windows/d3d12.dll"),
+            runtime_wine.join("lib/vkd3d/x86_64-windows/d3d12core.dll"),
+            runtime_wine.join("lib/vkd3d/x86_64-windows/dxgi.dll"),
+        ],
+        "vulkan_icd" => return Some(inspect_vulkan_icd_component_for_runtime(&runtime_wine)),
+        _ => return None,
+    };
+    let present = required
+        .iter()
+        .filter(|path| path.metadata().map(|metadata| metadata.is_file() && metadata.len() > 0).unwrap_or(false))
+        .count();
+    Some(if present == required.len() {
+        ComponentState::Installed
+    } else if present > 0 {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    })
+}
+
+fn inspect_vulkan_icd_component_for_runtime(runtime_wine: &Path) -> ComponentState {
+    let moltenvk = runtime_wine.join("lib/wine/x86_64-unix/libMoltenVK.dylib");
+    let icd_dir = runtime_wine.join("etc/vulkan/icd.d");
+    if !moltenvk.is_file() || !icd_dir.is_dir() {
+        return ComponentState::Missing;
+    }
+    let expected = moltenvk.to_string_lossy().to_string();
+    let Ok(entries) = fs::read_dir(&icd_dir) else {
+        return ComponentState::Missing;
+    };
+    let mut saw_moltenvk_icd = false;
+    let mut saw_runtime_path = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("MoltenVK") || !name.ends_with(".json") {
+            continue;
+        }
+        saw_moltenvk_icd = true;
+        let points_to_runtime = fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|value| value.pointer("/ICD/library_path").and_then(|path| path.as_str()).map(str::to_string))
+            .is_some_and(|library_path| library_path == expected);
+        saw_runtime_path |= points_to_runtime;
+    }
+    if saw_runtime_path {
+        ComponentState::Installed
+    } else if saw_moltenvk_icd {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    }
+}
+
+fn vulkan_runtime_component_label(component_id: &str) -> &'static str {
+    match component_id {
+        "dxvk_runtime" => "DXVK runtime",
+        "vkd3d_runtime" => "VKD3D-Proton runtime",
+        "vulkan_icd" => "MoltenVK Vulkan ICD",
+        _ => "Vulkan runtime component",
+    }
+}
+
+fn vulkan_runtime_component_asset_path(home: &Path, component_id: &str) -> PathBuf {
+    let runtime_wine = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine");
+    match component_id {
+        "dxvk_runtime" => runtime_wine.join("lib/dxvk"),
+        "vkd3d_runtime" => runtime_wine.join("lib/vkd3d"),
+        "vulkan_icd" => runtime_wine.join("etc/vulkan/icd.d/MoltenVK_icd.json"),
+        _ => runtime_wine,
+    }
 }
 
 fn windows_version_component_id(version: &str) -> String {
