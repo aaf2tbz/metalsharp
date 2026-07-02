@@ -69,12 +69,16 @@ Launcher profile and evidence reports:
 ```http
 GET /launcher/profiles
 
+GET /launcher/evidence
+
 POST /launcher/evidence
 {"family":"ea"}
 
 POST /launcher/evidence
 {"family":"ubisoft"}
 ```
+
+`GET /launcher/evidence` returns `metalsharp.launcher.evidence.inventory.v1`, a read-only inventory for the current Minecraft/EA/Ubisoft proof targets. It reads existing bottle manifests/logs only and does not launch Wine, start launchers, repair bottles, or mutate prefixes. `POST /launcher/evidence` returns the detailed `metalsharp.launcher.evidence.v1` report for a selected `id` or `family`.
 
 EA currently reports `ea_msi_1603`: the bootstrapper reaches MSI apply and fails with `0x80070643 / INST-14-1603`.
 

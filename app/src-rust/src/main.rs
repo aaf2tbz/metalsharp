@@ -1845,6 +1845,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             resp(200, kernel_translation::es_live::handle_es_live_processes(&body))
         },
         (Method::Get, "/launcher/profiles") => resp(200, launcher_profiles::report()),
+        (Method::Get, "/launcher/evidence") => resp(200, launcher_evidence::launcher_evidence_inventory()),
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))

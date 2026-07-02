@@ -119,7 +119,12 @@ fn phases() -> Vec<PhaseAudit> {
             phase: 10,
             title: "Launcher Profiles",
             status: "implemented_with_open_followups",
-            evidence: &["GET /launcher/profiles", "POST /launcher/evidence", "docs/runtime/launcher-runtime.md"],
+            evidence: &[
+                "GET /launcher/profiles",
+                "GET /launcher/evidence metalsharp.launcher.evidence.inventory.v1",
+                "POST /launcher/evidence metalsharp.launcher.evidence.v1",
+                "docs/runtime/launcher-runtime.md",
+            ],
             remaining: &["Controlled direct launcher proof for Minecraft/EA/Ubisoft remains pending until user approval."],
         },
     ]
