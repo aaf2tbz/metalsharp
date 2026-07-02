@@ -18,7 +18,7 @@ Use this page as the repo map before changing launch/runtime code.
 
 - [Runtime Contracts](runtime/runtime-contracts.md) - backend-owned runtime lane contract table and canonical `dxmt_m12` naming.
 - [Runtime Manifest](runtime/runtime-manifest.md) - read-only Wine/DXMT runtime manifest report and validation contract.
-- [Runtime Diagnostics](runtime/runtime-diagnostics.md) - read-only aggregate Wine 2.0 runtime readiness, prefix policy, and install replacement guard.
+- [Runtime Diagnostics](runtime/runtime-diagnostics.md) - read-only aggregate Wine 2.0 runtime readiness, migration policy, prefix policy, and install replacement guard.
 - [Source Adapters](runtime/source-adapters.md) - read-only unified Steam/GOG/Sharp adapter contract and prefix ownership model.
 - [Vulkan Lane Sources](runtime/vulkan-lane-sources.md) - pinned DXVK/VKD3D-Proton/MoltenVK source acquisition for planned Vulkan-family lanes.
 - [Runtime Bundles and Steam Routing](runtime/runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.

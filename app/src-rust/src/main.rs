@@ -31,6 +31,7 @@ mod launch;
 mod launcher_evidence;
 mod launcher_profiles;
 mod migrate;
+mod migration_policy;
 mod mtsp;
 mod platform;
 mod prefix_metadata;
@@ -223,6 +224,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/update/migrate/progress") => resp(200, migrate::read_migrate_progress()),
         // Phase 2: report what the last migration preserved, skipped, and why.
         (Method::Get, "/update/migrate/report") => resp(200, migrate::latest_migration_report()),
+        (Method::Get, "/update/migrate/policy") => resp(200, migration_policy::report()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
