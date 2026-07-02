@@ -31,8 +31,9 @@ fn phases() -> Vec<PhaseAudit> {
                 "GET /runtime/contracts",
                 "GET /mtsp/pipelines includes runtimeContractId",
                 "GET /source-adapters maps source routes to runtimeContractIds",
+                "runtime_contracts::tests::public_runtime_contract_docs_list_every_backend_lane",
             ],
-            remaining: &["Generate/check more docs directly from backend contract table."],
+            remaining: &["Generate a full reference table from backend contracts if desired."],
         },
         PhaseAudit {
             phase: 2,
@@ -60,12 +61,13 @@ fn phases() -> Vec<PhaseAudit> {
             status: "implemented_with_open_followups",
             evidence: &[
                 "POST /mtsp/prepare launch_receipt_preview",
+                "POST /source-adapters/prepare source prepare preview for Steam/GOG/Sharp",
                 "GET /diagnostics/pipeline/dry-run launch_receipt_preview",
                 "Steam/Sharp/native-Mono launch receipts under ~/.metalsharp/launch-receipts/",
                 "GOG launch receipts under ~/.metalsharp/gog/receipts/",
                 "GET /diagnostics/receipts",
             ],
-            remaining: &["Complete one shared prepare endpoint for all sources; GOG and Sharp still have source-local prepare/launch surfaces."],
+            remaining: &["Actual GOG and Sharp launches still use source-specific endpoints; unified source prepare is preview-only."],
         },
         PhaseAudit {
             phase: 5,

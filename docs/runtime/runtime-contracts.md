@@ -79,6 +79,8 @@ Available lanes:
 
 Planned lanes: none in the current Wine 2.0 private fork contract.
 
+Backend consistency guard: `runtime_contracts::tests::public_runtime_contract_docs_list_every_backend_lane` fails if this document omits a backend runtime lane id from the canonical `/runtime/contracts` table.
+
 As of the Wine 2.0 private fork, `dxvk_d9`, `dxvk_d11`, and `vkd3d_d12` are available experimental MTSP pipeline definitions. They reserve route parsing, environment shape, cache buckets, `WINEDLLPATH` directories, DLL deployment manifests, and Vulkan filesystem doctors. They remain fallback lanes, not defaults.
 
 ## Compatibility Priority Model

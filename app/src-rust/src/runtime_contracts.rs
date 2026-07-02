@@ -566,6 +566,19 @@ mod tests {
     }
 
     #[test]
+    fn public_runtime_contract_docs_list_every_backend_lane() {
+        let docs = include_str!("../../../docs/runtime/runtime-contracts.md");
+        for contract in runtime_lane_contracts() {
+            assert!(
+                docs.contains(&format!("`{}`", contract.id)),
+                "runtime-contracts.md must document backend contract {}",
+                contract.id
+            );
+        }
+        assert!(docs.contains("Backend consistency guard"));
+    }
+
+    #[test]
     fn vulkan_lanes_are_available_experimental_fallbacks() {
         for contract in runtime_lane_contracts().into_iter().filter(|contract| contract.family == "wine-vulkan") {
             assert_eq!(contract.status, RuntimeLaneStatus::Available);
