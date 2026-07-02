@@ -56,6 +56,15 @@ interface RuntimeProfileDefinition {
   components: string[];
 }
 
+interface RuntimeRouteOption {
+  id: string;
+  name: string;
+  description?: string;
+  backend?: string;
+  experimental?: boolean;
+  requires_wine?: boolean;
+}
+
 interface BottleManifest {
   id: string;
   name: string;
@@ -203,6 +212,7 @@ function openDropdown(name: string, event: MouseEvent) {
 }
 const bottles = ref<BottleManifest[]>([]);
 const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
+const runtimeRouteOptions = ref<RuntimeRouteOption[]>([]);
 const redistSources = ref<RedistSourceGuide[]>([]);
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const d3dmetalStates = ref<Record<string, D3DMetalGptkState | null>>({});
@@ -223,7 +233,7 @@ const gogStatus = ref<GogStatus | null>(null);
 const gogGames = ref<GogGame[]>([]);
 const gogLoading = ref<Record<string, boolean>>({});
 const gogProgress = ref<Record<string, number>>({});
-const engineOptions = [
+const fallbackEngineOptions: RuntimeRouteOption[] = [
   { id: "m12", name: "M12" },
   { id: "m11", name: "M11" },
   { id: "m10", name: "M10" },
@@ -234,6 +244,7 @@ const engineOptions = [
   { id: "d3dmetal", name: "D3DMetal" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
+const engineOptions = computed(() => runtimeRouteOptions.value.length ? runtimeRouteOptions.value : fallbackEngineOptions);
 
 const componentDisplayName: Record<string, string> = {
   "mono-arm64": "Mono ARM64",
@@ -294,19 +305,19 @@ function d3dmetalActionReady(action: D3DMetalGptkAction): boolean {
 function isFnaProfile(profile: string): boolean {
   return profile === "fna_arm64" || profile === "fna_x86";
 }
-const selectableRuntimeProfileIds = new Set(["m12", "m11", "m10", "m9", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "d3dmetal", "fna_arm64"]);
+const selectableRuntimeProfileIds = computed(() => new Set(engineOptions.value.map((option) => option.id)));
 const visibleRuntimeProfiles = computed(() => {
   const profiles = runtimeProfiles.value.some((profile) => profile.id === "d3dmetal")
     ? runtimeProfiles.value
     : [...runtimeProfiles.value, { id: "d3dmetal", name: "D3DMetal (GPTK)", components: ["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"] }];
   return profiles
-    .filter((profile) => selectableRuntimeProfileIds.has(profile.id))
+    .filter((profile) => selectableRuntimeProfileIds.value.has(profile.id))
     .map((profile) => ({
       ...profile,
       name:
         profile.id === "fna_arm64"
           ? "Mono/FNA"
-          : (engineOptions.find((option) => option.id === profile.id)?.name ?? profile.name.replace(/^D3D(\d+) Metal$/, "M$1")),
+          : (engineOptions.value.find((option) => option.id === profile.id)?.name ?? profile.name.replace(/^D3D(\d+) Metal$/, "M$1")),
     }));
 });
 
@@ -315,10 +326,11 @@ function sharpAppNameSort(a: SharpApp, b: SharpApp) {
 }
 
 async function load() {
-  const [result, bottleResult, profileResult, redistResult, gogStatusResult, gogGamesResult] = await Promise.all([
+  const [result, bottleResult, profileResult, routeOptionsResult, redistResult, gogStatusResult, gogGamesResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
     api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
+    api<{ ok: boolean; pipelines: RuntimeRouteOption[] }>("GET", "/mtsp/pipelines"),
     api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
     api<{ ok: boolean; status: GogStatus }>("GET", "/sharp-library/gog/status"),
     api<{ ok: boolean; games: GogGame[]; status: GogStatus }>("GET", "/sharp-library/gog/games"),
@@ -335,6 +347,7 @@ async function load() {
     bottles.value = bottleResult.bottles;
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
+  if (routeOptionsResult?.ok) runtimeRouteOptions.value = routeOptionsResult.pipelines.filter((option) => option.id !== "auto");
   if (redistResult?.ok) redistSources.value = redistResult.sources;
   if (gogStatusResult?.ok) gogStatus.value = gogStatusResult.status;
   if (gogGamesResult?.ok) {
