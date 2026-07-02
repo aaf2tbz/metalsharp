@@ -247,6 +247,25 @@ interface LaunchValidationResponse {
   invariants: string[];
 }
 
+interface Wine20RoadmapPhase {
+  phase: number;
+  title: string;
+  status: string;
+  evidence: string[];
+  remaining: string[];
+}
+
+interface Wine20RoadmapAuditResponse {
+  ok: boolean;
+  schema: "metalsharp.wine20.roadmap.audit.v1";
+  readOnly: true;
+  scope: string;
+  complete: boolean;
+  openFollowups: number;
+  phases: Wine20RoadmapPhase[];
+  invariants: string[];
+}
+
 interface LauncherProfile {
   schema: "metalsharp.launcher.profile.v1";
   id: string;

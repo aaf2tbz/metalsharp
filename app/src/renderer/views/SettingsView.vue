@@ -9,6 +9,7 @@ import {
   getReceiptInventory,
   getRuntimeDiagnostics,
   getSourceAdapters,
+  getWine20RoadmapAudit,
 } from "../composables/useApi";
 import type {
   AppConfig,
@@ -22,6 +23,8 @@ import type {
   SourceAdapter,
   SourceAdaptersResponse,
   UpdateStatus,
+  Wine20RoadmapAuditResponse,
+  Wine20RoadmapPhase,
 } from "../api-types";
 import IconTrash2 from "~icons/lucide/trash-2";
 
@@ -63,6 +66,7 @@ const launchValidation = ref<LaunchValidationResponse | null>(null);
 const receiptInventory = ref<ReceiptInventoryResponse | null>(null);
 const sourceAdapters = ref<SourceAdaptersResponse | null>(null);
 const launcherEvidenceInventory = ref<LauncherEvidenceInventoryResponse | null>(null);
+const wine20RoadmapAudit = ref<Wine20RoadmapAuditResponse | null>(null);
 const runtimeDiagnosticsLoading = ref(false);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
@@ -76,6 +80,7 @@ onMounted(async () => {
   await refreshReceiptInventory();
   await refreshSourceAdapters();
   await refreshLauncherEvidenceInventory();
+  await refreshWine20RoadmapAudit();
 });
 
 async function refreshConfig() {
@@ -128,6 +133,12 @@ async function refreshLauncherEvidenceInventory() {
   const result = await getLauncherEvidenceInventory();
   launcherEvidenceInventory.value = result;
   if (!result) toast.show("Launcher evidence inventory unavailable", "error");
+}
+
+async function refreshWine20RoadmapAudit() {
+  const result = await getWine20RoadmapAudit();
+  wine20RoadmapAudit.value = result;
+  if (!result) toast.show("Wine 2.0 roadmap audit unavailable", "error");
 }
 
 function formatBytes(bytes: number): string {
@@ -403,6 +414,18 @@ function launcherEvidenceStatusText(target: LauncherEvidenceTarget): string {
   return "Needs Proof";
 }
 
+function roadmapPhaseBadgeClass(phase: Wine20RoadmapPhase): string {
+  if (phase.status === "implemented" && phase.remaining.length === 0) return "badge-ok";
+  if (phase.status === "implemented_with_open_followups") return "badge-warn";
+  return "badge-muted";
+}
+
+function roadmapPhaseStatusText(phase: Wine20RoadmapPhase): string {
+  if (phase.status === "implemented" && phase.remaining.length === 0) return "Done";
+  if (phase.remaining.length > 0) return `${phase.remaining.length} Followup${phase.remaining.length === 1 ? "" : "s"}`;
+  return phase.status;
+}
+
 function toggleDeveloperMode(enabled: boolean) {
   developerMode.value = enabled;
   localStorage.setItem("metalsharp-developer-mode", String(enabled));
@@ -665,6 +688,43 @@ function uninstallMetalsharp() {
           </div>
           <div v-if="entry.nextActions.length" class="runtime-lane-blockers">
             {{ entry.nextActions[0] }}
+          </div>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
+          <div class="settings-label">Wine 2.0 Roadmap Audit</div>
+          <div class="settings-desc">
+            Read-only Phase 0–10 evidence map; intentionally incomplete while controlled proof remains pending.
+          </div>
+          <div v-if="wine20RoadmapAudit?.invariants?.length" class="settings-desc runtime-next-actions">
+            {{ wine20RoadmapAudit.invariants[1] ?? wine20RoadmapAudit.invariants[0] }}
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="wine20RoadmapAudit?.complete ? 'badge-ok' : 'badge-warn'">
+            {{ wine20RoadmapAudit?.complete ? "Complete" : "Open" }}
+          </span>
+          <span v-if="wine20RoadmapAudit" class="badge badge-warn">
+            Followups {{ wine20RoadmapAudit.openFollowups }}
+          </span>
+          <button class="btn btn-secondary btn-sm" @click="refreshWine20RoadmapAudit">Refresh Audit</button>
+        </div>
+      </div>
+      <div v-if="wine20RoadmapAudit" class="runtime-lane-grid" aria-label="Wine 2.0 roadmap audit">
+        <div
+          v-for="phase in wine20RoadmapAudit.phases"
+          :key="phase.phase"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': phase.status === 'implemented' && phase.remaining.length === 0 }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">Phase {{ phase.phase }} · {{ phase.title }}</span>
+            <span class="badge" :class="roadmapPhaseBadgeClass(phase)">{{ roadmapPhaseStatusText(phase) }}</span>
+          </div>
+          <div class="runtime-lane-meta">{{ phase.evidence[0] ?? "No evidence recorded" }}</div>
+          <div v-if="phase.remaining.length" class="runtime-lane-blockers">
+            {{ phase.remaining[0] }}
           </div>
         </div>
       </div>

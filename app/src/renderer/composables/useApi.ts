@@ -35,6 +35,10 @@ export function getLaunchValidation() {
   return api<LaunchValidationResponse>("GET", "/diagnostics/launch-validation");
 }
 
+export function getWine20RoadmapAudit() {
+  return api<Wine20RoadmapAuditResponse>("GET", "/diagnostics/wine20-roadmap");
+}
+
 export function getLauncherProfiles() {
   return api<LauncherProfilesResponse>("GET", "/launcher/profiles");
 }
