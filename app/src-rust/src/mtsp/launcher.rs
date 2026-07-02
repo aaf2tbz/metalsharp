@@ -2750,6 +2750,7 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         }
         let fmod_dir = metalsharp_home.join("runtime").join("fnalibs").join("fmod");
         if fmod_dir.join(lib).exists() {
+            preserve_fna_original_if_needed(&dst);
             let _ = std::fs::copy(fmod_dir.join(lib), &dst);
             fix_dylib_install_names(&dst);
             if let Some(sym) = symlink {
@@ -2847,6 +2848,9 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     if let Err(err) = deploy_offline_steamworks_net(game_dir, &metalsharp_home) {
         eprintln!("fna: offline Steamworks deploy failed: {}", err);
+    }
+    if let Err(err) = persist_fna_asset_staging_report(appid, game_dir, &metalsharp_home) {
+        eprintln!("fna: staging receipt persist failed: {}", err);
     }
 }
 
@@ -3374,6 +3378,7 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
     let dst = game_dir.join(lib);
     if dst.exists() {
         if fna_native_lib_needs_refresh(lib, &dst) {
+            preserve_fna_original_if_needed(&dst);
             let _ = std::fs::remove_file(&dst);
         } else {
             fix_dylib_install_names(&dst);
@@ -3419,6 +3424,130 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
     if let Some(sym) = symlink {
         ensure_fna_symlink(game_dir, lib, sym);
     }
+}
+
+fn preserve_fna_original_if_needed(dst: &Path) -> bool {
+    if !file_has_payload(dst) {
+        return false;
+    }
+    let backup =
+        dst.with_file_name(format!("{}.metalsharp-original", dst.file_name().unwrap_or_default().to_string_lossy()));
+    if backup.exists() {
+        return true;
+    }
+    std::fs::copy(dst, &backup).is_ok()
+}
+
+fn persist_fna_asset_staging_report(
+    appid: u32,
+    game_dir: &Path,
+    metalsharp_home: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = find_fna_profile(appid);
+    let runtime = metalsharp_home.join("runtime");
+    let mut report = crate::fna_profile::AssetStagingReport::new(appid);
+    let xna_reason = "FNA/XNA compatibility assembly staged for native Mono/FNA";
+    let mut assets: Vec<(&str, Vec<PathBuf>, bool, &str)> = vec![
+        ("FNA.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Game.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Graphics.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Audio.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Input.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Media.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Storage.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        (
+            "libSystem.Native.dylib",
+            vec![runtime.join("shims").join("libSystem.Native.dylib")],
+            true,
+            "CoreFX native shim staged for native Mono/FNA",
+        ),
+        (
+            "libSDL2-2.0.0.dylib",
+            vec![
+                runtime.join("fnalibs").join("libSDL2-2.0.0.dylib"),
+                runtime.join("shims").join("libSDL2-2.0.0.dylib"),
+            ],
+            true,
+            "SDL2 support staged for FNA3D/FAudio",
+        ),
+        (
+            "libFNA3D.0.dylib",
+            vec![runtime.join("fnalibs").join("libFNA3D.0.dylib"), runtime.join("shims").join("libFNA3D.0.dylib")],
+            true,
+            "FNA3D renderer support staged for native Mono/FNA",
+        ),
+        (
+            "libFAudio.0.dylib",
+            vec![runtime.join("fnalibs").join("libFAudio.0.dylib"), runtime.join("shims").join("libFAudio.0.dylib")],
+            true,
+            "FAudio/XAudio support staged for native Mono/FNA",
+        ),
+        (
+            "steam_appid.txt",
+            vec![game_dir.join("steam_appid.txt")],
+            true,
+            "Steam app id marker staged for native Mono/FNA",
+        ),
+        (
+            "Steamworks.NET.dll",
+            vec![game_dir.join("Steamworks.NET.dll.metalsharp-original"), game_dir.join("Steamworks.NET.dll")],
+            false,
+            "Steamworks.NET offline shim staged with original preserved when present",
+        ),
+        (
+            "libCSteamworks.dylib",
+            vec![runtime.join("shims").join("libCSteamworks.dylib")],
+            false,
+            "CSteamworks shim staged when required by the game",
+        ),
+        (
+            "libfmod.dylib",
+            vec![
+                runtime.join("fnalibs").join("fmod").join("libfmod.dylib"),
+                runtime.join("shims").join("libfmod.dylib"),
+            ],
+            profile.mono_arch == MonoArch::X86,
+            "FMOD support staged for legacy x86 Mono/FNA games",
+        ),
+        (
+            "libfmodstudio.dylib",
+            vec![
+                runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib"),
+                runtime.join("shims").join("libfmodstudio.dylib"),
+            ],
+            profile.mono_arch == MonoArch::X86,
+            "FMOD Studio support staged for legacy x86 Mono/FNA games",
+        ),
+    ];
+    for spec in FNA_NATIVE_SHIMS {
+        assets.push((
+            spec.output,
+            vec![runtime.join("shims").join(spec.output), game_dir.join(spec.output)],
+            spec.required_for_launch,
+            "native shim staged for Mono/FNA dllmap/runtime compatibility",
+        ));
+    }
+
+    for (filename, sources, required, reason) in assets {
+        let dest = game_dir.join(filename);
+        if !file_has_payload(&dest) {
+            continue;
+        }
+        let source = sources.into_iter().find(|path| file_has_payload(path)).unwrap_or_else(|| dest.clone());
+        let backup = game_dir.join(format!("{filename}.metalsharp-original"));
+        report.record(crate::fna_profile::record_asset_receipt(
+            filename,
+            &source,
+            &dest,
+            required,
+            backup.exists(),
+            true,
+            reason,
+        ));
+    }
+    report.persist(game_dir)?;
+    Ok(())
 }
 
 fn fna_native_lib_needs_refresh(lib: &str, path: &Path) -> bool {
@@ -5812,6 +5941,85 @@ mod tests {
         assert!(!game_dir.join("start_protected_game.old").exists());
 
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn fna_staging_receipts_record_required_assets_and_preserved_originals() {
+        let root = test_dir("fna-staging-receipts");
+        let ms_home = root.join(".metalsharp");
+        let runtime = ms_home.join("runtime");
+        let game_dir = root.join("game");
+        for path in [
+            runtime.join("fna/FNA.dll"),
+            runtime.join("fnalibs/libSDL2-2.0.0.dylib"),
+            runtime.join("fnalibs/libFNA3D.0.dylib"),
+            runtime.join("fnalibs/libFAudio.0.dylib"),
+            runtime.join("shims/libSystem.Native.dylib"),
+            runtime.join("shims/libkernel32.dylib"),
+            runtime.join("shims/libuser32.dylib"),
+            runtime.join("shims/libCarbon.dylib"),
+            runtime.join("shims/libmetalsharp_carbon_interpose.dylib"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).expect("create source parent");
+            std::fs::write(path, b"source-asset").expect("write source asset");
+        }
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        for name in [
+            "FNA.dll",
+            "Microsoft.Xna.Framework.dll",
+            "Microsoft.Xna.Framework.Game.dll",
+            "Microsoft.Xna.Framework.Graphics.dll",
+            "Microsoft.Xna.Framework.Audio.dll",
+            "Microsoft.Xna.Framework.Input.dll",
+            "Microsoft.Xna.Framework.Media.dll",
+            "Microsoft.Xna.Framework.Storage.dll",
+            "libSystem.Native.dylib",
+            "libSDL2-2.0.0.dylib",
+            "libFNA3D.0.dylib",
+            "libFAudio.0.dylib",
+            "libkernel32.dylib",
+            "libuser32.dylib",
+            "libCarbon.dylib",
+            "libmetalsharp_carbon_interpose.dylib",
+            "steam_appid.txt",
+        ] {
+            std::fs::write(game_dir.join(name), b"staged-asset").expect("write staged asset");
+        }
+        std::fs::write(game_dir.join("libSDL2-2.0.0.dylib.metalsharp-original"), b"original-sdl2")
+            .expect("write preserved original");
+
+        persist_fna_asset_staging_report(413150, &game_dir, &ms_home).expect("persist receipt");
+
+        let raw = std::fs::read_to_string(game_dir.join(".metalsharp/fna-staging.json")).expect("read receipt");
+        let receipt: serde_json::Value = serde_json::from_str(&raw).expect("parse receipt");
+        assert_eq!(receipt.get("appid").and_then(|value| value.as_u64()), Some(413150));
+        let receipts = receipt.get("receipts").and_then(|value| value.as_array()).expect("receipts");
+        assert!(receipts.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("libSDL2-2.0.0.dylib")
+                && entry.get("required").and_then(|value| value.as_bool()) == Some(true)
+                && entry.get("overwrote_game_file").and_then(|value| value.as_bool()) == Some(true)
+        }));
+        assert!(receipts.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("FNA.dll")
+                && entry.get("required").and_then(|value| value.as_bool()) == Some(true)
+                && entry.get("source_sha256").is_some()
+                && entry.get("dest_sha256").is_some()
+        }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fna_original_preservation_is_idempotent() {
+        let root = test_dir("fna-original-preservation");
+        std::fs::create_dir_all(&root).expect("create root");
+        let dst = root.join("libSDL2-2.0.0.dylib");
+        std::fs::write(&dst, b"original").expect("write original");
+
+        assert!(preserve_fna_original_if_needed(&dst));
+        std::fs::write(&dst, b"replacement").expect("write replacement");
+        assert!(preserve_fna_original_if_needed(&dst));
+        assert_eq!(std::fs::read(root.join("libSDL2-2.0.0.dylib.metalsharp-original")).unwrap(), b"original");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

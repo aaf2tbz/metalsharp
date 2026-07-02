@@ -521,13 +521,21 @@ fn native_mono_game_doctor(appid: u32, game_dir: &Path) -> NativeMonoGameDoctor 
     let receipt_present = file_nonempty(&receipt_path);
     let receipt_json =
         fs::read_to_string(&receipt_path).ok().and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
-    let originals_preserved = receipt_json
-        .as_ref()
-        .and_then(|value| value.get("receipts"))
-        .and_then(|value| value.as_array())
-        .is_some_and(|receipts| {
-            receipts.iter().all(|receipt| receipt.get("overwrote_game_file").and_then(|v| v.as_bool()) != Some(true))
-        });
+    let originals_preserved =
+        receipt_json.as_ref().and_then(|value| value.get("receipts")).and_then(|value| value.as_array()).is_some_and(
+            |receipts| {
+                receipts.iter().all(|receipt| {
+                    if receipt.get("overwrote_game_file").and_then(|v| v.as_bool()) != Some(true) {
+                        return true;
+                    }
+                    let Some(filename) = receipt.get("filename").and_then(|v| v.as_str()) else {
+                        return false;
+                    };
+                    game_dir.join(format!("{filename}.metalsharp-original")).exists()
+                        || game_dir.join(format!("{filename}.orig")).exists()
+                })
+            },
+        );
     let required_dylibs_staged = ["libSDL2-2.0.0.dylib", "libFNA3D.0.dylib", "libFAudio.0.dylib"]
         .iter()
         .all(|name| file_nonempty(&game_dir.join(name)));
