@@ -23,6 +23,8 @@ Manual launch methods still work; they force the pipeline before the recipe is b
 `metalsharp.launch.receipt.v1`. It is a non-spawned receipt preview containing source, app id, route, runtime contract id,
 prefix, Wine path, staged DLL list, dylibs/sidecars, env keys, log path, and warnings. Dry-run previews use the same env
 builder as launch but do not spawn Wine/Steam/the game; prepare previews describe the already-staged handoff state.
+GOGDL launches persist the same schema as a real `launchReceipt` under `~/.metalsharp/gog/receipts/` and return it from
+`POST /sharp-library/gog/play`.
 
 Runtime bottles add the user-facing readiness contract. Sharp Library installer/app bottles own their own prefixes under
 `~/.metalsharp/bottles/<id>/prefix`. Steam game bottles use ids like `steam_620` and are launch-authoritative preflight

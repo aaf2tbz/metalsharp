@@ -61,6 +61,8 @@ pub struct GogGame {
     #[serde(default)]
     pub last_log_path: Option<String>,
     #[serde(default)]
+    pub last_launch_receipt_path: Option<String>,
+    #[serde(default)]
     pub last_error: Option<String>,
 }
 
@@ -356,6 +358,55 @@ fn output_error(context: &str, output: &Output) -> Value {
 
 fn log_path(label: &str, product_id: &str) -> PathBuf {
     ms_home().join("logs").join("gog").join(format!("{}-{}-{}.log", label, product_id, now_secs()))
+}
+
+fn launch_receipt_path(product_id: &str) -> PathBuf {
+    gog_dir().join("receipts").join(format!("{}-launch.json", product_id))
+}
+
+fn gog_launch_receipt_for(
+    game: &GogGame,
+    args: &[String],
+    pid: u32,
+    log_path: &Path,
+    wine_path: &Path,
+    prefix: &Path,
+) -> Value {
+    json!({
+        "schema": "metalsharp.launch.receipt.v1",
+        "preview": false,
+        "source": "gog",
+        "appId": game.product_id,
+        "title": game.title,
+        "route": "gogdl_wine",
+        "runtimeContractId": "gogdl_wine",
+        "pipeline": "gogdl_wine",
+        "pipelineName": "GOGDL Wine",
+        "backend": "gogdl",
+        "prefix": prefix.to_string_lossy(),
+        "wine": wine_path.to_string_lossy(),
+        "gameDir": game.game_folder,
+        "exePath": game.primary_exe,
+        "taskName": game.primary_task_name,
+        "platform": game.platform,
+        "command": "gogdl",
+        "args": args,
+        "dllsStaged": [],
+        "dylibsUsed": [],
+        "envKeys": ["GOGDL_CONFIG_PATH", "GOGDL_SUPPORT_PATH"],
+        "logPath": log_path.to_string_lossy(),
+        "pid": pid,
+        "warnings": [],
+    })
+}
+
+fn persist_gog_launch_receipt(product_id: &str, receipt: &Value) -> Result<PathBuf, String> {
+    let path = launch_receipt_path(product_id);
+    ensure_parent(&path)?;
+    let data = serde_json::to_string_pretty(receipt)
+        .map_err(|error| format!("failed to encode GOG launch receipt: {}", error))?;
+    fs::write(&path, data).map_err(|error| format!("failed to write {}: {}", path.display(), error))?;
+    Ok(path)
 }
 
 fn spawn_gogdl_logged(label: &str, product_id: &str, args: &[String]) -> Result<(u32, PathBuf), String> {
@@ -1005,18 +1056,33 @@ pub fn handle_play(body: &Value) -> Value {
         gog_prefix().to_string_lossy().to_string(),
     ];
     match spawn_gogdl_logged("launch", &product_id, &args) {
-        Ok((pid, log)) => match update_cached_game(&product_id, |mut game| {
-            game.last_launch_pid = Some(pid);
-            game.last_log_path = Some(log.to_string_lossy().to_string());
-            game.running = true;
-            game.status = "running".to_string();
-            game.last_error = None;
-            game
-        }) {
-            Ok(game) => {
-                json!({"ok": true, "pid": pid, "logPath": log.to_string_lossy().to_string(), "winePrefix": gog_prefix().to_string_lossy().to_string(), "game": game})
-            },
-            Err(error) => json!({"ok": false, "error": error}),
+        Ok((pid, log)) => {
+            let prefix = gog_prefix();
+            let wine = wine_binary();
+            let receipt = gog_launch_receipt_for(&game, &args, pid, &log, &wine, &prefix);
+            let receipt_path = persist_gog_launch_receipt(&product_id, &receipt).ok();
+            match update_cached_game(&product_id, |mut game| {
+                game.last_launch_pid = Some(pid);
+                game.last_log_path = Some(log.to_string_lossy().to_string());
+                game.last_launch_receipt_path = receipt_path.as_ref().map(|path| path.to_string_lossy().to_string());
+                game.running = true;
+                game.status = "running".to_string();
+                game.last_error = None;
+                game
+            }) {
+                Ok(game) => {
+                    json!({
+                        "ok": true,
+                        "pid": pid,
+                        "logPath": log.to_string_lossy().to_string(),
+                        "launchReceiptPath": receipt_path.map(|path| path.to_string_lossy().to_string()),
+                        "launchReceipt": receipt,
+                        "winePrefix": prefix.to_string_lossy().to_string(),
+                        "game": game
+                    })
+                },
+                Err(error) => json!({"ok": false, "error": error}),
+            }
         },
         Err(error) => json!({"ok": false, "error": error}),
     }
@@ -1109,6 +1175,7 @@ pub fn handle_uninstall(body: &Value) -> Value {
         game.last_install_pid = None;
         game.last_launch_pid = None;
         game.last_log_path = None;
+        game.last_launch_receipt_path = None;
         game.last_error = None;
         game
     }) {
@@ -1139,5 +1206,40 @@ mod tests {
     #[test]
     fn exit_code_parser_finds_success() {
         assert_eq!(log_exit_code("abc\ngogdl exited with Some(0)\n"), Some(0));
+    }
+
+    #[test]
+    fn gog_launch_receipt_uses_unified_schema() {
+        let game = GogGame {
+            product_id: "1876546888".into(),
+            title: "Fall of Porcupine Prologue".into(),
+            platform: "windows".into(),
+            game_folder: Some("/Games/FallOfPorcupine".into()),
+            primary_exe: Some("FallOfPorcupine.exe".into()),
+            primary_task_name: Some("Play".into()),
+            installed: true,
+            ..Default::default()
+        };
+        let args = vec!["launch".into(), "/Games/FallOfPorcupine".into(), "1876546888".into()];
+        let receipt = gog_launch_receipt_for(
+            &game,
+            &args,
+            123,
+            Path::new("/tmp/gog-launch.log"),
+            Path::new("/runtime/wine/bin/metalsharp-wine"),
+            Path::new("/prefix/gog-prefix/prefix"),
+        );
+        assert_eq!(receipt.get("schema").and_then(|value| value.as_str()), Some("metalsharp.launch.receipt.v1"));
+        assert_eq!(receipt.get("source").and_then(|value| value.as_str()), Some("gog"));
+        assert_eq!(receipt.get("route").and_then(|value| value.as_str()), Some("gogdl_wine"));
+        assert_eq!(receipt.get("runtimeContractId").and_then(|value| value.as_str()), Some("gogdl_wine"));
+        assert_eq!(receipt.get("pid").and_then(|value| value.as_u64()), Some(123));
+        assert_eq!(receipt.get("prefix").and_then(|value| value.as_str()), Some("/prefix/gog-prefix/prefix"));
+        assert!(receipt
+            .get("envKeys")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .any(|key| key.as_str() == Some("GOGDL_CONFIG_PATH")));
     }
 }

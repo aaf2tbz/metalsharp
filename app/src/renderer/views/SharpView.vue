@@ -183,6 +183,7 @@ interface GogGame {
   lastInstallPid?: number | null;
   lastLaunchPid?: number | null;
   lastLogPath?: string | null;
+  lastLaunchReceiptPath?: string | null;
   lastError?: string | null;
 }
 
@@ -503,7 +504,7 @@ async function monitorGogProgress(productId: string) {
 
 async function playGogGame(game: GogGame) {
   gogLoading.value[`${game.productId}:play`] = true;
-  const result = await api<{ ok: boolean; game?: GogGame; pid?: number; error?: string }>("POST", "/sharp-library/gog/play", { productId: game.productId }, 90 * 1000);
+  const result = await api<{ ok: boolean; game?: GogGame; pid?: number; launchReceiptPath?: string | null; error?: string }>("POST", "/sharp-library/gog/play", { productId: game.productId }, 90 * 1000);
   gogLoading.value[`${game.productId}:play`] = false;
   if (result?.ok && result.game) {
     upsertGogGame(result.game);
