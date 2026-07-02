@@ -50,6 +50,7 @@ with open(path, "r", encoding="utf-8") as handle:
 
 ok = data.get("ok") is True
 guard = data.get("installReplacementGuard", {})
+update_guard = data.get("updateGuard", {})
 lanes = data.get("lanes", {})
 runtime = data.get("runtime", {})
 prefixes = data.get("prefixes", {})
@@ -65,6 +66,7 @@ print(f"prefix policy ok: {prefixes.get('ok')}")
 print(f"GOGDL source ok: {sources.get('gog', {}).get('ok')}")
 print(f"available lanes ready: {lanes.get('availableReady')}/{lanes.get('availableTotal')}")
 print(f"all lanes ready: {lanes.get('ready')}/{lanes.get('total')} ({lanes.get('planned')} planned, {lanes.get('external')} external)")
+print(f"update guard: {update_guard.get('releaseFeed')} (ok={update_guard.get('ok')})")
 print(f"install replacement allowed now: {guard.get('allowedNow')}")
 
 blocked = [entry for entry in lanes.get("entries", []) if not entry.get("ready")]
@@ -76,6 +78,9 @@ if blocked:
 if guard.get("allowedNow") is not False:
     print("ERROR: install replacement guard must remain false for this read-only check", file=sys.stderr)
     sys.exit(3)
+if update_guard.get("ok") is not True:
+    print("ERROR: private fork update guard is not safe", file=sys.stderr)
+    sys.exit(4)
 if not ok:
     print("ERROR: runtime diagnostics are not green", file=sys.stderr)
     sys.exit(1)

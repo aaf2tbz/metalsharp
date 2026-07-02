@@ -52,14 +52,24 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
     let wine_binary_present = file_nonempty(&wine_binary);
     let dxmt_current = crate::installer::dxmt_runtime_current_for_home(home);
     let dxmt_m12_current = crate::installer::dxmt_m12_runtime_current_for_home(home);
+    let update_guard = crate::updater::update_source_guard_report();
+    let update_guard_ok = update_guard.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
     let runtime_ready = wine_binary_present && dxmt_current && dxmt_m12_current && manifest_ok;
-    let ok = runtime_ready && prefix_ok && canonical_m12_ok;
+    let ok = runtime_ready && prefix_ok && canonical_m12_ok && update_guard_ok;
 
     json!({
         "ok": ok,
         "schema": RUNTIME_DIAGNOSTICS_SCHEMA,
         "readOnly": true,
-        "summary": runtime_summary(ok, runtime_ready, manifest_ok, dxmt_current, dxmt_m12_current, prefix_ok),
+        "summary": runtime_summary(
+            ok,
+            runtime_ready,
+            manifest_ok,
+            dxmt_current,
+            dxmt_m12_current,
+            prefix_ok,
+            update_guard_ok,
+        ),
         "paths": {
             "metalsharpHome": ms_home.to_string_lossy(),
             "runtimeRoot": runtime_root.to_string_lossy(),
@@ -100,11 +110,12 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
                 sources: &source_report,
             },
         ),
+        "updateGuard": update_guard,
         "installReplacementGuard": {
             "allowedNow": false,
             "reason": "Do not wipe or replace the current MetalSharp install from diagnostics. Replacement must be a final, explicit user-confirmed step after Wine 2.0 runtime validation passes."
         },
-        "nextActions": next_actions(runtime_ready, manifest_ok, dxmt_current, dxmt_m12_current, prefix_ok),
+        "nextActions": next_actions(runtime_ready, manifest_ok, dxmt_current, dxmt_m12_current, prefix_ok, update_guard_ok),
     })
 }
 
@@ -325,9 +336,13 @@ fn runtime_summary(
     dxmt_current: bool,
     dxmt_m12_current: bool,
     prefix_ok: bool,
+    update_guard_ok: bool,
 ) -> &'static str {
     if ok {
-        return "Runtime diagnostics passed: Wine, DXMT, dxmt_m12, manifest, and prefix policies are ready.";
+        return "Runtime diagnostics passed: Wine, DXMT, dxmt_m12, manifest, prefix policies, and update guard are ready.";
+    }
+    if !update_guard_ok {
+        return "Runtime diagnostics blocked: private fork update guard is not safe.";
     }
     if !prefix_ok {
         return "Runtime diagnostics blocked: Steam and GOG prefix policies are not safely separated.";
@@ -353,8 +368,12 @@ fn next_actions(
     dxmt_current: bool,
     dxmt_m12_current: bool,
     prefix_ok: bool,
+    update_guard_ok: bool,
 ) -> Vec<&'static str> {
     let mut actions = Vec::new();
+    if !update_guard_ok {
+        actions.push("Disable public updates or configure METALSHARP_UPDATE_REPO_API to an intentional private Wine 2.0 release feed before replacement.");
+    }
     if !prefix_ok {
         actions.push("Keep GOG on ~/.metalsharp/bottles/gog-prefix/prefix and Steam on ~/.metalsharp/prefix-steam; do not merge prefixes.");
     }
@@ -364,7 +383,7 @@ fn next_actions(
     if !manifest_ok {
         actions.push("Regenerate the runtime manifest through setup after runtime assets are staged, then re-check /runtime/manifest.");
     }
-    if runtime_ready && prefix_ok {
+    if runtime_ready && prefix_ok && update_guard_ok {
         actions.push(
             "Proceed to per-route doctors or game-specific launch diagnostics; do not wipe the current install yet.",
         );

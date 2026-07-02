@@ -250,6 +250,17 @@ interface RuntimeDiagnosticsResponse {
       mustNotUsePrefixSteam: boolean;
     };
   };
+  updateGuard: {
+    ok: boolean;
+    releaseFeed: "disabled" | "custom" | "public";
+    publicUpdatesDisabled: boolean;
+    customRepoConfigured: boolean;
+    allowPublicUpdates: boolean;
+    usingPublicRepo: boolean;
+    effectiveRepoApi?: string | null;
+    publicRepoApi: string;
+    reason: string;
+  };
   installReplacementGuard: { allowedNow: false; reason: string };
   nextActions: string[];
 }

@@ -470,6 +470,14 @@ function uninstallMetalsharp() {
           >
             GOGDL {{ runtimeDiagnosticStatus(runtimeDiagnostics.sources.gog.ok) }}
           </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.updateGuard.ok)"
+            :title="runtimeDiagnostics.updateGuard.reason"
+          >
+            Updates {{ runtimeDiagnostics.updateGuard.releaseFeed }}
+          </span>
           <button class="btn btn-secondary btn-sm" :disabled="runtimeDiagnosticsLoading" @click="refreshRuntimeDiagnostics">
             {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
           </button>

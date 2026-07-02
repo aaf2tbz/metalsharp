@@ -276,6 +276,17 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
           mustNotUsePrefixSteam: true,
         },
       },
+      updateGuard: {
+        ok: true,
+        releaseFeed: "disabled",
+        publicUpdatesDisabled: true,
+        customRepoConfigured: false,
+        allowPublicUpdates: false,
+        usingPublicRepo: false,
+        effectiveRepoApi: null,
+        publicRepoApi: "https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest",
+        reason: "Public MetalSharp updates are disabled for this private Wine 2.0 fork.",
+      },
       installReplacementGuard: {
         allowedNow: false,
         reason: "UI-only preview cannot authorize wiping or replacing an installed app.",
