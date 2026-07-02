@@ -86,6 +86,7 @@ Top-level fields:
 - `runtime` — Wine/DXMT/M12/manifest readiness.
 - `prefixes` — Steam/GOG prefix separation report.
 - `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
+- `vulkan` — filesystem-only Vulkan-family doctor. It checks canonical `runtime/wine/lib/dxvk`, `runtime/wine/lib/vkd3d`, required MoltenVK/VKD3D sidecars, and MoltenVK ICD JSON paths without launching Wine or Vulkan.
 - `lanes` — one read-only readiness row per runtime contract, with `availableReady`/`availableTotal` for implemented lanes plus `planned` and `external` counts for roadmap/external lanes. Each graphics runtime lane may include `artifactSummary` with `present`, `missing`, `total`, and `allPresent` counts derived from the filesystem-only manifest artifact report. Stable blocker ids include `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `dxvk_runtime`, `vkd3d_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
 - `updateGuard` — read-only private-fork update-source safety. It reports whether public MetalSharp updates are disabled, a custom feed is configured, or the public release feed is in use.
 - `installReplacementGuard` — destructive replacement guard.

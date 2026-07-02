@@ -210,6 +210,22 @@ interface RuntimeDiagnosticsResponse {
     manifest: RuntimeManifestResponse;
   };
   prefixes: Record<string, unknown>;
+  vulkan: {
+    ok: boolean;
+    readOnly: true;
+    runtimeLibraryRoot: string;
+    dxvk: RuntimeVulkanSurfaceReport;
+    vkd3d: RuntimeVulkanSurfaceReport;
+    icd: {
+      ok: boolean;
+      icdDir: string;
+      moltenvkRuntimePath: string;
+      moltenvkRuntimePresent: boolean;
+      present: boolean;
+      allPointToRuntimeMoltenVK: boolean;
+      entries: { path: string; libraryPath?: string | null; pointsToRuntimeMoltenVK: boolean }[];
+    };
+  };
   lanes: {
     total: number;
     ready: number;
@@ -269,6 +285,15 @@ interface RuntimeDiagnosticsResponse {
   };
   installReplacementGuard: { allowedNow: false; reason: string };
   nextActions: string[];
+}
+
+interface RuntimeVulkanSurfaceReport {
+  ok: boolean;
+  root: string;
+  present: number;
+  total: number;
+  missing: number;
+  entries: { path: string; relativePath: string; present: boolean }[];
 }
 
 type MetalsharpAPI = {

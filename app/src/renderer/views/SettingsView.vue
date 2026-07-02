@@ -473,6 +473,14 @@ function uninstallMetalsharp() {
           <span
             v-if="runtimeDiagnostics"
             class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.vulkan.ok)"
+            :title="`DXVK ${runtimeDiagnostics.vulkan.dxvk.present}/${runtimeDiagnostics.vulkan.dxvk.total}; VKD3D ${runtimeDiagnostics.vulkan.vkd3d.present}/${runtimeDiagnostics.vulkan.vkd3d.total}; ICD ${runtimeDiagnostics.vulkan.icd.present ? 'present' : 'missing'}`"
+          >
+            Vulkan {{ runtimeDiagnosticStatus(runtimeDiagnostics.vulkan.ok) }}
+          </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
             :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.updateGuard.ok)"
             :title="runtimeDiagnostics.updateGuard.reason"
           >

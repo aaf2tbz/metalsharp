@@ -54,6 +54,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
     let dxmt_m12_current = crate::installer::dxmt_m12_runtime_current_for_home(home);
     let update_guard = crate::updater::update_source_guard_report();
     let update_guard_ok = update_guard.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let vulkan_report = vulkan_runtime_doctor_report(&wine_root);
     let runtime_ready = wine_binary_present && dxmt_current && dxmt_m12_current && manifest_ok;
     let ok = runtime_ready && prefix_ok && canonical_m12_ok && update_guard_ok;
 
@@ -98,6 +99,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
         },
         "prefixes": prefix_report,
         "sources": source_report,
+        "vulkan": vulkan_report,
         "lanes": lane_readiness_report(
             &contracts,
             &LaneReadinessContext {
@@ -293,6 +295,117 @@ fn collect_artifact_counts(value: &Value, total: &mut u64, present: &mut u64) {
             }
         }
     }
+}
+
+fn vulkan_runtime_doctor_report(wine_root: &Path) -> Value {
+    let runtime_lib = wine_root.join("lib");
+    let dxvk_root = runtime_lib.join("dxvk");
+    let vkd3d_root = runtime_lib.join("vkd3d");
+    let moltenvk_runtime = runtime_lib.join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+    let icd_dir = wine_root.join("etc").join("vulkan").join("icd.d");
+    let dxvk_report = vulkan_surface_report(
+        &dxvk_root,
+        &[
+            "x86_64-windows/d3d9.dll",
+            "i386-windows/d3d9.dll",
+            "i386-windows/dxgi.dll",
+            "x86_64-windows/d3d10core.dll",
+            "x86_64-windows/d3d11.dll",
+            "x86_64-windows/dxgi.dll",
+            "x86_64-unix/libMoltenVK.dylib",
+        ],
+    );
+    let vkd3d_report = vulkan_surface_report(
+        &vkd3d_root,
+        &[
+            "x86_64-windows/d3d12.dll",
+            "x86_64-windows/dxgi.dll",
+            "x86_64-unix/libvkd3d-shader.dylib",
+            "x86_64-unix/libMoltenVK.dylib",
+        ],
+    );
+    let icd_report = vulkan_icd_report(&icd_dir, &moltenvk_runtime);
+    let dxvk_ok = dxvk_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let vkd3d_ok = vkd3d_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let icd_ok = icd_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+
+    json!({
+        "ok": dxvk_ok && vkd3d_ok && icd_ok,
+        "readOnly": true,
+        "runtimeLibraryRoot": runtime_lib.to_string_lossy(),
+        "dxvk": dxvk_report,
+        "vkd3d": vkd3d_report,
+        "icd": icd_report,
+    })
+}
+
+fn vulkan_surface_report(root: &Path, required: &[&str]) -> Value {
+    let entries: Vec<Value> = required
+        .iter()
+        .map(|relative| {
+            let path = root.join(relative);
+            json!({
+                "path": path.to_string_lossy(),
+                "relativePath": relative,
+                "present": file_nonempty(&path),
+            })
+        })
+        .collect();
+    let present =
+        entries.iter().filter(|entry| entry.get("present").and_then(|value| value.as_bool()) == Some(true)).count();
+
+    json!({
+        "ok": present == required.len(),
+        "root": root.to_string_lossy(),
+        "present": present,
+        "total": required.len(),
+        "missing": required.len().saturating_sub(present),
+        "entries": entries,
+    })
+}
+
+fn vulkan_icd_report(icd_dir: &Path, moltenvk_runtime: &Path) -> Value {
+    let mut entries = Vec::new();
+    if let Ok(read_dir) = std::fs::read_dir(icd_dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("MoltenVK") || !name.ends_with(".json") {
+                continue;
+            }
+            let library_path = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|data| serde_json::from_str::<Value>(&data).ok())
+                .and_then(|data| {
+                    data.get("ICD")
+                        .and_then(|icd| icd.get("library_path"))
+                        .and_then(|value| value.as_str())
+                        .map(str::to_owned)
+                });
+            let expected_library_path = moltenvk_runtime.to_string_lossy().to_string();
+            let points_to_runtime_moltenvk = library_path.as_deref() == Some(expected_library_path.as_str());
+            entries.push(json!({
+                "path": path.to_string_lossy(),
+                "libraryPath": library_path,
+                "pointsToRuntimeMoltenVK": points_to_runtime_moltenvk,
+            }));
+        }
+    }
+    let present = !entries.is_empty();
+    let all_point_to_runtime = present
+        && entries
+            .iter()
+            .all(|entry| entry.get("pointsToRuntimeMoltenVK").and_then(|value| value.as_bool()) == Some(true));
+
+    json!({
+        "ok": present && file_nonempty(moltenvk_runtime) && all_point_to_runtime,
+        "icdDir": icd_dir.to_string_lossy(),
+        "moltenvkRuntimePath": moltenvk_runtime.to_string_lossy(),
+        "moltenvkRuntimePresent": file_nonempty(moltenvk_runtime),
+        "present": present,
+        "allPointToRuntimeMoltenVK": all_point_to_runtime,
+        "entries": entries,
+    })
 }
 
 fn prefix_policy_report(steam_prefix: &Path, gog_prefix: &Path) -> Value {
@@ -637,6 +750,67 @@ mod tests {
         assert_eq!(vkd3d_artifacts.get("total").and_then(|value| value.as_u64()), Some(4));
         assert_eq!(vkd3d_artifacts.get("present").and_then(|value| value.as_u64()), Some(0));
         assert_eq!(vkd3d_artifacts.get("missing").and_then(|value| value.as_u64()), Some(4));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_report_vulkan_runtime_doctor_from_filesystem_only() {
+        let home = test_home("vulkan-doctor");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let wine_root = ms_home.join("runtime").join("wine");
+        let dxvk_root = wine_root.join("lib").join("dxvk");
+        let vkd3d_root = wine_root.join("lib").join("vkd3d");
+        let moltenvk_runtime = wine_root.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        let icd_dir = wine_root.join("etc").join("vulkan").join("icd.d");
+
+        for relative in [
+            "x86_64-windows/d3d9.dll",
+            "i386-windows/d3d9.dll",
+            "i386-windows/dxgi.dll",
+            "x86_64-windows/d3d10core.dll",
+            "x86_64-windows/d3d11.dll",
+            "x86_64-windows/dxgi.dll",
+            "x86_64-unix/libMoltenVK.dylib",
+        ] {
+            let path = dxvk_root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).expect("create dxvk parent");
+            fs::write(path, b"dxvk").expect("write dxvk file");
+        }
+        for relative in [
+            "x86_64-windows/d3d12.dll",
+            "x86_64-windows/dxgi.dll",
+            "x86_64-unix/libvkd3d-shader.dylib",
+            "x86_64-unix/libMoltenVK.dylib",
+        ] {
+            let path = vkd3d_root.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).expect("create vkd3d parent");
+            fs::write(path, b"vkd3d").expect("write vkd3d file");
+        }
+        fs::create_dir_all(moltenvk_runtime.parent().unwrap()).expect("create moltenvk parent");
+        fs::write(&moltenvk_runtime, b"moltenvk").expect("write runtime moltenvk");
+        fs::create_dir_all(&icd_dir).expect("create icd dir");
+        fs::write(
+            icd_dir.join("MoltenVK_icd.json"),
+            serde_json::json!({ "ICD": { "library_path": moltenvk_runtime.to_string_lossy() } }).to_string(),
+        )
+        .expect("write icd json");
+
+        let report = runtime_diagnostics_report_for(&home);
+        let vulkan = report.get("vulkan").expect("vulkan doctor");
+        assert_eq!(vulkan.get("readOnly").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(vulkan.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(vulkan.get("dxvk").and_then(|value| value.get("present")).and_then(|value| value.as_u64()), Some(7));
+        assert_eq!(
+            vulkan.get("vkd3d").and_then(|value| value.get("present")).and_then(|value| value.as_u64()),
+            Some(4)
+        );
+        assert_eq!(
+            vulkan
+                .get("icd")
+                .and_then(|value| value.get("allPointToRuntimeMoltenVK"))
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
         let _ = fs::remove_dir_all(home);
     }
 
