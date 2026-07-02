@@ -100,6 +100,7 @@ fn validation_entries(ms_home: &Path) -> Vec<ValidationEntry> {
         gog_entry(ms_home),
         native_mono_entry(ms_home, "native_mono_arm64", "native_mono_arm64", "runtime/mono-arm64/bin/mono"),
         native_mono_entry(ms_home, "native_mono_x86", "native_mono_x86", "runtime/mono-x86/bin/mono"),
+        sharp_library_entry(ms_home),
         launcher_profiles_entry(),
     ]
 }
@@ -204,6 +205,29 @@ fn native_mono_entry(ms_home: &Path, id: &'static str, route: &'static str, mono
             vec!["Keep FNA staging receipt with per-game launch notes.".into()]
         } else {
             vec!["Stage native FNA assets and capture launch proof only for an approved target.".into()]
+        },
+    }
+}
+
+fn sharp_library_entry(ms_home: &Path) -> ValidationEntry {
+    let receipt = latest_json_in(&ms_home.join("launch-receipts").join("sharp"));
+    let status = if receipt.is_some() { ProofStatus::Proven } else { ProofStatus::PendingLaunchProof };
+    ValidationEntry {
+        id: "sharp_library",
+        source: "sharp_library",
+        route: "sharp_custom",
+        runtime_contract_id: "sharp_custom",
+        required_evidence: &["source_adapter", "custom_launch_receipt", "bottle_manifest_or_library_entry"],
+        status,
+        evidence: json!({
+            "receiptPath": receipt.as_ref().map(|(path, _)| path.to_string_lossy().to_string()),
+            "receipt": receipt.map(|(_, value)| value),
+        }),
+        limitations: vec!["Sharp Library prepare remains source-local until all sources use /mtsp/prepare.".into()],
+        next_actions: if matches!(status, ProofStatus::Proven) {
+            vec!["Keep Sharp Library receipt with source-specific proof notes.".into()]
+        } else {
+            vec!["Run Sharp Library proof only after explicit user approval and keep launch receipt.".into()]
         },
     }
 }

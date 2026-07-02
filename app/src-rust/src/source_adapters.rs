@@ -129,7 +129,7 @@ fn sharp_adapter() -> Value {
             "stop": true,
             "receipts": "runtime"
         },
-        "limitations": ["Sharp Library launch receipts are route-local until all sources use /mtsp/prepare"]
+        "limitations": ["Sharp Library prepare remains source-local until all sources use /mtsp/prepare"]
     })
 }
 

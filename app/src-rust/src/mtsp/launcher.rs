@@ -923,6 +923,60 @@ fn persist_actual_launch_receipt_best_effort(input: ActualLaunchReceiptInput<'_>
     }
 }
 
+fn custom_launch_receipt_path_for_home(home: &Path, launch_id: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home)
+        .join("launch-receipts")
+        .join("sharp")
+        .join(format!("{}-launch.json", launch_id))
+}
+
+struct CustomLaunchReceiptInput<'a> {
+    launch_id: u32,
+    node: &'a PipelineNode,
+    recipe: &'a super::recipe::LaunchRecipe,
+    env: &'a [(String, String)],
+    pid: u32,
+    log_path: Option<&'a Path>,
+    prefix: &'a Path,
+    home: &'a Path,
+}
+
+fn persist_custom_launch_receipt_best_effort(input: CustomLaunchReceiptInput<'_>) {
+    let mut receipt = launch_receipt_preview_for_recipe(
+        input.launch_id,
+        input.node,
+        input.recipe,
+        input.env,
+        false,
+        Some(input.home),
+    );
+    let path = custom_launch_receipt_path_for_home(input.home, input.launch_id);
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("preview".to_string(), serde_json::Value::Bool(false));
+        object.insert("source".to_string(), serde_json::json!("sharp"));
+        object.insert("pid".to_string(), serde_json::json!(input.pid));
+        object.insert("prefix".to_string(), serde_json::json!(input.prefix.to_string_lossy().to_string()));
+        object.insert(
+            "logPath".to_string(),
+            input
+                .log_path
+                .map(|path| serde_json::json!(path.to_string_lossy().to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert("receiptPath".to_string(), serde_json::json!(path.to_string_lossy().to_string()));
+    }
+    if let Err(error) = path.parent().map(std::fs::create_dir_all).transpose() {
+        eprintln!("custom launch receipt directory failed for launch {}: {}", input.launch_id, error);
+        return;
+    }
+    if let Err(error) = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| error.to_string())
+        .and_then(|data| std::fs::write(&path, data).map_err(|error| error.to_string()))
+    {
+        eprintln!("custom launch receipt persist failed for launch {}: {}", input.launch_id, error);
+    }
+}
+
 fn quarantine_route_conflicts_for_recipe(
     recipe: &super::recipe::LaunchRecipe,
 ) -> Result<usize, Box<dyn std::error::Error>> {
@@ -1294,6 +1348,7 @@ pub fn launch_custom_with_options(
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let CustomLaunchOptions { prefix_path, log_path } = options;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
@@ -1315,8 +1370,7 @@ pub fn launch_custom_with_options(
         deploy_recipe_dlls(&recipe)?;
     }
 
-    let prefix =
-        options.prefix_path.unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
+    let prefix = prefix_path.unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
     std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -1350,11 +1404,11 @@ pub fn launch_custom_with_options(
 
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
-    if let Some(log_path) = options.log_path {
+    if let Some(log_path) = log_path.as_ref() {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+        let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
         writeln!(log, "launch_id={}", launch_id)?;
         writeln!(log, "pipeline={}", node.name)?;
         writeln!(log, "prefix={}", prefix.display())?;
@@ -1370,7 +1424,18 @@ pub fn launch_custom_with_options(
         let stdout = log.try_clone()?;
         cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
     }
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_custom_launch_receipt_best_effort(CustomLaunchReceiptInput {
+        launch_id,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path: log_path.as_deref(),
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method(), recipe))
 }
 
@@ -5169,6 +5234,8 @@ mod tests {
         assert!(env.iter().any(|(key, _)| key == "WINEDLLOVERRIDES"));
         let path = actual_launch_receipt_path_for_home(&home, 620);
         assert!(path.ends_with(Path::new(".metalsharp/launch-receipts/steam/620-launch.json")));
+        let sharp_path = custom_launch_receipt_path_for_home(&home, 12345);
+        assert!(sharp_path.ends_with(Path::new(".metalsharp/launch-receipts/sharp/12345-launch.json")));
     }
 
     #[test]
