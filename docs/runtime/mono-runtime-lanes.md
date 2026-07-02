@@ -25,6 +25,28 @@ MetalSharp now treats Mono/FNA as a first-class public route, not a global depen
 
 The route stages FNA/XNA assemblies, native FNA3D/FAudio/SDL/Steam libraries when available, FMOD/FMOD Studio stubs, `steam_appid.txt`, and Steamworks compatibility shims. It also deploys the macOS framework-backed MetalSharp shims expected by the dllmaps: `libkernel32.dylib`, `libuser32.dylib`, `libCarbon.dylib`, the Carbon interpose shim, and bundled CoreAudio/GameController shims such as `xaudio2_9.dylib` and `xinput1_4.dylib` when present. Celeste-style games select x86_64 Mono under Rosetta; Terraria-style games can use the Terraria runtime patch/stub path. Celeste and Terraria are now supported through this lane; future Mono/FNA titles should still be promoted only after per-game launch proof.
 
+## Phase 8 Native Platform Doctor
+
+`GET /diagnostics/fna/platform` is the read-only platform doctor for Phase 8. Optional query parameters:
+
+```text
+appid=<steam appid>
+gameDir=<absolute game directory>
+```
+
+The response reports:
+
+- `native_mono_arm64` and `native_mono_x86` lane readiness;
+- Mono binary presence and Mach-O architecture match (`arm64` or `x86_64`);
+- support inventory for Mono/FNA assets, including FNA.dll, SDL2, FNA3D, FAudio, FMOD/FM﻿OD Studio, OpenAL, XInput, Steamworks/CSteamworks, Carbon, HiView/User32, Kernel32, Carbon interpose, and staged receipts;
+- game-specific FNA/XNA/MonoGame evidence when `appid` + `gameDir` are provided;
+- `.metalsharp/fna-staging.json` receipt presence;
+- whether receipts show originals were preserved;
+- whether required dylibs are staged in the game directory;
+- whether the pinned/known-good profile or conservative unproven profile is applied.
+
+The doctor does not launch Mono, Wine, Steam, or the game. It only reads filesystem state and Mach-O headers.
+
 ## Phase 11 Minecraft Finding
 
 Minecraft is a useful hard case because it exercises installer classification, bottle readiness, Wine Mono, embedded browser/runtime needs, and app detection. Current evidence shows:

@@ -1311,6 +1311,23 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let path = std::path::PathBuf::from(&game_dir);
             resp(200, serde_json::to_value(fna_profile::classify_unproven_fna_game(appid, &path)).unwrap())
         },
+        (Method::Get, "/diagnostics/fna/platform") => {
+            let url_str = req.url().to_string();
+            let appid =
+                url_str.split("appid=").nth(1).and_then(|v| v.split('&').next()).and_then(|v| v.parse::<u32>().ok());
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| std::path::PathBuf::from(url_decode(s)));
+            let game = appid.zip(game_dir.as_deref());
+            match dirs::home_dir() {
+                Some(home) => {
+                    resp(200, serde_json::to_value(fna_profile::native_mono_platform_doctor_for(&home, game)).unwrap())
+                },
+                None => resp(500, json!({ "ok": false, "error": "home directory could not be resolved" })),
+            }
+        },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
             resp(200, bottles::handle_steam_compatdata(&body))

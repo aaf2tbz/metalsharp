@@ -24,7 +24,7 @@
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Known-good pinned FNA/XNA app ids. These keep their existing pinned
 /// behavior; the unproven-game classifier never applies to them.
@@ -365,6 +365,258 @@ pub fn explain_profile(appid: u32, game_dir: &Path) -> ProfileExplanation {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct NativeMonoPlatformDoctor {
+    pub schema_version: u32,
+    pub ok: bool,
+    pub read_only: bool,
+    pub metalsharp_home: String,
+    pub lanes: Vec<NativeMonoLaneDoctor>,
+    pub support_inventory: Vec<SupportInventoryEntry>,
+    pub game: Option<NativeMonoGameDoctor>,
+    pub next_actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NativeMonoLaneDoctor {
+    pub id: &'static str,
+    pub runtime_root: String,
+    pub mono_binary: String,
+    pub expected_arch: &'static str,
+    pub present: bool,
+    pub detected_architectures: Vec<String>,
+    pub architecture_ok: bool,
+    pub ready: bool,
+    pub blockers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SupportInventoryEntry {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub path: String,
+    pub present: bool,
+    pub required: bool,
+    pub sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NativeMonoGameDoctor {
+    pub appid: u32,
+    pub game_dir: String,
+    pub profile: ProfileExplanation,
+    pub receipt_path: String,
+    pub receipt_present: bool,
+    pub originals_preserved: bool,
+    pub known_good_profile_applied: bool,
+    pub required_dylibs_staged: bool,
+    pub blockers: Vec<String>,
+}
+
+pub fn native_mono_platform_doctor_for(home: &Path, game: Option<(u32, &Path)>) -> NativeMonoPlatformDoctor {
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home.to_path_buf());
+    let runtime = ms_home.join("runtime");
+    let lanes = vec![
+        native_mono_lane_doctor("native_mono_arm64", &runtime.join("mono-arm64"), "arm64"),
+        native_mono_lane_doctor("native_mono_x86", &runtime.join("mono-x86"), "x86_64"),
+    ];
+    let support_inventory = native_mono_support_inventory(&runtime);
+    let game = game.map(|(appid, game_dir)| native_mono_game_doctor(appid, game_dir));
+    let mut next_actions = Vec::new();
+    for lane in &lanes {
+        if !lane.present {
+            next_actions.push(format!("Stage {} Mono runtime at {}", lane.expected_arch, lane.runtime_root));
+        } else if !lane.architecture_ok {
+            next_actions.push(format!("Replace {} Mono binary with {} build", lane.id, lane.expected_arch));
+        }
+    }
+    if support_inventory.iter().any(|entry| entry.required && !entry.present) {
+        next_actions.push(
+            "Stage required FNA/FNA3D/FAudio/SDL2/native shim assets before marking native Mono games ready".into(),
+        );
+    }
+    if let Some(game) = &game {
+        if !game.receipt_present {
+            next_actions.push("Run the reversible FNA asset staging path so .metalsharp/fna-staging.json records originals and copied dylibs".into());
+        }
+        if !game.required_dylibs_staged {
+            next_actions.push("Stage required game-local FNA dylibs before native launch proof".into());
+        }
+    }
+    let ok = lanes.iter().all(|lane| lane.ready)
+        && support_inventory.iter().all(|entry| !entry.required || entry.present)
+        && game.as_ref().is_none_or(|game| game.blockers.is_empty());
+
+    NativeMonoPlatformDoctor {
+        schema_version: 1,
+        ok,
+        read_only: true,
+        metalsharp_home: ms_home.to_string_lossy().to_string(),
+        lanes,
+        support_inventory,
+        game,
+        next_actions,
+    }
+}
+
+fn native_mono_lane_doctor(id: &'static str, root: &Path, expected_arch: &'static str) -> NativeMonoLaneDoctor {
+    let mono_binary = root.join("bin").join("mono");
+    let present = file_nonempty(&mono_binary);
+    let detected_architectures = if present { mach_o_architectures(&mono_binary) } else { Vec::new() };
+    let architecture_ok = detected_architectures.iter().any(|arch| arch == expected_arch);
+    let mut blockers = Vec::new();
+    if !present {
+        blockers.push("mono_binary".into());
+    }
+    if present && !architecture_ok {
+        blockers.push("mono_arch".into());
+    }
+    NativeMonoLaneDoctor {
+        id,
+        runtime_root: root.to_string_lossy().to_string(),
+        mono_binary: mono_binary.to_string_lossy().to_string(),
+        expected_arch,
+        present,
+        detected_architectures,
+        architecture_ok,
+        ready: blockers.is_empty(),
+        blockers,
+    }
+}
+
+fn native_mono_support_inventory(runtime: &Path) -> Vec<SupportInventoryEntry> {
+    let entries: [(&str, &str, PathBuf, bool); 15] = [
+        ("fna", "FNA.dll", runtime.join("fna").join("FNA.dll"), true),
+        ("sdl2", "SDL2", runtime.join("fnalibs").join("libSDL2-2.0.0.dylib"), true),
+        ("fna3d", "FNA3D", runtime.join("fnalibs").join("libFNA3D.0.dylib"), true),
+        ("faudio", "FAudio", runtime.join("fnalibs").join("libFAudio.0.dylib"), true),
+        ("fmod", "FMOD", runtime.join("fnalibs").join("fmod").join("libfmod.dylib"), false),
+        ("fmodstudio", "FMOD Studio", runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib"), false),
+        ("openal", "OpenAL", runtime.join("fnalibs").join("libopenal.dylib"), false),
+        ("xinput", "XInput shim", runtime.join("shims").join("xinput1_4.dylib"), false),
+        ("steamworks", "Steamworks shim", runtime.join("shims").join("libsteam_api.dylib"), false),
+        ("csteamworks", "CSteamworks shim", runtime.join("shims").join("libCSteamworks.dylib"), false),
+        ("carbon", "Carbon shim", runtime.join("shims").join("libCarbon.dylib"), true),
+        ("hiview", "HiView/User32 shim", runtime.join("shims").join("libuser32.dylib"), true),
+        ("kernel32", "Kernel32 shim", runtime.join("shims").join("libkernel32.dylib"), true),
+        ("carbon_interpose", "Carbon interpose shim", runtime.join("shims").join("libCarbonInterpose.dylib"), false),
+        ("receipts", "staged asset receipts", runtime.join("fna").join("receipts"), false),
+    ];
+    entries
+        .into_iter()
+        .map(|(id, label, path, required)| SupportInventoryEntry {
+            id,
+            label,
+            path: path.to_string_lossy().to_string(),
+            present: if path.is_dir() { path.exists() } else { file_nonempty(&path) },
+            required,
+            sha256: if path.is_file() { crate::diagnostics::file_sha256(&path) } else { None },
+        })
+        .collect()
+}
+
+fn native_mono_game_doctor(appid: u32, game_dir: &Path) -> NativeMonoGameDoctor {
+    let profile = explain_profile(appid, game_dir);
+    let receipt_path = game_dir.join(".metalsharp").join("fna-staging.json");
+    let receipt_present = file_nonempty(&receipt_path);
+    let receipt_json =
+        fs::read_to_string(&receipt_path).ok().and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    let originals_preserved = receipt_json
+        .as_ref()
+        .and_then(|value| value.get("receipts"))
+        .and_then(|value| value.as_array())
+        .is_some_and(|receipts| {
+            receipts.iter().all(|receipt| receipt.get("overwrote_game_file").and_then(|v| v.as_bool()) != Some(true))
+        });
+    let required_dylibs_staged = ["libSDL2-2.0.0.dylib", "libFNA3D.0.dylib", "libFAudio.0.dylib"]
+        .iter()
+        .all(|name| file_nonempty(&game_dir.join(name)));
+    let known_good_profile_applied = if profile.pinned {
+        receipt_present && profile.signals.base_flavor != "unknown"
+    } else {
+        matches!(
+            classify_unproven_fna_game(appid, game_dir).recommendation,
+            UnprovenRecommendation::ConservativeFnaSetup
+        )
+    };
+    let mut blockers = Vec::new();
+    if profile.signals.base_flavor == "unknown" {
+        blockers.push("fna_xna_evidence".into());
+    }
+    if !receipt_present {
+        blockers.push("asset_receipts".into());
+    }
+    if receipt_present && !originals_preserved {
+        blockers.push("originals_preserved".into());
+    }
+    if !required_dylibs_staged {
+        blockers.push("required_dylibs".into());
+    }
+    if !known_good_profile_applied {
+        blockers.push("known_good_profile".into());
+    }
+
+    NativeMonoGameDoctor {
+        appid,
+        game_dir: game_dir.to_string_lossy().to_string(),
+        profile,
+        receipt_path: receipt_path.to_string_lossy().to_string(),
+        receipt_present,
+        originals_preserved,
+        known_good_profile_applied,
+        required_dylibs_staged,
+        blockers,
+    }
+}
+
+fn file_nonempty(path: &Path) -> bool {
+    path.metadata().map(|metadata| metadata.is_file() && metadata.len() > 0).unwrap_or(false)
+}
+
+fn mach_o_architectures(path: &Path) -> Vec<String> {
+    let Ok(bytes) = fs::read(path) else {
+        return Vec::new();
+    };
+    if bytes.len() < 8 {
+        return Vec::new();
+    }
+    let magic_be = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let magic_le = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let mut arches = Vec::new();
+    match magic_be {
+        0xcafebabe | 0xcafebabf if bytes.len() >= 8 => {
+            let count = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+            for idx in 0..count.min(16) {
+                let offset = 8 + idx * 20;
+                if bytes.len() < offset + 8 {
+                    break;
+                }
+                let cpu = u32::from_be_bytes([bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]]);
+                push_cpu_arch(cpu, &mut arches);
+            }
+        },
+        _ => match magic_le {
+            0xfeedface | 0xfeedfacf | 0xcefaedfe | 0xcffaedfe if bytes.len() >= 8 => {
+                let cpu = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+                push_cpu_arch(cpu, &mut arches);
+            },
+            _ => {},
+        },
+    }
+    arches.sort();
+    arches.dedup();
+    arches
+}
+
+fn push_cpu_arch(cpu: u32, arches: &mut Vec<String>) {
+    match cpu {
+        0x0100_000c => arches.push("arm64".into()),
+        0x0100_0007 => arches.push("x86_64".into()),
+        0x0000_0007 => arches.push("i386".into()),
+        _ => arches.push(format!("unknown:0x{cpu:08x}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,6 +627,77 @@ mod tests {
         for dll in dlls {
             fs::write(managed.join(dll), b"dll-bytes").unwrap();
         }
+    }
+
+    fn write_thin_macho(path: &Path, cpu: u32) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0xfeedfacfu32.to_le_bytes());
+        bytes.extend_from_slice(&cpu.to_le_bytes());
+        bytes.extend_from_slice(&[0; 24]);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn mach_o_architectures_detects_thin_arm64_and_x86_64() {
+        let dir = std::env::temp_dir().join("ms-fna-macho-arch");
+        let _ = fs::remove_dir_all(&dir);
+        let arm = dir.join("arm64");
+        let x86 = dir.join("x86_64");
+        write_thin_macho(&arm, 0x0100_000c);
+        write_thin_macho(&x86, 0x0100_0007);
+        assert_eq!(mach_o_architectures(&arm), vec!["arm64".to_string()]);
+        assert_eq!(mach_o_architectures(&x86), vec!["x86_64".to_string()]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn native_mono_platform_doctor_reports_lanes_inventory_and_game_receipts() {
+        let home = std::env::temp_dir().join("ms-fna-platform-doctor-home");
+        let _ = fs::remove_dir_all(&home);
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let runtime = ms_home.join("runtime");
+        write_thin_macho(&runtime.join("mono-arm64/bin/mono"), 0x0100_000c);
+        write_thin_macho(&runtime.join("mono-x86/bin/mono"), 0x0100_0007);
+        for path in [
+            runtime.join("fna/FNA.dll"),
+            runtime.join("fnalibs/libSDL2-2.0.0.dylib"),
+            runtime.join("fnalibs/libFNA3D.0.dylib"),
+            runtime.join("fnalibs/libFAudio.0.dylib"),
+            runtime.join("shims/libCarbon.dylib"),
+            runtime.join("shims/libuser32.dylib"),
+            runtime.join("shims/libkernel32.dylib"),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"asset").unwrap();
+        }
+        let game = home.join("game");
+        make_managed_game_dir(&game, &["FNA.dll"]);
+        for name in ["libSDL2-2.0.0.dylib", "libFNA3D.0.dylib", "libFAudio.0.dylib"] {
+            fs::write(game.join(name), b"game-asset").unwrap();
+        }
+        let mut receipts = AssetStagingReport::new(504230);
+        receipts.record(record_asset_receipt(
+            "libSDL2-2.0.0.dylib",
+            &runtime.join("fnalibs/libSDL2-2.0.0.dylib"),
+            &game.join("libSDL2-2.0.0.dylib"),
+            true,
+            false,
+            true,
+            "required native FNA support",
+        ));
+        receipts.persist(&game).unwrap();
+
+        let report = native_mono_platform_doctor_for(&home, Some((504230, &game)));
+        assert!(report.read_only);
+        assert!(report.ok, "doctor should be ready: {:?}", report.next_actions);
+        assert!(report.lanes.iter().all(|lane| lane.ready));
+        let game_report = report.game.expect("game report");
+        assert!(game_report.receipt_present);
+        assert!(game_report.originals_preserved);
+        assert!(game_report.required_dylibs_staged);
+        assert!(game_report.known_good_profile_applied);
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
