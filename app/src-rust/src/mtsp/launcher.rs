@@ -397,9 +397,14 @@ pub fn launch_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal(appid, node)
-        },
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12 => launch_dxmt_metal(appid, node),
         PipelineId::M13 | PipelineId::D3DMetal => launch_d3dmetal_gptk(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
@@ -422,7 +427,14 @@ pub fn launch_steam_bottle_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12 => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
@@ -505,6 +517,9 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12
         | PipelineId::M13
         | PipelineId::D3DMetal
         | PipelineId::M32
@@ -683,7 +698,16 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
 fn quarantine_route_conflicts_for_recipe(
     recipe: &super::recipe::LaunchRecipe,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    if !matches!(recipe.pipeline, PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
+    if !matches!(
+        recipe.pipeline,
+        PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M11
+            | PipelineId::M12
+            | PipelineId::DxvkD9
+            | PipelineId::DxvkD11
+            | PipelineId::Vkd3dD12
+    ) {
         return Ok(0);
     }
 
@@ -1027,12 +1051,17 @@ pub fn launch_custom_with_options(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12
         | PipelineId::M13
         | PipelineId::D3DMetal
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, M13, D3DMetal, or M32".into());
+            return Err(
+                "Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, DXVK, VKD3D, M13, D3DMetal, or M32".into(),
+            );
         },
     }
 

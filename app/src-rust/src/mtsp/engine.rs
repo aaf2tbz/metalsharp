@@ -9,6 +9,9 @@ pub enum PipelineId {
     M10,
     M11,
     M12,
+    DxvkD9,
+    DxvkD11,
+    Vkd3dD12,
     M13,
     D3DMetal,
     M32,
@@ -146,6 +149,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 ],
                 launch_args: vec!["-windowed", "-ResX=1280", "-ResY=720", "-ForceRes"],
                 alternatives: vec![
+                    PipelineId::Vkd3dD12,
                     PipelineId::M11,
                     PipelineId::M10,
                     PipelineId::M9,
@@ -203,6 +207,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 launch_args: vec![],
                 alternatives: vec![
                     PipelineId::M12,
+                    PipelineId::DxvkD11,
                     PipelineId::M10,
                     PipelineId::M9,
                     PipelineId::Steam,
@@ -272,6 +277,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 launch_args: vec![],
                 alternatives: vec![
                     PipelineId::M11,
+                    PipelineId::DxvkD11,
                     PipelineId::M9,
                     PipelineId::Steam,
                     PipelineId::MacSteam,
@@ -316,8 +322,89 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
                 ],
                 launch_args: vec![],
-                alternatives: vec![PipelineId::M11, PipelineId::M10, PipelineId::Steam, PipelineId::MacSteam],
+                alternatives: vec![
+                    PipelineId::DxvkD9,
+                    PipelineId::M11,
+                    PipelineId::M10,
+                    PipelineId::Steam,
+                    PipelineId::MacSteam,
+                ],
                 shader_cache_subdir: Some("m9"),
+            },
+            PipelineNode {
+                id: PipelineId::DxvkD9,
+                name: "DXVK D3D9",
+                description: "D3D9 -> Vulkan via DXVK, then MoltenVK",
+                backend: "dxvk",
+                graphics_backend: "vulkan",
+                experimental: true,
+                requires_wine: true,
+                wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxvk/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxvk/x86_64-windows", "lib/dxvk/i386-windows"],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "d3d9.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxvk/i386-windows", filename: "d3d9.dll", dest_filename: None },
+                ],
+                env_vars: vec![
+                    EnvVar { key: "DXVK_ASYNC", value: "1" },
+                    EnvVar { key: "DXVK_STATE_CACHE", value: "1" },
+                ],
+                launch_args: vec![],
+                alternatives: vec![PipelineId::M9, PipelineId::WineBare],
+                shader_cache_subdir: Some("dxvk-d9"),
+            },
+            PipelineNode {
+                id: PipelineId::DxvkD11,
+                name: "DXVK D3D11",
+                description: "D3D10/D3D11 -> Vulkan via DXVK, then MoltenVK",
+                backend: "dxvk",
+                graphics_backend: "vulkan",
+                experimental: true,
+                requires_wine: true,
+                wine_overrides: Some("d3d10,d3d10_1,d3d11,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxvk/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/dxvk/x86_64-windows", "lib/dxvk/i386-windows"],
+                deploy_dlls: vec![
+                    DllDeploy {
+                        source_subpath: "lib/dxvk/x86_64-windows",
+                        filename: "d3d10core.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
+                ],
+                env_vars: vec![
+                    EnvVar { key: "DXVK_ASYNC", value: "1" },
+                    EnvVar { key: "DXVK_STATE_CACHE", value: "1" },
+                ],
+                launch_args: vec![],
+                alternatives: vec![PipelineId::M11, PipelineId::M10, PipelineId::WineBare],
+                shader_cache_subdir: Some("dxvk-d11"),
+            },
+            PipelineNode {
+                id: PipelineId::Vkd3dD12,
+                name: "VKD3D-Proton D3D12",
+                description: "D3D12 -> Vulkan via VKD3D-Proton, then MoltenVK",
+                backend: "vkd3d",
+                graphics_backend: "vulkan",
+                experimental: true,
+                requires_wine: true,
+                wine_overrides: Some("d3d12,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/vkd3d/x86_64-unix"],
+                winedllpath_dirs: vec!["lib/vkd3d/x86_64-windows"],
+                deploy_dlls: vec![
+                    DllDeploy {
+                        source_subpath: "lib/vkd3d/x86_64-windows",
+                        filename: "d3d12.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy { source_subpath: "lib/vkd3d/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
+                ],
+                env_vars: vec![EnvVar { key: "VKD3D_CONFIG", value: "dxr" }],
+                launch_args: vec![],
+                alternatives: vec![PipelineId::M12, PipelineId::D3DMetal, PipelineId::M11],
+                shader_cache_subdir: Some("vkd3d-d12"),
             },
             PipelineNode {
                 id: PipelineId::M13,
@@ -455,6 +542,10 @@ impl PipelineId {
         matches!(self, PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12)
     }
 
+    pub fn is_vulkan_family(self) -> bool {
+        matches!(self, PipelineId::DxvkD9 | PipelineId::DxvkD11 | PipelineId::Vkd3dD12)
+    }
+
     pub fn is_user_selectable(self) -> bool {
         matches!(
             self,
@@ -497,6 +588,9 @@ impl PipelineId {
             "dxmt_metal" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "dxmt_metal12" => Some(PipelineId::M12),
             "d3d9_metal" => Some(PipelineId::M9),
+            "dxvk_d9" | "dxvk9" => Some(PipelineId::DxvkD9),
+            "dxvk_d11" | "dxvk11" => Some(PipelineId::DxvkD11),
+            "vkd3d_d12" | "vkd3d12" => Some(PipelineId::Vkd3dD12),
             "wined3d_32" => Some(PipelineId::M32),
             "metalsharp_wine" => Some(PipelineId::WineBare),
             "steam" => Some(PipelineId::Steam),
@@ -515,6 +609,9 @@ impl PipelineId {
             "dxmt" | "auto_dxmt" | "metalsharp_dxmt" => Some(PipelineId::Dxmt),
             "m11" | "d3d11" | "dx11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
             "m12" | "d3d12" | "dx12" => Some(PipelineId::M12),
+            "dxvk_d9" | "dxvk9" | "d9vk" => Some(PipelineId::DxvkD9),
+            "dxvk_d11" | "dxvk11" | "dxvk" => Some(PipelineId::DxvkD11),
+            "vkd3d_d12" | "vkd3d12" | "vkd3d" | "vkd3d_proton" => Some(PipelineId::Vkd3dD12),
             "m13" | "gptk" | "steam_d3dmetal" => Some(PipelineId::M13),
             "d3dmetal" | "d3dmetal_native" => Some(PipelineId::D3DMetal),
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
@@ -531,6 +628,9 @@ impl PipelineId {
     pub fn to_legacy_method(self) -> &'static str {
         match self {
             PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => "dxmt",
+            PipelineId::DxvkD9 => "dxvk_d9",
+            PipelineId::DxvkD11 => "dxvk_d11",
+            PipelineId::Vkd3dD12 => "vkd3d_d12",
             PipelineId::M13 => "gptk_d3dmetal",
             PipelineId::D3DMetal => "d3dmetal",
             PipelineId::M32 => "wined3d_32",
@@ -756,6 +856,9 @@ mod tests {
         for hidden in [
             PipelineId::Dxmt,
             PipelineId::M13,
+            PipelineId::DxvkD9,
+            PipelineId::DxvkD11,
+            PipelineId::Vkd3dD12,
             PipelineId::M32,
             PipelineId::Steam,
             PipelineId::MacSteam,
@@ -772,8 +875,40 @@ mod tests {
         assert_eq!(PipelineId::from_str_flexible(" M12 "), Some(PipelineId::M12));
         assert_eq!(PipelineId::from_str_flexible("d3d12"), Some(PipelineId::M12));
         assert_eq!(PipelineId::from_str_flexible("dx10"), Some(PipelineId::M10));
+        assert_eq!(PipelineId::from_str_flexible("dxvk-d9"), Some(PipelineId::DxvkD9));
+        assert_eq!(PipelineId::from_str_flexible("dxvk"), Some(PipelineId::DxvkD11));
+        assert_eq!(PipelineId::from_str_flexible("vkd3d-proton"), Some(PipelineId::Vkd3dD12));
         assert_eq!(PipelineId::from_str_flexible("wine-steam"), Some(PipelineId::Steam));
         assert_eq!(PipelineId::from_legacy_method("DXMT_METAL"), Some(PipelineId::M11));
+    }
+
+    #[test]
+    fn vulkan_family_lanes_are_hidden_until_payloads_are_available() {
+        let dxvk9 = get_pipeline(PipelineId::DxvkD9);
+        assert_eq!(dxvk9.backend, "dxvk");
+        assert!(dxvk9.experimental);
+        assert!(dxvk9.requires_wine);
+        assert_eq!(dxvk9.shader_cache_subdir, Some("dxvk-d9"));
+        assert!(dxvk9.deploy_dlls.iter().any(|dll| dll.filename == "d3d9.dll"));
+        assert!(dxvk9.deploy_dlls.iter().all(|dll| dll.source_subpath.contains("dxvk")));
+
+        let dxvk11 = get_pipeline(PipelineId::DxvkD11);
+        assert_eq!(dxvk11.backend, "dxvk");
+        assert!(dxvk11.wine_overrides.unwrap().contains("d3d11"));
+        assert!(dxvk11.deploy_dlls.iter().any(|dll| dll.filename == "d3d11.dll"));
+        assert!(dxvk11.deploy_dlls.iter().any(|dll| dll.filename == "dxgi.dll"));
+
+        let vkd3d = get_pipeline(PipelineId::Vkd3dD12);
+        assert_eq!(vkd3d.backend, "vkd3d");
+        assert!(vkd3d.wine_overrides.unwrap().contains("d3d12"));
+        assert_eq!(vkd3d.shader_cache_subdir, Some("vkd3d-d12"));
+        assert!(vkd3d.deploy_dlls.iter().any(|dll| dll.filename == "d3d12.dll"));
+        assert!(vkd3d.deploy_dlls.iter().all(|dll| dll.source_subpath.contains("vkd3d")));
+
+        for pipeline in [PipelineId::DxvkD9, PipelineId::DxvkD11, PipelineId::Vkd3dD12] {
+            assert!(!pipeline.is_user_selectable());
+            assert!(pipeline.is_vulkan_family());
+        }
     }
 
     #[test]
@@ -782,5 +917,8 @@ mod tests {
             assert_eq!(pipeline.to_legacy_method(), "dxmt");
             assert!(pipeline.is_dxmt_family());
         }
+        assert_eq!(PipelineId::DxvkD9.to_legacy_method(), "dxvk_d9");
+        assert_eq!(PipelineId::DxvkD11.to_legacy_method(), "dxvk_d11");
+        assert_eq!(PipelineId::Vkd3dD12.to_legacy_method(), "vkd3d_d12");
     }
 }

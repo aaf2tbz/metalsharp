@@ -71,6 +71,8 @@ Planned lanes:
 
 Planned lanes are intentionally visible in the contract so UI, docs, doctors, and migration can reserve stable IDs before the actual launch implementations are promoted.
 
+As of the Wine 2.0 private fork, `dxvk_d9`, `dxvk_d11`, and `vkd3d_d12` also have hidden MTSP pipeline definitions. These definitions reserve route parsing, environment shape, cache buckets, `WINEDLLPATH` directories, and DLL deployment manifests, but they are not user-selectable and remain `planned` until the actual DXVK/VKD3D/MoltenVK runtime payloads and doctors are staged.
+
 ## Compatibility Priority Model
 
 Recommended graphics fallback model:

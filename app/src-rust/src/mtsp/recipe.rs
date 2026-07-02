@@ -76,6 +76,9 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
             | PipelineId::M10
             | PipelineId::M11
             | PipelineId::M12
+            | PipelineId::DxvkD9
+            | PipelineId::DxvkD11
+            | PipelineId::Vkd3dD12
             | PipelineId::M13
             | PipelineId::D3DMetal
             | PipelineId::M32
@@ -94,6 +97,9 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12
         | PipelineId::M13
         | PipelineId::D3DMetal
         | PipelineId::M32
@@ -254,6 +260,9 @@ pub fn build_custom_launch_recipe(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12
         | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {

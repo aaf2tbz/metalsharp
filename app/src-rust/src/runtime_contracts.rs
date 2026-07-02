@@ -90,6 +90,22 @@ fn paths_for(surfaces: &[RuntimeSurfaceId]) -> Vec<&'static str> {
     surfaces.iter().filter_map(|surface| surface.installed_path()).collect()
 }
 
+pub fn runtime_lane_pipeline_id(lane_id: &str) -> Option<crate::mtsp::engine::PipelineId> {
+    match lane_id {
+        "m9" => Some(crate::mtsp::engine::PipelineId::M9),
+        "m10" => Some(crate::mtsp::engine::PipelineId::M10),
+        "m11" => Some(crate::mtsp::engine::PipelineId::M11),
+        "m12_dxmt_m12" => Some(crate::mtsp::engine::PipelineId::M12),
+        "dxvk_d9" => Some(crate::mtsp::engine::PipelineId::DxvkD9),
+        "dxvk_d11" => Some(crate::mtsp::engine::PipelineId::DxvkD11),
+        "vkd3d_d12" => Some(crate::mtsp::engine::PipelineId::Vkd3dD12),
+        "d3dmetal_gptk" => Some(crate::mtsp::engine::PipelineId::D3DMetal),
+        "wine_bare" => Some(crate::mtsp::engine::PipelineId::WineBare),
+        "steam_background" => Some(crate::mtsp::engine::PipelineId::Steam),
+        _ => None,
+    }
+}
+
 pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
     vec![
         RuntimeLaneContract {
@@ -537,6 +553,39 @@ mod tests {
         for contract in runtime_lane_contracts().into_iter().filter(|contract| contract.family == "wine-vulkan") {
             assert_eq!(contract.status, RuntimeLaneStatus::Planned);
             assert!(contract.doctor_checks.iter().any(|check| check.contains("vulkan") || check.contains("moltenvk")));
+        }
+    }
+
+    #[test]
+    fn runtime_lane_contracts_map_to_mtsp_pipelines() {
+        use crate::mtsp::engine::PipelineId;
+        assert_eq!(runtime_lane_pipeline_id("m12_dxmt_m12"), Some(PipelineId::M12));
+        assert_eq!(runtime_lane_pipeline_id("dxvk_d9"), Some(PipelineId::DxvkD9));
+        assert_eq!(runtime_lane_pipeline_id("dxvk_d11"), Some(PipelineId::DxvkD11));
+        assert_eq!(runtime_lane_pipeline_id("vkd3d_d12"), Some(PipelineId::Vkd3dD12));
+        assert_eq!(runtime_lane_pipeline_id("d3dmetal_gptk"), Some(PipelineId::D3DMetal));
+        assert_eq!(runtime_lane_pipeline_id("gogdl_wine"), None);
+    }
+
+    #[test]
+    fn contract_surface_paths_match_pipeline_route_surfaces() {
+        use crate::mtsp::engine::{get_pipeline, PipelineId};
+        let contracts = runtime_lane_contracts();
+        for (lane_id, pipeline_id, expected_path) in [
+            ("dxvk_d9", PipelineId::DxvkD9, "runtime/wine/lib/dxvk"),
+            ("dxvk_d11", PipelineId::DxvkD11, "runtime/wine/lib/dxvk"),
+            ("vkd3d_d12", PipelineId::Vkd3dD12, "runtime/wine/lib/vkd3d"),
+        ] {
+            let contract = contracts.iter().find(|contract| contract.id == lane_id).expect("contract");
+            let pipeline = get_pipeline(pipeline_id);
+            assert!(contract.runtime_surface_paths.contains(&expected_path), "{lane_id} missing {expected_path}");
+            assert_eq!(contract.shader_cache_lane, pipeline.shader_cache_subdir);
+            for dir in &pipeline.winedllpath_dirs {
+                assert!(
+                    contract.winedllpath_dirs.iter().any(|contract_dir| contract_dir.ends_with(dir)),
+                    "{lane_id} contract missing WINEDLLPATH dir {dir}"
+                );
+            }
         }
     }
 }
