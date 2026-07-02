@@ -209,6 +209,27 @@ interface RuntimeDiagnosticsResponse {
     manifest: RuntimeManifestResponse;
   };
   prefixes: Record<string, unknown>;
+  sources: {
+    steam: {
+      id: "steam_background";
+      prefixPath: string;
+      prefixPresent: boolean;
+      usesDedicatedPrefix: boolean;
+    };
+    gog: {
+      id: "gogdl_wine";
+      ok: boolean;
+      gogdlAvailable: boolean;
+      gogdlPath?: string | null;
+      authPresent: boolean;
+      authPath: string;
+      configPath: string;
+      supportPath: string;
+      prefixPath: string;
+      prefixPresent: boolean;
+      mustNotUsePrefixSteam: boolean;
+    };
+  };
   installReplacementGuard: { allowedNow: false; reason: string };
   nextActions: string[];
 }

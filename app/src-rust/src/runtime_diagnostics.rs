@@ -86,6 +86,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
             "manifest": manifest,
         },
         "prefixes": prefix_report,
+        "sources": source_readiness_report(&ms_home, &steam_prefix, &gog_prefix),
         "installReplacementGuard": {
             "allowedNow": false,
             "reason": "Do not wipe or replace the current MetalSharp install from diagnostics. Replacement must be a final, explicit user-confirmed step after Wine 2.0 runtime validation passes."
@@ -134,6 +135,60 @@ fn prefix_policy_report(steam_prefix: &Path, gog_prefix: &Path) -> Value {
             "canonicalPath": gog_canonical.as_ref().map(|path| path.to_string_lossy().to_string()),
         },
     })
+}
+
+fn source_readiness_report(ms_home: &Path, steam_prefix: &Path, gog_prefix: &Path) -> Value {
+    let gog_auth = ms_home.join("gog_store").join("auth.json");
+    let gog_config = ms_home.join("gogdl");
+    let gog_support = gog_config.join("gog-support");
+    let gogdl_binary = gogdl_binary_for(ms_home);
+    let gogdl_present = gogdl_binary.as_ref().is_some_and(|path| file_nonempty(path));
+    let gog_auth_present = file_nonempty(&gog_auth);
+    let gog_prefix_present = gog_prefix.is_dir();
+
+    json!({
+        "steam": {
+            "id": "steam_background",
+            "prefixPath": steam_prefix.to_string_lossy(),
+            "prefixPresent": steam_prefix.is_dir(),
+            "usesDedicatedPrefix": true,
+        },
+        "gog": {
+            "id": "gogdl_wine",
+            "ok": gogdl_present && gog_auth_present && gog_prefix_present,
+            "gogdlAvailable": gogdl_present,
+            "gogdlPath": gogdl_binary.as_ref().map(|path| path.to_string_lossy().to_string()),
+            "authPresent": gog_auth_present,
+            "authPath": gog_auth.to_string_lossy(),
+            "configPath": gog_config.to_string_lossy(),
+            "supportPath": gog_support.to_string_lossy(),
+            "prefixPath": gog_prefix.to_string_lossy(),
+            "prefixPresent": gog_prefix_present,
+            "mustNotUsePrefixSteam": true,
+        },
+    })
+}
+
+fn gogdl_binary_for(ms_home: &Path) -> Option<PathBuf> {
+    gogdl_candidates_for(ms_home).into_iter().find(|path| file_nonempty(path))
+}
+
+fn gogdl_candidates_for(ms_home: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(explicit) = std::env::var("METALSHARP_GOGDL_BIN") {
+        let explicit = explicit.trim();
+        if !explicit.is_empty() {
+            candidates.push(PathBuf::from(explicit));
+        }
+    }
+    candidates.push(ms_home.join("tools").join("gogdl"));
+    candidates.push(ms_home.join("runtime").join("gogdl"));
+    if let Ok(path_env) = std::env::var("PATH") {
+        for path in std::env::split_paths(&path_env) {
+            candidates.push(path.join("gogdl"));
+        }
+    }
+    candidates
 }
 
 fn runtime_summary(
@@ -278,6 +333,34 @@ mod tests {
         assert_eq!(gog.get("containsSymlink").and_then(|value| value.as_bool()), Some(true));
         assert_eq!(gog.get("canonicalOverlapsPrefixSteam").and_then(|value| value.as_bool()), Some(true));
         assert_eq!(gog.get("usesPrefixSteam").and_then(|value| value.as_bool()), Some(true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_report_gogdl_source_readiness_without_using_prefix_steam() {
+        let home = test_home("gog-source");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let gogdl = ms_home.join("tools").join("gogdl");
+        let auth = ms_home.join("gog_store").join("auth.json");
+        let gog_prefix = ms_home.join("bottles").join("gog-prefix").join("prefix");
+        fs::create_dir_all(gogdl.parent().unwrap()).expect("create gogdl parent");
+        fs::create_dir_all(auth.parent().unwrap()).expect("create auth parent");
+        fs::create_dir_all(&gog_prefix).expect("create gog prefix");
+        fs::write(&gogdl, b"#!/bin/sh\necho gogdl\n").expect("write gogdl");
+        fs::write(&auth, br#"{"access_token":"test-token"}"#).expect("write auth");
+
+        let report = runtime_diagnostics_report_for(&home);
+        let gog = report.get("sources").and_then(|sources| sources.get("gog")).expect("gog source diagnostics");
+        assert_eq!(gog.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(gog.get("gogdlAvailable").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(gog.get("authPresent").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(gog.get("prefixPresent").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(gog.get("mustNotUsePrefixSteam").and_then(|value| value.as_bool()), Some(true));
+        assert!(gog
+            .get("prefixPath")
+            .and_then(|value| value.as_str())
+            .expect("gog prefix path")
+            .ends_with(".metalsharp/bottles/gog-prefix/prefix"));
         let _ = fs::remove_dir_all(home);
     }
 

@@ -201,6 +201,27 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
           usesPrefixSteam: false,
         },
       },
+      sources: {
+        steam: {
+          id: "steam_background",
+          prefixPath: path.join(metalsharpHome, "prefix-steam"),
+          prefixPresent: true,
+          usesDedicatedPrefix: true,
+        },
+        gog: {
+          id: "gogdl_wine",
+          ok: true,
+          gogdlAvailable: true,
+          gogdlPath: path.join(metalsharpHome, "tools", "gogdl"),
+          authPresent: true,
+          authPath: path.join(metalsharpHome, "gog_store", "auth.json"),
+          configPath: path.join(metalsharpHome, "gogdl"),
+          supportPath: path.join(metalsharpHome, "gogdl", "gog-support"),
+          prefixPath: path.join(metalsharpHome, "bottles", "gog-prefix", "prefix"),
+          prefixPresent: true,
+          mustNotUsePrefixSteam: true,
+        },
+      },
       installReplacementGuard: {
         allowedNow: false,
         reason: "UI-only preview cannot authorize wiping or replacing an installed app.",

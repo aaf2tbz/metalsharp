@@ -16,7 +16,8 @@ This endpoint is intentionally non-mutating. It does not install assets, launch 
 - runtime manifest validation;
 - Wine/DXMT artifact presence and current-version checks;
 - canonical M12 installed surface checks;
-- Steam and GOG prefix policy checks.
+- Steam and GOG prefix policy checks;
+- filesystem-only Steam/GOG source readiness, including GOGDL binary/auth/prefix state.
 
 The endpoint exists so the app can answer “is the Wine 2.0 runtime shape coherent?” before deeper per-game doctors or launch experiments run.
 
@@ -84,6 +85,7 @@ Top-level fields:
 - `contracts` — contract counts and canonical M12 contract summary.
 - `runtime` — Wine/DXMT/M12/manifest readiness.
 - `prefixes` — Steam/GOG prefix separation report.
+- `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
 - `installReplacementGuard` — destructive replacement guard.
 - `nextActions` — suggested non-destructive next steps.
 
