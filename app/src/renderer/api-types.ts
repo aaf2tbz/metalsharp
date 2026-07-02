@@ -247,6 +247,50 @@ interface LaunchValidationResponse {
   invariants: string[];
 }
 
+interface SourceAdapter {
+  id: "steam" | "gog" | "sharp" | string;
+  schema: "metalsharp.source.adapter.v1";
+  displayName: string;
+  kind: "storefront" | "local_library" | string;
+  libraryEndpoint: string;
+  statusEndpoint: string;
+  launchEndpoint: string;
+  prepareEndpoint?: string | null;
+  runtimeContractIds: string[];
+  prefixPolicy: {
+    id: string;
+    type: string;
+    path?: string | null;
+    mustNotAlias: string[];
+  };
+  ready: boolean;
+  status: string;
+  installed: boolean | number | null;
+  running: boolean | null;
+  details: Record<string, unknown>;
+  capabilities: Record<string, unknown>;
+  limitations: string[];
+}
+
+interface SourceAdaptersResponse {
+  ok: boolean;
+  schema: "metalsharp.source.adapters.v1";
+  adapters: SourceAdapter[];
+}
+
+interface SourcePreparePreviewResponse {
+  ok: boolean;
+  schema: "metalsharp.source.prepare.preview.v1";
+  readOnly: true;
+  source: string;
+  appId: string;
+  route: string;
+  launchReceiptPreview: Record<string, unknown> & { schema: "metalsharp.launch.receipt.v1"; preview: true; dryRun: true };
+  mutates: false;
+  launches: false;
+  next: string;
+}
+
 interface ReceiptInventoryBucket {
   id: string;
   label: string;

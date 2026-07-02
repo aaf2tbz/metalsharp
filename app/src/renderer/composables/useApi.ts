@@ -35,6 +35,14 @@ export function getLaunchValidation() {
   return api<LaunchValidationResponse>("GET", "/diagnostics/launch-validation");
 }
 
+export function getSourceAdapters() {
+  return api<SourceAdaptersResponse>("GET", "/source-adapters");
+}
+
+export function previewSourcePrepare(body: { source: string; appId?: string | number; id?: string; productId?: string; route?: string; launchMethod?: string }) {
+  return api<SourcePreparePreviewResponse>("POST", "/source-adapters/prepare", body);
+}
+
 export function getReceiptInventory() {
   return api<ReceiptInventoryResponse>("GET", "/diagnostics/receipts");
 }
