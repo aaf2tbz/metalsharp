@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -137,6 +137,10 @@ fn file_nonempty(path: &Path) -> bool {
 }
 
 fn gogdl_candidates() -> Vec<PathBuf> {
+    gogdl_candidates_for(&ms_home())
+}
+
+fn gogdl_candidates_for(ms_home: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(explicit) = std::env::var("METALSHARP_GOGDL_BIN") {
         let explicit = explicit.trim();
@@ -144,8 +148,9 @@ fn gogdl_candidates() -> Vec<PathBuf> {
             candidates.push(PathBuf::from(explicit));
         }
     }
-    candidates.push(ms_home().join("tools").join("gogdl"));
-    candidates.push(ms_home().join("runtime").join("gogdl"));
+    candidates.push(ms_home.join("tools").join("gogdl"));
+    candidates.push(ms_home.join("tools").join("gogdl-venv").join("bin").join("gogdl"));
+    candidates.push(ms_home.join("runtime").join("gogdl"));
     if let Ok(path_env) = std::env::var("PATH") {
         for path in std::env::split_paths(&path_env) {
             candidates.push(path.join("gogdl"));
@@ -568,6 +573,140 @@ fn status_value() -> Value {
 
 pub fn handle_status() -> Value {
     json!({"ok": true, "status": status_value()})
+}
+
+pub fn handle_doctor() -> Value {
+    gog_doctor_for(&ms_home())
+}
+
+fn gog_doctor_for(ms_home: &Path) -> Value {
+    let gog_prefix = ms_home.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("prefix");
+    let steam_prefix = ms_home.join("prefix-steam");
+    let gogdl_binary = gogdl_candidates_for(ms_home).into_iter().find(|path| file_nonempty(path));
+    let auth = ms_home.join("gog_store").join("auth.json");
+    let config = ms_home.join("gogdl");
+    let support = config.join("gog-support");
+    let cache = ms_home.join("gog").join("library.json");
+    let receipts = ms_home.join("gog").join("receipts");
+    let cache_json = read_json_file(&cache).unwrap_or_else(|| json!({"games": []}));
+    let games = cache_json.get("games").and_then(|value| value.as_array()).cloned().unwrap_or_default();
+    let installed_games =
+        games.iter().filter(|game| game.get("installed").and_then(|value| value.as_bool()).unwrap_or(false)).count();
+    let running_games =
+        games.iter().filter(|game| game.get("running").and_then(|value| value.as_bool()).unwrap_or(false)).count();
+    let receipt_paths = json_file_paths(&receipts);
+    let dedicated_path_ok = gog_prefix.ends_with(Path::new("bottles/gog-prefix/prefix"));
+    let lexically_uses_prefix_steam = gog_prefix == steam_prefix || gog_prefix.starts_with(&steam_prefix);
+    let canonical_overlap = canonical_prefix_overlap(&steam_prefix, &gog_prefix);
+    let contains_symlink = path_contains_symlink_below(ms_home, &gog_prefix);
+    let uses_prefix_steam = lexically_uses_prefix_steam || canonical_overlap;
+    let gogdl_available = gogdl_binary.is_some();
+    let auth_present = file_nonempty(&auth);
+    let prefix_initialized = gog_prefix.join("drive_c").is_dir();
+    let mut blockers = Vec::new();
+    if !gogdl_available {
+        blockers.push("missing_gogdl");
+    }
+    if !auth_present {
+        blockers.push("missing_auth");
+    }
+    if !prefix_initialized {
+        blockers.push("prefix_not_initialized");
+    }
+    if !dedicated_path_ok || uses_prefix_steam || contains_symlink {
+        blockers.push("prefix_policy");
+    }
+    let ok = blockers.is_empty();
+
+    json!({
+        "ok": ok,
+        "schema": "metalsharp.gog.diagnostics.v1",
+        "readOnly": true,
+        "source": "gog",
+        "route": "gogdl_wine",
+        "runtimeContractId": "gogdl_wine",
+        "blockers": blockers,
+        "paths": {
+            "metalsharpHome": ms_home.to_string_lossy(),
+            "prefix": gog_prefix.to_string_lossy(),
+            "steamPrefix": steam_prefix.to_string_lossy(),
+            "auth": auth.to_string_lossy(),
+            "config": config.to_string_lossy(),
+            "support": support.to_string_lossy(),
+            "cache": cache.to_string_lossy(),
+            "receipts": receipts.to_string_lossy(),
+        },
+        "tools": {
+            "gogdlAvailable": gogdl_available,
+            "gogdlPath": gogdl_binary.as_ref().map(|path| path.to_string_lossy().to_string()),
+        },
+        "auth": {
+            "present": auth_present,
+            "path": auth.to_string_lossy(),
+        },
+        "prefix": {
+            "present": gog_prefix.is_dir(),
+            "initialized": prefix_initialized,
+            "dedicatedPathOk": dedicated_path_ok,
+            "containsSymlink": contains_symlink,
+            "usesPrefixSteam": uses_prefix_steam,
+            "lexicallyUsesPrefixSteam": lexically_uses_prefix_steam,
+            "canonicalOverlapsPrefixSteam": canonical_overlap,
+            "mustNotUsePrefixSteam": true,
+        },
+        "library": {
+            "cachePresent": cache.is_file(),
+            "gameCount": games.len(),
+            "installedGameCount": installed_games,
+            "runningGameCount": running_games,
+        },
+        "receipts": {
+            "directoryPresent": receipts.is_dir(),
+            "count": receipt_paths.len(),
+            "latest": receipt_paths.first().map(|path| path.to_string_lossy().to_string()),
+        },
+        "limitations": ["Filesystem-only doctor; does not run gogdl, Wine, wineboot, or a game."],
+    })
+}
+
+fn read_json_file(path: &Path) -> Option<Value> {
+    fs::read_to_string(path).ok().and_then(|data| serde_json::from_str(&data).ok())
+}
+
+fn json_file_paths(dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = fs::read_dir(dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect();
+    paths.sort_by_key(|path| std::cmp::Reverse(path.metadata().and_then(|meta| meta.modified()).ok()));
+    paths
+}
+
+fn canonical_prefix_overlap(steam_prefix: &Path, gog_prefix: &Path) -> bool {
+    match (steam_prefix.canonicalize(), gog_prefix.canonicalize()) {
+        (Ok(steam), Ok(gog)) => gog == steam || gog.starts_with(steam),
+        _ => false,
+    }
+}
+
+fn path_contains_symlink_below(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        current.push(component.as_os_str());
+        if matches!(component, Component::RootDir | Component::Prefix(_)) {
+            continue;
+        }
+        if std::fs::symlink_metadata(&current).map(|meta| meta.file_type().is_symlink()).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn handle_initialize_prefix() -> Value {
@@ -1206,6 +1345,41 @@ mod tests {
     #[test]
     fn exit_code_parser_finds_success() {
         assert_eq!(log_exit_code("abc\ngogdl exited with Some(0)\n"), Some(0));
+    }
+
+    fn temp_ms_home(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("metalsharp-gog-test-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create temp ms home");
+        root
+    }
+
+    #[test]
+    fn gog_doctor_reports_ready_dedicated_prefix_without_spawning() {
+        let ms_home = temp_ms_home("doctor-ready");
+        let gogdl = ms_home.join("tools").join("gogdl");
+        let auth = ms_home.join("gog_store").join("auth.json");
+        let prefix = ms_home.join("bottles").join("gog-prefix").join("prefix").join("drive_c");
+        let cache = ms_home.join("gog").join("library.json");
+        let receipt = ms_home.join("gog").join("receipts").join("1876546888-launch.json");
+        fs::create_dir_all(gogdl.parent().unwrap()).expect("create tools");
+        fs::create_dir_all(auth.parent().unwrap()).expect("create auth parent");
+        fs::create_dir_all(&prefix).expect("create prefix");
+        fs::create_dir_all(cache.parent().unwrap()).expect("create cache parent");
+        fs::create_dir_all(receipt.parent().unwrap()).expect("create receipts");
+        fs::write(&gogdl, b"#!/bin/sh\necho gogdl\n").expect("write gogdl");
+        fs::write(&auth, br#"{"access_token":"token"}"#).expect("write auth");
+        fs::write(&cache, br#"{"games":[{"productId":"1876546888","installed":true,"running":false}]}"#)
+            .expect("write cache");
+        fs::write(&receipt, br#"{"schema":"metalsharp.launch.receipt.v1"}"#).expect("write receipt");
+
+        let report = gog_doctor_for(&ms_home);
+        assert_eq!(report.get("schema").and_then(|value| value.as_str()), Some("metalsharp.gog.diagnostics.v1"));
+        assert_eq!(report.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(report.pointer("/prefix/mustNotUsePrefixSteam").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(report.pointer("/library/installedGameCount").and_then(|value| value.as_u64()), Some(1));
+        assert_eq!(report.pointer("/receipts/count").and_then(|value| value.as_u64()), Some(1));
+        let _ = fs::remove_dir_all(&ms_home);
     }
 
     #[test]

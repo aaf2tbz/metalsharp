@@ -1036,6 +1036,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/runtime/contracts") => resp(200, runtime_contracts::handle_runtime_contracts()),
         (Method::Get, "/runtime/manifest") => resp(200, runtime_manifest::handle_runtime_manifest()),
         (Method::Get, "/runtime/diagnostics") => resp(200, runtime_diagnostics::handle_runtime_diagnostics()),
+        (Method::Get, "/diagnostics/gog") => resp(200, gog::handle_doctor()),
         (Method::Get, "/source-adapters") => resp(200, source_adapters::report()),
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),

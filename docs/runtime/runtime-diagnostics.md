@@ -1,12 +1,13 @@
 # Runtime Diagnostics
 
-MetalSharp Wine 2.0 exposes a read-only aggregate diagnostics endpoint:
+MetalSharp Wine 2.0 exposes read-only diagnostics endpoints:
 
 ```text
 GET /runtime/diagnostics
+GET /diagnostics/gog
 ```
 
-This endpoint is intentionally non-mutating. It does not install assets, launch Wine, run `wineboot`, repair prefixes, or authorize replacing the current app install.
+These endpoints are intentionally non-mutating. They do not install assets, launch Wine, run `wineboot`, run GOGDL, repair prefixes, or authorize replacing the current app install.
 
 ## Scope
 
@@ -19,6 +20,8 @@ This endpoint is intentionally non-mutating. It does not install assets, launch 
 - Steam and GOG prefix policy checks;
 - filesystem-only Steam/GOG source readiness, including GOGDL binary/auth/prefix state;
 - Phase 8 Native Mono/FNA platform readiness, including Mono ARM64/x86 binary and architecture checks plus required support inventory.
+
+`/diagnostics/gog` returns `metalsharp.gog.diagnostics.v1` for the dedicated GOGDL source. It reports GOGDL binary/auth state, the dedicated `gog-prefix` policy, cached library counts, and persisted launch receipt counts without invoking GOGDL or Wine.
 
 The endpoint exists so the app can answer “is the Wine 2.0 runtime shape coherent?” before deeper per-game doctors or launch experiments run.
 
