@@ -41,6 +41,7 @@ jobs:
         uses: oras-project/setup-oras@v2
 
       - name: Publish developer SDK package
+        continue-on-error: true
         run: |
           set -euo pipefail
           OWNER="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
