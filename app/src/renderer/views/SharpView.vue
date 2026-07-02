@@ -224,11 +224,14 @@ const gogGames = ref<GogGame[]>([]);
 const gogLoading = ref<Record<string, boolean>>({});
 const gogProgress = ref<Record<string, number>>({});
 const engineOptions = [
-  { id: "d3dmetal", name: "D3DMetal" },
   { id: "m12", name: "M12" },
   { id: "m11", name: "M11" },
   { id: "m10", name: "M10" },
   { id: "m9", name: "M9" },
+  { id: "dxvk_d9", name: "DXVK D3D9" },
+  { id: "dxvk_d11", name: "DXVK D3D11" },
+  { id: "vkd3d_d12", name: "VKD3D D3D12" },
+  { id: "d3dmetal", name: "D3DMetal" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
 
@@ -249,6 +252,9 @@ const componentDisplayName: Record<string, string> = {
   "m12_winemetal": "M12 winemetal.dll / .so",
   "m12_gpu_stubs": "M12 GPU Stubs",
   "d3d12_agility": "D3D12 Agility",
+  "dxvk_runtime": "DXVK Runtime",
+  "vkd3d_runtime": "VKD3D Runtime",
+  "vulkan_icd": "Vulkan ICD",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
@@ -288,7 +294,7 @@ function d3dmetalActionReady(action: D3DMetalGptkAction): boolean {
 function isFnaProfile(profile: string): boolean {
   return profile === "fna_arm64" || profile === "fna_x86";
 }
-const selectableRuntimeProfileIds = new Set(["m12", "d3dmetal", "m11", "m10", "m9", "fna_arm64"]);
+const selectableRuntimeProfileIds = new Set(["m12", "m11", "m10", "m9", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "d3dmetal", "fna_arm64"]);
 const visibleRuntimeProfiles = computed(() => {
   const profiles = runtimeProfiles.value.some((profile) => profile.id === "d3dmetal")
     ? runtimeProfiles.value
@@ -297,7 +303,10 @@ const visibleRuntimeProfiles = computed(() => {
     .filter((profile) => selectableRuntimeProfileIds.has(profile.id))
     .map((profile) => ({
       ...profile,
-      name: profile.id === "fna_arm64" ? "Mono/FNA" : profile.name.replace(/^D3D(\d+) Metal$/, "M$1"),
+      name:
+        profile.id === "fna_arm64"
+          ? "Mono/FNA"
+          : (engineOptions.find((option) => option.id === profile.id)?.name ?? profile.name.replace(/^D3D(\d+) Metal$/, "M$1")),
     }));
 });
 

@@ -170,13 +170,16 @@ const bottlePreferredMode = ref("auto");
 const bottleSaving = ref(false);
 const artworkLoadFailed = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
-const userSelectablePipelineOrder = ["d3dmetal", "m12", "m11", "m10", "m9", "fna_arm64"];
+const userSelectablePipelineOrder = ["m12", "m11", "m10", "m9", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "d3dmetal", "fna_arm64"];
 const userSelectablePipelineNames: Record<string, string> = {
   m12: "M12",
-  d3dmetal: "D3DMetal",
+  vkd3d_d12: "VKD3D D3D12",
   m11: "M11",
+  dxvk_d11: "DXVK D3D11",
   m10: "M10",
   m9: "M9",
+  dxvk_d9: "DXVK D3D9",
+  d3dmetal: "D3DMetal",
   fna_arm64: "Mono/FNA",
 };
 
@@ -197,6 +200,9 @@ const componentDisplayName: Record<string, string> = {
   "m12_winemetal": "M12 winemetal.dll / .so",
   "m12_gpu_stubs": "M12 GPU Stubs",
   "d3d12_agility": "D3D12 Agility",
+  "dxvk_runtime": "DXVK Runtime",
+  "vkd3d_runtime": "VKD3D Runtime",
+  "vulkan_icd": "Vulkan ICD",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",

@@ -551,9 +551,12 @@ impl PipelineId {
             self,
             PipelineId::M12
                 | PipelineId::D3DMetal
+                | PipelineId::Vkd3dD12
                 | PipelineId::M11
+                | PipelineId::DxvkD11
                 | PipelineId::M10
                 | PipelineId::M9
+                | PipelineId::DxvkD9
                 | PipelineId::FnaArm64
         )
     }
@@ -562,9 +565,12 @@ impl PipelineId {
         match self {
             PipelineId::M12 => Some("m12"),
             PipelineId::D3DMetal => Some("d3dmetal"),
+            PipelineId::Vkd3dD12 => Some("vkd3d_d12"),
             PipelineId::M11 => Some("m11"),
+            PipelineId::DxvkD11 => Some("dxvk_d11"),
             PipelineId::M10 => Some("m10"),
             PipelineId::M9 => Some("m9"),
+            PipelineId::DxvkD9 => Some("dxvk_d9"),
             PipelineId::FnaArm64 => Some("fna_arm64"),
             _ => None,
         }
@@ -574,9 +580,12 @@ impl PipelineId {
         match self {
             PipelineId::M12 => Some("M12"),
             PipelineId::D3DMetal => Some("D3DMetal"),
+            PipelineId::Vkd3dD12 => Some("VKD3D D3D12"),
             PipelineId::M11 => Some("M11"),
+            PipelineId::DxvkD11 => Some("DXVK D3D11"),
             PipelineId::M10 => Some("M10"),
             PipelineId::M9 => Some("M9"),
+            PipelineId::DxvkD9 => Some("DXVK D3D9"),
             PipelineId::FnaArm64 => Some("Mono/FNA"),
             _ => None,
         }
@@ -845,20 +854,23 @@ mod tests {
                 PipelineId::M11,
                 PipelineId::M10,
                 PipelineId::M9,
+                PipelineId::DxvkD9,
+                PipelineId::DxvkD11,
+                PipelineId::Vkd3dD12,
                 PipelineId::D3DMetal,
                 PipelineId::FnaArm64
             ]
         );
 
         let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
-        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "D3DMetal", "Mono/FNA"]);
+        assert_eq!(
+            labels,
+            vec!["M12", "M11", "M10", "M9", "DXVK D3D9", "DXVK D3D11", "VKD3D D3D12", "D3DMetal", "Mono/FNA"]
+        );
 
         for hidden in [
             PipelineId::Dxmt,
             PipelineId::M13,
-            PipelineId::DxvkD9,
-            PipelineId::DxvkD11,
-            PipelineId::Vkd3dD12,
             PipelineId::M32,
             PipelineId::Steam,
             PipelineId::MacSteam,
@@ -883,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn vulkan_family_lanes_are_hidden_until_payloads_are_available() {
+    fn vulkan_family_lanes_are_selectable_experimental_fallbacks() {
         let dxvk9 = get_pipeline(PipelineId::DxvkD9);
         assert_eq!(dxvk9.backend, "dxvk");
         assert!(dxvk9.experimental);
@@ -906,8 +918,9 @@ mod tests {
         assert!(vkd3d.deploy_dlls.iter().all(|dll| dll.source_subpath.contains("vkd3d")));
 
         for pipeline in [PipelineId::DxvkD9, PipelineId::DxvkD11, PipelineId::Vkd3dD12] {
-            assert!(!pipeline.is_user_selectable());
+            assert!(pipeline.is_user_selectable());
             assert!(pipeline.is_vulkan_family());
+            assert!(get_pipeline(pipeline).experimental);
         }
     }
 
