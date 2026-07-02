@@ -127,6 +127,7 @@ if [ "$SKIP_DEVELOPER_SDK" = "1" ]; then
   done < "$MANIFEST"
 fi
 "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" "${VERIFY_ARGS[@]}"
+"$PROJECT_ROOT/tools/runtime/check-vulkan-lane-payloads.sh"
 
 rm -f "$OUT_DIR"/metalsharp-*.tar.zst
 while IFS=$'\t' read -r asset _root _platforms _notes; do

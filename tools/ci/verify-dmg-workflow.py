@@ -100,6 +100,7 @@ def check_bundle_scripts() -> None:
         "tools/dmg/repair-runtime-bundle.py",
         "repair_assets_fnalibs_bundle",
         "tools/bundles/verify-bundles.sh",
+        "tools/runtime/check-vulkan-lane-payloads.sh",
         "--bundle-dir \"$BUNDLE_DIR\" \"$asset\"",
         "Refreshing stale bundle",
         "metalsharp-bundle-manifest.tsv",

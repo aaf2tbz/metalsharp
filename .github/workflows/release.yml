@@ -71,6 +71,8 @@ jobs:
             metalsharp-runtime.tar.zst \
             metalsharp-assets.tar.zst \
             fnalibs.tar.zst \
+            dxvk.tar.zst \
+            vkd3d-proton.tar.zst \
             metalsharp-scripts-tools.tar.zst \
             metalsharp-steam.tar.zst
           ! tar --use-compress-program=unzstd -tf dist/bundles/metalsharp-assets.tar.zst \
@@ -135,6 +137,8 @@ jobs:
             metalsharp-graphics-dll.tar.zst \
             metalsharp-runtime.tar.zst \
             metalsharp-assets.tar.zst \
+            dxvk.tar.zst \
+            vkd3d-proton.tar.zst \
             metalsharp-scripts-tools.tar.zst \
             metalsharp-steam.tar.zst \
             metalsharp-d3d12-developer-sdk.tar.zst

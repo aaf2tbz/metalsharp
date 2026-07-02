@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.50.0",
+  "version": "0.51.0",
   "description": "MetalSharp Wine 2.0 — private D3D→Metal Wine runtime fork",
   "author": "MetalSharp",
   "repository": {
@@ -156,6 +156,14 @@
       {
         "from": "bundles/fnalibs.tar.zst",
         "to": "bundles/fnalibs.tar.zst"
+      },
+      {
+        "from": "bundles/vkd3d-proton.tar.zst",
+        "to": "bundles/vkd3d-proton.tar.zst"
+      },
+      {
+        "from": "bundles/dxvk.tar.zst",
+        "to": "bundles/dxvk.tar.zst"
       },
       {
         "from": "bundles/metalsharp-scripts-tools.tar.zst",
