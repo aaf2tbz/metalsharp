@@ -1,11 +1,11 @@
 {
   "name": "metalsharp",
   "version": "0.50.0",
-  "description": "MetalSharp — D3D→Metal translation layer frontend",
+  "description": "MetalSharp Wine 2.0 — private D3D→Metal Wine runtime fork",
   "author": "MetalSharp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aaf2tbz/metalsharp.git"
+    "url": "https://github.com/aaf2tbz/MetalSharp-Wine-2.0.git"
   },
   "main": "dist/main/index.js",
   "scripts": {
