@@ -109,7 +109,7 @@ function applyFilter() {
     filteredGames.value = [];
     return;
   }
-  let games = library.value.games;
+  let games = Array.isArray(library.value.games) ? library.value.games : [];
   if (filter.value === "installed") games = games.filter((g) => g.installed);
   if (filter.value === "not_installed") games = games.filter((g) => !g.installed);
   if (search.value) {

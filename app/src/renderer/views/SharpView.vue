@@ -1339,11 +1339,8 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
                   </button>
                   <button v-if="game.installed" class="btn btn-danger" :disabled="gogLoading[`${game.productId}:uninstall`]" @click="uninstallGogGame(game)">Uninstall</button>
                 </div>
-                <div class="gog-card-meta">
-                  <small v-if="game.gameFolder">Folder: {{ game.gameFolder }}</small>
-                  <small v-if="game.primaryTaskName">Task: {{ game.primaryTaskName }}</small>
-                  <small v-if="game.lastLogPath">Log: {{ game.lastLogPath }}</small>
-                  <strong v-if="game.lastError" class="launch-failure">{{ game.lastError }}</strong>
+                <div v-if="game.status === 'install_failed' && game.lastError" class="gog-card-meta">
+                  <strong class="launch-failure">{{ game.lastError }}</strong>
                 </div>
               </div>
             </div>

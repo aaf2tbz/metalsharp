@@ -501,6 +501,39 @@ fn find_game_folder(root: &Path, product_id: &str) -> Option<PathBuf> {
     None
 }
 
+fn gog_support_product_dir(product_id: &str) -> PathBuf {
+    gogdl_support_dir().join(product_id)
+}
+
+fn gog_manifest_product_dir(product_id: &str) -> PathBuf {
+    gogdl_config_dir().join("heroic_gogdl").join("manifests").join(product_id)
+}
+
+fn remove_gog_product_state(product_id: &str) {
+    for path in [gog_support_product_dir(product_id), gog_manifest_product_dir(product_id)] {
+        if path.is_dir() {
+            let _ = fs::remove_dir_all(path);
+        } else if path.exists() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn uninstall_game_target(game: &GogGame) -> Option<PathBuf> {
+    let product_id = &game.product_id;
+    if let Some(folder) = game.game_folder.as_ref().map(PathBuf::from) {
+        if folder.join(format!("goggame-{}.info", product_id)).is_file() {
+            return Some(folder);
+        }
+    }
+    if let Some(root) = game.install_root.as_ref().map(PathBuf::from) {
+        if let Some(folder) = find_game_folder(&root, product_id) {
+            return Some(folder);
+        }
+    }
+    None
+}
+
 fn apply_local_info(mut game: GogGame, folder: &Path) -> GogGame {
     let info_path = folder.join(format!("goggame-{}.info", game.product_id));
     let Some(info) = fs::read_to_string(info_path).ok().and_then(|data| serde_json::from_str::<Value>(&data).ok())
@@ -619,7 +652,10 @@ pub fn handle_install(body: &Value) -> Value {
     };
     let install_root =
         body_string(body, "installPath").map(PathBuf::from).unwrap_or_else(|| default_install_root(&product_id));
-    let support = gogdl_support_dir().join(&product_id);
+    let support = gog_support_product_dir(&product_id);
+    if find_game_folder(&install_root, &product_id).is_none() {
+        remove_gog_product_state(&product_id);
+    }
     if let Err(error) =
         fs::create_dir_all(&install_root).map_err(|error| format!("failed to create install path: {}", error))
     {
@@ -646,6 +682,11 @@ pub fn handle_install(body: &Value) -> Value {
                 game.platform = platform;
                 game.install_root = Some(install_root.to_string_lossy().to_string());
                 game.status = "downloading".to_string();
+                game.installed = false;
+                game.running = false;
+                game.game_folder = None;
+                game.primary_exe = None;
+                game.primary_task_name = None;
                 game.last_install_pid = Some(pid);
                 game.last_log_path = Some(log.to_string_lossy().to_string());
                 game.last_error = None;
@@ -734,15 +775,47 @@ pub fn handle_progress(body: &Value) -> Value {
     let active = game.last_install_pid.map(is_pid_alive).unwrap_or(false);
     if game.status == "downloading" && exit_code == Some(0) {
         let root = game.install_root.clone().map(PathBuf::from).unwrap_or_else(|| default_install_root(&product_id));
-        if let Ok(imported) = import_game_folder(&product_id, &root) {
-            game = imported;
+        match import_game_folder(&product_id, &root) {
+            Ok(imported) => {
+                game = imported;
+            },
+            Err(error) => {
+                remove_gog_product_state(&product_id);
+                let stale_manifest_noop = log.contains("Nothing to do");
+                if let Ok(updated) = update_cached_game(&product_id, |mut game| {
+                    game.status = if stale_manifest_noop { "not_installed" } else { "install_failed" }.to_string();
+                    game.last_error = if stale_manifest_noop {
+                        None
+                    } else {
+                        Some(format!("download finished but import failed: {}", error))
+                    };
+                    game.last_install_pid = None;
+                    game.last_log_path = None;
+                    game.primary_exe = None;
+                    game.primary_task_name = None;
+                    game.game_folder = None;
+                    game.installed = false;
+                    game
+                }) {
+                    game = updated;
+                }
+            },
         }
     } else if game.status == "downloading" && exit_code.is_some() && exit_code != Some(0) {
-        let _ = update_cached_game(&product_id, |mut game| {
+        remove_gog_product_state(&product_id);
+        if let Ok(updated) = update_cached_game(&product_id, |mut game| {
             game.status = "install_failed".to_string();
             game.last_error = Some(format!("gogdl exited with {:?}", exit_code));
+            game.last_install_pid = None;
+            game.last_log_path = None;
+            game.primary_exe = None;
+            game.primary_task_name = None;
+            game.game_folder = None;
+            game.installed = false;
             game
-        });
+        }) {
+            game = updated;
+        }
     }
     json!({
         "ok": true,
@@ -868,7 +941,7 @@ pub fn handle_uninstall(body: &Value) -> Value {
         return json!({"ok": false, "error": "game not found"});
     };
     let _ = kill_scoped_processes(&game);
-    let target = game.install_root.clone().or(game.game_folder.clone()).map(PathBuf::from);
+    let target = uninstall_game_target(&game);
     if let Some(target) = &target {
         if target.exists() {
             if let Err(error) = fs::remove_dir_all(target) {
@@ -876,6 +949,7 @@ pub fn handle_uninstall(body: &Value) -> Value {
             }
         }
     }
+    remove_gog_product_state(&product_id);
     match update_cached_game(&product_id, |mut game| {
         game.installed = false;
         game.running = false;
@@ -883,8 +957,11 @@ pub fn handle_uninstall(body: &Value) -> Value {
         game.install_root = None;
         game.game_folder = None;
         game.primary_exe = None;
+        game.primary_task_name = None;
         game.last_install_pid = None;
         game.last_launch_pid = None;
+        game.last_log_path = None;
+        game.last_error = None;
         game
     }) {
         Ok(game) => {

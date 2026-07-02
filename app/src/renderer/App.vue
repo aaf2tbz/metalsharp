@@ -117,7 +117,9 @@ async function refreshSteamStatus() {
 
 async function loadLibrary() {
   const lib = await api<SteamLibrary>("GET", "/steam/library");
-  if (lib) library.value = lib;
+  if (lib && Array.isArray(lib.games)) {
+    library.value = lib;
+  }
 
   await api<{ steam: SteamStatus }>("GET", "/scan");
   await refreshSteamStatus();
