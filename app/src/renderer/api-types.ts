@@ -44,6 +44,7 @@ interface UpdateStatus {
   download_size: number;
   release_notes: string;
   release_name: string;
+  updates_disabled?: boolean;
   error?: string;
 }
 

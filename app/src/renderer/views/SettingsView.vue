@@ -239,7 +239,8 @@ async function checkForUpdates() {
   toast.show("Checking for updates...", "success");
   const result = await api<UpdateStatus>("GET", "/update/check");
   if (result) updateStatus.value = result;
-  if (result?.ok && result.available) toast.show(`Update available: v${result.latest_version}`, "success");
+  if (result?.ok && result.updates_disabled) toast.show("Public updates disabled for private Wine 2.0 fork", "success");
+  else if (result?.ok && result.available) toast.show(`Update available: v${result.latest_version}`, "success");
   else if (result?.ok) toast.show("You're up to date!", "success");
   else toast.show("Could not check for updates", "error");
 }
@@ -590,11 +591,13 @@ function uninstallMetalsharp() {
           <div class="settings-label">Version</div>
           <div class="settings-desc">
             {{
-              updateStatus?.ok && updateStatus?.available
-                ? `v${updateStatus.latest_version} available (current: v${updateStatus.current_version})`
-                : updateStatus?.ok
-                  ? "You're up to date"
-                  : "Could not check for updates"
+              updateStatus?.ok && updateStatus?.updates_disabled
+                ? "Public updates disabled for private Wine 2.0 fork"
+                : updateStatus?.ok && updateStatus?.available
+                  ? `v${updateStatus.latest_version} available (current: v${updateStatus.current_version})`
+                  : updateStatus?.ok
+                    ? "You're up to date"
+                    : "Could not check for updates"
             }}
           </div>
         </div>
@@ -605,7 +608,7 @@ function uninstallMetalsharp() {
           <button v-if="!updateDownloading" class="btn btn-secondary btn-sm" @click="checkForUpdates">Check Now</button>
         </div>
       </div>
-      <div v-if="updateStatus?.ok && updateStatus?.available && !updateDownloading" class="settings-row">
+      <div v-if="updateStatus?.ok && updateStatus?.available && !updateStatus?.updates_disabled && !updateDownloading" class="settings-row">
         <div>
           <div class="settings-label">Download Update</div>
           <div class="settings-desc">v{{ updateStatus.latest_version }} is ready to download</div>

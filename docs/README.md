@@ -59,6 +59,7 @@ These files are planning history and should not be treated as the current implem
 ## Release
 
 - [Release Signing](release/release-signing.md)
+- [Private Fork Update Policy](release/private-fork-updates.md) - Wine 2.0 fork update-source guard and opt-in environment variables.
 
 ## Bundle Truth Sources
 
