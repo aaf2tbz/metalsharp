@@ -37,7 +37,15 @@ pub fn handle_runtime_manifest() -> Value {
 }
 
 pub fn runtime_manifest_report_for(home: &Path) -> Value {
-    let manifest = expected_runtime_manifest_for(home);
+    runtime_manifest_report_for_with_wine_probe(home, true)
+}
+
+pub fn runtime_manifest_filesystem_report_for(home: &Path) -> Value {
+    runtime_manifest_report_for_with_wine_probe(home, false)
+}
+
+fn runtime_manifest_report_for_with_wine_probe(home: &Path, probe_wine_version: bool) -> Value {
+    let manifest = expected_runtime_manifest_for_with_wine_probe(home, probe_wine_version);
     let artifact_report = crate::installer::runtime_artifact_report_for(home);
     let manifest_path = manifest_path_for(home);
     let persisted = read_persisted_manifest(&manifest_path);
@@ -55,6 +63,10 @@ pub fn runtime_manifest_report_for(home: &Path) -> Value {
 }
 
 pub fn expected_runtime_manifest_for(home: &Path) -> RuntimeManifest {
+    expected_runtime_manifest_for_with_wine_probe(home, true)
+}
+
+fn expected_runtime_manifest_for_with_wine_probe(home: &Path, probe_wine_version: bool) -> RuntimeManifest {
     let ms_home = crate::platform::metalsharp_home_dir_for(&home.to_path_buf());
     let runtime_root = ms_home.join("runtime");
     let wine_root = runtime_root.join("wine");
@@ -62,7 +74,7 @@ pub fn expected_runtime_manifest_for(home: &Path) -> RuntimeManifest {
     RuntimeManifest {
         schema: RUNTIME_MANIFEST_SCHEMA.to_string(),
         metalsharp_version: env!("CARGO_PKG_VERSION").to_string(),
-        wine_version: metalsharp_wine_version(&wine_root),
+        wine_version: if probe_wine_version { metalsharp_wine_version(&wine_root) } else { None },
         host_arch: host_arch.clone(),
         host_translation: if host_arch == "aarch64" || host_arch == "arm64" {
             "x86_64 Wine under Rosetta when launching Wine-backed routes".to_string()
