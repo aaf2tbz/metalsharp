@@ -35,7 +35,7 @@ GET /mtsp/pipelines
 GET /mtsp/pipelines?appid=<steam appid>
 ```
 
-It is backend-owned and derived from MTSP pipeline metadata that is expected to stay aligned with `/runtime/contracts`. Steam cards use it for app-specific recommendations and alternatives; Sharp Library uses it for bottle/runtime selectors with a static frontend fallback only for backend-unavailable states. Route selectors should not introduce new hardcoded runtime lanes without adding the corresponding backend pipeline and runtime contract.
+It is backend-owned and derived from MTSP pipeline metadata that is expected to stay aligned with `/runtime/contracts`. Each user-selectable route option includes `runtimeContractId` so the UI can trace visible choices back to the contract table. Steam cards use it for app-specific recommendations and alternatives; Sharp Library uses it for bottle/runtime selectors with a static frontend fallback only for backend-unavailable states. Route selectors should not introduce new hardcoded runtime lanes without adding the corresponding backend pipeline and runtime contract.
 
 ## Canonical M12 Naming
 

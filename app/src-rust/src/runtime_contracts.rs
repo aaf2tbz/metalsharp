@@ -90,6 +90,23 @@ fn paths_for(surfaces: &[RuntimeSurfaceId]) -> Vec<&'static str> {
     surfaces.iter().filter_map(|surface| surface.installed_path()).collect()
 }
 
+pub fn runtime_contract_id_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Option<&'static str> {
+    match pipeline {
+        crate::mtsp::engine::PipelineId::M9 => Some("m9"),
+        crate::mtsp::engine::PipelineId::M10 => Some("m10"),
+        crate::mtsp::engine::PipelineId::M11 => Some("m11"),
+        crate::mtsp::engine::PipelineId::M12 => Some("m12_dxmt_m12"),
+        crate::mtsp::engine::PipelineId::DxvkD9 => Some("dxvk_d9"),
+        crate::mtsp::engine::PipelineId::DxvkD11 => Some("dxvk_d11"),
+        crate::mtsp::engine::PipelineId::Vkd3dD12 => Some("vkd3d_d12"),
+        crate::mtsp::engine::PipelineId::D3DMetal => Some("d3dmetal_gptk"),
+        crate::mtsp::engine::PipelineId::WineBare => Some("wine_bare"),
+        crate::mtsp::engine::PipelineId::Steam => Some("steam_background"),
+        crate::mtsp::engine::PipelineId::FnaArm64 => Some("native_mono_arm64"),
+        _ => None,
+    }
+}
+
 pub fn runtime_lane_pipeline_id(lane_id: &str) -> Option<crate::mtsp::engine::PipelineId> {
     match lane_id {
         "m9" => Some(crate::mtsp::engine::PipelineId::M9),
@@ -560,12 +577,28 @@ mod tests {
     #[test]
     fn runtime_lane_contracts_map_to_mtsp_pipelines() {
         use crate::mtsp::engine::PipelineId;
+        assert_eq!(runtime_contract_id_for_pipeline(PipelineId::M12), Some("m12_dxmt_m12"));
+        assert_eq!(runtime_contract_id_for_pipeline(PipelineId::DxvkD9), Some("dxvk_d9"));
+        assert_eq!(runtime_contract_id_for_pipeline(PipelineId::DxvkD11), Some("dxvk_d11"));
+        assert_eq!(runtime_contract_id_for_pipeline(PipelineId::Vkd3dD12), Some("vkd3d_d12"));
+        assert_eq!(runtime_contract_id_for_pipeline(PipelineId::FnaArm64), Some("native_mono_arm64"));
         assert_eq!(runtime_lane_pipeline_id("m12_dxmt_m12"), Some(PipelineId::M12));
         assert_eq!(runtime_lane_pipeline_id("dxvk_d9"), Some(PipelineId::DxvkD9));
         assert_eq!(runtime_lane_pipeline_id("dxvk_d11"), Some(PipelineId::DxvkD11));
         assert_eq!(runtime_lane_pipeline_id("vkd3d_d12"), Some(PipelineId::Vkd3dD12));
         assert_eq!(runtime_lane_pipeline_id("d3dmetal_gptk"), Some(PipelineId::D3DMetal));
         assert_eq!(runtime_lane_pipeline_id("gogdl_wine"), None);
+    }
+
+    #[test]
+    fn user_selectable_pipelines_have_runtime_contract_ids() {
+        let contracts: std::collections::HashSet<_> =
+            runtime_lane_contracts().into_iter().map(|contract| contract.id).collect();
+        for pipeline in crate::mtsp::engine::pipelines().iter().filter(|pipeline| pipeline.id.is_user_selectable()) {
+            let contract_id = runtime_contract_id_for_pipeline(pipeline.id)
+                .unwrap_or_else(|| panic!("{} has no runtime contract id", pipeline.name));
+            assert!(contracts.contains(contract_id), "{} maps to missing contract {}", pipeline.name, contract_id);
+        }
     }
 
     #[test]

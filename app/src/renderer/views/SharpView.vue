@@ -59,6 +59,7 @@ interface RuntimeProfileDefinition {
 interface RuntimeRouteOption {
   id: string;
   name: string;
+  runtimeContractId?: string | null;
   description?: string;
   backend?: string;
   experimental?: boolean;

@@ -858,6 +858,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     serde_json::json!({
                         "id": p.id.user_selectable_id().unwrap_or("auto"),
                         "name": p.id.user_selectable_name().unwrap_or(p.name),
+                        "runtimeContractId": runtime_contracts::runtime_contract_id_for_pipeline(p.id),
                         "description": p.description,
                         "backend": p.backend,
                         "experimental": p.experimental,
