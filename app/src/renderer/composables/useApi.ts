@@ -35,4 +35,8 @@ export function getLaunchValidation() {
   return api<LaunchValidationResponse>("GET", "/diagnostics/launch-validation");
 }
 
+export function getReceiptInventory() {
+  return api<ReceiptInventoryResponse>("GET", "/diagnostics/receipts");
+}
+
 export { getAPI };

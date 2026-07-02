@@ -247,6 +247,32 @@ interface LaunchValidationResponse {
   invariants: string[];
 }
 
+interface ReceiptInventoryBucket {
+  id: string;
+  label: string;
+  root: string;
+  pattern: string;
+  present: boolean;
+  count: number;
+  latest?: {
+    path: string;
+    schema?: string | null;
+    runtimeContractId?: string | null;
+    source?: string | null;
+  } | null;
+  paths: string[];
+}
+
+interface ReceiptInventoryResponse {
+  ok: boolean;
+  schema: "metalsharp.receipts.inventory.v1";
+  readOnly: true;
+  metalsharpHome: string;
+  total: number;
+  buckets: ReceiptInventoryBucket[];
+  invariants: string[];
+}
+
 interface RuntimeDiagnosticsResponse {
   ok: boolean;
   schema: "metalsharp.runtime.diagnostics.v1";

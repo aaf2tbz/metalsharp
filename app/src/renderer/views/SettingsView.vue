@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, inject, onMounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
-import { api, getAPI, getLaunchValidation, getRuntimeDiagnostics } from "../composables/useApi";
-import type { AppConfig, LaunchValidationEntry, LaunchValidationResponse, RuntimeDiagnosticsResponse, UpdateStatus } from "../api-types";
+import { api, getAPI, getLaunchValidation, getReceiptInventory, getRuntimeDiagnostics } from "../composables/useApi";
+import type { AppConfig, LaunchValidationEntry, LaunchValidationResponse, ReceiptInventoryBucket, ReceiptInventoryResponse, RuntimeDiagnosticsResponse, UpdateStatus } from "../api-types";
 import IconTrash2 from "~icons/lucide/trash-2";
 
 interface CacheSummary {
@@ -40,6 +40,7 @@ const shaderCache = ref<CacheSummary | null>(null);
 const pipelineCache = ref<CacheSummary | null>(null);
 const runtimeDiagnostics = ref<RuntimeDiagnosticsResponse | null>(null);
 const launchValidation = ref<LaunchValidationResponse | null>(null);
+const receiptInventory = ref<ReceiptInventoryResponse | null>(null);
 const runtimeDiagnosticsLoading = ref(false);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
@@ -50,6 +51,7 @@ onMounted(async () => {
   await refreshCacheSizes();
   await refreshRuntimeDiagnostics();
   await refreshLaunchValidation();
+  await refreshReceiptInventory();
 });
 
 async function refreshConfig() {
@@ -84,6 +86,12 @@ async function refreshLaunchValidation() {
   const result = await getLaunchValidation();
   launchValidation.value = result;
   if (!result) toast.show("Launch validation matrix unavailable", "error");
+}
+
+async function refreshReceiptInventory() {
+  const result = await getReceiptInventory();
+  receiptInventory.value = result;
+  if (!result) toast.show("Receipt inventory unavailable", "error");
 }
 
 function formatBytes(bytes: number): string {
@@ -326,6 +334,14 @@ function launchValidationTitle(entry: LaunchValidationEntry): string {
   const limitations = entry.limitations.length ? entry.limitations.join(" · ") : "No limitations reported";
   const next = entry.nextActions.length ? entry.nextActions[0] : "No next action reported";
   return `${limitations}; next: ${next}`;
+}
+
+function receiptBucketBadgeClass(bucket: ReceiptInventoryBucket): string {
+  return bucket.count > 0 ? "badge-ok" : "badge-muted";
+}
+
+function receiptBucketTitle(bucket: ReceiptInventoryBucket): string {
+  return bucket.latest?.path ?? bucket.root;
 }
 
 function toggleDeveloperMode(enabled: boolean) {
@@ -590,6 +606,42 @@ function uninstallMetalsharp() {
           </div>
           <div v-if="entry.nextActions.length" class="runtime-lane-blockers">
             {{ entry.nextActions[0] }}
+          </div>
+        </div>
+      </div>
+      <div class="settings-row runtime-diagnostics-row">
+        <div>
+          <div class="settings-label">Runtime Receipt Inventory</div>
+          <div class="settings-desc">
+            Read-only inventory of launch, wineboot, prefix DLL staging, and FNA staging receipts.
+          </div>
+          <div v-if="receiptInventory?.invariants?.length" class="settings-desc runtime-next-actions">
+            {{ receiptInventory.invariants[0] }}
+          </div>
+        </div>
+        <div class="settings-value runtime-diagnostics-value">
+          <span class="badge" :class="receiptInventory && receiptInventory.total > 0 ? 'badge-ok' : 'badge-muted'">
+            Receipts {{ receiptInventory?.total ?? 0 }}
+          </span>
+          <button class="btn btn-secondary btn-sm" @click="refreshReceiptInventory">Refresh Receipts</button>
+        </div>
+      </div>
+      <div v-if="receiptInventory" class="runtime-lane-grid" aria-label="Runtime receipt inventory">
+        <div
+          v-for="bucket in receiptInventory.buckets"
+          :key="bucket.id"
+          class="runtime-lane-card"
+          :class="{ 'runtime-lane-ready': bucket.count > 0 }"
+        >
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">{{ bucket.label }}</span>
+            <span class="badge" :class="receiptBucketBadgeClass(bucket)" :title="receiptBucketTitle(bucket)">
+              {{ bucket.count }}
+            </span>
+          </div>
+          <div class="runtime-lane-meta">{{ bucket.pattern }} · {{ bucket.present ? "present" : "missing" }}</div>
+          <div v-if="bucket.latest" class="runtime-lane-artifacts">
+            Latest {{ bucket.latest.schema ?? "receipt" }} {{ bucket.latest.runtimeContractId ? `· ${bucket.latest.runtimeContractId}` : "" }}
           </div>
         </div>
       </div>
