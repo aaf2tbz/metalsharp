@@ -394,11 +394,13 @@ pub fn selected_deploy_dlls_for_pipeline(
     ms_root: &Path,
 ) -> Vec<RecipeDll> {
     let d3d9_subpath = if node.id == PipelineId::M9 { m9_d3d9_source_subpath(game_dir, exe_path) } else { "" };
+    let dxvk_d9_subpath = if node.id == PipelineId::DxvkD9 { dxvk_d9_source_subpath(game_dir, exe_path) } else { "" };
     let target_dirs = deploy_target_dirs_for_pipeline(game_dir, exe_path, node);
 
     node.deploy_dlls
         .iter()
         .filter(|dll| node.id != PipelineId::M9 || dll.source_subpath == d3d9_subpath)
+        .filter(|dll| node.id != PipelineId::DxvkD9 || dll.source_subpath == dxvk_d9_subpath)
         .flat_map(|dll| {
             let source_path = ms_root.join(dll.source_subpath).join(dll.filename);
             let dest_name = dll.dest_filename.unwrap_or(dll.filename);
@@ -850,6 +852,15 @@ fn normalized_tokens(name: &str) -> Vec<String> {
         .map(|s| s.to_lowercase())
         .filter(|s| !s.is_empty() && !["the", "and", "goty", "edition"].contains(&s.as_str()))
         .collect()
+}
+
+fn dxvk_d9_source_subpath(game_dir: &Path, exe_path: Option<&Path>) -> &'static str {
+    let wine_subpath = m9_d3d9_source_subpath(game_dir, exe_path);
+    if wine_subpath.contains("i386-windows") {
+        "lib/dxvk/i386-windows"
+    } else {
+        "lib/dxvk/x86_64-windows"
+    }
 }
 
 fn m9_d3d9_source_subpath(game_dir: &Path, exe_path: Option<&Path>) -> &'static str {
@@ -1448,6 +1459,54 @@ mod tests {
         let filenames: std::collections::HashSet<_> = selected.iter().map(|dll| dll.filename.as_str()).collect();
 
         assert_eq!(sources, std::collections::HashSet::from(["lib/wine/i386-windows"]));
+        assert_eq!(filenames, std::collections::HashSet::from(["d3d9.dll", "dxgi.dll"]));
+        assert_eq!(selected.len(), 2);
+        let _ = std::fs::remove_dir_all(game_dir);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn dxvk_d9_selects_i386_d3d9_and_dxgi_for_32_bit_exes() {
+        let game_dir = test_dir("dxvk-d9-32");
+        let runtime = test_dir("runtime-dxvk-32");
+        std::fs::create_dir_all(&game_dir).expect("create test game dir");
+        let exe = game_dir.join("ori32.exe");
+        write_test_pe(&exe, 0x014c, 0x10b);
+
+        let selected = selected_deploy_dlls_for_pipeline(
+            &game_dir,
+            Some(&exe),
+            super::super::engine::get_pipeline(PipelineId::DxvkD9),
+            &runtime,
+        );
+        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+        let filenames: std::collections::HashSet<_> = selected.iter().map(|dll| dll.filename.as_str()).collect();
+
+        assert_eq!(sources, std::collections::HashSet::from(["lib/dxvk/i386-windows"]));
+        assert_eq!(filenames, std::collections::HashSet::from(["d3d9.dll", "dxgi.dll"]));
+        assert_eq!(selected.len(), 2);
+        let _ = std::fs::remove_dir_all(game_dir);
+        let _ = std::fs::remove_dir_all(runtime);
+    }
+
+    #[test]
+    fn dxvk_d9_selects_x86_64_d3d9_and_dxgi_for_64_bit_exes() {
+        let game_dir = test_dir("dxvk-d9-64");
+        let runtime = test_dir("runtime-dxvk-64");
+        std::fs::create_dir_all(&game_dir).expect("create test game dir");
+        let exe = game_dir.join("ori64.exe");
+        write_test_pe(&exe, 0x8664, 0x20b);
+
+        let selected = selected_deploy_dlls_for_pipeline(
+            &game_dir,
+            Some(&exe),
+            super::super::engine::get_pipeline(PipelineId::DxvkD9),
+            &runtime,
+        );
+        let sources: std::collections::HashSet<_> = selected.iter().map(|dll| dll.source_subpath.as_str()).collect();
+        let filenames: std::collections::HashSet<_> = selected.iter().map(|dll| dll.filename.as_str()).collect();
+
+        assert_eq!(sources, std::collections::HashSet::from(["lib/dxvk/x86_64-windows"]));
         assert_eq!(filenames, std::collections::HashSet::from(["d3d9.dll", "dxgi.dll"]));
         assert_eq!(selected.len(), 2);
         let _ = std::fs::remove_dir_all(game_dir);

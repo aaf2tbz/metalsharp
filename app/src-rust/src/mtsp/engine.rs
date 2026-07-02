@@ -344,7 +344,9 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 winedllpath_dirs: vec!["lib/dxvk/x86_64-windows", "lib/dxvk/i386-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "d3d9.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxvk/x86_64-windows", filename: "dxgi.dll", dest_filename: None },
                     DllDeploy { source_subpath: "lib/dxvk/i386-windows", filename: "d3d9.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxvk/i386-windows", filename: "dxgi.dll", dest_filename: None },
                 ],
                 env_vars: vec![
                     EnvVar { key: "DXVK_ASYNC", value: "1" },
@@ -907,6 +909,7 @@ mod tests {
         assert!(dxvk9.requires_wine);
         assert_eq!(dxvk9.shader_cache_subdir, Some("dxvk-d9"));
         assert!(dxvk9.deploy_dlls.iter().any(|dll| dll.filename == "d3d9.dll"));
+        assert!(dxvk9.deploy_dlls.iter().any(|dll| dll.filename == "dxgi.dll"));
         assert!(dxvk9.deploy_dlls.iter().all(|dll| dll.source_subpath.contains("dxvk")));
 
         let dxvk11 = get_pipeline(PipelineId::DxvkD11);
