@@ -257,6 +257,13 @@ interface RuntimeDiagnosticsResponse {
       allPointToRuntimeMoltenVK: boolean;
       entries: { path: string; libraryPath?: string | null; pointsToRuntimeMoltenVK: boolean }[];
     };
+    dxvkStateCache: {
+      ok: boolean;
+      readOnly: true;
+      cacheRoot: string;
+      method: "permission_bits_no_probe_file";
+      entries: { lane: string; path: string; exists: boolean; writableByMode: boolean; checkedPath?: string | null; reason?: string | null }[];
+    };
   };
   lanes: {
     total: number;

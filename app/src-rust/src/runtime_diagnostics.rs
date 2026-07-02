@@ -56,7 +56,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
     let update_guard_ok = update_guard.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
     let native_mono_report = serde_json::to_value(crate::fna_profile::native_mono_platform_doctor_for(home, None))
         .unwrap_or_else(|_| json!({ "ok": false, "error": "native Mono/FNA doctor serialization failed" }));
-    let vulkan_report = vulkan_runtime_doctor_report(&wine_root);
+    let vulkan_report = vulkan_runtime_doctor_report(&wine_root, &ms_home);
     let runtime_ready = wine_binary_present && dxmt_current && dxmt_m12_current && manifest_ok;
     let ok = runtime_ready && prefix_ok && canonical_m12_ok && update_guard_ok;
 
@@ -337,7 +337,7 @@ fn collect_artifact_counts(value: &Value, total: &mut u64, present: &mut u64) {
     }
 }
 
-fn vulkan_runtime_doctor_report(wine_root: &Path) -> Value {
+fn vulkan_runtime_doctor_report(wine_root: &Path, ms_home: &Path) -> Value {
     let runtime_lib = wine_root.join("lib");
     let dxvk_root = runtime_lib.join("dxvk");
     let vkd3d_root = runtime_lib.join("vkd3d");
@@ -367,17 +367,73 @@ fn vulkan_runtime_doctor_report(wine_root: &Path) -> Value {
         ],
     );
     let icd_report = vulkan_icd_report(&icd_dir, &moltenvk_runtime);
+    let dxvk_state_cache = dxvk_state_cache_report(ms_home);
     let dxvk_ok = dxvk_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
     let vkd3d_ok = vkd3d_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
     let icd_ok = icd_report.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let dxvk_state_cache_ok = dxvk_state_cache.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
 
     json!({
-        "ok": dxvk_ok && vkd3d_ok && icd_ok,
+        "ok": dxvk_ok && vkd3d_ok && icd_ok && dxvk_state_cache_ok,
         "readOnly": true,
         "runtimeLibraryRoot": runtime_lib.to_string_lossy(),
         "dxvk": dxvk_report,
         "vkd3d": vkd3d_report,
         "icd": icd_report,
+        "dxvkStateCache": dxvk_state_cache,
+    })
+}
+
+fn dxvk_state_cache_report(ms_home: &Path) -> Value {
+    let cache_root = ms_home.join("shader-cache");
+    let entries: Vec<Value> = ["dxvk-d9", "dxvk-d11"]
+        .into_iter()
+        .map(|lane| {
+            let path = cache_root.join(lane);
+            let probe = non_mutating_writable_path_report(&path);
+            json!({
+                "lane": lane,
+                "path": path.to_string_lossy(),
+                "exists": path.is_dir(),
+                "writableByMode": probe.get("writableByMode").and_then(|value| value.as_bool()).unwrap_or(false),
+                "checkedPath": probe.get("checkedPath").cloned().unwrap_or(Value::Null),
+                "reason": probe.get("reason").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+    let ok = entries.iter().all(|entry| entry.get("writableByMode").and_then(|value| value.as_bool()) == Some(true));
+    json!({
+        "ok": ok,
+        "readOnly": true,
+        "cacheRoot": cache_root.to_string_lossy(),
+        "method": "permission_bits_no_probe_file",
+        "entries": entries,
+    })
+}
+
+fn non_mutating_writable_path_report(path: &Path) -> Value {
+    let checked = if path.exists() {
+        path.to_path_buf()
+    } else {
+        path.ancestors().skip(1).find(|ancestor| ancestor.exists()).unwrap_or(path).to_path_buf()
+    };
+    let metadata = std::fs::metadata(&checked).ok();
+    let writable = metadata.as_ref().is_some_and(|metadata| metadata.is_dir() && !metadata.permissions().readonly());
+    let reason = if path.exists() {
+        if writable {
+            "target_dir_writable_by_mode"
+        } else {
+            "target_dir_not_writable_by_mode"
+        }
+    } else if writable {
+        "nearest_existing_parent_writable_by_mode"
+    } else {
+        "nearest_existing_parent_not_writable_by_mode"
+    };
+    json!({
+        "writableByMode": writable,
+        "checkedPath": checked.to_string_lossy(),
+        "reason": reason,
     })
 }
 
@@ -932,6 +988,11 @@ mod tests {
                 .and_then(|value| value.as_bool()),
             Some(true)
         );
+        let state_cache = vulkan.get("dxvkStateCache").expect("dxvk state cache doctor");
+        assert_eq!(state_cache.get("readOnly").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(state_cache.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(state_cache.get("method").and_then(|value| value.as_str()), Some("permission_bits_no_probe_file"));
+        assert_eq!(state_cache.get("entries").and_then(|value| value.as_array()).map(Vec::len), Some(2));
         let _ = fs::remove_dir_all(home);
     }
 
