@@ -6,6 +6,7 @@ MetalSharp Wine 2.0 exposes read-only diagnostics endpoints:
 GET /runtime/diagnostics
 GET /diagnostics/gog
 GET /diagnostics/launch-validation
+GET /diagnostics/receipts
 GET /update/migrate/policy
 ```
 
@@ -30,6 +31,8 @@ These endpoints are intentionally non-mutating. They do not install assets, laun
 `/update/migrate/policy` returns `metalsharp.migration.policy.v1`, a read-only migration policy contract for Steam metadata-only preservation, dedicated GOG prefix preservation, GPTK prefix boundaries, Sharp bottle metadata, launch receipts, and runtime payload replacement. It does not perform migration or authorize install replacement.
 
 `/diagnostics/launch-validation` returns `metalsharp.launch.validation.matrix.v1`, a filesystem-only proof matrix. It distinguishes receipt-backed `proven` routes from `filesystem_validated` routes that still need controlled launch proof.
+
+`/diagnostics/receipts` returns `metalsharp.receipts.inventory.v1`, a read-only inventory of Steam/Sharp/native-Mono/GOG launch receipts, prefix wineboot receipts, and FNA staging receipts. It enumerates evidence files without executing launchers or repairs.
 
 The endpoint exists so the app can answer “is the Wine 2.0 runtime shape coherent?” before deeper per-game doctors or launch experiments run.
 
