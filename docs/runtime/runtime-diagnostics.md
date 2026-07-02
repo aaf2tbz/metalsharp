@@ -5,6 +5,7 @@ MetalSharp Wine 2.0 exposes read-only diagnostics endpoints:
 ```text
 GET /runtime/diagnostics
 GET /diagnostics/gog
+GET /diagnostics/launch-validation
 GET /update/migrate/policy
 ```
 
@@ -27,6 +28,8 @@ These endpoints are intentionally non-mutating. They do not install assets, laun
 `prefixMetadata.entries[]` uses `metalsharp.prefix.v2`. Existing mutating prefix operations now persist metadata at `<prefix>/.metalsharp/prefix-metadata-v2.json` and wineboot receipts under `<prefix>/.metalsharp/receipts/`. The diagnostics endpoint only reads those files and surfaces `metadataPersisted`, `metadataPath`, `persisted`, and `lastWinebootUpdate` when present.
 
 `/update/migrate/policy` returns `metalsharp.migration.policy.v1`, a read-only migration policy contract for Steam metadata-only preservation, dedicated GOG prefix preservation, GPTK prefix boundaries, Sharp bottle metadata, launch receipts, and runtime payload replacement. It does not perform migration or authorize install replacement.
+
+`/diagnostics/launch-validation` returns `metalsharp.launch.validation.matrix.v1`, a filesystem-only proof matrix. It distinguishes receipt-backed `proven` routes from `filesystem_validated` routes that still need controlled launch proof.
 
 The endpoint exists so the app can answer “is the Wine 2.0 runtime shape coherent?” before deeper per-game doctors or launch experiments run.
 

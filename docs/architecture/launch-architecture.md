@@ -28,6 +28,10 @@ Actual MTSP Steam launches persist the same schema after a successful child-proc
 dylibs/sidecars, and env keys. GOGDL launches persist the schema as a real `launchReceipt` under
 `~/.metalsharp/gog/receipts/` and return it from `POST /sharp-library/gog/play`.
 
+`GET /diagnostics/launch-validation` returns `metalsharp.launch.validation.matrix.v1`, a filesystem-only proof matrix.
+It reports whether M12, DXVK D3D9/D3D11, VKD3D D3D12, GOGDL, native Mono/FNA, and launcher profiles are proven by
+receipts, merely filesystem-validated, still pending launch proof, or policy-blocked. It never launches anything.
+
 Runtime bottles add the user-facing readiness contract. Sharp Library installer/app bottles own their own prefixes under
 `~/.metalsharp/bottles/<id>/prefix`. Steam game bottles use ids like `steam_620` and are launch-authoritative preflight
 records over the shared Wine Steam prefix, so Steam remains the running launcher/session owner while MetalSharp checks
