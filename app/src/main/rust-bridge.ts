@@ -284,12 +284,19 @@ export class RustBridge {
   }
 
   private getOwnVersion(): string {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-      return pkg.version || "";
-    } catch {
-      return "";
+    const candidates = [
+      path.join(__dirname, "..", "package.json"),
+      path.join(__dirname, "..", "..", "package.json"),
+      path.join(process.resourcesPath || "", "app.asar", "package.json"),
+      path.join(process.resourcesPath || "", "app", "package.json"),
+    ];
+    for (const candidate of candidates) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(candidate, "utf8"));
+        if (pkg.version) return pkg.version;
+      } catch {}
     }
+    return "";
   }
 
   private async getBackendVersion(): Promise<string | null> {

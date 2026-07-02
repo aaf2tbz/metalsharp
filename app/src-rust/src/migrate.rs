@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 4;
+const GOG_PREFIX_BOTTLE_ID: &str = "gog-prefix";
 const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "steamapps",
     "common",
@@ -50,6 +51,10 @@ const MIGRATION_SETTINGS_FILE_NAMES: &[&str] = &[
     "steam_autocloud.vdf",
 ];
 const MIGRATION_SETTINGS_EXTENSIONS: &[&str] = &["json", "toml", "plist", "vdf", "reg", "ini", "cfg", "conf"];
+const MIGRATION_STEAM_METADATA_EXTENSIONS: &[&str] =
+    &["acf", "cfg", "conf", "dll", "ini", "json", "manifest", "plist", "reg", "toml", "vdf"];
+const MIGRATION_STEAM_METADATA_DENY_NAMES: &[&str] =
+    &["cache", "common", "compatdata", "crashes", "depotcache", "downloading", "logs", "shadercache", "Temp", "tmp"];
 const MIGRATION_TOTAL_STEPS: usize = 8;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
@@ -815,13 +820,13 @@ fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
     let prefix_steam = ms_dir.join("prefix-steam");
     if prefix_steam.exists() {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
-        preserve_settings_only(&prefix_steam, &prefix_steam_tmp);
+        preserve_steam_metadata_only(&prefix_steam, &prefix_steam_tmp);
         report.record(
             "preserve",
             "preserved",
             "prefix-steam",
             Some(prefix_steam.to_string_lossy().to_string()),
-            "Steam prefix settings files preserved (payloads excluded)",
+            "Steam prefix metadata, manifests, and DLLs preserved (game payloads excluded)",
         );
     } else {
         report.record("preserve", "skipped", "prefix-steam", None, "prefix-steam directory absent");
@@ -883,12 +888,14 @@ fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
     if bottles.exists() {
         let _ = fs::create_dir_all(&bottles_tmp);
         preserve_settings_only(&bottles, &bottles_tmp);
+        preserve_steam_bottle_metadata(&bottles, &bottles_tmp, &mut report);
+        preserve_gog_bottle_prefix(&bottles, &bottles_tmp, &mut report);
         report.record(
             "preserve",
             "preserved",
             "bottles",
             Some(bottles.to_string_lossy().to_string()),
-            "bottle manifests preserved (appids and routes)",
+            "bottle manifests and Steam metadata preserved (game payloads excluded)",
         );
     } else {
         report.record("preserve", "skipped", "bottles", None, "bottles directory absent");
@@ -984,6 +991,7 @@ fn update_existing_wine_prefixes(ms_dir: &Path, step: usize) -> Result<usize, St
 fn collect_existing_wine_prefixes(ms_dir: &Path) -> Vec<PathBuf> {
     let mut prefixes = Vec::new();
     push_existing_prefix(&mut prefixes, ms_dir.join("prefix-steam"));
+    push_existing_prefix(&mut prefixes, gog_bottle_prefix_path(ms_dir));
     prefixes
 }
 
@@ -995,6 +1003,109 @@ fn push_existing_prefix(prefixes: &mut Vec<PathBuf>, prefix: PathBuf) {
         return;
     }
     prefixes.push(prefix);
+}
+
+fn gog_bottle_prefix_path(ms_dir: &Path) -> PathBuf {
+    ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("prefix")
+}
+
+fn preserve_steam_bottle_metadata(bottles: &Path, bottles_tmp: &Path, report: &mut MigrationReport) {
+    let entries = match fs::read_dir(bottles) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let mut preserved = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("steam_") {
+            continue;
+        }
+        let prefix = entry.path().join("prefix");
+        if !prefix.exists() {
+            continue;
+        }
+        let dst = bottles_tmp.join(name).join("prefix");
+        preserve_steam_metadata_only(&prefix, &dst);
+        if dst.exists() {
+            preserved += 1;
+        }
+    }
+    report.record(
+        "preserve",
+        if preserved == 0 { "skipped" } else { "preserved" },
+        "steam-bottle-metadata",
+        Some(bottles.to_string_lossy().to_string()),
+        format!("{} Steam bottle prefix metadata payload(s) preserved", preserved),
+    );
+}
+
+fn restore_steam_bottle_metadata(bottles_tmp: &Path, bottles: &Path, report: &mut MigrationReport) {
+    let entries = match fs::read_dir(bottles_tmp) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    let mut restored = 0usize;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("steam_") {
+            continue;
+        }
+        let prefix = entry.path().join("prefix");
+        if !prefix.exists() {
+            continue;
+        }
+        let dst = bottles.join(name).join("prefix");
+        restore_preserved_metadata(&prefix, &dst);
+        restored += 1;
+    }
+    report.record(
+        "restore",
+        if restored == 0 { "skipped" } else { "restored" },
+        "steam-bottle-metadata",
+        Some(bottles.to_string_lossy().to_string()),
+        format!("{} Steam bottle prefix metadata payload(s) restored", restored),
+    );
+}
+
+fn preserve_gog_bottle_prefix(bottles: &Path, bottles_tmp: &Path, report: &mut MigrationReport) {
+    let src = bottles.join(GOG_PREFIX_BOTTLE_ID).join("prefix");
+    if !src.exists() {
+        report.record("preserve", "skipped", "gog-prefix", None, "GOG prefix directory absent");
+        return;
+    }
+    let dst = bottles_tmp.join(GOG_PREFIX_BOTTLE_ID).join("prefix");
+    let _ = fs::create_dir_all(&dst);
+    copy_dir_recursive(&src, &dst);
+    report.record(
+        "preserve",
+        "preserved",
+        "gog-prefix",
+        Some(src.to_string_lossy().to_string()),
+        "dedicated GOG Wine prefix preserved across runtime install",
+    );
+}
+
+fn restore_gog_bottle_prefix(bottles_tmp: &Path, bottles: &Path, report: &mut MigrationReport) {
+    let src = bottles_tmp.join(GOG_PREFIX_BOTTLE_ID).join("prefix");
+    if !src.exists() {
+        report.record("restore", "skipped", "gog-prefix", None, "no preserved GOG prefix payload");
+        return;
+    }
+    let dst = bottles.join(GOG_PREFIX_BOTTLE_ID).join("prefix");
+    if dst.exists() {
+        let _ = fs::remove_dir_all(&dst);
+    }
+    let _ = fs::create_dir_all(&dst);
+    copy_dir_recursive(&src, &dst);
+    report.record(
+        "restore",
+        "restored",
+        "gog-prefix",
+        Some(dst.to_string_lossy().to_string()),
+        "dedicated GOG Wine prefix restored across runtime install",
+    );
 }
 
 fn run_wineboot_update(wine: &Path, runtime_wine: &Path, prefix: &Path) -> Result<(), String> {
@@ -1464,6 +1575,66 @@ fn preserve_settings_only(src: &PathBuf, dst: &PathBuf) {
     }
 }
 
+fn preserve_steam_metadata_only(src: &Path, dst: &Path) {
+    let entries = match fs::read_dir(src) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+        if migration_steam_metadata_denies_name(&name_str) {
+            continue;
+        }
+        let meta = match fs::symlink_metadata(&src_path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        } else if meta.is_dir() {
+            let before = count_settings_files(&dst_path);
+            preserve_steam_metadata_only(&src_path, &dst_path);
+            if count_settings_files(&dst_path) == before
+                && fs::read_dir(&dst_path).map(|mut entries| entries.next().is_none()).unwrap_or(false)
+            {
+                let _ = fs::remove_dir(&dst_path);
+            }
+        } else if migration_preserve_allows_steam_metadata_file(&src_path) {
+            if let Some(parent) = dst_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Err(error) = fs::copy(&src_path, &dst_path) {
+                log_to_file(&format!(
+                    "Migration preserve: failed to copy Steam metadata {}: {}",
+                    src_path.display(),
+                    error
+                ));
+            }
+        }
+    }
+}
+
+fn restore_preserved_metadata(src: &Path, dst: &Path) {
+    preserve_steam_metadata_only(src, dst);
+}
+
+fn migration_steam_metadata_denies_name(name: &str) -> bool {
+    MIGRATION_STEAM_METADATA_DENY_NAMES.iter().any(|denied| name.eq_ignore_ascii_case(denied))
+}
+
+fn migration_preserve_allows_steam_metadata_file(path: &Path) -> bool {
+    if migration_preserve_allows_file(path) {
+        return true;
+    }
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| MIGRATION_STEAM_METADATA_EXTENSIONS.iter().any(|allowed| ext.eq_ignore_ascii_case(allowed)))
+        .unwrap_or(false)
+}
+
 fn count_settings_files(path: &Path) -> usize {
     let mut count = 0usize;
     if let Ok(entries) = fs::read_dir(path) {
@@ -1858,7 +2029,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
             let _ = fs::create_dir_all(&dst);
         }
         remove_root_dosdevice_mapping(&dst);
-        preserve_settings_only(&preserved.prefix_steam_tmp, &dst);
+        restore_preserved_metadata(&preserved.prefix_steam_tmp, &dst);
 
         let dosdevices = dst.join("dosdevices");
         if !dosdevices.exists() {
@@ -1874,7 +2045,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
             "restored",
             "prefix-steam",
             Some(dst.to_string_lossy().to_string()),
-            "Steam prefix settings restored",
+            "Steam prefix metadata, manifests, and DLLs restored",
         );
     } else {
         report.record("restore", "skipped", "prefix-steam", None, "no preserved prefix-steam payload");
@@ -1945,12 +2116,14 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
             let _ = fs::create_dir_all(&dst);
         }
         preserve_settings_only(&preserved.bottles_tmp, &dst);
+        restore_steam_bottle_metadata(&preserved.bottles_tmp, &dst, report);
+        restore_gog_bottle_prefix(&preserved.bottles_tmp, &dst, report);
         report.record(
             "restore",
             "restored",
             "bottles",
             Some(dst.to_string_lossy().to_string()),
-            "bottle manifests restored (appids and routes)",
+            "bottle manifests and Steam metadata restored (game payloads excluded)",
         );
     } else {
         report.record("restore", "skipped", "bottles", None, "no preserved bottles payload");
@@ -2320,6 +2493,25 @@ mod tests {
     }
 
     #[test]
+    fn migration_collects_gog_prefix_for_update_only_when_present() {
+        let home = test_dir("gog-prefix-update");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let steam_prefix = ms_dir.join("prefix-steam");
+        let gog_prefix = ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("prefix");
+        fs::create_dir_all(&steam_prefix).expect("create Steam prefix");
+
+        let prefixes_without_gog = collect_existing_wine_prefixes(&ms_dir);
+        assert_eq!(prefixes_without_gog, vec![steam_prefix.clone()]);
+
+        fs::create_dir_all(&gog_prefix).expect("create GOG prefix");
+        let prefixes_with_gog = collect_existing_wine_prefixes(&ms_dir);
+        assert!(prefixes_with_gog.contains(&steam_prefix));
+        assert!(prefixes_with_gog.contains(&gog_prefix));
+        assert_eq!(prefixes_with_gog.len(), 2);
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_preserves_bottles_across_runtime_cleanup() {
         let home = test_dir("preserve-bottles");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -2336,6 +2528,46 @@ mod tests {
             fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
             r#"{"id":"steam_620"}"#
         );
+        assert!(!ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn migration_preserves_gog_prefix_payload_when_present() {
+        let home = test_dir("preserve-gog-prefix");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        let gog_bottle = ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID);
+        let gog_prefix = gog_bottle.join("prefix");
+        let gog_marker = gog_prefix.join("drive_c").join("gog-prefix-marker.txt");
+        let steam_bottle = ms_dir.join("bottles").join("steam_620");
+        let steam_payload = steam_bottle.join("prefix").join("drive_c").join("steam-payload.txt");
+        fs::create_dir_all(gog_marker.parent().unwrap()).expect("create GOG prefix payload");
+        fs::create_dir_all(steam_payload.parent().unwrap()).expect("create Steam bottle payload");
+        fs::write(gog_bottle.join("bottle.json"), br#"{"id":"gog-prefix"}"#).expect("write GOG bottle manifest");
+        fs::write(&gog_marker, b"gog prefix state").expect("write GOG prefix marker");
+        fs::write(steam_bottle.join("bottle.json"), br#"{"id":"steam_620"}"#).expect("write Steam bottle manifest");
+        fs::write(&steam_payload, b"steam payload").expect("write Steam payload");
+
+        let (preserved, mut report) = preserve_user_data(&ms_dir);
+        assert!(preserved.bottles_tmp.join(GOG_PREFIX_BOTTLE_ID).join("prefix").join("drive_c").exists());
+        assert!(preserved
+            .bottles_tmp
+            .join(GOG_PREFIX_BOTTLE_ID)
+            .join("prefix")
+            .join("drive_c")
+            .join("gog-prefix-marker.txt")
+            .exists());
+        assert!(!preserved.bottles_tmp.join("steam_620").join("prefix").exists());
+
+        fs::remove_dir_all(ms_dir.join("bottles")).expect("remove live bottles");
+        remove_old_runtime(&ms_dir);
+        restore_user_data(&ms_dir, &preserved, &mut report);
+
+        assert_eq!(fs::read_to_string(&gog_marker).unwrap(), "gog prefix state");
+        assert!(ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("bottle.json").exists());
+        assert!(ms_dir.join("bottles").join("steam_620").join("bottle.json").exists());
+        assert!(!ms_dir.join("bottles").join("steam_620").join("prefix").exists());
+        assert!(report.entries.iter().any(|entry| entry.category == "gog-prefix" && entry.outcome == "restored"));
         let _ = fs::remove_dir_all(home);
     }
 
@@ -2370,12 +2602,23 @@ mod tests {
         fs::create_dir_all(steamapps.join("shadercache").join("620")).expect("create shadercache payload");
         fs::write(steamapps.join("common").join("Portal 2").join("portal2.exe"), b"game").expect("write game payload");
         fs::write(steamapps.join("appmanifest_620.acf"), b"manifest").expect("write app manifest");
+        let staged_dll = ms_dir.join("prefix-steam").join("drive_c").join("windows").join("system32").join("dxgi.dll");
+        fs::create_dir_all(staged_dll.parent().unwrap()).expect("create staged DLL dir");
+        fs::write(&staged_dll, b"dll").expect("write staged DLL");
         fs::write(ms_dir.join("prefix-steam").join("user.reg"), b"settings").expect("write prefix settings");
 
         let (preserved, mut report) = preserve_user_data(&ms_dir);
         assert!(preserved.prefix_steam_tmp.join("user.reg").exists());
-        assert!(!preserved.prefix_steam_tmp.join("drive_c").exists());
-        assert!(!find_descendant_named(&preserved.prefix_steam_tmp, "steamapps"));
+        assert!(preserved
+            .prefix_steam_tmp
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("steamapps")
+            .join("appmanifest_620.acf")
+            .exists());
+        assert!(preserved.prefix_steam_tmp.join("drive_c").join("windows").join("system32").join("dxgi.dll").exists());
+        assert!(!find_descendant_named(&preserved.prefix_steam_tmp, "common"));
         assert!(!find_descendant_named(&preserved.prefix_steam_tmp, "portal2.exe"));
 
         let injected_steamapps =
@@ -2389,7 +2632,16 @@ mod tests {
         restore_user_data(&ms_dir, &preserved, &mut report);
 
         assert!(ms_dir.join("prefix-steam").join("user.reg").exists());
-        assert!(!ms_dir.join("prefix-steam").join("drive_c").exists());
+        assert!(ms_dir
+            .join("prefix-steam")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("steamapps")
+            .join("appmanifest_620.acf")
+            .exists());
+        assert!(ms_dir.join("prefix-steam").join("drive_c").join("windows").join("system32").join("dxgi.dll").exists());
+        assert!(!find_descendant_named(&ms_dir.join("prefix-steam"), "common"));
         assert!(!find_descendant_named(&ms_dir.join("prefix-steam"), "portal2.exe"));
         let _ = fs::remove_dir_all(home);
     }
@@ -2471,7 +2723,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_preserves_bottle_settings_without_prefix_payloads() {
+    fn migration_preserves_steam_bottle_metadata_without_game_payloads() {
         let home = test_dir("skip-bottle-prefix-payloads");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
         let bottle = ms_dir.join("bottles").join("steam_620");
@@ -2500,10 +2752,34 @@ mod tests {
             b"game",
         )
         .expect("write bottle game payload");
+        fs::write(
+            bottle
+                .join("prefix")
+                .join("drive_c")
+                .join("Program Files (x86)")
+                .join("Steam")
+                .join("steamapps")
+                .join("appmanifest_620.acf"),
+            b"manifest",
+        )
+        .expect("write bottle app manifest");
+        fs::write(bottle.join("prefix").join("drive_c").join("game-route.dll"), b"dll")
+            .expect("write bottle DLL metadata");
 
         let (preserved, mut report) = preserve_user_data(&ms_dir);
         assert!(preserved.bottles_tmp.join("steam_620").join("bottle.json").exists());
-        assert!(!preserved.bottles_tmp.join("steam_620").join("prefix").exists());
+        assert!(preserved
+            .bottles_tmp
+            .join("steam_620")
+            .join("prefix")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("steamapps")
+            .join("appmanifest_620.acf")
+            .exists());
+        assert!(preserved.bottles_tmp.join("steam_620").join("prefix").join("drive_c").join("game-route.dll").exists());
+        assert!(!find_descendant_named(&preserved.bottles_tmp, "common"));
         assert!(!find_descendant_named(&preserved.bottles_tmp, "portal2.exe"));
 
         let injected_bottle_payload = preserved
@@ -2527,7 +2803,24 @@ mod tests {
             fs::read_to_string(ms_dir.join("bottles").join("steam_620").join("bottle.json")).unwrap(),
             r#"{"id":"steam_620","profile":"m9"}"#
         );
-        assert!(!ms_dir.join("bottles").join("steam_620").join("prefix").exists());
+        assert!(ms_dir
+            .join("bottles")
+            .join("steam_620")
+            .join("prefix")
+            .join("drive_c")
+            .join("Program Files (x86)")
+            .join("Steam")
+            .join("steamapps")
+            .join("appmanifest_620.acf")
+            .exists());
+        assert!(ms_dir
+            .join("bottles")
+            .join("steam_620")
+            .join("prefix")
+            .join("drive_c")
+            .join("game-route.dll")
+            .exists());
+        assert!(!find_descendant_named(&ms_dir.join("bottles"), "common"));
         assert!(!find_descendant_named(&ms_dir.join("bottles"), "portal2.exe"));
         let _ = fs::remove_dir_all(home);
     }

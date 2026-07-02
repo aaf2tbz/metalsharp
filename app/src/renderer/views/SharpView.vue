@@ -142,7 +142,48 @@ interface RedistSourceGuide {
   notes: string;
 }
 
+interface GogStatus {
+  status: string;
+  ready: boolean;
+  authUrl: string;
+  authenticated: boolean;
+  gogdlAvailable: boolean;
+  gogdlPath?: string | null;
+  winePrefix: string;
+  prefixInitialized: boolean;
+  winePath: string;
+}
+
+interface GogGame {
+  productId: string;
+  title: string;
+  platform: string;
+  slug?: string | null;
+  imageUrl?: string | null;
+  iconUrl?: string | null;
+  installRoot?: string | null;
+  gameFolder?: string | null;
+  primaryExe?: string | null;
+  primaryTaskName?: string | null;
+  installed: boolean;
+  running: boolean;
+  status: string;
+  downloadSizeBytes?: number | null;
+  diskSizeBytes?: number | null;
+  lastInstallPid?: number | null;
+  lastLaunchPid?: number | null;
+  lastLogPath?: string | null;
+  lastError?: string | null;
+}
+
 const toast = useToast();
+const sourceMode = ref<"installers" | "gog">("installers");
+const headerTitle = computed(() => sourceMode.value === "gog" ? "GOG Games Library" : "Sharp Library");
+const headerSubtitle = computed(() =>
+  sourceMode.value === "gog"
+    ? "Connect, sync, install, and play GOG games through MetalSharp."
+    : "Install and manage Windows applications outside Steam.",
+);
 const apps = ref<SharpApp[]>([]);
 const dropdownOpen = ref<string | null>(null);
 const dropdownStyle = ref<Record<string, string>>({});
@@ -178,6 +219,10 @@ const runningSharpPids = ref<Record<string, number>>({});
 const recentLogLines = ref<Record<string, string[]>>({});
 const recentCrashReports = ref<Record<string, CrashReport[]>>({});
 const launchArgDrafts = ref<Record<string, string>>({});
+const gogStatus = ref<GogStatus | null>(null);
+const gogGames = ref<GogGame[]>([]);
+const gogLoading = ref<Record<string, boolean>>({});
+const gogProgress = ref<Record<string, number>>({});
 const engineOptions = [
   { id: "d3dmetal", name: "D3DMetal" },
   { id: "m12", name: "M12" },
@@ -261,11 +306,13 @@ function sharpAppNameSort(a: SharpApp, b: SharpApp) {
 }
 
 async function load() {
-  const [result, bottleResult, profileResult, redistResult] = await Promise.all([
+  const [result, bottleResult, profileResult, redistResult, gogStatusResult, gogGamesResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
     api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
     api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
+    api<{ ok: boolean; status: GogStatus }>("GET", "/sharp-library/gog/status"),
+    api<{ ok: boolean; games: GogGame[]; status: GogStatus }>("GET", "/sharp-library/gog/games"),
   ]);
   if (result?.ok) {
     apps.value = [...result.apps].sort(sharpAppNameSort);
@@ -280,11 +327,210 @@ async function load() {
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
   if (redistResult?.ok) redistSources.value = redistResult.sources;
+  if (gogStatusResult?.ok) gogStatus.value = gogStatusResult.status;
+  if (gogGamesResult?.ok) {
+    setGogGames(gogGamesResult.games ?? []);
+    gogStatus.value = gogGamesResult.status;
+    for (const game of gogGames.value) {
+      if (game.status === "downloading") void monitorGogProgress(game.productId);
+    }
+  }
+}
+
+function setGogGames(games: GogGame[]) {
+  gogGames.value = [...games].sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true }));
+}
+
+async function refreshGog() {
+  const [statusResult, gamesResult] = await Promise.all([
+    api<{ ok: boolean; status: GogStatus }>("GET", "/sharp-library/gog/status"),
+    api<{ ok: boolean; games: GogGame[]; status: GogStatus }>("GET", "/sharp-library/gog/games"),
+  ]);
+  if (statusResult?.ok) gogStatus.value = statusResult.status;
+  if (gamesResult?.ok) {
+    setGogGames(gamesResult.games ?? []);
+    gogStatus.value = gamesResult.status;
+  }
+}
+
+function upsertGogGame(game: GogGame) {
+  const idx = gogGames.value.findIndex((item) => item.productId === game.productId);
+  const games = [...gogGames.value];
+  if (idx >= 0) games[idx] = game;
+  else games.push(game);
+  setGogGames(games);
+}
+
+async function initializeGogPrefix() {
+  gogLoading.value.setup = true;
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/initialize-prefix", {}, 5 * 60 * 1000);
+  gogLoading.value.setup = false;
+  if (result?.ok) {
+    if (result.status) {
+      gogStatus.value = {
+        ...result.status,
+        prefixInitialized: true,
+        status: result.status.authenticated ? "ready" : "needs_login",
+        ready: result.status.authenticated,
+      };
+    }
+    await refreshGog();
+    toast.show("GOG prefix ready", "success");
+    return;
+  }
+
+  await refreshGog();
+  const transientHangup = !result || result.error?.toLowerCase().includes("socket hang up");
+  if (transientHangup && gogStatus.value?.prefixInitialized) {
+    toast.show("GOG prefix ready", "success");
+    return;
+  }
+  toast.show(result?.error ?? "Failed to initialize GOG prefix", "error");
+}
+
+async function disconnectGog() {
+  if (!confirm("Disconnect GOG and show Login again? Installed games will stay on disk.")) return;
+  gogLoading.value.login = true;
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/logout", {}, 30 * 1000);
+  gogLoading.value.login = false;
+  if (result?.ok) {
+    if (result.status) gogStatus.value = result.status;
+    await refreshGog();
+    toast.show("GOG disconnected", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to disconnect GOG", "error");
+  }
+}
+
+async function handleGogAuthButton() {
+  if (gogStatus.value?.authenticated) {
+    await disconnectGog();
+  } else {
+    await loginGog();
+  }
+}
+
+async function loginGog() {
+  if (!gogStatus.value?.authUrl) return;
+  gogLoading.value.login = true;
+  const login = await getAPI().gogOAuthLogin(gogStatus.value.authUrl);
+  if (!login.ok || !login.code) {
+    gogLoading.value.login = false;
+    toast.show(login.error ?? "GOG login cancelled", "error");
+    return;
+  }
+  toast.show("GOG login code captured; finishing connection…", "success");
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/auth-code", { code: login.code }, 90 * 1000);
+  gogLoading.value.login = false;
+  if (result?.ok && result.status) {
+    gogStatus.value = result.status;
+    toast.show("GOG connected", "success");
+    await syncGogLibrary();
+  } else {
+    toast.show(result?.error ?? "Failed to connect GOG", "error");
+  }
+}
+
+async function syncGogLibrary() {
+  gogLoading.value.sync = true;
+  const result = await api<{ ok: boolean; games?: GogGame[]; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/sync", {}, 5 * 60 * 1000);
+  gogLoading.value.sync = false;
+  if (result?.ok) {
+    if (result.games) setGogGames(result.games);
+    if (result.status) gogStatus.value = result.status;
+    await refreshGog();
+    toast.show("GOG library synced", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to sync GOG library", "error");
+  }
+}
+
+async function installGogGame(game: GogGame) {
+  const installPath = await getAPI().pickDirectory(`Choose install folder for ${game.title}`);
+  if (!installPath) return;
+  gogLoading.value[`${game.productId}:install`] = true;
+  const result = await api<{ ok: boolean; game?: GogGame; pid?: number; error?: string }>("POST", "/sharp-library/gog/install", {
+    productId: game.productId,
+    platform: game.platform || "windows",
+    installPath,
+  }, 90 * 1000);
+  gogLoading.value[`${game.productId}:install`] = false;
+  if (result?.ok && result.game) {
+    upsertGogGame(result.game);
+    toast.show(`Downloading ${game.title}`, "success");
+    void monitorGogProgress(game.productId);
+  } else {
+    toast.show(result?.error ?? `Failed to download ${game.title}`, "error");
+  }
+}
+
+async function monitorGogProgress(productId: string) {
+  for (let i = 0; i < 720; i++) {
+    const result = await api<{ ok: boolean; percent?: number; active?: boolean; game?: GogGame; error?: string }>("POST", "/sharp-library/gog/progress", { productId });
+    if (result?.ok) {
+      gogProgress.value[productId] = result.percent ?? gogProgress.value[productId] ?? 0;
+      if (result.game) upsertGogGame(result.game);
+      if (!result.active && result.game?.status !== "downloading") return;
+    } else {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+}
+
+async function playGogGame(game: GogGame) {
+  gogLoading.value[`${game.productId}:play`] = true;
+  const result = await api<{ ok: boolean; game?: GogGame; pid?: number; error?: string }>("POST", "/sharp-library/gog/play", { productId: game.productId }, 90 * 1000);
+  gogLoading.value[`${game.productId}:play`] = false;
+  if (result?.ok && result.game) {
+    upsertGogGame(result.game);
+    toast.show(`${game.title} launched`, "success");
+  } else {
+    toast.show(result?.error ?? `Failed to launch ${game.title}`, "error");
+  }
+}
+
+async function stopGogGame(game: GogGame) {
+  gogLoading.value[`${game.productId}:stop`] = true;
+  const result = await api<{ ok: boolean; game?: GogGame; error?: string }>("POST", "/sharp-library/gog/stop", { productId: game.productId });
+  gogLoading.value[`${game.productId}:stop`] = false;
+  if (result?.ok && result.game) {
+    upsertGogGame(result.game);
+    toast.show(`${game.title} stopped`, "success");
+  } else {
+    toast.show(result?.error ?? `Failed to stop ${game.title}`, "error");
+  }
+}
+
+async function uninstallGogGame(game: GogGame) {
+  if (!confirm(`Delete ${game.title} from disk?`)) return;
+  gogLoading.value[`${game.productId}:uninstall`] = true;
+  const result = await api<{ ok: boolean; game?: GogGame; error?: string }>("POST", "/sharp-library/gog/uninstall", { productId: game.productId }, 90 * 1000);
+  gogLoading.value[`${game.productId}:uninstall`] = false;
+  if (result?.ok && result.game) {
+    upsertGogGame(result.game);
+    toast.show(`${game.title} uninstalled`, "success");
+  } else {
+    toast.show(result?.error ?? `Failed to uninstall ${game.title}`, "error");
+  }
 }
 
 async function refreshSharpLibrary() {
   await load();
   toast.show("Sharp Library refreshed", "success");
+}
+
+async function refreshCurrentSource() {
+  if (sourceMode.value === "gog") {
+    if (gogStatus.value?.authenticated) {
+      await syncGogLibrary();
+    } else {
+      await refreshGog();
+      toast.show("GOG status refreshed", "success");
+    }
+    return;
+  }
+  await refreshSharpLibrary();
 }
 
 async function installExe() {
@@ -865,9 +1111,16 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 <template>
   <div class="sharp-view">
     <div class="sharp-header">
-      <h1>Sharp Library</h1>
+      <div class="sharp-header-title">
+        <h1>{{ headerTitle }}</h1>
+        <p>{{ headerSubtitle }}</p>
+      </div>
       <div class="sharp-header-controls">
-        <div v-if="redistSources.length" class="dropdown-wrap">
+        <div class="source-switch">
+          <button class="btn btn-secondary btn-sm" :class="{ active: sourceMode === 'installers' }" @click="sourceMode = 'installers'">Installers</button>
+          <button class="btn btn-secondary btn-sm" :class="{ active: sourceMode === 'gog' }" @click="sourceMode = 'gog'">GOG</button>
+        </div>
+        <div v-if="sourceMode === 'installers' && redistSources.length" class="dropdown-wrap">
           <button class="btn btn-secondary" @click="openDropdown('redist', $event)">
             <IconDownload class="btn-icon" width="14" height="14" />
             <span class="btn-label-long">Redist Sources</span><span class="btn-label-short">Redist</span> <span class="dropdown-count">{{ redistSources.length }}</span>
@@ -883,17 +1136,24 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
             </div>
           </div>
         </div>
-        <button class="btn btn-primary" @click="installExe">
+        <button v-if="sourceMode === 'installers'" class="btn btn-primary" @click="installExe">
           <IconUpload class="btn-icon" width="14" height="14" />
           <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
         </button>
-        <button class="btn btn-secondary" @click="refreshSharpLibrary">
+        <button v-if="sourceMode === 'gog'" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
+          <span class="btn-label-long">{{ gogLoading.setup ? "Initializing…" : gogStatus?.prefixInitialized ? "Prefix Ready" : "Initialize GOG Prefix" }}</span><span class="btn-label-short">Prefix</span>
+        </button>
+        <button v-if="sourceMode === 'gog'" class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized" @click="handleGogAuthButton">
+          <span class="btn-label-long">{{ gogStatus?.authenticated ? "GOG Connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}</span><span class="btn-label-short">{{ gogStatus?.authenticated ? "Connected" : "Login" }}</span>
+        </button>
+        <button class="btn btn-secondary" :disabled="sourceMode === 'gog' && gogLoading.sync" @click="refreshCurrentSource">
           <IconRefreshCcw class="btn-icon" width="14" height="14" />
-          <span class="btn-label-long">Refresh</span><span class="btn-label-short">Refresh</span>
+          <span class="btn-label-long">{{ sourceMode === 'gog' ? gogLoading.sync ? "Syncing…" : "Sync GOG" : "Refresh" }}</span><span class="btn-label-short">{{ sourceMode === 'gog' ? "Sync" : "Refresh" }}</span>
         </button>
       </div>
     </div>
 
+    <template v-if="sourceMode === 'installers'">
     <div v-if="apps.length === 0" class="empty-state">
       <div class="empty-icon">
         <IconMonitor width="48" height="48" />
@@ -1073,6 +1333,66 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
         </div>
       </div>
     </div>
+    </template>
+
+    <template v-else>
+      <section class="gog-panel">
+        <div v-if="!gogStatus?.gogdlAvailable" class="empty-state compact">
+          <h2>gogdl is not installed</h2>
+          <p>Install gogdl under ~/.metalsharp/tools/gogdl or set METALSHARP_GOGDL_BIN.</p>
+        </div>
+        <div v-else-if="!gogStatus?.prefixInitialized" class="empty-state compact">
+          <h2>Initialize GOG prefix</h2>
+          <p>Create the isolated Wine prefix before connecting games.</p>
+        </div>
+        <div v-else-if="!gogStatus?.authenticated" class="empty-state compact">
+          <h2>Login to GOG to connect your games</h2>
+          <p>MetalSharp will capture the GOG login code from a controlled sign-in window.</p>
+        </div>
+        <div v-else-if="gogGames.length === 0" class="empty-state compact">
+          <h2>No GOG games synced</h2>
+          <p>Click Sync Library after adding games to your GOG account.</p>
+        </div>
+
+        <div v-else class="sharp-grid">
+          <div v-for="game in gogGames" :key="game.productId" class="sharp-card gog-card" :class="{ running: game.running }">
+            <div class="sharp-card-banner">
+              <img v-if="game.imageUrl" :src="game.imageUrl" :alt="game.title" />
+              <span v-else class="sharp-icon-placeholder">{{ game.title.charAt(0) }}</span>
+              <button v-if="game.running" class="running-close-button" title="Stop game" @click="stopGogGame(game)">
+                <IconX width="14" height="14" />
+              </button>
+            </div>
+            <div class="sharp-card-body">
+              <div class="sharp-card-title">{{ game.title }}</div>
+              <div class="sharp-card-meta">
+                <span class="badge" :class="game.running ? 'badge-ok' : game.installed ? 'badge-ok' : game.status === 'downloading' ? 'badge-warn' : 'badge-muted'">
+                  {{ game.running ? "Running" : game.installed ? "Installed" : game.status === "downloading" ? "Downloading" : "GOG" }}
+                </span>
+                <span v-if="game.downloadSizeBytes" class="sharp-card-size">{{ formatBytes(game.downloadSizeBytes) }}</span>
+              </div>
+              <div v-if="game.status === 'downloading'" class="gog-progress">
+                <div class="gog-progress-bar"><span :style="{ width: `${gogProgress[game.productId] ?? 0}%` }"></span></div>
+                <small>{{ Math.floor(gogProgress[game.productId] ?? 0) }}%</small>
+              </div>
+              <div class="sharp-card-actions">
+                <div class="sharp-card-actions-row">
+                  <button v-if="game.running" class="btn btn-stop" :disabled="gogLoading[`${game.productId}:stop`]" @click="stopGogGame(game)">Stop</button>
+                  <button v-else-if="game.installed" class="btn btn-play" :disabled="gogLoading[`${game.productId}:play`]" @click="playGogGame(game)">Play</button>
+                  <button v-else class="btn btn-primary" :disabled="game.status === 'downloading' || gogLoading[`${game.productId}:install`]" @click="installGogGame(game)">
+                    {{ game.status === 'downloading' ? "Downloading…" : "Install" }}
+                  </button>
+                  <button v-if="game.installed" class="btn btn-danger" :disabled="gogLoading[`${game.productId}:uninstall`]" @click="uninstallGogGame(game)">Uninstall</button>
+                </div>
+                <div v-if="game.status === 'install_failed' && game.lastError" class="gog-card-meta">
+                  <strong class="launch-failure">{{ game.lastError }}</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </template>
   </div>
 </template>
 
@@ -1127,18 +1447,43 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
 .btn-icon {
   flex-shrink: 0;
 }
+.sharp-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
 .sharp-header h1 {
   font-size: 24px;
   font-weight: 750;
   line-height: 1.1;
 }
+.sharp-header-title p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.35;
+}
 .sharp-header-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  overflow: visible;
   -webkit-app-region: no-drag;
+}
+.source-switch {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-card) 80%, transparent);
+}
+.source-switch .active {
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .support-drawer {
@@ -1448,6 +1793,62 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
   gap: 12px;
   align-items: start;
 }
+.gog-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.gog-setup-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+.gog-setup-card h2 {
+  margin: 0 0 6px;
+  color: var(--text-primary);
+}
+.gog-setup-card p {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+}
+.gog-setup-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.gog-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.gog-progress-bar {
+  flex: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-deep) 70%, transparent);
+}
+.gog-progress-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #7ee787);
+}
+.gog-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 
 .sharp-card {
   align-self: start;
@@ -1472,6 +1873,39 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
     0 0 0 1px color-mix(in srgb, var(--accent) 36%, transparent),
     0 0 34px color-mix(in srgb, var(--accent) 28%, transparent),
     0 20px 42px color-mix(in srgb, var(--bg-deep) 42%, transparent);
+}
+.gog-card {
+  border-color: color-mix(in srgb, var(--border) 84%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border) 58%, transparent),
+    0 10px 26px color-mix(in srgb, var(--bg-deep) 34%, transparent);
+}
+.gog-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
+    0 14px 30px color-mix(in srgb, var(--bg-deep) 38%, transparent);
+}
+.gog-card .sharp-card-banner {
+  isolation: isolate;
+  background: color-mix(in srgb, var(--bg-deep) 94%, black);
+}
+.gog-card .sharp-card-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(to bottom, rgba(5, 10, 14, 0.06) 0%, rgba(5, 10, 14, 0.18) 45%, rgba(5, 10, 14, 0.62) 100%),
+    linear-gradient(to right, rgba(5, 10, 14, 0.2), transparent 28%, transparent 72%, rgba(5, 10, 14, 0.2));
+  mix-blend-mode: multiply;
+}
+.gog-card .sharp-card-banner img {
+  position: relative;
+  z-index: 0;
+  object-position: center top;
+  filter: brightness(0.68) contrast(1.55) saturate(1.22);
 }
 .sharp-card.running {
   border-color: var(--success);
@@ -1790,6 +2224,9 @@ details[open] > .drawer-summary {
   text-align: center;
   padding: 80px 20px;
   color: var(--text-dim);
+}
+.empty-state.compact {
+  padding: 36px 20px;
 }
 .empty-icon {
   margin-bottom: 16px;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, provide, type Component } from "vue";
+import { ref, computed, onMounted, provide, watch, type Component } from "vue";
 import Sidebar from "./components/Sidebar.vue";
 import Toast from "./components/Toast.vue";
 import SetupWizard from "./components/SetupWizard.vue";
@@ -48,6 +48,7 @@ const updateStatus = ref<UpdateStatus | null>(null);
 const steamApiKey = ref<string | null>(null);
 const setupDeviceName = ref("");
 const developerMode = ref(localStorage.getItem("metalsharp-developer-mode") === "true");
+const lowPerformanceMode = ref(localStorage.getItem("metalsharp-low-performance-mode") === "true");
 
 const updateDownloading = ref(false);
 const updateProgress = ref(0);
@@ -95,6 +96,7 @@ provide("startUpdateDownload", startUpdateDownload);
 provide("steamApiKey", steamApiKey);
 provide("setupDeviceName", setupDeviceName);
 provide("developerMode", developerMode);
+provide("lowPerformanceMode", lowPerformanceMode);
 provide("toast", toast);
 provide("loadLibrary", loadLibrary);
 provide("api", api);
@@ -117,7 +119,9 @@ async function refreshSteamStatus() {
 
 async function loadLibrary() {
   const lib = await api<SteamLibrary>("GET", "/steam/library");
-  if (lib) library.value = lib;
+  if (lib && Array.isArray(lib.games)) {
+    library.value = lib;
+  }
 
   await api<{ steam: SteamStatus }>("GET", "/scan");
   await refreshSteamStatus();
@@ -297,7 +301,17 @@ async function initApp() {
   startHealthPolling();
 }
 
-      onMounted(async () => {
+function applyLowPerformanceMode(enabled: boolean) {
+  document.documentElement.dataset.lowPerformance = String(enabled);
+}
+
+watch(lowPerformanceMode, (enabled) => {
+  localStorage.setItem("metalsharp-low-performance-mode", String(enabled));
+  applyLowPerformanceMode(enabled);
+});
+
+onMounted(async () => {
+  applyLowPerformanceMode(lowPerformanceMode.value);
   await checkBackend();
   const migrationMode = await getAPI().isMigrationMode?.();
   if (migrationMode) {
@@ -531,20 +545,10 @@ async function initApp() {
 }
 :root[data-theme="developer"] .content {
   background:
-    radial-gradient(circle at 18% 16%, rgba(185, 255, 77, 0.05) 0 1px, transparent 1.8px),
-    radial-gradient(circle at 82% 24%, rgba(0, 245, 255, 0.045) 0 1px, transparent 1.8px),
     linear-gradient(118deg, rgba(185, 255, 77, 0.025), transparent 36%, rgba(0, 245, 255, 0.03) 72%, transparent),
     radial-gradient(circle at 24% 16%, rgba(255, 46, 247, 0.14), transparent 34%),
     radial-gradient(circle at 84% 10%, rgba(0, 245, 255, 0.11), transparent 30%),
     var(--bg-deep);
-  background-size:
-    29px 29px,
-    37px 37px,
-    auto,
-    auto,
-    auto,
-    auto,
-    auto;
 }
 :root[data-theme="developer"] .update-banner {
   background:

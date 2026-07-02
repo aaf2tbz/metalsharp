@@ -335,3 +335,48 @@ textarea {
   left: 14px;
   background: #fff;
 }
+
+:root[data-low-performance="true"] {
+  --transition: 80ms linear;
+  --accent-glow: transparent;
+  --card-glow: transparent;
+}
+
+:root[data-low-performance="true"] *,
+:root[data-low-performance="true"] *::before,
+:root[data-low-performance="true"] *::after {
+  animation: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  filter: none !important;
+  text-shadow: none !important;
+}
+
+:root[data-low-performance="true"] .content,
+:root[data-low-performance="true"] .sidebar,
+:root[data-low-performance="true"] .update-banner,
+:root[data-low-performance="true"] .sharp-card,
+:root[data-low-performance="true"] .gog-card,
+:root[data-low-performance="true"] .game-card,
+:root[data-low-performance="true"] .modal-backdrop,
+:root[data-low-performance="true"] .update-changelog-modal {
+  background-image: none !important;
+}
+
+:root[data-low-performance="true"] .btn,
+:root[data-low-performance="true"] .sharp-card,
+:root[data-low-performance="true"] .gog-card,
+:root[data-low-performance="true"] .game-card,
+:root[data-low-performance="true"] .nav-item,
+:root[data-low-performance="true"] .log-entry {
+  transform: none !important;
+}
+
+:root[data-low-performance="true"] .gog-progress-bar span,
+:root[data-low-performance="true"] .update-progress-fill,
+:root[data-low-performance="true"] .update-banner-progress-fill,
+:root[data-low-performance="true"] .setup-progress-fill,
+:root[data-low-performance="true"] .migration-progress-fill {
+  transition: width 120ms linear !important;
+}

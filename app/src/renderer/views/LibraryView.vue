@@ -109,7 +109,7 @@ function applyFilter() {
     filteredGames.value = [];
     return;
   }
-  let games = library.value.games;
+  let games = Array.isArray(library.value.games) ? library.value.games : [];
   if (filter.value === "installed") games = games.filter((g) => g.installed);
   if (filter.value === "not_installed") games = games.filter((g) => !g.installed);
   if (search.value) {
@@ -406,14 +406,7 @@ watch([library, search, filter], () => {
   pointer-events: none;
 }
 :global(:root[data-theme="developer"] .library-header::after) {
-  background:
-    radial-gradient(circle at 18% 22%, rgba(185, 255, 77, 0.09) 0 1px, transparent 1.8px),
-    radial-gradient(circle at 72% 36%, rgba(0, 245, 255, 0.07) 0 1px, transparent 1.8px),
-    linear-gradient(90deg, rgba(255, 46, 247, 0.10), transparent 34%, rgba(0, 245, 255, 0.09) 78%, transparent);
-  background-size:
-    30px 30px,
-    43px 43px,
-    auto;
+  background: linear-gradient(90deg, rgba(255, 46, 247, 0.10), transparent 34%, rgba(0, 245, 255, 0.09) 78%, transparent);
 }
 .library-title-row {
   display: grid;
