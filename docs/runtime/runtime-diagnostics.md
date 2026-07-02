@@ -96,15 +96,23 @@ With a backend already running, use:
 
 ```bash
 tools/runtime/check-wine20-runtime-readiness.sh
+# or from app/: npm run wine20:readiness
 ```
 
-or point it at a temporary backend:
+or point it at a specific backend:
 
 ```bash
 tools/runtime/check-wine20-runtime-readiness.sh --url http://127.0.0.1:9284
 ```
 
-The script only reads `/runtime/diagnostics`; it does not launch Wine, repair assets, mutate prefixes, or authorize install replacement. It prints both implemented-lane readiness (`availableReady`/`availableTotal`) and all-lane coverage, where planned/external lanes are informational rather than required blockers. It exits non-zero when diagnostics are not green or if the install replacement guard is unexpectedly enabled.
+For a self-contained local preflight that builds the debug backend, starts it on an ephemeral port, reads diagnostics, and shuts it down:
+
+```bash
+tools/runtime/check-wine20-runtime-readiness-local.sh
+# or from app/: npm run wine20:readiness:local
+```
+
+The scripts only read `/runtime/diagnostics`; they do not launch Wine, repair assets, mutate prefixes, or authorize install replacement. They print both implemented-lane readiness (`availableReady`/`availableTotal`) and all-lane coverage, where planned/external lanes are informational rather than required blockers. They exit non-zero when diagnostics are not green or if the install replacement guard is unexpectedly enabled.
 
 ## Intended workflow
 

@@ -15,6 +15,8 @@
     "dev:vite": "vite",
     "rust:build": "cd src-rust && cargo build --release",
     "rust:dev": "cd src-rust && cargo build",
+    "wine20:readiness": "../tools/runtime/check-wine20-runtime-readiness.sh",
+    "wine20:readiness:local": "../tools/runtime/check-wine20-runtime-readiness-local.sh",
     "build:all": "npm run rust:build && npm run build",
     "pack": "npm run build:all && electron-builder --dir",
     "prepare:native": "../tools/package/prepare-native-placeholders.sh",
