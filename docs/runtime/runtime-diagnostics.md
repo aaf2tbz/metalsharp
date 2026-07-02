@@ -17,7 +17,8 @@ This endpoint is intentionally non-mutating. It does not install assets, launch 
 - Wine/DXMT artifact presence and current-version checks;
 - canonical M12 installed surface checks;
 - Steam and GOG prefix policy checks;
-- filesystem-only Steam/GOG source readiness, including GOGDL binary/auth/prefix state.
+- filesystem-only Steam/GOG source readiness, including GOGDL binary/auth/prefix state;
+- Phase 8 Native Mono/FNA platform readiness, including Mono ARM64/x86 binary and architecture checks plus required support inventory.
 
 The endpoint exists so the app can answer “is the Wine 2.0 runtime shape coherent?” before deeper per-game doctors or launch experiments run.
 
@@ -86,8 +87,9 @@ Top-level fields:
 - `runtime` — Wine/DXMT/M12/manifest readiness.
 - `prefixes` — Steam/GOG prefix separation report.
 - `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
+- `nativeMono` — filesystem-only Native Mono/FNA platform doctor. It reports `native_mono_arm64` and `native_mono_x86` Mono binary presence, Mach-O architecture match, required FNA/FNA3D/FAudio/SDL2/Carbon/HiView/Kernel32 support inventory, optional shims, and non-mutating next actions.
 - `vulkan` — filesystem-only Vulkan-family doctor. It checks canonical `runtime/wine/lib/dxvk`, `runtime/wine/lib/vkd3d`, required MoltenVK/VKD3D sidecars, and MoltenVK ICD JSON paths without launching Wine or Vulkan.
-- `lanes` — one read-only readiness row per runtime contract, with `availableReady`/`availableTotal` for implemented lanes plus `planned` and `external` counts when present. Each graphics runtime lane may include `artifactSummary` with `present`, `missing`, `total`, and `allPresent` counts derived from the filesystem-only manifest artifact report. Stable blocker ids include `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `dxvk_runtime`, `vkd3d_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
+- `lanes` — one read-only readiness row per runtime contract, with `availableReady`/`availableTotal` for implemented lanes plus `planned` and `external` counts when present. Native Mono/FNA lanes consume `nativeMono` doctor blockers such as `mono_binary`, `mono_arch`, and `native_mono_support_assets`. Each graphics runtime lane may include `artifactSummary` with `present`, `missing`, `total`, and `allPresent` counts derived from the filesystem-only manifest artifact report. Stable blocker ids include `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `dxvk_runtime`, `vkd3d_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
 - `updateGuard` — read-only private-fork update-source safety. It reports whether public MetalSharp updates are disabled, a custom feed is configured, or the public release feed is in use.
 - `installReplacementGuard` — destructive replacement guard.
 - `nextActions` — suggested non-destructive next steps.

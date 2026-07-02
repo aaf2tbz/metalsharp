@@ -54,6 +54,8 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
     let dxmt_m12_current = crate::installer::dxmt_m12_runtime_current_for_home(home);
     let update_guard = crate::updater::update_source_guard_report();
     let update_guard_ok = update_guard.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let native_mono_report = serde_json::to_value(crate::fna_profile::native_mono_platform_doctor_for(home, None))
+        .unwrap_or_else(|_| json!({ "ok": false, "error": "native Mono/FNA doctor serialization failed" }));
     let vulkan_report = vulkan_runtime_doctor_report(&wine_root);
     let runtime_ready = wine_binary_present && dxmt_current && dxmt_m12_current && manifest_ok;
     let ok = runtime_ready && prefix_ok && canonical_m12_ok && update_guard_ok;
@@ -99,17 +101,18 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
         },
         "prefixes": prefix_report,
         "sources": source_report,
+        "nativeMono": native_mono_report.clone(),
         "vulkan": vulkan_report,
         "lanes": lane_readiness_report(
             &contracts,
             &LaneReadinessContext {
-                runtime_root: &runtime_root,
                 wine_binary_present,
                 dxmt_current,
                 dxmt_m12_current,
                 manifest_ok,
                 prefix_ok,
                 sources: &source_report,
+                native_mono: &native_mono_report,
                 artifacts: manifest.get("artifacts").unwrap_or(&Value::Null),
             },
         ),
@@ -123,13 +126,13 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
 }
 
 struct LaneReadinessContext<'a> {
-    runtime_root: &'a Path,
     wine_binary_present: bool,
     dxmt_current: bool,
     dxmt_m12_current: bool,
     manifest_ok: bool,
     prefix_ok: bool,
     sources: &'a Value,
+    native_mono: &'a Value,
     artifacts: &'a Value,
 }
 
@@ -192,8 +195,9 @@ fn lane_readiness_entry(
     }
 
     match contract.id {
-        "native_mono_arm64" if !context.runtime_root.join("mono-arm64").exists() => blockers.push("mono_arm64_runtime"),
-        "native_mono_x86" if !context.runtime_root.join("mono-x86").exists() => blockers.push("mono_x86_runtime"),
+        "native_mono_arm64" | "native_mono_x86" => {
+            blockers.extend(native_mono_lane_blockers(contract.id, context.native_mono));
+        },
         "m9" | "m10" | "m11" if !context.dxmt_current => blockers.push("dxmt_runtime"),
         "m12_dxmt_m12" if !context.dxmt_m12_current => blockers.push("dxmt_m12_runtime"),
         "dxvk_d9" | "dxvk_d11" if !lane_artifacts_all_present(contract.id, context.artifacts) => {
@@ -242,6 +246,42 @@ fn lane_readiness_entry(
         "runtimeSurfacePaths": &contract.runtime_surface_paths,
         "artifactSummary": lane_artifact_summary(contract.id, context.artifacts),
     })
+}
+
+fn native_mono_lane_blockers(lane_id: &str, native_mono: &Value) -> Vec<&'static str> {
+    let mut blockers = Vec::new();
+    let support_ok =
+        native_mono.get("support_inventory").and_then(|inventory| inventory.as_array()).is_some_and(|inventory| {
+            inventory.iter().all(|entry| {
+                !entry.get("required").and_then(|value| value.as_bool()).unwrap_or(false)
+                    || entry.get("present").and_then(|value| value.as_bool()) == Some(true)
+            })
+        });
+    if !support_ok {
+        blockers.push("native_mono_support_assets");
+    }
+
+    let lane = native_mono
+        .get("lanes")
+        .and_then(|lanes| lanes.as_array())
+        .and_then(|lanes| lanes.iter().find(|lane| lane.get("id").and_then(|value| value.as_str()) == Some(lane_id)));
+    let Some(lane) = lane else {
+        blockers.push("native_mono_doctor");
+        return blockers;
+    };
+    if let Some(lane_blockers) = lane.get("blockers").and_then(|value| value.as_array()) {
+        for blocker in lane_blockers {
+            match blocker.as_str() {
+                Some("mono_binary") => blockers.push("mono_binary"),
+                Some("mono_arch") => blockers.push("mono_arch"),
+                Some(_) => blockers.push("native_mono_lane"),
+                None => {},
+            }
+        }
+    }
+    blockers.sort_unstable();
+    blockers.dedup();
+    blockers
 }
 
 fn lane_artifacts_all_present(lane_id: &str, artifacts: &Value) -> bool {
@@ -608,6 +648,30 @@ mod tests {
         path
     }
 
+    fn write_thin_macho(path: &Path, cpu: u32) {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0xfeedfacfu32.to_le_bytes());
+        bytes.extend_from_slice(&cpu.to_le_bytes());
+        bytes.extend_from_slice(&[0; 24]);
+        fs::create_dir_all(path.parent().unwrap()).expect("create macho parent");
+        fs::write(path, bytes).expect("write macho");
+    }
+
+    fn stage_native_mono_support_assets(runtime_root: &Path) {
+        for path in [
+            runtime_root.join("fna/FNA.dll"),
+            runtime_root.join("fnalibs/libSDL2-2.0.0.dylib"),
+            runtime_root.join("fnalibs/libFNA3D.0.dylib"),
+            runtime_root.join("fnalibs/libFAudio.0.dylib"),
+            runtime_root.join("shims/libCarbon.dylib"),
+            runtime_root.join("shims/libuser32.dylib"),
+            runtime_root.join("shims/libkernel32.dylib"),
+        ] {
+            fs::create_dir_all(path.parent().unwrap()).expect("create asset parent");
+            fs::write(path, b"asset").expect("write asset");
+        }
+    }
+
     #[test]
     fn diagnostics_keep_gog_and_steam_prefixes_separate() {
         let home = test_home("prefixes");
@@ -704,6 +768,59 @@ mod tests {
         let report = runtime_diagnostics_report_for(&home);
         assert_eq!(report.get("readOnly").and_then(|value| value.as_bool()), Some(true));
         assert!(!marker.exists(), "runtime diagnostics must not execute the Wine wrapper");
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_include_native_mono_platform_doctor() {
+        let home = test_home("native-mono-doctor");
+        let report = runtime_diagnostics_report_for(&home);
+        let native_mono = report.get("nativeMono").expect("native mono doctor");
+        assert_eq!(native_mono.get("read_only").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(native_mono.get("ok").and_then(|value| value.as_bool()), Some(false));
+        let lanes = native_mono.get("lanes").and_then(|value| value.as_array()).expect("native mono lanes");
+        assert_eq!(lanes.len(), 2);
+        assert!(lanes.iter().any(|lane| lane.get("id").and_then(|value| value.as_str()) == Some("native_mono_arm64")));
+        assert!(lanes.iter().any(|lane| lane.get("id").and_then(|value| value.as_str()) == Some("native_mono_x86")));
+        let readiness_lanes = report
+            .get("lanes")
+            .and_then(|value| value.get("entries"))
+            .and_then(|value| value.as_array())
+            .expect("runtime lane entries");
+        let arm64 = readiness_lanes
+            .iter()
+            .find(|lane| lane.get("id").and_then(|value| value.as_str()) == Some("native_mono_arm64"))
+            .expect("arm64 lane readiness");
+        let blockers = arm64.get("blockers").and_then(|value| value.as_array()).expect("arm64 blockers");
+        assert!(blockers.iter().any(|blocker| blocker.as_str() == Some("mono_binary")));
+        assert!(blockers.iter().any(|blocker| blocker.as_str() == Some("native_mono_support_assets")));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn diagnostics_use_native_mono_doctor_for_lane_readiness() {
+        let home = test_home("native-mono-ready");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let runtime = ms_home.join("runtime");
+        write_thin_macho(&runtime.join("mono-arm64/bin/mono"), 0x0100_000c);
+        write_thin_macho(&runtime.join("mono-x86/bin/mono"), 0x0100_0007);
+        stage_native_mono_support_assets(&runtime);
+        let report = runtime_diagnostics_report_for(&home);
+        let native_mono = report.get("nativeMono").expect("native mono doctor");
+        assert_eq!(native_mono.get("ok").and_then(|value| value.as_bool()), Some(true));
+        let readiness_lanes = report
+            .get("lanes")
+            .and_then(|value| value.get("entries"))
+            .and_then(|value| value.as_array())
+            .expect("runtime lane entries");
+        for id in ["native_mono_arm64", "native_mono_x86"] {
+            let lane = readiness_lanes
+                .iter()
+                .find(|lane| lane.get("id").and_then(|value| value.as_str()) == Some(id))
+                .expect("native mono lane readiness");
+            assert_eq!(lane.get("ready").and_then(|value| value.as_bool()), Some(true), "{id}");
+            assert_eq!(lane.get("blockers").and_then(|value| value.as_array()).map(Vec::len), Some(0), "{id}");
+        }
         let _ = fs::remove_dir_all(home);
     }
 

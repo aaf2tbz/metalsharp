@@ -185,6 +185,38 @@ interface RuntimeManifestResponse {
   artifacts: Record<string, unknown>;
 }
 
+interface NativeMonoLaneDoctor {
+  id: "native_mono_arm64" | "native_mono_x86";
+  runtime_root: string;
+  mono_binary: string;
+  expected_arch: "arm64" | "x86_64";
+  present: boolean;
+  detected_architectures: string[];
+  architecture_ok: boolean;
+  ready: boolean;
+  blockers: string[];
+}
+
+interface NativeMonoSupportInventoryEntry {
+  id: string;
+  label: string;
+  path: string;
+  present: boolean;
+  required: boolean;
+  sha256?: string | null;
+}
+
+interface NativeMonoPlatformDoctor {
+  schema_version: 1;
+  ok: boolean;
+  read_only: true;
+  metalsharp_home: string;
+  lanes: NativeMonoLaneDoctor[];
+  support_inventory: NativeMonoSupportInventoryEntry[];
+  game?: unknown | null;
+  next_actions: string[];
+}
+
 interface RuntimeDiagnosticsResponse {
   ok: boolean;
   schema: "metalsharp.runtime.diagnostics.v1";
@@ -251,6 +283,7 @@ interface RuntimeDiagnosticsResponse {
       };
     }[];
   };
+  nativeMono: NativeMonoPlatformDoctor;
   sources: {
     steam: {
       id: "steam_background";

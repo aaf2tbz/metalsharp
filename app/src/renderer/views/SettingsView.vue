@@ -265,6 +265,29 @@ function runtimeDiagnosticStatus(value?: boolean): string {
   return value ? "Ready" : "Needs Attention";
 }
 
+function nativeMonoSupportSummary(diagnostics: RuntimeDiagnosticsResponse | null): string {
+  const inventory = diagnostics?.nativeMono.support_inventory ?? [];
+  const required = inventory.filter((entry) => entry.required);
+  const present = required.filter((entry) => entry.present).length;
+  return `${present}/${required.length} required assets`;
+}
+
+function nativeMonoLaneSummary(diagnostics: RuntimeDiagnosticsResponse | null): string {
+  const lanes = diagnostics?.nativeMono.lanes ?? [];
+  const ready = lanes.filter((lane) => lane.ready).length;
+  return `${ready}/${lanes.length} lanes ready`;
+}
+
+function nativeMonoMissingRequired(diagnostics: RuntimeDiagnosticsResponse | null): string {
+  const missing = diagnostics?.nativeMono.support_inventory.filter((entry) => entry.required && !entry.present) ?? [];
+  return missing.length ? missing.map((entry) => entry.label).join(" · ") : "Required support assets staged";
+}
+
+function nativeMonoLaneBlockers(diagnostics: RuntimeDiagnosticsResponse | null): string {
+  const blockers = diagnostics?.nativeMono.lanes.flatMap((lane) => lane.blockers.map((blocker) => `${lane.id}: ${blocker}`)) ?? [];
+  return blockers.length ? blockers.join(" · ") : "Mono binaries and architectures match lane contracts";
+}
+
 function runtimeLaneBadgeClass(lane: RuntimeDiagnosticsResponse["lanes"]["entries"][number]): string {
   if (lane.ready) return "badge-ok";
   if (lane.status === "planned" || lane.status === "external") return "badge-muted";
@@ -473,6 +496,14 @@ function uninstallMetalsharp() {
           <span
             v-if="runtimeDiagnostics"
             class="badge"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.nativeMono.ok)"
+            :title="`${nativeMonoLaneSummary(runtimeDiagnostics)}; ${nativeMonoSupportSummary(runtimeDiagnostics)}`"
+          >
+            Mono/FNA {{ runtimeDiagnosticStatus(runtimeDiagnostics.nativeMono.ok) }}
+          </span>
+          <span
+            v-if="runtimeDiagnostics"
+            class="badge"
             :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.vulkan.ok)"
             :title="`DXVK ${runtimeDiagnostics.vulkan.dxvk.present}/${runtimeDiagnostics.vulkan.dxvk.total}; VKD3D ${runtimeDiagnostics.vulkan.vkd3d.present}/${runtimeDiagnostics.vulkan.vkd3d.total}; ICD ${runtimeDiagnostics.vulkan.icd.present ? 'present' : 'missing'}`"
           >
@@ -489,6 +520,21 @@ function uninstallMetalsharp() {
           <button class="btn btn-secondary btn-sm" :disabled="runtimeDiagnosticsLoading" @click="refreshRuntimeDiagnostics">
             {{ runtimeDiagnosticsLoading ? "Checking..." : "Refresh" }}
           </button>
+        </div>
+      </div>
+      <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Native Mono/FNA platform readiness">
+        <div class="runtime-lane-card" :class="{ 'runtime-lane-ready': runtimeDiagnostics.nativeMono.ok }">
+          <div class="runtime-lane-header">
+            <span class="runtime-lane-name">Native Mono/FNA Platform</span>
+            <span class="badge" :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.nativeMono.ok)">
+              {{ runtimeDiagnostics.nativeMono.ok ? "Ready" : "Needs Attention" }}
+            </span>
+          </div>
+          <div class="runtime-lane-meta">
+            {{ nativeMonoLaneSummary(runtimeDiagnostics) }} · {{ nativeMonoSupportSummary(runtimeDiagnostics) }} · read-only
+          </div>
+          <div class="runtime-lane-artifacts">{{ nativeMonoLaneBlockers(runtimeDiagnostics) }}</div>
+          <div class="runtime-lane-blockers">{{ nativeMonoMissingRequired(runtimeDiagnostics) }}</div>
         </div>
       </div>
       <div v-if="runtimeDiagnostics" class="runtime-lane-grid" aria-label="Runtime lane readiness">
