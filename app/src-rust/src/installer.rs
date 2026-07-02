@@ -315,6 +315,7 @@ fn install_steps() -> Vec<InstallStep> {
         ("Host Runtime ABI", Box::new(install_host_runtime)),
         ("Support Assets", Box::new(install_split_assets_bundle)),
         ("DXVK Runtime Surface", Box::new(install_dxvk_runtime_surface)),
+        ("VKD3D Runtime Surface", Box::new(install_vkd3d_runtime_surface)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Graphics Runtimes", Box::new(|home| ensure_graphics_runtimes_ready(home))),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
@@ -947,6 +948,8 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
         ("mono-x86", runtime_dir.join("mono-x86")),
         ("mono-arm64", runtime_dir.join("mono-arm64")),
         ("dxvk-1.10.3", runtime_dir.join("dxvk-1.10.3")),
+        ("vkd3d", runtime_dir.join("vkd3d")),
+        ("vkd3d-proton", runtime_dir.join("vkd3d-proton")),
         ("goldberg", runtime_dir.join("goldberg")),
         ("shims", runtime_dir.join("shims")),
         ("fnalibs", runtime_dir.join("fnalibs")),
@@ -1085,6 +1088,73 @@ fn copy_runtime_dlls(src: &Path, dst: &Path) -> Result<bool, String> {
         changed = true;
     }
     Ok(changed)
+}
+
+fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let runtime_root = ms_home.join("runtime");
+    let canonical = runtime_root.join("wine").join("lib").join("vkd3d");
+    if vkd3d_canonical_surface_has_payload(&canonical) {
+        return Ok(false);
+    }
+
+    let source = [runtime_root.join("vkd3d"), runtime_root.join("vkd3d-proton")].into_iter().find(|candidate| {
+        candidate.join("x64").join("d3d12.dll").is_file()
+            || candidate.join("x86_64-windows").join("d3d12.dll").is_file()
+    });
+    let Some(source) = source else {
+        // VKD3D remains planned. Missing payloads are visible in diagnostics,
+        // but setup should not fail until the lane is intentionally promoted.
+        return Ok(false);
+    };
+
+    let windows_dst = canonical.join("x86_64-windows");
+    let unix_dst = canonical.join("x86_64-unix");
+    fs::create_dir_all(&windows_dst).map_err(|error| format!("create VKD3D windows surface: {error}"))?;
+    fs::create_dir_all(&unix_dst).map_err(|error| format!("create VKD3D unix surface: {error}"))?;
+
+    let mut changed = false;
+    for source_subdir in ["x86_64-windows", "x64"] {
+        changed |= copy_runtime_dlls(&source.join(source_subdir), &windows_dst)?;
+    }
+    if !windows_dst.join("dxgi.dll").is_file() {
+        let dxvk_dxgi = runtime_root.join("wine").join("lib").join("dxvk").join("x86_64-windows").join("dxgi.dll");
+        if dxvk_dxgi.is_file() {
+            fs::copy(&dxvk_dxgi, windows_dst.join("dxgi.dll"))
+                .map_err(|error| format!("copy DXVK dxgi.dll into VKD3D surface: {error}"))?;
+            changed = true;
+        }
+    }
+
+    for source_subdir in ["x86_64-unix", "lib", ""] {
+        let src = source.join(source_subdir);
+        if !src.is_dir() {
+            continue;
+        }
+        for sidecar in VKD3D_REQUIRED_UNIX {
+            let path = src.join(sidecar);
+            if path.is_file() {
+                fs::copy(&path, unix_dst.join(sidecar))
+                    .map_err(|error| format!("copy VKD3D sidecar {}: {error}", path.display()))?;
+                changed = true;
+            }
+        }
+    }
+    if !unix_dst.join("libMoltenVK.dylib").is_file() {
+        let moltenvk = runtime_root.join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        if moltenvk.is_file() {
+            fs::copy(&moltenvk, unix_dst.join("libMoltenVK.dylib"))
+                .map_err(|error| format!("copy MoltenVK into VKD3D surface: {error}"))?;
+            changed = true;
+        }
+    }
+
+    Ok(changed)
+}
+
+fn vkd3d_canonical_surface_has_payload(surface: &Path) -> bool {
+    surface.join("x86_64-windows").join("d3d12.dll").is_file()
+        && surface.join("x86_64-windows").join("dxgi.dll").is_file()
 }
 
 fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
@@ -2647,6 +2717,37 @@ mod tests {
         let report = runtime_artifact_report_for(&home);
         let dxvk = report.get("planned").and_then(|planned| planned.get("dxvk")).expect("dxvk report");
         assert_eq!(dxvk.get("all_present").and_then(|value| value.as_bool()), Some(true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn vkd3d_runtime_surface_stages_from_payload_and_dxvk_dxgi() {
+        let home = test_home("vkd3d-canonical-surface");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let runtime_root = ms_home.join("runtime");
+        let source = runtime_root.join("vkd3d-proton");
+        fs::create_dir_all(source.join("x64")).expect("create vkd3d x64 dir");
+        fs::create_dir_all(source.join("x86_64-unix")).expect("create vkd3d unix dir");
+        fs::write(source.join("x64").join("d3d12.dll"), b"d3d12").expect("write vkd3d d3d12");
+        fs::write(source.join("x86_64-unix").join("libvkd3d-shader.dylib"), b"shader").expect("write vkd3d shader");
+
+        let dxvk_dxgi = runtime_root.join("wine").join("lib").join("dxvk").join("x86_64-windows").join("dxgi.dll");
+        fs::create_dir_all(dxvk_dxgi.parent().unwrap()).expect("create dxvk dxgi parent");
+        fs::write(&dxvk_dxgi, b"dxgi").expect("write dxvk dxgi");
+        let moltenvk = runtime_root.join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        fs::create_dir_all(moltenvk.parent().unwrap()).expect("create MoltenVK parent");
+        fs::write(&moltenvk, b"moltenvk").expect("write MoltenVK");
+
+        assert!(install_vkd3d_runtime_surface(&home).expect("stage vkd3d surface"));
+        let canonical = runtime_root.join("wine").join("lib").join("vkd3d");
+        assert!(canonical.join("x86_64-windows").join("d3d12.dll").is_file());
+        assert!(canonical.join("x86_64-windows").join("dxgi.dll").is_file());
+        assert!(canonical.join("x86_64-unix").join("libvkd3d-shader.dylib").is_file());
+        assert!(canonical.join("x86_64-unix").join("libMoltenVK.dylib").is_file());
+
+        let report = runtime_artifact_report_for(&home);
+        let vkd3d = report.get("planned").and_then(|planned| planned.get("vkd3d")).expect("vkd3d report");
+        assert_eq!(vkd3d.get("all_present").and_then(|value| value.as_bool()), Some(true));
         let _ = fs::remove_dir_all(home);
     }
 

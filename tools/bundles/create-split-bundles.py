@@ -251,6 +251,8 @@ def build_staging(tmp: Path) -> dict[str, Path]:
 
     optional_archives = {
         "dxvk.tar.zst": ("dxvk", "dxvk-1.10.3"),
+        "vkd3d.tar.zst": ("vkd3d", "vkd3d"),
+        "vkd3d-proton.tar.zst": ("vkd3d-proton", "vkd3d-proton"),
         "mono-x86.tar.zst": ("mono-x86", "mono-x86"),
         "fnalibs.tar.zst": ("fnalibs", "fnalibs"),
         "fna-kickstart.tar.zst": ("fna-kickstart", "fna-kickstart"),
