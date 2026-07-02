@@ -44,6 +44,12 @@ const DXMT_REQUIRED_PE: &[&str] = &[
 ];
 const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so"];
 const DXMT_M12_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+const DXVK_REQUIRED_UNIX: &[&str] = &["libMoltenVK.dylib"];
+const DXVK_D9_REQUIRED_PE_X64: &[&str] = &["d3d9.dll"];
+const DXVK_D9_REQUIRED_PE_I386: &[&str] = &["d3d9.dll", "dxgi.dll"];
+const DXVK_D11_REQUIRED_PE_X64: &[&str] = &["d3d10core.dll", "d3d11.dll", "dxgi.dll"];
+const VKD3D_REQUIRED_UNIX: &[&str] = &["libvkd3d-shader.dylib", "libMoltenVK.dylib"];
+const VKD3D_REQUIRED_PE_X64: &[&str] = &["d3d12.dll", "dxgi.dll"];
 #[cfg(not(test))]
 const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
     ("x86_64-windows/d3d10core.dll", "11c9610770cb0e3f6476d2bde2a3b1afa36a41bd00a2fffc6ea61d2e62c6258d"),
@@ -1449,8 +1455,13 @@ pub fn runtime_artifact_report() -> Value {
 pub fn runtime_artifact_report_for(home: &Path) -> Value {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    let wine_lib_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine").join("lib");
+    let dxvk_dir = wine_lib_dir.join("dxvk");
+    let vkd3d_dir = wine_lib_dir.join("vkd3d");
     let m11 = verify_required_files("dxmt", &dxmt_dir, DXMT_REQUIRED_UNIX, DXMT_REQUIRED_PE);
     let m12 = verify_required_files_with_unix("dxmt_m12", &dxmt_m12_dir, DXMT_M12_REQUIRED_UNIX, DXMT_REQUIRED_PE);
+    let dxvk = verify_dxvk_runtime_artifacts(&dxvk_dir);
+    let vkd3d = verify_vkd3d_runtime_artifacts(&vkd3d_dir);
     let ok = m11.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false)
         && m12.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false);
     json!({
@@ -1458,6 +1469,10 @@ pub fn runtime_artifact_report_for(home: &Path) -> Value {
         "schema_version": 1,
         "dxmt": m11,
         "dxmt_m12": m12,
+        "planned": {
+            "dxvk": dxvk,
+            "vkd3d": vkd3d,
+        },
     })
 }
 
@@ -1492,6 +1507,71 @@ fn verify_required_files_with_unix(
     // libunwind). This is the same shape as verify_required_files but takes the
     // M12 unix list explicitly so the report names each sidecar.
     verify_required_files(label, runtime_dir, unix_required, pe_required)
+}
+
+fn verify_dxvk_runtime_artifacts(runtime_dir: &Path) -> Value {
+    let d9 = verify_required_files_multi(
+        "dxvk_d9",
+        runtime_dir,
+        DXVK_REQUIRED_UNIX,
+        &[("x86_64-windows", DXVK_D9_REQUIRED_PE_X64), ("i386-windows", DXVK_D9_REQUIRED_PE_I386)],
+    );
+    let d11 = verify_required_files_multi(
+        "dxvk_d11",
+        runtime_dir,
+        DXVK_REQUIRED_UNIX,
+        &[("x86_64-windows", DXVK_D11_REQUIRED_PE_X64), ("i386-windows", DXVK_D11_REQUIRED_PE_X64)],
+    );
+    let all_present = d9.get("all_present").and_then(|value| value.as_bool()).unwrap_or(false)
+        && d11.get("all_present").and_then(|value| value.as_bool()).unwrap_or(false);
+    json!({
+        "all_present": all_present,
+        "required_external_state": ["Vulkan ICD"],
+        "d9": d9,
+        "d11": d11,
+    })
+}
+
+fn verify_vkd3d_runtime_artifacts(runtime_dir: &Path) -> Value {
+    let d12 = verify_required_files_multi(
+        "vkd3d_d12",
+        runtime_dir,
+        VKD3D_REQUIRED_UNIX,
+        &[("x86_64-windows", VKD3D_REQUIRED_PE_X64)],
+    );
+    json!({
+        "all_present": d12.get("all_present").and_then(|value| value.as_bool()).unwrap_or(false),
+        "required_external_state": ["Vulkan ICD"],
+        "d12": d12,
+    })
+}
+
+fn verify_required_files_multi(
+    label: &str,
+    runtime_dir: &Path,
+    unix_required: &[&str],
+    pe_required_by_subdir: &[(&str, &[&str])],
+) -> Value {
+    let mut entries = Vec::new();
+    let mut all_present = true;
+    for name in unix_required {
+        let path = runtime_dir.join("x86_64-unix").join(name);
+        let present = file_nonempty(&path);
+        all_present &= present;
+        entries.push(artifact_entry(label, "x86_64-unix", name, &path, present));
+    }
+    for (subdir, dlls) in pe_required_by_subdir {
+        for dll in *dlls {
+            let path = runtime_dir.join(subdir).join(dll);
+            let present = file_nonempty(&path);
+            all_present &= present;
+            entries.push(artifact_entry(label, subdir, dll, &path, present));
+        }
+    }
+    json!({
+        "all_present": all_present,
+        "entries": entries,
+    })
 }
 
 fn artifact_entry(label: &str, subdir: &str, name: &str, path: &Path, present: bool) -> Value {
@@ -2449,6 +2529,31 @@ mod tests {
             assert_eq!(entry.get("present").and_then(|v| v.as_bool()), Some(false));
             assert_eq!(entry.get("sha256").and_then(|v| v.as_str()), None);
         }
+
+        let planned = report.get("planned").expect("planned runtime surfaces");
+        let dxvk = planned.get("dxvk").expect("dxvk planned report");
+        assert_eq!(dxvk.get("all_present").and_then(|v| v.as_bool()), Some(false));
+        let dxvk_d11_entries = dxvk
+            .get("d11")
+            .and_then(|value| value.get("entries"))
+            .and_then(|value| value.as_array())
+            .expect("dxvk d11 entries");
+        assert!(dxvk_d11_entries.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("d3d11.dll")
+                && entry.get("subdir").and_then(|value| value.as_str()) == Some("x86_64-windows")
+        }));
+
+        let vkd3d = planned.get("vkd3d").expect("vkd3d planned report");
+        assert_eq!(vkd3d.get("all_present").and_then(|v| v.as_bool()), Some(false));
+        let vkd3d_d12_entries = vkd3d
+            .get("d12")
+            .and_then(|value| value.get("entries"))
+            .and_then(|value| value.as_array())
+            .expect("vkd3d d12 entries");
+        assert!(vkd3d_d12_entries.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("d3d12.dll")
+                && entry.get("subdir").and_then(|value| value.as_str()) == Some("x86_64-windows")
+        }));
     }
 
     #[test]

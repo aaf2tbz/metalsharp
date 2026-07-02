@@ -20,7 +20,8 @@ The manifest report covers:
 - Windows support model (`win32`, `win64`, `wow64`);
 - canonical M12 runtime surface: `dxmt_m12`;
 - known runtime surfaces and installed paths;
-- existing artifact report for `dxmt` and `dxmt_m12`.
+- required artifact report for `dxmt` and `dxmt_m12`;
+- planned artifact reports for `dxvk` and `vkd3d` surfaces, so missing future-lane payloads are visible by filename before those lanes are promoted.
 
 ## Canonical M12 Surface
 
@@ -53,6 +54,16 @@ The read-only report validates:
 - canonical M12 surface name;
 - canonical installed `dxmt_m12` path;
 - required M12 sidecars and PE DLLs via the existing installer artifact checks.
+
+Planned Vulkan-family surfaces are reported under `artifacts.planned` and are intentionally not part of the current overall runtime `ok` gate while their lane status remains `planned`:
+
+```text
+artifacts.planned.dxvk.d9.entries[]
+artifacts.planned.dxvk.d11.entries[]
+artifacts.planned.vkd3d.d12.entries[]
+```
+
+Each entry includes `filename`, `subdir`, `path`, `present`, `sha256`, and `size_bytes`, matching the required DXMT/M12 artifact-report shape.
 
 ## Writer Helper
 
