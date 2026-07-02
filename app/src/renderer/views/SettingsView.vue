@@ -443,9 +443,10 @@ function uninstallMetalsharp() {
           <span
             v-if="runtimeDiagnostics"
             class="badge"
-            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.lanes.ready === runtimeDiagnostics.lanes.total)"
+            :class="runtimeDiagnosticBadgeClass(runtimeDiagnostics.lanes.availableReady === runtimeDiagnostics.lanes.availableTotal)"
+            :title="`${runtimeDiagnostics.lanes.planned} planned, ${runtimeDiagnostics.lanes.external} external`"
           >
-            Lanes {{ runtimeDiagnostics.lanes.ready }}/{{ runtimeDiagnostics.lanes.total }}
+            Available Lanes {{ runtimeDiagnostics.lanes.availableReady }}/{{ runtimeDiagnostics.lanes.availableTotal }}
           </span>
           <span
             v-if="runtimeDiagnostics"

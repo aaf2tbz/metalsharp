@@ -204,6 +204,10 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
       lanes: {
         total: 13,
         ready: 9,
+        availableTotal: 9,
+        availableReady: 9,
+        planned: 3,
+        external: 1,
         entries: [
           {
             id: "m12_dxmt_m12",

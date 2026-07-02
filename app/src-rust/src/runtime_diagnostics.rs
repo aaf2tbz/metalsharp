@@ -125,10 +125,34 @@ fn lane_readiness_report(
     let entries: Vec<Value> = contracts.iter().map(|contract| lane_readiness_entry(contract, context)).collect();
     let ready =
         entries.iter().filter(|entry| entry.get("ready").and_then(|value| value.as_bool()) == Some(true)).count();
+    let available_total = contracts
+        .iter()
+        .filter(|contract| matches!(contract.status, crate::runtime_contracts::RuntimeLaneStatus::Available))
+        .count();
+    let available_ready = contracts
+        .iter()
+        .zip(entries.iter())
+        .filter(|(contract, entry)| {
+            matches!(contract.status, crate::runtime_contracts::RuntimeLaneStatus::Available)
+                && entry.get("ready").and_then(|value| value.as_bool()) == Some(true)
+        })
+        .count();
+    let planned = contracts
+        .iter()
+        .filter(|contract| matches!(contract.status, crate::runtime_contracts::RuntimeLaneStatus::Planned))
+        .count();
+    let external = contracts
+        .iter()
+        .filter(|contract| matches!(contract.status, crate::runtime_contracts::RuntimeLaneStatus::External))
+        .count();
 
     json!({
         "total": entries.len(),
         "ready": ready,
+        "availableTotal": available_total,
+        "availableReady": available_ready,
+        "planned": planned,
+        "external": external,
         "entries": entries,
     })
 }
@@ -491,11 +515,12 @@ mod tests {
     fn diagnostics_report_lane_readiness_blockers() {
         let home = test_home("lane-blockers");
         let report = runtime_diagnostics_report_for(&home);
-        let entries = report
-            .get("lanes")
-            .and_then(|lanes| lanes.get("entries"))
-            .and_then(|entries| entries.as_array())
-            .expect("lane entries");
+        let lanes = report.get("lanes").expect("lanes");
+        assert_eq!(lanes.get("total").and_then(|value| value.as_u64()), Some(13));
+        assert_eq!(lanes.get("availableTotal").and_then(|value| value.as_u64()), Some(9));
+        assert_eq!(lanes.get("planned").and_then(|value| value.as_u64()), Some(3));
+        assert_eq!(lanes.get("external").and_then(|value| value.as_u64()), Some(1));
+        let entries = lanes.get("entries").and_then(|entries| entries.as_array()).expect("lane entries");
         let m12 = entries
             .iter()
             .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some("m12_dxmt_m12"))

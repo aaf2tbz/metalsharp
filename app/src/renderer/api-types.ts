@@ -213,6 +213,10 @@ interface RuntimeDiagnosticsResponse {
   lanes: {
     total: number;
     ready: number;
+    availableTotal: number;
+    availableReady: number;
+    planned: number;
+    external: number;
     entries: {
       id: string;
       name: string;

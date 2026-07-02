@@ -86,7 +86,7 @@ Top-level fields:
 - `runtime` — Wine/DXMT/M12/manifest readiness.
 - `prefixes` — Steam/GOG prefix separation report.
 - `sources` — filesystem-only source readiness. GOG reports `gogdlAvailable`, `authPresent`, and dedicated `gog-prefix` state without spawning `gogdl`.
-- `lanes` — one read-only readiness row per runtime contract, with stable blocker ids such as `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
+- `lanes` — one read-only readiness row per runtime contract, with `availableReady`/`availableTotal` for implemented lanes plus `planned` and `external` counts for roadmap/external lanes. Stable blocker ids include `wine_binary`, `runtime_manifest`, `dxmt_runtime`, `dxmt_m12_runtime`, `gogdl_source`, `lane_planned`, and `external_runtime`.
 - `installReplacementGuard` — destructive replacement guard.
 - `nextActions` — suggested non-destructive next steps.
 
@@ -104,7 +104,7 @@ or point it at a temporary backend:
 tools/runtime/check-wine20-runtime-readiness.sh --url http://127.0.0.1:9284
 ```
 
-The script only reads `/runtime/diagnostics`; it does not launch Wine, repair assets, mutate prefixes, or authorize install replacement. It exits non-zero when diagnostics are not green or if the install replacement guard is unexpectedly enabled.
+The script only reads `/runtime/diagnostics`; it does not launch Wine, repair assets, mutate prefixes, or authorize install replacement. It prints both implemented-lane readiness (`availableReady`/`availableTotal`) and all-lane coverage, where planned/external lanes are informational rather than required blockers. It exits non-zero when diagnostics are not green or if the install replacement guard is unexpectedly enabled.
 
 ## Intended workflow
 

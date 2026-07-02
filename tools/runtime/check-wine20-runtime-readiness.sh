@@ -63,12 +63,13 @@ print(f"dxmt_m12 current: {runtime.get('dxmtM12Current')}")
 print(f"manifest ok: {runtime.get('manifestOk')}")
 print(f"prefix policy ok: {prefixes.get('ok')}")
 print(f"GOGDL source ok: {sources.get('gog', {}).get('ok')}")
-print(f"lanes ready: {lanes.get('ready')}/{lanes.get('total')}")
+print(f"available lanes ready: {lanes.get('availableReady')}/{lanes.get('availableTotal')}")
+print(f"all lanes ready: {lanes.get('ready')}/{lanes.get('total')} ({lanes.get('planned')} planned, {lanes.get('external')} external)")
 print(f"install replacement allowed now: {guard.get('allowedNow')}")
 
 blocked = [entry for entry in lanes.get("entries", []) if not entry.get("ready")]
 if blocked:
-    print("blocked lanes:")
+    print("non-ready lanes:")
     for entry in blocked:
         print(f"  - {entry.get('id')}: {', '.join(entry.get('blockers', []))}")
 
