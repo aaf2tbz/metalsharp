@@ -38,7 +38,7 @@ D3DMetal is an explicit GPTK lane rather than a generic bottle repair path. Savi
 
 | Public route | Backend | Launch path |
 |---|---|---|
-| **M12** | DXMT | Direct Wine launch with isolated `dxmt-m12` D3D12/D3D11/DXGI/winemetal DLLs |
+| **M12** | DXMT | Direct Wine launch with isolated installed `dxmt_m12` D3D12/D3D11/DXGI/winemetal DLLs |
 | **M11** | DXMT | Direct Wine launch with legacy `dxmt` D3D11/DXGI DLLs |
 | **M10** | DXMT | Direct Wine launch with legacy `dxmt` D3D10/D3D11/DXGI DLLs |
 | **M9** | DXMT launch family | Direct Wine launch with bundled `d3d9.dll` and DXMT-family cache/env |
@@ -86,7 +86,7 @@ M11/M10/M9 read from the legacy runtime surface:
 M12 reads from the isolated D3D12 surface:
 
 ```text
-~/.metalsharp/runtime/wine/lib/dxmt-m12
+~/.metalsharp/runtime/wine/lib/dxmt_m12
 ```
 
 M11/M10 copy:
@@ -102,7 +102,7 @@ M12 also copies:
 
 - `d3d12.dll`
 
-M12 also adds the `dxmt-m12` unix library directory to the fallback library path so `winemetal.so` and its bundled C++ sidecars are resolved from the same surface as the PE DLLs.
+M12 also adds the `dxmt_m12` unix library directory to the fallback library path so `winemetal.so` and its bundled C++ sidecars are resolved from the same installed surface as the PE DLLs.
 
 M9 copies:
 

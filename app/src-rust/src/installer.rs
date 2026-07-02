@@ -1182,7 +1182,7 @@ fn install_dxmt_m12_runtime(home: &PathBuf) -> Result<bool, String> {
         &dxmt_m12_dir,
         |dir| dxmt_m12_runtime_ready(dir),
         |dir| dxmt_m12_runtime_current_for_dir(dir),
-        "fallback:~/metalsharp/runtime/dxmt-m12",
+        "fallback:~/metalsharp/runtime/dxmt_m12",
     )
 }
 
@@ -1194,6 +1194,7 @@ fn install_graphics_runtime_surface(
     current: fn(&Path) -> bool,
     fallback_source: &str,
 ) -> Result<bool, String> {
+    let fallback_surface = if bundle_surface == "dxmt-m12" { "dxmt_m12" } else { "dxmt" };
     let _ = fs::create_dir_all(dst_dir.join("x86_64-unix"));
     let _ = fs::create_dir_all(dst_dir.join("x86_64-windows"));
 
@@ -1210,7 +1211,6 @@ fn install_graphics_runtime_surface(
         mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
     } else {
-        let fallback_surface = if bundle_surface == "dxmt-m12" { "dxmt-m12" } else { "dxmt" };
         let src_root = home.join("metalsharp").join("runtime").join(fallback_surface);
         if src_root.exists() {
             copy_graphics_runtime_surface(&src_root, dst_dir)?;
@@ -1225,10 +1225,10 @@ fn install_graphics_runtime_surface(
         Ok(true)
     } else {
         Err(format!(
-            "DXMT runtime surface {} {} not installed — bundle metalsharp-graphics-dll.tar.zst or place files in ~/.metalsharp/runtime/{}/",
+            "DXMT runtime surface {} {} not installed — bundle metalsharp-graphics-dll.tar.zst or place fallback files in ~/.metalsharp/runtime/{}/",
             bundle_surface,
             DXMT_BUNDLED_RUNTIME_VERSION,
-            bundle_surface
+            fallback_surface
         ))
     }
 }

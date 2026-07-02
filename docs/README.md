@@ -16,6 +16,7 @@ Use this page as the repo map before changing launch/runtime code.
 
 ## Runtime
 
+- [Runtime Contracts](runtime/runtime-contracts.md) - backend-owned runtime lane contract table and canonical `dxmt_m12` naming.
 - [Runtime Bundles and Steam Routing](runtime/runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.
 - [Mono Runtime Lanes](runtime/mono-runtime-lanes.md) - Mono/FNA/XNA route boundaries and native Mono lane details.
 - [Wine Architecture](runtime/wine-architecture.md) - Wine prefix/runtime layout and wrapper behavior.
