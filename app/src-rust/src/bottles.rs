@@ -2056,6 +2056,52 @@ pub fn repair_component(
         });
     }
 
+    // Phase 5: d3dmetal_native repair components. The Apple D3DMetal payload is
+    // not redistributable, so "repair" re-checks readiness and points the user at
+    // the staging tool rather than fetching binaries. host_abi repair is a
+    // re-verify only (the Wine modules come from the Wine build, not this path).
+    if matches!(component_id, "d3dmetal_native_host_abi" | "d3dmetal_native_payload" | "d3dmetal_native_sidecars") {
+        let home = dirs::home_dir().unwrap_or_default();
+        let readiness = crate::d3dmetal_native::readiness_for(&home);
+        let (status, detail) = match component_id {
+            "d3dmetal_native_host_abi" => {
+                if readiness.host_abi.ready {
+                    ("ready", "Wine D3DMetal host ABI is present and passes strict ABI gates".to_string())
+                } else {
+                    ("host_abi_missing", "Rebuild Wine 11.5 with the d3dmetal-host-abi patch (see tools/wine-patches/d3dmetal-host-abi/README.md) and stage winemac/win32u/ntdll.so into the runtime".to_string())
+                }
+            },
+            "d3dmetal_native_payload" => {
+                if readiness.payload.ready {
+                    ("ready", "d3dmetal_native payload is staged and verified".to_string())
+                } else {
+                    ("payload_missing_user_action_required", "Stage the payload from a GPTK source: tools/runtime/stage-d3dmetal-native-payload.py <gptk.dmg> (Apple binaries are not redistributed by MetalSharp)".to_string())
+                }
+            },
+            _ => {
+                // sidecars — covered by the payload check
+                if readiness.payload.ready {
+                    ("ready", "framework sidecars present".to_string())
+                } else {
+                    ("sidecar_missing", "Stage the payload to restore D3DMetal.framework sidecars".to_string())
+                }
+            },
+        };
+        let state = if status == "ready" { ComponentState::Installed } else { ComponentState::NeedsRepair };
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if status == "ready" { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: status.to_string(),
+            detail,
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if matches!(component_id, "wine-mono" | "gecko") {
         let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
         if dry_run {

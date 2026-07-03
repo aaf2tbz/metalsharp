@@ -108,6 +108,11 @@ fn expected_runtime_manifest_for_with_wine_probe(home: &Path, probe_wine_version
             ),
             surface_manifest("dxvk", &wine_root.join("lib").join("dxvk"), "planned DXVK runtime surface"),
             surface_manifest("vkd3d", &wine_root.join("lib").join("vkd3d"), "planned VKD3D-Proton runtime surface"),
+            surface_manifest(
+                "d3dmetal_native",
+                &wine_root.join("lib").join("d3dmetal_native"),
+                "MetalSharp-owned native D3DMetal payload contract (staged from a user/developer GPTK source; binaries not redistributed)",
+            ),
             surface_manifest("mono_arm64", &runtime_root.join("mono-arm64"), "native Mono/FNA ARM64 runtime"),
             surface_manifest("mono_x86", &runtime_root.join("mono-x86"), "native Mono/FNA x86_64 runtime"),
             surface_manifest("host", &runtime_root.join("host"), "MetalSharp host runtime ABI"),

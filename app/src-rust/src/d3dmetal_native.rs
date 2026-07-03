@@ -165,7 +165,9 @@ pub fn readiness_for(home: &Path) -> D3DMetalNativeReadiness {
     } else if !host_abi.ready && payload.ready {
         "host_abi_missing".to_string()
     } else if host_abi.ready && !payload.ready {
-        "payload_missing".to_string()
+        // The payload is Apple-proprietary and not redistributable; the user must
+        // stage it from their own GPTK source. Surface that explicitly.
+        "payload_missing_user_action_required".to_string()
     } else {
         "partial".to_string()
     };
