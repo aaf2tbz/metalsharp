@@ -77,7 +77,11 @@ class ModuleEvidence:
 
 def run_command(args: list[str]) -> str:
     try:
-        return subprocess.run(args, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+        # ``strings``/``nm``/``file`` output can contain arbitrary bytes from
+        # Mach-O binaries; decode lossily so a single invalid byte never aborts
+        # the checker (the probe is substring membership, not exact text).
+        result = subprocess.run(args, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        return result.stdout.decode("utf-8", errors="replace")
     except FileNotFoundError:
         return ""
 
