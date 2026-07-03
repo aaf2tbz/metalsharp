@@ -336,6 +336,11 @@ struct d3dmetal_macdrv_win_data
 {
     HWND                hwnd;
     macdrv_window       cocoa_window;
+    /* Reserved ABI slot retained for D3DMetal/DXMT payload compatibility.
+     * Current Wine 11.5 macdrv_win_data no longer carries cocoa_view; payloads
+     * are expected to use client_cocoa_view, but removing this field shifts the
+     * fixed struct layout from the CrossOver/GPTK contract. */
+    macdrv_view         cocoa_view;
     macdrv_view         client_cocoa_view;
     RECT                window_rect;
     RECT                whole_rect;
@@ -351,6 +356,7 @@ struct d3dmetal_macdrv_win_data
     unsigned int        minimized : 1;
     void               *padding[2];
 };
+C_ASSERT(sizeof(struct d3dmetal_macdrv_win_data) == 120);
 
 void OnMainThread(dispatch_block_t block);
 static void cf_client_surface_release(CFAllocatorRef allocator, const void *client_surface);
@@ -396,6 +402,7 @@ static struct d3dmetal_macdrv_win_data *my_get_win_data(HWND hwnd)
     d3dm_data = calloc(1, sizeof(*d3dm_data));
     d3dm_data->hwnd = data->hwnd;
     d3dm_data->cocoa_window = data->cocoa_window;
+    /* cocoa_view is intentionally left NULL; the slot exists to preserve ABI. */
     d3dm_data->client_cocoa_view = client_surface->cocoa_view;
     d3dm_data->window_rect = data->rects.window;
     d3dm_data->whole_rect = data->rects.visible;

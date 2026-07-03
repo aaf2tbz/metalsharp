@@ -1813,11 +1813,12 @@ fn launch_d3dmetal_native_with_context(
     }
 
     // Route via WINEDLLPATH (d3dmetal_native PE DLLs first, then Wine builtins).
-    let winedllpath = format!(
-        "{}:{}",
-        payload_dir.join("x86_64-windows").to_string_lossy(),
-        ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy()
-    );
+    // Wine expects each WINEDLLPATH entry to be a root that contains the
+    // architecture subdirectories (x86_64-windows/x86_64-unix); the builtin
+    // loader appends those names internally when pairing a PE DLL with its
+    // unixlib. Pointing directly at x86_64-windows makes installed runtimes
+    // search x86_64-windows/x86_64-windows and breaks the PE <-> unixlib pair.
+    let winedllpath = d3dmetal_native_winedllpath(&ms_root, &payload_dir);
     let dyld_library_path = format!(
         "{}:{}:{}",
         payload_dir.join("x86_64-unix").to_string_lossy(),
@@ -1826,7 +1827,7 @@ fn launch_d3dmetal_native_with_context(
     );
     let overrides = node
         .wine_overrides
-        .unwrap_or("d3d11,d3d12,dxgi,nvapi64,nvngx,atidxx64=n,b;gameoverlayrenderer,gameoverlayrenderer64=d");
+        .unwrap_or("d3d11,d3d12,dxgi,nvapi64,nvngx,atidxx64=b,n;gameoverlayrenderer,gameoverlayrenderer64=d");
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -1845,6 +1846,20 @@ fn launch_d3dmetal_native_with_context(
         )
         .env(
             MS_D3DMETAL_FRAMEWORK_PATH_ENV,
+            payload_dir
+                .join("external")
+                .join("D3DMetal.framework")
+                .join("Versions")
+                .join("A")
+                .join("D3DMetal")
+                .to_string_lossy()
+                .to_string(),
+        )
+        // Compatibility with Apple's D3DMetal payload: libd3dshared.dylib looks
+        // up this exact variable before dlopen()ing D3DMetal.framework. The MS_
+        // variable is MetalSharp's contract surface; this one is the payload ABI.
+        .env(
+            "D3DMETAL_FRAMEWORK_PATH",
             payload_dir
                 .join("external")
                 .join("D3DMetal.framework")
@@ -1916,7 +1931,7 @@ fn write_d3dmetal_native_receipt(
             // secret-safe: env var NAMES only, no values (could contain paths).
             "set": ["WINEPREFIX", "WINEDEBUG", "WINEDEBUGGER", "WINEDLLPATH", "DYLD_LIBRARY_PATH",
                     "WINEDLLOVERRIDES", "MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND",
-                    "MS_D3DMETAL_SHARED_PATH", "MS_D3DMETAL_FRAMEWORK_PATH"],
+                    "MS_D3DMETAL_SHARED_PATH", "MS_D3DMETAL_FRAMEWORK_PATH", "D3DMETAL_FRAMEWORK_PATH"],
         },
         "dll_source_paths": {
             "WINEDLLPATH": winedllpath,
@@ -1926,6 +1941,10 @@ fn write_d3dmetal_native_receipt(
     let mut f = std::fs::File::create(&path)?;
     writeln!(f, "{receipt}")?;
     Ok(())
+}
+
+fn d3dmetal_native_winedllpath(ms_root: &Path, payload_dir: &Path) -> String {
+    format!("{}:{}", payload_dir.to_string_lossy(), ms_root.join("lib").join("wine").to_string_lossy())
 }
 
 fn launch_dxmt_metal_with_context(
@@ -6671,20 +6690,38 @@ mod tests {
     fn d3dmetal_native_receipt_env_has_no_cx_vars() {
         // Phase 6 gate: the receipt records env NAMES only, and none may be CX_/CrossOver.
         let receipt = serde_json::json!({
-            "env": {"set": ["MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND", "WINEDLLPATH"]}
+            "env": {"set": ["MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND", "WINEDLLPATH", "D3DMETAL_FRAMEWORK_PATH"]}
         });
         let names = receipt["env"]["set"].as_array().unwrap();
         for n in names {
             let s = n.as_str().unwrap();
             assert!(!s.starts_with("CX_"), "CX_ env name in receipt: {s}");
         }
+        assert!(receipt.to_string().contains("D3DMETAL_FRAMEWORK_PATH"));
     }
 
     #[test]
-    fn d3dmetal_native_overrides_include_d3d11_d3d12_dxgi_native() {
-        // Phase 6 gate: WINEDLLOVERRIDES forces the d3dmetal_native route DLLs native.
+    fn d3dmetal_native_winedllpath_uses_runtime_roots_not_arch_subdirs() {
+        let ms_root = PathBuf::from("/tmp/ms/runtime/wine");
+        let payload_dir = ms_root.join("lib").join("d3dmetal_native");
+        let value = d3dmetal_native_winedllpath(&ms_root, &payload_dir);
+        assert_eq!(value, "/tmp/ms/runtime/wine/lib/d3dmetal_native:/tmp/ms/runtime/wine/lib/wine");
+        assert!(!value.contains("x86_64-windows"));
+        assert!(!value.contains("x86_64-unix"));
+    }
+
+    #[test]
+    fn d3dmetal_native_overrides_include_d3d11_d3d12_dxgi_builtin_first() {
+        // Phase 6 gate: the D3DMetal payload is native MetalSharp-owned code,
+        // but Wine must load its PE/unixlib route DLLs as builtin-style modules.
+        // Native-first/native-only makes LoadLibrary search the Windows path and
+        // miss the WINEDLLPATH-provided PE/unixlib pair.
         let node = crate::mtsp::engine::get_pipeline(crate::mtsp::engine::PipelineId::D3DMetalNative);
         let ov = node.wine_overrides.expect("native node has overrides");
+        assert!(
+            ov.contains("d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n"),
+            "D3DMetal route DLLs must be builtin-first: {ov}"
+        );
         for dll in ["d3d11", "d3d12", "dxgi"] {
             assert!(ov.contains(dll), "WINEDLLOVERRIDES missing {dll}: {ov}");
         }

@@ -432,7 +432,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: true,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 // WINEDLLPATH/DYLD paths and the MS_D3DMETAL_*_PATH vars are
                 // resolved at launch in a later phase; declared here so the
