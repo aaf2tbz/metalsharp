@@ -394,6 +394,15 @@ pub struct BottleManifest {
     pub last_launch_status: Option<String>,
     #[serde(default)]
     pub last_launch_finished_at: Option<String>,
+    /// Phase 4: saved-bottle overlay digest of the Wine D3DMetal host ABI the
+    /// overlay was built against (None for non-native profiles). Staleness is
+    /// detected by comparing to `d3dmetal_native::host_abi_digest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d3dmetal_host_abi_digest: Option<String>,
+    /// Phase 4: saved-bottle overlay digest of the staged d3dmetal_native
+    /// payload manifest. Binds the overlay to a specific payload revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d3dmetal_payload_manifest_digest: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1201,6 +1210,8 @@ fn ensure_installer_bottle_with_id(
         last_launch_pid: None,
         last_launch_status: None,
         last_launch_finished_at: None,
+        d3dmetal_host_abi_digest: None,
+        d3dmetal_payload_manifest_digest: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     });
@@ -1273,6 +1284,8 @@ fn ensure_steam_game_bottle_inner(
         last_launch_pid: None,
         last_launch_status: None,
         last_launch_finished_at: None,
+        d3dmetal_host_abi_digest: None,
+        d3dmetal_payload_manifest_digest: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     });
@@ -6242,6 +6255,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6279,6 +6294,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6320,6 +6337,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6363,6 +6382,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6411,6 +6432,8 @@ mod tests {
                 last_launch_pid: None,
                 last_launch_status: None,
                 last_launch_finished_at: None,
+                d3dmetal_host_abi_digest: None,
+                d3dmetal_payload_manifest_digest: None,
                 created_at: timestamp_secs(),
                 updated_at: timestamp_secs(),
             };
@@ -6496,6 +6519,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6528,6 +6553,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6980,6 +7007,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -7038,6 +7067,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -7084,6 +7115,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -7271,6 +7304,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -7308,6 +7343,8 @@ mod tests {
             last_launch_pid: Some(1234),
             last_launch_status: Some("running".into()),
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -7353,6 +7390,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -7389,6 +7428,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };

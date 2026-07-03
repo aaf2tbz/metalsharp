@@ -108,6 +108,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
         "lanes": lane_readiness_report(
             &contracts,
             &LaneReadinessContext {
+                home,
                 wine_binary_present,
                 dxmt_current,
                 dxmt_m12_current,
@@ -128,6 +129,7 @@ pub fn runtime_diagnostics_report_for(home: &Path) -> Value {
 }
 
 struct LaneReadinessContext<'a> {
+    home: &'a Path,
     wine_binary_present: bool,
     dxmt_current: bool,
     dxmt_m12_current: bool,
@@ -191,7 +193,27 @@ fn lane_readiness_entry(
     match contract.status {
         crate::runtime_contracts::RuntimeLaneStatus::Planned => blockers.push("lane_planned"),
         crate::runtime_contracts::RuntimeLaneStatus::External => blockers.push("external_runtime"),
-        crate::runtime_contracts::RuntimeLaneStatus::Reserved => blockers.push("lane_reserved"),
+        crate::runtime_contracts::RuntimeLaneStatus::Reserved => {
+            // The d3dmetal_native lane is Reserved until BOTH the Wine host ABI
+            // (Phase 2) and the payload contract (Phase 3) gates pass. When they
+            // do, clear the reserved blocker so the lane becomes selectable.
+            if contract.id == "d3dmetal_native" {
+                let readiness = crate::d3dmetal_native::readiness_for(context.home);
+                if readiness.ready {
+                    // both gates pass — lane is effectively available
+                } else {
+                    blockers.push("lane_reserved");
+                    if !readiness.host_abi.ready {
+                        blockers.push("host_abi_missing");
+                    }
+                    if !readiness.payload.ready {
+                        blockers.push("payload_missing");
+                    }
+                }
+            } else {
+                blockers.push("lane_reserved");
+            }
+        },
         crate::runtime_contracts::RuntimeLaneStatus::Available => {},
     }
 

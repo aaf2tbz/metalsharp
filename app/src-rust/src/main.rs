@@ -22,6 +22,7 @@ mod bottles;
 mod command_contract;
 mod compat_db_v2;
 mod d3d12_runtime_doctor;
+mod d3dmetal_native;
 mod diagnostics;
 mod doctor_registry;
 mod fna_profile;
@@ -1023,6 +1024,39 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/runtime/manifest") => resp(200, runtime_manifest::handle_runtime_manifest()),
         (Method::Get, "/runtime/diagnostics") => resp(200, runtime_diagnostics::handle_runtime_diagnostics()),
+        // d3dmetal_native readiness (Phase 4) — Developer Mode only. Exposes the
+        // Wine host-ABI gate (Phase 2) and payload contract gate (Phase 3) plus
+        // combined readiness + overlay digests. Never auto-selects the lane.
+        (Method::Get, "/d3dmetal-native/readiness") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let r = d3dmetal_native::readiness_for(&home);
+            resp(
+                200,
+                json!({ "ok": true, "ready": r.ready, "state": r.state, "host_abi": r.host_abi, "payload": r.payload }),
+            )
+        },
+        (Method::Get, "/d3dmetal-native/host-abi") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let r = d3dmetal_native::readiness_for(&home);
+            resp(200, json!({ "ok": true, "host_abi": r.host_abi }))
+        },
+        (Method::Get, "/d3dmetal-native/payload") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let r = d3dmetal_native::readiness_for(&home);
+            resp(200, json!({ "ok": true, "payload": r.payload }))
+        },
+        (Method::Get, "/d3dmetal-native/overlay-digests") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "host_abi_digest": d3dmetal_native::host_abi_digest(&home),
+                    "payload_manifest_digest": d3dmetal_native::payload_manifest_digest(&home),
+                    "architecture_lock": "x86_64_only",
+                }),
+            )
+        },
         (Method::Get, "/diagnostics/gog") => resp(200, gog::handle_doctor()),
         (Method::Get, "/diagnostics/launch-validation") => resp(200, launch_validation::report()),
         (Method::Get, "/diagnostics/receipts") => resp(200, receipt_inventory::report()),
