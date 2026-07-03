@@ -36,7 +36,7 @@ prebuilt tree; CI only verifies it). To reproduce the host-ABI modules:
 # 1. Extract wine-11.5 source (matches wine-11.5.tar.xz).
 # 2. Apply the patch:
 cd wine-11.5
-patch -p1 < /path/to/repo/tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
+patch -p0 < /path/to/repo/tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
 autoreconf -fvi   # only if configure.ac/Makefiles changed
 
 # 3. Out-of-tree build (x86_64-Unix, max-compat PE archs via clang):
@@ -62,7 +62,7 @@ four PE archs), mingw-w64, bison, flex, ninja. Build on an SSD (large).
 ## Status
 
 Phase 2 host-ABI presence is met. The registry/display thunk callbacks
-(`regqueryvalueexa_callback` etc.) are defined but remain 0 until the PE-side
-winemac callbacks are wired in Phase 6 (launch); `KeUserDispatchCallback` fails
-gracefully until then. The `macdrv_functions` table layout (the actual ABI
-contract payloads look up) is correct.
+(`regqueryvalueexa_callback` etc.) are now wired from the PE side during
+`macdrv_init`, and the `macdrv_functions` table layout (the actual ABI contract
+payloads look up) includes the retained compatibility slot required by the
+D3DMetal/DXMT payload ABI.

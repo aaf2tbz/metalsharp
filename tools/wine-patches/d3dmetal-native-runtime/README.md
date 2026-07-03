@@ -6,7 +6,7 @@ needed after the `d3dmetal-host-abi` patch is applied.
 Apply from the Wine source root.
 
 ```sh
-patch -p1 < tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
+patch -p0 < tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
 patch -p0 < tools/wine-patches/d3dmetal-native-runtime/0001-ntdll-d3dmetal-native-loader-tls.patch
 ```
 
