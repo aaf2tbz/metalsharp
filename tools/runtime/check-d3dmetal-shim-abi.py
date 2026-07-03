@@ -59,9 +59,9 @@ PROBES: tuple[Probe, ...] = (
     Probe("winemac", "CLIENT_SURFACE_PRESENTED event", "CLIENT_SURFACE_PRESENTED"),
     Probe("winemac", "D3DMetal client-surface storage", "d3dmetal_client_surface"),
     Probe("winemac", "macdrv client surface presented handler", "macdrv_client_surface_presented"),
-    Probe("winemac", "get D3DMetal client surface helper", "macdrv_get_view_d3dmetal_client_surface"),
-    Probe("winemac", "set D3DMetal client surface helper", "macdrv_set_view_d3dmetal_client_surface"),
-    Probe("win32u", "active graphics backend environment gate", "CX_ACTIVE_GRAPHICS_BACKEND"),
+    Probe("winemac", "get D3DMetal client surface helper", "macdrv_get_view_d3dmetal_client_surface", source="nm"),
+    Probe("winemac", "set D3DMetal client surface helper", "macdrv_set_view_d3dmetal_client_surface", source="nm"),
+    Probe("win32u", "active graphics backend environment gate", "MS_ACTIVE_GRAPHICS_BACKEND"),
     Probe("ntdll", "libd3dshared path discovery", "libd3dshared.dylib"),
 )
 
