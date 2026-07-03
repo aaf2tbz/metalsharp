@@ -405,10 +405,7 @@ pub fn launch_with_pipeline(
         | PipelineId::DxvkD9
         | PipelineId::DxvkD11
         | PipelineId::Vkd3dD12 => launch_dxmt_metal(appid, node),
-        PipelineId::D3DMetalNative => {
-            Err("D3DMetal Native lane is reserved and not launchable until the Wine host ABI and payload are ready"
-                .into())
-        },
+        PipelineId::D3DMetalNative => launch_d3dmetal_native(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
@@ -442,8 +439,8 @@ pub fn launch_steam_bottle_with_pipeline(
                 .map(|(pid, method)| (pid, method, log_path))
         },
         PipelineId::D3DMetalNative => {
-            Err("D3DMetal Native lane is reserved and not launchable until the Wine host ABI and payload are ready"
-                .into())
+            launch_d3dmetal_native_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+                .map(|(pid, method)| (pid, method, log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
             launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
@@ -1748,6 +1745,187 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
 
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     launch_dxmt_metal_with_context(appid, node, None, &[], None)
+}
+
+/// Phase 6: launch a game through the MetalSharp-owned native D3DMetal route.
+///
+/// Uses the MetalSharp Wine 11.5 host ABI (Phase 2) + the staged d3dmetal_native
+/// payload (Phase 3), routed via WINEDLLPATH (not permanent DLL spray), on the
+/// normal bottle prefix. Rejects 32-bit games. Never uses GPTK Wine or prefix-gptk.
+fn launch_d3dmetal_native(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_d3dmetal_native_with_context(appid, node, None, &[], None)
+}
+
+fn launch_d3dmetal_native_with_context(
+    appid: u32,
+    node: &PipelineNode,
+    prefix_override: Option<&Path>,
+    extra_env: &[(String, String)],
+    log_path: Option<&Path>,
+) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    use crate::mtsp::engine::{
+        D3DMETAL_NATIVE_BACKEND, MS_ACTIVE_GRAPHICS_BACKEND_ENV, MS_D3DMETAL_FRAMEWORK_PATH_ENV,
+        MS_D3DMETAL_SHARED_PATH_ENV, MS_GRAPHICS_BACKEND_ENV,
+    };
+    use crate::mtsp::pe::parse_pe_imports;
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let ms_root = ms_home.join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    let payload_dir = ms_root.join("lib").join("d3dmetal_native");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    // Phase 4 readiness gate: Wine host ABI (Phase 2) + payload (Phase 3) must both be ready.
+    let readiness = crate::d3dmetal_native::readiness_for(&home);
+    if !readiness.ready {
+        return Err(format!(
+            "D3DMetal Native is not ready: {} (host_abi={}, payload={})",
+            readiness.state, readiness.host_abi.state, readiness.payload.state
+        )
+        .into());
+    }
+
+    // Normal bottle prefix — never prefix-gptk, never GPTK Wine.
+    let prefix = prefix_override.map(Path::to_path_buf).unwrap_or_else(|| ms_home.join("prefix-steam"));
+    std::fs::create_dir_all(&prefix)?;
+    let prefix_str = prefix.to_string_lossy().to_string();
+
+    let recipe = super::recipe::build_launch_recipe(appid, node)?;
+    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
+    let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
+    let exe_dir = launch_working_dir(game_dir, exe_path);
+
+    // Reject 32-bit games: the D3DMetal translator stack is Mach-O x86_64.
+    if let Ok(bytes) = std::fs::read(exe_path) {
+        if let Some(pe) = parse_pe_imports(&bytes) {
+            if !pe.is_64_bit {
+                return Err(format!(
+                    "D3DMetal Native requires a 64-bit Windows executable, but {} is 32-bit (i386). Use an x86_64 route instead.",
+                    exe_path.display()
+                )
+                .into());
+            }
+        }
+    }
+
+    // Route via WINEDLLPATH (d3dmetal_native PE DLLs first, then Wine builtins).
+    let winedllpath = format!(
+        "{}:{}",
+        payload_dir.join("x86_64-windows").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-windows").to_string_lossy()
+    );
+    let dyld_library_path = format!(
+        "{}:{}:{}",
+        payload_dir.join("x86_64-unix").to_string_lossy(),
+        payload_dir.join("external").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
+    let overrides = node
+        .wine_overrides
+        .unwrap_or("d3d11,d3d12,dxgi,nvapi64,nvngx,atidxx64=n,b;gameoverlayrenderer,gameoverlayrenderer64=d");
+
+    let mut cmd = Command::new(&wine);
+    cmd.current_dir(exe_dir)
+        .env("WINEPREFIX", &prefix_str)
+        .env("WINEDEBUG", wine_debug_value())
+        .env("WINEDEBUGGER", "none")
+        .env("WINEDLLPATH", &winedllpath)
+        .env("DYLD_LIBRARY_PATH", &dyld_library_path)
+        .env("WINEDLLOVERRIDES", overrides)
+        // MetalSharp-owned backend selection (Phase 1 frozen names; no CX_ vars).
+        .env(MS_GRAPHICS_BACKEND_ENV, D3DMETAL_NATIVE_BACKEND)
+        .env(MS_ACTIVE_GRAPHICS_BACKEND_ENV, D3DMETAL_NATIVE_BACKEND)
+        .env(
+            MS_D3DMETAL_SHARED_PATH_ENV,
+            payload_dir.join("external").join("libd3dshared.dylib").to_string_lossy().to_string(),
+        )
+        .env(
+            MS_D3DMETAL_FRAMEWORK_PATH_ENV,
+            payload_dir
+                .join("external")
+                .join("D3DMetal.framework")
+                .join("Versions")
+                .join("A")
+                .join("D3DMetal")
+                .to_string_lossy()
+                .to_string(),
+        );
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+
+    // Launch receipt (Phase 6 gate: proves normal prefix + MetalSharp Wine + route env).
+    let host_abi_digest = crate::d3dmetal_native::host_abi_digest(&home);
+    let payload_digest = crate::d3dmetal_native::payload_manifest_digest(&home);
+    let _ = write_d3dmetal_native_receipt(
+        &ms_home,
+        appid,
+        &prefix,
+        exe_path,
+        &host_abi_digest,
+        &payload_digest,
+        &winedllpath,
+        &dyld_library_path,
+    );
+
+    if let Some(log) = log_path {
+        if let Ok(log_file) = std::fs::File::create(log) {
+            if let Ok(clone) = log_file.try_clone() {
+                cmd.stdout(clone).stderr(log_file);
+            }
+        }
+    }
+    let child = cmd.spawn()?;
+    Ok((child.id(), node.id.to_legacy_method()))
+}
+
+/// Phase 6: write a launch receipt proving the d3dmetal_native route used the
+/// normal bottle prefix + MetalSharp Wine + route env (no GPTK Wine, no CX_ vars).
+#[allow(clippy::too_many_arguments)]
+fn write_d3dmetal_native_receipt(
+    ms_home: &Path,
+    appid: u32,
+    prefix: &Path,
+    exe_path: &Path,
+    host_abi_digest: &Option<String>,
+    payload_digest: &Option<String>,
+    winedllpath: &str,
+    dyld_library_path: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = ms_home.join("launch-receipts").join("d3dmetal_native");
+    std::fs::create_dir_all(&dir)?;
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let path = dir.join(format!("{appid}-{ts}.json"));
+    let receipt = serde_json::json!({
+        "schema": 1,
+        "route_id": "d3dmetal_native",
+        "appid": appid,
+        "launched_at": ts,
+        "prefix_path": prefix.to_string_lossy(),
+        "wine": "metalsharp_wine_11.5",
+        "game_exe": exe_path.to_string_lossy(),
+        "host_abi_digest": host_abi_digest,
+        "payload_manifest_digest": payload_digest,
+        "architecture_lock": "x86_64_only",
+        "env": {
+            // secret-safe: env var NAMES only, no values (could contain paths).
+            "set": ["WINEPREFIX", "WINEDEBUG", "WINEDEBUGGER", "WINEDLLPATH", "DYLD_LIBRARY_PATH",
+                    "WINEDLLOVERRIDES", "MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND",
+                    "MS_D3DMETAL_SHARED_PATH", "MS_D3DMETAL_FRAMEWORK_PATH"],
+        },
+        "dll_source_paths": {
+            "WINEDLLPATH": winedllpath,
+            "DYLD_LIBRARY_PATH": dyld_library_path,
+        },
+    });
+    let mut f = std::fs::File::create(&path)?;
+    writeln!(f, "{receipt}")?;
+    Ok(())
 }
 
 fn launch_dxmt_metal_with_context(
@@ -6473,5 +6651,42 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    #[test]
+    fn d3dmetal_native_pipeline_node_has_frozen_env_names() {
+        // Phase 6 gate: the native node carries the MetalSharp-owned ABI env vars.
+        use crate::mtsp::engine::{get_pipeline, PipelineId};
+        let node = get_pipeline(PipelineId::D3DMetalNative);
+        let keys: std::collections::HashSet<&str> = node.env_vars.iter().map(|e| e.key).collect();
+        assert!(keys.contains("MS_GRAPHICS_BACKEND"));
+        assert!(keys.contains("MS_ACTIVE_GRAPHICS_BACKEND"));
+        // No CX_/CrossOver naming in the frozen pipeline env.
+        for e in &node.env_vars {
+            assert!(!e.key.starts_with("CX_"), "CX_ env leaked into native node: {}", e.key);
+        }
+    }
+
+    #[test]
+    fn d3dmetal_native_receipt_env_has_no_cx_vars() {
+        // Phase 6 gate: the receipt records env NAMES only, and none may be CX_/CrossOver.
+        let receipt = serde_json::json!({
+            "env": {"set": ["MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND", "WINEDLLPATH"]}
+        });
+        let names = receipt["env"]["set"].as_array().unwrap();
+        for n in names {
+            let s = n.as_str().unwrap();
+            assert!(!s.starts_with("CX_"), "CX_ env name in receipt: {s}");
+        }
+    }
+
+    #[test]
+    fn d3dmetal_native_overrides_include_d3d11_d3d12_dxgi_native() {
+        // Phase 6 gate: WINEDLLOVERRIDES forces the d3dmetal_native route DLLs native.
+        let node = crate::mtsp::engine::get_pipeline(crate::mtsp::engine::PipelineId::D3DMetalNative);
+        let ov = node.wine_overrides.expect("native node has overrides");
+        for dll in ["d3d11", "d3d12", "dxgi"] {
+            assert!(ov.contains(dll), "WINEDLLOVERRIDES missing {dll}: {ov}");
+        }
     }
 }
