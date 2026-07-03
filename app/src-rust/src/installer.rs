@@ -1852,21 +1852,13 @@ fn dxmt_m12_runtime_ready(dxmt_m12_dir: &Path) -> bool {
 }
 
 fn install_gptk_runtime(_home: &PathBuf) -> Result<bool, String> {
-    let was_installed = crate::platform::gptk_homebrew_installed();
-    if !was_installed {
-        brew_trust_cask("gcenx/wine/game-porting-toolkit")?;
-        brew_install("game-porting-toolkit")?;
-    }
-    if !crate::platform::gptk_homebrew_installed() {
-        return Err("GPTK installed via Homebrew but wine64/wineserver were not found under /Applications/Game Porting Toolkit.app".into());
-    }
-    let wine_root = crate::platform::gptk_homebrew_wine_root();
-    let pe_dir = wine_root.join("lib").join("wine").join("x86_64-windows");
-    let framework = wine_root.join("lib").join("external").join("D3DMetal.framework");
-    if !gptk_runtime_ready(&pe_dir, &framework) {
-        return Err("Homebrew GPTK payload is incomplete; reinstall game-porting-toolkit".into());
-    }
-    Ok(!was_installed)
+    // Phase 1 (D3DMetal native roadmap): the external Homebrew GPTK lane is
+    // removed. MetalSharp never installs or requires Homebrew GPTK anymore —
+    // the native `d3dmetal_native` route consumes a MetalSharp-owned Wine 11.5
+    // host ABI and a MetalSharp-owned payload (later phases). This is a
+    // deliberate no-op so no code path can trigger `brew_install game-porting-
+    // toolkit`. The GPTK prefix/component bottle plumbing is retired in Phases 4/5.
+    Ok(false)
 }
 
 fn gptk_runtime_ready(pe_dir: &Path, framework: &Path) -> bool {

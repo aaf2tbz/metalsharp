@@ -12,8 +12,7 @@ pub enum PipelineId {
     DxvkD9,
     DxvkD11,
     Vkd3dD12,
-    M13,
-    D3DMetal,
+    D3DMetalNative,
     M32,
     FnaArm64,
     Steam,
@@ -62,6 +61,16 @@ impl PipelineNode {
 static PIPELINES: OnceLock<Vec<PipelineNode>> = OnceLock::new();
 const DXMT_70_PERCENT_UPSCALE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60";
 const DXMT_M12_SAFE_CONFIG: &str = "d3d11.metalSpatialUpscaleFactor=1.43;d3d11.preferredMaxFrameRate=60";
+
+/// Backend value and MetalSharp-owned ABI variable names for the native
+/// D3DMetal lane. These must never carry the oracle's branding; the oracle
+/// is only ever consulted for behavior. See
+/// `docs/runtime/d3dmetal-native-contract.md` for the full contract.
+pub const D3DMETAL_NATIVE_BACKEND: &str = "d3dmetal_native";
+pub const MS_GRAPHICS_BACKEND_ENV: &str = "MS_GRAPHICS_BACKEND";
+pub const MS_ACTIVE_GRAPHICS_BACKEND_ENV: &str = "MS_ACTIVE_GRAPHICS_BACKEND";
+pub const MS_D3DMETAL_SHARED_PATH_ENV: &str = "MS_D3DMETAL_SHARED_PATH";
+pub const MS_D3DMETAL_FRAMEWORK_PATH_ENV: &str = "MS_D3DMETAL_FRAMEWORK_PATH";
 
 pub fn pipelines() -> &'static Vec<PipelineNode> {
     PIPELINES.get_or_init(|| {
@@ -410,46 +419,34 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 ],
                 env_vars: vec![EnvVar { key: "VKD3D_CONFIG", value: "dxr" }],
                 launch_args: vec![],
-                alternatives: vec![PipelineId::M12, PipelineId::D3DMetal, PipelineId::M11],
+                alternatives: vec![PipelineId::M12, PipelineId::M11],
                 shader_cache_subdir: Some("vkd3d-d12"),
             },
             PipelineNode {
-                id: PipelineId::M13,
-                name: "M13",
-                description: "D3D11/D3D12 via Apple Game Porting Toolkit (D3DMetal)",
-                backend: "gptk",
-                graphics_backend: "gptk",
-                experimental: false,
+                id: PipelineId::D3DMetalNative,
+                name: "D3DMetal Native",
+                description:
+                    "MetalSharp-owned native D3DMetal (Wine 11.5 host ABI + Apple D3DMetal payload) — reserved",
+                backend: D3DMETAL_NATIVE_BACKEND,
+                graphics_backend: D3DMETAL_NATIVE_BACKEND,
+                experimental: true,
                 requires_wine: true,
                 wine_overrides: Some(
                     "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
-                dyld_paths: vec!["lib/wine/x86_64-unix"],
-                winedllpath_dirs: vec![],
-                deploy_dlls: vec![],
-                env_vars: vec![],
-                launch_args: vec![],
-                alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::Steam],
-                shader_cache_subdir: Some("m13"),
-            },
-            PipelineNode {
-                id: PipelineId::D3DMetal,
-                name: "D3DMetal",
-                description: "D3D11/D3D12 via Apple D3DMetal 4.0 (GPTK Wine)",
-                backend: "d3dmetal",
-                graphics_backend: "d3dmetal",
-                experimental: true,
-                requires_wine: false,
-                wine_overrides: Some(
-                    "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                ),
+                // WINEDLLPATH/DYLD paths and the MS_D3DMETAL_*_PATH vars are
+                // resolved at launch in a later phase; declared here so the
+                // ABI names are frozen and grep-discoverable now.
                 dyld_paths: vec![],
                 winedllpath_dirs: vec![],
                 deploy_dlls: vec![],
-                env_vars: vec![],
+                env_vars: vec![
+                    EnvVar { key: MS_GRAPHICS_BACKEND_ENV, value: D3DMETAL_NATIVE_BACKEND },
+                    EnvVar { key: MS_ACTIVE_GRAPHICS_BACKEND_ENV, value: D3DMETAL_NATIVE_BACKEND },
+                ],
                 launch_args: vec![],
-                alternatives: vec![PipelineId::M12, PipelineId::M11, PipelineId::M13],
-                shader_cache_subdir: Some("d3dmetal"),
+                alternatives: vec![PipelineId::M12, PipelineId::M11],
+                shader_cache_subdir: Some("d3dmetal_native"),
             },
             PipelineNode {
                 id: PipelineId::M32,
@@ -557,7 +554,6 @@ impl PipelineId {
         matches!(
             self,
             PipelineId::M12
-                | PipelineId::D3DMetal
                 | PipelineId::Vkd3dD12
                 | PipelineId::M11
                 | PipelineId::DxvkD11
@@ -571,7 +567,6 @@ impl PipelineId {
     pub fn user_selectable_id(self) -> Option<&'static str> {
         match self {
             PipelineId::M12 => Some("m12"),
-            PipelineId::D3DMetal => Some("d3dmetal"),
             PipelineId::Vkd3dD12 => Some("vkd3d_d12"),
             PipelineId::M11 => Some("m11"),
             PipelineId::DxvkD11 => Some("dxvk_d11"),
@@ -586,7 +581,6 @@ impl PipelineId {
     pub fn user_selectable_name(self) -> Option<&'static str> {
         match self {
             PipelineId::M12 => Some("M12"),
-            PipelineId::D3DMetal => Some("D3DMetal"),
             PipelineId::Vkd3dD12 => Some("VKD3D D3D12"),
             PipelineId::M11 => Some("M11"),
             PipelineId::DxvkD11 => Some("DXVK D3D11"),
@@ -628,8 +622,11 @@ impl PipelineId {
             "dxvk_d9" | "dxvk9" | "d9vk" => Some(PipelineId::DxvkD9),
             "dxvk_d11" | "dxvk11" | "dxvk" => Some(PipelineId::DxvkD11),
             "vkd3d_d12" | "vkd3d12" | "vkd3d" | "vkd3d_proton" => Some(PipelineId::Vkd3dD12),
-            "m13" | "gptk" | "steam_d3dmetal" => Some(PipelineId::M13),
-            "d3dmetal" | "d3dmetal_native" => Some(PipelineId::D3DMetal),
+            // Legacy `d3dmetal`/`d3dmetal_native`/`gptk`/`m13` aliases all
+            // resolve to the single reserved native variant. There is no GPTK
+            // lane anymore; native is not user-selectable/launchable until the
+            // host ABI and payload are ready.
+            "d3dmetal" | "d3dmetal_native" | "m13" | "gptk" | "steam_d3dmetal" => Some(PipelineId::D3DMetalNative),
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
@@ -647,8 +644,7 @@ impl PipelineId {
             PipelineId::DxvkD9 => "dxvk_d9",
             PipelineId::DxvkD11 => "dxvk_d11",
             PipelineId::Vkd3dD12 => "vkd3d_d12",
-            PipelineId::M13 => "gptk_d3dmetal",
-            PipelineId::D3DMetal => "d3dmetal",
+            PipelineId::D3DMetalNative => "d3dmetal_native",
             PipelineId::M32 => "wined3d_32",
             PipelineId::FnaArm64 => "xna_fna_arm64",
             PipelineId::Steam => "steam",
@@ -675,6 +671,40 @@ mod tests {
         assert!(dxmt.alternatives.contains(&PipelineId::M11));
         assert!(dxmt.alternatives.contains(&PipelineId::M10));
         assert!(dxmt.alternatives.contains(&PipelineId::M9));
+    }
+
+    #[test]
+    fn d3dmetal_native_is_reserved_and_gptk_lane_is_gone() {
+        // The external GPTK lane (M13 / Apple-GPTK-Wine / Homebrew GPTK) is
+        // removed entirely. `d3dmetal`/`gptk`/`m13` aliases all resolve to the
+        // single reserved native variant, which is not selectable/launchable.
+        assert!(!PipelineId::D3DMetalNative.is_user_selectable());
+        assert_eq!(PipelineId::D3DMetalNative.user_selectable_id(), None);
+        assert_eq!(PipelineId::D3DMetalNative.user_selectable_name(), None);
+        assert_eq!(PipelineId::from_str_flexible("d3dmetal_native"), Some(PipelineId::D3DMetalNative));
+        assert_eq!(PipelineId::from_str_flexible("d3dmetal"), Some(PipelineId::D3DMetalNative));
+        assert_eq!(PipelineId::from_str_flexible("gptk"), Some(PipelineId::D3DMetalNative));
+        assert_eq!(PipelineId::from_str_flexible("m13"), Some(PipelineId::D3DMetalNative));
+        assert_eq!(PipelineId::from_str_flexible("steam_d3dmetal"), Some(PipelineId::D3DMetalNative));
+
+        let node = get_pipeline(PipelineId::D3DMetalNative);
+        assert_eq!(node.backend, D3DMETAL_NATIVE_BACKEND);
+        assert_eq!(node.graphics_backend, D3DMETAL_NATIVE_BACKEND);
+        assert!(node.experimental);
+        assert_eq!(node.id.to_legacy_method(), "d3dmetal_native");
+        // No selectable pipeline's alternatives may fall back to the reserved lane.
+        for pipeline in pipelines() {
+            assert!(!pipeline.id.is_user_selectable() || !pipeline.alternatives.contains(&PipelineId::D3DMetalNative));
+        }
+    }
+
+    #[test]
+    fn d3dmetal_native_abi_names_are_frozen() {
+        assert_eq!(D3DMETAL_NATIVE_BACKEND, "d3dmetal_native");
+        assert_eq!(MS_GRAPHICS_BACKEND_ENV, "MS_GRAPHICS_BACKEND");
+        assert_eq!(MS_ACTIVE_GRAPHICS_BACKEND_ENV, "MS_ACTIVE_GRAPHICS_BACKEND");
+        assert_eq!(MS_D3DMETAL_SHARED_PATH_ENV, "MS_D3DMETAL_SHARED_PATH");
+        assert_eq!(MS_D3DMETAL_FRAMEWORK_PATH_ENV, "MS_D3DMETAL_FRAMEWORK_PATH");
     }
 
     #[test]
@@ -864,20 +894,16 @@ mod tests {
                 PipelineId::DxvkD9,
                 PipelineId::DxvkD11,
                 PipelineId::Vkd3dD12,
-                PipelineId::D3DMetal,
                 PipelineId::FnaArm64
             ]
         );
 
         let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
-        assert_eq!(
-            labels,
-            vec!["M12", "M11", "M10", "M9", "DXVK D3D9", "DXVK D3D11", "VKD3D D3D12", "D3DMetal", "Mono/FNA"]
-        );
+        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "DXVK D3D9", "DXVK D3D11", "VKD3D D3D12", "Mono/FNA"]);
 
         for hidden in [
             PipelineId::Dxmt,
-            PipelineId::M13,
+            PipelineId::D3DMetalNative,
             PipelineId::M32,
             PipelineId::Steam,
             PipelineId::MacSteam,

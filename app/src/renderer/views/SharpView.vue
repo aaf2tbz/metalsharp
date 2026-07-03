@@ -243,7 +243,6 @@ const fallbackEngineOptions: RuntimeRouteOption[] = [
   { id: "dxvk_d9", name: "DXVK D3D9" },
   { id: "dxvk_d11", name: "DXVK D3D11" },
   { id: "vkd3d_d12", name: "VKD3D D3D12" },
-  { id: "d3dmetal", name: "D3DMetal" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
 const engineOptions = computed(() => runtimeRouteOptions.value.length ? runtimeRouteOptions.value : fallbackEngineOptions);
@@ -309,10 +308,10 @@ function isFnaProfile(profile: string): boolean {
 }
 const selectableRuntimeProfileIds = computed(() => new Set(engineOptions.value.map((option) => option.id)));
 const visibleRuntimeProfiles = computed(() => {
-  const profiles = runtimeProfiles.value.some((profile) => profile.id === "d3dmetal")
-    ? runtimeProfiles.value
-    : [...runtimeProfiles.value, { id: "d3dmetal", name: "D3DMetal (GPTK)", components: ["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"] }];
-  return profiles
+  // The external Homebrew GPTK / D3DMetal (GPTK) profile is removed. The
+  // native d3dmetal_native lane is reserved and not selectable until the Wine
+  // host ABI and payload are ready (later phases).
+  return runtimeProfiles.value
     .filter((profile) => selectableRuntimeProfileIds.value.has(profile.id))
     .map((profile) => ({
       ...profile,

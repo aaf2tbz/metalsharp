@@ -258,9 +258,8 @@ pub enum RuntimeProfile {
     DxvkD9,
     DxvkD11,
     Vkd3dD12,
-    M13,
-    #[serde(rename = "d3dmetal")]
-    D3DMetal,
+    #[serde(rename = "d3dmetal_native", alias = "d3dmetal", alias = "m13", alias = "gptk")]
+    D3DMetalNative,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -671,7 +670,7 @@ fn normalize_loaded_runtime_profile_components(manifest: &mut BottleManifest) {
             });
             !has_pr230_shape || has_stale_m12_shape
         },
-        RuntimeProfile::D3DMetal => {
+        RuntimeProfile::D3DMetalNative => {
             manifest.installed_components.iter().any(|component| is_m12_runtime_component(&component.id))
         },
         _ => false,
@@ -881,8 +880,7 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::DxvkD9 => "dxvk_d9",
         crate::mtsp::engine::PipelineId::DxvkD11 => "dxvk_d11",
         crate::mtsp::engine::PipelineId::Vkd3dD12 => "vkd3d_d12",
-        crate::mtsp::engine::PipelineId::M13 => "m13",
-        crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
+        crate::mtsp::engine::PipelineId::D3DMetalNative => "d3dmetal",
         crate::mtsp::engine::PipelineId::M32 => "m32",
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
         crate::mtsp::engine::PipelineId::Steam => "steam",
@@ -996,7 +994,7 @@ pub fn resolve_steam_pipeline_for_request(
 }
 
 pub fn steam_pipeline_defaults_offline(pipeline: crate::mtsp::engine::PipelineId) -> bool {
-    matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
+    matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetalNative)
 }
 
 pub fn save_steam_compatdata(
@@ -1120,10 +1118,9 @@ pub fn steam_route_contracts() -> Vec<SteamRouteContract> {
         steam_route_contract_for(DxvkD9),
         steam_route_contract_for(DxvkD11),
         steam_route_contract_for(Vkd3dD12),
-        steam_route_contract_for(M13),
         steam_route_contract_for(FnaArm64),
         steam_route_contract_for(WineBare),
-        steam_route_contract_for(D3DMetal),
+        steam_route_contract_for(D3DMetalNative),
     ]
 }
 
@@ -1335,66 +1332,19 @@ pub fn prepare_steam_game_launch(
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
-    if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
-        if let Some(ref home) = dirs::home_dir() {
-            match crate::installer::ensure_gptk_runtime_ready(home) {
-                Ok(_) => mark_component_state(&mut manifest, "gptk", ComponentState::Installed),
-                Err(e) => {
-                    eprintln!("bottle: D3DMetal GPTK runtime staging failed: {}", e);
-                    mark_component_state(&mut manifest, "gptk", ComponentState::NeedsRepair);
-                },
-            }
-
-            if !crate::platform::gptk_prefix_ready(home) {
-                match crate::platform::ensure_gptk_prefix(home) {
-                    Ok(_) => mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed),
-                    Err(e) => {
-                        eprintln!("bottle: D3DMetal GPTK prefix seed requested: {}", e);
-                        let state = if crate::platform::gptk_prefix_seeding(home) {
-                            ComponentState::Unknown
-                        } else {
-                            ComponentState::NeedsRepair
-                        };
-                        mark_component_state(&mut manifest, "gptk_prefix", state);
-                    },
-                }
-            }
-
-            if crate::platform::gptk_prefix_ready(home) {
-                mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed);
-                if let Some(ref game_path) = manifest.game_install_path {
-                    let game_dir = std::path::PathBuf::from(game_path);
-                    if let Ok(Some(external_path)) = crate::platform::migrate_game_to_external(home, &game_dir, appid) {
-                        manifest.game_install_path = Some(external_path.to_string_lossy().to_string());
-                        manifest.runtime_assets = detect_game_runtime_assets(&external_path);
-                        manifest.installed_app_detections = detect_apps_in_game_dir(&external_path);
-                        eprintln!("bottle: D3DMetal game migrated to external SSD, updated manifest");
-                    }
-                }
-                if let Err(e) = crate::platform::ensure_gptk_dosdevices(home) {
-                    eprintln!("bottle: D3DMetal dosdevices link failed: {}", e);
-                }
-                if !crate::platform::gptk_vcrun_installed(home) {
-                    eprintln!("bottle: D3DMetal profile saved, installing VC++ redist into GPTK prefix ...");
-                    let result = crate::platform::install_gptk_prefix_components(home);
-                    if let Err(e) = &result {
-                        eprintln!("bottle: VC++ redist install failed: {}", e);
-                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::NeedsRepair);
-                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::NeedsRepair);
-                    } else {
-                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::Installed);
-                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::Installed);
-                    }
-                }
-            }
-            manifest.health = if components_ready(&manifest.installed_components) {
-                BottleHealth::Ready
-            } else {
-                BottleHealth::NeedsRepair
-            };
-            manifest.updated_at = timestamp_secs();
-            save_bottle(&manifest)?;
+    if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetalNative) {
+        // Phase 1 (D3DMetal native roadmap): the Homebrew GPTK staging path is
+        // retired. The native lane is reserved until the Wine host ABI (Phase 2)
+        // and payload contract (Phase 3) are ready; native launch is rejected
+        // elsewhere. Do not stage gptk/gptk_prefix components or migrate to an
+        // external GPTK prefix here. Phase 4 owns the native bottle profile; until
+        // then mark native components NeedsRepair so health is never misreported.
+        for component_id in ["d3d11", "d3d12", "dxgi", "d3d10", "gpu_vendor_stubs"] {
+            mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
         }
+        manifest.health = BottleHealth::NeedsRepair;
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
     } else {
         let vcrun_ids: Vec<String> = manifest
             .installed_components
@@ -1534,8 +1484,7 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::DxvkD9 => RuntimeProfile::DxvkD9,
             crate::mtsp::engine::PipelineId::DxvkD11 => RuntimeProfile::DxvkD11,
             crate::mtsp::engine::PipelineId::Vkd3dD12 => RuntimeProfile::Vkd3dD12,
-            crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
-            crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
+            crate::mtsp::engine::PipelineId::D3DMetalNative => RuntimeProfile::D3DMetalNative,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -2756,7 +2705,7 @@ pub fn repair_component(
     }
 
     if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-        && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+        && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetalNative)
     {
         let home = dirs::home_dir().ok_or("no home dir")?;
         let cid = component_id.to_string();
@@ -2868,7 +2817,7 @@ pub fn repair_component(
     }
 
     if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-        && !matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+        && !matches!(manifest.runtime_profile, RuntimeProfile::D3DMetalNative)
     {
         let is_x64 = component_id == "vcrun2019_x64" || component_id == "vcrun2019";
         let is_x86 = component_id == "vcrun2019_x86" || component_id == "vcrun2019";
@@ -3432,7 +3381,6 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::M10,
         RuntimeProfile::M9,
         RuntimeProfile::DxvkD9,
-        RuntimeProfile::M13,
         RuntimeProfile::Dotnet,
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
@@ -3525,19 +3473,12 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["dxvk_runtime", "vulkan_icd", "directx_jun2010", "vcrun2019_x64", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::DxvkD9,
         ),
-        RuntimeProfile::M13 => (
-            "GPTK D3DMetal",
+        RuntimeProfile::D3DMetalNative => (
+            "D3DMetal Native",
             BottleArch::Win64,
             true,
             &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs"][..],
-            crate::mtsp::engine::PipelineId::M13,
-        ),
-        RuntimeProfile::D3DMetal => (
-            "D3DMetal (GPTK)",
-            BottleArch::Win64,
-            false,
-            &["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"][..],
-            crate::mtsp::engine::PipelineId::D3DMetal,
+            crate::mtsp::engine::PipelineId::D3DMetalNative,
         ),
         RuntimeProfile::Dotnet => (
             ".NET",
@@ -3645,8 +3586,7 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::DxvkD9 => RuntimeProfile::DxvkD9,
         crate::mtsp::engine::PipelineId::DxvkD11 => RuntimeProfile::DxvkD11,
         crate::mtsp::engine::PipelineId::Vkd3dD12 => RuntimeProfile::Vkd3dD12,
-        crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
-        crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
+        crate::mtsp::engine::PipelineId::D3DMetalNative => RuntimeProfile::D3DMetalNative,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
@@ -3677,8 +3617,7 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "dxvk_d9" | "dxvk9" => Some(RuntimeProfile::DxvkD9),
         "dxvk_d11" | "dxvk11" | "dxvk" => Some(RuntimeProfile::DxvkD11),
         "vkd3d_d12" | "vkd3d12" | "vkd3d" | "vkd3d_proton" => Some(RuntimeProfile::Vkd3dD12),
-        "m13" | "gptk" => Some(RuntimeProfile::M13),
-        "d3dmetal" | "d3dmetal_native" => Some(RuntimeProfile::D3DMetal),
+        "d3dmetal" | "d3dmetal_native" => Some(RuntimeProfile::D3DMetalNative),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
@@ -3964,7 +3903,7 @@ fn inspect_components_for_manifest(
                 } else if matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod") {
                     inspect_mono_fna_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
                 } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-                    && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
+                    && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetalNative)
                 {
                     let home = dirs::home_dir().unwrap_or_default();
                     if crate::platform::gptk_vcrun_installed(&home) {
@@ -6617,7 +6556,7 @@ mod tests {
 
     #[test]
     fn d3dmetal_route_contract_advertises_offline_emulation_lane() {
-        let d3dmetal = steam_route_contract_for(crate::mtsp::engine::PipelineId::D3DMetal);
+        let d3dmetal = steam_route_contract_for(crate::mtsp::engine::PipelineId::D3DMetalNative);
         assert_eq!(d3dmetal.steam_identity_mode, "offline_steam_emulation");
         assert_eq!(d3dmetal.launch_route, "/steam/launch-offline");
     }
@@ -6848,12 +6787,12 @@ mod tests {
             RuntimeComponent { id: "m12_gpu_stubs".into(), state: ComponentState::Installed },
             RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::NeedsRepair },
         ];
-        let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetal);
+        let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetalNative);
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "d3d12_agility"));
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_winemetal"));
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_gpu_stubs"));
-        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk"));
-        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk_prefix"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "d3d11"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gpu_vendor_stubs"));
         assert_eq!(
             rebuilt_d3dmetal
                 .iter()
@@ -7400,10 +7339,10 @@ mod tests {
             steam_app_id: Some(999999),
             prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
             arch: BottleArch::Win64,
-            runtime_profile: RuntimeProfile::D3DMetal,
+            runtime_profile: RuntimeProfile::D3DMetalNative,
             preferred_pipeline: Some("d3dmetal".into()),
             route_rule: None,
-            installed_components: default_components_for(RuntimeProfile::D3DMetal),
+            installed_components: default_components_for(RuntimeProfile::D3DMetalNative),
             source_installer_path: None,
             installer_kind: None,
             game_install_path: Some("/games/D3DMetal Game".into()),
@@ -7418,7 +7357,7 @@ mod tests {
             updated_at: timestamp_secs(),
         };
 
-        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::D3DMetal);
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::D3DMetalNative);
 
         assert_eq!(record.launch_pipeline, "d3dmetal");
         assert_eq!(record.steam_identity_mode, "offline_steam_emulation");
@@ -7664,11 +7603,6 @@ mod tests {
         }
         assert!(!m12_ids.contains(&"gpu_vendor_stubs"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
-
-        let m13 = default_components_for(RuntimeProfile::M13);
-        let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
-        assert!(m13_ids.contains(&"gpu_vendor_stubs"));
-        assert!(!m13_ids.contains(&"gptk_amd_stub"));
     }
 
     #[test]

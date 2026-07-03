@@ -272,7 +272,7 @@ async function installVcppX86() {
       <div v-if="step === 1" class="setup-body">
         <div class="setup-section-header">
           <h1>Install Homebrew</h1>
-          <p>MetalSharp uses Homebrew for setup tools such as zstd and Rosetta checks. GPTK/D3DMetal is optional and is only installed later when you save a game as a D3DMetal bottle.</p>
+          <p>MetalSharp uses Homebrew for setup tools such as zstd and Rosetta checks. No Homebrew GPTK is ever required: MetalSharp ships its own Wine 11.5 and a MetalSharp-owned native D3DMetal pipeline.</p>
         </div>
 
         <div class="setup-brew-step">
@@ -294,7 +294,7 @@ async function installVcppX86() {
       <div v-if="step === 2" class="setup-body">
         <div class="setup-section-header">
           <h1>Install Runtime</h1>
-          <p>Install the MetalSharp-owned Wine runtime, DXMT graphics runtimes, Steam support files, Mono/FNA support, scripts, and bottle rules. GPTK is not installed during first-time setup.</p>
+          <p>Install the MetalSharp-owned Wine runtime, DXMT graphics runtimes, Steam support files, Mono/FNA support, scripts, and bottle rules. No GPTK is installed during first-time setup.</p>
         </div>
 
         <button

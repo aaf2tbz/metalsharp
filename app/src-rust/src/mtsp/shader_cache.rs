@@ -182,7 +182,7 @@ fn merge_preset_into_user(preset_db: &PathBuf, user_db: &PathBuf) -> Option<u64>
 // gives the cache doctor a real, testable introspection path today.
 
 /// The shader-cache family a pipeline shares. M9/M10/M11 share the legacy
-/// `dxmt-metal` family; M12/M13 use the isolated `dxmt-metal12` family.
+/// `dxmt-metal` family; M12 use the isolated `dxmt-metal12` family.
 /// DXVK/VKD3D lanes use their own Vulkan-family cache buckets.
 pub fn shader_cache_family(pipeline: crate::mtsp::engine::PipelineId) -> &'static [&'static str] {
     use crate::mtsp::engine::PipelineId;
@@ -194,7 +194,6 @@ pub fn shader_cache_family(pipeline: crate::mtsp::engine::PipelineId) -> &'stati
         PipelineId::DxvkD9 => &["dxvk-d9"],
         PipelineId::DxvkD11 => &["dxvk-d11"],
         PipelineId::Vkd3dD12 => &["vkd3d-d12"],
-        PipelineId::M13 => &["m13", "dxmt-metal12"],
         _ => &[],
     }
 }
@@ -210,7 +209,6 @@ pub fn primary_cache_subdir(pipeline: crate::mtsp::engine::PipelineId) -> Option
         PipelineId::DxvkD9 => Some("dxvk-d9"),
         PipelineId::DxvkD11 => Some("dxvk-d11"),
         PipelineId::Vkd3dD12 => Some("vkd3d-d12"),
-        PipelineId::M13 => Some("m13"),
         _ => None,
     }
 }
@@ -392,8 +390,7 @@ fn pipeline_preference_id_str(pipeline: crate::mtsp::engine::PipelineId) -> &'st
         PipelineId::M10 => "m10",
         PipelineId::M11 => "m11",
         PipelineId::M12 => "m12",
-        PipelineId::M13 => "m13",
-        PipelineId::D3DMetal => "d3dmetal",
+        PipelineId::D3DMetalNative => "d3dmetal",
         PipelineId::FnaArm64 => "fna_arm64",
         PipelineId::WineBare => "wine_bare",
         _ => "auto",
@@ -513,9 +510,8 @@ mod tests {
         use crate::mtsp::engine::PipelineId;
         // M9/M10/M11 share the legacy dxmt-metal family.
         assert_eq!(shader_cache_family(PipelineId::M11), &["m11", "dxmt-metal"]);
-        // M12/M13 use the isolated dxmt-metal12 family and must not mix.
+        // M12 use the isolated dxmt-metal12 family and must not mix.
         assert_eq!(shader_cache_family(PipelineId::M12), &["m12", "dxmt-metal12"]);
-        assert_eq!(shader_cache_family(PipelineId::M13), &["m13", "dxmt-metal12"]);
         // Vulkan-family lanes do not reuse DXMT cache families.
         assert_eq!(shader_cache_family(PipelineId::DxvkD9), &["dxvk-d9"]);
         assert_eq!(shader_cache_family(PipelineId::DxvkD11), &["dxvk-d11"]);
@@ -532,7 +528,6 @@ mod tests {
         assert_eq!(primary_cache_subdir(PipelineId::DxvkD9), Some("dxvk-d9"));
         assert_eq!(primary_cache_subdir(PipelineId::DxvkD11), Some("dxvk-d11"));
         assert_eq!(primary_cache_subdir(PipelineId::Vkd3dD12), Some("vkd3d-d12"));
-        assert_eq!(primary_cache_subdir(PipelineId::M13), Some("m13"));
     }
 
     fn make_dxmt_cache_db(path: &Path, rows: &[(&str, Vec<&str>)]) {

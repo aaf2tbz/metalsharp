@@ -73,7 +73,7 @@ Available lanes:
 - `dxvk_d9` experimental fallback
 - `dxvk_d11` experimental fallback
 - `vkd3d_d12` experimental fallback
-- `d3dmetal_gptk` externally provisioned through Homebrew GPTK
+- `d3dmetal_native` MetalSharp-owned native D3DMetal (reserved; no Homebrew GPTK)
 - `wine_bare`
 - `steam_background`
 - `gogdl_wine`

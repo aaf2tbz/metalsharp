@@ -57,6 +57,8 @@ pub enum RuntimeLaneStatus {
     Available,
     External,
     Planned,
+    /// Exists in the model but is not selectable/launchable until its gates pass.
+    Reserved,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,7 +101,7 @@ pub fn runtime_contract_id_for_pipeline(pipeline: crate::mtsp::engine::PipelineI
         crate::mtsp::engine::PipelineId::DxvkD9 => Some("dxvk_d9"),
         crate::mtsp::engine::PipelineId::DxvkD11 => Some("dxvk_d11"),
         crate::mtsp::engine::PipelineId::Vkd3dD12 => Some("vkd3d_d12"),
-        crate::mtsp::engine::PipelineId::D3DMetal => Some("d3dmetal_gptk"),
+        crate::mtsp::engine::PipelineId::D3DMetalNative => Some("d3dmetal_native"),
         crate::mtsp::engine::PipelineId::WineBare => Some("wine_bare"),
         crate::mtsp::engine::PipelineId::Steam => Some("steam_background"),
         crate::mtsp::engine::PipelineId::FnaArm64 => Some("native_mono_arm64"),
@@ -116,7 +118,7 @@ pub fn runtime_lane_pipeline_id(lane_id: &str) -> Option<crate::mtsp::engine::Pi
         "dxvk_d9" => Some(crate::mtsp::engine::PipelineId::DxvkD9),
         "dxvk_d11" => Some(crate::mtsp::engine::PipelineId::DxvkD11),
         "vkd3d_d12" => Some(crate::mtsp::engine::PipelineId::Vkd3dD12),
-        "d3dmetal_gptk" => Some(crate::mtsp::engine::PipelineId::D3DMetal),
+        "d3dmetal_native" => Some(crate::mtsp::engine::PipelineId::D3DMetalNative),
         "wine_bare" => Some(crate::mtsp::engine::PipelineId::WineBare),
         "steam_background" => Some(crate::mtsp::engine::PipelineId::Steam),
         _ => None,
@@ -266,7 +268,7 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             dyld_paths: vec!["runtime/wine/lib/wine/x86_64-unix", "runtime/wine/lib/dxmt/x86_64-unix"],
             winedllpath_dirs: vec!["runtime/wine/lib/dxmt/x86_64-windows", "runtime/wine/lib/metalsharp/x86_64-windows"],
             shader_cache_lane: Some("m11"),
-            fallback_lanes: vec!["dxvk_d11", "d3dmetal_gptk", "wine_bare"],
+            fallback_lanes: vec!["dxvk_d11", "d3dmetal_native", "wine_bare"],
             doctor_checks: vec!["wine_runtime", "dxmt_runtime", "prefix_wineboot", "shader_cache"],
             repair_actions: vec!["repair_dxmt_runtime", "stage_route_dlls", "run_wineboot_update"],
             notes: "Protected D3D11 lane and primary fallback for D3D12 titles that cannot use M12.",
@@ -298,7 +300,7 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             dyld_paths: vec!["runtime/wine/lib/dxmt_m12/x86_64-unix", "runtime/wine/lib/wine/x86_64-unix"],
             winedllpath_dirs: vec!["runtime/wine/lib/dxmt_m12/x86_64-windows"],
             shader_cache_lane: Some("m12"),
-            fallback_lanes: vec!["d3dmetal_gptk", "vkd3d_d12", "m11"],
+            fallback_lanes: vec!["d3dmetal_native", "vkd3d_d12", "m11"],
             doctor_checks: vec![
                 "wine_runtime",
                 "dxmt_m12_manifest",
@@ -380,35 +382,35 @@ pub fn runtime_lane_contracts() -> Vec<RuntimeLaneContract> {
             dyld_paths: vec!["runtime/wine/lib/wine/x86_64-unix", "runtime/wine/lib/vkd3d/x86_64-unix"],
             winedllpath_dirs: vec!["runtime/wine/lib/vkd3d/x86_64-windows"],
             shader_cache_lane: Some("vkd3d-d12"),
-            fallback_lanes: vec!["m12_dxmt_m12", "d3dmetal_gptk", "m11"],
+            fallback_lanes: vec!["m12_dxmt_m12", "d3dmetal_native", "m11"],
             doctor_checks: vec!["vkd3d_dlls", "vkd3d_sidecars", "moltenvk", "vulkan_icd", "feature_limits"],
             repair_actions: vec!["install_vkd3d_runtime", "fix_moltenvk_icd"],
             notes: "Available experimental D3D12 escape hatch below M12/dxmt_m12 and D3DMetal priority.",
         },
         RuntimeLaneContract {
-            id: "d3dmetal_gptk",
-            name: "D3DMetal",
-            family: "gptk-d3dmetal",
-            status: RuntimeLaneStatus::External,
+            id: "d3dmetal_native",
+            name: "D3DMetal Native",
+            family: "d3dmetal-native",
+            status: RuntimeLaneStatus::Reserved,
             source_scopes: vec!["steam", "sharp_library"],
             requires_wine: true,
             supports_win32: false,
             supports_win64: true,
-            host_arch: "x86_64-rosetta",
+            host_arch: "x86_64",
             windows_arch: "win64",
             graphics_apis: vec!["d3d11", "d3d12", "d3dmetal"],
-            prefix_policy: "prefix-gptk",
+            prefix_policy: "bottle",
             runtime_surfaces: vec![RuntimeSurfaceId::D3DMetal],
             runtime_surface_paths: paths_for(&[RuntimeSurfaceId::D3DMetal]),
             required_pe_dlls: vec!["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll"],
             required_unix_sidecars: vec!["D3DMetal.framework"],
-            dyld_paths: vec!["Game Porting Toolkit.app/Contents/Resources/wine/lib/wine/x86_64-unix"],
+            dyld_paths: vec!["runtime/wine/lib/wine/x86_64-unix"],
             winedllpath_dirs: vec![],
-            shader_cache_lane: Some("d3dmetal"),
+            shader_cache_lane: Some("d3dmetal_native"),
             fallback_lanes: vec!["m12_dxmt_m12", "m11", "vkd3d_d12"],
-            doctor_checks: vec!["homebrew_gptk", "rosetta", "gptk_prefix", "vcrun2019"],
-            repair_actions: vec!["install_homebrew_gptk", "seed_gptk_prefix", "install_gptk_redist"],
-            notes: "Explicit external GPTK lane. It must not mix GPTK route DLLs into DXMT runtime surfaces.",
+            doctor_checks: vec!["d3dmetal_host_abi", "d3dmetal_payload", "vcrun2019"],
+            repair_actions: vec!["repair_d3dmetal_host_abi", "repair_d3dmetal_payload"],
+            notes: "MetalSharp-owned native D3DMetal lane (reserved): no Homebrew GPTK, no CX naming. Not selectable until the Wine host ABI and payload are ready.",
         },
         RuntimeLaneContract {
             id: "wine_bare",
@@ -601,7 +603,7 @@ mod tests {
             "dxvk_d9",
             "dxvk_d11",
             "vkd3d_d12",
-            "d3dmetal_gptk",
+            "d3dmetal_native",
             "wine_bare",
             "steam_background",
             "gogdl_wine",
@@ -666,7 +668,7 @@ mod tests {
         assert_eq!(runtime_lane_pipeline_id("dxvk_d9"), Some(PipelineId::DxvkD9));
         assert_eq!(runtime_lane_pipeline_id("dxvk_d11"), Some(PipelineId::DxvkD11));
         assert_eq!(runtime_lane_pipeline_id("vkd3d_d12"), Some(PipelineId::Vkd3dD12));
-        assert_eq!(runtime_lane_pipeline_id("d3dmetal_gptk"), Some(PipelineId::D3DMetal));
+        assert_eq!(runtime_lane_pipeline_id("d3dmetal_native"), Some(PipelineId::D3DMetalNative));
         assert_eq!(runtime_lane_pipeline_id("gogdl_wine"), None);
     }
 

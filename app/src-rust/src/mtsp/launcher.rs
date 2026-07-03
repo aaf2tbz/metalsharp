@@ -405,7 +405,10 @@ pub fn launch_with_pipeline(
         | PipelineId::DxvkD9
         | PipelineId::DxvkD11
         | PipelineId::Vkd3dD12 => launch_dxmt_metal(appid, node),
-        PipelineId::M13 | PipelineId::D3DMetal => launch_d3dmetal_gptk(appid, node),
+        PipelineId::D3DMetalNative => {
+            Err("D3DMetal Native lane is reserved and not launchable until the Wine host ABI and payload are ready"
+                .into())
+        },
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
@@ -438,9 +441,9 @@ pub fn launch_steam_bottle_with_pipeline(
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
-        PipelineId::M13 | PipelineId::D3DMetal => {
-            launch_d3dmetal_gptk_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
-                .map(|(pid, method)| (pid, method, log_path))
+        PipelineId::D3DMetalNative => {
+            Err("D3DMetal Native lane is reserved and not launchable until the Wine host ABI and payload are ready"
+                .into())
         },
         PipelineId::M32 | PipelineId::WineBare => {
             launch_wine_bare_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
@@ -523,8 +526,7 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::DxvkD9
         | PipelineId::DxvkD11
         | PipelineId::Vkd3dD12
-        | PipelineId::M13
-        | PipelineId::D3DMetal
+        | PipelineId::D3DMetalNative
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 => {
@@ -548,13 +550,13 @@ pub fn prepare_steam_pipeline_env(
         prepare_steam_api_for_game_dir(&home, game_dir, appid, pipeline_id);
         cleanup_legacy_eac_toggle_artifacts(game_dir);
         cleanup_legacy_injections(game_dir)?;
-        if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
+        if matches!(pipeline_id, PipelineId::M12) {
             let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
             cleanup_m12_legacy_hook_artifacts(game_dir, &prefix);
             crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
         }
     }
-    if pipeline_id == PipelineId::D3DMetal {
+    if pipeline_id == PipelineId::D3DMetalNative {
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_metalsharp_dlls_from_game_dir(game_dir)?;
         }
@@ -1205,7 +1207,7 @@ fn pipeline_quarantine_label(pipeline: PipelineId) -> &'static str {
         PipelineId::M10 => "m10",
         PipelineId::M11 => "m11",
         PipelineId::M12 => "m12",
-        PipelineId::D3DMetal => "d3dmetal",
+        PipelineId::D3DMetalNative => "d3dmetal",
         _ => "route",
     }
 }
@@ -1473,14 +1475,11 @@ pub fn launch_custom_with_options(
         | PipelineId::DxvkD9
         | PipelineId::DxvkD11
         | PipelineId::Vkd3dD12
-        | PipelineId::M13
-        | PipelineId::D3DMetal
+        | PipelineId::D3DMetalNative
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            return Err(
-                "Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, DXVK, VKD3D, M13, D3DMetal, or M32".into(),
-            );
+            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, DXVK, VKD3D, or M32".into());
         },
     }
 
@@ -1747,157 +1746,6 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
     }
 }
 
-fn gptk_ensure_dependencies(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !crate::platform::rosetta_is_installed() {
-        eprintln!("d3dmetal: Installing Rosetta 2...");
-        let status =
-            std::process::Command::new("softwareupdate").args(["--install-rosetta", "--agree-to-license"]).status()?;
-        if !status.success() {
-            return Err(
-                "Failed to install Rosetta 2. Install manually: softwareupdate --install-rosetta --agree-to-license"
-                    .into(),
-            );
-        }
-    }
-    crate::installer::ensure_gptk_runtime_ready(home)
-        .map(|_| ())
-        .map_err(|e| format!("D3DMetal GPTK runtime setup failed: {}", e).into())
-}
-
-fn launch_d3dmetal_gptk(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_d3dmetal_gptk_with_context(appid, node, None, &[], None)
-}
-
-fn launch_d3dmetal_gptk_with_context(
-    appid: u32,
-    node: &PipelineNode,
-    prefix_override: Option<&Path>,
-    extra_env: &[(String, String)],
-    log_path: Option<&Path>,
-) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    gptk_ensure_dependencies(&home)?;
-
-    if !crate::platform::gptk_prefix_ready(&home) {
-        return Err("GPTK prefix is not ready — open the bottle settings and repair 'gptk_prefix' first".into());
-    }
-    let gptk_prefix = crate::platform::gptk_prefix_path(&home);
-    crate::platform::sync_gptk_prefix(&home)?;
-    let gptk_root = crate::platform::gptk_wine_root_for_home(&home);
-    let gptk_wine64 = crate::platform::gptk_wine64_binary_for_home(&home);
-    let gptk_wineserver = crate::platform::gptk_wineserver_binary_for_home(&home);
-
-    let default_log_path;
-    let log_path = match log_path {
-        Some(path) => Some(path),
-        None => {
-            default_log_path = mtsp_launch_log_path(appid);
-            Some(default_log_path.as_path())
-        },
-    };
-
-    let recipe = super::recipe::build_launch_recipe(appid, node)?;
-    let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
-    let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
-    let exe_dir = launch_working_dir(game_dir, exe_path);
-    let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-
-    apply_start_protected_game_bypass(appid, game_dir);
-
-    let prefix = gptk_prefix;
-    let prefix_str = prefix.to_string_lossy().to_string();
-    let offline_mode = extra_env.iter().any(|(key, value)| key == "METALSHARP_OFFLINE_MODE" && value == "1");
-    if offline_mode {
-        if crate::platform::disable_gptk_steam_launcher_for_offline(&prefix)? {
-            eprintln!(
-                "d3dmetal offline: disabled GPTK Steam launcher at {}",
-                crate::platform::gptk_disabled_steam_exe(&prefix).display()
-            );
-        }
-        let _ = Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
-    } else {
-        crate::platform::restore_gptk_steam_launcher(&prefix)?;
-    }
-
-    deploy_steam_appid(game_dir, appid);
-
-    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-
-    if node.uses_winedllpath_routing() {
-        validate_recipe_runtime(&recipe)?;
-    }
-    deploy_recipe_dlls(&recipe)?;
-    deploy_prefix_route_dlls(&recipe, &prefix)?;
-
-    let cache_paths = build_cache_paths(&home, node, appid);
-
-    let mut dyld_parts = vec![
-        gptk_root.join("lib").to_string_lossy().to_string(),
-        gptk_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
-        gptk_root.join("lib").join("external").to_string_lossy().to_string(),
-    ];
-    for dyld_dir in &node.dyld_paths {
-        let full = ms_root.join(dyld_dir);
-        dyld_parts.push(full.to_string_lossy().to_string());
-    }
-    let dyld = dyld_parts.join(":");
-
-    let mut cmd = Command::new(&gptk_wine64);
-    cmd.current_dir(exe_dir)
-        .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", wine_debug_value())
-        .env("WINEDEBUGGER", "none")
-        .env("WINESERVER", &gptk_wineserver)
-        .env("WINELOADER", &gptk_wine64)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .env("MS_GRAPHICS_BACKEND", node.graphics_backend)
-        .env("WINEMSYNC", "1");
-
-    if node.uses_winedllpath_routing() {
-        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
-        cmd.env("WINEDLLPATH", &winedllpath);
-    }
-
-    if let Some(overrides) = node.wine_overrides {
-        cmd.env("WINEDLLOVERRIDES", overrides);
-    }
-
-    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    apply_app_launch_env(&mut cmd, appid, node.id);
-    for (key, value) in extra_env {
-        cmd.env(key, value);
-    }
-
-    cmd.arg(&exe_name);
-    cmd.args(&recipe.launch_args);
-    attach_launch_log(
-        &mut cmd,
-        log_path,
-        LaunchLogContext {
-            appid,
-            node,
-            prefix: &prefix,
-            cwd: exe_dir,
-            exe_name: &exe_name,
-            args: &recipe.launch_args,
-            cache_paths: cache_paths.as_ref(),
-        },
-    )?;
-    let launch_env = command_env_pairs(&cmd);
-    let child = cmd.spawn()?;
-    persist_actual_launch_receipt_best_effort(ActualLaunchReceiptInput {
-        appid,
-        node,
-        recipe: &recipe,
-        env: &launch_env,
-        pid: child.id(),
-        log_path,
-        prefix: &prefix,
-        home: &home,
-    });
-    Ok((child.id(), node.id.to_legacy_method()))
-}
-
 fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     launch_dxmt_metal_with_context(appid, node, None, &[], None)
 }
@@ -2027,7 +1875,7 @@ fn deploy_d3d12_agility_sidecars(
     node: &PipelineNode,
     game_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !matches!(node.id, PipelineId::M12 | PipelineId::M13) {
+    if !matches!(node.id, PipelineId::M12) {
         return Ok(());
     }
 
@@ -4322,7 +4170,7 @@ fn gptk_prefix_game_dir_aliases(prefix: &Path, game_dir: &Path) -> Vec<PathBuf> 
 
 fn goldberg_dirs_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) -> Vec<PathBuf> {
     let mut dirs = vec![game_dir.to_path_buf()];
-    if matches!(pipeline_id, PipelineId::D3DMetal) {
+    if matches!(pipeline_id, PipelineId::D3DMetalNative) {
         let prefix = crate::platform::gptk_prefix_path(home);
         for alias in gptk_prefix_game_dir_aliases(&prefix, game_dir) {
             push_unique_physical_path(&mut dirs, alias);
@@ -4514,7 +4362,7 @@ pub fn goldberg_status_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: P
     if goldberg_status(&game_dir.to_path_buf()) {
         return true;
     }
-    if !matches!(pipeline_id, PipelineId::D3DMetal) {
+    if !matches!(pipeline_id, PipelineId::D3DMetalNative) {
         return false;
     }
 
@@ -6128,7 +5976,7 @@ mod tests {
         std::os::unix::fs::symlink(&library, dosdevices.join("d:")).expect("create library drive");
 
         let aliases = gptk_prefix_game_dir_aliases(&prefix, &game_dir);
-        let dirs = goldberg_dirs_for_pipeline(&home, &game_dir, PipelineId::D3DMetal);
+        let dirs = goldberg_dirs_for_pipeline(&home, &game_dir, PipelineId::D3DMetalNative);
 
         assert!(aliases.contains(&dosdevices.join("d:").join("steamapps").join("common").join("Celeste")));
         assert_eq!(dirs, vec![game_dir.clone()]);

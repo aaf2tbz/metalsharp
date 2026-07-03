@@ -22,7 +22,6 @@ mod bottles;
 mod command_contract;
 mod compat_db_v2;
 mod d3d12_runtime_doctor;
-mod d3dmetal_gptk;
 mod diagnostics;
 mod doctor_registry;
 mod fna_profile;
@@ -566,7 +565,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 env.push(("SteamGameId".to_string(), id.to_string()));
                                 env.push(("METALSHARP_OFFLINE_MODE".to_string(), "1".to_string()));
                             }
-                            let is_gptk_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetal);
+                            let is_gptk_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetalNative);
                             let steam_started = if is_gptk_direct {
                                 false
                             } else {
@@ -1013,38 +1012,6 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
-        (Method::Post, "/d3dmetal/bottles/save") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_save(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/status") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_status(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/install-homebrew-gptk") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_install_homebrew_gptk(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/install-rosetta") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_install_rosetta(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/repair-gptk-payload") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_repair_gptk_payload(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/install-x64-redist") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_install_x64_redist(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/seed-prefix") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_seed_prefix(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/play") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_play(&body))
-        },
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
         // Phase 2: declarative Steam route contract table (protected + first-class lanes).
         (Method::Get, "/bottles/route-contracts") => {

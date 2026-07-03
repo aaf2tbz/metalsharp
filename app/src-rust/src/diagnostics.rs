@@ -184,7 +184,6 @@ pub fn shader_cache_dirs(home: &Path, pipeline: crate::mtsp::engine::PipelineId,
         PipelineId::M10 => &["m10", "dxmt-metal"],
         PipelineId::M11 => &["m11", "dxmt-metal"],
         PipelineId::M12 => &["m12", "dxmt-metal12"],
-        PipelineId::M13 => &["m13", "dxmt-metal12"],
         _ => &[],
     };
 

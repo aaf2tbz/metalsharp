@@ -106,7 +106,7 @@ fn runtime_surface_for_route(route: &str) -> &'static str {
         "vkd3d_d12" => "vkd3d",
         "native_mono_arm64" => "mono_arm64",
         "native_mono_x86" => "mono_x86",
-        "d3dmetal_gptk" => "d3dmetal",
+        "d3dmetal_native" => "d3dmetal",
         _ => "wine",
     }
 }

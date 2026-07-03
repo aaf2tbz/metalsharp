@@ -79,8 +79,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
             | PipelineId::DxvkD9
             | PipelineId::DxvkD11
             | PipelineId::Vkd3dD12
-            | PipelineId::M13
-            | PipelineId::D3DMetal
+            | PipelineId::D3DMetalNative
             | PipelineId::M32
             | PipelineId::FnaArm64
             | PipelineId::WineBare
@@ -100,8 +99,7 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         | PipelineId::DxvkD9
         | PipelineId::DxvkD11
         | PipelineId::Vkd3dD12
-        | PipelineId::M13
-        | PipelineId::D3DMetal
+        | PipelineId::D3DMetalNative
         | PipelineId::M32
         | PipelineId::FnaArm64
         | PipelineId::WineBare => {
@@ -233,11 +231,11 @@ pub(crate) fn requires_steam_launch_args(appid: u32) -> bool {
 }
 
 pub(crate) fn uses_steam_launch_model(appid: u32, pipeline: PipelineId) -> bool {
-    requires_steam_launch_args(appid) && !matches!(pipeline, PipelineId::M13 | PipelineId::D3DMetal)
+    requires_steam_launch_args(appid) && !matches!(pipeline, PipelineId::D3DMetalNative)
 }
 
 pub(crate) fn uses_steam_secure_launch_model(appid: u32, pipeline: PipelineId) -> bool {
-    requires_steam_secure_launch_args(appid) && !matches!(pipeline, PipelineId::M13 | PipelineId::D3DMetal)
+    requires_steam_secure_launch_args(appid) && !matches!(pipeline, PipelineId::D3DMetalNative)
 }
 
 fn append_unique_launch_arg(launch_args: &mut Vec<String>, arg: &str) {
@@ -263,7 +261,6 @@ pub fn build_custom_launch_recipe(
         | PipelineId::DxvkD9
         | PipelineId::DxvkD11
         | PipelineId::Vkd3dD12
-        | PipelineId::M13
         | PipelineId::M32
         | PipelineId::WineBare => Some(match exe_path {
             Some(path) => path.to_path_buf(),
@@ -329,7 +326,7 @@ fn resolve_game_exe_for_pipeline(
     // Steam's launcher/protected-game wrappers. Prefer the real binaries for
     // known D3D11/D3D12 titles that otherwise advertise start_protected_game.exe
     // or a bootstrapper before their renderer-bearing executable.
-    if matches!(pipeline, Some(PipelineId::D3DMetal | PipelineId::M13)) {
+    if matches!(pipeline, Some(PipelineId::D3DMetalNative)) {
         for preferred in d3dmetal_direct_exe_names(appid) {
             if let Some(path) = find_case_insensitive(game_dir, preferred) {
                 return Ok(path);
@@ -479,7 +476,6 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
             | PipelineId::M10
             | PipelineId::M11
             | PipelineId::M12
-            | PipelineId::M13
             | PipelineId::M32
             | PipelineId::FnaArm64
             | PipelineId::WineBare
@@ -701,7 +697,6 @@ fn route_api_mismatch(pipeline: PipelineId, api: super::pe::D3dApi) -> bool {
             | (PipelineId::M10, super::pe::D3dApi::D3D10)
             | (PipelineId::M11, super::pe::D3dApi::D3D11)
             | (PipelineId::M12, super::pe::D3dApi::D3D12)
-            | (PipelineId::M13, super::pe::D3dApi::D3D12)
             | (PipelineId::M32, _)
     )
 }
@@ -972,17 +967,6 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
         });
     }
 
-    if node.backend == "gptk" {
-        let framework =
-            crate::platform::gptk_homebrew_wine_root().join("lib").join("external").join("D3DMetal.framework");
-        assets.push(RuntimeAsset {
-            name: "Homebrew D3DMetal.framework".into(),
-            present: framework.exists(),
-            path: framework,
-            required: true,
-        });
-    }
-
     for dir in &node.winedllpath_dirs {
         let p = ms_root.join(dir);
         assets.push(RuntimeAsset { name: dir.to_string(), present: p.exists(), path: p, required: true });
@@ -1073,7 +1057,7 @@ mod tests {
             .expect("write protected exe");
         std::fs::write(elden_game_dir.join("eldenring.exe"), b"REAL_GAME").expect("write elden exe");
 
-        let elden = resolve_game_exe_for_pipeline(1245620, &elden_dir, Some(PipelineId::D3DMetal))
+        let elden = resolve_game_exe_for_pipeline(1245620, &elden_dir, Some(PipelineId::D3DMetalNative))
             .expect("select elden real exe");
         assert_eq!(elden.file_name().and_then(|name| name.to_str()), Some("eldenring.exe"));
 
@@ -1083,8 +1067,8 @@ mod tests {
         std::fs::write(ac6_game_dir.join("start_protected_game.exe"), b"PROTECTED_STUB").expect("write protected exe");
         std::fs::write(ac6_game_dir.join("armoredcore6.exe"), b"REAL_GAME").expect("write ac6 exe");
 
-        let ac6 =
-            resolve_game_exe_for_pipeline(1888160, &ac6_dir, Some(PipelineId::D3DMetal)).expect("select ac6 real exe");
+        let ac6 = resolve_game_exe_for_pipeline(1888160, &ac6_dir, Some(PipelineId::D3DMetalNative))
+            .expect("select ac6 real exe");
         assert_eq!(ac6.file_name().and_then(|name| name.to_str()), Some("armoredcore6.exe"));
 
         let _ = std::fs::remove_dir_all(elden_dir);
@@ -1125,7 +1109,7 @@ mod tests {
         std::fs::write(dir.join("re4.exe"), b"game").expect("write re4 exe");
 
         let selected =
-            resolve_game_exe_for_pipeline(2050650, &dir, Some(PipelineId::D3DMetal)).expect("select re4 exe");
+            resolve_game_exe_for_pipeline(2050650, &dir, Some(PipelineId::D3DMetalNative)).expect("select re4 exe");
 
         assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some("re4.exe"));
         let _ = std::fs::remove_dir_all(dir);
@@ -1140,7 +1124,7 @@ mod tests {
             std::fs::write(dir.join("Launcher.exe"), b"launcher").expect("write launcher");
             std::fs::write(dir.join(exe_name), b"game").expect("write route exe");
 
-            let selected = resolve_game_exe_for_pipeline(appid, &dir, Some(PipelineId::D3DMetal))
+            let selected = resolve_game_exe_for_pipeline(appid, &dir, Some(PipelineId::D3DMetalNative))
                 .expect("select configured route exe");
             assert_eq!(selected.file_name().and_then(|name| name.to_str()), Some(exe_name));
 
@@ -1294,7 +1278,7 @@ mod tests {
 
     #[test]
     fn d3dmetal_launches_skip_steam_secure_args() {
-        for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
+        for pipeline in [PipelineId::D3DMetalNative] {
             for appid in [440, 620, 4000, 252490, 271590, 284160, 292030, 1172380, 1260320, 3241660] {
                 let args = effective_launch_args(appid, super::super::engine::get_pipeline(pipeline));
 
@@ -1313,18 +1297,17 @@ mod tests {
 
     #[test]
     fn d3dmetal_launches_keep_game_specific_defaults() {
-        for pipeline in [PipelineId::D3DMetal, PipelineId::M13] {
-            let rust_args = effective_launch_args(252490, super::super::engine::get_pipeline(pipeline));
-            assert!(rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-vulkan")), "pipeline {pipeline:?}");
-            assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
-            assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
+        let pipeline = PipelineId::D3DMetalNative;
+        let rust_args = effective_launch_args(252490, super::super::engine::get_pipeline(pipeline));
+        assert!(rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-vulkan")), "pipeline {pipeline:?}");
+        assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+        assert!(!rust_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
 
-            let rdr2_args = effective_launch_args(1174180, super::super::engine::get_pipeline(pipeline));
-            assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-api")), "pipeline {pipeline:?}");
-            assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("Vulkan")), "pipeline {pipeline:?}");
-            assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
-            assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
-        }
+        let rdr2_args = effective_launch_args(1174180, super::super::engine::get_pipeline(pipeline));
+        assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-api")), "pipeline {pipeline:?}");
+        assert!(rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("Vulkan")), "pipeline {pipeline:?}");
+        assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-steam")), "pipeline {pipeline:?}");
+        assert!(!rdr2_args.iter().any(|arg| arg.eq_ignore_ascii_case("-secure")), "pipeline {pipeline:?}");
     }
 
     #[test]

@@ -8,7 +8,7 @@ pub fn report() -> Value {
             "1245620",
             "Elden Ring",
             "m12_dxmt_m12",
-            &["d3dmetal_gptk", "vkd3d_d12", "m11"],
+            &["d3dmetal_native", "vkd3d_d12", "m11"],
             &["vcrun2019_x64", "vcrun2019_x86"],
             "offline_supported",
             "pending_launch_proof",

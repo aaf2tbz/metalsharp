@@ -165,6 +165,10 @@ fn lane_readiness_report(
         .iter()
         .filter(|contract| matches!(contract.status, crate::runtime_contracts::RuntimeLaneStatus::External))
         .count();
+    let reserved = contracts
+        .iter()
+        .filter(|contract| matches!(contract.status, crate::runtime_contracts::RuntimeLaneStatus::Reserved))
+        .count();
 
     json!({
         "total": entries.len(),
@@ -173,6 +177,7 @@ fn lane_readiness_report(
         "availableReady": available_ready,
         "planned": planned,
         "external": external,
+        "reserved": reserved,
         "entries": entries,
     })
 }
@@ -186,6 +191,7 @@ fn lane_readiness_entry(
     match contract.status {
         crate::runtime_contracts::RuntimeLaneStatus::Planned => blockers.push("lane_planned"),
         crate::runtime_contracts::RuntimeLaneStatus::External => blockers.push("external_runtime"),
+        crate::runtime_contracts::RuntimeLaneStatus::Reserved => blockers.push("lane_reserved"),
         crate::runtime_contracts::RuntimeLaneStatus::Available => {},
     }
 
@@ -1046,7 +1052,8 @@ mod tests {
         assert_eq!(lanes.get("total").and_then(|value| value.as_u64()), Some(13));
         assert_eq!(lanes.get("availableTotal").and_then(|value| value.as_u64()), Some(12));
         assert_eq!(lanes.get("planned").and_then(|value| value.as_u64()), Some(0));
-        assert_eq!(lanes.get("external").and_then(|value| value.as_u64()), Some(1));
+        assert_eq!(lanes.get("external").and_then(|value| value.as_u64()), Some(0));
+        assert_eq!(lanes.get("reserved").and_then(|value| value.as_u64()), Some(1));
         let entries = lanes.get("entries").and_then(|entries| entries.as_array()).expect("lane entries");
         let m12 = entries
             .iter()
