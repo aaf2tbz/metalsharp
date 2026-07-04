@@ -37,7 +37,16 @@ REQUIRED_ARCH = "x86_64"
 
 # Required PE route DLLs (thin PE thunk into the Unix translator).
 REQUIRED_PE_DLLS = ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"]
-OPTIONAL_PE_DLLS = ["atidxx64.dll", "nvngx.dll"]  # present only for some payloads
+OPTIONAL_PE_DLLS = [
+    # D3D10 extended compatibility family. Some GPTK/D3DMetal sources carry
+    # PE-only d3d10_1/d3d10core modules; they should route from the payload root
+    # when present, but current no-game probes still return E_FAIL.
+    "d3d10_1.dll",
+    "d3d10core.dll",
+    # Present only for some payloads.
+    "atidxx64.dll",
+    "nvngx.dll",
+]
 
 # Required framework sidecars (the shader compiler / metallib contract).
 REQUIRED_FRAMEWORK_RESOURCES = [
@@ -160,6 +169,11 @@ def verify(payload_dir: Path, runtime_root: Path, *, skip_host_abi: bool = False
         arch = file_arch(pe_dir / d)
         if "x86" not in arch:
             bad_arch.append((d, arch))
+    optional_pe = [d for d in OPTIONAL_PE_DLLS if (pe_dir / d).exists()]
+    for d in optional_pe:
+        arch = file_arch(pe_dir / d)
+        if "x86" not in arch:
+            bad_arch.append((d, arch))
     if bad_arch:
         return CheckResult(STATE_WRONG_ARCHITECTURE, f"PE DLLs not x86_64: {bad_arch}", {"bad_arch": bad_arch})
 
@@ -207,6 +221,7 @@ def verify(payload_dir: Path, runtime_root: Path, *, skip_host_abi: bool = False
 
     return CheckResult(STATE_READY, "d3dmetal_native payload is complete and x86_64", {
         "pe_dlls": REQUIRED_PE_DLLS,
+        "optional_pe_dlls_present": optional_pe,
         "framework": str(fw),
         "license_status": license_status or "unspecified",
         "source_type": str(manifest.get("source_type", "unspecified")),

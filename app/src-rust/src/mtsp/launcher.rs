@@ -6718,14 +6718,16 @@ mod tests {
         // Phase 6 gate: the D3DMetal payload is native MetalSharp-owned code,
         // but Wine must load its PE/unixlib route DLLs as builtin-style modules.
         // Native-first/native-only makes LoadLibrary search the Windows path and
-        // miss the WINEDLLPATH-provided PE/unixlib pair.
+        // miss the WINEDLLPATH-provided PE/unixlib pair. D3D10.1/core are included
+        // so D3D10 compatibility probes do not silently mix stock Wine builtins
+        // when those optional payload DLLs are staged.
         let node = crate::mtsp::engine::get_pipeline(crate::mtsp::engine::PipelineId::D3DMetalNative);
         let ov = node.wine_overrides.expect("native node has overrides");
         assert!(
-            ov.contains("d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n"),
+            ov.contains("d3d10,d3d10_1,d3d10core,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n"),
             "D3DMetal route DLLs must be builtin-first: {ov}"
         );
-        for dll in ["d3d11", "d3d12", "dxgi"] {
+        for dll in ["d3d10", "d3d10_1", "d3d10core", "d3d11", "d3d12", "dxgi"] {
             assert!(ov.contains(dll), "WINEDLLOVERRIDES missing {dll}: {ov}");
         }
     }

@@ -44,6 +44,7 @@ DEFAULT_RUNTIME_ROOT = Path.home() / ".metalsharp" / "runtime" / "wine"
 PAYLOAD_REL = Path("lib") / "d3dmetal_native"
 
 REQUIRED_PE_DLLS = ["d3d10.dll", "d3d11.dll", "d3d12.dll", "dxgi.dll", "nvapi64.dll", "nvngx-on-metalfx.dll"]
+OPTIONAL_PE_DLLS = ["d3d10_1.dll", "d3d10core.dll", "atidxx64.dll", "nvngx.dll"]
 REQUIRED_FRAMEWORK_RESOURCES = ["default.metallib", "libdxccontainer.dylib", "libdxcompiler.dylib",
                                 "libdxilconv.dylib", "libmetalirconverter.dylib"]
 
@@ -133,7 +134,8 @@ def build_manifest(payload_dir: Path, source: Path, runtime_root: Path) -> dict:
     ext_dir = payload_dir / "external"
 
     pe_hashes = {}
-    for dll in sorted(REQUIRED_PE_DLLS + [d.name for d in pe_dir.glob("*.dll") if d.name not in REQUIRED_PE_DLLS]):
+    known_pe = REQUIRED_PE_DLLS + OPTIONAL_PE_DLLS
+    for dll in sorted(known_pe + [d.name for d in pe_dir.glob("*.dll") if d.name not in known_pe]):
         f = pe_dir / dll
         if f.exists() and not f.is_symlink():
             pe_hashes[dll] = {"sha256": sha256_file(f), "size": f.stat().st_size}
@@ -201,7 +203,8 @@ def stage(source: Path, runtime_root: Path, force: bool) -> Path:
             if not src.exists():
                 raise RuntimeError(f"source missing required PE DLL: {dll}")
             copy_preserving(src, payload_dir / "x86_64-windows" / dll)
-        # any optional PE DLLs (atidxx64.dll, nvngx.dll) carried over if present
+        # Optional PE DLLs (including D3D10.1/core compatibility members) and any
+        # future payload DLLs are carried over if present.
         for extra in pe_src.glob("*.dll"):
             if extra.name not in REQUIRED_PE_DLLS and not (payload_dir / "x86_64-windows" / extra.name).exists():
                 copy_preserving(extra, payload_dir / "x86_64-windows" / extra.name)
