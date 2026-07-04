@@ -152,6 +152,19 @@ const SCRIPTS_TOOLS_REQUIRED_ARCHIVE_FILES: &[&str] =
     &["scripts/tools/configs/mtsp-rules.toml", "scripts/tools/updater/update.sh"];
 const STEAM_REQUIRED_ARCHIVE_FILES: &[&str] =
     &["steam/SteamSetup.exe", "steam/steamwebhelper.exe", "steam/steamwebhelper-wrapper.c"];
+const D3DMETAL_NATIVE_CONTRACT_REQUIRED_ARCHIVE_FILES: &[&str] =
+    &["d3dmetal_native/lib/d3dmetal_native/manifest.json", "d3dmetal_native/lib/d3dmetal_native/STAGING.md"];
+const D3DMETAL_NATIVE_CONTRACT_ALLOWED_ARCHIVE_FILES: &[&str] = &[
+    "d3dmetal_native",
+    "d3dmetal_native/",
+    "d3dmetal_native/lib",
+    "d3dmetal_native/lib/",
+    "d3dmetal_native/lib/d3dmetal_native",
+    "d3dmetal_native/lib/d3dmetal_native/",
+    "d3dmetal_native/lib/d3dmetal_native/manifest.json",
+    "d3dmetal_native/lib/d3dmetal_native/STAGING.md",
+    "d3dmetal_native/lib/d3dmetal_native/receipt.json",
+];
 
 const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp-runtime.tar.zst",
@@ -160,6 +173,7 @@ const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "fnalibs.tar.zst",
     "metalsharp-scripts-tools.tar.zst",
     "metalsharp-steam.tar.zst",
+    "metalsharp-d3dmetal-native-contract.tar.zst",
 ];
 
 fn progress_path() -> PathBuf {
@@ -2436,7 +2450,68 @@ fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
         return archive_required_files_valid(path, STEAM_REQUIRED_ARCHIVE_FILES);
     }
 
+    if name == "metalsharp-d3dmetal-native-contract" || name == "metalsharp-d3dmetal-native-contract.tar.zst" {
+        return archive_d3dmetal_native_contract_valid(path);
+    }
+
     true
+}
+
+fn archive_d3dmetal_native_contract_valid(path: &Path) -> bool {
+    if !archive_required_files_valid(path, D3DMETAL_NATIVE_CONTRACT_REQUIRED_ARCHIVE_FILES) {
+        return false;
+    }
+
+    let listing = match archive_listing(path) {
+        Some(entries) => entries,
+        None => return false,
+    };
+
+    listing.iter().all(|entry| {
+        D3DMETAL_NATIVE_CONTRACT_ALLOWED_ARCHIVE_FILES.contains(&entry.as_str())
+            && !entry.contains("/x86_64-windows/")
+            && !entry.contains("/x86_64-unix/")
+            && !entry.contains("/external/")
+            && !entry.contains("D3DMetal.framework")
+            && !entry.ends_with(".dll")
+            && !entry.ends_with(".dylib")
+            && !entry.ends_with(".so")
+            && !entry.ends_with(".metallib")
+            && !entry.ends_with("/D3DMetal")
+            && entry != "D3DMetal"
+    })
+}
+
+fn archive_listing(path: &Path) -> Option<Vec<String>> {
+    let file = fs::File::open(path).ok()?;
+    let mut decoder = zstd::Decoder::new(file).ok()?;
+    let mut tar_cmd = mac_cmd("tar")
+        .args(["-tf", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    if let Some(mut stdin) = tar_cmd.stdin.take() {
+        if std::io::copy(&mut decoder, &mut stdin).is_err() {
+            let _ = tar_cmd.kill();
+            return None;
+        }
+    }
+
+    let output = tar_cmd.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+    )
 }
 
 fn archive_dxmt_m12_hashes_valid(path: &Path) -> bool {
@@ -2884,6 +2959,7 @@ mod tests {
             "fnalibs.tar.zst",
             "metalsharp-scripts-tools.tar.zst",
             "metalsharp-steam.tar.zst",
+            "metalsharp-d3dmetal-native-contract.tar.zst",
         ] {
             assert!(mac_assets.contains(&expected), "missing mac bundle asset {}", expected);
         }
@@ -2943,6 +3019,8 @@ mod tests {
         assert!(!bundled_artifact_valid("metalsharp-scripts-tools.tar.zst", &stale));
         assert!(!bundled_artifact_valid("metalsharp-steam", &stale));
         assert!(!bundled_artifact_valid("metalsharp-steam.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-d3dmetal-native-contract", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-d3dmetal-native-contract.tar.zst", &stale));
         assert!(bundled_artifact_valid("unmanaged-test-asset.bin", &stale));
 
         let _ = fs::remove_dir_all(home);
@@ -3136,6 +3214,57 @@ mod tests {
 
         assert!(bundled_artifact_valid("other-file.bin", &non_bundle));
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn d3dmetal_native_contract_bundle_validation_accepts_binary_free_contract() {
+        let home = test_home("d3dmetal-contract-valid");
+        let archive = write_d3dmetal_contract_archive(&home, false);
+
+        assert!(bundled_artifact_valid("metalsharp-d3dmetal-native-contract.tar.zst", &archive));
+        assert!(bundled_artifact_valid("metalsharp-d3dmetal-native-contract", &archive));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn d3dmetal_native_contract_bundle_validation_rejects_payload_binaries() {
+        let home = test_home("d3dmetal-contract-payload");
+        let archive = write_d3dmetal_contract_archive(&home, true);
+
+        assert!(!bundled_artifact_valid("metalsharp-d3dmetal-native-contract.tar.zst", &archive));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    fn write_d3dmetal_contract_archive(root: &Path, include_payload: bool) -> PathBuf {
+        let contract_dir = root.join("d3dmetal_native").join("lib").join("d3dmetal_native");
+        fs::create_dir_all(&contract_dir).expect("create d3dmetal contract dir");
+        fs::write(contract_dir.join("manifest.json"), br#"{"route_id":"d3dmetal_native"}"#)
+            .expect("write contract manifest");
+        fs::write(contract_dir.join("STAGING.md"), b"stage from user-provided GPTK source\n")
+            .expect("write staging docs");
+        if include_payload {
+            let pe_dir = root.join("d3dmetal_native").join("lib").join("d3dmetal_native").join("x86_64-windows");
+            fs::create_dir_all(&pe_dir).expect("create forbidden payload dir");
+            fs::write(pe_dir.join("d3d12.dll"), b"forbidden apple payload").expect("write forbidden payload");
+        }
+
+        let tar_path = root.join("contract.tar");
+        let archive = root.join("metalsharp-d3dmetal-native-contract.tar.zst");
+        let status = mac_cmd("tar")
+            .arg("-cf")
+            .arg(&tar_path)
+            .arg("-C")
+            .arg(root)
+            .arg("d3dmetal_native")
+            .status()
+            .expect("create contract tar");
+        assert!(status.success(), "tar failed for contract fixture");
+
+        let mut input = fs::File::open(&tar_path).expect("open contract tar");
+        let mut output = fs::File::create(&archive).expect("create contract zst");
+        zstd::stream::copy_encode(&mut input, &mut output, 0).expect("compress contract fixture");
+        let _ = fs::remove_file(tar_path);
+        archive
     }
 
     fn write_dxmt_runtime_files(dxmt_dir: &Path) {

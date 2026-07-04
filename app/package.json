@@ -176,6 +176,10 @@
       {
         "from": "bundles/metalsharp-d3d12-developer-sdk.tar.zst",
         "to": "bundles/metalsharp-d3d12-developer-sdk.tar.zst"
+      },
+      {
+        "from": "bundles/metalsharp-d3dmetal-native-contract.tar.zst",
+        "to": "bundles/metalsharp-d3dmetal-native-contract.tar.zst"
       }
     ],
     "directories": {
