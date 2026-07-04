@@ -41,6 +41,7 @@ jobs:
         uses: oras-project/setup-oras@v2
 
       - name: Publish developer SDK package
+        continue-on-error: true
         run: |
           set -euo pipefail
           OWNER="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
@@ -71,12 +72,15 @@ jobs:
             metalsharp-runtime.tar.zst \
             metalsharp-assets.tar.zst \
             fnalibs.tar.zst \
+            dxvk.tar.zst \
+            vkd3d-proton.tar.zst \
             metalsharp-scripts-tools.tar.zst \
             metalsharp-steam.tar.zst
           ! tar --use-compress-program=unzstd -tf dist/bundles/metalsharp-assets.tar.zst \
             | grep -E '^assets/eac-toggle/'
 
       - name: Publish developer SDK bundle
+        continue-on-error: true
         run: |
           tools/bundles/publish-release-assets.sh bundles \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
@@ -135,6 +139,8 @@ jobs:
             metalsharp-graphics-dll.tar.zst \
             metalsharp-runtime.tar.zst \
             metalsharp-assets.tar.zst \
+            dxvk.tar.zst \
+            vkd3d-proton.tar.zst \
             metalsharp-scripts-tools.tar.zst \
             metalsharp-steam.tar.zst \
             metalsharp-d3d12-developer-sdk.tar.zst

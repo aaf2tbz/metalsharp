@@ -17,6 +17,7 @@ done < <(
   find . \
     -path './.git' -prune -o \
     -path './app/node_modules' -prune -o \
+    -path './.cache' -prune -o \
     -path './vendor' -prune -o \
     -type f -name '*.sh' -print0
 )

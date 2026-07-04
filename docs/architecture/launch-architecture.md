@@ -19,6 +19,22 @@ The launch recipe is the backend contract for click-to-play. It records the appi
 selected executable, launch arguments, environment, DLL placement, runtime asset status, anti-cheat markers, and warnings.
 Manual launch methods still work; they force the pipeline before the recipe is built.
 
+`POST /mtsp/prepare` and `GET /diagnostics/pipeline/dry-run` also emit `launch_receipt_preview` with schema
+`metalsharp.launch.receipt.v1`. It is a non-spawned receipt preview containing source, app id, route, runtime contract id,
+prefix, Wine path, staged DLL list, dylibs/sidecars, env keys, log path, and warnings. Dry-run previews use the same env
+builder as launch but do not spawn Wine/Steam/the game; prepare previews describe the already-staged handoff state.
+Actual MTSP Steam launches persist the same schema after a successful child-process spawn under
+`~/.metalsharp/launch-receipts/steam/<appid>-launch.json` with `preview: false`, the PID, prefix, log path, staged DLLs,
+dylibs/sidecars, and env keys. Sharp Library custom launches persist matching receipts under
+`~/.metalsharp/launch-receipts/sharp/<launch-id>-launch.json`. Native Mono/FNA launches persist receipts under
+`~/.metalsharp/launch-receipts/native-mono/<appid>-launch.json`, in addition to game-local FNA staging receipts.
+GOGDL launches persist the schema as a real `launchReceipt` under `~/.metalsharp/gog/receipts/` and return it from
+`POST /sharp-library/gog/play`.
+
+`GET /diagnostics/launch-validation` returns `metalsharp.launch.validation.matrix.v1`, a filesystem-only proof matrix.
+It reports whether M12, DXVK D3D9/D3D11, VKD3D D3D12, GOGDL, native Mono/FNA, and launcher profiles are proven by
+receipts, merely filesystem-validated, still pending launch proof, or policy-blocked. It never launches anything.
+
 Runtime bottles add the user-facing readiness contract. Sharp Library installer/app bottles own their own prefixes under
 `~/.metalsharp/bottles/<id>/prefix`. Steam game bottles use ids like `steam_620` and are launch-authoritative preflight
 records over the shared Wine Steam prefix, so Steam remains the running launcher/session owner while MetalSharp checks
@@ -38,7 +54,7 @@ D3DMetal is an explicit GPTK lane rather than a generic bottle repair path. Savi
 
 | Public route | Backend | Launch path |
 |---|---|---|
-| **M12** | DXMT | Direct Wine launch with isolated `dxmt-m12` D3D12/D3D11/DXGI/winemetal DLLs |
+| **M12** | DXMT | Direct Wine launch with isolated installed `dxmt_m12` D3D12/D3D11/DXGI/winemetal DLLs |
 | **M11** | DXMT | Direct Wine launch with legacy `dxmt` D3D11/DXGI DLLs |
 | **M10** | DXMT | Direct Wine launch with legacy `dxmt` D3D10/D3D11/DXGI DLLs |
 | **M9** | DXMT launch family | Direct Wine launch with bundled `d3d9.dll` and DXMT-family cache/env |
@@ -86,7 +102,7 @@ M11/M10/M9 read from the legacy runtime surface:
 M12 reads from the isolated D3D12 surface:
 
 ```text
-~/.metalsharp/runtime/wine/lib/dxmt-m12
+~/.metalsharp/runtime/wine/lib/dxmt_m12
 ```
 
 M11/M10 copy:
@@ -102,7 +118,7 @@ M12 also copies:
 
 - `d3d12.dll`
 
-M12 also adds the `dxmt-m12` unix library directory to the fallback library path so `winemetal.so` and its bundled C++ sidecars are resolved from the same surface as the PE DLLs.
+M12 also adds the `dxmt_m12` unix library directory to the fallback library path so `winemetal.so` and its bundled C++ sidecars are resolved from the same installed surface as the PE DLLs.
 
 M9 copies:
 

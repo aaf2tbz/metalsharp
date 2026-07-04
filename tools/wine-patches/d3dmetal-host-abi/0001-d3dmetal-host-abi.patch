@@ -1,0 +1,1026 @@
+MetalSharp Wine 11.5 patch: D3DMetal host ABI bridge
+
+Generated from proven x86_64 build-tree source against pristine Wine 11.5.
+Applies from the Wine source root with patch -p0.
+
+--- dlls/winemac.drv/macdrv_cocoa.h	2026-03-20 14:33:36
++++ dlls/winemac.drv/macdrv_cocoa.h	2026-07-02 23:38:10
+@@ -302,6 +302,7 @@
+     WINDOW_MINIMIZE_REQUESTED,
+     WINDOW_RESIZE_ENDED,
+     WINDOW_RESTORE_REQUESTED,
++    CLIENT_SURFACE_PRESENTED,
+     NUM_EVENT_TYPES
+ };
+ 
+@@ -403,6 +404,9 @@
+             bool    keep_frame;
+             CGRect  frame;
+         }                                           window_restore_requested;
++        struct {
++            void           *client_surface;
++        }                                           client_surface_presented;
+     };
+ } macdrv_event;
+ 
+@@ -529,6 +533,9 @@
+ extern void macdrv_view_release_metal_view(macdrv_metal_view v);
+ extern bool macdrv_get_view_backing_size(macdrv_view v, int backing_size[2]);
+ extern void macdrv_set_view_backing_size(macdrv_view v, const int backing_size[2]);
++/* D3DMetal client-surface association on a content view (MetalSharp-owned native D3DMetal host ABI). */
++extern void  macdrv_set_view_d3dmetal_client_surface(macdrv_view v, void *client_surface);
++extern void *macdrv_get_view_d3dmetal_client_surface(macdrv_view v);
+ extern uint32_t macdrv_window_background_color(void);
+ extern bool macdrv_ime_process_key(int keyc, unsigned int flags, int repeat, void *data);
+ extern bool macdrv_is_any_wine_window_visible(void);
+--- dlls/winemac.drv/macdrv.h	2026-03-20 14:33:36
++++ dlls/winemac.drv/macdrv.h	2026-07-03 02:58:40
+@@ -44,6 +44,9 @@
+ 
+ extern UINT64 app_icon_callback;
+ extern UINT64 app_quit_request_callback;
++extern UINT64 regcreateopenkeyexa_callback;
++extern UINT64 regqueryvalueexa_callback;
++extern UINT64 regsetvalueexa_callback;
+ 
+ extern const char* debugstr_cf(CFTypeRef t);
+ 
+@@ -188,6 +191,7 @@
+     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
+     unsigned int        minimized : 1;          /* is window minimized? */
+     unsigned int        fullscreen : 1;         /* is the window visible rect fullscreen? (unrelated to native AppKit/Cocoa fullscreen) */
++    CFMutableArrayRef   d3dmetal_client_surfaces; /* D3DMetal client surfaces for this window (MetalSharp native D3DMetal host ABI) */
+ };
+ 
+ struct macdrv_client_surface
+@@ -214,6 +218,9 @@
+ 
+ extern void macdrv_handle_event(const macdrv_event *event);
+ 
++/* D3DMetal client-surface presented event handler (MetalSharp native D3DMetal host ABI). */
++void macdrv_client_surface_presented(const macdrv_event *event);
++
+ extern void macdrv_window_close_requested(HWND hwnd);
+ extern void macdrv_window_frame_changed(HWND hwnd, const macdrv_event *event);
+ extern void macdrv_window_got_focus(HWND hwnd, const macdrv_event *event);
+--- dlls/winemac.drv/event.c	2026-03-20 14:33:36
++++ dlls/winemac.drv/event.c	2026-07-02 23:40:08
+@@ -75,6 +75,7 @@
+         "WINDOW_MINIMIZE_REQUESTED",
+         "WINDOW_RESIZE_ENDED",
+         "WINDOW_RESTORE_REQUESTED",
++        "CLIENT_SURFACE_PRESENTED",
+     };
+     C_ASSERT(ARRAYSIZE(event_names) == NUM_EVENT_TYPES);
+ 
+@@ -476,6 +477,9 @@
+         break;
+     case WINDOW_RESTORE_REQUESTED:
+         macdrv_window_restore_requested(hwnd, event);
++        break;
++    case CLIENT_SURFACE_PRESENTED:
++        macdrv_client_surface_presented(event);
+         break;
+     default:
+         TRACE("    ignoring\n");
+--- dlls/winemac.drv/Makefile.in	2026-03-20 14:33:36
++++ dlls/winemac.drv/Makefile.in	2026-07-03 17:45:00
+@@ -1,6 +1,6 @@
+ MODULE    = winemac.drv
+ UNIXLIB   = winemac.so
+-IMPORTS   = uuid rpcrt4 user32 gdi32 win32u
++IMPORTS   = uuid rpcrt4 user32 gdi32 advapi32 win32u
+ DELAYIMPORTS = ole32 shell32 imm32
+ UNIX_LIBS    = \
+ 	-lwin32u \
+@@ -34,6 +34,8 @@
+ 	image.c \
+ 	keyboard.c \
+ 	macdrv_main.c \
++	metalsharp_d3dmetal.c \
++	metalsharp_d3dmetal_objc.m \
+ 	mouse.c \
+ 	opengl.c \
+ 	surface.c \
+--- dlls/winemac.drv/dllmain.c	2026-03-20 14:33:36
++++ dlls/winemac.drv/dllmain.c	2026-07-03 16:34:07
+@@ -22,6 +22,7 @@
+ #include "ntstatus.h"
+ #include "windef.h"
+ #include "winbase.h"
++#include "winreg.h"
+ #include "ntgdi.h"
+ #include "macdrv_res.h"
+ #include "shellapi.h"
+@@ -361,8 +362,69 @@
+ 
+     return NtCallbackReturn(entries, count * sizeof(entries[0]), 0);
+ }
++
+ 
++/* D3DMetal registry thunk callbacks: PE-side implementations that execute the
++ * actual Win32 registry calls when KeUserDispatchCallback dispatches to them.
++ * These are passed to the Unix side via init_params so libd3dshared's
++ * macdrv_functions table can call RegQueryValueExA etc. through the dispatch. */
++static NTSTATUS WINAPI macdrv_regqueryvalueexa(void *arg, ULONG size)
++{
++    struct regqueryvalueexa_params *params = arg;
++    LONG result;
++    result = RegQueryValueExA(UlongToHandle(params->hkey),
++                              param_ptr(params->name),
++                              param_ptr(params->reserved),
++                              param_ptr(params->type),
++                              param_ptr(params->data),
++                              param_ptr(params->count));
++    *(LONG *)param_ptr(params->result) = result;
++    return 0;
++}
+ 
++static NTSTATUS WINAPI macdrv_regsetvalueexa(void *arg, ULONG size)
++{
++    struct regsetvalueexa_params *params = arg;
++    LONG result;
++    result = RegSetValueExA(UlongToHandle(params->hkey),
++                            param_ptr(params->name),
++                            params->reserved,
++                            params->type,
++                            param_ptr(params->data),
++                            params->count);
++    *(LONG *)param_ptr(params->result) = result;
++    return 0;
++}
++
++static NTSTATUS WINAPI macdrv_regcreateopenkeyexa(void *arg, ULONG size)
++{
++    struct regcreateopenkeyexa_params *params = arg;
++    LONG result;
++    if (params->create)
++    {
++        result = RegCreateKeyExA(UlongToHandle(params->hkey),
++                                 param_ptr(params->name),
++                                 params->reserved,
++                                 param_ptr(params->class),
++                                 params->options,
++                                 params->access,
++                                 param_ptr(params->security),
++                                 param_ptr(params->retkey),
++                                 param_ptr(params->disposition));
++    }
++    else
++    {
++        result = RegOpenKeyExA(UlongToHandle(params->hkey),
++                               param_ptr(params->name),
++                               params->options,
++                               params->access,
++                               param_ptr(params->retkey));
++    }
++    *(LONG *)param_ptr(params->result) = result;
++    return 0;
++}
++
++
+ static BOOL process_attach(void)
+ {
+     struct init_params params;
+@@ -393,6 +455,9 @@
+     params.strings = strings;
+     params.app_icon_callback = (UINT_PTR)macdrv_app_icon;
+     params.app_quit_request_callback = (UINT_PTR)macdrv_app_quit_request;
++    params.regcreateopenkeyexa_callback = (UINT_PTR)macdrv_regcreateopenkeyexa;
++    params.regsetvalueexa_callback = (UINT_PTR)macdrv_regsetvalueexa;
++    params.regqueryvalueexa_callback = (UINT_PTR)macdrv_regqueryvalueexa;
+ 
+     if (MACDRV_CALL(init, &params)) return FALSE;
+ 
+--- dlls/winemac.drv/macdrv_main.c	2026-03-20 14:33:36
++++ dlls/winemac.drv/macdrv_main.c	2026-07-03 02:58:40
+@@ -60,6 +60,9 @@
+ 
+ UINT64 app_icon_callback = 0;
+ UINT64 app_quit_request_callback = 0;
++UINT64 regcreateopenkeyexa_callback = 0;
++UINT64 regqueryvalueexa_callback = 0;
++UINT64 regsetvalueexa_callback = 0;
+ 
+ CFDictionaryRef localized_strings;
+ 
+@@ -430,6 +433,9 @@
+ 
+     app_icon_callback = params->app_icon_callback;
+     app_quit_request_callback = params->app_quit_request_callback;
++    regcreateopenkeyexa_callback = params->regcreateopenkeyexa_callback;
++    regqueryvalueexa_callback = params->regqueryvalueexa_callback;
++    regsetvalueexa_callback = params->regsetvalueexa_callback;
+ 
+     status = SessionGetInfo(callerSecuritySession, NULL, &attributes);
+     if (status != noErr || !(attributes & sessionHasGraphicAccess))
+--- dlls/winemac.drv/unixlib.h	2026-03-20 14:33:36
++++ dlls/winemac.drv/unixlib.h	2026-07-03 02:58:00
+@@ -41,6 +41,9 @@
+     struct localized_string *strings;
+     UINT64 app_icon_callback;
+     UINT64 app_quit_request_callback;
++    UINT64 regcreateopenkeyexa_callback;
++    UINT64 regqueryvalueexa_callback;
++    UINT64 regsetvalueexa_callback;
+ };
+ 
+ /* macdrv_quit_result params */
+@@ -71,6 +74,47 @@
+     UINT32 hwnd;
+ };
+ 
++/* D3DMetal registry thunk params (used by macdrv_functions PE-side callbacks) */
++struct regcreateopenkeyexa_params
++{
++    struct dispatch_callback_params dispatch;
++    UINT32 create;
++    UINT32 hkey;
++    UINT64 name;
++    UINT32 reserved;
++    UINT64 class;
++    UINT32 options;
++    UINT32 access;
++    UINT64 security;
++    UINT64 retkey;
++    UINT64 disposition;
++    UINT32 result;
++};
++
++struct regqueryvalueexa_params
++{
++    struct dispatch_callback_params dispatch;
++    UINT32 hkey;
++    UINT64 name;
++    UINT64 reserved;
++    UINT64 type;
++    UINT64 data;
++    UINT64 count;
++    UINT32 result;
++};
++
++struct regsetvalueexa_params
++{
++    struct dispatch_callback_params dispatch;
++    UINT32 hkey;
++    UINT64 name;
++    UINT32 reserved;
++    UINT32 type;
++    UINT64 data;
++    UINT32 count;
++    UINT32 result;
++};
++
+ static inline void *param_ptr(UINT64 param)
+ {
+     return (void *)(UINT_PTR)param;
+--- dlls/win32u/d3dkmt.c	2026-03-20 14:33:36
++++ dlls/win32u/d3dkmt.c	2026-07-02 23:56:11
+@@ -24,6 +24,7 @@
+ 
+ #include <assert.h>
+ #include <pthread.h>
++#include <stdlib.h>
+ 
+ #include "ntstatus.h"
+ #include "ntgdi_private.h"
+@@ -35,6 +36,7 @@
+ #include <d3d10.h>
+ #include <d3d11.h>
+ #include <d3d12.h>
++#include <d3dkmdt.h>
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(d3dkmt);
+ 
+@@ -709,6 +711,26 @@
+ 
+         *value = KMT_DRIVERVERSION_WDDM_1_3;
+         return STATUS_SUCCESS;
++    }
++    case KMTQAITYPE_WDDM_2_7_CAPS:
++    {
++        /* MetalSharp-owned native D3DMetal backend gate (no CrossOver/CX naming).
++         * When MS_ACTIVE_GRAPHICS_BACKEND=d3dmetal_native, advertise hardware
++         * scheduling (HwSch) caps that D3DMetal/DXMT payloads expect. */
++        D3DKMT_WDDM_2_7_CAPS *caps = desc->pPrivateDriverData;
++        const char *active_gfx_backend = getenv("MS_ACTIVE_GRAPHICS_BACKEND");
++
++        if (desc->PrivateDriverDataSize < sizeof(*caps))
++            return STATUS_INVALID_PARAMETER;
++
++        if (active_gfx_backend && !strcmp(active_gfx_backend, "d3dmetal_native"))
++        {
++            caps->HwSchEnabled = 1;
++            caps->HwSchSupported = 1;
++            caps->HwSchEnabledByDefault = 1;
++            return STATUS_SUCCESS;
++        }
++        /* fallthrough */
+     }
+     default:
+     {
+--- dlls/ntdll/unix/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/loader.c	2026-07-03 14:58:08
+@@ -39,6 +39,10 @@
+ #include <sys/wait.h>
+ #include <unistd.h>
+ #include <dlfcn.h>
++#ifdef __APPLE__
++# include <sys/utsname.h>
++# include <mach-o/getsect.h>
++#endif
+ #ifdef HAVE_PWD_H
+ # include <pwd.h>
+ #endif
+@@ -1007,6 +1011,9 @@
+ 
+ #endif /* SO_DLLS_SUPPORTED */
+ 
++#if defined(__x86_64__)
++static NTSTATUS pe_module_loaded( void *args );
++#endif
+ 
+ static const unixlib_entry_t unix_call_funcs[] =
+ {
+@@ -1018,6 +1025,9 @@
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
++#if defined(__x86_64__)
++    pe_module_loaded,
++#endif
+ };
+ 
+ 
+@@ -1025,6 +1035,9 @@
+ 
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+ static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
++#if defined(__x86_64__)
++static NTSTATUS wow64_pe_module_loaded( void *args ) { return STATUS_NOT_IMPLEMENTED; }
++#endif
+ 
+ const unixlib_entry_t unix_call_wow64_funcs[] =
+ {
+@@ -1036,6 +1049,9 @@
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
++#if defined(__x86_64__)
++    wow64_pe_module_loaded,
++#endif
+ };
+ 
+ #endif  /* _WIN64 */
+@@ -2227,12 +2243,74 @@
+  *
+  * Main entry point called by the wine loader.
+  */
++/* MetalSharp-owned native D3DMetal shared-library discovery.
++ *
++ * Ports behavior (not branding) from the D3DMetal host ABI oracle into
++ * MetalSharp Wine 11.5. CrossOver is only an oracle. The shared sidecar
++ * (libd3dshared.dylib) provides non-native code region registration used by
++ * the D3DMetal translator; it is discovered via the MetalSharp-owned
++ * MS_D3DMETAL_SHARED_PATH env var (no CX_/CrossOver identifiers).
++ */
++#ifdef __APPLE__
++static pthread_once_t ms_d3dmetal_shared_once = PTHREAD_ONCE_INIT;
++static void *ms_d3dmetal_shared_lib;
++static void (*ms_register_non_native_code_region)( void *, void * );
++static BOOL (*ms_supports_non_native_code_regions)( void );
++
++static BOOL ms_d3dmetal_sonoma_or_later(void)
++{
++    struct utsname name;
++    int major;
++    if (uname(&name)) return FALSE;
++    major = atoi(name.release);
++    return major >= 23;  /* macOS 14 (Sonoma) is Darwin 23 */
++}
++
++static void ms_d3dmetal_init_shared_support(void)
++{
++    const char *path = getenv("MS_D3DMETAL_SHARED_PATH");
++    if (!path || !ms_d3dmetal_sonoma_or_later()) return;
++
++    ms_d3dmetal_shared_lib = dlopen(path, RTLD_LOCAL);
++    if (ms_d3dmetal_shared_lib)
++    {
++        ms_register_non_native_code_region = dlsym(ms_d3dmetal_shared_lib, "register_non_native_code_region");
++        ms_supports_non_native_code_regions = dlsym(ms_d3dmetal_shared_lib, "supports_non_native_code_regions");
++        TRACE("Loaded libd3dshared.dylib from MS_D3DMETAL_SHARED_PATH (%s): "
++              "non-native code region support %s\n", path,
++              (ms_register_non_native_code_region && ms_supports_non_native_code_regions &&
++               ms_supports_non_native_code_regions()) ? "present" : "absent");
++    }
++    else
++        TRACE("Loading libd3dshared.dylib failed: %s\n", dlerror());
++}
++#endif
++
++static NTSTATUS pe_module_loaded( void *args )
++{
++#ifdef __APPLE__
++    struct pe_module_loaded_params *params = args;
++
++    pthread_once(&ms_d3dmetal_shared_once, ms_d3dmetal_init_shared_support);
++    if (ms_register_non_native_code_region && ms_supports_non_native_code_regions &&
++        ms_supports_non_native_code_regions())
++    {
++        TRACE("Marking MetalSharp non-native code region: %p-%p\n", params->start, params->end);
++        ms_register_non_native_code_region(params->start, params->end);
++    }
++#endif
++    return STATUS_SUCCESS;
++}
++
+ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+ {
+     main_argc = argc;
+     main_argv = argv;
+ 
+     init_paths();
++#ifdef __APPLE__
++    pthread_once(&ms_d3dmetal_shared_once, ms_d3dmetal_init_shared_support);
++#endif
+     if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
+     unsetenv( "WINELOADERNOEXEC" );
+ 
+--- dlls/winemac.drv/metalsharp_d3dmetal.c	1969-12-31 17:00:00
++++ dlls/winemac.drv/metalsharp_d3dmetal.c	2026-07-03 05:36:25
+@@ -0,0 +1,433 @@
++/*
++ * MetalSharp-owned native D3DMetal host ABI shim.
++ *
++ * Ports the behavior (not the branding) of CrossOver's D3DMetal host shim into
++ * MetalSharp Wine 11.5. CrossOver is only ever an oracle for behavior; this
++ * code is MetalSharp-owned. The exported `macdrv_functions` symbol and the
++ * `macdrv_functions_t` table layout (192 bytes, C_ASSERT-enforced) are Wine/DXMT
++ * ABI contract — the D3DMetal/DXMT payloads look them up by that exact name —
++ * so the name is retained deliberately; it is not CrossOver branding.
++ *
++ * Active backend selection uses MetalSharp-owned names (MS_ACTIVE_GRAPHICS_BACKEND
++ * = d3dmetal_native); no CX_/CrossOver identifiers appear in compiled output.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#if 0
++#pragma makedep unix
++#endif
++
++#if defined(__x86_64__)
++
++#include "config.h"
++
++#include "ntstatus.h"
++#define WIN32_NO_STATUS
++#include "macdrv.h"
++#include "ntuser.h"
++#include "shellapi.h"
++#include "wine/server.h"
++
++#include <CoreFoundation/CoreFoundation.h>
++
++WINE_DEFAULT_DEBUG_CHANNEL(macdrv_d3dmtl);
++
++/* The registry thunk callback targets are defined in macdrv_main.c and
++ * set during macdrv init from the PE-side callbacks in dllmain.c. */
++
++typedef LONG LSTATUS;
++
++struct d3dmetal_macdrv_win_data;
++
++/* macdrv_functions ABI table consumed by D3DMetal/DXMT payloads. The layout is
++ * a fixed Wine/DXMT contract (C_ASSERT enforces 192 bytes / 24 pointers). */
++struct macdrv_functions_t
++{
++    void  (*macdrv_init_display_devices)(BOOL);
++    struct d3dmetal_macdrv_win_data *(*get_win_data)(HWND hwnd);
++    void  (*release_win_data)(struct d3dmetal_macdrv_win_data *data);
++    macdrv_window   (*macdrv_get_cocoa_window)(HWND hwnd, BOOL require_on_screen);
++    macdrv_metal_device (*macdrv_create_metal_device)(void);
++    void  (*macdrv_release_metal_device)(macdrv_metal_device d);
++    macdrv_metal_view   (*macdrv_view_create_metal_view)(macdrv_view v, macdrv_metal_device d);
++    macdrv_metal_layer  (*macdrv_view_get_metal_layer)(macdrv_metal_view v);
++    void  (*macdrv_view_release_metal_view)(macdrv_metal_view v);
++    void  (*on_main_thread)(dispatch_block_t b);
++    LSTATUS (WINAPI *RegQueryValueExA)(HKEY, LPCSTR, LPDWORD, LPDWORD, BYTE *, LPDWORD);
++    LSTATUS (WINAPI *RegSetValueExA)(HKEY, LPCSTR, DWORD, DWORD, const BYTE *, DWORD);
++    LSTATUS (WINAPI *RegOpenKeyExA)(HKEY, LPCSTR, DWORD, DWORD, HKEY *);
++    LSTATUS (WINAPI *RegCreateKeyExA)(HKEY, LPCSTR, DWORD, LPSTR, DWORD, DWORD, LPSECURITY_ATTRIBUTES, HKEY *, LPDWORD);
++    LSTATUS (WINAPI *RegCloseKey)(HKEY);
++    BOOL    (WINAPI *EnumDisplayMonitors)(HDC, LPRECT, MONITORENUMPROC, LPARAM);
++    BOOL    (WINAPI *GetMonitorInfoA)(HMONITOR, LPMONITORINFO);
++    BOOL    (WINAPI *AdjustWindowRectEx)(LPRECT, DWORD, BOOL, DWORD);
++    LONG_PTR(WINAPI *GetWindowLongPtrW)(HWND, int);
++    BOOL    (WINAPI *GetWindowRect)(HWND, LPRECT);
++    BOOL    (WINAPI *MoveWindow)(HWND, int, int, int, int, BOOL);
++    BOOL    (WINAPI *SetWindowPos)(HWND, HWND, int, int, int, int, UINT);
++    INT     (WINAPI *GetSystemMetrics)(INT);
++    LONG_PTR(WINAPI *SetWindowLongPtrW)(HWND, INT, LONG_PTR);
++};
++C_ASSERT(sizeof(struct macdrv_functions_t) == 192);
++
++/* D3DMetal-private window data returned to the payload. The payload expects a
++ * fixed layout; the trailing padding slots keep ABI room for fields the current
++ * macdrv_win_data no longer carries. */
++struct d3dmetal_macdrv_win_data
++{
++    HWND                hwnd;
++    macdrv_window       cocoa_window;
++    /* Reserved ABI slot retained for D3DMetal/DXMT payload compatibility.
++     * Current Wine 11.5 macdrv_win_data no longer carries cocoa_view; payloads
++     * are expected to use client_cocoa_view, but removing this field shifts the
++     * fixed struct layout from the CrossOver/GPTK contract. */
++    macdrv_view         cocoa_view;
++    macdrv_view         client_cocoa_view;
++    RECT                window_rect;
++    RECT                whole_rect;
++    RECT                client_rect;
++    int                 pixel_format;
++    COLORREF            color_key;
++    HANDLE              drag_event;
++    unsigned int        on_screen : 1;
++    unsigned int        shaped : 1;
++    unsigned int        layered : 1;
++    unsigned int        ulw_layered : 1;
++    unsigned int        per_pixel_alpha : 1;
++    unsigned int        minimized : 1;
++    void               *padding[2];
++};
++C_ASSERT(sizeof(struct d3dmetal_macdrv_win_data) == 120);
++
++void OnMainThread(dispatch_block_t block);
++static void cf_client_surface_release(CFAllocatorRef allocator, const void *client_surface);
++
++static void my_macdrv_init_display_devices(BOOL p1)
++{
++    TRACE("macdrv_init_display_devices %d - no-op\n", p1);
++}
++
++/* Create a D3DMetal client surface for the window and associate it with the
++ * Cocoa content view, so WineMetalLayer::nextDrawable can post a presented
++ * event. D3DMetal/DXMT call get_win_data() only when creating a new swapchain:
++ *   get_win_data -> create_metal_device -> create_metal_view -> get_metal_layer -> release_win_data
++ */
++static struct d3dmetal_macdrv_win_data *my_get_win_data(HWND hwnd)
++{
++    struct macdrv_win_data *data;
++    struct d3dmetal_macdrv_win_data *d3dm_data;
++    struct macdrv_client_surface *client_surface;
++
++    TRACE("get_win_data %p\n", hwnd);
++
++    client_surface = macdrv_client_surface_create(hwnd);
++
++    /* get_win_data() must happen after client_surface creation to avoid deadlock. */
++    data = get_win_data(hwnd);
++    if (!data)
++    {
++        client_surface_release(&client_surface->client);
++        return NULL;
++    }
++
++    macdrv_set_view_d3dmetal_client_surface(client_surface->cocoa_view, &client_surface->client);
++
++    if (!data->d3dmetal_client_surfaces)
++    {
++        static const CFArrayCallBacks callbacks = { .release = cf_client_surface_release };
++        TRACE("allocating d3dmetal_client_surface array for hwnd %p\n", hwnd);
++        data->d3dmetal_client_surfaces = CFArrayCreateMutable(NULL, 0, &callbacks);
++    }
++    CFArrayAppendValue(data->d3dmetal_client_surfaces, client_surface);
++
++    d3dm_data = calloc(1, sizeof(*d3dm_data));
++    d3dm_data->hwnd = data->hwnd;
++    d3dm_data->cocoa_window = data->cocoa_window;
++    /* cocoa_view is intentionally left NULL; the slot exists to preserve ABI. */
++    d3dm_data->client_cocoa_view = client_surface->cocoa_view;
++    d3dm_data->window_rect = data->rects.window;
++    d3dm_data->whole_rect = data->rects.visible;
++    d3dm_data->client_rect = data->rects.client;
++    d3dm_data->pixel_format = data->pixel_format;
++    d3dm_data->drag_event = data->drag_event;
++    d3dm_data->on_screen = data->on_screen;
++    d3dm_data->shaped = data->shaped;
++    d3dm_data->layered = data->layered;
++    d3dm_data->ulw_layered = data->ulw_layered;
++    d3dm_data->per_pixel_alpha = data->per_pixel_alpha;
++    d3dm_data->minimized = data->minimized;
++    d3dm_data->padding[0] = data;
++    return d3dm_data;
++}
++
++static void my_release_win_data(struct d3dmetal_macdrv_win_data *data)
++{
++    TRACE("release_win_data %p\n", data);
++    if (!data) return;
++    release_win_data(data->padding[0]);
++    free(data);
++}
++
++static macdrv_window my_macdrv_get_cocoa_window(HWND hwnd, BOOL require_on_screen)
++{
++    TRACE("macdrv_get_cocoa_window %p %d\n", hwnd, require_on_screen);
++    return macdrv_get_cocoa_window(hwnd, require_on_screen);
++}
++
++static macdrv_metal_device my_macdrv_create_metal_device(void)
++{
++    TRACE("macdrv_create_metal_device\n");
++    return macdrv_create_metal_device();
++}
++
++static void my_macdrv_release_metal_device(macdrv_metal_device d)
++{
++    TRACE("macdrv_release_metal_device %p\n", d);
++    macdrv_release_metal_device(d);
++}
++
++static macdrv_metal_view my_macdrv_view_create_metal_view(macdrv_view v, macdrv_metal_device d)
++{
++    TRACE("macdrv_view_create_metal_view %p %p\n", v, d);
++    return macdrv_view_create_metal_view(v, d);
++}
++
++static macdrv_metal_layer my_macdrv_view_get_metal_layer(macdrv_metal_view v)
++{
++    TRACE("macdrv_view_get_metal_layer %p\n", v);
++    return macdrv_view_get_metal_layer(v);
++}
++
++static void my_macdrv_view_release_metal_view(macdrv_metal_view v)
++{
++    TRACE("macdrv_view_release_metal_view %p\n", v);
++    macdrv_view_release_metal_view(v);
++}
++
++static void my_OnMainThread(dispatch_block_t b)
++{
++    TRACE("OnMainThread %p\n", b);
++    OnMainThread(b);
++}
++
++static LSTATUS WINAPI my_RegQueryValueExA(HKEY p1, LPCSTR p2, LPDWORD p3, LPDWORD p4, BYTE *p5, LPDWORD p6)
++{
++    LSTATUS result;
++    void *ret_ptr;
++    ULONG ret_len;
++    struct regqueryvalueexa_params params =
++    {
++        .dispatch = { .callback = regqueryvalueexa_callback },
++        .hkey = HandleToUlong(p1),
++        .name = (UINT_PTR)p2,
++        .reserved = (UINT_PTR)p3,
++        .type = (UINT_PTR)p4,
++        .data = (UINT_PTR)p5,
++        .count = (UINT_PTR)p6,
++        .result = (UINT_PTR)&result,
++    };
++    TRACE("RegQueryValueExA %p %s %p %p %p %p\n", p1, p2, p3, p4, p5, p6);
++    KeUserDispatchCallback(&params.dispatch, sizeof(params), &ret_ptr, &ret_len);
++    return result;
++}
++
++static LSTATUS WINAPI my_RegSetValueExA(HKEY p1, LPCSTR p2, DWORD p3, DWORD p4, const BYTE *p5, DWORD p6)
++{
++    LSTATUS result;
++    void *ret_ptr;
++    ULONG ret_len;
++    struct regsetvalueexa_params params =
++    {
++        .dispatch = { .callback = regsetvalueexa_callback },
++        .hkey = HandleToUlong(p1),
++        .name = (UINT_PTR)p2,
++        .reserved = p3,
++        .type = p4,
++        .data = (UINT_PTR)p5,
++        .count = p6,
++        .result = (UINT_PTR)&result,
++    };
++    TRACE("RegSetValueExA %p %s(%p) %d %p %d\n", p1, p2, p2, p4, p5, p6);
++    KeUserDispatchCallback(&params.dispatch, sizeof(params), &ret_ptr, &ret_len);
++    return result;
++}
++
++static LSTATUS WINAPI my_RegOpenKeyExA(HKEY p1, LPCSTR p2, DWORD p3, DWORD p4, HKEY *p5)
++{
++    LSTATUS result;
++    void *ret_ptr;
++    ULONG ret_len;
++    struct regcreateopenkeyexa_params params =
++    {
++        .dispatch = { .callback = regcreateopenkeyexa_callback },
++        .create = 0,
++        .hkey = HandleToUlong(p1),
++        .name = (UINT_PTR)p2,
++        .options = p3,
++        .access = p4,
++        .retkey = (UINT_PTR)p5,
++        .result = (UINT_PTR)&result,
++    };
++    TRACE("RegOpenKeyExA %p %s\n", p1, p2);
++    KeUserDispatchCallback(&params.dispatch, sizeof(params), &ret_ptr, &ret_len);
++    return result;
++}
++
++static LSTATUS WINAPI my_RegCreateKeyExA(HKEY p1, LPCSTR p2, DWORD p3, LPSTR p4, DWORD p5, DWORD p6,
++                                         LPSECURITY_ATTRIBUTES p7, HKEY *p8, LPDWORD p9)
++{
++    LSTATUS result;
++    void *ret_ptr;
++    ULONG ret_len;
++    struct regcreateopenkeyexa_params params =
++    {
++        .dispatch = { .callback = regcreateopenkeyexa_callback },
++        .create = 1,
++        .hkey = HandleToUlong(p1),
++        .name = (UINT_PTR)p2,
++        .reserved = p3,
++        .class = (UINT_PTR)p4,
++        .options = p5,
++        .access = p6,
++        .security = (UINT_PTR)p7,
++        .retkey = (UINT_PTR)p8,
++        .disposition = (UINT_PTR)p9,
++        .result = (UINT_PTR)&result,
++    };
++    TRACE("RegCreateKeyExA %p %s\n", p1, p2);
++    KeUserDispatchCallback(&params.dispatch, sizeof(params), &ret_ptr, &ret_len);
++    return result;
++}
++
++static LSTATUS WINAPI my_RegCloseKey(HKEY hkey)
++{
++    TRACE("RegCloseKey %p\n", hkey);
++    if (!hkey) return ERROR_INVALID_HANDLE;
++    if (hkey >= (HKEY)0x80000000) return ERROR_SUCCESS;
++    return RtlNtStatusToDosError(NtClose(hkey));
++}
++
++static BOOL WINAPI my_EnumDisplayMonitors(HDC h, LPRECT p2, MONITORENUMPROC p3, LPARAM p4)
++{
++    TRACE("EnumDisplayMonitors %p %p %p %ld\n", h, p2, p3, p4);
++    return NtUserEnumDisplayMonitors(h, p2, p3, p4);
++}
++
++static BOOL WINAPI my_GetMonitorInfoA(HMONITOR monitor, LPMONITORINFO info)
++{
++    MONITORINFOEXW miW;
++    BOOL ret;
++    TRACE("GetMonitorInfoA %p %p\n", monitor, info);
++    if (info->cbSize == sizeof(MONITORINFO)) return NtUserGetMonitorInfo(monitor, info);
++    if (info->cbSize != sizeof(MONITORINFOEXA)) return FALSE;
++    miW.cbSize = sizeof(miW);
++    ret = NtUserGetMonitorInfo(monitor, (MONITORINFO *)&miW);
++    if (ret)
++    {
++        MONITORINFOEXA *miA = (MONITORINFOEXA *)info;
++        ULONG size;
++        miA->rcMonitor = miW.rcMonitor;
++        miA->rcWork = miW.rcWork;
++        miA->dwFlags = miW.dwFlags;
++        RtlUnicodeToUTF8N(miA->szDevice, sizeof(miA->szDevice), &size, miW.szDevice, lstrlenW(miW.szDevice) * sizeof(WCHAR));
++    }
++    return ret;
++}
++
++static BOOL WINAPI my_AdjustWindowRectEx(LPRECT p1, DWORD p2, BOOL p3, DWORD p4)
++{
++    TRACE("AdjustWindowRectEx %p %u %d %u\n", p1, p2, p3, p4);
++    return NtUserAdjustWindowRect(p1, p2, p3, p4, NtUserGetSystemDpiForProcess(NULL));
++}
++
++static LONG_PTR WINAPI my_GetWindowLongPtrW(HWND h, int nIndex)
++{
++    TRACE("GetWindowLongPtrW %p\n", h);
++    return NtUserGetWindowLongPtrW(h, nIndex);
++}
++
++static BOOL WINAPI my_GetWindowRect(HWND h, LPRECT rect)
++{
++    TRACE("GetWindowRect %p %p\n", h, rect);
++    return NtUserGetWindowRect(h, rect, NtUserGetWinMonitorDpi(h, MDT_DEFAULT));
++}
++
++static BOOL WINAPI my_MoveWindow(HWND h, int X, int Y, int nWidth, int nHeight, BOOL bRepaint)
++{
++    TRACE("MoveWindow %p %d %d %d %d %d\n", h, X, Y, nWidth, nHeight, bRepaint);
++    return NtUserMoveWindow(h, X, Y, nWidth, nHeight, bRepaint);
++}
++
++static BOOL WINAPI my_SetWindowPos(HWND h, HWND h2, int x, int y, int cx, int cy, UINT flags)
++{
++    TRACE("SetWindowPos %p %p %d %d %d %d %u\n", h, h2, x, y, cx, cy, flags);
++    return NtUserSetWindowPos(h, h2, x, y, cx, cy, flags);
++}
++
++static INT WINAPI my_GetSystemMetrics(INT index)
++{
++    TRACE("GetSystemMetrics %d\n", index);
++    return NtUserGetSystemMetrics(index);
++}
++
++static LONG_PTR WINAPI my_SetWindowLongPtrW(HWND hwnd, INT offset, LONG_PTR newval)
++{
++    TRACE("SetWindowLongPtrW %p %d %ld\n", hwnd, offset, newval);
++    return NtUserSetWindowLongPtr(hwnd, offset, newval, FALSE);
++}
++
++DECLSPEC_EXPORT struct macdrv_functions_t macdrv_functions =
++{
++    &my_macdrv_init_display_devices,
++    &my_get_win_data,
++    &my_release_win_data,
++    &my_macdrv_get_cocoa_window,
++    &my_macdrv_create_metal_device,
++    &my_macdrv_release_metal_device,
++    &my_macdrv_view_create_metal_view,
++    &my_macdrv_view_get_metal_layer,
++    &my_macdrv_view_release_metal_view,
++    &my_OnMainThread,
++    &my_RegQueryValueExA,
++    &my_RegSetValueExA,
++    &my_RegOpenKeyExA,
++    &my_RegCreateKeyExA,
++    &my_RegCloseKey,
++    &my_EnumDisplayMonitors,
++    &my_GetMonitorInfoA,
++    &my_AdjustWindowRectEx,
++    &my_GetWindowLongPtrW,
++    &my_GetWindowRect,
++    &my_MoveWindow,
++    &my_SetWindowPos,
++    &my_GetSystemMetrics,
++    &my_SetWindowLongPtrW,
++};
++
++/* CLIENT_SURFACE_PRESENTED event handler: forward to the shared client_surface
++ * present path (used by the OpenGL/MoltenVK lane too). */
++void macdrv_client_surface_presented(const macdrv_event *event)
++{
++    TRACE("client_surface %p\n", event->client_surface_presented.client_surface);
++    client_surface_present(event->client_surface_presented.client_surface);
++}
++
++static void cf_client_surface_release(CFAllocatorRef allocator, const void *client_surface)
++{
++    client_surface_release((struct client_surface *)client_surface);
++}
++
++#endif
+--- dlls/winemac.drv/metalsharp_d3dmetal_objc.h	1969-12-31 17:00:00
++++ dlls/winemac.drv/metalsharp_d3dmetal_objc.h	2026-07-02 23:40:22
+@@ -0,0 +1,35 @@
++/*
++ * MetalSharp-owned native D3DMetal host ABI — Metal layer hook.
++ *
++ * Ports the behavior (not the branding) of CrossOver's D3DMetal host shim into
++ * MetalSharp Wine 11.5. CrossOver is only ever an oracle for behavior; this
++ * code is MetalSharp-owned. The WineMetalLayer class name and the
++ * macdrv_functions symbol are Wine/DXMT ABI contract names, not CrossOver
++ * branding, and are retained so D3DMetal/DXMT payloads resolve them.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#if defined(__x86_64__)
++
++#import <QuartzCore/QuartzCore.h>
++
++/* A CAMetalLayer subclass that hooks nextDrawable so a D3DMetal client-surface
++ * "presented" event is posted to the Wine event queue. The D3DMetal/DXMT
++ * payload installs this class as the view backing layer. */
++@interface WineMetalLayer : CAMetalLayer
++@end
++
++#endif
+--- dlls/winemac.drv/metalsharp_d3dmetal_objc.m	1969-12-31 17:00:00
++++ dlls/winemac.drv/metalsharp_d3dmetal_objc.m	2026-07-02 23:48:28
+@@ -0,0 +1,100 @@
++/*
++ * MetalSharp-owned native D3DMetal host ABI — Metal layer hook + view
++ * client-surface association.
++ *
++ * Ports behavior (not branding) from CrossOver's D3DMetal host shim into
++ * MetalSharp Wine 11.5. CrossOver is only an oracle for behavior. The
++ * WineMetalLayer class name is a Wine/DXMT ABI contract name, retained so
++ * D3DMetal/DXMT payloads resolve it; it is not CrossOver branding.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with this library; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
++ */
++
++#if 0
++#pragma makedep unix
++#endif
++
++#if defined(__x86_64__)
++
++#include "config.h"
++
++#import <AppKit/AppKit.h>
++#import <QuartzCore/QuartzCore.h>
++#import <objc/runtime.h>
++
++#include "macdrv_cocoa.h"
++#import "cocoa_app.h"
++#import "cocoa_event.h"
++#import "cocoa_window.h"
++#import "metalsharp_d3dmetal_objc.h"
++
++#pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
++
++static const char *const d3dmetal_client_surface_key = "metalsharp.d3dmetal.client_surface";
++
++/* Associate/extract a D3DMetal client_surface pointer on a content view.
++ * The D3DMetal host shim (metalsharp_d3dmetal.c) sets this when it creates a
++ * client surface so that WineMetalLayer-nextDrawable can find it and post the
++ * CLIENT_SURFACE_PRESENTED event. Declared in macdrv_cocoa.h (Cocoa API); kept
++ * default-visibility so the host-ABI surface is grep-discoverable. */
++__attribute__((visibility("default")))
++void macdrv_set_view_d3dmetal_client_surface(macdrv_view v, void *client_surface)
++{
++    objc_setAssociatedObject((id)v, d3dmetal_client_surface_key, [NSNumber numberWithPointer:client_surface], OBJC_ASSOCIATION_RETAIN);
++}
++
++__attribute__((visibility("default")))
++void *macdrv_get_view_d3dmetal_client_surface(macdrv_view v)
++{
++    NSNumber *n = objc_getAssociatedObject((id)v, d3dmetal_client_surface_key);
++    return n ? [n pointerValue] : NULL;
++}
++
++@implementation WineMetalLayer
++
++    /* Extend [CAMetalLayer nextDrawable] so client_surface_present() is called
++     * for the D3DMetal client_surface associated with the view that owns this
++     * layer. The layer's delegate is the WineMetalView containing it; that
++     * view's superview is the WineContentView on which the client_surface was
++     * associated by macdrv_set_view_d3dmetal_client_surface().
++     */
++    - (id<CAMetalDrawable>) nextDrawable
++    {
++        if ([self.delegate isKindOfClass:NSClassFromString(@"WineMetalView")])
++        {
++            NSView *view = (NSView *)self.delegate;
++            if ([view.superview isKindOfClass:NSClassFromString(@"WineContentView")] &&
++                [view.window isKindOfClass:NSClassFromString(@"WineWindow")])
++            {
++                void *client_surface = macdrv_get_view_d3dmetal_client_surface((macdrv_view)view.superview);
++                if (client_surface)
++                {
++                    macdrv_event *event;
++                    event = macdrv_create_event(CLIENT_SURFACE_PRESENTED, (WineWindow *)view.window);
++                    event->client_surface_presented.client_surface = client_surface;
++
++                    WineEventQueue *queue = [(WineWindow *)view.window queue];
++                    [queue postEvent:event];
++                    macdrv_release_event(event);
++                }
++            }
++        }
++
++        return [super nextDrawable];
++    }
++
++@end
++
++#endif

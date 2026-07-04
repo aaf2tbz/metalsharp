@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const REPO_API: &str = "https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest";
+const PUBLIC_REPO_API: &str = "https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest";
+const UPDATE_REPO_API_ENV: &str = "METALSHARP_UPDATE_REPO_API";
+const ALLOW_PUBLIC_UPDATES_ENV: &str = "METALSHARP_ALLOW_PUBLIC_UPDATES";
 
 static UPDATING: AtomicBool = AtomicBool::new(false);
 static DOWNLOAD_PERCENT: AtomicU32 = AtomicU32::new(0);
@@ -65,10 +67,14 @@ fn find_dmg_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
 }
 
 pub fn check_for_update() -> serde_json::Value {
+    let repo_api = match update_repo_api() {
+        Some(repo_api) => repo_api,
+        None => return updates_disabled_response(),
+    };
     let config = ureq::config::Config::builder().user_agent(format!("MetalSharp/{}", CURRENT_VERSION)).build();
     let agent = ureq::Agent::new_with_config(config);
 
-    let mut resp = match agent.get(REPO_API).call() {
+    let mut resp = match agent.get(&repo_api).call() {
         Ok(r) => r,
         Err(e) => {
             return json!({
@@ -115,6 +121,79 @@ pub fn check_for_update() -> serde_json::Value {
         "download_size": download_size,
         "release_notes": release_notes,
         "release_name": release_name,
+        "update_repo_api": repo_api,
+        "updates_disabled": false,
+    })
+}
+
+fn update_repo_api() -> Option<String> {
+    let custom_repo = std::env::var(UPDATE_REPO_API_ENV).ok();
+    let allow_public = std::env::var(ALLOW_PUBLIC_UPDATES_ENV).map(|value| value == "1").unwrap_or(false);
+    update_repo_api_from_values(custom_repo.as_deref(), allow_public)
+}
+
+pub fn update_source_guard_report() -> serde_json::Value {
+    let custom_repo = std::env::var(UPDATE_REPO_API_ENV).ok();
+    let allow_public = std::env::var(ALLOW_PUBLIC_UPDATES_ENV).map(|value| value == "1").unwrap_or(false);
+    update_source_guard_report_from_values(custom_repo.as_deref(), allow_public)
+}
+
+fn update_source_guard_report_from_values(custom_repo: Option<&str>, allow_public: bool) -> serde_json::Value {
+    let trimmed_custom = custom_repo.map(str::trim).filter(|value| !value.is_empty());
+    let effective_repo = update_repo_api_from_values(custom_repo, allow_public);
+    let using_public_repo = effective_repo.as_deref() == Some(PUBLIC_REPO_API);
+    let public_updates_disabled = effective_repo.is_none();
+    let custom_repo_configured = trimmed_custom.is_some();
+    let ok = !using_public_repo;
+    let release_feed = if public_updates_disabled {
+        "disabled"
+    } else if using_public_repo {
+        "public"
+    } else {
+        "custom"
+    };
+    let reason = if public_updates_disabled {
+        "Public MetalSharp updates are disabled for this private Wine 2.0 fork."
+    } else if using_public_repo {
+        "This private Wine 2.0 fork is configured to use the public MetalSharp update feed."
+    } else {
+        "A custom update feed is configured; verify it points at an intentional private Wine 2.0 release source."
+    };
+
+    json!({
+        "ok": ok,
+        "releaseFeed": release_feed,
+        "publicUpdatesDisabled": public_updates_disabled,
+        "customRepoConfigured": custom_repo_configured,
+        "allowPublicUpdates": allow_public,
+        "usingPublicRepo": using_public_repo,
+        "effectiveRepoApi": effective_repo,
+        "publicRepoApi": PUBLIC_REPO_API,
+        "reason": reason,
+    })
+}
+
+fn update_repo_api_from_values(custom_repo: Option<&str>, allow_public: bool) -> Option<String> {
+    if let Some(value) = custom_repo {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    allow_public.then(|| PUBLIC_REPO_API.to_string())
+}
+
+fn updates_disabled_response() -> serde_json::Value {
+    json!({
+        "ok": true,
+        "current_version": CURRENT_VERSION,
+        "latest_version": CURRENT_VERSION,
+        "available": false,
+        "download_url": "",
+        "download_size": 0,
+        "release_notes": "Public MetalSharp updates are disabled for the private MetalSharp Wine 2.0 fork. Set METALSHARP_UPDATE_REPO_API or METALSHARP_ALLOW_PUBLIC_UPDATES=1 to opt in.",
+        "release_name": "MetalSharp Wine 2.0 private fork",
+        "updates_disabled": true,
     })
 }
 
@@ -134,6 +213,14 @@ fn semver_gt(a: &str, b: &str) -> bool {
 }
 
 pub fn start_update() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    if update_repo_api().is_none() {
+        return Ok(json!({
+            "ok": false,
+            "error": "updates are disabled for this private Wine 2.0 fork; set METALSHARP_UPDATE_REPO_API or METALSHARP_ALLOW_PUBLIC_UPDATES=1 to opt in",
+            "updates_disabled": true,
+        }));
+    }
+
     if UPDATING.load(Ordering::SeqCst) {
         return Ok(json!({"ok": false, "error": "update already in progress"}));
     }
@@ -414,6 +501,51 @@ mod tests {
     #[test]
     fn unix_days_to_ymd_handles_current_dates_without_underflow() {
         assert_eq!(unix_days_to_ymd(20_592), (2026, 5, 19));
+    }
+
+    #[test]
+    fn private_fork_updates_are_disabled_without_explicit_opt_in() {
+        assert_eq!(update_repo_api_from_values(None, false), None);
+        let response = updates_disabled_response();
+        assert_eq!(response.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(response.get("available").and_then(|value| value.as_bool()), Some(false));
+        assert_eq!(response.get("updates_disabled").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(response.get("download_url").and_then(|value| value.as_str()), Some(""));
+    }
+
+    #[test]
+    fn updater_allows_custom_or_explicit_public_release_sources() {
+        assert_eq!(
+            update_repo_api_from_values(
+                Some(" https://api.github.com/repos/aaf2tbz/MetalSharp-Wine-2.0/releases/latest "),
+                false
+            )
+            .as_deref(),
+            Some("https://api.github.com/repos/aaf2tbz/MetalSharp-Wine-2.0/releases/latest")
+        );
+        assert_eq!(update_repo_api_from_values(Some("   "), true).as_deref(), Some(PUBLIC_REPO_API));
+        assert_eq!(update_repo_api_from_values(None, true).as_deref(), Some(PUBLIC_REPO_API));
+    }
+
+    #[test]
+    fn update_source_guard_reports_private_fork_safety() {
+        let disabled = update_source_guard_report_from_values(None, false);
+        assert_eq!(disabled.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(disabled.get("releaseFeed").and_then(|value| value.as_str()), Some("disabled"));
+        assert_eq!(disabled.get("publicUpdatesDisabled").and_then(|value| value.as_bool()), Some(true));
+
+        let custom = update_source_guard_report_from_values(
+            Some(" https://api.github.com/repos/aaf2tbz/MetalSharp-Wine-2.0/releases/latest "),
+            false,
+        );
+        assert_eq!(custom.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(custom.get("releaseFeed").and_then(|value| value.as_str()), Some("custom"));
+        assert_eq!(custom.get("customRepoConfigured").and_then(|value| value.as_bool()), Some(true));
+
+        let public = update_source_guard_report_from_values(None, true);
+        assert_eq!(public.get("ok").and_then(|value| value.as_bool()), Some(false));
+        assert_eq!(public.get("releaseFeed").and_then(|value| value.as_str()), Some("public"));
+        assert_eq!(public.get("usingPublicRepo").and_then(|value| value.as_bool()), Some(true));
     }
 
     #[test]

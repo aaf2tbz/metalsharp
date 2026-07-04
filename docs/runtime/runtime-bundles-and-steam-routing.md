@@ -43,8 +43,10 @@ After install those surfaces live under:
 
 ```text
 ~/.metalsharp/runtime/wine/lib/dxmt/
-~/.metalsharp/runtime/wine/lib/dxmt-m12/
+~/.metalsharp/runtime/wine/lib/dxmt_m12/
 ```
+
+`Graphics/dll/dxmt-m12` is the release-bundle root. The canonical installed runtime surface is `dxmt_m12`.
 
 Installed DXMT runtime state is recorded in:
 
@@ -52,7 +54,7 @@ Installed DXMT runtime state is recorded in:
 ~/.metalsharp/runtime/wine/lib/dxmt/metalsharp-dxmt-runtime.json
 ```
 
-Do not trust a runtime by version string alone. Check the manifest, required DLLs, the `dxmt-m12` sidecars, and source archive hash when diagnosing deployment drift.
+Do not trust a runtime by version string alone. Check the manifest, required DLLs, the installed `dxmt_m12` sidecars, and source archive hash when diagnosing deployment drift.
 
 ## Steam Launch Route
 

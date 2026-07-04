@@ -397,10 +397,15 @@ pub fn launch_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal(appid, node)
-        },
-        PipelineId::M13 | PipelineId::D3DMetal => launch_d3dmetal_gptk(appid, node),
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12 => launch_dxmt_metal(appid, node),
+        PipelineId::D3DMetalNative => launch_d3dmetal_native(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
         PipelineId::Steam => launch_steam(appid),
@@ -422,12 +427,19 @@ pub fn launch_steam_bottle_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M11
+        | PipelineId::M12
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12 => {
             launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
-        PipelineId::M13 | PipelineId::D3DMetal => {
-            launch_d3dmetal_gptk_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+        PipelineId::D3DMetalNative => {
+            launch_d3dmetal_native_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
         },
         PipelineId::M32 | PipelineId::WineBare => {
@@ -475,6 +487,8 @@ pub fn prepare_pipeline_with_request(
 
     let readiness_ok = readiness.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
     let deployed_sources: Vec<String> = recipe.dlls.iter().map(|dll| dll.source_subpath.clone()).collect();
+    let launch_receipt_preview =
+        launch_receipt_preview_for_recipe(appid, node, &recipe, &env, false, dirs::home_dir().as_deref());
 
     Ok(serde_json::json!({
         "ok": readiness_ok,
@@ -487,6 +501,7 @@ pub fn prepare_pipeline_with_request(
         "recipe": recipe,
         "launch_env": env.iter().map(|(key, value)| serde_json::json!({"key": key, "value": value})).collect::<Vec<_>>(),
         "readiness": readiness,
+        "launch_receipt_preview": launch_receipt_preview,
         "deployed_dlls": deployed_sources.len(),
         "deployed_sources": deployed_sources,
         "timing": timing.to_json(),
@@ -505,8 +520,10 @@ pub fn prepare_steam_pipeline_env(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
-        | PipelineId::M13
-        | PipelineId::D3DMetal
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12
+        | PipelineId::D3DMetalNative
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 => {
@@ -530,13 +547,13 @@ pub fn prepare_steam_pipeline_env(
         prepare_steam_api_for_game_dir(&home, game_dir, appid, pipeline_id);
         cleanup_legacy_eac_toggle_artifacts(game_dir);
         cleanup_legacy_injections(game_dir)?;
-        if matches!(pipeline_id, PipelineId::M12 | PipelineId::M13) {
+        if matches!(pipeline_id, PipelineId::M12) {
             let prefix = crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam");
             cleanup_m12_legacy_hook_artifacts(game_dir, &prefix);
             crate::setup::stage_agility_sdk_for_game(appid, game_dir, &home)?;
         }
     }
-    if pipeline_id == PipelineId::D3DMetal {
+    if pipeline_id == PipelineId::D3DMetalNative {
         if let Some(game_dir) = recipe.game_dir.as_ref() {
             cleanup_metalsharp_dlls_from_game_dir(game_dir)?;
         }
@@ -626,12 +643,23 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         }
     }
 
-    // For the isolated M12/M13 lane, also verify the x86_64-unix sidecars that
-    // winemetal requires at runtime.
+    // Verify required Unix sidecars for routes whose PE DLLs depend on runtime
+    // dylibs/so files. This stays read-only and mirrors the filesystem paths
+    // launch envs will expose via DYLD/LD library path.
     let mut unix_sidecars: Vec<serde_json::Value> = Vec::new();
-    let unix_lib_dir = if pipeline == PipelineId::M12 {
-        let dir = ms_root.join("lib").join("dxmt_m12").join("x86_64-unix");
-        for sidecar in ["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"] {
+    let (unix_lib_dir, required_sidecars): (Option<PathBuf>, &[&str]) = match pipeline {
+        PipelineId::M12 => (
+            Some(ms_root.join("lib").join("dxmt_m12").join("x86_64-unix")),
+            &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"],
+        ),
+        PipelineId::DxvkD9 | PipelineId::DxvkD11 => {
+            (Some(ms_root.join("lib").join("dxvk").join("x86_64-unix")), &["libMoltenVK.dylib"])
+        },
+        PipelineId::Vkd3dD12 => (Some(ms_root.join("lib").join("vkd3d").join("x86_64-unix")), &["libMoltenVK.dylib"]),
+        _ => (None, &[]),
+    };
+    if let Some(dir) = unix_lib_dir.as_ref() {
+        for sidecar in required_sidecars {
             let path = dir.join(sidecar);
             let present = path.exists();
             let sha = if present { crate::diagnostics::file_sha256(&path) } else { None };
@@ -649,10 +677,17 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
                 }));
             }
         }
-        Some(dir)
-    } else {
-        None
-    };
+    }
+
+    let launch_receipt_preview = launch_receipt_preview_for_dry_run(
+        appid,
+        node,
+        &env,
+        &deploy_dlls,
+        &unix_sidecars,
+        missing.is_empty(),
+        Some(&home),
+    );
 
     serde_json::json!({
         "ok": missing.is_empty(),
@@ -669,6 +704,7 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
         "deploy_dlls": deploy_dlls,
         "unix_sidecars": unix_sidecars,
         "env_pairs": env_pairs_json,
+        "launch_receipt_preview": launch_receipt_preview,
         "env_keys_present": {
             "WINEDLLOVERRIDES": env_keys.contains("WINEDLLOVERRIDES"),
             "DXMT_SHADER_CACHE_PATH": env_keys.contains("DXMT_SHADER_CACHE_PATH"),
@@ -680,10 +716,347 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
     })
 }
 
+fn launch_receipt_preview_for_recipe(
+    appid: u32,
+    node: &PipelineNode,
+    recipe: &super::recipe::LaunchRecipe,
+    env: &[(String, String)],
+    dry_run: bool,
+    home_override: Option<&Path>,
+) -> serde_json::Value {
+    let dlls: Vec<serde_json::Value> = recipe
+        .dlls
+        .iter()
+        .map(|dll| {
+            serde_json::json!({
+                "filename": dll.filename,
+                "sourcePath": dll.source_path.to_string_lossy(),
+                "destPath": dll.dest_path.to_string_lossy(),
+                "sourcePresent": dll.source_present,
+            })
+        })
+        .collect();
+    let dylibs: Vec<serde_json::Value> = recipe
+        .runtime_assets
+        .iter()
+        .filter(|asset| {
+            asset.path.extension().and_then(|ext| ext.to_str()).is_some_and(|ext| matches!(ext, "dylib" | "so"))
+        })
+        .map(|asset| {
+            serde_json::json!({
+                "name": asset.name,
+                "path": asset.path.to_string_lossy(),
+                "required": asset.required,
+                "present": asset.present,
+            })
+        })
+        .collect();
+    launch_receipt_preview_common(LaunchReceiptPreviewInput {
+        appid,
+        node,
+        game_dir: recipe.game_dir.as_ref(),
+        exe_path: recipe.exe_path.as_ref(),
+        env,
+        dlls,
+        dylibs,
+        dry_run,
+        warnings: recipe.warnings.clone(),
+        home_override,
+    })
+}
+
+fn launch_receipt_preview_for_dry_run(
+    appid: u32,
+    node: &PipelineNode,
+    env: &[(String, String)],
+    deploy_dlls: &[serde_json::Value],
+    unix_sidecars: &[serde_json::Value],
+    ok: bool,
+    home_override: Option<&Path>,
+) -> serde_json::Value {
+    let dlls: Vec<serde_json::Value> = deploy_dlls
+        .iter()
+        .map(|dll| {
+            serde_json::json!({
+                "filename": dll.get("filename").cloned().unwrap_or(serde_json::Value::Null),
+                "sourcePath": dll.get("source_path").cloned().unwrap_or(serde_json::Value::Null),
+                "destPath": serde_json::Value::Null,
+                "sourcePresent": dll.get("present").cloned().unwrap_or(serde_json::Value::Bool(false)),
+                "optional": dll.get("optional").cloned().unwrap_or(serde_json::Value::Bool(false)),
+            })
+        })
+        .collect();
+    let dylibs: Vec<serde_json::Value> = unix_sidecars
+        .iter()
+        .map(|sidecar| {
+            serde_json::json!({
+                "name": sidecar.get("filename").cloned().unwrap_or(serde_json::Value::Null),
+                "path": sidecar.get("path").cloned().unwrap_or(serde_json::Value::Null),
+                "required": true,
+                "present": sidecar.get("present").cloned().unwrap_or(serde_json::Value::Bool(false)),
+            })
+        })
+        .collect();
+    launch_receipt_preview_common(LaunchReceiptPreviewInput {
+        appid,
+        node,
+        game_dir: None,
+        exe_path: None,
+        env,
+        dlls,
+        dylibs,
+        dry_run: true,
+        warnings: if ok { Vec::new() } else { vec!["dry-run has missing required route artifacts".into()] },
+        home_override,
+    })
+}
+
+struct LaunchReceiptPreviewInput<'a> {
+    appid: u32,
+    node: &'a PipelineNode,
+    game_dir: Option<&'a PathBuf>,
+    exe_path: Option<&'a PathBuf>,
+    env: &'a [(String, String)],
+    dlls: Vec<serde_json::Value>,
+    dylibs: Vec<serde_json::Value>,
+    dry_run: bool,
+    warnings: Vec<String>,
+    home_override: Option<&'a Path>,
+}
+
+fn launch_receipt_preview_common(input: LaunchReceiptPreviewInput<'_>) -> serde_json::Value {
+    let default_home = dirs::home_dir().unwrap_or_default();
+    let home = input.home_override.unwrap_or(default_home.as_path());
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let wine_root = ms_home.join("runtime").join("wine");
+    let prefix = ms_home.join("prefix-steam");
+    let env_keys: Vec<String> = input.env.iter().map(|(key, _)| key.clone()).collect();
+    let log_path = input
+        .env
+        .iter()
+        .find(|(key, _)| key == "DXMT_LOG_PATH")
+        .or_else(|| input.env.iter().find(|(key, _)| key == "METALSHARP_PIPELINE_CACHE_PATH"))
+        .map(|(_, value)| value.trim_end_matches('/').to_string());
+
+    serde_json::json!({
+        "schema": "metalsharp.launch.receipt.v1",
+        "preview": true,
+        "dryRun": input.dry_run,
+        "source": "steam",
+        "appId": input.appid,
+        "route": input.node.id.user_selectable_id().unwrap_or_else(|| input.node.id.to_legacy_method()),
+        "runtimeContractId": crate::runtime_contracts::runtime_contract_id_for_pipeline(input.node.id),
+        "pipeline": input.node.id,
+        "pipelineName": input.node.name,
+        "backend": input.node.backend,
+        "prefix": prefix.to_string_lossy(),
+        "wine": crate::platform::runtime_wine_binary(&wine_root).to_string_lossy(),
+        "gameDir": input.game_dir.map(|path| path.to_string_lossy().to_string()),
+        "exePath": input.exe_path.map(|path| path.to_string_lossy().to_string()),
+        "dllsStaged": input.dlls,
+        "dylibsUsed": input.dylibs,
+        "envKeys": env_keys,
+        "logPath": log_path,
+        "pid": serde_json::Value::Null,
+        "warnings": input.warnings,
+    })
+}
+
+fn command_env_pairs(cmd: &Command) -> Vec<(String, String)> {
+    cmd.get_envs()
+        .filter_map(|(key, value)| {
+            value.map(|value| (key.to_string_lossy().to_string(), value.to_string_lossy().to_string()))
+        })
+        .collect()
+}
+
+fn actual_launch_receipt_path_for_home(home: &Path, appid: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home)
+        .join("launch-receipts")
+        .join("steam")
+        .join(format!("{}-launch.json", appid))
+}
+
+struct ActualLaunchReceiptInput<'a> {
+    appid: u32,
+    node: &'a PipelineNode,
+    recipe: &'a super::recipe::LaunchRecipe,
+    env: &'a [(String, String)],
+    pid: u32,
+    log_path: Option<&'a Path>,
+    prefix: &'a Path,
+    home: &'a Path,
+}
+
+fn persist_actual_launch_receipt(input: ActualLaunchReceiptInput<'_>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let mut receipt =
+        launch_receipt_preview_for_recipe(input.appid, input.node, input.recipe, input.env, false, Some(input.home));
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("preview".to_string(), serde_json::Value::Bool(false));
+        object.insert("pid".to_string(), serde_json::json!(input.pid));
+        object.insert("prefix".to_string(), serde_json::json!(input.prefix.to_string_lossy().to_string()));
+        object.insert(
+            "logPath".to_string(),
+            input
+                .log_path
+                .map(|path| serde_json::json!(path.to_string_lossy().to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert("receiptPath".to_string(), serde_json::Value::Null);
+    }
+    let path = actual_launch_receipt_path_for_home(input.home, input.appid);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("receiptPath".to_string(), serde_json::json!(path.to_string_lossy().to_string()));
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&receipt)?)?;
+    Ok(path)
+}
+
+fn persist_actual_launch_receipt_best_effort(input: ActualLaunchReceiptInput<'_>) {
+    let appid = input.appid;
+    if let Err(error) = persist_actual_launch_receipt(input) {
+        eprintln!("launch receipt persist failed for appid {}: {}", appid, error);
+    }
+}
+
+fn custom_launch_receipt_path_for_home(home: &Path, launch_id: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home)
+        .join("launch-receipts")
+        .join("sharp")
+        .join(format!("{}-launch.json", launch_id))
+}
+
+fn native_mono_launch_receipt_path_for_home(home: &Path, appid: u32) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home)
+        .join("launch-receipts")
+        .join("native-mono")
+        .join(format!("{}-launch.json", appid))
+}
+
+struct CustomLaunchReceiptInput<'a> {
+    launch_id: u32,
+    node: &'a PipelineNode,
+    recipe: &'a super::recipe::LaunchRecipe,
+    env: &'a [(String, String)],
+    pid: u32,
+    log_path: Option<&'a Path>,
+    prefix: &'a Path,
+    home: &'a Path,
+}
+
+fn persist_custom_launch_receipt_best_effort(input: CustomLaunchReceiptInput<'_>) {
+    let mut receipt = launch_receipt_preview_for_recipe(
+        input.launch_id,
+        input.node,
+        input.recipe,
+        input.env,
+        false,
+        Some(input.home),
+    );
+    let path = custom_launch_receipt_path_for_home(input.home, input.launch_id);
+    if let Some(object) = receipt.as_object_mut() {
+        object.insert("preview".to_string(), serde_json::Value::Bool(false));
+        object.insert("source".to_string(), serde_json::json!("sharp"));
+        object.insert("pid".to_string(), serde_json::json!(input.pid));
+        object.insert("prefix".to_string(), serde_json::json!(input.prefix.to_string_lossy().to_string()));
+        object.insert(
+            "logPath".to_string(),
+            input
+                .log_path
+                .map(|path| serde_json::json!(path.to_string_lossy().to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        );
+        object.insert("receiptPath".to_string(), serde_json::json!(path.to_string_lossy().to_string()));
+    }
+    if let Err(error) = path.parent().map(std::fs::create_dir_all).transpose() {
+        eprintln!("custom launch receipt directory failed for launch {}: {}", input.launch_id, error);
+        return;
+    }
+    if let Err(error) = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| error.to_string())
+        .and_then(|data| std::fs::write(&path, data).map_err(|error| error.to_string()))
+    {
+        eprintln!("custom launch receipt persist failed for launch {}: {}", input.launch_id, error);
+    }
+}
+
+struct NativeMonoLaunchReceiptInput<'a> {
+    appid: u32,
+    profile: &'a FnaGameProfile,
+    node: &'a PipelineNode,
+    game_dir: &'a Path,
+    exe_path: &'a Path,
+    env: &'a [(String, String)],
+    pid: u32,
+    log_path: &'a Path,
+    home: &'a Path,
+}
+
+fn native_mono_runtime_contract_id(profile: &FnaGameProfile) -> &'static str {
+    if profile.mono_arch == MonoArch::X86 {
+        "native_mono_x86"
+    } else {
+        "native_mono_arm64"
+    }
+}
+
+fn persist_native_mono_launch_receipt_best_effort(input: NativeMonoLaunchReceiptInput<'_>) {
+    let path = native_mono_launch_receipt_path_for_home(input.home, input.appid);
+    let env_keys: Vec<String> = input.env.iter().map(|(key, _)| key.clone()).collect();
+    let receipt = serde_json::json!({
+        "schema": "metalsharp.launch.receipt.v1",
+        "preview": false,
+        "dryRun": false,
+        "source": "native_mono",
+        "appId": input.appid,
+        "route": input.profile.method_label,
+        "runtimeContractId": native_mono_runtime_contract_id(input.profile),
+        "pipeline": input.node.id,
+        "pipelineName": input.node.name,
+        "backend": input.node.backend,
+        "prefix": serde_json::Value::Null,
+        "wine": serde_json::Value::Null,
+        "gameDir": input.game_dir.to_string_lossy(),
+        "exePath": input.exe_path.to_string_lossy(),
+        "dllsStaged": [],
+        "dylibsUsed": [
+            {"name": "mono", "path": input.env.iter().find(|(key, _)| key == "MONO_PATH").map(|(_, value)| value.clone()), "required": true, "present": true}
+        ],
+        "envKeys": env_keys,
+        "logPath": input.log_path.to_string_lossy(),
+        "pid": input.pid,
+        "receiptPath": path.to_string_lossy(),
+        "warnings": [],
+    });
+    if let Err(error) = path.parent().map(std::fs::create_dir_all).transpose() {
+        eprintln!("native mono launch receipt directory failed for appid {}: {}", input.appid, error);
+        return;
+    }
+    if let Err(error) = serde_json::to_string_pretty(&receipt)
+        .map_err(|error| error.to_string())
+        .and_then(|data| std::fs::write(&path, data).map_err(|error| error.to_string()))
+    {
+        eprintln!("native mono launch receipt persist failed for appid {}: {}", input.appid, error);
+    }
+}
+
 fn quarantine_route_conflicts_for_recipe(
     recipe: &super::recipe::LaunchRecipe,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    if !matches!(recipe.pipeline, PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
+    if !matches!(
+        recipe.pipeline,
+        PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M11
+            | PipelineId::M12
+            | PipelineId::DxvkD9
+            | PipelineId::DxvkD11
+            | PipelineId::Vkd3dD12
+            | PipelineId::D3DMetalNative
+    ) {
         return Ok(0);
     }
 
@@ -832,7 +1205,7 @@ fn pipeline_quarantine_label(pipeline: PipelineId) -> &'static str {
         PipelineId::M10 => "m10",
         PipelineId::M11 => "m11",
         PipelineId::M12 => "m12",
-        PipelineId::D3DMetal => "d3dmetal",
+        PipelineId::D3DMetalNative => "d3dmetal",
         _ => "route",
     }
 }
@@ -936,6 +1309,7 @@ fn deploy_prefix_route_dlls(
 
     let system32 = prefix.join("drive_c").join("windows").join("system32");
     std::fs::create_dir_all(&system32)?;
+    let mut staged = Vec::new();
     for deploy in &recipe.dlls {
         if !deploy.source_present {
             continue;
@@ -946,9 +1320,78 @@ fn deploy_prefix_route_dlls(
         ) {
             continue;
         }
-        std::fs::copy(&deploy.source_path, system32.join(&deploy.filename))?;
+        let dest = system32.join(&deploy.filename);
+        std::fs::copy(&deploy.source_path, &dest)?;
+        staged.push(serde_json::json!({
+            "filename": deploy.filename,
+            "sourcePath": deploy.source_path.to_string_lossy(),
+            "destPath": dest.to_string_lossy(),
+            "sourceSha256": crate::diagnostics::file_sha256(&deploy.source_path),
+            "destSha256": crate::diagnostics::file_sha256(&dest),
+        }));
     }
+    persist_prefix_route_dll_staging_receipt(prefix, recipe, &staged)?;
     Ok(())
+}
+
+fn persist_prefix_route_dll_staging_receipt(
+    prefix: &Path,
+    recipe: &super::recipe::LaunchRecipe,
+    staged: &[serde_json::Value],
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let dir = prefix.join(".metalsharp").join("receipts");
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("route-dll-staging-{}-{}.json", now, recipe.pipeline.to_legacy_method()));
+    let runtime_contract_id = crate::runtime_contracts::runtime_contract_id_for_pipeline(recipe.pipeline);
+    let receipt = serde_json::json!({
+        "schema": "metalsharp.prefix.route_dll_staging.receipt.v1",
+        "timestamp": now,
+        "prefix": prefix.to_string_lossy(),
+        "pipeline": recipe.pipeline,
+        "runtimeContractId": runtime_contract_id,
+        "appId": recipe.appid,
+        "gameDir": recipe.game_dir.as_ref().map(|path| path.to_string_lossy().to_string()),
+        "exePath": recipe.exe_path.as_ref().map(|path| path.to_string_lossy().to_string()),
+        "system32": prefix.join("drive_c").join("windows").join("system32").to_string_lossy(),
+        "stagedCount": staged.len(),
+        "dlls": staged,
+    });
+    std::fs::write(&path, serde_json::to_string_pretty(&receipt)?)?;
+    let components: Vec<serde_json::Value> = staged
+        .iter()
+        .filter_map(|dll| {
+            let filename = dll.get("filename")?.as_str()?;
+            Some(serde_json::json!({
+                "id": format!("route-dll:{}", filename),
+                "kind": "route_dll",
+                "filename": filename,
+                "pipeline": recipe.pipeline,
+                "runtimeContractId": runtime_contract_id,
+                "path": dll.get("destPath").cloned().unwrap_or(serde_json::Value::Null),
+                "sha256": dll.get("destSha256").cloned().unwrap_or(serde_json::Value::Null),
+                "installedAt": now,
+                "receipt": path.to_string_lossy(),
+            }))
+        })
+        .collect();
+    if !components.is_empty() {
+        crate::prefix_metadata::record_installed_components(prefix, prefix_route_metadata_owner(prefix), &components)
+            .map_err(std::io::Error::other)?;
+    }
+    Ok(path)
+}
+
+fn prefix_route_metadata_owner(prefix: &Path) -> &'static str {
+    if prefix.ends_with(Path::new("prefix-steam")) {
+        "steam"
+    } else if prefix.ends_with(Path::new("bottles/gog-prefix/prefix")) {
+        "gog"
+    } else if prefix.ends_with(Path::new("prefix-gptk")) {
+        "gptk"
+    } else {
+        "mtsp"
+    }
 }
 
 fn wine_debug_value() -> String {
@@ -1027,16 +1470,19 @@ pub fn launch_custom_with_options(
         | PipelineId::M10
         | PipelineId::M11
         | PipelineId::M12
-        | PipelineId::M13
-        | PipelineId::D3DMetal
+        | PipelineId::DxvkD9
+        | PipelineId::DxvkD11
+        | PipelineId::Vkd3dD12
+        | PipelineId::D3DMetalNative
         | PipelineId::M32
         | PipelineId::WineBare => {},
         PipelineId::FnaArm64 | PipelineId::Steam | PipelineId::MacSteam => {
-            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, M13, D3DMetal, or M32".into());
+            return Err("Sharp Library apps must use Auto, Wine, M9, M10, M11, M12, DXVK, VKD3D, or M32".into());
         },
     }
 
     let home = dirs::home_dir().ok_or("no home dir")?;
+    let CustomLaunchOptions { prefix_path, log_path } = options;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
     let wine = crate::platform::runtime_wine_binary(&ms_root);
     if !wine.exists() {
@@ -1058,8 +1504,7 @@ pub fn launch_custom_with_options(
         deploy_recipe_dlls(&recipe)?;
     }
 
-    let prefix =
-        options.prefix_path.unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
+    let prefix = prefix_path.unwrap_or_else(|| crate::platform::metalsharp_home_dir_for(&home).join("prefix-steam"));
     std::fs::create_dir_all(&prefix)?;
     let prefix_str = prefix.to_string_lossy().to_string();
     let exe_dir = launch_working_dir(game_dir, exe_path);
@@ -1093,11 +1538,11 @@ pub fn launch_custom_with_options(
 
     cmd.arg(&exe_name);
     cmd.args(&recipe.launch_args);
-    if let Some(log_path) = options.log_path {
+    if let Some(log_path) = log_path.as_ref() {
         if let Some(parent) = log_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut log = OpenOptions::new().create(true).append(true).open(&log_path)?;
+        let mut log = OpenOptions::new().create(true).append(true).open(log_path)?;
         writeln!(log, "launch_id={}", launch_id)?;
         writeln!(log, "pipeline={}", node.name)?;
         writeln!(log, "prefix={}", prefix.display())?;
@@ -1113,7 +1558,18 @@ pub fn launch_custom_with_options(
         let stdout = log.try_clone()?;
         cmd.stdout(Stdio::from(stdout)).stderr(Stdio::from(log));
     }
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_custom_launch_receipt_best_effort(CustomLaunchReceiptInput {
+        launch_id,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path: log_path.as_deref(),
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method(), recipe))
 }
 
@@ -1273,6 +1729,17 @@ fn launch_working_dir<'a>(game_dir: &'a std::path::Path, exe_path: &'a std::path
     exe_path.parent().unwrap_or(game_dir)
 }
 
+fn append_recipe_launch_target(
+    cmd: &mut Command,
+    exe_path: &Path,
+    recipe: &super::recipe::LaunchRecipe,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let exe_name = exe_path.file_name().ok_or("game exe not found")?.to_string_lossy().to_string();
+    cmd.arg(&exe_name);
+    cmd.args(&recipe.launch_args);
+    Ok(())
+}
+
 fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), Box<dyn std::error::Error>> {
     let missing: Vec<String> = recipe
         .runtime_assets
@@ -1288,148 +1755,219 @@ fn validate_recipe_runtime(recipe: &super::recipe::LaunchRecipe) -> Result<(), B
     }
 }
 
-fn gptk_ensure_dependencies(home: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if !crate::platform::rosetta_is_installed() {
-        eprintln!("d3dmetal: Installing Rosetta 2...");
-        let status =
-            std::process::Command::new("softwareupdate").args(["--install-rosetta", "--agree-to-license"]).status()?;
-        if !status.success() {
-            return Err(
-                "Failed to install Rosetta 2. Install manually: softwareupdate --install-rosetta --agree-to-license"
-                    .into(),
-            );
-        }
-    }
-    crate::installer::ensure_gptk_runtime_ready(home)
-        .map(|_| ())
-        .map_err(|e| format!("D3DMetal GPTK runtime setup failed: {}", e).into())
+fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_dxmt_metal_with_context(appid, node, None, &[], None)
 }
 
-fn launch_d3dmetal_gptk(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_d3dmetal_gptk_with_context(appid, node, None, &[], None)
+/// Phase 6: launch a game through the MetalSharp-owned native D3DMetal route.
+///
+/// Uses the MetalSharp Wine 11.5 host ABI (Phase 2) + the staged d3dmetal_native
+/// payload (Phase 3), routed via WINEDLLPATH (not permanent DLL spray), on the
+/// normal bottle prefix. Rejects 32-bit games. Never uses GPTK Wine or prefix-gptk.
+fn launch_d3dmetal_native(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
+    launch_d3dmetal_native_with_context(appid, node, None, &[], None)
 }
 
-fn launch_d3dmetal_gptk_with_context(
+fn launch_d3dmetal_native_with_context(
     appid: u32,
     node: &PipelineNode,
     prefix_override: Option<&Path>,
     extra_env: &[(String, String)],
     log_path: Option<&Path>,
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("no home dir")?;
-    gptk_ensure_dependencies(&home)?;
-
-    if !crate::platform::gptk_prefix_ready(&home) {
-        return Err("GPTK prefix is not ready — open the bottle settings and repair 'gptk_prefix' first".into());
-    }
-    let gptk_prefix = crate::platform::gptk_prefix_path(&home);
-    crate::platform::sync_gptk_prefix(&home)?;
-    let gptk_root = crate::platform::gptk_wine_root_for_home(&home);
-    let gptk_wine64 = crate::platform::gptk_wine64_binary_for_home(&home);
-    let gptk_wineserver = crate::platform::gptk_wineserver_binary_for_home(&home);
-
-    let default_log_path;
-    let log_path = match log_path {
-        Some(path) => Some(path),
-        None => {
-            default_log_path = mtsp_launch_log_path(appid);
-            Some(default_log_path.as_path())
-        },
+    use crate::mtsp::engine::{
+        D3DMETAL_NATIVE_BACKEND, MS_ACTIVE_GRAPHICS_BACKEND_ENV, MS_D3DMETAL_FRAMEWORK_PATH_ENV,
+        MS_D3DMETAL_PAYLOAD_DIR_ENV, MS_D3DMETAL_SHARED_PATH_ENV, MS_GRAPHICS_BACKEND_ENV,
     };
+    use crate::mtsp::pe::parse_pe_imports;
+
+    let home = dirs::home_dir().ok_or("no home dir")?;
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+    let ms_root = ms_home.join("runtime").join("wine");
+    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    let payload_dir = ms_root.join("lib").join("d3dmetal_native");
+
+    if !wine.exists() {
+        return Err("MetalSharp Wine not found — run setup first".into());
+    }
+
+    // Phase 4 readiness gate: Wine host ABI (Phase 2) + payload (Phase 3) must both be ready.
+    let readiness = crate::d3dmetal_native::readiness_for(&home);
+    if !readiness.ready {
+        return Err(format!(
+            "D3DMetal Native is not ready: {} (host_abi={}, payload={})",
+            readiness.state, readiness.host_abi.state, readiness.payload.state
+        )
+        .into());
+    }
+
+    // Normal bottle prefix — never prefix-gptk, never GPTK Wine.
+    let prefix = prefix_override.map(Path::to_path_buf).unwrap_or_else(|| ms_home.join("prefix-steam"));
+    std::fs::create_dir_all(&prefix)?;
+    let prefix_str = prefix.to_string_lossy().to_string();
 
     let recipe = super::recipe::build_launch_recipe(appid, node)?;
     let game_dir = recipe.game_dir.as_ref().ok_or("game dir not found")?;
     let exe_path = recipe.exe_path.as_ref().ok_or("game exe not found")?;
     let exe_dir = launch_working_dir(game_dir, exe_path);
-    let exe_name = exe_path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
-    apply_start_protected_game_bypass(appid, game_dir);
-
-    let prefix = gptk_prefix;
-    let prefix_str = prefix.to_string_lossy().to_string();
-    let offline_mode = extra_env.iter().any(|(key, value)| key == "METALSHARP_OFFLINE_MODE" && value == "1");
-    if offline_mode {
-        if crate::platform::disable_gptk_steam_launcher_for_offline(&prefix)? {
-            eprintln!(
-                "d3dmetal offline: disabled GPTK Steam launcher at {}",
-                crate::platform::gptk_disabled_steam_exe(&prefix).display()
-            );
+    // Reject 32-bit games: the D3DMetal translator stack is Mach-O x86_64.
+    if let Ok(bytes) = std::fs::read(exe_path) {
+        if let Some(pe) = parse_pe_imports(&bytes) {
+            if !pe.is_64_bit {
+                return Err(format!(
+                    "D3DMetal Native requires a 64-bit Windows executable, but {} is 32-bit (i386). Use an x86_64 route instead.",
+                    exe_path.display()
+                )
+                .into());
+            }
         }
-        let _ = Command::new(&gptk_wineserver).env("WINEPREFIX", &prefix_str).arg("-k").status();
-    } else {
-        crate::platform::restore_gptk_steam_launcher(&prefix)?;
     }
 
-    deploy_steam_appid(game_dir, appid);
-
-    let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-
-    if node.uses_winedllpath_routing() {
-        validate_recipe_runtime(&recipe)?;
+    // Route GPTK4 PE DLLs as external native DLLs. Wine 11.5 does not resolve
+    // these PE payload DLLs from WINEDLLPATH alone for a game process; app-local
+    // staging is the proven native-first path. Quarantine stale MetalSharp route
+    // DLLs before deploying the currently staged d3dmetal_native payload.
+    let quarantined = quarantine_route_conflicts_for_recipe(&recipe)?;
+    if quarantined > 0 {
+        eprintln!("d3dmetal_native: quarantined {} stale route DLL conflict(s) before launch", quarantined);
     }
     deploy_recipe_dlls(&recipe)?;
-    deploy_prefix_route_dlls(&recipe, &prefix)?;
 
-    let cache_paths = build_cache_paths(&home, node, appid);
+    // Keep WINEDLLPATH rooted at the payload/Wine trees for any paired unixlib or
+    // follow-on Wine lookup, but do not rely on it as the PE DLL route proof.
+    let winedllpath = d3dmetal_native_winedllpath(&ms_root, &payload_dir);
+    let dyld_library_path = format!(
+        "{}:{}:{}",
+        payload_dir.join("x86_64-unix").to_string_lossy(),
+        payload_dir.join("external").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
+    let overrides = node
+        .wine_overrides
+        .unwrap_or("d3d10,d3d10_1,d3d10core,d3d11,d3d12,dxgi,nvapi64,nvngx,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d");
 
-    let mut dyld_parts = vec![
-        gptk_root.join("lib").to_string_lossy().to_string(),
-        gptk_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string(),
-        gptk_root.join("lib").join("external").to_string_lossy().to_string(),
-    ];
-    for dyld_dir in &node.dyld_paths {
-        let full = ms_root.join(dyld_dir);
-        dyld_parts.push(full.to_string_lossy().to_string());
-    }
-    let dyld = dyld_parts.join(":");
-
-    let mut cmd = Command::new(&gptk_wine64);
+    let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
         .env("WINEPREFIX", &prefix_str)
         .env("WINEDEBUG", wine_debug_value())
         .env("WINEDEBUGGER", "none")
-        .env("WINESERVER", &gptk_wineserver)
-        .env("WINELOADER", &gptk_wine64)
-        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
-        .env("MS_GRAPHICS_BACKEND", node.graphics_backend)
-        .env("WINEMSYNC", "1");
-
-    if node.uses_winedllpath_routing() {
-        let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
-        cmd.env("WINEDLLPATH", &winedllpath);
+        .env("WINEDLLPATH", &winedllpath)
+        .env("DYLD_LIBRARY_PATH", &dyld_library_path)
+        .env("WINEDLLOVERRIDES", overrides)
+        // MetalSharp-owned backend selection (Phase 1 frozen names; no CX_ vars).
+        .env(MS_GRAPHICS_BACKEND_ENV, D3DMETAL_NATIVE_BACKEND)
+        .env(MS_ACTIVE_GRAPHICS_BACKEND_ENV, D3DMETAL_NATIVE_BACKEND)
+        .env(MS_D3DMETAL_PAYLOAD_DIR_ENV, payload_dir.to_string_lossy().to_string())
+        .env(
+            MS_D3DMETAL_SHARED_PATH_ENV,
+            payload_dir.join("external").join("libd3dshared.dylib").to_string_lossy().to_string(),
+        )
+        .env(
+            MS_D3DMETAL_FRAMEWORK_PATH_ENV,
+            payload_dir
+                .join("external")
+                .join("D3DMetal.framework")
+                .join("Versions")
+                .join("A")
+                .join("D3DMetal")
+                .to_string_lossy()
+                .to_string(),
+        )
+        // Compatibility with Apple's D3DMetal payload: libd3dshared.dylib looks
+        // up this exact variable before dlopen()ing D3DMetal.framework. The MS_
+        // variable is MetalSharp's contract surface; this one is the payload ABI.
+        .env(
+            "D3DMETAL_FRAMEWORK_PATH",
+            payload_dir
+                .join("external")
+                .join("D3DMetal.framework")
+                .join("Versions")
+                .join("A")
+                .join("D3DMetal")
+                .to_string_lossy()
+                .to_string(),
+        );
+    for (k, v) in extra_env {
+        cmd.env(k, v);
     }
 
-    if let Some(overrides) = node.wine_overrides {
-        cmd.env("WINEDLLOVERRIDES", overrides);
-    }
+    append_recipe_launch_target(&mut cmd, exe_path, &recipe)?;
 
-    apply_cache_env(&mut cmd, node, cache_paths.as_ref(), &ms_root);
-    apply_app_launch_env(&mut cmd, appid, node.id);
-    for (key, value) in extra_env {
-        cmd.env(key, value);
+    if let Some(log) = log_path {
+        if let Ok(log_file) = std::fs::File::create(log) {
+            if let Ok(clone) = log_file.try_clone() {
+                cmd.stdout(clone).stderr(log_file);
+            }
+        }
     }
-
-    cmd.arg(&exe_name);
-    cmd.args(&recipe.launch_args);
-    attach_launch_log(
-        &mut cmd,
-        log_path,
-        LaunchLogContext {
-            appid,
-            node,
-            prefix: &prefix,
-            cwd: exe_dir,
-            exe_name: &exe_name,
-            args: &recipe.launch_args,
-            cache_paths: cache_paths.as_ref(),
-        },
-    )?;
     let child = cmd.spawn()?;
+
+    // Launch receipt (Phase 6 gate: proves normal prefix + MetalSharp Wine + route env).
+    // Write it only after Wine starts so a failed spawn cannot create false route proof.
+    let host_abi_digest = crate::d3dmetal_native::host_abi_digest(&home);
+    let payload_digest = crate::d3dmetal_native::payload_manifest_digest(&home);
+    let _ = write_d3dmetal_native_receipt(
+        &ms_home,
+        appid,
+        &prefix,
+        exe_path,
+        &host_abi_digest,
+        &payload_digest,
+        &winedllpath,
+        &dyld_library_path,
+    );
+
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
-fn launch_dxmt_metal(appid: u32, node: &PipelineNode) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
-    launch_dxmt_metal_with_context(appid, node, None, &[], None)
+/// Phase 6: write a launch receipt proving the d3dmetal_native route used the
+/// normal bottle prefix + MetalSharp Wine + route env (no GPTK Wine, no CX_ vars).
+#[allow(clippy::too_many_arguments)]
+fn write_d3dmetal_native_receipt(
+    ms_home: &Path,
+    appid: u32,
+    prefix: &Path,
+    exe_path: &Path,
+    host_abi_digest: &Option<String>,
+    payload_digest: &Option<String>,
+    winedllpath: &str,
+    dyld_library_path: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = ms_home.join("launch-receipts").join("d3dmetal_native");
+    std::fs::create_dir_all(&dir)?;
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let path = dir.join(format!("{appid}-{ts}.json"));
+    let receipt = serde_json::json!({
+        "schema": 1,
+        "route_id": "d3dmetal_native",
+        "appid": appid,
+        "launched_at": ts,
+        "prefix_path": prefix.to_string_lossy(),
+        "wine": "metalsharp_wine_11.5",
+        "game_exe": exe_path.to_string_lossy(),
+        "host_abi_digest": host_abi_digest,
+        "payload_manifest_digest": payload_digest,
+        "architecture_lock": "x86_64_only",
+        "env": {
+            // secret-safe: env var NAMES only, no values (could contain paths).
+            "set": ["WINEPREFIX", "WINEDEBUG", "WINEDEBUGGER", "WINEDLLPATH", "DYLD_LIBRARY_PATH",
+                    "WINEDLLOVERRIDES", "MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND",
+                    "MS_D3DMETAL_PAYLOAD_DIR", "MS_D3DMETAL_SHARED_PATH", "MS_D3DMETAL_FRAMEWORK_PATH", "D3DMETAL_FRAMEWORK_PATH"],
+        },
+        "dll_source_paths": {
+            "WINEDLLPATH": winedllpath,
+            "DYLD_LIBRARY_PATH": dyld_library_path,
+        },
+    });
+    let mut f = std::fs::File::create(&path)?;
+    writeln!(f, "{receipt}")?;
+    Ok(())
+}
+
+fn d3dmetal_native_winedllpath(ms_root: &Path, payload_dir: &Path) -> String {
+    format!("{}:{}", payload_dir.to_string_lossy(), ms_root.join("lib").join("wine").to_string_lossy())
 }
 
 fn launch_dxmt_metal_with_context(
@@ -1537,7 +2075,18 @@ fn launch_dxmt_metal_with_context(
             cache_paths: cache_paths.as_ref(),
         },
     )?;
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_actual_launch_receipt_best_effort(ActualLaunchReceiptInput {
+        appid,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path,
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
@@ -1546,7 +2095,7 @@ fn deploy_d3d12_agility_sidecars(
     node: &PipelineNode,
     game_dir: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if !matches!(node.id, PipelineId::M12 | PipelineId::M13) {
+    if !matches!(node.id, PipelineId::M12) {
         return Ok(());
     }
 
@@ -1623,7 +2172,18 @@ fn launch_wine_bare_with_context(
             cache_paths: cache_paths.as_ref(),
         },
     )?;
+    let launch_env = command_env_pairs(&cmd);
     let child = cmd.spawn()?;
+    persist_actual_launch_receipt_best_effort(ActualLaunchReceiptInput {
+        appid,
+        node,
+        recipe: &recipe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path,
+        prefix: &prefix,
+        home: &home,
+    });
     Ok((child.id(), node.id.to_legacy_method()))
 }
 
@@ -1785,12 +2345,24 @@ fn launch_fna_arm64(appid: u32) -> Result<(u32, &'static str, PathBuf), Box<dyn 
 
     cmd.arg(&exe);
 
+    let launch_env = command_env_pairs(&cmd);
     let mut child = cmd.spawn()?;
     std::thread::sleep(Duration::from_millis(900));
     if let Some(status) = child.try_wait()? {
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/Mono/XNA launch exited early with status {}. Log: {}", status, log_tail).into());
     }
+    persist_native_mono_launch_receipt_best_effort(NativeMonoLaunchReceiptInput {
+        appid,
+        profile,
+        node,
+        game_dir: dir,
+        exe_path: &exe,
+        env: &launch_env,
+        pid: child.id(),
+        log_path: &log_path,
+        home: &home,
+    });
     let method = profile.method_label;
     Ok((child.id(), method, log_path))
 }
@@ -1979,6 +2551,7 @@ fn launch_fna_kickstart(
         arch_cmd.env("SteamAppId", appid.to_string());
         arch_cmd.env("SteamGameId", appid.to_string());
         arch_cmd.env("MONO_DISABLE_SHARED_AREA", "1");
+        let launch_env = command_env_pairs(&arch_cmd);
         let mut child = arch_cmd.spawn()?;
         std::thread::sleep(Duration::from_millis(900));
         if let Some(status) = child.try_wait()? {
@@ -1987,15 +2560,38 @@ fn launch_fna_kickstart(
                 format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into()
             );
         }
+        persist_native_mono_launch_receipt_best_effort(NativeMonoLaunchReceiptInput {
+            appid,
+            profile,
+            node,
+            game_dir: dir,
+            exe_path: &game_kick,
+            env: &launch_env,
+            pid: child.id(),
+            log_path: &log_path,
+            home,
+        });
         return Ok((child.id(), profile.method_label, log_path));
     }
 
+    let launch_env = command_env_pairs(&cmd);
     let mut child = cmd.spawn()?;
     std::thread::sleep(Duration::from_millis(900));
     if let Some(status) = child.try_wait()? {
         let log_tail = tail_text(&log_path, 4096);
         return Err(format!("FNA/MonoKickstart launch exited early with status {}. Log: {}", status, log_tail).into());
     }
+    persist_native_mono_launch_receipt_best_effort(NativeMonoLaunchReceiptInput {
+        appid,
+        profile,
+        node,
+        game_dir: dir,
+        exe_path: &game_kick,
+        env: &launch_env,
+        pid: child.id(),
+        log_path: &log_path,
+        home,
+    });
     Ok((child.id(), profile.method_label, log_path))
 }
 
@@ -2713,6 +3309,7 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
         }
         let fmod_dir = metalsharp_home.join("runtime").join("fnalibs").join("fmod");
         if fmod_dir.join(lib).exists() {
+            preserve_fna_original_if_needed(&dst);
             let _ = std::fs::copy(fmod_dir.join(lib), &dst);
             fix_dylib_install_names(&dst);
             if let Some(sym) = symlink {
@@ -2810,6 +3407,9 @@ fn deploy_fna_assemblies(appid: u32, game_dir: &PathBuf) {
     let _ = std::fs::write(game_dir.join("steam_appid.txt"), appid.to_string());
     if let Err(err) = deploy_offline_steamworks_net(game_dir, &metalsharp_home) {
         eprintln!("fna: offline Steamworks deploy failed: {}", err);
+    }
+    if let Err(err) = persist_fna_asset_staging_report(appid, game_dir, &metalsharp_home) {
+        eprintln!("fna: staging receipt persist failed: {}", err);
     }
 }
 
@@ -3337,6 +3937,7 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
     let dst = game_dir.join(lib);
     if dst.exists() {
         if fna_native_lib_needs_refresh(lib, &dst) {
+            preserve_fna_original_if_needed(&dst);
             let _ = std::fs::remove_file(&dst);
         } else {
             fix_dylib_install_names(&dst);
@@ -3382,6 +3983,130 @@ fn copy_fna_native_lib(game_dir: &PathBuf, shims_dir: &PathBuf, lib: &str, symli
     if let Some(sym) = symlink {
         ensure_fna_symlink(game_dir, lib, sym);
     }
+}
+
+fn preserve_fna_original_if_needed(dst: &Path) -> bool {
+    if !file_has_payload(dst) {
+        return false;
+    }
+    let backup =
+        dst.with_file_name(format!("{}.metalsharp-original", dst.file_name().unwrap_or_default().to_string_lossy()));
+    if backup.exists() {
+        return true;
+    }
+    std::fs::copy(dst, &backup).is_ok()
+}
+
+fn persist_fna_asset_staging_report(
+    appid: u32,
+    game_dir: &Path,
+    metalsharp_home: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let profile = find_fna_profile(appid);
+    let runtime = metalsharp_home.join("runtime");
+    let mut report = crate::fna_profile::AssetStagingReport::new(appid);
+    let xna_reason = "FNA/XNA compatibility assembly staged for native Mono/FNA";
+    let mut assets: Vec<(&str, Vec<PathBuf>, bool, &str)> = vec![
+        ("FNA.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Game.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Graphics.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Audio.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Input.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Media.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        ("Microsoft.Xna.Framework.Storage.dll", vec![runtime.join("fna").join("FNA.dll")], true, xna_reason),
+        (
+            "libSystem.Native.dylib",
+            vec![runtime.join("shims").join("libSystem.Native.dylib")],
+            true,
+            "CoreFX native shim staged for native Mono/FNA",
+        ),
+        (
+            "libSDL2-2.0.0.dylib",
+            vec![
+                runtime.join("fnalibs").join("libSDL2-2.0.0.dylib"),
+                runtime.join("shims").join("libSDL2-2.0.0.dylib"),
+            ],
+            true,
+            "SDL2 support staged for FNA3D/FAudio",
+        ),
+        (
+            "libFNA3D.0.dylib",
+            vec![runtime.join("fnalibs").join("libFNA3D.0.dylib"), runtime.join("shims").join("libFNA3D.0.dylib")],
+            true,
+            "FNA3D renderer support staged for native Mono/FNA",
+        ),
+        (
+            "libFAudio.0.dylib",
+            vec![runtime.join("fnalibs").join("libFAudio.0.dylib"), runtime.join("shims").join("libFAudio.0.dylib")],
+            true,
+            "FAudio/XAudio support staged for native Mono/FNA",
+        ),
+        (
+            "steam_appid.txt",
+            vec![game_dir.join("steam_appid.txt")],
+            true,
+            "Steam app id marker staged for native Mono/FNA",
+        ),
+        (
+            "Steamworks.NET.dll",
+            vec![game_dir.join("Steamworks.NET.dll.metalsharp-original"), game_dir.join("Steamworks.NET.dll")],
+            false,
+            "Steamworks.NET offline shim staged with original preserved when present",
+        ),
+        (
+            "libCSteamworks.dylib",
+            vec![runtime.join("shims").join("libCSteamworks.dylib")],
+            false,
+            "CSteamworks shim staged when required by the game",
+        ),
+        (
+            "libfmod.dylib",
+            vec![
+                runtime.join("fnalibs").join("fmod").join("libfmod.dylib"),
+                runtime.join("shims").join("libfmod.dylib"),
+            ],
+            profile.mono_arch == MonoArch::X86,
+            "FMOD support staged for legacy x86 Mono/FNA games",
+        ),
+        (
+            "libfmodstudio.dylib",
+            vec![
+                runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib"),
+                runtime.join("shims").join("libfmodstudio.dylib"),
+            ],
+            profile.mono_arch == MonoArch::X86,
+            "FMOD Studio support staged for legacy x86 Mono/FNA games",
+        ),
+    ];
+    for spec in FNA_NATIVE_SHIMS {
+        assets.push((
+            spec.output,
+            vec![runtime.join("shims").join(spec.output), game_dir.join(spec.output)],
+            spec.required_for_launch,
+            "native shim staged for Mono/FNA dllmap/runtime compatibility",
+        ));
+    }
+
+    for (filename, sources, required, reason) in assets {
+        let dest = game_dir.join(filename);
+        if !file_has_payload(&dest) {
+            continue;
+        }
+        let source = sources.into_iter().find(|path| file_has_payload(path)).unwrap_or_else(|| dest.clone());
+        let backup = game_dir.join(format!("{filename}.metalsharp-original"));
+        report.record(crate::fna_profile::record_asset_receipt(
+            filename,
+            &source,
+            &dest,
+            required,
+            backup.exists(),
+            true,
+            reason,
+        ));
+    }
+    report.persist(game_dir)?;
+    Ok(())
 }
 
 fn fna_native_lib_needs_refresh(lib: &str, path: &Path) -> bool {
@@ -3665,7 +4390,7 @@ fn gptk_prefix_game_dir_aliases(prefix: &Path, game_dir: &Path) -> Vec<PathBuf> 
 
 fn goldberg_dirs_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) -> Vec<PathBuf> {
     let mut dirs = vec![game_dir.to_path_buf()];
-    if matches!(pipeline_id, PipelineId::D3DMetal) {
+    if matches!(pipeline_id, PipelineId::D3DMetalNative) {
         let prefix = crate::platform::gptk_prefix_path(home);
         for alias in gptk_prefix_game_dir_aliases(&prefix, game_dir) {
             push_unique_physical_path(&mut dirs, alias);
@@ -3857,7 +4582,7 @@ pub fn goldberg_status_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: P
     if goldberg_status(&game_dir.to_path_buf()) {
         return true;
     }
-    if !matches!(pipeline_id, PipelineId::D3DMetal) {
+    if !matches!(pipeline_id, PipelineId::D3DMetalNative) {
         return false;
     }
 
@@ -4725,8 +5450,35 @@ mod tests {
         assert_eq!(m12_env.get("WINEDLLOVERRIDES").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12_env.get("SteamAppId").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(m12.get("dry_run").and_then(|v| v.as_bool()), Some(true));
+        let receipt = m12.get("launch_receipt_preview").expect("launch receipt preview");
+        assert_eq!(receipt.get("schema").and_then(|v| v.as_str()), Some("metalsharp.launch.receipt.v1"));
+        assert_eq!(receipt.get("preview").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(receipt.get("dryRun").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(receipt.get("route").and_then(|v| v.as_str()), Some("m12"));
+        assert_eq!(receipt.get("runtimeContractId").and_then(|v| v.as_str()), Some("m12_dxmt_m12"));
+        let receipt_env_keys = receipt.get("envKeys").and_then(|v| v.as_array()).expect("receipt env keys");
+        assert!(receipt_env_keys.iter().any(|key| key.as_str() == Some("WINEDLLOVERRIDES")));
+        assert!(receipt_env_keys.iter().any(|key| key.as_str() == Some("SteamAppId")));
+        let receipt_dlls = receipt.get("dllsStaged").and_then(|v| v.as_array()).expect("receipt dlls");
+        assert!(receipt_dlls.iter().any(|dll| dll.get("filename").and_then(|v| v.as_str()) == Some("d3d12.dll")));
 
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn actual_launch_receipt_helpers_use_stable_paths_and_env_keys() {
+        let home = std::env::temp_dir().join("ms-actual-launch-receipt-helper");
+        let mut cmd = Command::new("/usr/bin/true");
+        cmd.env("SteamAppId", "620").env("WINEDLLOVERRIDES", "d3d12=n");
+        let env = command_env_pairs(&cmd);
+        assert!(env.iter().any(|(key, value)| key == "SteamAppId" && value == "620"));
+        assert!(env.iter().any(|(key, _)| key == "WINEDLLOVERRIDES"));
+        let path = actual_launch_receipt_path_for_home(&home, 620);
+        assert!(path.ends_with(Path::new(".metalsharp/launch-receipts/steam/620-launch.json")));
+        let sharp_path = custom_launch_receipt_path_for_home(&home, 12345);
+        assert!(sharp_path.ends_with(Path::new(".metalsharp/launch-receipts/sharp/12345-launch.json")));
+        let native_mono_path = native_mono_launch_receipt_path_for_home(&home, 504230);
+        assert!(native_mono_path.ends_with(Path::new(".metalsharp/launch-receipts/native-mono/504230-launch.json")));
     }
 
     #[test]
@@ -4772,6 +5524,62 @@ mod tests {
             missing_filenames
         );
         assert_eq!(dry.get("ok").and_then(|v| v.as_bool()), Some(false), "empty home must yield ok=false");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn vulkan_dry_runs_verify_unix_sidecars_and_missing_artifacts() {
+        let home = std::env::temp_dir().join("ms-vulkan-dryrun-empty");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+
+        let dxvk = pipeline_dry_run_for(&home, 17300, Some(PipelineId::DxvkD11));
+        let dxvk_sidecars: Vec<String> = dxvk
+            .get("unix_sidecars")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|sidecar| sidecar.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(dxvk_sidecars, vec!["libMoltenVK.dylib".to_string()]);
+        let dxvk_missing: Vec<String> = dxvk
+            .get("missing")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|missing| missing.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert!(dxvk_missing.contains(&"d3d11.dll".to_string()));
+        assert!(dxvk_missing.contains(&"libMoltenVK.dylib".to_string()));
+        assert_eq!(dxvk.get("ok").and_then(|value| value.as_bool()), Some(false));
+
+        let vkd3d = pipeline_dry_run_for(&home, 2379780, Some(PipelineId::Vkd3dD12));
+        let vkd3d_sidecars: Vec<String> = vkd3d
+            .get("unix_sidecars")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|sidecar| sidecar.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(vkd3d_sidecars, vec!["libMoltenVK.dylib".to_string()]);
+        let vkd3d_missing: Vec<String> = vkd3d
+            .get("missing")
+            .and_then(|value| value.as_array())
+            .unwrap()
+            .iter()
+            .map(|missing| missing.get("filename").unwrap().as_str().unwrap().to_string())
+            .collect();
+        assert!(vkd3d_missing.contains(&"d3d12.dll".to_string()));
+        assert!(vkd3d_missing.contains(&"libMoltenVK.dylib".to_string()));
+        assert_eq!(vkd3d.get("ok").and_then(|value| value.as_bool()), Some(false));
+        let receipt = vkd3d.get("launch_receipt_preview").expect("vkd3d receipt preview");
+        assert_eq!(receipt.get("route").and_then(|value| value.as_str()), Some("vkd3d_d12"));
+        assert_eq!(receipt.get("runtimeContractId").and_then(|value| value.as_str()), Some("vkd3d_d12"));
+        let dylibs = receipt.get("dylibsUsed").and_then(|value| value.as_array()).expect("vkd3d dylibs");
+        assert!(dylibs
+            .iter()
+            .any(|dylib| dylib.get("name").and_then(|value| value.as_str()) == Some("libMoltenVK.dylib")));
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -5266,6 +6074,29 @@ mod tests {
         for dll in dlls {
             assert_eq!(std::fs::read_to_string(system32.join(dll)).unwrap(), format!("m12-{dll}"));
         }
+        let receipt_dir = prefix.join(".metalsharp").join("receipts");
+        let receipt = std::fs::read_dir(&receipt_dir)
+            .expect("receipt dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name().and_then(|name| name.to_str()).unwrap_or_default().starts_with("route-dll-staging-")
+            })
+            .expect("route dll staging receipt");
+        let receipt_json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(receipt).unwrap()).unwrap();
+        assert_eq!(
+            receipt_json.get("schema").and_then(|value| value.as_str()),
+            Some("metalsharp.prefix.route_dll_staging.receipt.v1")
+        );
+        assert_eq!(receipt_json.get("stagedCount").and_then(|value| value.as_u64()), Some(6));
+        let metadata = crate::prefix_metadata::read_metadata(&prefix).expect("prefix metadata");
+        assert_eq!(metadata.get("schema").and_then(|value| value.as_str()), Some("metalsharp.prefix.v2"));
+        let components = metadata.get("installedComponents").and_then(|value| value.as_array()).unwrap();
+        assert_eq!(components.len(), 6);
+        assert!(components.iter().any(|component| {
+            component.get("id").and_then(|value| value.as_str()) == Some("route-dll:d3d12.dll")
+                && component.get("runtimeContractId").and_then(|value| value.as_str()) == Some("m12_dxmt_m12")
+        }));
 
         let _ = std::fs::remove_dir_all(root);
     }
@@ -5365,7 +6196,7 @@ mod tests {
         std::os::unix::fs::symlink(&library, dosdevices.join("d:")).expect("create library drive");
 
         let aliases = gptk_prefix_game_dir_aliases(&prefix, &game_dir);
-        let dirs = goldberg_dirs_for_pipeline(&home, &game_dir, PipelineId::D3DMetal);
+        let dirs = goldberg_dirs_for_pipeline(&home, &game_dir, PipelineId::D3DMetalNative);
 
         assert!(aliases.contains(&dosdevices.join("d:").join("steamapps").join("common").join("Celeste")));
         assert_eq!(dirs, vec![game_dir.clone()]);
@@ -5729,6 +6560,85 @@ mod tests {
     }
 
     #[test]
+    fn fna_staging_receipts_record_required_assets_and_preserved_originals() {
+        let root = test_dir("fna-staging-receipts");
+        let ms_home = root.join(".metalsharp");
+        let runtime = ms_home.join("runtime");
+        let game_dir = root.join("game");
+        for path in [
+            runtime.join("fna/FNA.dll"),
+            runtime.join("fnalibs/libSDL2-2.0.0.dylib"),
+            runtime.join("fnalibs/libFNA3D.0.dylib"),
+            runtime.join("fnalibs/libFAudio.0.dylib"),
+            runtime.join("shims/libSystem.Native.dylib"),
+            runtime.join("shims/libkernel32.dylib"),
+            runtime.join("shims/libuser32.dylib"),
+            runtime.join("shims/libCarbon.dylib"),
+            runtime.join("shims/libmetalsharp_carbon_interpose.dylib"),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).expect("create source parent");
+            std::fs::write(path, b"source-asset").expect("write source asset");
+        }
+        std::fs::create_dir_all(&game_dir).expect("create game dir");
+        for name in [
+            "FNA.dll",
+            "Microsoft.Xna.Framework.dll",
+            "Microsoft.Xna.Framework.Game.dll",
+            "Microsoft.Xna.Framework.Graphics.dll",
+            "Microsoft.Xna.Framework.Audio.dll",
+            "Microsoft.Xna.Framework.Input.dll",
+            "Microsoft.Xna.Framework.Media.dll",
+            "Microsoft.Xna.Framework.Storage.dll",
+            "libSystem.Native.dylib",
+            "libSDL2-2.0.0.dylib",
+            "libFNA3D.0.dylib",
+            "libFAudio.0.dylib",
+            "libkernel32.dylib",
+            "libuser32.dylib",
+            "libCarbon.dylib",
+            "libmetalsharp_carbon_interpose.dylib",
+            "steam_appid.txt",
+        ] {
+            std::fs::write(game_dir.join(name), b"staged-asset").expect("write staged asset");
+        }
+        std::fs::write(game_dir.join("libSDL2-2.0.0.dylib.metalsharp-original"), b"original-sdl2")
+            .expect("write preserved original");
+
+        persist_fna_asset_staging_report(413150, &game_dir, &ms_home).expect("persist receipt");
+
+        let raw = std::fs::read_to_string(game_dir.join(".metalsharp/fna-staging.json")).expect("read receipt");
+        let receipt: serde_json::Value = serde_json::from_str(&raw).expect("parse receipt");
+        assert_eq!(receipt.get("appid").and_then(|value| value.as_u64()), Some(413150));
+        let receipts = receipt.get("receipts").and_then(|value| value.as_array()).expect("receipts");
+        assert!(receipts.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("libSDL2-2.0.0.dylib")
+                && entry.get("required").and_then(|value| value.as_bool()) == Some(true)
+                && entry.get("overwrote_game_file").and_then(|value| value.as_bool()) == Some(true)
+        }));
+        assert!(receipts.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("FNA.dll")
+                && entry.get("required").and_then(|value| value.as_bool()) == Some(true)
+                && entry.get("source_sha256").is_some()
+                && entry.get("dest_sha256").is_some()
+        }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn fna_original_preservation_is_idempotent() {
+        let root = test_dir("fna-original-preservation");
+        std::fs::create_dir_all(&root).expect("create root");
+        let dst = root.join("libSDL2-2.0.0.dylib");
+        std::fs::write(&dst, b"original").expect("write original");
+
+        assert!(preserve_fna_original_if_needed(&dst));
+        std::fs::write(&dst, b"replacement").expect("write replacement");
+        assert!(preserve_fna_original_if_needed(&dst));
+        assert_eq!(std::fs::read(root.join("libSDL2-2.0.0.dylib.metalsharp-original")).unwrap(), b"original");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn legacy_eac_toggle_cleanup_removes_marked_files_only() {
         let home = test_dir("legacy-eac-toggle-cleanup");
         let marked = home.join("Binaries").join("Win64");
@@ -5783,5 +6693,72 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    #[test]
+    fn d3dmetal_native_pipeline_node_has_frozen_env_names() {
+        // Phase 6 gate: the native node carries the MetalSharp-owned ABI env vars.
+        use crate::mtsp::engine::{get_pipeline, PipelineId};
+        let node = get_pipeline(PipelineId::D3DMetalNative);
+        let keys: std::collections::HashSet<&str> = node.env_vars.iter().map(|e| e.key).collect();
+        assert!(keys.contains("MS_GRAPHICS_BACKEND"));
+        assert!(keys.contains("MS_ACTIVE_GRAPHICS_BACKEND"));
+        // Dynamic path envs such as MS_D3DMETAL_PAYLOAD_DIR are resolved at launch time.
+        assert!(!keys.contains("MS_D3DMETAL_PAYLOAD_DIR"));
+        // No CX_/CrossOver naming in the frozen pipeline env.
+        for e in &node.env_vars {
+            assert!(!e.key.starts_with("CX_"), "CX_ env leaked into native node: {}", e.key);
+        }
+    }
+
+    #[test]
+    fn d3dmetal_native_receipt_env_has_no_cx_vars() {
+        // Phase 6 gate: the receipt records env NAMES only, and none may be CX_/CrossOver.
+        let receipt = serde_json::json!({
+            "env": {"set": ["MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND", "MS_D3DMETAL_PAYLOAD_DIR", "WINEDLLPATH", "D3DMETAL_FRAMEWORK_PATH"]}
+        });
+        let names = receipt["env"]["set"].as_array().unwrap();
+        for n in names {
+            let s = n.as_str().unwrap();
+            assert!(!s.starts_with("CX_"), "CX_ env name in receipt: {s}");
+        }
+        assert!(receipt.to_string().contains("D3DMETAL_FRAMEWORK_PATH"));
+    }
+
+    #[test]
+    fn d3dmetal_native_winedllpath_uses_runtime_roots_not_arch_subdirs() {
+        let ms_root = PathBuf::from("/tmp/ms/runtime/wine");
+        let payload_dir = ms_root.join("lib").join("d3dmetal_native");
+        let value = d3dmetal_native_winedllpath(&ms_root, &payload_dir);
+        assert_eq!(value, "/tmp/ms/runtime/wine/lib/d3dmetal_native:/tmp/ms/runtime/wine/lib/wine");
+        assert!(!value.contains("x86_64-windows"));
+        assert!(!value.contains("x86_64-unix"));
+    }
+
+    #[test]
+    fn d3dmetal_native_overrides_include_d3d11_d3d12_dxgi_native_first() {
+        // Phase 6 gate: GPTK4's PE DLLs are staged externally and must win over
+        // Wine builtins. The proven route is app-local staging plus native-first
+        // fallback (`=n,b`), not WINEDLLPATH-only builtin-first routing.
+        let node = crate::mtsp::engine::get_pipeline(crate::mtsp::engine::PipelineId::D3DMetalNative);
+        let ov = node.wine_overrides.expect("native node has overrides");
+        assert!(
+            ov.contains("d3d10,d3d10_1,d3d10core,d3d11,d3d12,dxgi,nvapi64,nvngx,nvngx-on-metalfx=n,b"),
+            "D3DMetal route DLLs must be native-first: {ov}"
+        );
+        for dll in ["d3d10", "d3d10_1", "d3d10core", "d3d11", "d3d12", "dxgi"] {
+            assert!(ov.contains(dll), "WINEDLLOVERRIDES missing {dll}: {ov}");
+        }
+    }
+
+    #[test]
+    fn d3dmetal_native_command_appends_game_exe_and_launch_args() {
+        let mut cmd = std::process::Command::new("wine");
+        let mut recipe = empty_test_recipe(crate::mtsp::engine::PipelineId::D3DMetalNative);
+        recipe.launch_args = vec!["-dx12".into(), "-NoLauncher".into()];
+        append_recipe_launch_target(&mut cmd, Path::new("/games/Foo/FooGame.exe"), &recipe)
+            .expect("append launch target");
+        let args: Vec<String> = cmd.get_args().map(|arg| arg.to_string_lossy().to_string()).collect();
+        assert_eq!(args, vec!["FooGame.exe", "-dx12", "-NoLauncher"]);
     }
 }

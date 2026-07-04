@@ -1,0 +1,92 @@
+MetalSharp Wine 11.5 patch: preserve 0.49 mscompatdb autoload surface
+
+Applies after:
+  tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
+  tools/wine-patches/d3dmetal-native-runtime/0001-ntdll-d3dmetal-native-loader-tls.patch
+
+Purpose:
+  Preserve the MetalSharp 0.49 process-routing compatibility surface while
+  keeping the runtime hermetic. mscompatdb.so is loaded only when MS_ROOT is set
+  by bin/metalsharp-wine, and KeServiceDescriptorTable is exported for the
+  preserved mscompatdb syscall-table hook.
+
+--- dlls/ntdll/unix/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/loader.c	2026-07-04 04:38:00
+@@ -455,6 +455,54 @@
+     set_config_dir();
+ }
+ 
++#ifdef __APPLE__
++/* MetalSharp 0.49 compatibility database autoload.
++ *
++ * The published working runtime loaded mscompatdb.so from Wine's Unix module
++ * directory for Steam/Burn/child-process routing. Keep this as an additive
++ * compatibility surface while newer D3DMetal Native loader hooks remain
++ * independently gated by MS_D3DMETAL_* variables.
++ */
++static BOOL mscompatdb_loaded;
++
++static void load_metalsharp_mscompatdb_from_dir( const char *dir )
++{
++    char *path;
++    void *handle;
++
++    if (mscompatdb_loaded || !dir || !*dir) return;
++    if (asprintf( &path, "%s/mscompatdb.so", dir ) == -1) return;
++    if (!access( path, R_OK ))
++    {
++        handle = dlopen( path, RTLD_NOW | RTLD_GLOBAL );
++        if (handle)
++        {
++            mscompatdb_loaded = TRUE;
++            fprintf( stderr, "mscompatdb: loaded from %s\n", path );
++        }
++        else fprintf( stderr, "mscompatdb: failed to load %s: %s\n", path, dlerror() );
++    }
++    free( path );
++}
++
++static void load_metalsharp_mscompatdb(void)
++{
++    const char *root = getenv( "MS_ROOT" );
++    char *path;
++
++    /* The preserved MetalSharp compatibility DB needs the hermetic runtime root
++     * to find etc/mscompatdb_rules.toml. Do not fall back to /etc from direct
++     * bin/wine diagnostics; MetalSharp launches through bin/metalsharp-wine,
++     * which sets MS_ROOT before ntdll starts.
++     */
++    if (!root || !*root) return;
++
++    if (asprintf( &path, "%s/lib/wine/%s", root, get_so_dir(current_machine) ) == -1) return;
++    load_metalsharp_mscompatdb_from_dir( path );
++    free( path );
++}
++#endif
++
+ 
+ /***********************************************************************
+  *           get_alternate_wineloader
+@@ -2398,6 +2446,7 @@
+ 
+     init_paths();
+ #ifdef __APPLE__
++    load_metalsharp_mscompatdb();
+     pthread_once(&ms_d3dmetal_shared_once, ms_d3dmetal_init_shared_support);
+ #endif
+     if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
+--- dlls/ntdll/unix/syscall.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/syscall.c	2026-07-04 04:38:00
+@@ -243,7 +243,11 @@
+ #undef SYSCALL_ENTRY
+ };
+ 
+-SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4] =
++/* MetalSharp 0.49 compatibility: mscompatdb.so resolves this table with
++ * dlsym() when it is autoloaded from ntdll's Unix side. Keep the symbol
++ * externally visible for the preserved process-routing compatibility surface.
++ */
++__attribute__((visibility("default"))) SYSTEM_SERVICE_TABLE KeServiceDescriptorTable[4] =
+ {
+     { (ULONG_PTR *)syscalls, NULL, ARRAY_SIZE(syscalls), syscall_args }
+ };

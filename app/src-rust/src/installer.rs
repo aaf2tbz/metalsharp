@@ -44,6 +44,12 @@ const DXMT_REQUIRED_PE: &[&str] = &[
 ];
 const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so"];
 const DXMT_M12_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
+const DXVK_REQUIRED_UNIX: &[&str] = &["libMoltenVK.dylib"];
+const DXVK_D9_REQUIRED_PE_X64: &[&str] = &["d3d9.dll"];
+const DXVK_D9_REQUIRED_PE_I386: &[&str] = &["d3d9.dll", "dxgi.dll"];
+const DXVK_D11_REQUIRED_PE_X64: &[&str] = &["d3d10core.dll", "d3d11.dll", "dxgi.dll"];
+const VKD3D_REQUIRED_UNIX: &[&str] = &["libMoltenVK.dylib"];
+const VKD3D_REQUIRED_PE_X64: &[&str] = &["d3d12.dll", "d3d12core.dll", "dxgi.dll"];
 #[cfg(not(test))]
 const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
     ("x86_64-windows/d3d10core.dll", "11c9610770cb0e3f6476d2bde2a3b1afa36a41bd00a2fffc6ea61d2e62c6258d"),
@@ -146,6 +152,19 @@ const SCRIPTS_TOOLS_REQUIRED_ARCHIVE_FILES: &[&str] =
     &["scripts/tools/configs/mtsp-rules.toml", "scripts/tools/updater/update.sh"];
 const STEAM_REQUIRED_ARCHIVE_FILES: &[&str] =
     &["steam/SteamSetup.exe", "steam/steamwebhelper.exe", "steam/steamwebhelper-wrapper.c"];
+const D3DMETAL_NATIVE_CONTRACT_REQUIRED_ARCHIVE_FILES: &[&str] =
+    &["d3dmetal_native/lib/d3dmetal_native/manifest.json", "d3dmetal_native/lib/d3dmetal_native/STAGING.md"];
+const D3DMETAL_NATIVE_CONTRACT_ALLOWED_ARCHIVE_FILES: &[&str] = &[
+    "d3dmetal_native",
+    "d3dmetal_native/",
+    "d3dmetal_native/lib",
+    "d3dmetal_native/lib/",
+    "d3dmetal_native/lib/d3dmetal_native",
+    "d3dmetal_native/lib/d3dmetal_native/",
+    "d3dmetal_native/lib/d3dmetal_native/manifest.json",
+    "d3dmetal_native/lib/d3dmetal_native/STAGING.md",
+    "d3dmetal_native/lib/d3dmetal_native/receipt.json",
+];
 
 const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp-runtime.tar.zst",
@@ -154,6 +173,7 @@ const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "fnalibs.tar.zst",
     "metalsharp-scripts-tools.tar.zst",
     "metalsharp-steam.tar.zst",
+    "metalsharp-d3dmetal-native-contract.tar.zst",
 ];
 
 fn progress_path() -> PathBuf {
@@ -308,6 +328,8 @@ fn install_steps() -> Vec<InstallStep> {
         ("Runtime Assets", Box::new(install_metalsharp_bundle)),
         ("Host Runtime ABI", Box::new(install_host_runtime)),
         ("Support Assets", Box::new(install_split_assets_bundle)),
+        ("DXVK Runtime Surface", Box::new(install_dxvk_runtime_surface)),
+        ("VKD3D Runtime Surface", Box::new(install_vkd3d_runtime_surface)),
         ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Graphics Runtimes", Box::new(|home| ensure_graphics_runtimes_ready(home))),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
@@ -564,6 +586,7 @@ fn install_metalsharp_bundle(home: &PathBuf) -> Result<bool, String> {
                 Ok(o) if o.status.success() => {
                     fix_moltenvk_icd_paths(&runtime_dir.join("wine"));
                     mark_split_bundle_installed(home, RUNTIME_BUNDLE, &archive);
+                    record_runtime_manifest_after_setup(home);
                     return Ok(true);
                 },
                 Ok(o) => {
@@ -671,6 +694,29 @@ pub fn moltenvk_ready(wine_dir: &Path) -> bool {
     wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib").is_file()
 }
 
+fn moltenvk_icd_ready(wine_dir: &Path) -> bool {
+    let actual_lib = wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+    if !actual_lib.is_file() {
+        return false;
+    }
+    let expected = actual_lib.to_string_lossy().to_string();
+    let icd_dir = wine_dir.join("etc").join("vulkan").join("icd.d");
+    let Ok(entries) = fs::read_dir(&icd_dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("MoltenVK") || !name.ends_with(".json") {
+            return false;
+        }
+        fs::read_to_string(entry.path())
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|value| value.pointer("/ICD/library_path").and_then(|path| path.as_str()).map(str::to_string))
+            .is_some_and(|library_path| library_path == expected)
+    })
+}
+
 fn fix_moltenvk_icd_paths(wine_dir: &Path) {
     let actual_lib = wine_dir.join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
     if !actual_lib.exists() {
@@ -709,6 +755,12 @@ fn fix_moltenvk_icd_paths(wine_dir: &Path) {
     }
 }
 
+fn record_runtime_manifest_after_setup(home: &Path) {
+    if let Err(error) = crate::runtime_manifest::write_expected_runtime_manifest_for(home) {
+        eprintln!("runtime-manifest: failed to write runtime manifest: {}", error);
+    }
+}
+
 fn split_bundle_marker_dir(home: &Path) -> PathBuf {
     crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("bundle-state")
 }
@@ -736,11 +788,13 @@ fn fna_support_assets_current(home: &Path) -> bool {
     let kick_faudio = runtime.join("fna-kickstart").join("osx").join("libFAudio.0.dylib");
     let fmod = runtime.join("fnalibs").join("fmod").join("libfmod.dylib");
     let fmodstudio = runtime.join("fnalibs").join("fmod").join("libfmodstudio.dylib");
+    let fna = runtime.join("fna").join("FNA.dll");
     fna_dylib_uses_sdl2(&fna3d)
         && fna_dylib_uses_sdl2(&kick_fna3d)
         && fna_dylib_uses_sdl2(&faudio)
         && fna_dylib_uses_sdl2(&kick_faudio)
         && sdl2.exists()
+        && file_nonempty(&fna)
         && fmod_dylib_has_payload(&fmod)
         && fmod_dylib_has_payload(&fmodstudio)
 }
@@ -797,7 +851,7 @@ fn repair_fna_support_assets_from_assets_archive(archive: &Path, runtime_dir: &P
     extract_zst(&archive.to_path_buf(), &tmp, ASSETS_BUNDLE)?;
     let assets = tmp.join("assets");
     let mut copied = refresh_fna_support_assets_from_fnalibs_dir(&assets.join("fnalibs"), runtime_dir)?;
-    copied += refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart").join("osx"), runtime_dir)?;
+    copied += refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart"), runtime_dir)?;
     let _ = fs::remove_dir_all(&tmp);
     Ok(copied)
 }
@@ -832,9 +886,10 @@ fn refresh_fna_support_assets_from_fnalibs_dir(source: &Path, runtime_dir: &Path
 }
 
 fn refresh_fna_kickstart_from_dir(source: &Path, runtime_dir: &Path) -> Result<usize, String> {
-    if !fna_dylib_uses_sdl2(&source.join("libFNA3D.0.dylib"))
-        || !fna_dylib_uses_sdl2(&source.join("libFAudio.0.dylib"))
-        || !source.join("libSDL2-2.0.0.dylib").exists()
+    let osx = source.join("osx");
+    if !fna_dylib_uses_sdl2(&osx.join("libFNA3D.0.dylib"))
+        || !fna_dylib_uses_sdl2(&osx.join("libFAudio.0.dylib"))
+        || !osx.join("libSDL2-2.0.0.dylib").exists()
     {
         return Ok(0);
     }
@@ -842,8 +897,15 @@ fn refresh_fna_kickstart_from_dir(source: &Path, runtime_dir: &Path) -> Result<u
     let kick_osx = runtime_dir.join("fna-kickstart").join("osx");
     fs::create_dir_all(&kick_osx).map_err(|e| format!("create {}: {}", kick_osx.display(), e))?;
     let mut copied = 0usize;
-    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib"] {
-        copy_file_overwrite(&source.join(name), &kick_osx.join(name))?;
+    for name in ["libFNA3D.0.dylib", "libSDL2-2.0.0.dylib", "libFAudio.0.dylib", "libtheorafile.dylib"] {
+        let src = osx.join(name);
+        if src.is_file() {
+            copy_file_overwrite(&src, &kick_osx.join(name))?;
+            copied += 1;
+        }
+    }
+    if source.join("FNA.dll").is_file() {
+        copy_file_overwrite(&source.join("FNA.dll"), &runtime_dir.join("fna").join("FNA.dll"))?;
         copied += 1;
     }
     Ok(copied)
@@ -933,6 +995,8 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
         ("mono-x86", runtime_dir.join("mono-x86")),
         ("mono-arm64", runtime_dir.join("mono-arm64")),
         ("dxvk-1.10.3", runtime_dir.join("dxvk-1.10.3")),
+        ("vkd3d", runtime_dir.join("vkd3d")),
+        ("vkd3d-proton", runtime_dir.join("vkd3d-proton")),
         ("goldberg", runtime_dir.join("goldberg")),
         ("shims", runtime_dir.join("shims")),
         ("fnalibs", runtime_dir.join("fnalibs")),
@@ -944,6 +1008,9 @@ fn install_split_assets_bundle(home: &PathBuf) -> Result<bool, String> {
             copy_dir_recursive(&src, &dst_path)?;
             changed = true;
         }
+    }
+    if assets.join("fna-kickstart").exists() {
+        changed |= refresh_fna_kickstart_from_dir(&assets.join("fna-kickstart"), &runtime_dir)? > 0;
     }
 
     // GPTK is Homebrew-owned. Ignore stale assets/gptk payloads that may exist
@@ -1008,8 +1075,193 @@ fn install_mono_x86_fallback(home: &PathBuf) -> Result<bool, String> {
     Err("mono x86 fallback not found".into())
 }
 
+pub fn ensure_vulkan_runtime_surfaces_ready(home: &Path) -> Result<bool, String> {
+    let home_buf = home.to_path_buf();
+    let ms_home = crate::platform::metalsharp_home_dir_for(&home_buf);
+    let wine_dir = ms_home.join("runtime").join("wine");
+    let mut changed = false;
+
+    let runtime_bundle_repair_needed =
+        !metalsharp_wine_binary(home).is_file() || !moltenvk_ready(&wine_dir) || !moltenvk_icd_ready(&wine_dir);
+    if runtime_bundle_repair_needed {
+        changed |= ensure_runtime_bundle_assets(&home_buf)?;
+        let _ = fs::remove_file(split_bundle_marker_path(home, RUNTIME_BUNDLE));
+        changed |= install_metalsharp_bundle(&home_buf)?;
+    }
+
+    fix_moltenvk_icd_paths(&wine_dir);
+    changed |= install_dxvk_runtime_surface(&home_buf)?;
+    changed |= install_vkd3d_runtime_surface(&home_buf)?;
+    record_runtime_manifest_after_setup(home);
+    Ok(changed)
+}
+
+fn install_dxvk_runtime_surface(home: &PathBuf) -> Result<bool, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let legacy = ms_home.join("runtime").join("dxvk-1.10.3");
+    let canonical = ms_home.join("runtime").join("wine").join("lib").join("dxvk");
+    if dxvk_canonical_surface_has_payload(&canonical) {
+        return Ok(false);
+    }
+    if !legacy.join("x64").join("d3d11.dll").is_file() && find_bundled_archive("dxvk").is_none() {
+        // DXVK/VKD3D lanes are still planned. Missing DXVK payloads should
+        // remain visible in diagnostics, but setup must not fail here.
+        return Ok(false);
+    }
+
+    let x64_dst = canonical.join("x86_64-windows");
+    let x32_dst = canonical.join("i386-windows");
+    let unix_dst = canonical.join("x86_64-unix");
+    fs::create_dir_all(&x64_dst).map_err(|error| format!("create DXVK x64 surface: {error}"))?;
+    fs::create_dir_all(&x32_dst).map_err(|error| format!("create DXVK x32 surface: {error}"))?;
+    fs::create_dir_all(&unix_dst).map_err(|error| format!("create DXVK unix surface: {error}"))?;
+
+    let mut changed = false;
+    if let Some(archive) = find_bundled_archive("dxvk") {
+        let tmp = std::env::temp_dir().join("metalsharp-dxvk-canonical-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).map_err(|error| format!("create DXVK canonical extract dir: {error}"))?;
+        extract_zst(&archive, &tmp, "dxvk")?;
+        let source = tmp.join("dxvk");
+        changed |= copy_runtime_dlls(&source.join("x86_64-windows"), &x64_dst)?;
+        changed |= copy_runtime_dlls(&source.join("i386-windows"), &x32_dst)?;
+        for sidecar in DXVK_REQUIRED_UNIX {
+            let src = source.join("x86_64-unix").join(sidecar);
+            if src.is_file() {
+                fs::copy(&src, unix_dst.join(sidecar))
+                    .map_err(|error| format!("copy DXVK sidecar {}: {error}", src.display()))?;
+                changed = true;
+            }
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+    changed |= copy_runtime_dlls(&legacy.join("x64"), &x64_dst)?;
+    changed |= copy_runtime_dlls(&legacy.join("x32"), &x32_dst)?;
+
+    let moltenvk =
+        ms_home.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+    if !unix_dst.join("libMoltenVK.dylib").is_file() && moltenvk.is_file() {
+        let dest = unix_dst.join("libMoltenVK.dylib");
+        fs::copy(&moltenvk, &dest).map_err(|error| format!("copy MoltenVK into DXVK surface: {error}"))?;
+        changed = true;
+    }
+
+    Ok(changed)
+}
+
+fn dxvk_canonical_surface_has_payload(surface: &Path) -> bool {
+    surface.join("x86_64-windows").join("d3d11.dll").is_file()
+        && surface.join("i386-windows").join("d3d11.dll").is_file()
+        && surface.join("x86_64-unix").join("libMoltenVK.dylib").is_file()
+}
+
+fn copy_runtime_dlls(src: &Path, dst: &Path) -> Result<bool, String> {
+    if !src.is_dir() {
+        return Ok(false);
+    }
+    let mut changed = false;
+    for entry in fs::read_dir(src).map_err(|error| format!("read runtime dll dir {}: {error}", src.display()))? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.extension().map(|extension| extension.to_string_lossy().eq_ignore_ascii_case("dll")) != Some(true) {
+            continue;
+        }
+        fs::copy(&path, dst.join(entry.file_name()))
+            .map_err(|error| format!("copy runtime DLL {}: {error}", path.display()))?;
+        changed = true;
+    }
+    Ok(changed)
+}
+
+fn install_vkd3d_runtime_surface(home: &PathBuf) -> Result<bool, String> {
+    let ms_home = crate::platform::metalsharp_home_dir_for(home);
+    let runtime_root = ms_home.join("runtime");
+    let canonical = runtime_root.join("wine").join("lib").join("vkd3d");
+    if vkd3d_canonical_surface_has_payload(&canonical) {
+        return Ok(false);
+    }
+
+    let mut extracted_tmp = None;
+    let mut extracted_source = None;
+    if let Some(archive) = find_bundled_archive("vkd3d-proton") {
+        let tmp = std::env::temp_dir().join("metalsharp-vkd3d-canonical-extract");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).map_err(|error| format!("create VKD3D canonical extract dir: {error}"))?;
+        extract_zst(&archive, &tmp, "vkd3d-proton")?;
+        extracted_source = Some(tmp.join("vkd3d-proton"));
+        extracted_tmp = Some(tmp);
+    }
+    let source = extracted_source
+        .as_ref()
+        .cloned()
+        .into_iter()
+        .chain([runtime_root.join("vkd3d"), runtime_root.join("vkd3d-proton")])
+        .find(|candidate| {
+            candidate.join("x64").join("d3d12.dll").is_file()
+                || candidate.join("x86_64-windows").join("d3d12.dll").is_file()
+        });
+    let Some(source) = source else {
+        // Missing payloads are visible in diagnostics/readiness. Keep setup
+        // non-fatal so unrelated Wine/DXMT repair paths do not regress.
+        return Ok(false);
+    };
+
+    let windows_dst = canonical.join("x86_64-windows");
+    let unix_dst = canonical.join("x86_64-unix");
+    fs::create_dir_all(&windows_dst).map_err(|error| format!("create VKD3D windows surface: {error}"))?;
+    fs::create_dir_all(&unix_dst).map_err(|error| format!("create VKD3D unix surface: {error}"))?;
+
+    let mut changed = false;
+    for source_subdir in ["x86_64-windows", "x64"] {
+        changed |= copy_runtime_dlls(&source.join(source_subdir), &windows_dst)?;
+    }
+    if !windows_dst.join("dxgi.dll").is_file() {
+        let dxvk_dxgi = runtime_root.join("wine").join("lib").join("dxvk").join("x86_64-windows").join("dxgi.dll");
+        if dxvk_dxgi.is_file() {
+            fs::copy(&dxvk_dxgi, windows_dst.join("dxgi.dll"))
+                .map_err(|error| format!("copy DXVK dxgi.dll into VKD3D surface: {error}"))?;
+            changed = true;
+        }
+    }
+
+    for source_subdir in ["x86_64-unix", "lib", ""] {
+        let src = source.join(source_subdir);
+        if !src.is_dir() {
+            continue;
+        }
+        for sidecar in VKD3D_REQUIRED_UNIX {
+            let path = src.join(sidecar);
+            if path.is_file() {
+                fs::copy(&path, unix_dst.join(sidecar))
+                    .map_err(|error| format!("copy VKD3D sidecar {}: {error}", path.display()))?;
+                changed = true;
+            }
+        }
+    }
+    if !unix_dst.join("libMoltenVK.dylib").is_file() {
+        let moltenvk = runtime_root.join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        if moltenvk.is_file() {
+            fs::copy(&moltenvk, unix_dst.join("libMoltenVK.dylib"))
+                .map_err(|error| format!("copy MoltenVK into VKD3D surface: {error}"))?;
+            changed = true;
+        }
+    }
+
+    if let Some(tmp) = extracted_tmp {
+        let _ = fs::remove_dir_all(tmp);
+    }
+
+    Ok(changed)
+}
+
+fn vkd3d_canonical_surface_has_payload(surface: &Path) -> bool {
+    surface.join("x86_64-windows").join("d3d12.dll").is_file()
+        && surface.join("x86_64-windows").join("dxgi.dll").is_file()
+        && surface.join("x86_64-unix").join("libMoltenVK.dylib").is_file()
+}
+
 fn install_dxvk_fallback(home: &PathBuf) -> Result<bool, String> {
-    let dxvk_dir = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("dxvk-1.10.3");
+    let dxvk_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("dxvk-1.10.3");
     if dxvk_dir.join("x32").join("d3d11.dll").exists() {
         return Ok(false);
     }
@@ -1077,6 +1329,7 @@ pub fn ensure_dxmt_runtime_ready(home: &Path) -> Result<bool, String> {
     changed |= install_dxmt_runtime(&home_buf)?;
 
     if dxmt_runtime_current_for_dir(&dxmt_dir) {
+        record_runtime_manifest_after_setup(home);
         Ok(changed)
     } else {
         Err(format!(
@@ -1102,6 +1355,7 @@ pub fn ensure_dxmt_m12_runtime_ready(home: &Path) -> Result<bool, String> {
     changed |= install_dxmt_m12_runtime(&home_buf)?;
 
     if dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        record_runtime_manifest_after_setup(home);
         Ok(changed)
     } else {
         Err(format!(
@@ -1129,6 +1383,7 @@ pub fn ensure_graphics_runtimes_ready(home: &Path) -> Result<bool, String> {
     changed |= install_dxmt_m12_runtime(&home_buf)?;
 
     if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+        record_runtime_manifest_after_setup(home);
         Ok(changed)
     } else {
         Err(format!(
@@ -1182,7 +1437,7 @@ fn install_dxmt_m12_runtime(home: &PathBuf) -> Result<bool, String> {
         &dxmt_m12_dir,
         |dir| dxmt_m12_runtime_ready(dir),
         |dir| dxmt_m12_runtime_current_for_dir(dir),
-        "fallback:~/metalsharp/runtime/dxmt-m12",
+        "fallback:~/metalsharp/runtime/dxmt_m12",
     )
 }
 
@@ -1194,6 +1449,7 @@ fn install_graphics_runtime_surface(
     current: fn(&Path) -> bool,
     fallback_source: &str,
 ) -> Result<bool, String> {
+    let fallback_surface = if bundle_surface == "dxmt-m12" { "dxmt_m12" } else { "dxmt" };
     let _ = fs::create_dir_all(dst_dir.join("x86_64-unix"));
     let _ = fs::create_dir_all(dst_dir.join("x86_64-windows"));
 
@@ -1210,7 +1466,6 @@ fn install_graphics_runtime_surface(
         mark_split_bundle_installed(home, GRAPHICS_DLL_BUNDLE, &archive);
         let _ = fs::remove_dir_all(&tmp);
     } else {
-        let fallback_surface = if bundle_surface == "dxmt-m12" { "dxmt-m12" } else { "dxmt" };
         let src_root = home.join("metalsharp").join("runtime").join(fallback_surface);
         if src_root.exists() {
             copy_graphics_runtime_surface(&src_root, dst_dir)?;
@@ -1225,10 +1480,10 @@ fn install_graphics_runtime_surface(
         Ok(true)
     } else {
         Err(format!(
-            "DXMT runtime surface {} {} not installed — bundle metalsharp-graphics-dll.tar.zst or place files in ~/.metalsharp/runtime/{}/",
+            "DXMT runtime surface {} {} not installed — bundle metalsharp-graphics-dll.tar.zst or place fallback files in ~/.metalsharp/runtime/{}/",
             bundle_surface,
             DXMT_BUNDLED_RUNTIME_VERSION,
-            bundle_surface
+            fallback_surface
         ))
     }
 }
@@ -1439,8 +1694,13 @@ pub fn runtime_artifact_report() -> Value {
 pub fn runtime_artifact_report_for(home: &Path) -> Value {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
+    let wine_lib_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine").join("lib");
+    let dxvk_dir = wine_lib_dir.join("dxvk");
+    let vkd3d_dir = wine_lib_dir.join("vkd3d");
     let m11 = verify_required_files("dxmt", &dxmt_dir, DXMT_REQUIRED_UNIX, DXMT_REQUIRED_PE);
     let m12 = verify_required_files_with_unix("dxmt_m12", &dxmt_m12_dir, DXMT_M12_REQUIRED_UNIX, DXMT_REQUIRED_PE);
+    let dxvk = verify_dxvk_runtime_artifacts(&dxvk_dir);
+    let vkd3d = verify_vkd3d_runtime_artifacts(&vkd3d_dir);
     let ok = m11.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false)
         && m12.get("all_present").and_then(|v| v.as_bool()).unwrap_or(false);
     json!({
@@ -1448,6 +1708,10 @@ pub fn runtime_artifact_report_for(home: &Path) -> Value {
         "schema_version": 1,
         "dxmt": m11,
         "dxmt_m12": m12,
+        "planned": {
+            "dxvk": dxvk,
+            "vkd3d": vkd3d,
+        },
     })
 }
 
@@ -1482,6 +1746,71 @@ fn verify_required_files_with_unix(
     // libunwind). This is the same shape as verify_required_files but takes the
     // M12 unix list explicitly so the report names each sidecar.
     verify_required_files(label, runtime_dir, unix_required, pe_required)
+}
+
+fn verify_dxvk_runtime_artifacts(runtime_dir: &Path) -> Value {
+    let d9 = verify_required_files_multi(
+        "dxvk_d9",
+        runtime_dir,
+        DXVK_REQUIRED_UNIX,
+        &[("x86_64-windows", DXVK_D9_REQUIRED_PE_X64), ("i386-windows", DXVK_D9_REQUIRED_PE_I386)],
+    );
+    let d11 = verify_required_files_multi(
+        "dxvk_d11",
+        runtime_dir,
+        DXVK_REQUIRED_UNIX,
+        &[("x86_64-windows", DXVK_D11_REQUIRED_PE_X64), ("i386-windows", DXVK_D11_REQUIRED_PE_X64)],
+    );
+    let all_present = d9.get("all_present").and_then(|value| value.as_bool()).unwrap_or(false)
+        && d11.get("all_present").and_then(|value| value.as_bool()).unwrap_or(false);
+    json!({
+        "all_present": all_present,
+        "required_external_state": ["Vulkan ICD"],
+        "d9": d9,
+        "d11": d11,
+    })
+}
+
+fn verify_vkd3d_runtime_artifacts(runtime_dir: &Path) -> Value {
+    let d12 = verify_required_files_multi(
+        "vkd3d_d12",
+        runtime_dir,
+        VKD3D_REQUIRED_UNIX,
+        &[("x86_64-windows", VKD3D_REQUIRED_PE_X64)],
+    );
+    json!({
+        "all_present": d12.get("all_present").and_then(|value| value.as_bool()).unwrap_or(false),
+        "required_external_state": ["Vulkan ICD"],
+        "d12": d12,
+    })
+}
+
+fn verify_required_files_multi(
+    label: &str,
+    runtime_dir: &Path,
+    unix_required: &[&str],
+    pe_required_by_subdir: &[(&str, &[&str])],
+) -> Value {
+    let mut entries = Vec::new();
+    let mut all_present = true;
+    for name in unix_required {
+        let path = runtime_dir.join("x86_64-unix").join(name);
+        let present = file_nonempty(&path);
+        all_present &= present;
+        entries.push(artifact_entry(label, "x86_64-unix", name, &path, present));
+    }
+    for (subdir, dlls) in pe_required_by_subdir {
+        for dll in *dlls {
+            let path = runtime_dir.join(subdir).join(dll);
+            let present = file_nonempty(&path);
+            all_present &= present;
+            entries.push(artifact_entry(label, subdir, dll, &path, present));
+        }
+    }
+    json!({
+        "all_present": all_present,
+        "entries": entries,
+    })
 }
 
 fn artifact_entry(label: &str, subdir: &str, name: &str, path: &Path, present: bool) -> Value {
@@ -1530,21 +1859,13 @@ fn dxmt_m12_runtime_ready(dxmt_m12_dir: &Path) -> bool {
 }
 
 fn install_gptk_runtime(_home: &PathBuf) -> Result<bool, String> {
-    let was_installed = crate::platform::gptk_homebrew_installed();
-    if !was_installed {
-        brew_trust_cask("gcenx/wine/game-porting-toolkit")?;
-        brew_install("game-porting-toolkit")?;
-    }
-    if !crate::platform::gptk_homebrew_installed() {
-        return Err("GPTK installed via Homebrew but wine64/wineserver were not found under /Applications/Game Porting Toolkit.app".into());
-    }
-    let wine_root = crate::platform::gptk_homebrew_wine_root();
-    let pe_dir = wine_root.join("lib").join("wine").join("x86_64-windows");
-    let framework = wine_root.join("lib").join("external").join("D3DMetal.framework");
-    if !gptk_runtime_ready(&pe_dir, &framework) {
-        return Err("Homebrew GPTK payload is incomplete; reinstall game-porting-toolkit".into());
-    }
-    Ok(!was_installed)
+    // Phase 1 (D3DMetal native roadmap): the external Homebrew GPTK lane is
+    // removed. MetalSharp never installs or requires Homebrew GPTK anymore —
+    // the native `d3dmetal_native` route consumes a MetalSharp-owned Wine 11.5
+    // host ABI and a MetalSharp-owned payload (later phases). This is a
+    // deliberate no-op so no code path can trigger `brew_install game-porting-
+    // toolkit`. The GPTK prefix/component bottle plumbing is retired in Phases 4/5.
+    Ok(false)
 }
 
 fn gptk_runtime_ready(pe_dir: &Path, framework: &Path) -> bool {
@@ -2122,7 +2443,68 @@ fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
         return archive_required_files_valid(path, STEAM_REQUIRED_ARCHIVE_FILES);
     }
 
+    if name == "metalsharp-d3dmetal-native-contract" || name == "metalsharp-d3dmetal-native-contract.tar.zst" {
+        return archive_d3dmetal_native_contract_valid(path);
+    }
+
     true
+}
+
+fn archive_d3dmetal_native_contract_valid(path: &Path) -> bool {
+    if !archive_required_files_valid(path, D3DMETAL_NATIVE_CONTRACT_REQUIRED_ARCHIVE_FILES) {
+        return false;
+    }
+
+    let listing = match archive_listing(path) {
+        Some(entries) => entries,
+        None => return false,
+    };
+
+    listing.iter().all(|entry| {
+        D3DMETAL_NATIVE_CONTRACT_ALLOWED_ARCHIVE_FILES.contains(&entry.as_str())
+            && !entry.contains("/x86_64-windows/")
+            && !entry.contains("/x86_64-unix/")
+            && !entry.contains("/external/")
+            && !entry.contains("D3DMetal.framework")
+            && !entry.ends_with(".dll")
+            && !entry.ends_with(".dylib")
+            && !entry.ends_with(".so")
+            && !entry.ends_with(".metallib")
+            && !entry.ends_with("/D3DMetal")
+            && entry != "D3DMetal"
+    })
+}
+
+fn archive_listing(path: &Path) -> Option<Vec<String>> {
+    let file = fs::File::open(path).ok()?;
+    let mut decoder = zstd::Decoder::new(file).ok()?;
+    let mut tar_cmd = mac_cmd("tar")
+        .args(["-tf", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+
+    if let Some(mut stdin) = tar_cmd.stdin.take() {
+        if std::io::copy(&mut decoder, &mut stdin).is_err() {
+            let _ = tar_cmd.kill();
+            return None;
+        }
+    }
+
+    let output = tar_cmd.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(|line| line.trim().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+    )
 }
 
 fn archive_dxmt_m12_hashes_valid(path: &Path) -> bool {
@@ -2439,6 +2821,90 @@ mod tests {
             assert_eq!(entry.get("present").and_then(|v| v.as_bool()), Some(false));
             assert_eq!(entry.get("sha256").and_then(|v| v.as_str()), None);
         }
+
+        let planned = report.get("planned").expect("planned runtime surfaces");
+        let dxvk = planned.get("dxvk").expect("dxvk planned report");
+        assert_eq!(dxvk.get("all_present").and_then(|v| v.as_bool()), Some(false));
+        let dxvk_d11_entries = dxvk
+            .get("d11")
+            .and_then(|value| value.get("entries"))
+            .and_then(|value| value.as_array())
+            .expect("dxvk d11 entries");
+        assert!(dxvk_d11_entries.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("d3d11.dll")
+                && entry.get("subdir").and_then(|value| value.as_str()) == Some("x86_64-windows")
+        }));
+
+        let vkd3d = planned.get("vkd3d").expect("vkd3d planned report");
+        assert_eq!(vkd3d.get("all_present").and_then(|v| v.as_bool()), Some(false));
+        let vkd3d_d12_entries = vkd3d
+            .get("d12")
+            .and_then(|value| value.get("entries"))
+            .and_then(|value| value.as_array())
+            .expect("vkd3d d12 entries");
+        assert!(vkd3d_d12_entries.iter().any(|entry| {
+            entry.get("filename").and_then(|value| value.as_str()) == Some("d3d12.dll")
+                && entry.get("subdir").and_then(|value| value.as_str()) == Some("x86_64-windows")
+        }));
+    }
+
+    #[test]
+    fn dxvk_runtime_surface_stages_from_legacy_payload() {
+        let home = test_home("dxvk-canonical-surface");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let legacy = ms_home.join("runtime").join("dxvk-1.10.3");
+        for subdir in ["x64", "x32"] {
+            fs::create_dir_all(legacy.join(subdir)).expect("create legacy dxvk dir");
+            for dll in ["d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll"] {
+                fs::write(legacy.join(subdir).join(dll), format!("{subdir}-{dll}")).expect("write legacy dxvk dll");
+            }
+        }
+        let moltenvk =
+            ms_home.join("runtime").join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        fs::create_dir_all(moltenvk.parent().unwrap()).expect("create MoltenVK parent");
+        fs::write(&moltenvk, b"moltenvk").expect("write MoltenVK");
+
+        assert!(install_dxvk_runtime_surface(&home).expect("stage dxvk surface"));
+        let canonical = ms_home.join("runtime").join("wine").join("lib").join("dxvk");
+        assert!(canonical.join("x86_64-windows").join("d3d11.dll").is_file());
+        assert!(canonical.join("i386-windows").join("d3d11.dll").is_file());
+        assert!(canonical.join("x86_64-unix").join("libMoltenVK.dylib").is_file());
+
+        let report = runtime_artifact_report_for(&home);
+        let dxvk = report.get("planned").and_then(|planned| planned.get("dxvk")).expect("dxvk report");
+        assert_eq!(dxvk.get("all_present").and_then(|value| value.as_bool()), Some(true));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn vkd3d_runtime_surface_stages_from_payload_and_dxvk_dxgi() {
+        let home = test_home("vkd3d-canonical-surface");
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let runtime_root = ms_home.join("runtime");
+        let source = runtime_root.join("vkd3d-proton");
+        fs::create_dir_all(source.join("x64")).expect("create vkd3d x64 dir");
+        fs::create_dir_all(source.join("x86_64-unix")).expect("create vkd3d unix dir");
+        fs::write(source.join("x64").join("d3d12.dll"), b"d3d12").expect("write vkd3d d3d12");
+        fs::write(source.join("x64").join("d3d12core.dll"), b"d3d12core").expect("write vkd3d d3d12core");
+
+        let dxvk_dxgi = runtime_root.join("wine").join("lib").join("dxvk").join("x86_64-windows").join("dxgi.dll");
+        fs::create_dir_all(dxvk_dxgi.parent().unwrap()).expect("create dxvk dxgi parent");
+        fs::write(&dxvk_dxgi, b"dxgi").expect("write dxvk dxgi");
+        let moltenvk = runtime_root.join("wine").join("lib").join("wine").join("x86_64-unix").join("libMoltenVK.dylib");
+        fs::create_dir_all(moltenvk.parent().unwrap()).expect("create MoltenVK parent");
+        fs::write(&moltenvk, b"moltenvk").expect("write MoltenVK");
+
+        assert!(install_vkd3d_runtime_surface(&home).expect("stage vkd3d surface"));
+        let canonical = runtime_root.join("wine").join("lib").join("vkd3d");
+        assert!(canonical.join("x86_64-windows").join("d3d12.dll").is_file());
+        assert!(canonical.join("x86_64-windows").join("d3d12core.dll").is_file());
+        assert!(canonical.join("x86_64-windows").join("dxgi.dll").is_file());
+        assert!(canonical.join("x86_64-unix").join("libMoltenVK.dylib").is_file());
+
+        let report = runtime_artifact_report_for(&home);
+        let vkd3d = report.get("planned").and_then(|planned| planned.get("vkd3d")).expect("vkd3d report");
+        assert_eq!(vkd3d.get("all_present").and_then(|value| value.as_bool()), Some(true));
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]
@@ -2486,6 +2952,7 @@ mod tests {
             "fnalibs.tar.zst",
             "metalsharp-scripts-tools.tar.zst",
             "metalsharp-steam.tar.zst",
+            "metalsharp-d3dmetal-native-contract.tar.zst",
         ] {
             assert!(mac_assets.contains(&expected), "missing mac bundle asset {}", expected);
         }
@@ -2545,6 +3012,8 @@ mod tests {
         assert!(!bundled_artifact_valid("metalsharp-scripts-tools.tar.zst", &stale));
         assert!(!bundled_artifact_valid("metalsharp-steam", &stale));
         assert!(!bundled_artifact_valid("metalsharp-steam.tar.zst", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-d3dmetal-native-contract", &stale));
+        assert!(!bundled_artifact_valid("metalsharp-d3dmetal-native-contract.tar.zst", &stale));
         assert!(bundled_artifact_valid("unmanaged-test-asset.bin", &stale));
 
         let _ = fs::remove_dir_all(home);
@@ -2738,6 +3207,57 @@ mod tests {
 
         assert!(bundled_artifact_valid("other-file.bin", &non_bundle));
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn d3dmetal_native_contract_bundle_validation_accepts_binary_free_contract() {
+        let home = test_home("d3dmetal-contract-valid");
+        let archive = write_d3dmetal_contract_archive(&home, false);
+
+        assert!(bundled_artifact_valid("metalsharp-d3dmetal-native-contract.tar.zst", &archive));
+        assert!(bundled_artifact_valid("metalsharp-d3dmetal-native-contract", &archive));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn d3dmetal_native_contract_bundle_validation_rejects_payload_binaries() {
+        let home = test_home("d3dmetal-contract-payload");
+        let archive = write_d3dmetal_contract_archive(&home, true);
+
+        assert!(!bundled_artifact_valid("metalsharp-d3dmetal-native-contract.tar.zst", &archive));
+        let _ = fs::remove_dir_all(home);
+    }
+
+    fn write_d3dmetal_contract_archive(root: &Path, include_payload: bool) -> PathBuf {
+        let contract_dir = root.join("d3dmetal_native").join("lib").join("d3dmetal_native");
+        fs::create_dir_all(&contract_dir).expect("create d3dmetal contract dir");
+        fs::write(contract_dir.join("manifest.json"), br#"{"route_id":"d3dmetal_native"}"#)
+            .expect("write contract manifest");
+        fs::write(contract_dir.join("STAGING.md"), b"stage from user-provided GPTK source\n")
+            .expect("write staging docs");
+        if include_payload {
+            let pe_dir = root.join("d3dmetal_native").join("lib").join("d3dmetal_native").join("x86_64-windows");
+            fs::create_dir_all(&pe_dir).expect("create forbidden payload dir");
+            fs::write(pe_dir.join("d3d12.dll"), b"forbidden apple payload").expect("write forbidden payload");
+        }
+
+        let tar_path = root.join("contract.tar");
+        let archive = root.join("metalsharp-d3dmetal-native-contract.tar.zst");
+        let status = mac_cmd("tar")
+            .arg("-cf")
+            .arg(&tar_path)
+            .arg("-C")
+            .arg(root)
+            .arg("d3dmetal_native")
+            .status()
+            .expect("create contract tar");
+        assert!(status.success(), "tar failed for contract fixture");
+
+        let mut input = fs::File::open(&tar_path).expect("open contract tar");
+        let mut output = fs::File::create(&archive).expect("create contract zst");
+        zstd::stream::copy_encode(&mut input, &mut output, 0).expect("compress contract fixture");
+        let _ = fs::remove_file(tar_path);
+        archive
     }
 
     fn write_dxmt_runtime_files(dxmt_dir: &Path) {

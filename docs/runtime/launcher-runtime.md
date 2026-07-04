@@ -4,6 +4,12 @@ Status: Phase 3 foundation
 
 MetalSharp treats launcher installers as bottle-managed Windows programs, not as one-off EXEs. The goal is to let launchers keep their login/session state, install child games into the same bottle, and produce logs that explain why a launcher or child game failed.
 
+## Launcher Profile Contract
+
+`GET /launcher/profiles` returns `metalsharp.launcher.profiles.v1`, a read-only launcher profile contract. It maps CEF/Chromium, WebView2 storefronts, .NET/WPF, 32-bit .NET/WPF, Java, Electron, and GOG Galaxy/storefront launchers to runtime profiles, required components, detection hints, wrapper policy, repair controls, known launchers, and limitations.
+
+The endpoint does not scan bottles, repair components, launch Wine, or mutate prefixes. It is the canonical contract for deciding which launcher profile should be used before the existing installer classifier and launcher evidence reports do source-specific work.
+
 ## Known Launcher Recipes
 
 The installer classifier recognizes these launcher families before generic .NET, WebView, MSI, or PE import heuristics:
@@ -58,15 +64,21 @@ EA App is the first Steam-adjacent storefront proof target:
 - the direct MSI log files are still created as zero bytes, so the next EA pass needs deeper Wine MSI/service/elevation inspection around per-machine package cache writes
 - WebView2/Edge helper executables are runtime components, not apps; prefix app detection filters them so a runtime repair does not pollute the Sharp Library
 
-Launcher evidence reports:
+Launcher profile and evidence reports:
 
 ```http
+GET /launcher/profiles
+
+GET /launcher/evidence
+
 POST /launcher/evidence
 {"family":"ea"}
 
 POST /launcher/evidence
 {"family":"ubisoft"}
 ```
+
+`GET /launcher/evidence` returns `metalsharp.launcher.evidence.inventory.v1`, a read-only inventory for the current Minecraft/EA/Ubisoft proof targets. It reads existing bottle manifests/logs only and does not launch Wine, start launchers, repair bottles, or mutate prefixes. `POST /launcher/evidence` returns the detailed `metalsharp.launcher.evidence.v1` report for a selected `id` or `family`.
 
 EA currently reports `ea_msi_1603`: the bootstrapper reaches MSI apply and fails with `0x80070643 / INST-14-1603`.
 

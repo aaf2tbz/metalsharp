@@ -170,13 +170,16 @@ const bottlePreferredMode = ref("auto");
 const bottleSaving = ref(false);
 const artworkLoadFailed = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
-const userSelectablePipelineOrder = ["d3dmetal", "m12", "m11", "m10", "m9", "fna_arm64"];
+const userSelectablePipelineOrder = ["m12", "m11", "m10", "m9", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "d3dmetal", "fna_arm64"];
 const userSelectablePipelineNames: Record<string, string> = {
   m12: "M12",
-  d3dmetal: "D3DMetal",
+  vkd3d_d12: "VKD3D D3D12",
   m11: "M11",
+  dxvk_d11: "DXVK D3D11",
   m10: "M10",
   m9: "M9",
+  dxvk_d9: "DXVK D3D9",
+  d3dmetal: "D3DMetal",
   fna_arm64: "Mono/FNA",
 };
 
@@ -197,6 +200,9 @@ const componentDisplayName: Record<string, string> = {
   "m12_winemetal": "M12 winemetal.dll / .so",
   "m12_gpu_stubs": "M12 GPU Stubs",
   "d3d12_agility": "D3D12 Agility",
+  "dxvk_runtime": "DXVK Runtime",
+  "vkd3d_runtime": "VKD3D Runtime",
+  "vulkan_icd": "Vulkan ICD",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
@@ -485,20 +491,7 @@ async function runRuntimeDoctor() {
   runtimeOpen.value = true;
   emit('expanded', props.game.appid, true);
   runtimeLoading.value = true;
-  const savedD3DMetalRoute = hasSavedD3DMetalRoute();
   runtimeReport.value = null;
-  if (savedD3DMetalRoute) {
-    await loadD3DMetalStatus();
-    if (d3dmetalState.value) {
-      runtimeReport.value = runtimeReportFromD3DMetalState(d3dmetalState.value, d3dmetalActions.value);
-      bottleName.value = d3dmetalState.value.name || props.game.name;
-      bottlePreferredMode.value = "d3dmetal";
-    } else {
-      toast.show("D3DMetal state not found; save the D3DMetal bottle again", "error");
-    }
-    runtimeLoading.value = false;
-    return;
-  }
   clearD3DMetalPanelState();
   const result = await api<{ ok: boolean; report?: SteamRuntimeReport; error?: string }>(
     "POST",
@@ -534,19 +527,11 @@ async function openBottleWorkspace() {
 }
 
 async function loadD3DMetalStatus() {
-  const bottleId = runtimeReport.value?.bottle_id ?? props.game.bottle_id ?? `steam_${props.game.appid}`;
-  const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/status", {
-    appid: props.game.appid,
-    bottleId,
-  });
-  if (result?.ok && result.state) {
-    d3dmetalState.value = result.state;
-    d3dmetalActions.value = result.actions ?? [];
-    syncD3DMetalRuntimeReport();
-  } else {
-    d3dmetalState.value = null;
-    d3dmetalActions.value = [];
-  }
+  // The retired GPTK bottle endpoints were removed with the native D3DMetal
+  // route. Readiness now comes from the normal runtime doctor/repair flow and
+  // launch goes through /steam/launch-game with launchMethod=d3dmetal.
+  d3dmetalState.value = null;
+  d3dmetalActions.value = [];
 }
 
 async function playSelectedLaunchMode() {
@@ -555,20 +540,7 @@ async function playSelectedLaunchMode() {
     emit('play', launchMode);
     return;
   }
-  if (!d3dmetalState.value) await loadD3DMetalStatus();
-  const playAction = d3dmetalActions.value.find((action) => action.id === "play_d3dmetal") ?? {
-    id: "play_d3dmetal",
-    label: "Play D3DMetal",
-    enabled: d3dmetalState.value?.play_ready === true,
-    state: d3dmetalState.value?.play_ready ? "seeded" : "missing",
-    detail: "Launch game exe directly through GPTK Wine",
-  };
-  if (!d3dmetalState.value?.play_ready || !playAction.enabled) {
-    toast.show("D3DMetal bottle is not ready; seed VC runtime DLLs and seed prefix first", "error");
-    return;
-  }
-  const pid = await runD3DMetalAction(playAction);
-  if (pid) emit('d3dmetalLaunched', pid);
+  emit('play', "d3dmetal");
 }
 
 async function runD3DMetalPanelAction(action: D3DMetalGptkAction) {
@@ -576,21 +548,8 @@ async function runD3DMetalPanelAction(action: D3DMetalGptkAction) {
   if (action.id === "play_d3dmetal" && pid) emit('d3dmetalLaunched', pid);
 }
 
-function d3dmetalActionRoute(actionId: string) {
-  switch (actionId) {
-    case "install_homebrew_gptk":
-      return "/d3dmetal/bottles/install-homebrew-gptk";
-    case "install_rosetta":
-      return "/d3dmetal/bottles/install-rosetta";
-    case "repair_gptk_payload":
-      return "/d3dmetal/bottles/repair-gptk-payload";
-    case "install_x64_redist":
-      return "/d3dmetal/bottles/install-x64-redist";
-    case "seed_prefix":
-      return "/d3dmetal/bottles/seed-prefix";
-    default:
-      return "/d3dmetal/bottles/play";
-  }
+function d3dmetalActionRoute(_actionId: string) {
+  return "/steam/launch-game";
 }
 
 async function runD3DMetalAction(action: D3DMetalGptkAction): Promise<number | null> {
@@ -691,36 +650,6 @@ async function saveBottleEdit() {
     return;
   }
   bottleSaving.value = true;
-  if (bottlePreferredMode.value === "d3dmetal") {
-    const gameDir = runtimeReport.value?.game_install_path;
-    if (!gameDir) {
-      toast.show("D3DMetal save requires a detected game install path", "error");
-      bottleSaving.value = false;
-      return;
-    }
-    const d3dmetalResult = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/save", {
-      appid: props.game.appid,
-      bottleId,
-      name: bottleName.value || props.game.name,
-      gameDir,
-    }, 10 * 60 * 1000);
-    bottleSaving.value = false;
-    if (d3dmetalResult?.ok && d3dmetalResult.state) {
-      d3dmetalState.value = d3dmetalResult.state;
-      d3dmetalActions.value = d3dmetalResult.actions ?? [];
-      selectedLaunchMode.value = "d3dmetal";
-      runtimeReport.value = runtimeReportFromD3DMetalState(d3dmetalState.value, d3dmetalActions.value);
-      localStorage.setItem(launchModeStorageKey.value, "d3dmetal");
-      pipelineName.value = "D3DMetal";
-      pipelineResolvedLocally.value = true;
-      toast.show("D3DMetal bottle saved; seed VC runtime DLLs and seed prefix when ready", "success");
-      return;
-    }
-    toast.show(d3dmetalResult?.error ?? "D3DMetal bottle save failed", "error");
-    await loadD3DMetalStatus();
-    return;
-  }
-
   if (bottlePreferredMode.value !== "d3dmetal") {
     clearD3DMetalPanelState();
     if (reportIsD3DMetal(runtimeReport.value)) {

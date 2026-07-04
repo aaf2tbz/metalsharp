@@ -481,7 +481,7 @@ mod tests {
         for (appid, pipeline) in [
             (17410, PipelineId::M9),
             (312520, PipelineId::M11),
-            (387290, PipelineId::M11),
+            (387290, PipelineId::DxvkD11),
             (475150, PipelineId::M9),
             (504230, PipelineId::FnaArm64),
             (49520, PipelineId::M9),
@@ -597,15 +597,16 @@ mod tests {
     }
 
     #[test]
-    fn game_recipes_parse_ori_m11_exe_override() {
+    fn game_recipes_parse_ori_dxvk_d11_exe_override() {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let ori = recipes.get(&387290).expect("ori recipe");
-        assert_eq!(ori.pipeline, PipelineId::M11);
+        assert_eq!(ori.pipeline, PipelineId::DxvkD11);
         assert_eq!(ori.name, "Ori and the Blind Forest: Definitive Edition");
         assert_eq!(ori.exe_names, vec!["oriDE.exe".to_string()]);
         assert!(ori.check_dlls.contains(&"d3d11.dll".to_string()));
         assert!(ori.check_dlls.contains(&"dxgi.dll".to_string()));
-        assert!(ori.check_dlls.contains(&"winemetal.dll".to_string()));
+        assert!(!ori.check_dlls.contains(&"d3d9.dll".to_string()));
+        assert!(!ori.check_dlls.contains(&"winemetal.dll".to_string()));
     }
 
     #[test]
