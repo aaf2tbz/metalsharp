@@ -20,22 +20,42 @@
 mod binding_contract;
 mod bottles;
 mod command_contract;
+mod compat_db_v2;
 mod d3d12_runtime_doctor;
-mod d3dmetal_gptk;
+mod d3dmetal_native;
 mod diagnostics;
+mod doctor_registry;
 mod fna_profile;
 mod gog;
 mod installer;
 mod kernel_translation;
+mod known_good;
 mod launch;
+mod launch_validation;
 mod launcher_evidence;
+mod launcher_profiles;
 mod migrate;
+mod migration_policy;
 mod mtsp;
 mod platform;
+mod prefix_metadata;
+mod receipt_inventory;
+mod release_gates;
+mod roadmap_audit;
+mod runtime_contracts;
+mod runtime_diagnostics;
+mod runtime_manifest;
+mod safe_mode;
+mod save_manager;
 mod scan;
 mod setup;
 mod sharp_library;
+mod source_adapters;
+mod source_launch;
+mod source_prepare;
 mod steam;
+mod support_inventory;
+mod toolchain_inventory;
 mod updater;
 
 use serde_json::{json, Value};
@@ -217,6 +237,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Get, "/update/migrate/progress") => resp(200, migrate::read_migrate_progress()),
         // Phase 2: report what the last migration preserved, skipped, and why.
         (Method::Get, "/update/migrate/report") => resp(200, migrate::latest_migration_report()),
+        (Method::Get, "/update/migrate/policy") => resp(200, migration_policy::report()),
         (Method::Get, "/setup/state") => resp(200, setup::state()),
         (Method::Post, "/setup/save") => {
             let body = read_body(req);
@@ -545,7 +566,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 env.push(("SteamGameId".to_string(), id.to_string()));
                                 env.push(("METALSHARP_OFFLINE_MODE".to_string(), "1".to_string()));
                             }
-                            let is_gptk_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetal);
+                            let is_gptk_direct = matches!(pipeline, mtsp::engine::PipelineId::D3DMetalNative);
                             let steam_started = if is_gptk_direct {
                                 false
                             } else {
@@ -855,6 +876,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     serde_json::json!({
                         "id": p.id.user_selectable_id().unwrap_or("auto"),
                         "name": p.id.user_selectable_name().unwrap_or(p.name),
+                        "runtimeContractId": runtime_contracts::runtime_contract_id_for_pipeline(p.id),
                         "description": p.description,
                         "backend": p.backend,
                         "experimental": p.experimental,
@@ -991,42 +1013,82 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/sharp-library") => resp(200, sharp_library::handle_get_library()),
         (Method::Get, "/bottles") => resp(200, bottles::handle_list_bottles()),
-        (Method::Post, "/d3dmetal/bottles/save") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_save(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/status") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_status(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/install-homebrew-gptk") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_install_homebrew_gptk(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/install-rosetta") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_install_rosetta(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/repair-gptk-payload") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_repair_gptk_payload(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/install-x64-redist") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_install_x64_redist(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/seed-prefix") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_seed_prefix(&body))
-        },
-        (Method::Post, "/d3dmetal/bottles/play") => {
-            let body = read_body(req);
-            resp(200, d3dmetal_gptk::handle_play(&body))
-        },
         (Method::Get, "/bottles/profiles") => resp(200, bottles::handle_list_runtime_profiles()),
         // Phase 2: declarative Steam route contract table (protected + first-class lanes).
         (Method::Get, "/bottles/route-contracts") => {
             resp(200, json!({ "ok": true, "contracts": bottles::steam_route_contracts() }))
+        },
+        (Method::Get, "/runtime/contracts") => resp(200, runtime_contracts::handle_runtime_contracts()),
+        (Method::Get, "/runtime/contracts/reference") => {
+            resp(200, runtime_contracts::handle_runtime_contract_reference())
+        },
+        (Method::Get, "/runtime/manifest") => resp(200, runtime_manifest::handle_runtime_manifest()),
+        (Method::Get, "/runtime/diagnostics") => resp(200, runtime_diagnostics::handle_runtime_diagnostics()),
+        // d3dmetal_native readiness (Phase 4) — Developer Mode only. Exposes the
+        // Wine host-ABI gate (Phase 2) and payload contract gate (Phase 3) plus
+        // combined readiness + overlay digests. Never auto-selects the lane.
+        (Method::Get, "/d3dmetal-native/readiness") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let r = d3dmetal_native::readiness_for(&home);
+            resp(
+                200,
+                json!({ "ok": true, "ready": r.ready, "state": r.state, "host_abi": r.host_abi, "payload": r.payload }),
+            )
+        },
+        (Method::Get, "/d3dmetal-native/host-abi") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let r = d3dmetal_native::readiness_for(&home);
+            resp(200, json!({ "ok": true, "host_abi": r.host_abi }))
+        },
+        (Method::Get, "/d3dmetal-native/payload") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            let r = d3dmetal_native::readiness_for(&home);
+            resp(200, json!({ "ok": true, "payload": r.payload }))
+        },
+        (Method::Get, "/d3dmetal-native/overlay-digests") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "host_abi_digest": d3dmetal_native::host_abi_digest(&home),
+                    "payload_manifest_digest": d3dmetal_native::payload_manifest_digest(&home),
+                    "architecture_lock": "x86_64_only",
+                }),
+            )
+        },
+        (Method::Get, "/diagnostics/gog") => resp(200, gog::handle_doctor()),
+        (Method::Get, "/diagnostics/launch-validation") => resp(200, launch_validation::report()),
+        (Method::Get, "/diagnostics/receipts") => resp(200, receipt_inventory::report()),
+        (Method::Get, "/diagnostics/wine20-roadmap") => resp(200, roadmap_audit::report()),
+        (Method::Get, "/diagnostics/doctors") => resp(200, doctor_registry::report()),
+        (Method::Get, "/diagnostics/support-inventory") => resp(200, support_inventory::report()),
+        (Method::Get, "/diagnostics/toolchain-inventory") => resp(200, toolchain_inventory::report()),
+        (Method::Get, "/diagnostics/release-gates") => resp(200, release_gates::report()),
+        (Method::Get, "/known-good") => resp(200, known_good::inventory()),
+        (Method::Post, "/known-good/record") => {
+            let body = read_body(req);
+            resp(200, known_good::handle_record(&body))
+        },
+        (Method::Get, "/compatibility/db-v2") => resp(200, compat_db_v2::report()),
+        (Method::Get, "/safe-mode/profile") => resp(200, safe_mode::report()),
+        (Method::Post, "/safe-mode/preview") => {
+            let body = read_body(req);
+            resp(200, safe_mode::preview(&body))
+        },
+        (Method::Get, "/save-manager/inventory") => resp(200, save_manager::inventory()),
+        (Method::Post, "/save-manager/backup-plan") => {
+            let body = read_body(req);
+            resp(200, save_manager::backup_plan(&body))
+        },
+        (Method::Get, "/source-adapters") => resp(200, source_adapters::report()),
+        (Method::Post, "/source-adapters/prepare") => {
+            let body = read_body(req);
+            resp(200, source_prepare::handle_prepare(&body))
+        },
+        (Method::Post, "/source-adapters/launch") => {
+            let body = read_body(req);
+            resp(200, source_launch::handle_launch(&body))
         },
         (Method::Get, "/bottles/compatibility-matrix") => resp(200, bottles::handle_compatibility_matrix()),
         (Method::Get, "/bottles/redist-sources") => resp(200, bottles::handle_redist_sources()),
@@ -1304,6 +1366,23 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 .unwrap_or_default();
             let path = std::path::PathBuf::from(&game_dir);
             resp(200, serde_json::to_value(fna_profile::classify_unproven_fna_game(appid, &path)).unwrap())
+        },
+        (Method::Get, "/diagnostics/fna/platform") => {
+            let url_str = req.url().to_string();
+            let appid =
+                url_str.split("appid=").nth(1).and_then(|v| v.split('&').next()).and_then(|v| v.parse::<u32>().ok());
+            let game_dir = url_str
+                .split("gameDir=")
+                .nth(1)
+                .and_then(|v| v.split('&').next())
+                .map(|s| std::path::PathBuf::from(url_decode(s)));
+            let game = appid.zip(game_dir.as_deref());
+            match dirs::home_dir() {
+                Some(home) => {
+                    resp(200, serde_json::to_value(fna_profile::native_mono_platform_doctor_for(&home, game)).unwrap())
+                },
+                None => resp(500, json!({ "ok": false, "error": "home directory could not be resolved" })),
+            }
         },
         (Method::Post, "/steam/compatdata") => {
             let body = read_body(req);
@@ -1802,6 +1881,8 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, kernel_translation::es_live::handle_es_live_processes(&body))
         },
+        (Method::Get, "/launcher/profiles") => resp(200, launcher_profiles::report()),
+        (Method::Get, "/launcher/evidence") => resp(200, launcher_evidence::launcher_evidence_inventory()),
         (Method::Post, "/launcher/evidence") => {
             let body = read_body(req);
             resp(200, launcher_evidence::handle_launcher_evidence(&body))

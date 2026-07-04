@@ -255,9 +255,11 @@ pub enum RuntimeProfile {
     M10,
     M11,
     M12,
-    M13,
-    #[serde(rename = "d3dmetal")]
-    D3DMetal,
+    DxvkD9,
+    DxvkD11,
+    Vkd3dD12,
+    #[serde(rename = "d3dmetal_native", alias = "d3dmetal", alias = "m13", alias = "gptk")]
+    D3DMetalNative,
     Dotnet,
     Win32Dotnet,
     Webview,
@@ -322,6 +324,45 @@ pub enum InstallerKind {
 }
 
 #[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BottleRouteEnv {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BottleRouteDll {
+    pub source_subpath: String,
+    pub filename: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dest_filename: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BottleRouteRule {
+    pub schema_version: u32,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appid: Option<u32>,
+    pub pipeline: String,
+    pub pipeline_name: String,
+    pub runtime_profile: RuntimeProfile,
+    pub graphics_backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wine_overrides: Option<String>,
+    #[serde(default)]
+    pub winedllpath_dirs: Vec<String>,
+    #[serde(default)]
+    pub dyld_paths: Vec<String>,
+    #[serde(default)]
+    pub deploy_dlls: Vec<BottleRouteDll>,
+    #[serde(default)]
+    pub env: Vec<BottleRouteEnv>,
+    #[serde(default)]
+    pub launch_args: Vec<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BottleManifest {
     pub id: String,
     pub name: String,
@@ -334,6 +375,8 @@ pub struct BottleManifest {
     pub runtime_profile: RuntimeProfile,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_pipeline: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_rule: Option<BottleRouteRule>,
     #[serde(default)]
     pub installed_components: Vec<RuntimeComponent>,
     pub source_installer_path: Option<String>,
@@ -351,6 +394,15 @@ pub struct BottleManifest {
     pub last_launch_status: Option<String>,
     #[serde(default)]
     pub last_launch_finished_at: Option<String>,
+    /// Phase 4: saved-bottle overlay digest of the Wine D3DMetal host ABI the
+    /// overlay was built against (None for non-native profiles). Staleness is
+    /// detected by comparing to `d3dmetal_native::host_abi_digest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d3dmetal_host_abi_digest: Option<String>,
+    /// Phase 4: saved-bottle overlay digest of the staged d3dmetal_native
+    /// payload manifest. Binds the overlay to a specific payload revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub d3dmetal_payload_manifest_digest: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -481,6 +533,8 @@ pub struct SteamRuntimeDiagnostic {
     pub bottle_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preferred_pipeline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_rule: Option<BottleRouteRule>,
     pub pipeline: crate::mtsp::engine::PipelineId,
     pub runtime_profile: RuntimeProfile,
     pub prefix_path: String,
@@ -625,7 +679,7 @@ fn normalize_loaded_runtime_profile_components(manifest: &mut BottleManifest) {
             });
             !has_pr230_shape || has_stale_m12_shape
         },
-        RuntimeProfile::D3DMetal => {
+        RuntimeProfile::D3DMetalNative => {
             manifest.installed_components.iter().any(|component| is_m12_runtime_component(&component.id))
         },
         _ => false,
@@ -700,6 +754,7 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
     let mut persisted = manifest.clone();
     refresh_mono_fna_components_before_save(&mut persisted);
     refresh_dxmt_runtime_before_save(&mut persisted);
+    refresh_bottle_route_rule_before_save(&mut persisted);
     let _guard = BOTTLE_SAVE_LOCK.lock().map_err(|_| "bottle save lock poisoned")?;
     let dir = bottle_dir(&manifest.id);
     fs::create_dir_all(dir.join("prefix"))?;
@@ -812,7 +867,13 @@ fn refresh_mono_fna_components_before_save(manifest: &mut BottleManifest) {
 }
 
 fn manifest_preferred_pipeline(manifest: &BottleManifest) -> Option<crate::mtsp::engine::PipelineId> {
-    match manifest.preferred_pipeline.as_deref().and_then(crate::mtsp::engine::PipelineId::from_str_flexible) {
+    let saved_route_pipeline = manifest
+        .route_rule
+        .as_ref()
+        .and_then(|rule| crate::mtsp::engine::PipelineId::from_str_flexible(&rule.pipeline));
+    let legacy_preference =
+        manifest.preferred_pipeline.as_deref().and_then(crate::mtsp::engine::PipelineId::from_str_flexible);
+    match saved_route_pipeline.or(legacy_preference) {
         Some(crate::mtsp::engine::PipelineId::Dxmt) | None => None,
         Some(pipeline) => Some(pipeline),
     }
@@ -825,14 +886,88 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::M10 => "m10",
         crate::mtsp::engine::PipelineId::M11 => "m11",
         crate::mtsp::engine::PipelineId::M12 => "m12",
-        crate::mtsp::engine::PipelineId::M13 => "m13",
-        crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
+        crate::mtsp::engine::PipelineId::DxvkD9 => "dxvk_d9",
+        crate::mtsp::engine::PipelineId::DxvkD11 => "dxvk_d11",
+        crate::mtsp::engine::PipelineId::Vkd3dD12 => "vkd3d_d12",
+        crate::mtsp::engine::PipelineId::D3DMetalNative => "d3dmetal",
         crate::mtsp::engine::PipelineId::M32 => "m32",
         crate::mtsp::engine::PipelineId::FnaArm64 => "fna_arm64",
         crate::mtsp::engine::PipelineId::Steam => "steam",
         crate::mtsp::engine::PipelineId::MacSteam => "mac_steam",
         crate::mtsp::engine::PipelineId::WineBare => "wine_bare",
     }
+}
+
+fn build_bottle_route_rule(
+    appid: Option<u32>,
+    pipeline: crate::mtsp::engine::PipelineId,
+    runtime_profile: RuntimeProfile,
+    updated_at: &str,
+) -> BottleRouteRule {
+    let node = crate::mtsp::engine::get_pipeline(pipeline);
+    BottleRouteRule {
+        schema_version: 1,
+        source: "bottle_saved_preference".to_string(),
+        appid,
+        pipeline: pipeline_preference_id(pipeline).to_string(),
+        pipeline_name: node.name.to_string(),
+        runtime_profile,
+        graphics_backend: node.graphics_backend.to_string(),
+        wine_overrides: node.wine_overrides.map(|overrides| overrides.to_string()),
+        winedllpath_dirs: node.winedllpath_dirs.iter().map(|path| path.to_string()).collect(),
+        dyld_paths: node.dyld_paths.iter().map(|path| path.to_string()).collect(),
+        deploy_dlls: node
+            .deploy_dlls
+            .iter()
+            .map(|dll| BottleRouteDll {
+                source_subpath: dll.source_subpath.to_string(),
+                filename: dll.filename.to_string(),
+                dest_filename: dll.dest_filename.map(|name| name.to_string()),
+            })
+            .collect(),
+        env: node
+            .env_vars
+            .iter()
+            .map(|var| BottleRouteEnv { key: var.key.to_string(), value: var.value.to_string() })
+            .collect(),
+        launch_args: appid
+            .map(|id| crate::mtsp::recipe::effective_launch_args(id, node))
+            .unwrap_or_else(|| node.launch_args.iter().map(|arg| arg.to_string()).collect()),
+        updated_at: if updated_at.is_empty() { timestamp_secs() } else { updated_at.to_string() },
+    }
+}
+
+fn refresh_bottle_route_rule_before_save(manifest: &mut BottleManifest) {
+    let preferred_pipeline = manifest
+        .preferred_pipeline
+        .as_deref()
+        .and_then(crate::mtsp::engine::PipelineId::from_str_flexible)
+        .filter(|pipeline| *pipeline != crate::mtsp::engine::PipelineId::Dxmt);
+
+    let (appid, pipeline, runtime_profile) = if manifest.bottle_type == BottleType::Steam {
+        let Some(appid) = manifest.steam_app_id else {
+            manifest.route_rule = None;
+            return;
+        };
+        let Some(pipeline) = preferred_pipeline else {
+            // Steam "Auto" means shipped/static rules are authoritative again;
+            // do not keep a stale saved overlay from a previous explicit
+            // selection.
+            manifest.route_rule = None;
+            return;
+        };
+        (Some(appid), pipeline, runtime_profile_for_app_pipeline(appid, pipeline))
+    } else {
+        // Non-Steam bottles do not have appid TOML fallback rules. Their saved
+        // runtime profile is the dynamic route rule, covering installer,
+        // Sharp-app, GOG/imported, WineBare, FNA/Mono, DXMT, DXVK, VKD3D, and
+        // D3DMetal bottle choices with the same persisted launch-shape snapshot.
+        let pipeline =
+            preferred_pipeline.unwrap_or_else(|| runtime_profile_definition(manifest.runtime_profile).launch_pipeline);
+        (manifest.steam_app_id, pipeline, manifest.runtime_profile)
+    };
+
+    manifest.route_rule = Some(build_bottle_route_rule(appid, pipeline, runtime_profile, &manifest.updated_at));
 }
 
 fn effective_pipeline_for_bottle_refresh(
@@ -868,7 +1003,7 @@ pub fn resolve_steam_pipeline_for_request(
 }
 
 pub fn steam_pipeline_defaults_offline(pipeline: crate::mtsp::engine::PipelineId) -> bool {
-    matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetal)
+    matches!(pipeline, crate::mtsp::engine::PipelineId::D3DMetalNative)
 }
 
 pub fn save_steam_compatdata(
@@ -989,10 +1124,12 @@ pub fn steam_route_contracts() -> Vec<SteamRouteContract> {
         steam_route_contract_for(M10),
         steam_route_contract_for(M11),
         steam_route_contract_for(M12),
-        steam_route_contract_for(M13),
+        steam_route_contract_for(DxvkD9),
+        steam_route_contract_for(DxvkD11),
+        steam_route_contract_for(Vkd3dD12),
         steam_route_contract_for(FnaArm64),
         steam_route_contract_for(WineBare),
-        steam_route_contract_for(D3DMetal),
+        steam_route_contract_for(D3DMetalNative),
     ]
 }
 
@@ -1061,6 +1198,7 @@ fn ensure_installer_bottle_with_id(
         arch: classification.arch,
         runtime_profile: classification.runtime_profile,
         preferred_pipeline: None,
+        route_rule: None,
         installed_components: default_components_for(classification.runtime_profile),
         source_installer_path: Some(source_installer.to_string_lossy().to_string()),
         installer_kind: Some(classification.installer_kind),
@@ -1072,6 +1210,8 @@ fn ensure_installer_bottle_with_id(
         last_launch_pid: None,
         last_launch_status: None,
         last_launch_finished_at: None,
+        d3dmetal_host_abi_digest: None,
+        d3dmetal_payload_manifest_digest: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     });
@@ -1132,6 +1272,7 @@ fn ensure_steam_game_bottle_inner(
         arch: BottleArch::Wow64,
         runtime_profile,
         preferred_pipeline: None,
+        route_rule: None,
         installed_components: default_components_for(runtime_profile),
         source_installer_path: None,
         installer_kind: None,
@@ -1143,6 +1284,8 @@ fn ensure_steam_game_bottle_inner(
         last_launch_pid: None,
         last_launch_status: None,
         last_launch_finished_at: None,
+        d3dmetal_host_abi_digest: None,
+        d3dmetal_payload_manifest_digest: None,
         created_at: now.clone(),
         updated_at: now.clone(),
     });
@@ -1163,6 +1306,7 @@ fn ensure_steam_game_bottle_inner(
     manifest.health =
         if game_dir.map(|dir| dir.exists()).unwrap_or(false) { BottleHealth::Ready } else { BottleHealth::New };
     manifest.updated_at = now;
+    refresh_bottle_route_rule_before_save(&mut manifest);
     save_bottle(&manifest)?;
     let _ = save_steam_compatdata(&manifest, effective_pipeline);
     Ok(manifest)
@@ -1201,66 +1345,19 @@ pub fn prepare_steam_game_launch(
     refresh_manifest_runtime_views(&mut manifest);
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
-    if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal) {
-        if let Some(ref home) = dirs::home_dir() {
-            match crate::installer::ensure_gptk_runtime_ready(home) {
-                Ok(_) => mark_component_state(&mut manifest, "gptk", ComponentState::Installed),
-                Err(e) => {
-                    eprintln!("bottle: D3DMetal GPTK runtime staging failed: {}", e);
-                    mark_component_state(&mut manifest, "gptk", ComponentState::NeedsRepair);
-                },
-            }
-
-            if !crate::platform::gptk_prefix_ready(home) {
-                match crate::platform::ensure_gptk_prefix(home) {
-                    Ok(_) => mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed),
-                    Err(e) => {
-                        eprintln!("bottle: D3DMetal GPTK prefix seed requested: {}", e);
-                        let state = if crate::platform::gptk_prefix_seeding(home) {
-                            ComponentState::Unknown
-                        } else {
-                            ComponentState::NeedsRepair
-                        };
-                        mark_component_state(&mut manifest, "gptk_prefix", state);
-                    },
-                }
-            }
-
-            if crate::platform::gptk_prefix_ready(home) {
-                mark_component_state(&mut manifest, "gptk_prefix", ComponentState::Installed);
-                if let Some(ref game_path) = manifest.game_install_path {
-                    let game_dir = std::path::PathBuf::from(game_path);
-                    if let Ok(Some(external_path)) = crate::platform::migrate_game_to_external(home, &game_dir, appid) {
-                        manifest.game_install_path = Some(external_path.to_string_lossy().to_string());
-                        manifest.runtime_assets = detect_game_runtime_assets(&external_path);
-                        manifest.installed_app_detections = detect_apps_in_game_dir(&external_path);
-                        eprintln!("bottle: D3DMetal game migrated to external SSD, updated manifest");
-                    }
-                }
-                if let Err(e) = crate::platform::ensure_gptk_dosdevices(home) {
-                    eprintln!("bottle: D3DMetal dosdevices link failed: {}", e);
-                }
-                if !crate::platform::gptk_vcrun_installed(home) {
-                    eprintln!("bottle: D3DMetal profile saved, installing VC++ redist into GPTK prefix ...");
-                    let result = crate::platform::install_gptk_prefix_components(home);
-                    if let Err(e) = &result {
-                        eprintln!("bottle: VC++ redist install failed: {}", e);
-                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::NeedsRepair);
-                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::NeedsRepair);
-                    } else {
-                        mark_component_state(&mut manifest, "vcrun2019_x64", ComponentState::Installed);
-                        mark_component_state(&mut manifest, "vcrun2019_x86", ComponentState::Installed);
-                    }
-                }
-            }
-            manifest.health = if components_ready(&manifest.installed_components) {
-                BottleHealth::Ready
-            } else {
-                BottleHealth::NeedsRepair
-            };
-            manifest.updated_at = timestamp_secs();
-            save_bottle(&manifest)?;
+    if matches!(manifest.runtime_profile, RuntimeProfile::D3DMetalNative) {
+        // Phase 1 (D3DMetal native roadmap): the Homebrew GPTK staging path is
+        // retired. The native lane is reserved until the Wine host ABI (Phase 2)
+        // and payload contract (Phase 3) are ready; native launch is rejected
+        // elsewhere. Do not stage gptk/gptk_prefix components or migrate to an
+        // external GPTK prefix here. Phase 4 owns the native bottle profile; until
+        // then mark native components NeedsRepair so health is never misreported.
+        for component_id in ["d3d11", "d3d12", "dxgi", "d3d10", "gpu_vendor_stubs"] {
+            mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
         }
+        manifest.health = BottleHealth::NeedsRepair;
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
     } else {
         let vcrun_ids: Vec<String> = manifest
             .installed_components
@@ -1397,8 +1494,10 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
-            crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
-            crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
+            crate::mtsp::engine::PipelineId::DxvkD9 => RuntimeProfile::DxvkD9,
+            crate::mtsp::engine::PipelineId::DxvkD11 => RuntimeProfile::DxvkD11,
+            crate::mtsp::engine::PipelineId::Vkd3dD12 => RuntimeProfile::Vkd3dD12,
+            crate::mtsp::engine::PipelineId::D3DMetalNative => RuntimeProfile::D3DMetalNative,
             _ => RuntimeProfile::Plain,
         }
     };
@@ -1496,12 +1595,14 @@ pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleMa
         manifest.preferred_pipeline = pipeline.user_selectable_id().map(|id| id.to_string());
     }
     manifest.updated_at = timestamp_secs();
+    refresh_bottle_route_rule_before_save(&mut manifest);
     save_bottle(&manifest)?;
     if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
         manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
         manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
         manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
         manifest.updated_at = timestamp_secs();
+        refresh_bottle_route_rule_before_save(&mut manifest);
         save_bottle(&manifest)?;
     }
     if let Some(appid) = manifest.steam_app_id {
@@ -1581,12 +1682,14 @@ pub fn edit_bottle(
             rebuild_components_for_profile(&manifest.installed_components, manifest.runtime_profile);
     }
     manifest.updated_at = timestamp_secs();
+    refresh_bottle_route_rule_before_save(&mut manifest);
     save_bottle(&manifest)?;
     if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
         manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
         manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
         manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
         manifest.updated_at = timestamp_secs();
+        refresh_bottle_route_rule_before_save(&mut manifest);
         save_bottle(&manifest)?;
     }
     if let Some(appid) = manifest.steam_app_id {
@@ -1953,6 +2056,52 @@ pub fn repair_component(
         });
     }
 
+    // Phase 5: d3dmetal_native repair components. The Apple D3DMetal payload is
+    // not redistributable, so "repair" re-checks readiness and points the user at
+    // the staging tool rather than fetching binaries. host_abi repair is a
+    // re-verify only (the Wine modules come from the Wine build, not this path).
+    if matches!(component_id, "d3dmetal_native_host_abi" | "d3dmetal_native_payload" | "d3dmetal_native_sidecars") {
+        let home = dirs::home_dir().unwrap_or_default();
+        let readiness = crate::d3dmetal_native::readiness_for(&home);
+        let (status, detail) = match component_id {
+            "d3dmetal_native_host_abi" => {
+                if readiness.host_abi.ready {
+                    ("ready", "Wine D3DMetal host ABI is present and passes strict ABI gates".to_string())
+                } else {
+                    ("host_abi_missing", "Rebuild Wine 11.5 with the d3dmetal-host-abi patch (see tools/wine-patches/d3dmetal-host-abi/README.md) and stage winemac/win32u/ntdll.so into the runtime".to_string())
+                }
+            },
+            "d3dmetal_native_payload" => {
+                if readiness.payload.ready {
+                    ("ready", "d3dmetal_native payload is staged and verified".to_string())
+                } else {
+                    ("payload_missing_user_action_required", "Stage the payload from a GPTK source: tools/runtime/stage-d3dmetal-native-payload.py <gptk.dmg> (Apple binaries are not redistributed by MetalSharp)".to_string())
+                }
+            },
+            _ => {
+                // sidecars — covered by the payload check
+                if readiness.payload.ready {
+                    ("ready", "framework sidecars present".to_string())
+                } else {
+                    ("sidecar_missing", "Stage the payload to restore D3DMetal.framework sidecars".to_string())
+                }
+            },
+        };
+        let state = if status == "ready" { ComponentState::Installed } else { ComponentState::NeedsRepair };
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if status == "ready" { BottleHealth::Ready } else { BottleHealth::NeedsRepair };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: status.to_string(),
+            detail,
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if matches!(component_id, "wine-mono" | "gecko") {
         let log_path = bottle_logs_dir(id).join(format!("component-{}-{}.log", component_id, timestamp_secs()));
         if dry_run {
@@ -2001,6 +2150,16 @@ pub fn repair_component(
         }
 
         let installed = install_host_core_fonts(&prefix, &log_path)?;
+        if installed {
+            record_prefix_component_metadata(
+                &prefix,
+                component_id,
+                "font_component",
+                "Mapped host system fonts into the bottle font directory",
+                Some(&prefix.join("drive_c").join("windows").join("Fonts")),
+                Some(&log_path),
+            );
+        }
         mark_component_state(
             &mut manifest,
             component_id,
@@ -2476,6 +2635,64 @@ pub fn repair_component(
         });
     }
 
+    if matches!(component_id, "dxvk_runtime" | "vkd3d_runtime" | "vulkan_icd") {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        if dry_run {
+            let state = inspect_vulkan_runtime_component(component_id).unwrap_or(ComponentState::Missing);
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if state == ComponentState::Installed {
+                    "already_installed"
+                } else {
+                    "runtime_repair_available"
+                }
+                .to_string(),
+                detail: if state == ComponentState::Installed {
+                    format!(
+                        "{} is already staged in the MetalSharp Wine runtime",
+                        vulkan_runtime_component_label(component_id)
+                    )
+                } else {
+                    "Repairs packaged DXVK/VKD3D-Proton runtime surfaces and MoltenVK ICD metadata from bundled assets"
+                        .to_string()
+                },
+                asset_path: Some(
+                    vulkan_runtime_component_asset_path(&home, component_id).to_string_lossy().to_string(),
+                ),
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        crate::installer::ensure_vulkan_runtime_surfaces_ready(&home)?;
+        for cid in ["dxvk_runtime", "vkd3d_runtime", "vulkan_icd"] {
+            if manifest.installed_components.iter().any(|component| component.id == cid) || cid == component_id {
+                let state = inspect_vulkan_runtime_component(cid).unwrap_or(ComponentState::Missing);
+                mark_component_state(&mut manifest, cid, state);
+            }
+        }
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        let state = inspect_vulkan_runtime_component(component_id).unwrap_or(ComponentState::Missing);
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "needs_repair" }.to_string(),
+            detail: format!(
+                "Repaired packaged Vulkan fallback runtime surfaces; {} is {}",
+                vulkan_runtime_component_label(component_id),
+                if state == ComponentState::Installed { "ready" } else { "still incomplete" }
+            ),
+            asset_path: Some(vulkan_runtime_component_asset_path(&home, component_id).to_string_lossy().to_string()),
+            log_path: None,
+            pid: None,
+        });
+    }
+
     if component_id == "d3d12_agility" {
         let home = dirs::home_dir().ok_or("no home dir")?;
         let appid = manifest.steam_app_id.ok_or("D3D12 Agility repair requires a Steam app id")?;
@@ -2546,121 +2763,7 @@ pub fn repair_component(
         });
     }
 
-    if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-        && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
-    {
-        let home = dirs::home_dir().ok_or("no home dir")?;
-        let cid = component_id.to_string();
-        if dry_run {
-            let already = crate::platform::gptk_vcrun_installed(&home);
-            return Ok(ComponentRepairReport {
-                id: cid,
-                status: if already { "already_installed".to_string() } else { "repair_available".to_string() },
-                detail: format!(
-                    "VC++ 2015-2022 redist {}{}",
-                    if component_id == "vcrun2019_x64" {
-                        "(x64) "
-                    } else if component_id == "vcrun2019_x86" {
-                        "(x86) "
-                    } else {
-                        "(x86 + x64) "
-                    },
-                    if already {
-                        "already installed in the GPTK prefix"
-                    } else {
-                        "will be installed into the GPTK prefix"
-                    }
-                ),
-                asset_path: None,
-                log_path: None,
-                pid: None,
-            });
-        }
-
-        if crate::platform::gptk_vcrun_installed(&home) {
-            mark_component_state(&mut manifest, component_id, ComponentState::Installed);
-            manifest.health = if components_ready(&manifest.installed_components) {
-                BottleHealth::Ready
-            } else {
-                BottleHealth::NeedsRepair
-            };
-            manifest.updated_at = timestamp_secs();
-            save_bottle(&manifest)?;
-            return Ok(ComponentRepairReport {
-                id: cid,
-                status: "already_installed".to_string(),
-                detail: format!(
-                    "VC++ 2015-2022 redist {}already installed in the GPTK prefix",
-                    if component_id == "vcrun2019_x64" {
-                        "(x64) "
-                    } else if component_id == "vcrun2019_x86" {
-                        "(x86) "
-                    } else {
-                        "(x86 + x64) "
-                    }
-                ),
-                asset_path: None,
-                log_path: None,
-                pid: None,
-            });
-        }
-
-        mark_component_state(&mut manifest, component_id, ComponentState::NeedsRepair);
-        manifest.health = BottleHealth::NeedsRepair;
-        manifest.updated_at = timestamp_secs();
-        save_bottle(&manifest)?;
-
-        let bottle_id = id.to_string();
-        let cid_report = cid.clone();
-        thread::spawn(move || {
-            let home = dirs::home_dir().unwrap_or_default();
-            match crate::platform::install_gptk_prefix_components(&home) {
-                Ok(()) => {
-                    eprintln!("{} gptk: install done, installed={}", cid, crate::platform::gptk_vcrun_installed(&home));
-                },
-                Err(e) => {
-                    eprintln!("{} gptk: install failed: {}", cid, e);
-                },
-            }
-            let state = if crate::platform::gptk_vcrun_installed(&home) {
-                ComponentState::Installed
-            } else {
-                ComponentState::Missing
-            };
-            if let Ok(mut m) = load_bottle(&bottle_id) {
-                mark_component_state(&mut m, &cid, state);
-                m.health = if components_ready(&m.installed_components) {
-                    BottleHealth::Ready
-                } else {
-                    BottleHealth::NeedsRepair
-                };
-                m.updated_at = timestamp_secs();
-                let _ = save_bottle(&m);
-            }
-        });
-
-        return Ok(ComponentRepairReport {
-            id: cid_report,
-            status: "started".to_string(),
-            detail: format!(
-                "Downloading and installing VC++ 2015-2022 {} into GPTK prefix",
-                if component_id == "vcrun2019_x64" {
-                    "(x64)"
-                } else if component_id == "vcrun2019_x86" {
-                    "(x86)"
-                } else {
-                    "(x86 + x64)"
-                }
-            ),
-            asset_path: None,
-            log_path: None,
-            pid: None,
-        });
-    }
-
-    if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-        && !matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
-    {
+    if matches!(component_id, "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019") {
         let is_x64 = component_id == "vcrun2019_x64" || component_id == "vcrun2019";
         let is_x86 = component_id == "vcrun2019_x86" || component_id == "vcrun2019";
         let arch_label = if is_x64 && is_x86 {
@@ -2686,6 +2789,14 @@ pub fn repair_component(
             });
         }
         if vcpp_prefix_has_runtime(&prefix) {
+            record_prefix_component_metadata(
+                &prefix,
+                component_id,
+                "redist_component",
+                &format!("VC++ 2015-2022 ({}) already installed", arch_label),
+                None,
+                None,
+            );
             mark_component_state(&mut manifest, component_id, ComponentState::Installed);
             manifest.health = if components_ready(&manifest.installed_components) {
                 BottleHealth::Ready
@@ -2709,7 +2820,18 @@ pub fn repair_component(
         thread::spawn(move || {
             match vcpp_install_into_prefix(&prefix_owned) {
                 Ok(()) => {
-                    eprintln!("{}: VC++ 2015-2022 installed, verified={}", cid, vcpp_prefix_has_runtime(&prefix_owned));
+                    let verified = vcpp_prefix_has_runtime(&prefix_owned);
+                    eprintln!("{}: VC++ 2015-2022 installed, verified={}", cid, verified);
+                    if verified {
+                        record_prefix_component_metadata(
+                            &prefix_owned,
+                            &cid,
+                            "redist_component",
+                            "VC++ 2015-2022 runtime installed into prefix",
+                            None,
+                            None,
+                        );
+                    }
                 },
                 Err(e) => {
                     eprintln!("{}: VC++ 2015-2022 install failed: {}", cid, e);
@@ -3092,6 +3214,7 @@ pub fn handle_steam_runtime_doctor(body: &serde_json::Map<String, Value>) -> Val
         bottle_id: bottle.as_ref().map(|b| b.id.clone()),
         bottle_name: bottle.as_ref().map(|b| b.name.clone()),
         preferred_pipeline: bottle.as_ref().and_then(|b| b.preferred_pipeline.clone()),
+        route_rule: bottle.as_ref().and_then(|b| b.route_rule.clone()),
         pipeline,
         runtime_profile: profile,
         prefix_path: prefix.to_string_lossy().to_string(),
@@ -3196,11 +3319,13 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::Plain,
         RuntimeProfile::Launcher,
         RuntimeProfile::GameInstall,
-        RuntimeProfile::M9,
-        RuntimeProfile::M10,
-        RuntimeProfile::M11,
         RuntimeProfile::M12,
-        RuntimeProfile::M13,
+        RuntimeProfile::Vkd3dD12,
+        RuntimeProfile::M11,
+        RuntimeProfile::DxvkD11,
+        RuntimeProfile::M10,
+        RuntimeProfile::M9,
+        RuntimeProfile::DxvkD9,
         RuntimeProfile::Dotnet,
         RuntimeProfile::Win32Dotnet,
         RuntimeProfile::Webview,
@@ -3272,19 +3397,33 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             ][..],
             crate::mtsp::engine::PipelineId::M12,
         ),
-        RuntimeProfile::M13 => (
-            "GPTK D3DMetal",
+        RuntimeProfile::Vkd3dD12 => (
+            "VKD3D D3D12",
+            BottleArch::Win64,
+            true,
+            &["vkd3d_runtime", "vulkan_icd", "vcrun2019_x64", "vcrun2019_x86", "d3d12_agility"][..],
+            crate::mtsp::engine::PipelineId::Vkd3dD12,
+        ),
+        RuntimeProfile::DxvkD11 => (
+            "DXVK D3D11",
+            BottleArch::Wow64,
+            true,
+            &["dxvk_runtime", "vulkan_icd", "vcrun2019_x64", "vcrun2019_x86"][..],
+            crate::mtsp::engine::PipelineId::DxvkD11,
+        ),
+        RuntimeProfile::DxvkD9 => (
+            "DXVK D3D9",
+            BottleArch::Wow64,
+            true,
+            &["dxvk_runtime", "vulkan_icd", "directx_jun2010", "vcrun2019_x64", "vcrun2019_x86"][..],
+            crate::mtsp::engine::PipelineId::DxvkD9,
+        ),
+        RuntimeProfile::D3DMetalNative => (
+            "D3DMetal Native",
             BottleArch::Win64,
             true,
             &["d3d11", "d3d12", "dxgi", "d3d10", "vcrun2019_x64", "vcrun2019_x86", "gpu_vendor_stubs"][..],
-            crate::mtsp::engine::PipelineId::M13,
-        ),
-        RuntimeProfile::D3DMetal => (
-            "D3DMetal (GPTK)",
-            BottleArch::Win64,
-            false,
-            &["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"][..],
-            crate::mtsp::engine::PipelineId::D3DMetal,
+            crate::mtsp::engine::PipelineId::D3DMetalNative,
         ),
         RuntimeProfile::Dotnet => (
             ".NET",
@@ -3389,8 +3528,10 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
-        crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
-        crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
+        crate::mtsp::engine::PipelineId::DxvkD9 => RuntimeProfile::DxvkD9,
+        crate::mtsp::engine::PipelineId::DxvkD11 => RuntimeProfile::DxvkD11,
+        crate::mtsp::engine::PipelineId::Vkd3dD12 => RuntimeProfile::Vkd3dD12,
+        crate::mtsp::engine::PipelineId::D3DMetalNative => RuntimeProfile::D3DMetalNative,
         crate::mtsp::engine::PipelineId::FnaArm64 => RuntimeProfile::FnaArm64,
         _ => RuntimeProfile::Plain,
     }
@@ -3418,8 +3559,10 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "m10" => Some(RuntimeProfile::M10),
         "m11" => Some(RuntimeProfile::M11),
         "m12" => Some(RuntimeProfile::M12),
-        "m13" | "gptk" => Some(RuntimeProfile::M13),
-        "d3dmetal" | "d3dmetal_native" => Some(RuntimeProfile::D3DMetal),
+        "dxvk_d9" | "dxvk9" => Some(RuntimeProfile::DxvkD9),
+        "dxvk_d11" | "dxvk11" | "dxvk" => Some(RuntimeProfile::DxvkD11),
+        "vkd3d_d12" | "vkd3d12" | "vkd3d" | "vkd3d_proton" => Some(RuntimeProfile::Vkd3dD12),
+        "d3dmetal" | "d3dmetal_native" => Some(RuntimeProfile::D3DMetalNative),
         "dotnet" => Some(RuntimeProfile::Dotnet),
         "win32_dotnet" | "win32dotnet" => Some(RuntimeProfile::Win32Dotnet),
         "webview" => Some(RuntimeProfile::Webview),
@@ -3704,15 +3847,6 @@ fn inspect_components_for_manifest(
                     inspect_d3d12_agility_component_for_manifest(manifest).unwrap_or(fallback)
                 } else if matches!(component.id.as_str(), "fna" | "xna" | "sdl2" | "fna3d" | "faudio" | "fmod") {
                     inspect_mono_fna_component_for_manifest(manifest, &component.id).unwrap_or(fallback)
-                } else if matches!(component.id.as_str(), "vcrun2019_x64" | "vcrun2019_x86" | "vcrun2019")
-                    && matches!(manifest.runtime_profile, RuntimeProfile::D3DMetal)
-                {
-                    let home = dirs::home_dir().unwrap_or_default();
-                    if crate::platform::gptk_vcrun_installed(&home) {
-                        ComponentState::Installed
-                    } else {
-                        fallback
-                    }
                 } else {
                     fallback
                 };
@@ -3910,6 +4044,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
         "d3d9" | "d3d10" | "d3d10_1" | "d3d11" | "d3d12" | "dxgi" => {
             inspect_runtime_dll_component(id).unwrap_or(fallback)
         },
+        "dxvk_runtime" | "vkd3d_runtime" | "vulkan_icd" => inspect_vulkan_runtime_component(id).unwrap_or(fallback),
         "webview2" => {
             if drive_c.join("Program Files (x86)").join("Microsoft").join("EdgeWebView").exists()
                 || drive_c.join("Program Files").join("Microsoft").join("EdgeWebView").exists()
@@ -4308,10 +4443,101 @@ fn inspect_runtime_dll_component(id: &str) -> Option<ComponentState> {
     let candidates = [
         runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join(&filename),
         runtime_wine.join("lib").join("wine").join("x86_64-windows").join(&filename),
-        runtime_wine.join("lib").join("dxvk").join("x64-windows").join(&filename),
+        runtime_wine.join("lib").join("dxvk").join("x86_64-windows").join(&filename),
         runtime_wine.join("lib").join("dxvk").join("i386-windows").join(&filename),
     ];
     Some(if candidates.iter().any(|path| path.exists()) { ComponentState::Installed } else { ComponentState::Missing })
+}
+
+fn inspect_vulkan_runtime_component(id: &str) -> Option<ComponentState> {
+    let home = dirs::home_dir()?;
+    let runtime_wine = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+    let required = match id {
+        "dxvk_runtime" => vec![
+            runtime_wine.join("lib/dxvk/x86_64-unix/libMoltenVK.dylib"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/d3d9.dll"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/d3d10core.dll"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/d3d11.dll"),
+            runtime_wine.join("lib/dxvk/x86_64-windows/dxgi.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/d3d9.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/d3d10core.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/d3d11.dll"),
+            runtime_wine.join("lib/dxvk/i386-windows/dxgi.dll"),
+        ],
+        "vkd3d_runtime" => vec![
+            runtime_wine.join("lib/vkd3d/x86_64-unix/libMoltenVK.dylib"),
+            runtime_wine.join("lib/vkd3d/x86_64-windows/d3d12.dll"),
+            runtime_wine.join("lib/vkd3d/x86_64-windows/d3d12core.dll"),
+            runtime_wine.join("lib/vkd3d/x86_64-windows/dxgi.dll"),
+        ],
+        "vulkan_icd" => return Some(inspect_vulkan_icd_component_for_runtime(&runtime_wine)),
+        _ => return None,
+    };
+    let present = required
+        .iter()
+        .filter(|path| path.metadata().map(|metadata| metadata.is_file() && metadata.len() > 0).unwrap_or(false))
+        .count();
+    Some(if present == required.len() {
+        ComponentState::Installed
+    } else if present > 0 {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    })
+}
+
+fn inspect_vulkan_icd_component_for_runtime(runtime_wine: &Path) -> ComponentState {
+    let moltenvk = runtime_wine.join("lib/wine/x86_64-unix/libMoltenVK.dylib");
+    let icd_dir = runtime_wine.join("etc/vulkan/icd.d");
+    if !moltenvk.is_file() || !icd_dir.is_dir() {
+        return ComponentState::Missing;
+    }
+    let expected = moltenvk.to_string_lossy().to_string();
+    let Ok(entries) = fs::read_dir(&icd_dir) else {
+        return ComponentState::Missing;
+    };
+    let mut saw_moltenvk_icd = false;
+    let mut saw_runtime_path = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with("MoltenVK") || !name.ends_with(".json") {
+            continue;
+        }
+        saw_moltenvk_icd = true;
+        let points_to_runtime = fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .and_then(|value| value.pointer("/ICD/library_path").and_then(|path| path.as_str()).map(str::to_string))
+            .is_some_and(|library_path| library_path == expected);
+        saw_runtime_path |= points_to_runtime;
+    }
+    if saw_runtime_path {
+        ComponentState::Installed
+    } else if saw_moltenvk_icd {
+        ComponentState::NeedsRepair
+    } else {
+        ComponentState::Missing
+    }
+}
+
+fn vulkan_runtime_component_label(component_id: &str) -> &'static str {
+    match component_id {
+        "dxvk_runtime" => "DXVK runtime",
+        "vkd3d_runtime" => "VKD3D-Proton runtime",
+        "vulkan_icd" => "MoltenVK Vulkan ICD",
+        _ => "Vulkan runtime component",
+    }
+}
+
+fn vulkan_runtime_component_asset_path(home: &Path, component_id: &str) -> PathBuf {
+    let runtime_wine = crate::platform::metalsharp_home_dir_for(home).join("runtime").join("wine");
+    match component_id {
+        "dxvk_runtime" => runtime_wine.join("lib/dxvk"),
+        "vkd3d_runtime" => runtime_wine.join("lib/vkd3d"),
+        "vulkan_icd" => runtime_wine.join("etc/vulkan/icd.d/MoltenVK_icd.json"),
+        _ => runtime_wine,
+    }
 }
 
 fn windows_version_component_id(version: &str) -> String {
@@ -4948,6 +5174,14 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
     if exit_status.success() {
         let marker = prefix.join("drive_c").join("metalsharp-post-wineboot-seeded");
         let _ = fs::write(&marker, timestamp_secs().as_bytes());
+        record_prefix_component_metadata(
+            prefix,
+            "post_wineboot_config",
+            "prefix_seed_component",
+            "Post-wineboot registry overrides, font substitutions, and MetalSharp hook were seeded",
+            Some(&marker),
+            Some(log_path),
+        );
     }
     Ok(pid)
 }
@@ -5803,9 +6037,73 @@ fn timestamp_secs() -> String {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string()
 }
 
+fn record_prefix_component_metadata(
+    prefix: &Path,
+    component_id: &str,
+    kind: &str,
+    detail: &str,
+    path: Option<&Path>,
+    log_path: Option<&Path>,
+) {
+    let installed_at = timestamp_secs().parse::<u64>().unwrap_or_default();
+    let component = json!({
+        "id": format!("component:{}", component_id),
+        "kind": kind,
+        "componentId": component_id,
+        "detail": detail,
+        "path": path.map(|path| path.to_string_lossy().to_string()),
+        "logPath": log_path.map(|path| path.to_string_lossy().to_string()),
+        "installedAt": installed_at,
+    });
+    let _ = crate::prefix_metadata::record_installed_components(
+        prefix,
+        prefix_metadata_owner_for_bottle_prefix(prefix),
+        &[component],
+    );
+}
+
+fn prefix_metadata_owner_for_bottle_prefix(prefix: &Path) -> &'static str {
+    if prefix.ends_with(Path::new("prefix-steam")) {
+        "steam"
+    } else if prefix.ends_with(Path::new("bottles/gog-prefix/prefix")) {
+        "gog"
+    } else if prefix.ends_with(Path::new("prefix-gptk")) {
+        "gptk"
+    } else {
+        "bottle"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bottle_component_metadata_records_prefix_installed_components() {
+        let prefix = test_dir("bottle-component-metadata");
+        std::fs::create_dir_all(prefix.join("drive_c/windows/Fonts")).expect("create prefix");
+        let log = prefix.join("component-corefonts.log");
+        record_prefix_component_metadata(
+            &prefix,
+            "corefonts",
+            "font_component",
+            "Mapped host fonts",
+            Some(&prefix.join("drive_c/windows/Fonts")),
+            Some(&log),
+        );
+        let metadata = crate::prefix_metadata::read_metadata(&prefix).expect("metadata");
+        assert_eq!(metadata.get("schema").and_then(|value| value.as_str()), Some("metalsharp.prefix.v2"));
+        assert_eq!(metadata.get("owner").and_then(|value| value.as_str()), Some("bottle"));
+        assert_eq!(
+            metadata.pointer("/installedComponents/0/id").and_then(|value| value.as_str()),
+            Some("component:corefonts")
+        );
+        assert_eq!(
+            metadata.pointer("/installedComponents/0/kind").and_then(|value| value.as_str()),
+            Some("font_component")
+        );
+        let _ = std::fs::remove_dir_all(prefix);
+    }
 
     #[test]
     fn wineboot_state_prefix_missing_when_prefix_absent() {
@@ -5868,6 +6166,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M11,
             preferred_pipeline: Some("dxmt".into()),
+            route_rule: None,
             installed_components: Vec::new(),
             source_installer_path: None,
             installer_kind: None,
@@ -5879,6 +6178,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -5904,6 +6205,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M9,
             preferred_pipeline: Some("m9".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
@@ -5915,6 +6217,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -5944,6 +6248,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M11,
             preferred_pipeline: Some("m11".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M11),
             source_installer_path: None,
             installer_kind: None,
@@ -5955,6 +6260,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -5986,6 +6293,7 @@ mod tests {
             arch: BottleArch::Win64,
             runtime_profile: RuntimeProfile::M12,
             preferred_pipeline: Some("m12".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M12),
             source_installer_path: None,
             installer_kind: None,
@@ -5997,6 +6305,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6033,6 +6343,7 @@ mod tests {
                 arch: BottleArch::Win64,
                 runtime_profile: contract.runtime_profile,
                 preferred_pipeline: Some(contract.pipeline.to_string()),
+                route_rule: None,
                 installed_components: default_components_for(contract.runtime_profile),
                 source_installer_path: None,
                 installer_kind: None,
@@ -6044,6 +6355,8 @@ mod tests {
                 last_launch_pid: None,
                 last_launch_status: None,
                 last_launch_finished_at: None,
+                d3dmetal_host_abi_digest: None,
+                d3dmetal_payload_manifest_digest: None,
                 created_at: timestamp_secs(),
                 updated_at: timestamp_secs(),
             };
@@ -6077,9 +6390,106 @@ mod tests {
         // The contract table is the protected-lane gate. These ids must all be
         // present so a future refactor cannot silently drop a lane.
         let ids: Vec<&'static str> = steam_route_contracts().iter().map(|c| c.pipeline).collect();
-        for required in ["m9", "m10", "m11", "m12", "fna_arm64", "wine_bare", "d3dmetal"] {
+        for required in
+            ["m9", "m10", "m11", "m12", "dxvk_d9", "dxvk_d11", "vkd3d_d12", "fna_arm64", "wine_bare", "d3dmetal"]
+        {
             assert!(ids.contains(&required), "route contract table must cover {} (got {:?})", required, ids);
         }
+    }
+
+    #[test]
+    fn saved_dxvk_d9_route_rule_carries_dxgi_override_and_deploy() {
+        let rule = build_bottle_route_rule(
+            Some(387290),
+            crate::mtsp::engine::PipelineId::DxvkD9,
+            RuntimeProfile::DxvkD9,
+            "123",
+        );
+
+        assert_eq!(rule.pipeline, "dxvk_d9");
+        assert_eq!(rule.wine_overrides.as_deref(), Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"));
+        let dlls = rule.deploy_dlls.iter().map(|dll| dll.filename.as_str()).collect::<Vec<_>>();
+        assert!(dlls.contains(&"d3d9.dll"));
+        assert!(dlls.contains(&"dxgi.dll"));
+    }
+
+    #[test]
+    fn auto_preference_clears_stale_bottle_route_overlay() {
+        let mut manifest = BottleManifest {
+            id: steam_game_bottle_id(387290),
+            name: "Ori".into(),
+            custom_name: None,
+            bottle_type: BottleType::Steam,
+            steam_app_id: Some(387290),
+            prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::M11,
+            preferred_pipeline: None,
+            route_rule: Some(build_bottle_route_rule(
+                Some(387290),
+                crate::mtsp::engine::PipelineId::DxvkD11,
+                RuntimeProfile::DxvkD11,
+                "123",
+            )),
+            installed_components: default_components_for(RuntimeProfile::M11),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        refresh_bottle_route_rule_before_save(&mut manifest);
+        assert!(manifest.route_rule.is_none());
+    }
+
+    #[test]
+    fn non_steam_saved_runtime_profile_persists_route_overlay() {
+        let mut manifest = BottleManifest {
+            id: "installer_dxvk_probe".into(),
+            name: "DXVK Probe".into(),
+            custom_name: None,
+            bottle_type: BottleType::Installer,
+            steam_app_id: None,
+            prefix_path: "/tmp/metalsharp-test-prefix".into(),
+            arch: BottleArch::Wow64,
+            runtime_profile: RuntimeProfile::DxvkD11,
+            preferred_pipeline: None,
+            route_rule: None,
+            installed_components: default_components_for(RuntimeProfile::DxvkD11),
+            source_installer_path: None,
+            installer_kind: None,
+            game_install_path: None,
+            runtime_assets: Vec::new(),
+            installed_app_detections: Vec::new(),
+            health: BottleHealth::Ready,
+            last_launch_log: None,
+            last_launch_pid: None,
+            last_launch_status: None,
+            last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
+            created_at: "0".into(),
+            updated_at: "0".into(),
+        };
+
+        refresh_bottle_route_rule_before_save(&mut manifest);
+        let rule = manifest.route_rule.expect("non-Steam bottle profile should create saved route rule");
+        assert_eq!(rule.pipeline, "dxvk_d11");
+        assert_eq!(rule.runtime_profile, RuntimeProfile::DxvkD11);
+        assert_eq!(
+            rule.wine_overrides.as_deref(),
+            Some("d3d10,d3d10_1,d3d11,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        );
     }
 
     #[test]
@@ -6096,7 +6506,7 @@ mod tests {
 
     #[test]
     fn d3dmetal_route_contract_advertises_offline_emulation_lane() {
-        let d3dmetal = steam_route_contract_for(crate::mtsp::engine::PipelineId::D3DMetal);
+        let d3dmetal = steam_route_contract_for(crate::mtsp::engine::PipelineId::D3DMetalNative);
         assert_eq!(d3dmetal.steam_identity_mode, "offline_steam_emulation");
         assert_eq!(d3dmetal.launch_route, "/steam/launch-offline");
     }
@@ -6327,12 +6737,12 @@ mod tests {
             RuntimeComponent { id: "m12_gpu_stubs".into(), state: ComponentState::Installed },
             RuntimeComponent { id: "vcrun2019_x64".into(), state: ComponentState::NeedsRepair },
         ];
-        let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetal);
+        let rebuilt_d3dmetal = rebuild_components_for_profile(&m12_existing, RuntimeProfile::D3DMetalNative);
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "d3d12_agility"));
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_winemetal"));
         assert!(!rebuilt_d3dmetal.iter().any(|component| component.id == "m12_gpu_stubs"));
-        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk"));
-        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gptk_prefix"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "d3d11"));
+        assert!(rebuilt_d3dmetal.iter().any(|component| component.id == "gpu_vendor_stubs"));
         assert_eq!(
             rebuilt_d3dmetal
                 .iter()
@@ -6508,6 +6918,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::FnaX86,
             preferred_pipeline: Some("fna_arm64".into()),
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::FnaX86),
             source_installer_path: None,
             installer_kind: None,
@@ -6519,6 +6930,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: "0".into(),
             updated_at: "0".into(),
         };
@@ -6565,6 +6978,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::Plain,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: Vec::new(),
             source_installer_path: None,
             installer_kind: Some(InstallerKind::Msi),
@@ -6576,6 +6990,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -6605,6 +7021,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::FnaX86,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: vec![RuntimeComponent { id: "xna".into(), state: ComponentState::Missing }],
             source_installer_path: None,
             installer_kind: None,
@@ -6621,6 +7038,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -6796,6 +7215,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M9,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
@@ -6807,6 +7227,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -6827,6 +7249,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::M9,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::M9),
             source_installer_path: None,
             installer_kind: None,
@@ -6843,6 +7266,8 @@ mod tests {
             last_launch_pid: Some(1234),
             last_launch_status: Some("running".into()),
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -6874,9 +7299,10 @@ mod tests {
             steam_app_id: Some(999999),
             prefix_path: steam_launch_prefix().to_string_lossy().to_string(),
             arch: BottleArch::Win64,
-            runtime_profile: RuntimeProfile::D3DMetal,
+            runtime_profile: RuntimeProfile::D3DMetalNative,
             preferred_pipeline: Some("d3dmetal".into()),
-            installed_components: default_components_for(RuntimeProfile::D3DMetal),
+            route_rule: None,
+            installed_components: default_components_for(RuntimeProfile::D3DMetalNative),
             source_installer_path: None,
             installer_kind: None,
             game_install_path: Some("/games/D3DMetal Game".into()),
@@ -6887,11 +7313,13 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
 
-        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::D3DMetal);
+        let record = steam_compatdata_record(&manifest, crate::mtsp::engine::PipelineId::D3DMetalNative);
 
         assert_eq!(record.launch_pipeline, "d3dmetal");
         assert_eq!(record.steam_identity_mode, "offline_steam_emulation");
@@ -6911,6 +7339,7 @@ mod tests {
             arch: BottleArch::Wow64,
             runtime_profile: RuntimeProfile::GameInstall,
             preferred_pipeline: None,
+            route_rule: None,
             installed_components: default_components_for(RuntimeProfile::GameInstall),
             source_installer_path: None,
             installer_kind: Some(InstallerKind::Exe),
@@ -6922,6 +7351,8 @@ mod tests {
             last_launch_pid: None,
             last_launch_status: None,
             last_launch_finished_at: None,
+            d3dmetal_host_abi_digest: None,
+            d3dmetal_payload_manifest_digest: None,
             created_at: timestamp_secs(),
             updated_at: timestamp_secs(),
         };
@@ -7136,11 +7567,6 @@ mod tests {
         }
         assert!(!m12_ids.contains(&"gpu_vendor_stubs"));
         assert!(!m12_ids.contains(&"gptk_amd_stub"));
-
-        let m13 = default_components_for(RuntimeProfile::M13);
-        let m13_ids = m13.iter().map(|c| c.id.as_str()).collect::<Vec<_>>();
-        assert!(m13_ids.contains(&"gpu_vendor_stubs"));
-        assert!(!m13_ids.contains(&"gptk_amd_stub"));
     }
 
     #[test]

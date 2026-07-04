@@ -1,11 +1,11 @@
 {
   "name": "metalsharp",
-  "version": "0.50.0",
-  "description": "MetalSharp — D3D→Metal translation layer frontend",
+  "version": "0.51.0",
+  "description": "MetalSharp Wine 2.0 — private D3D→Metal Wine runtime fork",
   "author": "MetalSharp",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aaf2tbz/metalsharp.git"
+    "url": "https://github.com/aaf2tbz/MetalSharp-Wine-2.0.git"
   },
   "main": "dist/main/index.js",
   "scripts": {
@@ -15,6 +15,10 @@
     "dev:vite": "vite",
     "rust:build": "cd src-rust && cargo build --release",
     "rust:dev": "cd src-rust && cargo build",
+    "wine20:readiness": "../tools/runtime/check-wine20-runtime-readiness.sh",
+    "wine20:readiness:local": "../tools/runtime/check-wine20-runtime-readiness-local.sh",
+    "wine20:vulkan-build": "../tools/runtime/build-vulkan-lane-payloads.sh",
+    "wine20:vulkan-payloads": "../tools/runtime/check-vulkan-lane-payloads.sh",
     "build:all": "npm run rust:build && npm run build",
     "pack": "npm run build:all && electron-builder --dir",
     "prepare:native": "../tools/package/prepare-native-placeholders.sh",
@@ -154,6 +158,14 @@
         "to": "bundles/fnalibs.tar.zst"
       },
       {
+        "from": "bundles/vkd3d-proton.tar.zst",
+        "to": "bundles/vkd3d-proton.tar.zst"
+      },
+      {
+        "from": "bundles/dxvk.tar.zst",
+        "to": "bundles/dxvk.tar.zst"
+      },
+      {
         "from": "bundles/metalsharp-scripts-tools.tar.zst",
         "to": "bundles/metalsharp-scripts-tools.tar.zst"
       },
@@ -164,6 +176,10 @@
       {
         "from": "bundles/metalsharp-d3d12-developer-sdk.tar.zst",
         "to": "bundles/metalsharp-d3d12-developer-sdk.tar.zst"
+      },
+      {
+        "from": "bundles/metalsharp-d3dmetal-native-contract.tar.zst",
+        "to": "bundles/metalsharp-d3dmetal-native-contract.tar.zst"
       }
     ],
     "directories": {

@@ -99,6 +99,10 @@ verify_local() {
       failed=1
       continue
     fi
+    if [ "$asset" = "metalsharp-d3dmetal-native-contract.tar.zst" ] && ! verify_d3dmetal_native_contract_core "$path"; then
+      failed=1
+      continue
+    fi
     echo "OK: $asset root=$root"
   done < <(manifest_rows)
   return "$failed"
@@ -321,6 +325,9 @@ payload_at_least() {
 verify_scripts_tools_core() {
   verify_required_files "$1" "SCRIPTS TOOLS" \
     scripts/tools/configs/mtsp-rules.toml \
+    scripts/tools/runtime/check-d3dmetal-native-payload.py \
+    scripts/tools/runtime/check-d3dmetal-shim-abi.py \
+    scripts/tools/runtime/stage-d3dmetal-native-payload.py \
     scripts/tools/updater/update.py \
     scripts/tools/updater/update.sh
 }
@@ -330,6 +337,24 @@ verify_steam_core() {
     steam/SteamSetup.exe \
     steam/steamwebhelper.exe \
     steam/steamwebhelper-wrapper.c
+}
+
+verify_d3dmetal_native_contract_core() {
+  local path="$1"
+  local listing
+  verify_required_files "$path" "D3DMETAL NATIVE CONTRACT" \
+    d3dmetal_native/lib/d3dmetal_native/manifest.json \
+    d3dmetal_native/lib/d3dmetal_native/STAGING.md || return 1
+
+  listing="$(tar --use-compress-program=unzstd -tf "$path")"
+  if grep -Ev '^(d3dmetal_native/?|d3dmetal_native/lib/?|d3dmetal_native/lib/d3dmetal_native/?|d3dmetal_native/lib/d3dmetal_native/(manifest\.json|STAGING\.md|receipt\.json))$' <<< "$listing" >/dev/null; then
+    echo "D3DMETAL NATIVE CONTRACT INVALID: unexpected payload file present" >&2
+    return 1
+  fi
+  if grep -Eq '(^|/)(x86_64-windows|x86_64-unix|external|D3DMetal\.framework)(/|$)|\.(dll|dylib|so|metallib)$|(^|/)D3DMetal$' <<< "$listing"; then
+    echo "D3DMETAL NATIVE CONTRACT INVALID: Apple payload binaries must not be bundled" >&2
+    return 1
+  fi
 }
 
 verify_release() {

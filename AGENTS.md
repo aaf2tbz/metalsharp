@@ -69,7 +69,7 @@ Modern runtime paths use MTSP pipeline ids and bottle profiles. Steam games get 
 | `M9` | D3D9 / 32-bit capable DXMT-family route | Nidhogg 2, Undertale, Blasphemous, Dave the Diver |
 | `M10` | D3D10 to Metal | D3D10 apps/games |
 | `M11` | D3D11 to Metal | Rain World, Schedule I, Subnautica BZ |
-| `M12` | D3D12 to Metal through the isolated `dxmt-m12` runtime surface | Peak, Silksong, Elden Ring, D3D12 investigation titles |
+| `M12` | D3D12 to Metal through the isolated installed `dxmt_m12` runtime surface | Peak, Silksong, Elden Ring, D3D12 investigation titles |
 | `Mono/FNA` | Windows XNA/FNA through native Mono, staged FNA/XNA assemblies, and host shims | Celeste, Terraria |
 
 Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, and `m13` stay backend-parseable for legacy records, diagnostics, and fallback behavior, but they are not normal bottle route buttons.
@@ -79,8 +79,8 @@ Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, a
 - Wine runtime: `~/.metalsharp/runtime/wine/`
 - Wine prefix: `~/.metalsharp/prefix-steam/`
 - DXMT PE DLLs for M9/M10/M11: `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`
-- DXMT M12 PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt-m12/x86_64-windows/`
-- DXMT M12 Unix bridge and sidecars: `~/.metalsharp/runtime/wine/lib/dxmt-m12/x86_64-unix/`
+- DXMT M12 PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/`
+- DXMT M12 Unix bridge and sidecars: `~/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/`
 - DXVK i386 DLLs: `~/.metalsharp/runtime/wine/lib/dxvk/i386-windows/`
 - MoltenVK ICD: `~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json`
 - DXMT config: `~/.metalsharp/runtime/wine/etc/dxmt.conf`

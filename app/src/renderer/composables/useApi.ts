@@ -19,4 +19,86 @@ export async function api<T = unknown>(
   }
 }
 
+export function getRuntimeContracts() {
+  return api<RuntimeContractsResponse>("GET", "/runtime/contracts");
+}
+
+export function getRuntimeContractReference() {
+  return api<RuntimeContractReferenceResponse>("GET", "/runtime/contracts/reference");
+}
+
+export function getRuntimeManifest() {
+  return api<RuntimeManifestResponse>("GET", "/runtime/manifest");
+}
+
+export function getRuntimeDiagnostics() {
+  return api<RuntimeDiagnosticsResponse>("GET", "/runtime/diagnostics");
+}
+
+export function getLaunchValidation() {
+  return api<LaunchValidationResponse>("GET", "/diagnostics/launch-validation");
+}
+
+export function getWine20RoadmapAudit() {
+  return api<Wine20RoadmapAuditResponse>("GET", "/diagnostics/wine20-roadmap");
+}
+
+export function getSupportInventory() {
+  return api<SupportInventoryResponse>("GET", "/diagnostics/support-inventory");
+}
+
+export function getToolchainInventory() {
+  return api<ToolchainInventoryResponse>("GET", "/diagnostics/toolchain-inventory");
+}
+
+export function getReleaseGates() {
+  return api<ReleaseGatesResponse>("GET", "/diagnostics/release-gates");
+}
+
+export function getLauncherProfiles() {
+  return api<LauncherProfilesResponse>("GET", "/launcher/profiles");
+}
+
+export function getLauncherEvidenceInventory() {
+  return api<LauncherEvidenceInventoryResponse>("GET", "/launcher/evidence");
+}
+
+export function getLauncherEvidence(body: { id?: string; family?: string }) {
+  return api<LauncherEvidenceResponse>("POST", "/launcher/evidence", body);
+}
+
+export function getSourceAdapters() {
+  return api<SourceAdaptersResponse>("GET", "/source-adapters");
+}
+
+export function previewSourcePrepare(body: {
+  source: string;
+  appId?: string | number;
+  id?: string;
+  productId?: string;
+  route?: string;
+  launchMethod?: string;
+}) {
+  return api<SourcePreparePreviewResponse>("POST", "/source-adapters/prepare", body);
+}
+
+export function dispatchSourceLaunch(body: {
+  source: string;
+  confirmed?: boolean;
+  appId?: string | number;
+  appid?: number;
+  id?: string;
+  productId?: string;
+  route?: string;
+  pipeline?: string;
+  launchMethod?: string;
+  engine?: string;
+}) {
+  return api<SourceLaunchDispatchResponse>("POST", "/source-adapters/launch", body);
+}
+
+export function getReceiptInventory() {
+  return api<ReceiptInventoryResponse>("GET", "/diagnostics/receipts");
+}
+
 export { getAPI };

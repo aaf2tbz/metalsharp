@@ -1,0 +1,483 @@
+MetalSharp Wine 11.5 patch: ntdll D3DMetal native loader/TLS bridge
+
+Generated from proven x86_64 build-tree source against pristine Wine 11.5 after applying:
+  tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
+Applies from the Wine source root with patch -p0.
+
+--- dlls/ntdll/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/loader.c	2026-07-03 15:21:06
+@@ -2248,6 +2248,64 @@
+  *
+  * Build the module data for a mapped dll.
+  */
++static BOOL d3dmetal_native_enabled(void)
++{
++    static const WCHAR env_name[] = L"MS_ACTIVE_GRAPHICS_BACKEND";
++    static const WCHAR backend_name[] = L"d3dmetal_native";
++    WCHAR buffer[64];
++    UNICODE_STRING name, value, expected;
++
++    RtlInitUnicodeString( &name, env_name );
++    value.Buffer = buffer;
++    value.Length = 0;
++    value.MaximumLength = sizeof(buffer);
++    if (RtlQueryEnvironmentVariable_U( NULL, &name, &value )) return FALSE;
++
++    RtlInitUnicodeString( &expected, backend_name );
++    return RtlEqualUnicodeString( &value, &expected, TRUE );
++}
++
++static BOOL is_d3dmetal_bridge_module( const UNICODE_STRING *base_name )
++{
++    static const WCHAR d3d10W[] = L"d3d10.dll";
++    static const WCHAR d3d11W[] = L"d3d11.dll";
++    static const WCHAR d3d12W[] = L"d3d12.dll";
++    static const WCHAR dxgiW[] = L"dxgi.dll";
++    static const WCHAR nvapi64W[] = L"nvapi64.dll";
++    static const WCHAR nvngxW[] = L"nvngx-on-metalfx.dll";
++    UNICODE_STRING name;
++
++    RtlInitUnicodeString( &name, d3d10W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, d3d11W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, d3d12W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, dxgiW );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, nvapi64W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, nvngxW );
++    return RtlEqualUnicodeString( base_name, &name, TRUE );
++}
++
++static void make_d3dmetal_bridge_image_writable( WINE_MODREF *wm, void *module, SIZE_T map_size )
++{
++    void *addr = module;
++    SIZE_T size = map_size;
++    ULONG old_prot;
++    NTSTATUS status;
++
++    if (!d3dmetal_native_enabled()) return;
++    if (!is_d3dmetal_bridge_module( &wm->ldr.BaseDllName )) return;
++
++    status = NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, PAGE_EXECUTE_READWRITE, &old_prot );
++    if (status) WARN( "Failed to make D3DMetal bridge %s writable, status %#lx.\n",
++                      debugstr_w(wm->ldr.BaseDllName.Buffer), status );
++    else TRACE( "Made D3DMetal bridge %s writable at %p-0x%Ix (old %#lx).\n",
++                debugstr_w(wm->ldr.BaseDllName.Buffer), addr, size, old_prot );
++}
++
+ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name, void **module,
+                               const SECTION_IMAGE_INFORMATION *image_info, const struct file_id *id,
+                               DWORD flags, BOOL system, BOOL redirected, WINE_MODREF **pwm )
+@@ -2323,6 +2381,16 @@
+ 
+     TRACE_(loaddll)( "Loaded %s at %p: %s\n", debugstr_w(wm->ldr.FullDllName.Buffer), *module,
+                      is_builtin ? "builtin" : "native" );
++
++    make_d3dmetal_bridge_image_writable( wm, *module, map_size );
++
++#if defined(__x86_64__)
++    if (wm->ldr.Flags & LDR_IMAGE_IS_DLL)
++    {
++        struct pe_module_loaded_params params = { *module, (void *)((BYTE *)*module + map_size) };
++        WINE_UNIX_CALL( unix_pe_module_loaded, &params );
++    }
++#endif
+ 
+     wm->ldr.LoadCount = 1;
+     *pwm = wm;
+@@ -3394,6 +3462,19 @@
+ 
+ 
+ /***********************************************************************
++ *              __wine_unix_call
++ *
++ * Compatibility export for D3DMetal PE route DLLs built against the
++ * pre-dispatcher unixlib ABI. Newer Wine code calls the inline helper in
++ * wine/unixlib.h, which forwards to __wine_unix_call_dispatcher.
++ */
++NTSTATUS WINAPI __wine_unix_call_exported( unixlib_handle_t handle, unsigned int code, void *args )
++{
++    return __wine_unix_call( handle, code, args );
++}
++
++
++/***********************************************************************
+  *           __wine_unix_spawnvp
+  */
+ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
+--- dlls/ntdll/ntdll.spec	2026-03-20 14:33:36
++++ dlls/ntdll/ntdll.spec	2026-07-03 06:58:28
+@@ -1751,6 +1751,7 @@
+ @ stdcall __wine_ctrl_routine(ptr)
+ @ extern -private __wine_syscall_dispatcher
+ @ extern -private __wine_unix_call_dispatcher
++@ stdcall __wine_unix_call(int64 long ptr) __wine_unix_call_exported
+ @ extern -private -arch=arm64ec __wine_unix_call_dispatcher_arm64ec
+ @ extern -private __wine_unixlib_handle
+ 
+--- dlls/ntdll/unix/system.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/system.c	2026-07-03 14:44:19
+@@ -80,6 +80,11 @@
+ #include "wine/asm.h"
+ #include "unix_private.h"
+ #include "wine/debug.h"
++
++#ifdef __APPLE__
++extern void apple_restore_pthread_slots( TEB *teb );
++extern void apple_mirror_teb_slots( TEB *teb );
++#endif
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(ntdll);
+ 
+@@ -3640,7 +3645,13 @@
+     {
+         RTL_DYNAMIC_TIME_ZONE_INFORMATION tz;
+ 
++#ifdef __APPLE__
++        apple_restore_pthread_slots( NtCurrentTeb() );
++#endif
+         get_timezone_info( &tz );
++#ifdef __APPLE__
++        apple_mirror_teb_slots( NtCurrentTeb() );
++#endif
+         len = sizeof(RTL_TIME_ZONE_INFORMATION);
+         if (size >= len)
+         {
+@@ -3886,7 +3897,13 @@
+     {
+         RTL_DYNAMIC_TIME_ZONE_INFORMATION tz;
+ 
++#ifdef __APPLE__
++        apple_restore_pthread_slots( NtCurrentTeb() );
++#endif
+         get_timezone_info( &tz );
++#ifdef __APPLE__
++        apple_mirror_teb_slots( NtCurrentTeb() );
++#endif
+         len = sizeof(tz);
+         if (size >= len)
+         {
+--- dlls/ntdll/unixlib.h	2026-03-20 14:33:36
++++ dlls/ntdll/unixlib.h	2026-07-03 14:56:45
+@@ -66,6 +66,12 @@
+     CONTEXT                    *context;
+ };
+ 
++struct pe_module_loaded_params
++{
++    void *start;
++    void *end;
++};
++
+ enum ntdll_unix_funcs
+ {
+     unix_load_so_dll,
+@@ -76,6 +82,9 @@
+     unix_wine_server_handle_to_fd,
+     unix_wine_spawnvp,
+     unix_system_time_precise,
++#if defined(__x86_64__)
++    unix_pe_module_loaded,
++#endif
+ };
+ 
+ extern unixlib_handle_t __wine_unixlib_handle;
+--- dlls/ntdll/unix/signal_x86_64.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/signal_x86_64.c	2026-07-03 14:41:05
+@@ -513,6 +513,11 @@
+     DWORD                 fs;            /* 0338 WOW TEB selector */
+     DWORD                 mxcsr;         /* 033c Unix-side mxcsr register */
+     char                  syscall_dispatch; /* 0340 */
++#ifdef __APPLE__
++    void                 *pthread_slot_self;
++    void                 *pthread_slot_tls;
++    void                 *pthread_slot_peb;
++#endif
+ };
+ 
+ C_ASSERT( sizeof(struct amd64_thread_data) <= sizeof(((struct ntdll_thread_data *)0)->cpu_data) );
+@@ -522,6 +527,11 @@
+ C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, fs ) == 0x338 );
+ C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, mxcsr ) == 0x33c );
+ C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, syscall_dispatch ) == 0x340 );
++#ifdef __APPLE__
++C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, pthread_slot_self ) == 0x348 );
++C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, pthread_slot_tls ) == 0x350 );
++C_ASSERT( offsetof( TEB, GdiTebBatch ) + offsetof( struct amd64_thread_data, pthread_slot_peb ) == 0x358 );
++#endif
+ 
+ static inline struct amd64_thread_data *amd64_thread_data(void)
+ {
+@@ -923,19 +933,11 @@
+         if (fs32_sel) arch_prctl( ARCH_SET_FS, thread_data->pthread_teb );
+     }
+ #elif defined __APPLE__
+-    {
+-        struct amd64_thread_data *thread_data = (struct amd64_thread_data *)&get_current_teb()->GdiTebBatch;
+-        _thread_set_tsd_base( (uint64_t)thread_data->pthread_teb );
+-
+-        /* When in a syscall, CS will be the kernel's selector (0x07, SYSCALL_CS in xnu source)
+-         * instead of the user selector (cs64_sel: 0x2b, USER64_CS).
+-         * Fix up sigcontext so later code can compare it to cs64_sel.
+-         *
+-         * Only applies on Intel, not under Rosetta.
+-         */
+-        if (CS_sig((ucontext_t *)sigcontext) == 0x07 /* SYSCALL_CS */)
+-            CS_sig((ucontext_t *)sigcontext) = cs64_sel;
+-    }
++    /* Keep Darwin's GS base pointing at pthread TLS. Native Apple libraries
++     * use %gs:0 for pthread self; Wine TEB slots are mirrored into that TLS
++     * area in init_syscall_frame(). */
++    if (CS_sig((ucontext_t *)sigcontext) == 0x07 /* SYSCALL_CS */)
++        CS_sig((ucontext_t *)sigcontext) = cs64_sel;
+ #endif
+     return sigcontext;
+ }
+@@ -954,10 +956,6 @@
+         thread_data->syscall_dispatch = 1;  /* SYSCALL_DISPATCH_FILTER_BLOCK */
+         if (fs32_sel) __asm__ volatile( "movw %0,%%fs" :: "r" (fs32_sel) );
+     }
+-#elif defined __APPLE__
+-    if (!is_inside_signal_stack( (void *)RSP_sig(sigcontext )) &&
+-        !is_inside_syscall( RSP_sig(sigcontext )))
+-        _thread_set_tsd_base( (uint64_t)NtCurrentTeb() );
+ #endif
+     if (is_16bit( sigcontext )) return;
+ #ifdef DS_sig
+@@ -1820,13 +1818,6 @@
+                    "jz 1f\n\t"
+                    "movw %ax,%fs\n"
+                    "1:\n\t"
+-#elif defined __APPLE__
+-                   "movq %rcx,%r10\n\t"
+-                   "movq %r13,%rdi\n\t"
+-                   "xorl %esi,%esi\n\t"
+-                   "movl $0x3000003,%eax\n\t"  /* _thread_set_tsd_base */
+-                   "syscall\n\t"
+-                   "movq %r10,%rcx\n\t"
+ #endif
+                    "movq 0x330(%r13),%r10\n\t" /* amd64_thread_data()->instrumentation_callback */
+                    "movq (%r10),%r10\n\t"
+@@ -2853,7 +2844,32 @@
+ 
+     if (kr == KERN_SUCCESS) return (void*)tiinfo.thread_handle;
+     return NULL;
++}
++
++void apple_restore_pthread_slots( TEB *teb )
++{
++    struct amd64_thread_data *thread_data = (struct amd64_thread_data *)&teb->GdiTebBatch;
++    char *pthread_teb = thread_data->pthread_teb;
++
++    if (!pthread_teb) return;
++    *(void **)(pthread_teb + FIELD_OFFSET(TEB, Tib.Self)) = thread_data->pthread_slot_self;
++    *(void **)(pthread_teb + FIELD_OFFSET(TEB, ThreadLocalStoragePointer)) = thread_data->pthread_slot_tls;
++    *(void **)(pthread_teb + FIELD_OFFSET(TEB, Peb)) = thread_data->pthread_slot_peb;
+ }
++
++void apple_mirror_teb_slots( TEB *teb )
++{
++    struct amd64_thread_data *thread_data = (struct amd64_thread_data *)&teb->GdiTebBatch;
++    char *pthread_teb = thread_data->pthread_teb;
++
++    if (!pthread_teb) return;
++    thread_data->pthread_slot_self = *(void **)(pthread_teb + FIELD_OFFSET(TEB, Tib.Self));
++    thread_data->pthread_slot_tls  = *(void **)(pthread_teb + FIELD_OFFSET(TEB, ThreadLocalStoragePointer));
++    thread_data->pthread_slot_peb  = *(void **)(pthread_teb + FIELD_OFFSET(TEB, Peb));
++    *(void **)(pthread_teb + FIELD_OFFSET(TEB, Tib.Self)) = teb->Tib.Self;
++    *(void **)(pthread_teb + FIELD_OFFSET(TEB, ThreadLocalStoragePointer)) = teb->ThreadLocalStoragePointer;
++    *(void **)(pthread_teb + FIELD_OFFSET(TEB, Peb)) = teb->Peb;
++}
+ #endif
+ 
+ #ifdef PR_SET_SYSCALL_USER_DISPATCH
+@@ -2985,6 +3001,8 @@
+     sysarch( X86_64_SET_GSBASE, &teb );
+ #elif defined (__APPLE__)
+     thread_data->pthread_teb = mac_thread_gsbase();
++    teb->Instrumentation[0] = thread_data->pthread_teb;
++    apple_mirror_teb_slots( teb );
+ #else
+ # error Please define setting %gs for your architecture
+ #endif
+@@ -3093,7 +3111,12 @@
+  */
+ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher,
+                    __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_gs_load") ":\n\t"
++#ifdef __APPLE__
++                   "movq %gs:0x30,%rcx\n\t"
++                   "movq 0x378(%rcx),%rcx\n\t"     /* thread_data->syscall_frame */
++#else
+                    "movq %gs:0x378,%rcx\n\t"       /* thread_data->syscall_frame */
++#endif
+                    "popq 0x70(%rcx)\n\t"           /* frame->rip */
+                    __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
+                    __ASM_CFI_REG_IS_AT2(rip, rcx, 0xf0,0x00)
+@@ -3195,12 +3218,6 @@
+                    "syscall\n\t"
+                    "leaq -0x98(%rbp),%rcx\n"
+                    "2:\n\t"
+-#elif defined __APPLE__
+-                   "movq 0x320(%r13),%rdi\n\t"     /* amd64_thread_data()->pthread_teb */
+-                   "xorl %esi,%esi\n\t"
+-                   "movl $0x3000003,%eax\n\t"      /* _thread_set_tsd_base */
+-                   "syscall\n\t"
+-                   "leaq -0x98(%rbp),%rcx\n"
+ #endif
+                    "ldmxcsr 0x33c(%r13)\n\t"       /* amd64_thread_data()->mxcsr */
+                    "movl 0xb0(%rcx),%eax\n\t"      /* frame->syscall_id */
+@@ -3248,15 +3265,6 @@
+                    "jz 1f\n\t"
+                    "movw %dx,%fs\n"
+                    "1:\n\t"
+-#elif defined __APPLE__
+-                   "movq %rax,%r8\n\t"
+-                   "movq %rcx,%rdx\n\t"
+-                   "movq %r13,%rdi\n\t"            /* teb */
+-                   "xorl %esi,%esi\n\t"
+-                   "movl $0x3000003,%eax\n\t"      /* _thread_set_tsd_base */
+-                   "syscall\n\t"
+-                   "movq %rdx,%rcx\n\t"
+-                   "movq %r8,%rax\n\t"
+ #endif
+                    "movl 0xb4(%rcx),%edx\n\t"      /* frame->restore_flags */
+                    "testl $0x48,%edx\n\t"          /* CONTEXT_FLOATING_POINT | CONTEXT_XSTATE */
+@@ -3345,7 +3353,12 @@
+                    "popfq\n\t"
+                    "iretq\n"
+                    /* RESTORE_FLAGS_INSTRUMENTATION */
++#ifdef __APPLE__
++                   "2:\tmovq %gs:0x30,%r10\n\t"
++                   "movq 0x330(%r10),%r10\n\t"    /* amd64_thread_data()->instrumentation_callback */
++#else
+                    "2:\tmovq %gs:0x330,%r10\n\t"  /* amd64_thread_data()->instrumentation_callback */
++#endif
+                    "movq (%r10),%r10\n\t"
+                    "test %r10,%r10\n\t"
+                    "jz 3b\n\t"
+@@ -3404,7 +3417,12 @@
+                    "jmp " __ASM_LOCAL_LABEL("__wine_syscall_dispatcher_return") )
+ 
+ __ASM_GLOBAL_FUNC( __wine_syscall_dispatcher_instrumentation,
++#ifdef __APPLE__
++                   "movq %gs:0x30,%rcx\n\t"
++                   "movq 0x378(%rcx),%rcx\n\t"     /* thread_data->syscall_frame */
++#else
+                    "movq %gs:0x378,%rcx\n\t"       /* thread_data->syscall_frame */
++#endif
+                    "popq 0x70(%rcx)\n\t"           /* frame->rip */
+                    __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
+                    __ASM_CFI_REG_IS_AT2(rip, rcx, 0xf0,0x00)
+@@ -3422,7 +3440,12 @@
+ __ASM_GLOBAL_FUNC( __wine_unix_call_dispatcher,
+                    "movq %rcx,%r10\n\t"
+                    __ASM_LOCAL_LABEL("__wine_unix_call_dispatcher_gs_load") ":\n\t"
++#ifdef __APPLE__
++                   "movq %gs:0x30,%rcx\n\t"
++                   "movq 0x378(%rcx),%rcx\n\t"     /* thread_data->syscall_frame */
++#else
+                    "movq %gs:0x378,%rcx\n\t"       /* thread_data->syscall_frame */
++#endif
+                    "popq 0x70(%rcx)\n\t"           /* frame->rip */
+                    __ASM_CFI(".cfi_adjust_cfa_offset -8\n\t")
+                    __ASM_CFI_REG_IS_AT2(rip, rcx, 0xf0,0x00)
+@@ -3485,11 +3508,6 @@
+                    "mov $158,%eax\n\t"             /* SYS_arch_prctl */
+                    "syscall\n\t"
+                    "2:\n\t"
+-#elif defined __APPLE__
+-                   "movq 0x320(%r13),%rdi\n\t"     /* amd64_thread_data()->pthread_teb */
+-                   "xorl %esi,%esi\n\t"
+-                   "movl $0x3000003,%eax\n\t"      /* _thread_set_tsd_base */
+-                   "syscall\n\t"
+ #endif
+                    "ldmxcsr 0x33c(%r13)\n\t"       /* amd64_thread_data()->mxcsr */
+                    "movq %r8,%rdi\n\t"             /* args */
+@@ -3518,17 +3536,8 @@
+                    "jz 1f\n\t"
+                    "movw %dx,%fs\n"
+                    "1:\n\t"
+-#elif defined __APPLE__
+-                   "movq %rax,%rdx\n\t"
+-                   "movq %rcx,%r14\n\t"
+-                   "movq %r13,%rdi\n\t"            /* teb */
+-                   "xorl %esi,%esi\n\t"
+-                   "movl $0x3000003,%eax\n\t"      /* _thread_set_tsd_base */
+-                   "syscall\n\t"
+-                   "movq %r14,%rcx\n\t"
+-                   "movq %rdx,%rax\n\t"
+-                   "movq 0x60(%rcx),%r14\n\t"
+ #endif
++                   "movq 0x60(%rcx),%r14\n\t"
+                    "movq 0x58(%rcx),%r13\n\t"
+                    "movq 0x28(%rcx),%rdi\n\t"
+                    "movq 0x20(%rcx),%rsi\n\t"
+
+--- dlls/ntdll/unix/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/loader.c	2026-07-03 17:54:00
+@@ -298,16 +298,61 @@
+     }
+ }
+ 
++static BOOL d3dmetal_native_enabled_unix(void)
++{
++    const char *backend = getenv( "MS_GRAPHICS_BACKEND" );
++    const char *active = getenv( "MS_ACTIVE_GRAPHICS_BACKEND" );
++
++    return (backend && !strcmp( backend, "d3dmetal_native" )) ||
++           (active && !strcmp( active, "d3dmetal_native" ));
++}
++
++static char *get_d3dmetal_payload_dir(void)
++{
++    const char *payload = getenv( "MS_D3DMETAL_PAYLOAD_DIR" );
++    const char *shared;
++    char *copy, *slash;
++
++    if (payload && *payload) return strdup( payload );
++
++    /* Derive <runtime>/lib/d3dmetal_native from
++     * MS_D3DMETAL_SHARED_PATH=<payload>/external/libd3dshared.dylib.
++     */
++    shared = getenv( "MS_D3DMETAL_SHARED_PATH" );
++    if (!shared || !*shared) return NULL;
++
++    if (!(copy = strdup( shared ))) return NULL;
++    if (!(slash = strrchr( copy, '/' ))) goto failed;
++    *slash = 0;
++    if (!(slash = strrchr( copy, '/' ))) goto failed;
++    *slash = 0;
++    return copy;
++
++failed:
++    free( copy );
++    return NULL;
++}
++
+ static void set_dll_path(void)
+ {
+     char *p, *path = getenv( "WINEDLLPATH" );
++    char *d3dmetal_payload = NULL;
+     int i, count = 0;
+ 
+-    if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
++    if (d3dmetal_native_enabled_unix()) d3dmetal_payload = get_d3dmetal_payload_dir();
+ 
++    if (d3dmetal_payload) count++;
++    if (path) for (p = path, count++; *p; p++) if (*p == ':') count++;
++
+     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+     count = 0;
+ 
++    /* Wine normally searches its compiled lib/wine root before WINEDLLPATH.
++     * For MetalSharp's D3DMetal Native route, the staged bridge DLLs must win
++     * over Wine's stock d3d10/d3d11/d3d12/dxgi builtins so they can pair with
++     * the D3DMetal unixlib sidecars instead of falling back to wined3d.
++     */
++    if (d3dmetal_payload) dll_paths[count++] = d3dmetal_payload;
+     if (!build_dir) dll_paths[count++] = dll_dir;
+ 
+     if (path)

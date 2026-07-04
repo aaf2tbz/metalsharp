@@ -16,10 +16,16 @@ Use this page as the repo map before changing launch/runtime code.
 
 ## Runtime
 
+- [Runtime Contracts](runtime/runtime-contracts.md) - backend-owned runtime lane contract table and canonical `dxmt_m12` naming.
+- [Runtime Manifest](runtime/runtime-manifest.md) - read-only Wine/DXMT runtime manifest report and validation contract.
+- [Runtime Diagnostics](runtime/runtime-diagnostics.md) - read-only aggregate Wine 2.0 runtime readiness, migration policy, prefix policy, and install replacement guard.
+- [Wine 2.0 Phase 11–16 Upgrade Readiness](runtime/wine20-phase11-16-upgrade-readiness.md) - doctor registry, known-good snapshots, compatibility DB v2, safe mode, save manager, support inventory, toolchain inventory, and release gates.
+- [Source Adapters](runtime/source-adapters.md) - read-only unified Steam/GOG/Sharp adapter contract and prefix ownership model.
+- [Vulkan Lane Sources](runtime/vulkan-lane-sources.md) - pinned DXVK/VKD3D-Proton/MoltenVK source acquisition for planned Vulkan-family lanes.
 - [Runtime Bundles and Steam Routing](runtime/runtime-bundles-and-steam-routing.md) - bundle provenance, wrapper deployment, and the correct Wine Steam route.
 - [Mono Runtime Lanes](runtime/mono-runtime-lanes.md) - Mono/FNA/XNA route boundaries and native Mono lane details.
 - [Wine Architecture](runtime/wine-architecture.md) - Wine prefix/runtime layout and wrapper behavior.
-- [Launcher Runtime](runtime/launcher-runtime.md) - Sharp Library launcher and CEF/WebView runtime handling.
+- [Launcher Runtime](runtime/launcher-runtime.md) - Sharp Library launcher profile contracts and CEF/WebView runtime handling.
 - [Compatdata Architecture](runtime/compatdata-architecture.md) - Steam game compatdata ownership.
 - [Host Runtime ABI](runtime/host-runtime-abi.md) - host shim ABI boundaries.
 - [Redistributable Runtime](runtime/redistributable-runtime.md) - redistributable source and repair policy.
@@ -56,6 +62,7 @@ These files are planning history and should not be treated as the current implem
 ## Release
 
 - [Release Signing](release/release-signing.md)
+- [Private Fork Update Policy](release/private-fork-updates.md) - Wine 2.0 fork update-source guard and opt-in environment variables.
 
 ## Bundle Truth Sources
 

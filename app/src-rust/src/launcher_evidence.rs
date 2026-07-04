@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 
+const EVIDENCE_SCHEMA: &str = "metalsharp.launcher.evidence.v1";
+const INVENTORY_SCHEMA: &str = "metalsharp.launcher.evidence.inventory.v1";
 const TAIL_LINES: usize = 80;
 const MAX_ARTIFACT_READ_BYTES: u64 = 1024 * 1024;
 const MAX_LOG_DEPTH: usize = 10;
@@ -24,6 +26,30 @@ struct LauncherFacts {
     ea_msi_log_empty: bool,
     ubisoft_launcher_started: bool,
     ubisoft_version: Option<String>,
+}
+
+pub fn launcher_evidence_inventory() -> Value {
+    let targets: Vec<Value> =
+        ["minecraft", "ea", "ubisoft"].into_iter().map(|family| launcher_evidence_target(family)).collect();
+    let proven = targets
+        .iter()
+        .filter(|target| target.get("status").and_then(|value| value.as_str()) == Some("controlled_proof_recorded"))
+        .count();
+    json!({
+        "ok": true,
+        "schema": INVENTORY_SCHEMA,
+        "readOnly": true,
+        "summary": {
+            "total": targets.len(),
+            "controlledProofRecorded": proven,
+            "pendingControlledProof": targets.len().saturating_sub(proven),
+        },
+        "targets": targets,
+        "invariants": [
+            "This inventory reads existing bottle manifests/logs only; it does not launch Wine, start launchers, repair bottles, or mutate prefixes.",
+            "Controlled launcher proof for Minecraft/EA/Ubisoft requires explicit user approval."
+        ],
+    })
 }
 
 pub fn handle_launcher_evidence(body: &Map<String, Value>) -> Value {
@@ -51,6 +77,8 @@ pub fn handle_launcher_evidence(body: &Map<String, Value>) -> Value {
 
     json!({
         "ok": true,
+        "schema": EVIDENCE_SCHEMA,
+        "readOnly": true,
         "id": manifest.id,
         "family": family,
         "status": status,
@@ -81,6 +109,44 @@ pub fn handle_launcher_evidence(body: &Map<String, Value>) -> Value {
         "artifacts": artifacts,
         "nextActions": launcher_next_actions(&status, &family),
     })
+}
+
+fn launcher_evidence_target(family: &str) -> Value {
+    match latest_bottle_for_family(family) {
+        Some(id) => {
+            let mut body = Map::new();
+            body.insert("id".to_string(), json!(id));
+            let report = handle_launcher_evidence(&body);
+            json!({
+                "family": family,
+                "status": launcher_inventory_status(&report),
+                "bottleId": report.get("id").cloned().unwrap_or(Value::Null),
+                "evidenceStatus": report.get("status").cloned().unwrap_or(Value::Null),
+                "summary": report.get("summary").cloned().unwrap_or(Value::Null),
+                "nextActions": report.get("nextActions").cloned().unwrap_or_else(|| json!([])),
+                "report": report,
+            })
+        },
+        None => json!({
+            "family": family,
+            "status": "pending_no_bottle_evidence",
+            "bottleId": Value::Null,
+            "evidenceStatus": Value::Null,
+            "summary": format!("No existing launcher bottle evidence found for {family}."),
+            "nextActions": ["Create or select a launcher proof bottle only after explicit user approval."],
+        }),
+    }
+}
+
+fn launcher_inventory_status(report: &Value) -> &'static str {
+    match report.get("status").and_then(|value| value.as_str()) {
+        Some("installed_launcher_detected") => "filesystem_validated",
+        Some("ea_msi_1603") | Some("ubisoft_auto_started_then_crash_reporter") => "known_blocker_recorded",
+        Some("ubisoft_installed_no_direct_launch_proof") | Some("installed_not_launched_directly") => {
+            "pending_controlled_direct_launch"
+        },
+        _ => "pending_controlled_proof",
+    }
 }
 
 fn latest_bottle_for_family(family: &str) -> Option<String> {
@@ -118,6 +184,7 @@ fn latest_bottle_for_family(family: &str) -> Option<String> {
 fn family_tokens(family: &str) -> Vec<String> {
     match family {
         "ea" | "ea_app" | "origin" => vec!["eaapp".to_string(), "ea app".to_string(), "origin".to_string()],
+        "minecraft" | "mojang" => vec!["minecraft".to_string(), "mojang".to_string()],
         "ubisoft" | "ubisoft_connect" | "uplay" => vec!["ubisoft".to_string(), "uplay".to_string()],
         _ => vec![family.to_string()],
     }
@@ -131,6 +198,8 @@ fn launcher_family(manifest: &BottleManifest) -> String {
         "ubisoft".to_string()
     } else if haystack.contains("eaapp") || haystack.contains("ea app") || haystack.contains("origin") {
         "ea".to_string()
+    } else if haystack.contains("minecraft") || haystack.contains("mojang") {
+        "minecraft".to_string()
     } else {
         "unknown".to_string()
     }
@@ -455,6 +524,20 @@ fn tail_lines(text: &str, max_lines: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_evidence_inventory_is_read_only_and_tracks_proof_targets() {
+        let inventory = launcher_evidence_inventory();
+        assert_eq!(inventory.get("schema").and_then(|value| value.as_str()), Some(INVENTORY_SCHEMA));
+        assert_eq!(inventory.get("readOnly").and_then(|value| value.as_bool()), Some(true));
+        let targets = inventory.get("targets").and_then(|value| value.as_array()).expect("targets");
+        for family in ["minecraft", "ea", "ubisoft"] {
+            assert!(
+                targets.iter().any(|target| target.get("family").and_then(|value| value.as_str()) == Some(family)),
+                "missing launcher proof target {family}"
+            );
+        }
+    }
 
     #[test]
     fn parses_ea_inst_14_1603() {

@@ -25,6 +25,9 @@ It is used by the public Wine-backed routes M12, M11, M10, and M9. Internal fall
 │   ├── dxmt/
 │   │   ├── x86_64-unix/
 │   │   └── x86_64-windows/
+│   ├── dxmt_m12/
+│   │   ├── x86_64-unix/
+│   │   └── x86_64-windows/
 └── etc/
     ├── dxmt.conf
     └── vulkan/icd.d/MoltenVK_icd.json
@@ -44,6 +47,8 @@ User/runtime state lives beside the runtime root:
 ~/.metalsharp/
 ├── prefix-steam/
 ├── bottles/
+│   └── gog-prefix/
+│       └── prefix/
 ├── sharp-library/
 ├── games/
 ├── shader-cache/
@@ -77,12 +82,19 @@ winemetal.dll
 
 M10 deploys Wine's public `d3d10.dll` and `d3d10_1.dll` entrypoints for D3D10 imports, then uses DXMT's `d3d10core.dll` as the D3D10 handoff and shares the D3D11/DXGI/winemetal runtime with M11.
 
-M12:
+M12 reads from the canonical installed `dxmt_m12` runtime surface:
+
+```text
+~/.metalsharp/runtime/wine/lib/dxmt_m12/
+```
+
+and deploys:
 
 ```text
 d3d12.dll
 d3d11.dll
 dxgi.dll
+dxgi_dxmt.dll
 d3d10core.dll
 winemetal.dll
 ```
@@ -107,6 +119,12 @@ Sharp Library installer/app bottles use dedicated prefixes:
 
 ```text
 ~/.metalsharp/bottles/<id>/prefix/
+```
+
+GOGDL-backed GOG uses a dedicated source prefix and must never use `prefix-steam`:
+
+```text
+~/.metalsharp/bottles/gog-prefix/prefix/
 ```
 
 Steam game bottles are different: they are launch-authoritative readiness records, but their `prefix_path` currently

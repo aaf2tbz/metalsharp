@@ -251,6 +251,8 @@ def build_staging(tmp: Path) -> dict[str, Path]:
 
     optional_archives = {
         "dxvk.tar.zst": ("dxvk", "dxvk-1.10.3"),
+        "vkd3d.tar.zst": ("vkd3d", "vkd3d"),
+        "vkd3d-proton.tar.zst": ("vkd3d-proton", "vkd3d-proton"),
         "mono-x86.tar.zst": ("mono-x86", "mono-x86"),
         "fnalibs.tar.zst": ("fnalibs", "fnalibs"),
         "fna-kickstart.tar.zst": ("fna-kickstart", "fna-kickstart"),
@@ -273,6 +275,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
 
     copy_tree(APP_DIR / "updater", roots["scripts"] / "updater")
     copy_tree(PROJECT_ROOT / "configs", roots["scripts"] / "configs")
+    copy_tree(PROJECT_ROOT / "tools" / "runtime", roots["scripts"] / "runtime")
     copy_tree(APP_DIR / "native", roots["scripts"] / "native", ignore=lambda rel, is_dir: rel.parts[:1] == ("host",))
     for cef_asset in SOURCE_BUNDLES.glob("cef*"):
         copy_file(cef_asset, roots["scripts"] / "cef" / cef_asset.name)

@@ -43,15 +43,28 @@ for required in \
   "$BUNDLES/metalsharp-runtime.tar.zst" \
   "$BUNDLES/metalsharp-assets.tar.zst" \
   "$BUNDLES/fnalibs.tar.zst" \
+  "$BUNDLES/dxvk.tar.zst" \
+  "$BUNDLES/vkd3d-proton.tar.zst" \
   "$BUNDLES/metalsharp-scripts-tools.tar.zst" \
   "$BUNDLES/metalsharp-steam.tar.zst" \
-  "$BUNDLES/metalsharp-d3d12-developer-sdk.tar.zst"
+  "$BUNDLES/metalsharp-d3d12-developer-sdk.tar.zst" \
+  "$BUNDLES/metalsharp-d3dmetal-native-contract.tar.zst"
 do
   if [ ! -s "$required" ]; then
     echo "DMG missing required runtime asset: ${required#$APP_DIR/}" >&2
     exit 1
   fi
 done
+
+# Phase 5: d3dmetal_native contract + verifier scripts must ship in the DMG's
+# scripts-tools bundle path. The contract bundle MUST be binary-free (Apple
+# D3DMetal payloads are never redistributed).
+if [ -s "$BUNDLES/metalsharp-d3dmetal-native-contract.tar.zst" ]; then
+  if zstd -dc "$BUNDLES/metalsharp-d3dmetal-native-contract.tar.zst" 2>/dev/null | tar -tf - 2>/dev/null | grep -Eq '\.(dll|dylib)$|D3DMetal$'; then
+    echo "d3dmetal-native contract bundle must NOT contain Apple binaries" >&2
+    exit 1
+  fi
+fi
 
 if [ ! -s "$HOST/libmetalsharp_host_runtime.dylib" ] \
   && [ ! -s "$HOST/libmetalsharp_host_runtime.so" ] \

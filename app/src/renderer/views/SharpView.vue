@@ -56,6 +56,16 @@ interface RuntimeProfileDefinition {
   components: string[];
 }
 
+interface RuntimeRouteOption {
+  id: string;
+  name: string;
+  runtimeContractId?: string | null;
+  description?: string;
+  backend?: string;
+  experimental?: boolean;
+  requires_wine?: boolean;
+}
+
 interface BottleManifest {
   id: string;
   name: string;
@@ -173,6 +183,7 @@ interface GogGame {
   lastInstallPid?: number | null;
   lastLaunchPid?: number | null;
   lastLogPath?: string | null;
+  lastLaunchReceiptPath?: string | null;
   lastError?: string | null;
 }
 
@@ -203,6 +214,7 @@ function openDropdown(name: string, event: MouseEvent) {
 }
 const bottles = ref<BottleManifest[]>([]);
 const runtimeProfiles = ref<RuntimeProfileDefinition[]>([]);
+const runtimeRouteOptions = ref<RuntimeRouteOption[]>([]);
 const redistSources = ref<RedistSourceGuide[]>([]);
 const bottleReports = ref<Record<string, BottleDiagnostic | null>>({});
 const d3dmetalStates = ref<Record<string, D3DMetalGptkState | null>>({});
@@ -223,14 +235,17 @@ const gogStatus = ref<GogStatus | null>(null);
 const gogGames = ref<GogGame[]>([]);
 const gogLoading = ref<Record<string, boolean>>({});
 const gogProgress = ref<Record<string, number>>({});
-const engineOptions = [
-  { id: "d3dmetal", name: "D3DMetal" },
+const fallbackEngineOptions: RuntimeRouteOption[] = [
   { id: "m12", name: "M12" },
   { id: "m11", name: "M11" },
   { id: "m10", name: "M10" },
   { id: "m9", name: "M9" },
+  { id: "dxvk_d9", name: "DXVK D3D9" },
+  { id: "dxvk_d11", name: "DXVK D3D11" },
+  { id: "vkd3d_d12", name: "VKD3D D3D12" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
+const engineOptions = computed(() => runtimeRouteOptions.value.length ? runtimeRouteOptions.value : fallbackEngineOptions);
 
 const componentDisplayName: Record<string, string> = {
   "mono-arm64": "Mono ARM64",
@@ -249,6 +264,9 @@ const componentDisplayName: Record<string, string> = {
   "m12_winemetal": "M12 winemetal.dll / .so",
   "m12_gpu_stubs": "M12 GPU Stubs",
   "d3d12_agility": "D3D12 Agility",
+  "dxvk_runtime": "DXVK Runtime",
+  "vkd3d_runtime": "VKD3D Runtime",
+  "vulkan_icd": "Vulkan ICD",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
   "gptk": "GPTK",
@@ -288,16 +306,19 @@ function d3dmetalActionReady(action: D3DMetalGptkAction): boolean {
 function isFnaProfile(profile: string): boolean {
   return profile === "fna_arm64" || profile === "fna_x86";
 }
-const selectableRuntimeProfileIds = new Set(["m12", "d3dmetal", "m11", "m10", "m9", "fna_arm64"]);
+const selectableRuntimeProfileIds = computed(() => new Set(engineOptions.value.map((option) => option.id)));
 const visibleRuntimeProfiles = computed(() => {
-  const profiles = runtimeProfiles.value.some((profile) => profile.id === "d3dmetal")
-    ? runtimeProfiles.value
-    : [...runtimeProfiles.value, { id: "d3dmetal", name: "D3DMetal (GPTK)", components: ["gptk", "rosetta", "gptk_prefix", "vcrun2019_x64", "vcrun2019_x86"] }];
-  return profiles
-    .filter((profile) => selectableRuntimeProfileIds.has(profile.id))
+  // The external Homebrew GPTK / D3DMetal (GPTK) profile is removed. The
+  // native d3dmetal_native lane is reserved and not selectable until the Wine
+  // host ABI and payload are ready (later phases).
+  return runtimeProfiles.value
+    .filter((profile) => selectableRuntimeProfileIds.value.has(profile.id))
     .map((profile) => ({
       ...profile,
-      name: profile.id === "fna_arm64" ? "Mono/FNA" : profile.name.replace(/^D3D(\d+) Metal$/, "M$1"),
+      name:
+        profile.id === "fna_arm64"
+          ? "Mono/FNA"
+          : (engineOptions.value.find((option) => option.id === profile.id)?.name ?? profile.name.replace(/^D3D(\d+) Metal$/, "M$1")),
     }));
 });
 
@@ -306,10 +327,11 @@ function sharpAppNameSort(a: SharpApp, b: SharpApp) {
 }
 
 async function load() {
-  const [result, bottleResult, profileResult, redistResult, gogStatusResult, gogGamesResult] = await Promise.all([
+  const [result, bottleResult, profileResult, routeOptionsResult, redistResult, gogStatusResult, gogGamesResult] = await Promise.all([
     api<{ ok: boolean; apps: SharpApp[] }>("GET", "/sharp-library"),
     api<{ ok: boolean; bottles: BottleManifest[] }>("GET", "/bottles"),
     api<{ ok: boolean; profiles: RuntimeProfileDefinition[] }>("GET", "/bottles/profiles"),
+    api<{ ok: boolean; pipelines: RuntimeRouteOption[] }>("GET", "/mtsp/pipelines"),
     api<{ ok: boolean; sources: RedistSourceGuide[] }>("GET", "/bottles/redist-sources"),
     api<{ ok: boolean; status: GogStatus }>("GET", "/sharp-library/gog/status"),
     api<{ ok: boolean; games: GogGame[]; status: GogStatus }>("GET", "/sharp-library/gog/games"),
@@ -326,6 +348,7 @@ async function load() {
     bottles.value = bottleResult.bottles;
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
+  if (routeOptionsResult?.ok) runtimeRouteOptions.value = routeOptionsResult.pipelines.filter((option) => option.id !== "auto");
   if (redistResult?.ok) redistSources.value = redistResult.sources;
   if (gogStatusResult?.ok) gogStatus.value = gogStatusResult.status;
   if (gogGamesResult?.ok) {
@@ -480,7 +503,7 @@ async function monitorGogProgress(productId: string) {
 
 async function playGogGame(game: GogGame) {
   gogLoading.value[`${game.productId}:play`] = true;
-  const result = await api<{ ok: boolean; game?: GogGame; pid?: number; error?: string }>("POST", "/sharp-library/gog/play", { productId: game.productId }, 90 * 1000);
+  const result = await api<{ ok: boolean; game?: GogGame; pid?: number; launchReceiptPath?: string | null; error?: string }>("POST", "/sharp-library/gog/play", { productId: game.productId }, 90 * 1000);
   gogLoading.value[`${game.productId}:play`] = false;
   if (result?.ok && result.game) {
     upsertGogGame(result.game);
@@ -602,43 +625,25 @@ function clearD3DMetalBottleState(bottleId: string) {
 }
 
 async function loadD3DMetalStatus(bottle: BottleManifest) {
-  if (bottle.runtime_profile !== "d3dmetal") {
-    clearD3DMetalBottleState(bottle.id);
-    return;
-  }
-  if (!bottle.steam_app_id) return;
-  const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/status", {
-    appid: bottle.steam_app_id,
-    bottleId: bottle.id,
-  });
-  if (result?.ok && result.state) {
-    d3dmetalStates.value[bottle.id] = result.state;
-    d3dmetalActions.value[bottle.id] = result.actions ?? [];
-  } else {
-    clearD3DMetalBottleState(bottle.id);
-  }
+  // The retired GPTK bottle endpoints are gone; native D3DMetal readiness is
+  // surfaced through runtime doctor/repair and normal launch receipts.
+  clearD3DMetalBottleState(bottle.id);
 }
 
 async function saveD3DMetalBottle(bottle: BottleManifest) {
-  if (!bottle.steam_app_id || !bottle.game_install_path) {
-    toast.show("D3DMetal save requires a Steam app id and game install path", "error");
-    return;
-  }
   bottleLoading.value[bottle.id] = true;
-  const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/save", {
-    appid: bottle.steam_app_id,
-    bottleId: bottle.id,
+  const result = await api<{ ok: boolean; bottle?: BottleManifest; error?: string }>("POST", "/bottles/edit", {
+    id: bottle.id,
     name: bottle.name,
-    gameDir: bottle.game_install_path,
-  }, 10 * 60 * 1000);
+    preferredPipeline: "d3dmetal",
+  });
   bottleLoading.value[bottle.id] = false;
-  if (result?.ok && result.state) {
-    d3dmetalStates.value[bottle.id] = result.state;
-    d3dmetalActions.value[bottle.id] = result.actions ?? [];
-    toast.show("D3DMetal bottle saved; seed VC runtime DLLs and seed prefix when ready", "success");
+  if (result?.ok && result.bottle) {
+    upsertBottle(result.bottle);
+    clearD3DMetalBottleState(bottle.id);
+    toast.show("D3DMetal Native route saved; launch uses the normal bottle prefix", "success");
   } else {
-    toast.show(result?.error ?? "D3DMetal bottle save failed", "error");
-    await loadD3DMetalStatus(bottle);
+    toast.show(result?.error ?? "D3DMetal route save failed", "error");
   }
 }
 
@@ -647,21 +652,8 @@ function sharpAppExeAbsolute(app: SharpApp) {
   return `${app.install_dir.replace(/\/$/, "")}/${app.exe_path.replace(/^\.\//, "")}`;
 }
 
-function d3dmetalActionRoute(actionId: string) {
-  switch (actionId) {
-    case "install_homebrew_gptk":
-      return "/d3dmetal/bottles/install-homebrew-gptk";
-    case "install_rosetta":
-      return "/d3dmetal/bottles/install-rosetta";
-    case "repair_gptk_payload":
-      return "/d3dmetal/bottles/repair-gptk-payload";
-    case "install_x64_redist":
-      return "/d3dmetal/bottles/install-x64-redist";
-    case "seed_prefix":
-      return "/d3dmetal/bottles/seed-prefix";
-    default:
-      return "/d3dmetal/bottles/play";
-  }
+function d3dmetalActionRoute(_actionId: string) {
+  return "/steam/launch-game";
 }
 
 async function runD3DMetalAction(bottle: BottleManifest, action: D3DMetalGptkAction, app?: SharpApp): Promise<number | null> {
@@ -830,30 +822,6 @@ function bottleBadgeClass(health: string) {
 async function launchApp(id: string, engine: string) {
   const app = apps.value.find((a) => a.id === id);
   if (!app) return;
-  if (engine === "d3dmetal" && app.bottle_id) {
-    const bottle = bottles.value.find((item) => item.id === app.bottle_id);
-    if (bottle?.steam_app_id) {
-      if (!d3dmetalStates.value[bottle.id]) await loadD3DMetalStatus(bottle);
-      const playAction = d3dmetalActions.value[bottle.id]?.find((action) => action.id === "play_d3dmetal") ?? {
-        id: "play_d3dmetal",
-        label: "Play D3DMetal",
-        enabled: d3dmetalStates.value[bottle.id]?.play_ready === true,
-        state: d3dmetalStates.value[bottle.id]?.play_ready ? "seeded" : "missing",
-        detail: "Launch game exe directly through GPTK Wine",
-      };
-      if (!d3dmetalStates.value[bottle.id]?.play_ready || !playAction.enabled) {
-        toast.show("D3DMetal bottle is not ready; seed VC runtime DLLs and seed prefix first", "error");
-        return;
-      }
-      const pid = await runD3DMetalAction(bottle, playAction, app);
-      if (pid) {
-        runningSharpPids.value[id] = pid;
-        launchErrors.value[id] = "";
-        diagnosticsOpen.value[id] = false;
-      }
-      return;
-    }
-  }
   toast.show(`Launching ${app.name}...`);
   const result = await api<{ ok: boolean; pid?: number; pipeline?: string; warnings?: string[]; error?: string }>(
     "POST",
