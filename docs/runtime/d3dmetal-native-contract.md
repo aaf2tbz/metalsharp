@@ -59,12 +59,14 @@ and payload are ready"`.
 
 Current isolated no-game packaged-runtime evidence (2026-07-03):
 
+Latest post-restage proof log: `/Volumes/AverySSD/metalsharp-d3dmetal-isolated-probe/logs/packaged-d3dmetal-post-restage-full-20260703-183603`.
+
 - `wineboot` succeeds under staged MetalSharp Wine 11.5 x86_64.
 - `tools/runtime/check-d3dmetal-native-payload.py --runtime-root <staged-runtime> --json` reports `ready: true`.
 - `CreateDXGIFactory2` returns `hr=0x00000000`.
 - `D3D12CreateDevice(NULL)` returns `hr=0x00000000`.
 - `D3D11CreateDevice(NULL)` returns `hr=0x00000000` after the Wine loader gives `MS_D3DMETAL_PAYLOAD_DIR` priority over the stock `lib/wine` builtin root for the `d3dmetal_native` backend.
 - `D3D10CreateDevice` and `D3D10CreateDevice1` still return `hr=0x80004005`; this is tracked as the remaining extended compatibility step, not a route-shape failure.
-- D3D10 compatibility retest with payload-root `d3d10_1.dll` and `d3d10core.dll` staged from GPTK still returned `hr=0x80004005` (`/Volumes/AverySSD/metalsharp-d3dmetal-isolated-probe/logs/packaged-d3dmetal-d3d10-with-gptk-core-20260703-182537`). This confirms the current D3D10 failure is not just a stock-Wine module mixing problem; those DLLs remain optional compatibility payload members, not a support guarantee.
+- D3D10 compatibility retest with payload-root `d3d10_1.dll` and `d3d10core.dll` staged from GPTK still returned `hr=0x80004005` (`/Volumes/AverySSD/metalsharp-d3dmetal-isolated-probe/logs/packaged-d3dmetal-d3d10-with-gptk-core-20260703-182537`; reconfirmed in the post-restage proof log). This confirms the current D3D10 failure is not just a stock-Wine module mixing problem; those DLLs remain optional compatibility payload members, not a support guarantee.
 
 Historical Phase 1 checks used `tools/runtime/check-d3dmetal-shim-abi.py` to show that the stock shipped MetalSharp Wine lacked the CrossOver-style D3DMetal host ABI hooks. The current Wine patch stack closes that host ABI gap for the staged runtime.
