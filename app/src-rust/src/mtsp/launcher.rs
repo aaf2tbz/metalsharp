@@ -1765,7 +1765,7 @@ fn launch_d3dmetal_native_with_context(
 ) -> Result<(u32, &'static str), Box<dyn std::error::Error>> {
     use crate::mtsp::engine::{
         D3DMETAL_NATIVE_BACKEND, MS_ACTIVE_GRAPHICS_BACKEND_ENV, MS_D3DMETAL_FRAMEWORK_PATH_ENV,
-        MS_D3DMETAL_SHARED_PATH_ENV, MS_GRAPHICS_BACKEND_ENV,
+        MS_D3DMETAL_PAYLOAD_DIR_ENV, MS_D3DMETAL_SHARED_PATH_ENV, MS_GRAPHICS_BACKEND_ENV,
     };
     use crate::mtsp::pe::parse_pe_imports;
 
@@ -1840,6 +1840,7 @@ fn launch_d3dmetal_native_with_context(
         // MetalSharp-owned backend selection (Phase 1 frozen names; no CX_ vars).
         .env(MS_GRAPHICS_BACKEND_ENV, D3DMETAL_NATIVE_BACKEND)
         .env(MS_ACTIVE_GRAPHICS_BACKEND_ENV, D3DMETAL_NATIVE_BACKEND)
+        .env(MS_D3DMETAL_PAYLOAD_DIR_ENV, payload_dir.to_string_lossy().to_string())
         .env(
             MS_D3DMETAL_SHARED_PATH_ENV,
             payload_dir.join("external").join("libd3dshared.dylib").to_string_lossy().to_string(),
@@ -1931,7 +1932,7 @@ fn write_d3dmetal_native_receipt(
             // secret-safe: env var NAMES only, no values (could contain paths).
             "set": ["WINEPREFIX", "WINEDEBUG", "WINEDEBUGGER", "WINEDLLPATH", "DYLD_LIBRARY_PATH",
                     "WINEDLLOVERRIDES", "MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND",
-                    "MS_D3DMETAL_SHARED_PATH", "MS_D3DMETAL_FRAMEWORK_PATH", "D3DMETAL_FRAMEWORK_PATH"],
+                    "MS_D3DMETAL_PAYLOAD_DIR", "MS_D3DMETAL_SHARED_PATH", "MS_D3DMETAL_FRAMEWORK_PATH", "D3DMETAL_FRAMEWORK_PATH"],
         },
         "dll_source_paths": {
             "WINEDLLPATH": winedllpath,
@@ -6680,6 +6681,8 @@ mod tests {
         let keys: std::collections::HashSet<&str> = node.env_vars.iter().map(|e| e.key).collect();
         assert!(keys.contains("MS_GRAPHICS_BACKEND"));
         assert!(keys.contains("MS_ACTIVE_GRAPHICS_BACKEND"));
+        // Dynamic path envs such as MS_D3DMETAL_PAYLOAD_DIR are resolved at launch time.
+        assert!(!keys.contains("MS_D3DMETAL_PAYLOAD_DIR"));
         // No CX_/CrossOver naming in the frozen pipeline env.
         for e in &node.env_vars {
             assert!(!e.key.starts_with("CX_"), "CX_ env leaked into native node: {}", e.key);
@@ -6690,7 +6693,7 @@ mod tests {
     fn d3dmetal_native_receipt_env_has_no_cx_vars() {
         // Phase 6 gate: the receipt records env NAMES only, and none may be CX_/CrossOver.
         let receipt = serde_json::json!({
-            "env": {"set": ["MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND", "WINEDLLPATH", "D3DMETAL_FRAMEWORK_PATH"]}
+            "env": {"set": ["MS_GRAPHICS_BACKEND", "MS_ACTIVE_GRAPHICS_BACKEND", "MS_D3DMETAL_PAYLOAD_DIR", "WINEDLLPATH", "D3DMETAL_FRAMEWORK_PATH"]}
         });
         let names = receipt["env"]["set"].as_array().unwrap();
         for n in names {

@@ -415,3 +415,69 @@ Applies from the Wine source root with patch -p0.
                     "movq 0x58(%rcx),%r13\n\t"
                     "movq 0x28(%rcx),%rdi\n\t"
                     "movq 0x20(%rcx),%rsi\n\t"
+
+--- dlls/ntdll/unix/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/loader.c	2026-07-03 17:54:00
+@@ -298,16 +298,61 @@
+     }
+ }
+ 
++static BOOL d3dmetal_native_enabled_unix(void)
++{
++    const char *backend = getenv( "MS_GRAPHICS_BACKEND" );
++    const char *active = getenv( "MS_ACTIVE_GRAPHICS_BACKEND" );
++
++    return (backend && !strcmp( backend, "d3dmetal_native" )) ||
++           (active && !strcmp( active, "d3dmetal_native" ));
++}
++
++static char *get_d3dmetal_payload_dir(void)
++{
++    const char *payload = getenv( "MS_D3DMETAL_PAYLOAD_DIR" );
++    const char *shared;
++    char *copy, *slash;
++
++    if (payload && *payload) return strdup( payload );
++
++    /* Derive <runtime>/lib/d3dmetal_native from
++     * MS_D3DMETAL_SHARED_PATH=<payload>/external/libd3dshared.dylib.
++     */
++    shared = getenv( "MS_D3DMETAL_SHARED_PATH" );
++    if (!shared || !*shared) return NULL;
++
++    if (!(copy = strdup( shared ))) return NULL;
++    if (!(slash = strrchr( copy, '/' ))) goto failed;
++    *slash = 0;
++    if (!(slash = strrchr( copy, '/' ))) goto failed;
++    *slash = 0;
++    return copy;
++
++failed:
++    free( copy );
++    return NULL;
++}
++
+ static void set_dll_path(void)
+ {
+     char *p, *path = getenv( "WINEDLLPATH" );
++    char *d3dmetal_payload = NULL;
+     int i, count = 0;
+ 
+-    if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
++    if (d3dmetal_native_enabled_unix()) d3dmetal_payload = get_d3dmetal_payload_dir();
+ 
++    if (d3dmetal_payload) count++;
++    if (path) for (p = path, count++; *p; p++) if (*p == ':') count++;
++
+     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+     count = 0;
+ 
++    /* Wine normally searches its compiled lib/wine root before WINEDLLPATH.
++     * For MetalSharp's D3DMetal Native route, the staged bridge DLLs must win
++     * over Wine's stock d3d10/d3d11/d3d12/dxgi builtins so they can pair with
++     * the D3DMetal unixlib sidecars instead of falling back to wined3d.
++     */
++    if (d3dmetal_payload) dll_paths[count++] = d3dmetal_payload;
+     if (!build_dir) dll_paths[count++] = dll_dir;
+ 
+     if (path)

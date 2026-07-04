@@ -84,7 +84,15 @@ Applies from the Wine source root with patch -p0.
      default:
          TRACE("    ignoring\n");
 --- dlls/winemac.drv/Makefile.in	2026-03-20 14:33:36
-+++ dlls/winemac.drv/Makefile.in	2026-07-02 23:44:00
++++ dlls/winemac.drv/Makefile.in	2026-07-03 17:45:00
+@@ -1,6 +1,6 @@
+ MODULE    = winemac.drv
+ UNIXLIB   = winemac.so
+-IMPORTS   = uuid rpcrt4 user32 gdi32 win32u
++IMPORTS   = uuid rpcrt4 user32 gdi32 advapi32 win32u
+ DELAYIMPORTS = ole32 shell32 imm32
+ UNIX_LIBS    = \
+ 	-lwin32u \
 @@ -34,6 +34,8 @@
  	image.c \
  	keyboard.c \
@@ -95,14 +103,21 @@ Applies from the Wine source root with patch -p0.
  	opengl.c \
  	surface.c \
 --- dlls/winemac.drv/dllmain.c	2026-03-20 14:33:36
-+++ dlls/winemac.drv/dllmain.c	2026-07-03 02:57:43
-@@ -360,9 +360,70 @@
-     FreeResource(res_data);
++++ dlls/winemac.drv/dllmain.c	2026-07-03 16:34:07
+@@ -22,6 +22,7 @@
+ #include "ntstatus.h"
+ #include "windef.h"
+ #include "winbase.h"
++#include "winreg.h"
+ #include "ntgdi.h"
+ #include "macdrv_res.h"
+ #include "shellapi.h"
+@@ -361,8 +362,69 @@
  
      return NtCallbackReturn(entries, count * sizeof(entries[0]), 0);
-+}
+ }
 +
-+
+ 
 +/* D3DMetal registry thunk callbacks: PE-side implementations that execute the
 + * actual Win32 registry calls when KeUserDispatchCallback dispatches to them.
 + * These are passed to the Unix side via init_params so libd3dshared's
@@ -120,7 +135,7 @@ Applies from the Wine source root with patch -p0.
 +    *(LONG *)param_ptr(params->result) = result;
 +    return 0;
 +}
-+
+ 
 +static NTSTATUS WINAPI macdrv_regsetvalueexa(void *arg, ULONG size)
 +{
 +    struct regsetvalueexa_params *params = arg;
@@ -133,8 +148,8 @@ Applies from the Wine source root with patch -p0.
 +                            params->count);
 +    *(LONG *)param_ptr(params->result) = result;
 +    return 0;
- }
- 
++}
++
 +static NTSTATUS WINAPI macdrv_regcreateopenkeyexa(void *arg, ULONG size)
 +{
 +    struct regcreateopenkeyexa_params *params = arg;
@@ -162,12 +177,12 @@ Applies from the Wine source root with patch -p0.
 +    *(LONG *)param_ptr(params->result) = result;
 +    return 0;
 +}
- 
++
 +
  static BOOL process_attach(void)
  {
      struct init_params params;
-@@ -393,6 +454,9 @@
+@@ -393,6 +455,9 @@
      params.strings = strings;
      params.app_icon_callback = (UINT_PTR)macdrv_app_icon;
      params.app_quit_request_callback = (UINT_PTR)macdrv_app_quit_request;

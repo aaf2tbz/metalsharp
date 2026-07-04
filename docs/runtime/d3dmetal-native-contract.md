@@ -14,6 +14,7 @@ oracle for behavior.
 |---|---|---|
 | bottle graphics backend | `MS_GRAPHICS_BACKEND` | `d3dmetal_native` |
 | active backend visible to Wine host modules | `MS_ACTIVE_GRAPHICS_BACKEND` | `d3dmetal_native` |
+| D3DMetal payload root | `MS_D3DMETAL_PAYLOAD_DIR` | `…/runtime/wine/lib/d3dmetal_native` |
 | D3DMetal shared library path | `MS_D3DMETAL_SHARED_PATH` | `…/d3dmetal_native/external/libd3dshared.dylib` |
 | D3DMetal framework path | `MS_D3DMETAL_FRAMEWORK_PATH` | `…/d3dmetal_native/external/D3DMetal.framework/Versions/A/D3DMetal` |
 | launch receipt backend key | `metalsharp.graphics_backend` | `d3dmetal_native` |
@@ -21,8 +22,9 @@ oracle for behavior.
 
 These names are defined as Rust constants in `app/src-rust/src/mtsp/engine.rs`
 (`D3DMETAL_NATIVE_BACKEND`, `MS_GRAPHICS_BACKEND_ENV`,
-`MS_ACTIVE_GRAPHICS_BACKEND_ENV`, `MS_D3DMETAL_SHARED_PATH_ENV`,
-`MS_D3DMETAL_FRAMEWORK_PATH_ENV`) so they are grep-discoverable and frozen.
+`MS_ACTIVE_GRAPHICS_BACKEND_ENV`, `MS_D3DMETAL_PAYLOAD_DIR_ENV`,
+`MS_D3DMETAL_SHARED_PATH_ENV`, `MS_D3DMETAL_FRAMEWORK_PATH_ENV`) so they are
+grep-discoverable and frozen.
 
 ## Naming and ownership rule
 
@@ -35,8 +37,11 @@ requires Homebrew GPTK.
 
 ## Reserved status
 
-`PipelineId::D3DMetalNative` exists and is `experimental`, but it is **not
-user-selectable and not launchable** until:
+`PipelineId::D3DMetalNative` exists and is `experimental`, but it remains guarded
+until the packaged runtime, payload, and regression gates pass. The route is not
+a replacement for M12/DXMT yet.
+
+It is **not user-selectable and not broadly launchable** until:
 
 - **Phase 2** — the Wine 11.5 host ABI shim parity (`winemac.drv` Metal layer +
   client-surface present bridge, `win32u` `MS_ACTIVE_GRAPHICS_BACKEND` gate,
@@ -49,13 +54,15 @@ Until then the launcher rejects `d3dmetal_native` with
 `"D3DMetal Native lane is reserved and not launchable until the Wine host ABI
 and payload are ready"`.
 
-## Baseline evidence (Phase 1)
+## Baseline evidence
 
-`tools/runtime/check-d3dmetal-shim-abi.py` against the current runtime reports:
+Current isolated no-game packaged-runtime evidence (2026-07-03):
 
-- `baseline_ready: true` — DXMT/MoltenVK macOS host path present.
-- `native_d3dmetal_host_abi_ready: false` — the CrossOver-style D3DMetal host
-  ABI hooks (`WineMetalLayer` nextDrawable, `CLIENT_SURFACE_PRESENTED`,
-  `client_surface_present`, `MS_ACTIVE_GRAPHICS_BACKEND`/`libd3dshared.dylib`
-  discovery) are **absent** from the shipped MetalSharp Wine 11.5 modules. This
-  is the precise gap Phase 2 closes.
+- `wineboot` succeeds under staged MetalSharp Wine 11.5 x86_64.
+- `tools/runtime/check-d3dmetal-native-payload.py --runtime-root <staged-runtime> --json` reports `ready: true`.
+- `CreateDXGIFactory2` returns `hr=0x00000000`.
+- `D3D12CreateDevice(NULL)` returns `hr=0x00000000`.
+- `D3D11CreateDevice(NULL)` returns `hr=0x00000000` after the Wine loader gives `MS_D3DMETAL_PAYLOAD_DIR` priority over the stock `lib/wine` builtin root for the `d3dmetal_native` backend.
+- `D3D10CreateDevice` and `D3D10CreateDevice1` still return `hr=0x80004005`; this is tracked as the remaining extended compatibility step, not a route-shape failure.
+
+Historical Phase 1 checks used `tools/runtime/check-d3dmetal-shim-abi.py` to show that the stock shipped MetalSharp Wine lacked the CrossOver-style D3DMetal host ABI hooks. The current Wine patch stack closes that host ABI gap for the staged runtime.

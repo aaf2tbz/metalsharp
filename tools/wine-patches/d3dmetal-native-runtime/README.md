@@ -19,6 +19,7 @@ Patch groups:
   - WDDM caps expected by the D3DMetal payload
 - `d3dmetal-native-runtime/0001-ntdll-d3dmetal-native-loader-tls.patch`
   - D3DMetal bridge PE image writeability policy gated by `MS_ACTIVE_GRAPHICS_BACKEND=d3dmetal_native`
+  - D3DMetal payload-root priority in `ntdll/unix/loader.c` via `MS_D3DMETAL_PAYLOAD_DIR`, so staged bridge DLLs win over Wine's stock `lib/wine` builtins for D3DMetal Native
   - PE module registration with `libd3dshared.dylib` via `MS_D3DMETAL_SHARED_PATH`
   - narrow Apple pthread/TLS restoration around native timezone calls
   - temporary `ntdll.__wine_unix_call` compatibility export retained pending final ABI decision
@@ -26,3 +27,10 @@ Patch groups:
 The runtime patches are x86_64/win64-oriented. Do not claim arm64 Wine support
 for this D3DMetal payload until a separate arm64-compatible ABI and payload are
 proven.
+
+Current no-game packaged-runtime proof with this patch stack:
+
+- `CreateDXGIFactory2` succeeds.
+- `D3D12CreateDevice(NULL)` succeeds.
+- `D3D11CreateDevice(NULL)` succeeds after `MS_D3DMETAL_PAYLOAD_DIR` makes the compact D3DMetal `d3d11.dll` bridge load instead of Wine's stock `wined3d` path.
+- `D3D10CreateDevice` / `D3D10CreateDevice1` still return `E_FAIL` and remain an extended compatibility workstream.
