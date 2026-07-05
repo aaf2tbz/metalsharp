@@ -118,11 +118,15 @@ interface D3DMetalGptkState {
   name: string;
   game_dir: string;
   game_exe?: string | null;
-  gptk_homebrew: string;
-  rosetta: string;
+  framework_download?: string;
+  dmg_path?: string;
+  gptk_homebrew?: string;
+  rosetta?: string;
   gptk_payload: string;
-  x64_redist: string;
-  seed: string;
+  x64_redist?: string;
+  seed?: string;
+  patch?: string;
+  host_abi?: string;
   play_ready: boolean;
   last_error?: string | null;
 }
@@ -243,6 +247,7 @@ const fallbackEngineOptions: RuntimeRouteOption[] = [
   { id: "dxvk_d9", name: "DXVK D3D9" },
   { id: "dxvk_d11", name: "DXVK D3D11" },
   { id: "vkd3d_d12", name: "VKD3D D3D12" },
+  { id: "d3dmetal", name: "D3DMetal" },
   { id: "fna_arm64", name: "Mono/FNA" },
 ];
 const engineOptions = computed(() => runtimeRouteOptions.value.length ? runtimeRouteOptions.value : fallbackEngineOptions);
@@ -300,7 +305,7 @@ function componentStateClass(state: string): string {
 }
 
 function d3dmetalActionReady(action: D3DMetalGptkAction): boolean {
-  return ["installed", "updated", "seeded"].includes(action.state);
+  return ["installed", "updated", "seeded", "downloaded", "staged", "patched", "ready"].includes(action.state);
 }
 
 function isFnaProfile(profile: string): boolean {
@@ -308,9 +313,6 @@ function isFnaProfile(profile: string): boolean {
 }
 const selectableRuntimeProfileIds = computed(() => new Set(engineOptions.value.map((option) => option.id)));
 const visibleRuntimeProfiles = computed(() => {
-  // The external Homebrew GPTK / D3DMetal (GPTK) profile is removed. The
-  // native d3dmetal_native lane is reserved and not selectable until the Wine
-  // host ABI and payload are ready (later phases).
   return runtimeProfiles.value
     .filter((profile) => selectableRuntimeProfileIds.value.has(profile.id))
     .map((profile) => ({
@@ -348,7 +350,13 @@ async function load() {
     bottles.value = bottleResult.bottles;
   }
   if (profileResult?.ok) runtimeProfiles.value = profileResult.profiles;
-  if (routeOptionsResult?.ok) runtimeRouteOptions.value = routeOptionsResult.pipelines.filter((option) => option.id !== "auto");
+  if (routeOptionsResult?.ok) {
+    const options = routeOptionsResult.pipelines.filter((option) => option.id !== "auto");
+    if (!options.some((option) => option.id === "d3dmetal")) {
+      options.push({ id: "d3dmetal", name: "D3DMetal", description: "Native D3DMetal runtime" });
+    }
+    runtimeRouteOptions.value = options;
+  }
   if (redistResult?.ok) redistSources.value = redistResult.sources;
   if (gogStatusResult?.ok) gogStatus.value = gogStatusResult.status;
   if (gogGamesResult?.ok) {
@@ -625,9 +633,17 @@ function clearD3DMetalBottleState(bottleId: string) {
 }
 
 async function loadD3DMetalStatus(bottle: BottleManifest) {
-  // The retired GPTK bottle endpoints are gone; native D3DMetal readiness is
-  // surfaced through runtime doctor/repair and normal launch receipts.
-  clearD3DMetalBottleState(bottle.id);
+  const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal-native/setup-status", {
+    appid: bottle.steam_app_id ?? 0,
+    bottleId: bottle.id,
+    name: bottle.name,
+  });
+  if (result?.ok) {
+    d3dmetalStates.value[bottle.id] = result.state ?? null;
+    d3dmetalActions.value[bottle.id] = result.actions ?? [];
+  } else {
+    clearD3DMetalBottleState(bottle.id);
+  }
 }
 
 async function saveD3DMetalBottle(bottle: BottleManifest) {
@@ -652,35 +668,56 @@ function sharpAppExeAbsolute(app: SharpApp) {
   return `${app.install_dir.replace(/\/$/, "")}/${app.exe_path.replace(/^\.\//, "")}`;
 }
 
-function d3dmetalActionRoute(_actionId: string) {
+function d3dmetalActionRoute(actionId: string) {
+  if (actionId === "stage") return "/d3dmetal-native/stage";
+  if (actionId === "patch") return "/d3dmetal-native/patch";
   return "/steam/launch-game";
 }
 
 async function runD3DMetalAction(bottle: BottleManifest, action: D3DMetalGptkAction, app?: SharpApp): Promise<number | null> {
-  if (!bottle.steam_app_id) return null;
   bottleLoading.value[bottle.id] = true;
-  const route = d3dmetalActionRoute(action.id);
-  const result = await api<D3DMetalGptkResponse>("POST", route, {
-    appid: bottle.steam_app_id,
-    bottleId: bottle.id,
-    gameDir: bottle.game_install_path,
-    gameExe: app ? sharpAppExeAbsolute(app) : undefined,
-    launchArgs: app ? [...(app.launch_args ?? []), ...(app.user_launch_args ?? [])] : undefined,
-  }, 10 * 60 * 1000);
-  bottleLoading.value[bottle.id] = false;
-  if (result?.ok) {
-    toast.show(action.id === "play_d3dmetal" ? "D3DMetal launch started" : `${action.label}: complete`, "success");
-    if (result.state) {
-      d3dmetalStates.value[bottle.id] = result.state;
-      d3dmetalActions.value[bottle.id] = result.actions ?? [];
-    } else {
+  try {
+    if (action.id === "install_framework") {
+      const status = await api<D3DMetalGptkResponse>("POST", "/d3dmetal-native/setup-status", {
+        appid: bottle.steam_app_id ?? 0,
+        bottleId: bottle.id,
+        name: bottle.name,
+      });
+      if (!status?.download_url) throw new Error("D3DMetal framework download URL is unavailable");
+      const opened = await getAPI().openExternal(status.download_url);
+      if (!opened?.ok) throw new Error(opened?.error ?? "Failed to open Apple Developer download");
+      toast.show("Apple Developer download opened. Waiting for the DMG to finish in Downloads…", "success");
       await loadD3DMetalStatus(bottle);
+      return null;
     }
-    return result.launch?.pid ?? null;
-  } else {
+
+    const route = d3dmetalActionRoute(action.id);
+    const result = await api<D3DMetalGptkResponse>("POST", route, {
+      appid: bottle.steam_app_id ?? 0,
+      bottleId: bottle.id,
+      gameDir: bottle.game_install_path,
+      gameExe: app ? sharpAppExeAbsolute(app) : undefined,
+      launchArgs: app ? [...(app.launch_args ?? []), ...(app.user_launch_args ?? [])] : undefined,
+    }, 10 * 60 * 1000);
+    if (result?.ok) {
+      toast.show(action.id === "play_d3dmetal" ? "D3DMetal launch started" : `${action.label}: complete`, "success");
+      if (result.state) {
+        d3dmetalStates.value[bottle.id] = result.state;
+        d3dmetalActions.value[bottle.id] = result.actions ?? [];
+      } else {
+        await loadD3DMetalStatus(bottle);
+      }
+      return result.launch?.pid ?? null;
+    }
     toast.show(result?.error ?? `${action.label} failed`, "error");
     await loadD3DMetalStatus(bottle);
     return null;
+  } catch (e) {
+    toast.show(e instanceof Error ? e.message : `${action.label} failed`, "error");
+    await loadD3DMetalStatus(bottle);
+    return null;
+  } finally {
+    bottleLoading.value[bottle.id] = false;
   }
 }
 

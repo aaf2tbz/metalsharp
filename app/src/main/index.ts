@@ -346,6 +346,33 @@ function uiOnlyBackendResponse(method: string, url: string): unknown {
   if (url.startsWith("/mtsp/pipelines")) {
     return { ok: true, id: "m12", name: "M12", preferred: "m12", pipelines: [] };
   }
+  if (url === "/d3dmetal-native/setup-status" || url === "/d3dmetal-native/stage" || url === "/d3dmetal-native/patch") {
+    return {
+      ok: true,
+      download_url:
+        "https://download.developer.apple.com/Developer_Tools/Evaluation_environment_for_Windows_games_4.0_beta_1/Evaluation_environment_for_Windows_games_4.0_beta_1.dmg",
+      state: {
+        bottle_id: "steam_1583230",
+        appid: 1583230,
+        name: "High Fidelity Render Probe",
+        game_dir: "",
+        game_exe: null,
+        framework_download: "missing",
+        dmg_path: "",
+        gptk_payload: "missing",
+        patch: "missing",
+        host_abi: "ready",
+        play_ready: false,
+        last_error: "UI preview: download/stage/patch flow is mocked.",
+      },
+      actions: [
+        { id: "install_framework", label: "Install Framework", enabled: true, state: "missing", detail: "Open Apple Developer download for GPTK4 evaluation environment" },
+        { id: "stage", label: "Stage", enabled: false, state: "missing", detail: "Download the GPTK4 evaluation DMG before staging" },
+        { id: "patch", label: "Patch", enabled: false, state: "missing", detail: "Stage the payload before patching" },
+      ],
+      ready: false,
+    };
+  }
   if (method === "POST") {
     return { ok: true };
   }
@@ -957,6 +984,24 @@ function registerIpc() {
         },
       );
     });
+  });
+
+  ipcMain.handle("app:open-external", async (_e, targetUrl: string) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(targetUrl);
+    } catch {
+      return { ok: false, error: "Invalid URL." };
+    }
+    const allowedAppleDownload =
+      parsed.protocol === "https:" &&
+      parsed.hostname === "download.developer.apple.com" &&
+      parsed.pathname.endsWith("/Evaluation_environment_for_Windows_games_4.0_beta_1.dmg");
+    if (!allowedAppleDownload) {
+      return { ok: false, error: "Refusing to open an untrusted external URL." };
+    }
+    await shell.openExternal(targetUrl);
+    return { ok: true };
   });
 
   ipcMain.handle("app:open-in-finder", async (_e, inputPath: string) => {

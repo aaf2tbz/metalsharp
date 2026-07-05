@@ -10,9 +10,12 @@
 //! CrossOver/CX never appears in any name here; the checkers are MetalSharp-owned.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+pub const GPTK4_DMG_URL: &str = "https://download.developer.apple.com/Developer_Tools/Evaluation_environment_for_Windows_games_4.0_beta_1/Evaluation_environment_for_Windows_games_4.0_beta_1.dmg";
+const GPTK4_DMG_FILE: &str = "Evaluation_environment_for_Windows_games_4.0_beta_1.dmg";
 
 /// Resolve the directory holding runtime checker scripts.
 /// Packaged installs use ~/.metalsharp/scripts/tools/runtime; source-tree lookup
@@ -177,6 +180,180 @@ pub fn readiness_for(home: &Path) -> D3DMetalNativeReadiness {
         "partial".to_string()
     };
     D3DMetalNativeReadiness { host_abi, payload, ready, state }
+}
+
+fn payload_dir(home: &Path) -> PathBuf {
+    wine_runtime_root(home).join("lib").join("d3dmetal_native")
+}
+
+fn compat_receipt_path(home: &Path) -> PathBuf {
+    payload_dir(home).join("metalsharp-d3dmetal-compat-patches.json")
+}
+
+fn downloaded_dmg_path(home: &Path) -> PathBuf {
+    home.join("Downloads").join(GPTK4_DMG_FILE)
+}
+
+fn partial_download_present(home: &Path) -> bool {
+    let downloads = home.join("Downloads");
+    for suffix in [".download", ".crdownload", ".part"] {
+        if downloads.join(format!("{GPTK4_DMG_FILE}{suffix}")).exists() {
+            return true;
+        }
+    }
+    false
+}
+
+fn staged_payload_present(home: &Path) -> bool {
+    let root = payload_dir(home);
+    root.join("manifest.json").exists()
+        && root.join("x86_64-windows").join("dxgi.dll").exists()
+        && root.join("x86_64-windows").join("d3d11.dll").exists()
+        && root.join("x86_64-windows").join("d3d12.dll").exists()
+        && root.join("external").join("libd3dshared.dylib").exists()
+        && root.join("external").join("D3DMetal.framework").join("Versions").join("A").join("D3DMetal").exists()
+}
+
+fn patch_applied(home: &Path) -> bool {
+    compat_receipt_path(home).exists()
+}
+
+pub fn compat_patch_applied(home: &Path) -> bool {
+    patch_applied(home)
+}
+
+fn action(id: &str, label: &str, enabled: bool, state: &str, detail: String) -> Value {
+    json!({"id": id, "label": label, "enabled": enabled, "state": state, "detail": detail})
+}
+
+pub fn setup_status_for(home: &Path, appid: Option<u32>, bottle_id: Option<&str>, name: Option<&str>) -> Value {
+    let dmg = downloaded_dmg_path(home);
+    let dmg_present = dmg.exists() && dmg.extension().and_then(|v| v.to_str()) == Some("dmg");
+    let downloading = !dmg_present && partial_download_present(home);
+    let staged = staged_payload_present(home);
+    let patched = patch_applied(home);
+    let readiness = readiness_for(home);
+    let play_ready = readiness.ready && patched;
+
+    let download_state = if dmg_present { "downloaded" } else if downloading { "downloading" } else { "missing" };
+    let stage_state = if staged { "staged" } else { "missing" };
+    let patch_state = if patched { "patched" } else { "missing" };
+    let mut actions = Vec::new();
+    actions.push(action(
+        "install_framework",
+        "Install Framework",
+        !dmg_present && !downloading,
+        download_state,
+        if dmg_present {
+            format!("GPTK4 evaluation DMG found at {}", dmg.display())
+        } else if downloading {
+            "Waiting for the GPTK4 evaluation DMG download to finish in Downloads".to_string()
+        } else {
+            "Open Apple Developer download for GPTK4 evaluation environment".to_string()
+        },
+    ));
+    actions.push(action(
+        "stage",
+        "Stage",
+        dmg_present && !staged,
+        stage_state,
+        if staged {
+            format!("D3DMetal payload staged at {}", payload_dir(home).display())
+        } else if dmg_present {
+            "Stage DLLs, sidecars, libd3dshared.dylib, and D3DMetal.framework into the Wine runtime".to_string()
+        } else {
+            "Download the GPTK4 evaluation DMG before staging".to_string()
+        },
+    ));
+    actions.push(action(
+        "patch",
+        "Patch",
+        staged && !patched,
+        patch_state,
+        if patched {
+            format!("Local PE compatibility transform receipt found at {}", compat_receipt_path(home).display())
+        } else if staged {
+            "Apply the local GPTK4 thunk/create fallback patches to the staged payload".to_string()
+        } else {
+            "Stage the payload before patching".to_string()
+        },
+    ));
+
+    json!({
+        "ok": true,
+        "download_url": GPTK4_DMG_URL,
+        "state": {
+            "bottle_id": bottle_id.unwrap_or(""),
+            "appid": appid.unwrap_or(0),
+            "name": name.unwrap_or("D3DMetal"),
+            "game_dir": "",
+            "game_exe": null,
+            "framework_download": download_state,
+            "dmg_path": if dmg_present { dmg.to_string_lossy().to_string() } else { String::new() },
+            "gptk_payload": stage_state,
+            "patch": patch_state,
+            "host_abi": readiness.host_abi.state,
+            "play_ready": play_ready,
+            "last_error": if play_ready { Value::Null } else { json!(format!("D3DMetal Native readiness: {} (host_abi={}, payload={}, patch={})", readiness.state, readiness.host_abi.state, readiness.payload.state, patch_state)) },
+        },
+        "actions": actions,
+        "ready": play_ready,
+        "readiness": readiness,
+    })
+}
+
+fn run_runtime_tool(home: &Path, script_name: &str, args: &[String]) -> Value {
+    let script = runtime_tools_dir(home).join(script_name);
+    if !script.exists() {
+        return json!({"ok": false, "error": format!("runtime tool not found: {}", script.display())});
+    }
+    let output = Command::new("python3").arg(&script).args(args).output();
+    match output {
+        Ok(out) if out.status.success() => json!({
+            "ok": true,
+            "stdout": String::from_utf8_lossy(&out.stdout).to_string(),
+            "stderr": String::from_utf8_lossy(&out.stderr).to_string(),
+        }),
+        Ok(out) => json!({
+            "ok": false,
+            "error": String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            "stdout": String::from_utf8_lossy(&out.stdout).to_string(),
+            "status": out.status.code(),
+        }),
+        Err(e) => json!({"ok": false, "error": format!("failed to run {script_name}: {e}")}),
+    }
+}
+
+pub fn stage_downloaded_payload(home: &Path) -> Value {
+    let dmg = downloaded_dmg_path(home);
+    if !dmg.exists() {
+        return json!({"ok": false, "error": format!("GPTK4 evaluation DMG not found at {}", dmg.display())});
+    }
+    let runtime_root = wine_runtime_root(home);
+    let args = vec![
+        dmg.to_string_lossy().to_string(),
+        "--runtime-root".to_string(),
+        runtime_root.to_string_lossy().to_string(),
+        "--force".to_string(),
+        "--skip-compat-patch".to_string(),
+    ];
+    let result = run_runtime_tool(home, "stage-d3dmetal-native-payload.py", &args);
+    if !result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return result;
+    }
+    setup_status_for(home, None, None, None)
+}
+
+pub fn patch_staged_payload(home: &Path) -> Value {
+    if !staged_payload_present(home) {
+        return json!({"ok": false, "error": "D3DMetal payload is not staged yet"});
+    }
+    let args = vec![wine_runtime_root(home).to_string_lossy().to_string()];
+    let result = run_runtime_tool(home, "patch-d3dmetal-native-payload.py", &args);
+    if !result.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        return result;
+    }
+    setup_status_for(home, None, None, None)
 }
 
 /// Stable digest of the Wine host ABI surface (winemac/win32u/ntdll/winevulkan

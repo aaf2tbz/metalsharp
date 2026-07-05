@@ -1793,10 +1793,13 @@ fn launch_d3dmetal_native_with_context(
 
     // Phase 4 readiness gate: Wine host ABI (Phase 2) + payload (Phase 3) must both be ready.
     let readiness = crate::d3dmetal_native::readiness_for(&home);
-    if !readiness.ready {
+    if !readiness.ready || !crate::d3dmetal_native::compat_patch_applied(&home) {
         return Err(format!(
-            "D3DMetal Native is not ready: {} (host_abi={}, payload={})",
-            readiness.state, readiness.host_abi.state, readiness.payload.state
+            "D3DMetal Native is not ready: {} (host_abi={}, payload={}, patch={})",
+            readiness.state,
+            readiness.host_abi.state,
+            readiness.payload.state,
+            if crate::d3dmetal_native::compat_patch_applied(&home) { "patched" } else { "missing" }
         )
         .into());
     }
@@ -1845,7 +1848,7 @@ fn launch_d3dmetal_native_with_context(
     );
     let overrides = node
         .wine_overrides
-        .unwrap_or("d3d10,d3d10_1,d3d10core,d3d11,d3d12,dxgi,nvapi64,nvngx,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d");
+        .unwrap_or("d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n;winedbg.exe=d");
 
     let mut cmd = Command::new(&wine);
     cmd.current_dir(exe_dir)
@@ -6738,15 +6741,16 @@ mod tests {
     #[test]
     fn d3dmetal_native_overrides_include_d3d11_d3d12_dxgi_native_first() {
         // Phase 6 gate: GPTK4's PE DLLs are staged externally and must win over
-        // Wine builtins. The proven route is app-local staging plus native-first
-        // fallback (`=n,b`), not WINEDLLPATH-only builtin-first routing.
+        // Wine builtins. The proven route is app-local staging plus builtin-first
+        // fallback (`=b,n`) so the Wine loader reaches the patched PE payload safely.
         let node = crate::mtsp::engine::get_pipeline(crate::mtsp::engine::PipelineId::D3DMetalNative);
         let ov = node.wine_overrides.expect("native node has overrides");
         assert!(
-            ov.contains("d3d10,d3d10_1,d3d10core,d3d11,d3d12,dxgi,nvapi64,nvngx,nvngx-on-metalfx=n,b"),
-            "D3DMetal route DLLs must be native-first: {ov}"
+            ov.contains("d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n"),
+            "D3DMetal route DLLs must use the proven patched-payload fallback order: {ov}"
         );
-        for dll in ["d3d10", "d3d10_1", "d3d10core", "d3d11", "d3d12", "dxgi"] {
+        assert!(ov.contains("winedbg.exe=d"), "D3DMetal route must disable winedbg: {ov}");
+        for dll in ["d3d10", "d3d11", "d3d12", "dxgi"] {
             assert!(ov.contains(dll), "WINEDLLOVERRIDES missing {dll}: {ov}");
         }
     }

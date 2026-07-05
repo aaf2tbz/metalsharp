@@ -631,6 +631,7 @@ type MetalsharpAPI = {
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;
   installHomebrew: () => Promise<{ ok: boolean; error?: string }>;
   openInFinder: (path: string) => Promise<void>;
+  openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
   openLogsFolder: () => Promise<{ ok: boolean; path?: string; error?: string }>;
   openMetalsharpFolder: () => Promise<{ ok: boolean; path?: string; error?: string }>;
   repairDataAccess: () => Promise<{

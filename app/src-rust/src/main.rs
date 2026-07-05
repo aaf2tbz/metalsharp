@@ -1035,6 +1035,26 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 json!({ "ok": true, "ready": r.ready, "state": r.state, "host_abi": r.host_abi, "payload": r.payload }),
             )
         },
+        (Method::Get, "/d3dmetal-native/setup-status") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(200, d3dmetal_native::setup_status_for(&home, None, None, None))
+        },
+        (Method::Post, "/d3dmetal-native/setup-status") => {
+            let body = read_body(req);
+            let home = dirs::home_dir().unwrap_or_default();
+            let appid = body.get("appid").and_then(|v| v.as_u64()).map(|v| v as u32);
+            let bottle_id = body.get("bottleId").or_else(|| body.get("bottle_id")).and_then(|v| v.as_str());
+            let name = body.get("name").and_then(|v| v.as_str());
+            resp(200, d3dmetal_native::setup_status_for(&home, appid, bottle_id, name))
+        },
+        (Method::Post, "/d3dmetal-native/stage") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(200, d3dmetal_native::stage_downloaded_payload(&home))
+        },
+        (Method::Post, "/d3dmetal-native/patch") => {
+            let home = dirs::home_dir().unwrap_or_default();
+            resp(200, d3dmetal_native::patch_staged_payload(&home))
+        },
         (Method::Get, "/d3dmetal-native/host-abi") => {
             let home = dirs::home_dir().unwrap_or_default();
             let r = d3dmetal_native::readiness_for(&home);

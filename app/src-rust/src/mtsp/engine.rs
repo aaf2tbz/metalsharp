@@ -427,13 +427,13 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 id: PipelineId::D3DMetalNative,
                 name: "D3DMetal Native",
                 description:
-                    "MetalSharp-owned native D3DMetal (Wine 11.5 host ABI + Apple D3DMetal payload) — reserved",
+                    "MetalSharp-owned native D3DMetal (Wine 11.5 host ABI + user-staged Apple D3DMetal payload)",
                 backend: D3DMETAL_NATIVE_BACKEND,
                 graphics_backend: D3DMETAL_NATIVE_BACKEND,
                 experimental: true,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "d3d10,d3d10_1,d3d10core,d3d11,d3d12,dxgi,nvapi64,nvngx,nvngx-on-metalfx=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d10,d3d11,d3d12,dxgi,nvapi64,nvngx-on-metalfx=b,n;winedbg.exe=d",
                 ),
                 // D3DMetal Native must resolve GPTK4 route DLLs as external PE
                 // DLLs, not Wine builtins. Wine 11.5 does not discover these PE
@@ -573,6 +573,7 @@ impl PipelineId {
                 | PipelineId::M10
                 | PipelineId::M9
                 | PipelineId::DxvkD9
+                | PipelineId::D3DMetalNative
                 | PipelineId::FnaArm64
         )
     }
@@ -586,6 +587,7 @@ impl PipelineId {
             PipelineId::M10 => Some("m10"),
             PipelineId::M9 => Some("m9"),
             PipelineId::DxvkD9 => Some("dxvk_d9"),
+            PipelineId::D3DMetalNative => Some("d3dmetal"),
             PipelineId::FnaArm64 => Some("fna_arm64"),
             _ => None,
         }
@@ -600,6 +602,7 @@ impl PipelineId {
             PipelineId::M10 => Some("M10"),
             PipelineId::M9 => Some("M9"),
             PipelineId::DxvkD9 => Some("DXVK D3D9"),
+            PipelineId::D3DMetalNative => Some("D3DMetal"),
             PipelineId::FnaArm64 => Some("Mono/FNA"),
             _ => None,
         }
@@ -636,9 +639,9 @@ impl PipelineId {
             "dxvk_d11" | "dxvk11" | "dxvk" => Some(PipelineId::DxvkD11),
             "vkd3d_d12" | "vkd3d12" | "vkd3d" | "vkd3d_proton" => Some(PipelineId::Vkd3dD12),
             // Legacy `d3dmetal`/`d3dmetal_native`/`gptk`/`m13` aliases all
-            // resolve to the single reserved native variant. There is no GPTK
-            // lane anymore; native is not user-selectable/launchable until the
-            // host ABI and payload are ready.
+            // resolve to the single native D3DMetal variant. There is no GPTK
+            // Wine lane anymore; this route uses MetalSharp Wine plus a locally
+            // staged Apple D3DMetal payload.
             "d3dmetal" | "d3dmetal_native" | "m13" | "gptk" | "steam_d3dmetal" => Some(PipelineId::D3DMetalNative),
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
@@ -687,13 +690,13 @@ mod tests {
     }
 
     #[test]
-    fn d3dmetal_native_is_reserved_and_gptk_lane_is_gone() {
-        // The external GPTK lane (M13 / Apple-GPTK-Wine / Homebrew GPTK) is
-        // removed entirely. `d3dmetal`/`gptk`/`m13` aliases all resolve to the
-        // single reserved native variant, which is not selectable/launchable.
-        assert!(!PipelineId::D3DMetalNative.is_user_selectable());
-        assert_eq!(PipelineId::D3DMetalNative.user_selectable_id(), None);
-        assert_eq!(PipelineId::D3DMetalNative.user_selectable_name(), None);
+    fn d3dmetal_native_is_user_selectable_and_gptk_wine_lane_is_gone() {
+        // The external GPTK Wine lane (M13 / Apple-GPTK-Wine / Homebrew GPTK)
+        // is removed entirely. `d3dmetal`/`gptk`/`m13` aliases all resolve to
+        // the MetalSharp Wine native D3DMetal route.
+        assert!(PipelineId::D3DMetalNative.is_user_selectable());
+        assert_eq!(PipelineId::D3DMetalNative.user_selectable_id(), Some("d3dmetal"));
+        assert_eq!(PipelineId::D3DMetalNative.user_selectable_name(), Some("D3DMetal"));
         assert_eq!(PipelineId::from_str_flexible("d3dmetal_native"), Some(PipelineId::D3DMetalNative));
         assert_eq!(PipelineId::from_str_flexible("d3dmetal"), Some(PipelineId::D3DMetalNative));
         assert_eq!(PipelineId::from_str_flexible("gptk"), Some(PipelineId::D3DMetalNative));
@@ -705,9 +708,14 @@ mod tests {
         assert_eq!(node.graphics_backend, D3DMETAL_NATIVE_BACKEND);
         assert!(node.experimental);
         assert_eq!(node.id.to_legacy_method(), "d3dmetal_native");
-        // No selectable pipeline's alternatives may fall back to the reserved lane.
+        // D3DMetal is selectable directly, but no other selectable pipeline should
+        // silently fall back to it.
         for pipeline in pipelines() {
-            assert!(!pipeline.id.is_user_selectable() || !pipeline.alternatives.contains(&PipelineId::D3DMetalNative));
+            assert!(
+                pipeline.id == PipelineId::D3DMetalNative
+                    || !pipeline.id.is_user_selectable()
+                    || !pipeline.alternatives.contains(&PipelineId::D3DMetalNative)
+            );
         }
     }
 
