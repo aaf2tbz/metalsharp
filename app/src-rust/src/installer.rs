@@ -709,6 +709,14 @@ fn fix_moltenvk_icd_paths(wine_dir: &Path) {
     }
 }
 
+pub(crate) fn packaged_runtime_bundle_current_for_home(home: &Path) -> Option<bool> {
+    [find_in_resources(RUNTIME_BUNDLE), find_in_dev_path(RUNTIME_BUNDLE)]
+        .into_iter()
+        .flatten()
+        .find(|archive| bundled_artifact_valid(RUNTIME_BUNDLE, archive))
+        .map(|archive| split_bundle_current(home, RUNTIME_BUNDLE, &archive))
+}
+
 fn split_bundle_marker_dir(home: &Path) -> PathBuf {
     crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("bundle-state")
 }

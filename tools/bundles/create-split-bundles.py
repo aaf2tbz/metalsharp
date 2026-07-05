@@ -273,6 +273,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
 
     copy_tree(APP_DIR / "updater", roots["scripts"] / "updater")
     copy_tree(PROJECT_ROOT / "configs", roots["scripts"] / "configs")
+    copy_tree(PROJECT_ROOT / "tools" / "runtime", roots["scripts"] / "runtime")
     copy_tree(APP_DIR / "native", roots["scripts"] / "native", ignore=lambda rel, is_dir: rel.parts[:1] == ("host",))
     for cef_asset in SOURCE_BUNDLES.glob("cef*"):
         copy_file(cef_asset, roots["scripts"] / "cef" / cef_asset.name)

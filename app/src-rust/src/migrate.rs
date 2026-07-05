@@ -274,7 +274,7 @@ pub fn needs_migration() -> serde_json::Value {
 fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
     let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
     if runtime_core_ready(&ms_dir) {
-        return false;
+        return setup_completed && crate::installer::packaged_runtime_bundle_current_for_home(home) == Some(false);
     }
 
     setup_completed || ms_dir.join("prefix-steam").exists()

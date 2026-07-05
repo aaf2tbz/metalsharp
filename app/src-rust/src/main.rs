@@ -1003,6 +1003,10 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, d3dmetal_gptk::handle_install_homebrew_gptk(&body))
         },
+        (Method::Post, "/d3dmetal/bottles/install-framework") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_install_framework(&body))
+        },
         (Method::Post, "/d3dmetal/bottles/install-rosetta") => {
             let body = read_body(req);
             resp(200, d3dmetal_gptk::handle_install_rosetta(&body))
@@ -1010,6 +1014,14 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         (Method::Post, "/d3dmetal/bottles/repair-gptk-payload") => {
             let body = read_body(req);
             resp(200, d3dmetal_gptk::handle_repair_gptk_payload(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/stage") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_stage_payload(&body))
+        },
+        (Method::Post, "/d3dmetal/bottles/patch") => {
+            let body = read_body(req);
+            resp(200, d3dmetal_gptk::handle_patch_payload(&body))
         },
         (Method::Post, "/d3dmetal/bottles/install-x64-redist") => {
             let body = read_body(req);
