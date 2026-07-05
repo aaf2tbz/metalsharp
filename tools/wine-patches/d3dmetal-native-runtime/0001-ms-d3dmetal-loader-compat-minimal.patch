@@ -1,0 +1,338 @@
+MetalSharp Wine 11.5 patch: D3DMetal loader compatibility minimal safe candidate
+
+Generated from the restored safe loader-compat candidate after the 2026-07-05
+GPTK4 investigation. Applies after the host ABI patch from the Wine source root
+with patch -p0.
+
+This patch intentionally avoids ntdll.spec exports and avoids Darwin
+signal/syscall/TLS/GS changes. It implements the Phase-A loader compatibility
+surface only:
+
+- backend-gated D3DMetal payload search priority via MS_D3DMETAL_PAYLOAD_DIR
+- backend-gated PE image registration through MS_D3DMETAL_SHARED_PATH
+- backend-gated D3DMetal bridge image writability for the bridge DLL allowlist
+- a narrow RtlVirtualUnwind2 null optional-output guard observed during GPTK4
+  crash diagnostics
+
+Known blocker retained outside this patch: GPTK4 dxgi/d3d12/d3d11 create calls
+still crash at the native task_policy_set / Rosetta boundary on the new all-PE
+Wine 11.5 runtime. Do not treat this patch as full D3DMetal runtime proof.
+
+--- dlls/ntdll/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/loader.c	2026-07-05 02:42:24
+@@ -2248,6 +2248,74 @@
+  *
+  * Build the module data for a mapped dll.
+  */
++static BOOL d3dmetal_native_enabled(void)
++{
++    static const WCHAR active_env_name[] = L"MS_ACTIVE_GRAPHICS_BACKEND";
++    static const WCHAR backend_env_name[] = L"MS_GRAPHICS_BACKEND";
++    static const WCHAR backend_name[] = L"d3dmetal_native";
++    WCHAR buffer[64];
++    UNICODE_STRING name, value, expected;
++
++    RtlInitUnicodeString( &expected, backend_name );
++
++    RtlInitUnicodeString( &name, active_env_name );
++    value.Buffer = buffer;
++    value.Length = 0;
++    value.MaximumLength = sizeof(buffer);
++    if (!RtlQueryEnvironmentVariable_U( NULL, &name, &value ) && RtlEqualUnicodeString( &value, &expected, TRUE ))
++        return TRUE;
++
++    RtlInitUnicodeString( &name, backend_env_name );
++    value.Buffer = buffer;
++    value.Length = 0;
++    value.MaximumLength = sizeof(buffer);
++    if (!RtlQueryEnvironmentVariable_U( NULL, &name, &value ) && RtlEqualUnicodeString( &value, &expected, TRUE ))
++        return TRUE;
++
++    return FALSE;
++}
++
++static BOOL is_d3dmetal_bridge_module( const UNICODE_STRING *base_name )
++{
++    static const WCHAR d3d10W[] = L"d3d10.dll";
++    static const WCHAR d3d11W[] = L"d3d11.dll";
++    static const WCHAR d3d12W[] = L"d3d12.dll";
++    static const WCHAR dxgiW[] = L"dxgi.dll";
++    static const WCHAR nvapi64W[] = L"nvapi64.dll";
++    static const WCHAR nvngxW[] = L"nvngx-on-metalfx.dll";
++    UNICODE_STRING name;
++
++    RtlInitUnicodeString( &name, d3d10W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, d3d11W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, d3d12W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, dxgiW );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, nvapi64W );
++    if (RtlEqualUnicodeString( base_name, &name, TRUE )) return TRUE;
++    RtlInitUnicodeString( &name, nvngxW );
++    return RtlEqualUnicodeString( base_name, &name, TRUE );
++}
++
++static void make_d3dmetal_bridge_image_writable( WINE_MODREF *wm, void *module, SIZE_T map_size )
++{
++    void *addr = module;
++    SIZE_T size = map_size;
++    ULONG old_prot;
++    NTSTATUS status;
++
++    if (!d3dmetal_native_enabled()) return;
++    if (!is_d3dmetal_bridge_module( &wm->ldr.BaseDllName )) return;
++
++    status = NtProtectVirtualMemory( NtCurrentProcess(), &addr, &size, PAGE_EXECUTE_READWRITE, &old_prot );
++    if (status) WARN( "Failed to make D3DMetal bridge %s writable, status %#lx.\n",
++                      debugstr_w(wm->ldr.BaseDllName.Buffer), status );
++    else TRACE( "Made D3DMetal bridge %s writable at %p-0x%Ix (old %#lx).\n",
++                debugstr_w(wm->ldr.BaseDllName.Buffer), addr, size, old_prot );
++}
++
+ static NTSTATUS build_module( LPCWSTR load_path, const UNICODE_STRING *nt_name, void **module,
+                               const SECTION_IMAGE_INFORMATION *image_info, const struct file_id *id,
+                               DWORD flags, BOOL system, BOOL redirected, WINE_MODREF **pwm )
+@@ -2323,6 +2391,16 @@
+ 
+     TRACE_(loaddll)( "Loaded %s at %p: %s\n", debugstr_w(wm->ldr.FullDllName.Buffer), *module,
+                      is_builtin ? "builtin" : "native" );
++
++    make_d3dmetal_bridge_image_writable( wm, *module, map_size );
++
++#if defined(__x86_64__)
++    if ((wm->ldr.Flags & LDR_IMAGE_IS_DLL) && d3dmetal_native_enabled())
++    {
++        struct pe_module_loaded_params params = { *module, (void *)((BYTE *)*module + map_size) };
++        WINE_UNIX_CALL( unix_pe_module_loaded, &params );
++    }
++#endif
+ 
+     wm->ldr.LoadCount = 1;
+     *pwm = wm;
+--- dlls/ntdll/unix/loader.c	2026-03-20 14:33:36
++++ dlls/ntdll/unix/loader.c	2026-07-05 03:20:56
+@@ -37,6 +37,7 @@
+ #include <sys/stat.h>
+ #include <sys/mman.h>
+ #include <sys/wait.h>
++#include <sys/utsname.h>
+ #include <unistd.h>
+ #include <dlfcn.h>
+ #ifdef HAVE_PWD_H
+@@ -293,17 +294,59 @@
+     default: return machine;
+     }
+ }
++
++static BOOL d3dmetal_native_enabled_unix(void)
++{
++    const char *backend = getenv( "MS_GRAPHICS_BACKEND" );
++    const char *active = getenv( "MS_ACTIVE_GRAPHICS_BACKEND" );
+ 
++    return (backend && !strcmp( backend, "d3dmetal_native" )) ||
++           (active && !strcmp( active, "d3dmetal_native" ));
++}
++
++static char *get_d3dmetal_payload_dir(void)
++{
++    const char *payload = getenv( "MS_D3DMETAL_PAYLOAD_DIR" );
++    const char *shared;
++    char *copy, *slash;
++
++    if (payload && *payload) return strdup( payload );
++
++    /* Derive <payload> from MS_D3DMETAL_SHARED_PATH=<payload>/external/libd3dshared.dylib. */
++    shared = getenv( "MS_D3DMETAL_SHARED_PATH" );
++    if (!shared || !*shared) return NULL;
++
++    if (!(copy = strdup( shared ))) return NULL;
++    if (!(slash = strrchr( copy, '/' ))) goto failed;
++    *slash = 0;
++    if (!(slash = strrchr( copy, '/' ))) goto failed;
++    *slash = 0;
++    return copy;
++
++failed:
++    free( copy );
++    return NULL;
++}
++
+ static void set_dll_path(void)
+ {
+     char *p, *path = getenv( "WINEDLLPATH" );
++    char *d3dmetal_payload = NULL;
+     int i, count = 0;
+ 
+-    if (path) for (p = path, count = 1; *p; p++) if (*p == ':') count++;
++    if (d3dmetal_native_enabled_unix()) d3dmetal_payload = get_d3dmetal_payload_dir();
+ 
++    if (d3dmetal_payload) count++;
++    if (path) for (p = path, count++; *p; p++) if (*p == ':') count++;
++
+     dll_paths = malloc( (count + 2) * sizeof(*dll_paths) );
+     count = 0;
+ 
++    /* D3DMetal Native is an opt-in runtime route. When selected, treat the staged
++     * GPTK/D3DMetal payload as a Wine DLL root before the stock runtime root, so
++     * existing arch-dir fallback still works for missing i386/arm/aarch64 payloads.
++     */
++    if (d3dmetal_payload) dll_paths[count++] = d3dmetal_payload;
+     if (!build_dir) dll_paths[count++] = dll_dir;
+ 
+     if (path)
+@@ -979,6 +1022,7 @@
+ }
+ 
+ extern NTSTATUS unwind_builtin_dll( void *args );
++static NTSTATUS pe_module_loaded( void *args );
+ 
+ #else /* SO_DLLS_SUPPORTED */
+ 
+@@ -1007,11 +1051,13 @@
+ 
+ #endif /* SO_DLLS_SUPPORTED */
+ 
++static NTSTATUS pe_module_loaded( void *args );
+ 
+ static const unixlib_entry_t unix_call_funcs[] =
+ {
+     load_so_dll,
+     unwind_builtin_dll,
++    pe_module_loaded,
+     unixcall_wine_dbg_write,
+     unixcall_wine_server_call,
+     unixcall_wine_server_fd_to_handle,
+@@ -1025,11 +1071,13 @@
+ 
+ static NTSTATUS wow64_load_so_dll( void *args ) { return STATUS_INVALID_IMAGE_FORMAT; }
+ static NTSTATUS wow64_unwind_builtin_dll( void *args ) { return STATUS_UNSUCCESSFUL; }
++static NTSTATUS wow64_pe_module_loaded( void *args ) { return STATUS_NOT_IMPLEMENTED; }
+ 
+ const unixlib_entry_t unix_call_wow64_funcs[] =
+ {
+     wow64_load_so_dll,
+     wow64_unwind_builtin_dll,
++    wow64_pe_module_loaded,
+     wow64_wine_dbg_write,
+     wow64_wine_server_call,
+     wow64_wine_server_fd_to_handle,
+@@ -2226,13 +2274,73 @@
+  *           __wine_main
+  *
+  * Main entry point called by the wine loader.
++ */
++
++/* MetalSharp D3DMetal loader compatibility shim.
++ *
++ * GPTK4's libd3dshared.dylib can expose Rosetta/non-native code region helpers.
++ * Keep this Darwin-only, MetalSharp-env-gated, and independent of syscall/TLS paths.
+  */
++#ifdef __APPLE__
++static pthread_once_t ms_d3dmetal_shared_once = PTHREAD_ONCE_INIT;
++static void *ms_d3dmetal_shared_lib;
++static void (*ms_register_non_native_code_region)( void *, void * );
++static BOOL (*ms_supports_non_native_code_regions)( void );
++
++static BOOL ms_d3dmetal_sonoma_or_later(void)
++{
++    struct utsname name;
++    int major;
++    if (uname(&name)) return FALSE;
++    major = atoi(name.release);
++    return major >= 23;  /* macOS 14 (Sonoma) is Darwin 23 */
++}
++
++static void ms_d3dmetal_init_shared_support(void)
++{
++    const char *path = getenv("MS_D3DMETAL_SHARED_PATH");
++    if (!d3dmetal_native_enabled_unix() || !path || !ms_d3dmetal_sonoma_or_later()) return;
++
++    ms_d3dmetal_shared_lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
++    if (ms_d3dmetal_shared_lib)
++    {
++        ms_register_non_native_code_region = dlsym(ms_d3dmetal_shared_lib, "register_non_native_code_region");
++        ms_supports_non_native_code_regions = dlsym(ms_d3dmetal_shared_lib, "supports_non_native_code_regions");
++        TRACE("Loaded libd3dshared.dylib from MS_D3DMETAL_SHARED_PATH (%s): "
++              "non-native code region support %s\n", path,
++              (ms_register_non_native_code_region && ms_supports_non_native_code_regions &&
++               ms_supports_non_native_code_regions()) ? "present" : "absent");
++    }
++    else
++        TRACE("Loading libd3dshared.dylib failed: %s\n", dlerror());
++}
++#endif
++
++static NTSTATUS pe_module_loaded( void *args )
++{
++#ifdef __APPLE__
++    struct pe_module_loaded_params *params = args;
++
++    pthread_once(&ms_d3dmetal_shared_once, ms_d3dmetal_init_shared_support);
++    if (ms_register_non_native_code_region && ms_supports_non_native_code_regions &&
++        ms_supports_non_native_code_regions())
++    {
++        TRACE("Marking MetalSharp non-native code region: %p-%p\n", params->start, params->end);
++        ms_register_non_native_code_region(params->start, params->end);
++    }
++#endif
++    return STATUS_SUCCESS;
++}
++
+ DECLSPEC_EXPORT void __wine_main( int argc, char *argv[] )
+ {
+     main_argc = argc;
+     main_argv = argv;
+ 
+     init_paths();
++#ifdef __APPLE__
++    pthread_once(&ms_d3dmetal_shared_once, ms_d3dmetal_init_shared_support);
++#endif
+     if (!getenv( "WINELOADERNOEXEC" ) || argc <= 1) check_command_line( argc, argv );
+     unsetenv( "WINELOADERNOEXEC" );
+ 
+--- dlls/ntdll/unixlib.h	2026-03-20 14:33:36
++++ dlls/ntdll/unixlib.h	2026-07-05 00:33:39
+@@ -66,10 +66,17 @@
+     CONTEXT                    *context;
+ };
+ 
++struct pe_module_loaded_params
++{
++    void                       *start;
++    void                       *end;
++};
++
+ enum ntdll_unix_funcs
+ {
+     unix_load_so_dll,
+     unix_unwind_builtin_dll,
++    unix_pe_module_loaded,
+     unix_wine_dbg_write,
+     unix_wine_server_call,
+     unix_wine_server_fd_to_handle,
+--- dlls/ntdll/unwind.c	2026-03-20 14:33:36
++++ dlls/ntdll/unwind.c	2026-07-05 01:55:04
+@@ -2044,6 +2044,9 @@
+     struct UNWIND_INFO *info;
+     unsigned int i, prolog_offset;
+     BOOL mach_frame = FALSE, chained = FALSE;
++    void *dummy_data = NULL;
++    ULONG_PTR dummy_frame_ret;
++    PEXCEPTION_ROUTINE dummy_handler_ret;
+ 
+ #ifdef __arm64ec__
+     if (RtlIsEcCode( pc ))
+@@ -2065,6 +2068,10 @@
+     TRACE( "type %lx base %I64x rip %I64x rva %I64x rsp %I64x\n", type, base, pc, pc - base, context->Rsp );
+     if (limit_low || limit_high) FIXME( "limits not supported\n" );
+ 
++    if (!data) data = &dummy_data;
++    if (!frame_ret) frame_ret = &dummy_frame_ret;
++    if (!handler_ret) handler_ret = &dummy_handler_ret;
++
+     frame = *frame_ret = context->Rsp;
+ 
+     if (!function)  /* leaf function */

@@ -1,40 +1,65 @@
 # D3DMetal Native Runtime Wine 11.5 Patches
 
-These patches capture the proven MetalSharp Wine 11.5 x86_64 build-tree fixes
-needed after the `d3dmetal-host-abi` patch is applied.
+Status: **safe loader-compat candidate; create-path compatibility still blocked**.
 
-Apply from the Wine source root.
+These patches are for the MetalSharp Wine 11.5 Rosetta x86_64 host + all-PE
+runtime shape. Apply from the Wine source root after the host ABI patch.
 
 ```sh
 patch -p0 < tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
-patch -p0 < tools/wine-patches/d3dmetal-native-runtime/0001-ntdll-d3dmetal-native-loader-tls.patch
-patch -p0 < tools/wine-patches/d3dmetal-native-runtime/0002-mscompatdb-compat-surface.patch
+patch -p0 < tools/wine-patches/d3dmetal-native-runtime/0001-ms-d3dmetal-loader-compat-minimal.patch
 ```
 
-Patch groups:
+## Active patch
 
-- `d3dmetal-host-abi/0001-d3dmetal-host-abi.patch`
-  - winemac host ABI bridge
-  - client-surface presentation plumbing
-  - registry callback thunks
-  - WDDM caps expected by the D3DMetal payload
-- `d3dmetal-native-runtime/0001-ntdll-d3dmetal-native-loader-tls.patch`
-  - D3DMetal bridge PE image writeability policy gated by `MS_ACTIVE_GRAPHICS_BACKEND=d3dmetal_native`
-  - PE module registration with `libd3dshared.dylib` via `MS_D3DMETAL_SHARED_PATH`
-  - narrow Apple pthread/TLS restoration around native timezone calls
-  - temporary `ntdll.__wine_unix_call` compatibility export retained pending final ABI decision
-- `d3dmetal-native-runtime/0002-mscompatdb-compat-surface.patch`
-  - restores the MetalSharp 0.49 `mscompatdb.so` autoload/process-routing surface
-  - gates autoload on `MS_ROOT` so direct `bin/wine` diagnostics do not fall back to `/etc/mscompatdb_rules.toml`
-  - exports `KeServiceDescriptorTable` for the preserved `mscompatdb` hook
+`0001-ms-d3dmetal-loader-compat-minimal.patch` is the restored safe candidate
+from the 2026-07-05 loader-compat investigation. It intentionally avoids:
 
-The runtime patches are x86_64/win64-oriented. Do not claim arm64 Wine support
-for this D3DMetal payload until a separate arm64-compatible ABI and payload are
-proven.
+- `dlls/ntdll/ntdll.spec` exports
+- `dlls/ntdll/unix/signal_x86_64.c`
+- `dlls/ntdll/unix/syscall.c`
+- `dlls/ntdll/unix/system.c`
+- broad syscall dispatcher / GS / TLS mutation
 
-Current no-game packaged-runtime proof with this patch stack:
+It provides only the Phase-A loader compatibility surface:
 
-- `CreateDXGIFactory2` succeeds.
-- `D3D12CreateDevice(NULL)` succeeds.
-- `D3D11CreateDevice(NULL)` succeeds when GPTK4 `dxgi.dll`, `d3d11.dll`, and `d3d12.dll` are staged app-locally and selected with native-first `WINEDLLOVERRIDES` (`=n,b`). `WINEDLLPATH`/payload-root priority alone is not accepted as a route proof.
-- `D3D10CreateDevice` / `D3D10CreateDevice1` still return `E_FAIL` and remain an extended compatibility workstream.
+- backend-gated D3DMetal payload-root priority through `MS_D3DMETAL_PAYLOAD_DIR`
+- backend-gated PE image registration through `MS_D3DMETAL_SHARED_PATH`
+- bridge DLL image writability for the D3DMetal allowlist
+- a narrow `RtlVirtualUnwind2` null optional-output guard observed during GPTK4
+  crash diagnostics
+
+## Current evidence
+
+Verified with the restored safe candidate:
+
+- backend-off internal Steam prefix `wineboot -u` succeeds
+- GPTK4 `dxgi.dll`, `d3d12.dll`, and `d3d11.dll` load with backend enabled
+- `CreateDXGIFactory2`, `D3D12CreateDevice`, and `D3D11CreateDevice` exports resolve
+- forbidden `ntdll`/syscall/TLS files remain unchanged
+
+Still blocked:
+
+- `CreateDXGIFactory2` crashes before returning HRESULT
+- `D3D12CreateDevice` crashes before returning HRESULT
+- `D3D11CreateDevice` crashes before returning HRESULT
+- common native crash site: `libsystem_kernel.dylib task_policy_set +331`
+
+Detailed blocker audit:
+
+```text
+/Volumes/AverySSD/wine-build-ms/metalsharp-wine-11.5-d3dmetal-loader-compat-experiment/audits/roadmap-completion-blocker-audit-20260705-0341.md
+```
+
+## Deprecated patch
+
+`0001-ntdll-d3dmetal-native-loader-tls.patch.deprecated-do-not-apply` is retained
+only as historical evidence. Do not apply it to product runtime builds. It
+contains the earlier broad TLS/export approach that this investigation rejected
+for the Steam-safe Wine 11.5 runtime shape.
+
+## Product rule
+
+The D3DMetal Native lane must remain experimental/not broadly launchable until
+a separate fix proves the create-call results required by the roadmap without
+regressing backend-off Steam/Wine behavior.

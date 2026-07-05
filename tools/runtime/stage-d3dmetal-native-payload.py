@@ -23,6 +23,10 @@ Offline-only. Does not download anything.
 
 Usage:
     stage-d3dmetal-native-payload.py <gptk_dmg_or_dir> [--runtime-root ~/.metalsharp/runtime/wine]
+
+By default, staging also applies MetalSharp's local GPTK4 compatibility
+transform with patch-d3dmetal-native-payload.py. This modifies only the local
+user-staged payload and never commits or redistributes Apple binaries.
 """
 
 from __future__ import annotations
@@ -132,6 +136,7 @@ def build_manifest(payload_dir: Path, source: Path, runtime_root: Path) -> dict:
     pe_dir = payload_dir / "x86_64-windows"
     unix_dir = payload_dir / "x86_64-unix"
     ext_dir = payload_dir / "external"
+    compat_receipt_path = payload_dir / "metalsharp-d3dmetal-compat-patches.json"
 
     pe_hashes = {}
     known_pe = REQUIRED_PE_DLLS + OPTIONAL_PE_DLLS
@@ -155,6 +160,18 @@ def build_manifest(payload_dir: Path, source: Path, runtime_root: Path) -> dict:
         },
     }
 
+    compat_transform = None
+    if compat_receipt_path.exists():
+        try:
+            receipt = json.loads(compat_receipt_path.read_text())
+            compat_transform = {
+                "receipt": compat_receipt_path.name,
+                "patches": [p.get("id") for p in receipt.get("patches", [])],
+                "applied_at": receipt.get("applied_at"),
+            }
+        except json.JSONDecodeError:
+            compat_transform = {"receipt": compat_receipt_path.name, "error": "invalid json"}
+
     return {
         "schema_version": 1,
         "route_id": "d3dmetal_native",
@@ -174,10 +191,21 @@ def build_manifest(payload_dir: Path, source: Path, runtime_root: Path) -> dict:
         "pe_dlls": pe_hashes,
         "unix_modules": unix_entries,
         "external": external,
+        "compatibility_transform": compat_transform,
     }
 
 
-def stage(source: Path, runtime_root: Path, force: bool) -> Path:
+def apply_compat_transform(payload_dir: Path) -> None:
+    patcher = Path(__file__).resolve().with_name("patch-d3dmetal-native-payload.py")
+    if not patcher.exists():
+        raise RuntimeError(f"compatibility patcher missing: {patcher}")
+    proc = subprocess.run([sys.executable, str(patcher), str(payload_dir)], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        stderr = proc.stderr.strip() or proc.stdout.strip()
+        raise RuntimeError(f"D3DMetal compatibility transform failed: {stderr}")
+
+
+def stage(source: Path, runtime_root: Path, force: bool, apply_compat_patch: bool = True) -> Path:
     payload_dir = runtime_root / PAYLOAD_REL
     if payload_dir.exists() and not force:
         raise RuntimeError(f"{payload_dir} already exists (use --force to overwrite)")
@@ -228,6 +256,9 @@ def stage(source: Path, runtime_root: Path, force: bool) -> Path:
 
         copy_tree_preserving(ext_src, payload_dir / "external")
 
+        if apply_compat_patch:
+            apply_compat_transform(payload_dir)
+
         manifest = build_manifest(payload_dir, source, runtime_root)
         (payload_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
@@ -244,6 +275,7 @@ def main(argv: Iterable[str]) -> int:
     p.add_argument("source", type=Path, help="GPTK .dmg or extracted redist/ directory")
     p.add_argument("--runtime-root", type=Path, default=DEFAULT_RUNTIME_ROOT, help="Wine runtime root")
     p.add_argument("--force", action="store_true", help="Overwrite an existing staged payload")
+    p.add_argument("--skip-compat-patch", action="store_true", help="Stage raw payload without applying MetalSharp's local GPTK4 compatibility transform")
     args = p.parse_args(list(argv))
 
     runtime_root = args.runtime_root.expanduser().resolve()
@@ -253,7 +285,7 @@ def main(argv: Iterable[str]) -> int:
         return 2
 
     try:
-        payload_dir = stage(source, runtime_root, args.force)
+        payload_dir = stage(source, runtime_root, args.force, apply_compat_patch=not args.skip_compat_patch)
     except Exception as exc:  # pragma: no cover - user-facing errors
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -265,7 +297,9 @@ def main(argv: Iterable[str]) -> int:
     fw = payload_dir / "external" / "D3DMetal.framework" / "Versions" / "A"
     print(f"  pe dlls     : {len(list(pe.glob('*.dll')))}")
     print(f"  unix modules: {len(list((payload_dir / 'x86_64-unix').glob('*.so')))}")
+    receipt = payload_dir / "metalsharp-d3dmetal-compat-patches.json"
     print(f"  framework   : {'present' if (fw / 'D3DMetal').exists() else 'MISSING'}")
+    print(f"  compat patch: {'applied' if receipt.exists() else 'skipped'}")
     print("next: verify with check-d3dmetal-native-payload.py --runtime-root", str(runtime_root))
     return 0
 
