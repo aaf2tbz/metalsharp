@@ -1,6 +1,6 @@
 # D3DMetal Native Runtime Wine 11.5 Patches
 
-Status: **safe loader-compat candidate; create-path compatibility still blocked**.
+Status: **loader-safe Wine patch + local GPTK4 payload compatibility transform**.
 
 These patches are for the MetalSharp Wine 11.5 Rosetta x86_64 host + all-PE
 runtime shape. Apply from the Wine source root after the host ABI patch.
@@ -10,7 +10,7 @@ patch -p0 < tools/wine-patches/d3dmetal-host-abi/0001-d3dmetal-host-abi.patch
 patch -p0 < tools/wine-patches/d3dmetal-native-runtime/0001-ms-d3dmetal-loader-compat-minimal.patch
 ```
 
-## Active patch
+## Active Wine patch
 
 `0001-ms-d3dmetal-loader-compat-minimal.patch` is the restored safe candidate
 from the 2026-07-05 loader-compat investigation. It intentionally avoids:
@@ -29,27 +29,54 @@ It provides only the Phase-A loader compatibility surface:
 - a narrow `RtlVirtualUnwind2` null optional-output guard observed during GPTK4
   crash diagnostics
 
+## Active payload transform
+
+`tools/runtime/stage-d3dmetal-native-payload.py` applies
+`tools/runtime/patch-d3dmetal-native-payload.py` by default after staging a
+user/developer-provided GPTK4 payload. This transform modifies only local
+user-staged Apple binaries and records a receipt. MetalSharp does not commit or
+redistribute Apple D3DMetal/GPTK payload files.
+
+The transform forces known GPTK4 PE thunk entrypoints through their existing
+unix-call fallback paths:
+
+- `dxgi.dll` `Thunk_Thread`
+- `dxgi.dll` `CreateDXGIFactory2`
+- `d3d12.dll` `D3D12CreateDevice`
+- `d3d11.dll` `D3D11CreateDevice`
+
+This avoids the native callback path that dirties Darwin pthread TLS/GS under
+Rosetta while preserving backend-off Wine/Steam behavior.
+
+## Validation helpers
+
+- `tools/runtime/check-d3dmetal-native-payload.py` verifies the staged payload
+  contract and host ABI readiness.
+- `tools/runtime/run-d3dmetal-native-split-probes.py` compiles and runs the
+  backend-on split probes:
+  - load-only
+  - `CreateDXGIFactory2`
+  - `D3D12CreateDevice`
+  - `D3D11CreateDevice`
+
 ## Current evidence
 
-Verified with the restored safe candidate:
+Verified during the loader-compat investigation:
 
-- backend-off internal Steam prefix `wineboot -u` succeeds
-- GPTK4 `dxgi.dll`, `d3d12.dll`, and `d3d11.dll` load with backend enabled
-- `CreateDXGIFactory2`, `D3D12CreateDevice`, and `D3D11CreateDevice` exports resolve
-- forbidden `ntdll`/syscall/TLS files remain unchanged
+- backend-off `wineboot -u` succeeds
+- backend-off TEB probe succeeds
+- backend-on `wineboot -u` succeeds
+- backend-on load-only probe succeeds
+- backend-on split create probes return process `RC=0` / HRESULT success for:
+  - `CreateDXGIFactory2`
+  - `D3D12CreateDevice`
+  - `D3D11CreateDevice`
+- backend-off SteamSetup silent install/update smoke succeeds
+- forbidden broad `ntdll`/syscall/TLS files remain unchanged by the active Wine
+  patch
 
-Still blocked:
-
-- `CreateDXGIFactory2` crashes before returning HRESULT
-- `D3D12CreateDevice` crashes before returning HRESULT
-- `D3D11CreateDevice` crashes before returning HRESULT
-- common native crash site: `libsystem_kernel.dylib task_policy_set +331`
-
-Detailed blocker audit:
-
-```text
-/Volumes/AverySSD/wine-build-ms/metalsharp-wine-11.5-d3dmetal-loader-compat-experiment/audits/roadmap-completion-blocker-audit-20260705-0341.md
-```
+The lane remains experimental until follow-up real-game/device-object semantics
+are validated beyond no-game split probes.
 
 ## Deprecated patch
 
@@ -57,9 +84,3 @@ Detailed blocker audit:
 only as historical evidence. Do not apply it to product runtime builds. It
 contains the earlier broad TLS/export approach that this investigation rejected
 for the Steam-safe Wine 11.5 runtime shape.
-
-## Product rule
-
-The D3DMetal Native lane must remain experimental/not broadly launchable until
-a separate fix proves the create-call results required by the roadmap without
-regressing backend-off Steam/Wine behavior.

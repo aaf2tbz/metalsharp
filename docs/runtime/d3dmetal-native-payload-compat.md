@@ -28,10 +28,24 @@ python3 tools/runtime/patch-d3dmetal-native-payload.py ~/.metalsharp/runtime/win
 python3 tools/runtime/patch-d3dmetal-native-payload.py ~/.metalsharp/runtime/wine --check
 ```
 
+`tools/runtime/stage-d3dmetal-native-payload.py` runs this transform by default after staging. Use `--skip-compat-patch` only when intentionally preserving an unmodified raw GPTK payload for diagnostics.
+
 The tool is idempotent. It records:
 
 - `.metalsharp-compat-backups/<timestamp>/` with pre-patch local DLL copies
 - `metalsharp-d3dmetal-compat-patches.json` with patch ids, offsets, and before/after SHA-256 values
+
+## Split probe helper
+
+After staging and patching, run the backend-on split probes with:
+
+```sh
+python3 tools/runtime/run-d3dmetal-native-split-probes.py \
+  --runtime-root ~/.metalsharp/runtime/wine \
+  --prefix /path/to/internal/test-prefix
+```
+
+The helper compiles temporary Windows probes with `x86_64-w64-mingw32-gcc`, sets the `d3dmetal_native` backend environment, and runs `wineboot`, load-only, `CreateDXGIFactory2`, `D3D12CreateDevice`, and `D3D11CreateDevice` separately.
 
 ## Evidence from loader-compat investigation
 
