@@ -458,7 +458,9 @@ async function createProcessManagerWindow() {
       processManagerWindow.setAlwaysOnTop(true, "screen-saver");
     }
   });
-  await processManagerWindow.loadFile(rendererIndexPath(), { query: { overlay: "process-manager", theme: "developer" } });
+  await processManagerWindow.loadFile(rendererIndexPath(), {
+    query: { overlay: "process-manager", theme: "developer" },
+  });
   return processManagerWindow;
 }
 
@@ -484,7 +486,9 @@ function registerProcessManagerShortcut() {
     }
   }
   if (!registered) {
-    console.warn("MetalSharp Process Manager Cmd+P shortcut unavailable; overlay can still be opened from IPC/dev launch.");
+    console.warn(
+      "MetalSharp Process Manager Cmd+P shortcut unavailable; overlay can still be opened from IPC/dev launch.",
+    );
   }
 }
 
