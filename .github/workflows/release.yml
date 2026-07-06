@@ -101,6 +101,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          tools/release/set-version.sh "$VERSION"
+
       - name: Build Rust backend
         run: cd app/src-rust && cargo build --release
 
@@ -117,11 +122,6 @@ jobs:
 
       - name: Install Electron deps
         run: cd app && npm ci
-
-      - name: Set version from tag
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          tools/release/set-version.sh "$VERSION"
 
       - name: Build TypeScript
         run: cd app && npm run build

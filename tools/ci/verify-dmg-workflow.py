@@ -157,6 +157,12 @@ def check_workflows() -> None:
     ]:
         if required not in release:
             fail(f"release workflow missing signing fallback contract: {required}")
+    version_step = release.find("- name: Set version from tag")
+    rust_step = release.find("- name: Build Rust backend")
+    cpp_step = release.find("- name: Build C++ engine")
+    electron_step = release.find("- name: Build TypeScript")
+    if not (0 <= version_step < rust_step < cpp_step < electron_step):
+        fail("release workflow must set the tag version before Rust/CMake/Electron build steps")
     if "CSC_IDENTITY_AUTO_DISCOVERY=false" not in read("tools/dmg/check-apple-signing-readiness.sh"):
         fail("unsigned DMG fallback must disable Electron Builder certificate discovery")
     adhoc_sign = read("app/build/adhoc-deep-sign.cjs")
