@@ -42,6 +42,10 @@ function isUiOnlyRuntime(): boolean {
   return process.env.METALSHARP_UI_ONLY === "1";
 }
 
+function isProcessManagerOnlyRuntime(): boolean {
+  return process.env.METALSHARP_PROCESS_MANAGER_ONLY === "1" || process.argv.includes("--process-manager-overlay");
+}
+
 function getMetalsharpDir(): string {
   if (process.env.METALSHARP_HOME?.trim()) {
     return path.resolve(process.env.METALSHARP_HOME);
@@ -420,10 +424,10 @@ async function createProcessManagerWindow() {
   }
 
   processManagerWindow = new BrowserWindow({
-    width: 860,
-    height: 610,
-    minWidth: 720,
-    minHeight: 520,
+    width: 760,
+    height: 540,
+    minWidth: 680,
+    minHeight: 480,
     frame: false,
     transparent: true,
     hasShadow: false,
@@ -470,11 +474,18 @@ async function toggleProcessManagerWindow() {
 }
 
 function registerProcessManagerShortcut() {
-  if (process.platform !== "darwin") {
-    globalShortcut.register("CommandOrControl+P", () => void toggleProcessManagerWindow());
-    return;
+  const shortcuts = process.platform === "darwin" ? ["Command+P", "CommandOrControl+P"] : ["CommandOrControl+P"];
+  let registered = false;
+  for (const accelerator of shortcuts) {
+    const ok = globalShortcut.register(accelerator, () => void toggleProcessManagerWindow());
+    registered ||= ok || globalShortcut.isRegistered(accelerator);
+    if (!ok && !globalShortcut.isRegistered(accelerator)) {
+      console.warn(`MetalSharp Process Manager shortcut was not registered: ${accelerator}`);
+    }
   }
-  globalShortcut.register("Command+P", () => void toggleProcessManagerWindow());
+  if (!registered) {
+    console.warn("MetalSharp Process Manager Cmd+P shortcut unavailable; overlay can still be opened from IPC/dev launch.");
+  }
 }
 
 async function createWindow(migrating = false) {
@@ -553,6 +564,14 @@ app.whenReady().then(async () => {
     migrationMode = false;
     registerIpc();
     registerProcessManagerShortcut();
+    if (isProcessManagerOnlyRuntime()) {
+      const win = await createProcessManagerWindow();
+      win.center();
+      win.show();
+      win.focus();
+      app.on("activate", () => void toggleProcessManagerWindow());
+      return;
+    }
     await createWindow(false);
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
@@ -591,6 +610,14 @@ app.whenReady().then(async () => {
 
   registerIpc();
   registerProcessManagerShortcut();
+
+  if (isProcessManagerOnlyRuntime()) {
+    const win = await createProcessManagerWindow();
+    win.center();
+    win.show();
+    win.focus();
+    return;
+  }
 
   await createWindow(needsMigration);
 

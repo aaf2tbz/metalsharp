@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
         <article class="pm-stat">
           <span class="pm-label">CPU Temp</span>
           <strong>{{ tempLabel }}</strong>
-          <small>{{ sample?.cpu_temp_c == null ? "private sensor pending" : "package" }}</small>
+          <small>{{ sample?.cpu_temp_c == null ? "private sensor unavailable" : sample?.cpu_temp_source ?? "private PMU sensor" }}</small>
         </article>
         <article class="pm-stat">
           <span class="pm-label">Cores Used</span>
@@ -141,8 +141,8 @@ onBeforeUnmount(() => {
         </article>
         <article class="pm-stat pm-stat-wide">
           <span class="pm-label">GPU Usage</span>
-          <strong>{{ sample?.gpu_percent == null ? "HOOK" : gpuPercent.toFixed(0) + "%" }}</strong>
-          <small>{{ sample?.gpu_label ?? "Metal session telemetry hook pending" }}</small>
+          <strong>{{ sample?.gpu_percent == null ? "SYS" : gpuPercent.toFixed(0) + "%" }}</strong>
+          <small>{{ sample?.gpu_label ?? "system GPU telemetry unavailable" }}</small>
           <div class="pm-meter pm-meter-magenta"><span :style="{ width: gpuPercent + '%' }"></span></div>
         </article>
       </div>
@@ -206,7 +206,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 18px;
+  padding: 12px;
   color: var(--text-primary);
   background:
     radial-gradient(circle at 18% 0%, rgba(255, 46, 247, 0.22), transparent 36%),
@@ -214,11 +214,11 @@ onBeforeUnmount(() => {
     radial-gradient(circle at 50% 100%, rgba(185, 255, 77, 0.13), transparent 42%);
 }
 .pm-panel {
-  width: min(820px, calc(100vw - 24px));
-  max-height: calc(100vh - 24px);
-  overflow: hidden;
+  width: min(720px, calc(100vw - 18px));
+  max-height: calc(100vh - 18px);
+  overflow: auto;
   border: 1px solid var(--border-strong);
-  border-radius: 28px;
+  border-radius: 16px;
   background:
     linear-gradient(140deg, rgba(9, 7, 15, 0.82), rgba(19, 16, 34, 0.74) 46%, rgba(5, 35, 44, 0.64)),
     rgba(9, 7, 15, 0.74);
@@ -235,19 +235,19 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  padding: 22px 24px 14px;
+  padding: 14px 18px 9px;
 }
 .pm-brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 11px;
 }
 .pm-logo-wrap {
-  width: 58px;
-  height: 58px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
-  border-radius: 18px;
+  border-radius: 14px;
   border: 1px solid rgba(185, 255, 77, 0.38);
   background:
     linear-gradient(135deg, rgba(185, 255, 77, 0.16), rgba(0, 245, 255, 0.12), rgba(255, 46, 247, 0.14)),
@@ -255,14 +255,14 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 24px rgba(185, 255, 77, 0.16);
 }
 .pm-logo-wrap img {
-  width: 42px;
-  height: 42px;
+  width: 32px;
+  height: 32px;
   object-fit: contain;
 }
 .pm-kicker {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 9px;
   letter-spacing: 0.2em;
   color: var(--accent-hover);
   text-transform: uppercase;
@@ -273,8 +273,8 @@ h2 {
 }
 h1 {
   font-family: var(--font-logo);
-  font-size: 16px;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--accent);
   text-shadow: 0 0 22px rgba(185, 255, 77, 0.24);
 }
@@ -284,53 +284,53 @@ h2 {
 }
 .pm-close {
   -webkit-app-region: no-drag;
-  width: 38px;
-  height: 38px;
+  width: 32px;
+  height: 32px;
   border: 1px solid rgba(255, 79, 119, 0.44);
   border-radius: 999px;
   background: rgba(255, 79, 119, 0.1);
   color: #ffd7df;
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
 }
 .pm-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 8px 24px 14px;
+  gap: 9px;
+  padding: 6px 18px 10px;
 }
 .pm-stat {
-  min-height: 112px;
-  padding: 14px;
+  min-height: 84px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 20px;
+  border-radius: 16px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent), rgba(13, 11, 23, 0.62);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
 }
 .pm-stat-wide {
   grid-column: span 4;
-  min-height: 82px;
+  min-height: 64px;
 }
 .pm-label,
 .pm-stat small {
   display: block;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 10px;
 }
 .pm-stat strong {
   display: block;
-  margin: 7px 0 5px;
+  margin: 5px 0 3px;
   font-family: var(--font-mono);
-  font-size: 25px;
+  font-size: 20px;
   color: var(--text-bright);
 }
 .pm-stat-fps strong {
   color: var(--accent);
 }
 .pm-meter {
-  height: 6px;
-  margin-top: 10px;
+  height: 5px;
+  margin-top: 7px;
   overflow: hidden;
   border-radius: 999px;
   background: rgba(0, 245, 255, 0.11);
@@ -347,19 +347,19 @@ h2 {
 .pm-action-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 0 24px 14px;
+  gap: 9px;
+  padding: 0 18px 10px;
 }
 .pm-action {
-  min-height: 102px;
+  min-height: 74px;
   border: 1px solid rgba(0, 245, 255, 0.24);
-  border-radius: 20px;
+  border-radius: 16px;
   background:
     linear-gradient(135deg, rgba(0, 245, 255, 0.12), rgba(255, 46, 247, 0.08)),
     rgba(13, 11, 23, 0.74);
   color: var(--text-primary);
   text-align: left;
-  padding: 14px;
+  padding: 10px 12px;
   cursor: pointer;
   transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
@@ -373,12 +373,12 @@ h2 {
 .pm-action small {
   display: block;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 10px;
 }
 .pm-action strong {
   display: block;
-  margin: 8px 0;
-  font-size: 17px;
+  margin: 5px 0;
+  font-size: 14px;
   color: var(--accent);
 }
 .pm-action.danger {
@@ -391,9 +391,9 @@ h2 {
   color: var(--accent-hover);
 }
 .pm-processes {
-  margin: 0 24px 16px;
+  margin: 0 18px 10px;
   border: 1px solid var(--border);
-  border-radius: 22px;
+  border-radius: 16px;
   background: rgba(9, 7, 15, 0.46);
   overflow: hidden;
 }
@@ -401,29 +401,29 @@ h2 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
 }
 .pm-process-header > span,
 .pm-footer {
   color: var(--text-dim);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
 }
 .pm-process-list {
-  max-height: 160px;
+  max-height: 96px;
   overflow: auto;
 }
 .pm-process-row,
 .pm-empty {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 88px 88px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) 74px 74px;
+  gap: 8px;
   align-items: center;
-  padding: 10px 14px;
+  padding: 7px 10px;
   border-bottom: 1px solid rgba(0, 245, 255, 0.08);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10px;
 }
 .pm-process-row strong,
 .pm-process-row small {
@@ -445,8 +445,8 @@ h2 {
 .pm-footer {
   display: flex;
   justify-content: space-between;
-  gap: 18px;
-  padding: 0 24px 20px;
+  gap: 12px;
+  padding: 0 18px 12px;
 }
 @media (max-width: 760px) {
   .pm-grid,

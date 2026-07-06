@@ -18,10 +18,12 @@ mkdirSync(dirname(output), { recursive: true });
 
 const candidates = process.platform === "darwin" ? ["/usr/bin/clang++", "clang++", "c++"] : ["c++", "clang++", "g++"];
 let lastError = "";
+const frameworkArgs = process.platform === "darwin" ? ["-framework", "CoreFoundation", "-framework", "IOKit"] : [];
+
 for (const compiler of candidates) {
   const result = spawnSync(
     compiler,
-    ["-std=c++17", "-O2", "-Wall", "-Wextra", source, "-o", output],
+    ["-std=c++17", "-O2", "-Wall", "-Wextra", source, "-o", output, ...frameworkArgs],
     { stdio: "pipe", encoding: "utf8" },
   );
   if (result.status === 0 && existsSync(output)) {

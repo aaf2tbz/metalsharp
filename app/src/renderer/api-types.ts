@@ -69,6 +69,7 @@ interface ProcessManagerSample {
   fps: number | null;
   cpu_percent: number;
   cpu_temp_c: number | null;
+  cpu_temp_source?: string;
   cores_used: number;
   cores_total: number;
   ram_used_bytes: number;
