@@ -54,6 +54,32 @@ interface UpdateProgress {
   error: string | null;
 }
 
+interface ProcessManagerProcess {
+  pid: number;
+  name: string;
+  command: string;
+  cpu_percent: number;
+  mem_percent: number;
+}
+
+interface ProcessManagerSample {
+  ok: boolean;
+  source: string;
+  timestamp: number;
+  fps: number | null;
+  cpu_percent: number;
+  cpu_temp_c: number | null;
+  cores_used: number;
+  cores_total: number;
+  ram_used_bytes: number;
+  ram_total_bytes: number;
+  gpu_percent: number | null;
+  gpu_label: string;
+  chip: string;
+  helper_path?: string;
+  processes: ProcessManagerProcess[];
+}
+
 interface InstallStatus {
   phase: string;
   percent: number;
@@ -146,6 +172,10 @@ type MetalsharpAPI = {
   ) => Promise<BackendResponse>;
   isFirstLaunch: () => Promise<boolean>;
   isMigrationMode: () => Promise<boolean>;
+  processManagerToggle: () => Promise<{ ok: boolean; error?: string }>;
+  processManagerClose: () => Promise<{ ok: boolean; error?: string }>;
+  processManagerSample: () => Promise<ProcessManagerSample>;
+  processManagerAction: (action: string) => Promise<{ ok: boolean; error?: string; visualOnly?: boolean }>;
   restartAfterMigration: () => Promise<{ ok: boolean; error?: string; deletedDmg?: string | null; launched?: string }>;
   ejectDmg: () => Promise<void>;
   installDeps: (command: string) => Promise<{ ok: boolean; error?: string }>;

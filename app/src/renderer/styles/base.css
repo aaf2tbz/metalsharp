@@ -36,6 +36,11 @@ body {
   background: var(--bg-deep);
 }
 
+body.process-manager-overlay-body,
+body.process-manager-overlay-body #app {
+  background: transparent;
+}
+
 ::-webkit-scrollbar {
   width: 6px;
 }

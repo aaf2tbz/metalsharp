@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "child_process";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
@@ -29,6 +29,7 @@ function ensureShellPath() {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let processManagerWindow: BrowserWindow | null = null;
 let bridge: RustBridge;
 let updaterBridge: UpdaterBridge;
 let steamappsWatcher: fs.FSWatcher | null = null;
@@ -409,6 +410,73 @@ async function checkNeedsMigration(): Promise<boolean> {
   });
 }
 
+function rendererIndexPath() {
+  return path.join(__dirname, "..", "renderer", "index.html");
+}
+
+async function createProcessManagerWindow() {
+  if (processManagerWindow && !processManagerWindow.isDestroyed()) {
+    return processManagerWindow;
+  }
+
+  processManagerWindow = new BrowserWindow({
+    width: 860,
+    height: 610,
+    minWidth: 720,
+    minHeight: 520,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    resizable: true,
+    movable: true,
+    show: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    title: "MetalSharp Process Manager",
+    backgroundColor: "#00000000",
+    vibrancy: process.platform === "darwin" ? "hud" : undefined,
+    trafficLightPosition: { x: 16, y: 16 },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  processManagerWindow.setAlwaysOnTop(true, "screen-saver");
+  processManagerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  processManagerWindow.on("closed", () => {
+    processManagerWindow = null;
+  });
+  processManagerWindow.on("blur", () => {
+    // Keep the overlay available mid-game without stealing focus forever.
+    if (processManagerWindow && !processManagerWindow.isDestroyed()) {
+      processManagerWindow.setAlwaysOnTop(true, "screen-saver");
+    }
+  });
+  await processManagerWindow.loadFile(rendererIndexPath(), { query: { overlay: "process-manager", theme: "developer" } });
+  return processManagerWindow;
+}
+
+async function toggleProcessManagerWindow() {
+  const win = await createProcessManagerWindow();
+  if (win.isVisible()) {
+    win.hide();
+    return;
+  }
+  win.center();
+  win.show();
+  win.focus();
+}
+
+function registerProcessManagerShortcut() {
+  if (process.platform !== "darwin") {
+    globalShortcut.register("CommandOrControl+P", () => void toggleProcessManagerWindow());
+    return;
+  }
+  globalShortcut.register("Command+P", () => void toggleProcessManagerWindow());
+}
+
 async function createWindow(migrating = false) {
   const uiOnly = isUiOnlyRuntime();
   mainWindow = new BrowserWindow({
@@ -433,7 +501,7 @@ async function createWindow(migrating = false) {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"), {
+  mainWindow.loadFile(rendererIndexPath(), {
     query: isUiOnlyRuntime() ? { theme: "developer" } : {},
   });
 }
@@ -484,6 +552,7 @@ app.whenReady().then(async () => {
     process.env.METALSHARP_DEV = "1";
     migrationMode = false;
     registerIpc();
+    registerProcessManagerShortcut();
     await createWindow(false);
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow(false);
@@ -521,6 +590,7 @@ app.whenReady().then(async () => {
   migrationMode = needsMigration;
 
   registerIpc();
+  registerProcessManagerShortcut();
 
   await createWindow(needsMigration);
 
@@ -535,6 +605,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", async () => {
   await cleanup();
+  globalShortcut.unregisterAll();
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -546,6 +617,90 @@ function backendErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Backend request failed";
+}
+
+function processManagerHelperCandidates(): string[] {
+  const exeDir = path.dirname(app.getPath("exe"));
+  return [
+    path.join(process.resourcesPath ?? "", "scripts", "tools", "native", "metalsharp-process-manager-helper"),
+    path.join(exeDir, "..", "Resources", "scripts", "tools", "native", "metalsharp-process-manager-helper"),
+    path.join(__dirname, "..", "..", "native", "metalsharp-process-manager-helper"),
+    path.join(process.cwd(), "native", "metalsharp-process-manager-helper"),
+  ].filter(Boolean);
+}
+
+function parseProcessManagerHelperOutput(stdout: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function jsProcessManagerFallback() {
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const load = os.loadavg()[0] ?? 0;
+  const cores = os.cpus().length || 1;
+  return {
+    ok: true,
+    source: "metalsharp-process-helper-js-fallback",
+    timestamp: Math.floor(Date.now() / 1000),
+    fps: null,
+    cpu_percent: Math.min(100, Math.round((load / cores) * 1000) / 10),
+    cpu_temp_c: null,
+    cores_used: Math.round(load * 10) / 10,
+    cores_total: cores,
+    ram_used_bytes: totalMem - freeMem,
+    ram_total_bytes: totalMem,
+    gpu_percent: null,
+    gpu_label: "Metal session telemetry hook pending",
+    chip: os.cpus()[0]?.model ?? os.arch(),
+    processes: [],
+  };
+}
+
+async function processManagerSample() {
+  for (const candidate of processManagerHelperCandidates()) {
+    if (!candidate || !fs.existsSync(candidate)) continue;
+    const result = await new Promise<Record<string, unknown> | null>((resolve) => {
+      execFile(candidate, [], { timeout: 2500, env: { ...process.env, PATH: ensureShellPath() } }, (error, stdout) => {
+        if (error) {
+          resolve(null);
+          return;
+        }
+        resolve(parseProcessManagerHelperOutput(stdout));
+      });
+    });
+    if (result) return { ...result, helper_path: candidate };
+  }
+  return jsProcessManagerFallback();
+}
+
+async function processManagerQuitGame() {
+  const backendResult = await requestBackend("POST", "/steam/stop", undefined, 5000);
+  if (process.platform === "darwin") {
+    for (const pattern of ["wine", "wineserver", "steam.exe", "steamwebhelper.exe", "GameOverlayUI.exe"]) {
+      try {
+        execFileSync("/usr/bin/pkill", ["-f", pattern], { stdio: "ignore" });
+      } catch {}
+    }
+  }
+  return { ok: true, backend: backendResult };
+}
+
+async function processManagerViewSteam() {
+  if (process.platform === "darwin") {
+    try {
+      execFileSync("/usr/bin/osascript", [
+        "-e",
+        'tell application "System Events" to set frontmost of every process whose name contains "Steam" to true',
+      ]);
+      return { ok: true, mode: "activate-existing" };
+    } catch {}
+  }
+  return requestBackend("POST", "/steam/launch", undefined, 10000);
 }
 
 async function requestBackend(
@@ -598,6 +753,27 @@ function registerIpc() {
   ipcMain.handle("app:is-first-launch", () => {
     if (isUiOnlyRuntime()) return false;
     return isFirstLaunch();
+  });
+
+  ipcMain.handle("process-manager:toggle", async () => {
+    await toggleProcessManagerWindow();
+    return { ok: true };
+  });
+
+  ipcMain.handle("process-manager:close", () => {
+    if (processManagerWindow && !processManagerWindow.isDestroyed()) processManagerWindow.hide();
+    return { ok: true };
+  });
+
+  ipcMain.handle("process-manager:sample", async () => processManagerSample());
+
+  ipcMain.handle("process-manager:action", async (_e, action: string) => {
+    if (action === "quit-game") return processManagerQuitGame();
+    if (action === "view-steam") return processManagerViewSteam();
+    if (action === "metalfx" || action === "gpu-acceleration") {
+      return { ok: true, visualOnly: true, action };
+    }
+    return { ok: false, error: `Unknown process manager action: ${action}` };
   });
 
   ipcMain.handle("app:is-migration-mode", () => {

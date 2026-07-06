@@ -9,7 +9,7 @@
   },
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc && vite build && cp src/renderer/icon.png src/renderer/pressstart2p.ttf dist/renderer/",
+    "build": "node scripts/build-process-manager-helper.mjs && tsc && vite build && cp src/renderer/icon.png src/renderer/pressstart2p.ttf dist/renderer/",
     "start": "npm run build && electron .",
     "dev": "tsc -w & vite build --watch & electron .",
     "dev:vite": "vite",
