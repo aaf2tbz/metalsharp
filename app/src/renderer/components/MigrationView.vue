@@ -9,6 +9,10 @@ const message = ref("Checking migration status...");
 const error = ref<string | null>(null);
 const complete = ref(false);
 const launching = ref(false);
+const checking = ref(true);
+const requiresDisclaimer = ref(false);
+const disclaimerAccepted = ref(false);
+const migrationTargetVersion = ref<string | null>(null);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -17,15 +21,38 @@ const percent = computed(() => {
   return Math.round((step.value / total.value) * 100);
 });
 
-const stages = [
-  { name: "[D3D]" },
-  { name: "[DXMT]" },
-  { name: "[x86_64]" },
-  { name: "[Metal]" },
-];
+const stages = [{ name: "[D3D]" }, { name: "[DXMT]" }, { name: "[x86_64]" }, { name: "[Metal]" }];
 
 const MAX_START_RETRIES = 20;
 const START_RETRY_DELAY_MS = 500;
+
+async function checkMigrationMode() {
+  try {
+    const res = await window.metalsharp.migrateCheck();
+    const data = res?.data ?? res;
+    migrationTargetVersion.value = data?.migration_target_version ?? data?.target_version ?? null;
+    requiresDisclaimer.value =
+      data?.requires_disclaimer === true && data?.migration_shape === "wine115_rebuild_preserve_prefixes";
+    if (requiresDisclaimer.value) {
+      message.value = "MetalSharp 0.51.0 needs your confirmation before rebuilding the runtime.";
+      return;
+    }
+    await startMigration();
+  } catch (e: unknown) {
+    const errorText = e instanceof Error ? e.message : "Failed to check migration status";
+    error.value = errorText;
+    message.value = `Error: ${error.value}`;
+  } finally {
+    checking.value = false;
+  }
+}
+
+async function acceptDisclaimerAndStart() {
+  disclaimerAccepted.value = true;
+  requiresDisclaimer.value = false;
+  message.value = "Starting protected 0.51.0 migration...";
+  await startMigration();
+}
 
 async function startMigration(retriesLeft = MAX_START_RETRIES) {
   try {
@@ -112,7 +139,7 @@ async function restartApp() {
 }
 
 onMounted(async () => {
-  await startMigration();
+  await checkMigrationMode();
 });
 
 onUnmounted(() => {
@@ -126,11 +153,16 @@ onUnmounted(() => {
       <div class="migration-header">
         <div class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
         <h1 class="migration-title">MetalSharp Update Migration</h1>
-        <p class="migration-subtitle">Preserving your settings and refreshing the runtime</p>
+        <p class="migration-subtitle">Preserving Steam/GOG prefixes and saved bottles while refreshing the runtime</p>
       </div>
 
       <div class="pipeline-vis">
-        <div v-for="(stage, i) in stages" :key="stage.name" class="pipeline-stage" :class="{ active: !complete && !error }">
+        <div
+          v-for="(stage, i) in stages"
+          :key="stage.name"
+          class="pipeline-stage"
+          :class="{ active: !complete && !error }"
+        >
           <span class="stage-label">{{ stage.name }}</span>
           <div v-if="i < stages.length - 1" class="pipeline-arrow">
             <IconArrowRight width="16" height="12" />
@@ -138,7 +170,27 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div class="progress-section">
+      <div v-if="requiresDisclaimer && !disclaimerAccepted" class="migration-disclaimer">
+        <h2>Major Wine runtime rebuild{{ migrationTargetVersion ? ` (${migrationTargetVersion})` : "" }}</h2>
+        <p>
+          This update replaces MetalSharp's Wine infrastructure. MetalSharp will preserve your
+          <strong>steam-prefix</strong>, <strong>gog-prefix</strong>, Steam API key, and saved bottle metadata before
+          installing the new runtime.
+        </p>
+        <p>
+          Full game installations may not survive this migration. Large Steam/GOG game payloads are not copied by
+          default to avoid filling internal storage or restoring files into an incompatible prefix layout.
+        </p>
+        <p>
+          The legacy GPTK prefix will not be restored. D3DMetal now uses the native payload route through the Steam
+          prefix.
+        </p>
+        <button class="restart-btn danger" :disabled="checking" @click="acceptDisclaimerAndStart()">
+          I understand — rebuild MetalSharp and preserve prefixes
+        </button>
+      </div>
+
+      <div v-else class="progress-section">
         <div class="progress-bar-track">
           <div class="progress-bar-fill" :style="{ width: percent + '%' }" :class="{ complete, error: !!error }" />
         </div>
@@ -248,17 +300,50 @@ onUnmounted(() => {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pipeline-arrow {
   color: rgba(102, 192, 244, 0.3);
   margin: 0 4px;
+}
+
+.migration-disclaimer {
+  text-align: left;
+  background: rgba(239, 83, 80, 0.08);
+  border: 1px solid rgba(239, 83, 80, 0.28);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.migration-disclaimer h2 {
+  color: #fff;
+  font-size: 16px;
+  margin: 0 0 10px 0;
+}
+
+.migration-disclaimer p {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0 0 10px 0;
+}
+
+.migration-disclaimer strong {
+  color: #66c0f4;
 }
 
 .progress-section {
@@ -323,8 +408,20 @@ onUnmounted(() => {
   transition: background 0.2s;
 }
 
+.restart-btn.danger {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  background: linear-gradient(135deg, #ef5350 0%, #ff8a65 100%);
+  color: #fff;
+}
+
 .restart-btn:hover {
   background: #4db8e8;
+}
+
+.restart-btn.danger:hover {
+  background: linear-gradient(135deg, #e53935 0%, #ff7043 100%);
 }
 
 .error-hint {

@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const MIGRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MIGRATE_SCHEMA_VERSION: u64 = 4;
+const WINE115_REBUILD_MIGRATION_VERSION: &str = "0.51.0";
 const GOG_PREFIX_BOTTLE_ID: &str = "gog-prefix";
 const MIGRATION_PAYLOAD_DENY_NAMES: &[&str] = &[
     "steamapps",
@@ -55,6 +56,8 @@ const MIGRATION_STEAM_METADATA_EXTENSIONS: &[&str] =
     &["acf", "cfg", "conf", "dll", "ini", "json", "manifest", "plist", "reg", "toml", "vdf"];
 const MIGRATION_STEAM_METADATA_DENY_NAMES: &[&str] =
     &["cache", "common", "compatdata", "crashes", "depotcache", "downloading", "logs", "shadercache", "Temp", "tmp"];
+const MIGRATION_STEAM_PREFIX_GAME_PAYLOAD_DENY_NAMES: &[&str] =
+    &["common", "compatdata", "depotcache", "downloading", "shadercache", "steamapps_temp", "Temp", "tmp"];
 const MIGRATION_TOTAL_STEPS: usize = 8;
 
 static MIGRATING: AtomicBool = AtomicBool::new(false);
@@ -223,6 +226,8 @@ pub fn needs_migration() -> serde_json::Value {
 
     let marker_requested = post_update_marker.as_ref().map(|marker| marker.needed).unwrap_or(false);
     let marker_target_version = post_update_marker.as_ref().and_then(|marker| marker.target_version.clone());
+    let migration_target_version = migration_target_version(post_update_marker.as_ref());
+    let wine115_rebuild_migration = is_wine115_rebuild_migration_target(&migration_target_version);
     let marker_target_mismatch =
         post_update_marker.as_ref().is_some_and(|marker| post_update_target_newer_than_running(marker));
 
@@ -250,6 +255,9 @@ pub fn needs_migration() -> serde_json::Value {
         "needed": needed,
         "current_version": current_version,
         "target_version": MIGRATE_VERSION,
+        "migration_target_version": migration_target_version,
+        "requires_disclaimer": wine115_rebuild_migration,
+        "migration_shape": if wine115_rebuild_migration { "wine115_rebuild_preserve_prefixes" } else { "standard" },
         "current_schema": current_schema.unwrap_or(0),
         "target_schema": MIGRATE_SCHEMA_VERSION,
         "post_update_target_version": marker_target_version,
@@ -278,6 +286,14 @@ fn runtime_needs_repair(home: &Path, setup_completed: bool) -> bool {
     }
 
     setup_completed || ms_dir.join("prefix-steam").exists()
+}
+
+fn migration_target_version(marker: Option<&PostUpdateMigrationMarker>) -> String {
+    marker.and_then(|m| m.target_version.as_deref()).unwrap_or(MIGRATE_VERSION).to_string()
+}
+
+fn is_wine115_rebuild_migration_target(version: &str) -> bool {
+    compare_versions(version, WINE115_REBUILD_MIGRATION_VERSION).is_eq()
 }
 
 fn post_update_marker_path(ms_dir: &Path) -> PathBuf {
@@ -743,13 +759,11 @@ struct PreservedData {
     setup_json: Option<Vec<u8>>,
     steam_config_json: Option<Vec<u8>>,
     prefix_steam_tmp: PathBuf,
-    prefix_gptk_tmp: PathBuf,
     cache_tmp: PathBuf,
     games_tmp: PathBuf,
     sharp_library_tmp: PathBuf,
     bottles_tmp: PathBuf,
     prefix_steam_dosdevice_links: Vec<(String, PathBuf)>,
-    prefix_gptk_dosdevice_links: Vec<(String, PathBuf)>,
 }
 
 fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
@@ -820,33 +834,26 @@ fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
     let prefix_steam = ms_dir.join("prefix-steam");
     if prefix_steam.exists() {
         let _ = fs::create_dir_all(&prefix_steam_tmp);
-        preserve_steam_metadata_only(&prefix_steam, &prefix_steam_tmp);
+        preserve_steam_prefix_without_game_payloads(&prefix_steam, &prefix_steam_tmp);
         report.record(
             "preserve",
             "preserved",
             "prefix-steam",
             Some(prefix_steam.to_string_lossy().to_string()),
-            "Steam prefix metadata, manifests, and DLLs preserved (game payloads excluded)",
+            "Steam prefix preserved without Steam game/depot/cache payloads",
         );
     } else {
         report.record("preserve", "skipped", "prefix-steam", None, "prefix-steam directory absent");
     }
 
-    let prefix_gptk_tmp = tmp.join("prefix-gptk");
     let prefix_gptk = ms_dir.join("prefix-gptk");
-    if prefix_gptk.exists() {
-        let _ = fs::create_dir_all(&prefix_gptk_tmp);
-        preserve_settings_only(&prefix_gptk, &prefix_gptk_tmp);
-        report.record(
-            "preserve",
-            "preserved",
-            "prefix-gptk",
-            Some(prefix_gptk.to_string_lossy().to_string()),
-            "GPTK prefix settings files preserved",
-        );
-    } else {
-        report.record("preserve", "skipped", "prefix-gptk", None, "prefix-gptk directory absent");
-    }
+    report.record(
+        "preserve",
+        "skipped",
+        "prefix-gptk",
+        if prefix_gptk.exists() { Some(prefix_gptk.to_string_lossy().to_string()) } else { None },
+        "legacy GPTK prefix is intentionally not preserved; D3DMetal now uses the native payload route inside steam-prefix",
+    );
 
     write_migrate_progress("running", 2, MIGRATION_TOTAL_STEPS, "Preserving user settings (game metadata)...", None);
     let games_tmp = tmp.join("games");
@@ -918,24 +925,16 @@ fn preserve_user_data(ms_dir: &PathBuf) -> (PreservedData, MigrationReport) {
         None,
         format!("{} prefix-steam dosdevice links snapshotted", prefix_steam_dosdevice_links.len()),
     );
-    let prefix_gptk_dosdevice_links = if ms_dir.join("prefix-gptk").exists() {
-        collect_prefix_dosdevice_links(&ms_dir.join("prefix-gptk"))
-    } else {
-        Vec::new()
-    };
-
     (
         PreservedData {
             setup_json,
             steam_config_json,
             prefix_steam_tmp,
-            prefix_gptk_tmp,
             cache_tmp,
             games_tmp,
             sharp_library_tmp,
             bottles_tmp,
             prefix_steam_dosdevice_links,
-            prefix_gptk_dosdevice_links,
         },
         report,
     )
@@ -1534,6 +1533,45 @@ fn preserve_selective(src: &PathBuf, dst: &PathBuf, skip_names: &[&str]) {
     }
 }
 
+fn preserve_steam_prefix_without_game_payloads(src: &PathBuf, dst: &PathBuf) {
+    let entries = match fs::read_dir(src) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy().to_string();
+        let src_path = entry.path();
+        let dst_path = dst.join(&name);
+
+        if MIGRATION_STEAM_PREFIX_GAME_PAYLOAD_DENY_NAMES.iter().any(|denied| name_str.eq_ignore_ascii_case(denied)) {
+            continue;
+        }
+
+        let meta = match fs::symlink_metadata(&src_path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        } else if meta.is_dir() {
+            let _ = fs::create_dir_all(&dst_path);
+            preserve_steam_prefix_without_game_payloads(&src_path, &dst_path);
+        } else if meta.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Err(error) = fs::copy(&src_path, &dst_path) {
+                log_to_file(&format!(
+                    "Migration preserve: failed to copy Steam prefix file {}: {}",
+                    src_path.display(),
+                    error
+                ));
+            }
+        }
+    }
+}
+
 fn preserve_settings_only(src: &PathBuf, dst: &PathBuf) {
     let entries = match fs::read_dir(src) {
         Ok(entries) => entries,
@@ -1997,6 +2035,7 @@ fn remove_old_runtime(ms_dir: &PathBuf) {
         "shader-cache",
         "crashes",
         "SteamSetup.exe",
+        "prefix-gptk",
         "install_progress.json",
         "update_progress.json",
     ];
@@ -2025,11 +2064,11 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
 
     if preserved.prefix_steam_tmp.exists() {
         let dst = ms_dir.join("prefix-steam");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
+        if dst.exists() {
+            let _ = fs::remove_dir_all(&dst);
         }
-        remove_root_dosdevice_mapping(&dst);
-        restore_preserved_metadata(&preserved.prefix_steam_tmp, &dst);
+        let _ = fs::create_dir_all(&dst);
+        preserve_steam_prefix_without_game_payloads(&preserved.prefix_steam_tmp, &dst);
 
         let dosdevices = dst.join("dosdevices");
         if !dosdevices.exists() {
@@ -2045,7 +2084,7 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
             "restored",
             "prefix-steam",
             Some(dst.to_string_lossy().to_string()),
-            "Steam prefix metadata, manifests, and DLLs restored",
+            "Steam prefix restored without Steam game/depot/cache payloads",
         );
     } else {
         report.record("restore", "skipped", "prefix-steam", None, "no preserved prefix-steam payload");
@@ -2053,28 +2092,13 @@ fn restore_user_data(ms_dir: &PathBuf, preserved: &PreservedData, report: &mut M
 
     restore_prefix_dosdevice_links(&ms_dir.join("prefix-steam"), &preserved.prefix_steam_dosdevice_links);
 
-    if preserved.prefix_gptk_tmp.exists() {
-        let dst = ms_dir.join("prefix-gptk");
-        if !dst.exists() {
-            let _ = fs::create_dir_all(&dst);
-        }
-        preserve_settings_only(&preserved.prefix_gptk_tmp, &dst);
-
-        let dosdevices = dst.join("dosdevices");
-        if !dosdevices.exists() {
-            let _ = fs::create_dir_all(&dosdevices);
-        }
-        report.record(
-            "restore",
-            "restored",
-            "prefix-gptk",
-            Some(dst.to_string_lossy().to_string()),
-            "GPTK prefix settings restored",
-        );
-    } else {
-        report.record("restore", "skipped", "prefix-gptk", None, "no preserved prefix-gptk payload");
-    }
-    restore_prefix_dosdevice_links(&ms_dir.join("prefix-gptk"), &preserved.prefix_gptk_dosdevice_links);
+    report.record(
+        "restore",
+        "skipped",
+        "prefix-gptk",
+        None,
+        "legacy GPTK prefix is intentionally not restored for the native D3DMetal route",
+    );
 
     if preserved.games_tmp.exists() {
         let dst = ms_dir.join("games");
@@ -2572,6 +2596,23 @@ mod tests {
     }
 
     #[test]
+    fn migration_cleanup_removes_legacy_gptk_prefix_only() {
+        let home = test_dir("remove-legacy-gptk-prefix");
+        let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
+        fs::create_dir_all(ms_dir.join("prefix-steam")).expect("create steam prefix");
+        fs::create_dir_all(ms_dir.join("prefix-gptk")).expect("create gptk prefix");
+        fs::create_dir_all(ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("prefix"))
+            .expect("create gog prefix");
+
+        remove_old_runtime(&ms_dir);
+
+        assert!(ms_dir.join("prefix-steam").exists());
+        assert!(ms_dir.join("bottles").join(GOG_PREFIX_BOTTLE_ID).join("prefix").exists());
+        assert!(!ms_dir.join("prefix-gptk").exists());
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
     fn migration_removes_deprecated_compatdata_across_runtime_cleanup() {
         let home = test_dir("remove-compatdata");
         let ms_dir = crate::platform::metalsharp_home_dir_for(&home);
@@ -2992,6 +3033,15 @@ mod tests {
     }
 
     #[test]
+    fn migration_check_flags_wine115_rebuild_disclaimer_for_051_target() {
+        let marker = PostUpdateMigrationMarker { needed: true, target_version: Some("0.51.0".into()) };
+        let target = migration_target_version(Some(&marker));
+        assert_eq!(target, "0.51.0");
+        assert!(is_wine115_rebuild_migration_target(&target));
+        assert!(!is_wine115_rebuild_migration_target("0.52.0"));
+    }
+
+    #[test]
     fn post_update_marker_blocks_running_app_older_than_target() {
         let marker = PostUpdateMigrationMarker { needed: true, target_version: Some("999.0.0".into()) };
 
@@ -3177,7 +3227,6 @@ mod tests {
         let (preserved, mut report) = preserve_user_data(&ms_dir);
 
         assert_eq!(preserved.prefix_steam_dosdevice_links, vec![(String::from("s:"), external_steam.clone())]);
-        assert_eq!(preserved.prefix_gptk_dosdevice_links, vec![(String::from("l:"), home.clone())]);
 
         fs::remove_dir_all(ms_dir.join("prefix-steam")).expect("remove prefix-steam");
         fs::remove_dir_all(ms_dir.join("prefix-gptk")).expect("remove prefix-gptk");
@@ -3191,12 +3240,7 @@ mod tests {
         );
         assert!(!ms_dir.join("prefix-steam").join("dosdevices").join("z:").exists());
 
-        assert!(ms_dir.join("prefix-gptk").join("user.reg").exists());
-        assert_eq!(
-            fs::read_link(ms_dir.join("prefix-gptk").join("dosdevices").join("l:"))
-                .expect("read restored gptk l drive"),
-            home
-        );
+        assert!(!ms_dir.join("prefix-gptk").exists(), "legacy GPTK prefix should not be restored");
 
         let _ = fs::remove_dir_all(home);
     }
@@ -3251,10 +3295,10 @@ mod tests {
 
         assert!(!ms_dir.join("prefix-gptk").exists());
 
-        let (preserved, _report) = preserve_user_data(&ms_dir);
+        let (preserved, report) = preserve_user_data(&ms_dir);
 
         assert!(preserved.prefix_steam_dosdevice_links.is_empty());
-        assert!(preserved.prefix_gptk_dosdevice_links.is_empty());
+        assert!(report.entries.iter().any(|entry| entry.category == "prefix-gptk" && entry.outcome == "skipped"));
 
         let _ = fs::remove_dir_all(home);
     }
