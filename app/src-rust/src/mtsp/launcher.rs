@@ -2044,7 +2044,21 @@ fn tail_text(path: &Path, max_bytes: usize) -> String {
 }
 
 fn build_dyld(ms_root: &PathBuf, paths: &[&str]) -> String {
-    paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()).collect::<Vec<_>>().join(":")
+    let mut ordered: Vec<String> = Vec::new();
+    for path in paths.iter().map(|p| ms_root.join(p).to_string_lossy().to_string()) {
+        if !ordered.contains(&path) {
+            ordered.push(path);
+        }
+    }
+    for path in [ms_root.join("lib"), ms_root.join("lib").join("wine").join("x86_64-unix")]
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+    {
+        if !ordered.contains(&path) {
+            ordered.push(path);
+        }
+    }
+    ordered.join(":")
 }
 
 fn dxmt_winemetal_unixlib_path(_ms_root: &Path) -> String {
@@ -5223,6 +5237,43 @@ mod tests {
             }
             let _ = std::fs::remove_dir_all(&home);
         }
+    }
+
+    #[test]
+    fn dxmt_route_env_prepends_runtime_support_lib_for_wine115_shape() {
+        for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11, PipelineId::M12] {
+            let home = test_dir(&format!("dyld-runtime-lib-{:?}", pipeline_id));
+            let node = get_pipeline(pipeline_id);
+            let env = steam_pipeline_env_pairs(&home, node, 42);
+            let dyld = env.iter().find(|(key, _)| key == "DYLD_LIBRARY_PATH").map(|(_, value)| value.clone()).unwrap();
+            let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
+            let entries: Vec<&str> = dyld.split(':').collect();
+            let base_lib = ms_root.join("lib").to_string_lossy().to_string();
+            let wine_unix = ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy().to_string();
+            assert!(entries.contains(&base_lib.as_str()), "{:?} DYLD missing staged base lib: {}", pipeline_id, dyld);
+            assert!(entries.contains(&wine_unix.as_str()), "{:?} DYLD missing Wine unix lib: {}", pipeline_id, dyld);
+            if pipeline_id != PipelineId::M12 {
+                let dxmt_unix = ms_root.join("lib").join("dxmt").join("x86_64-unix").to_string_lossy().to_string();
+                assert!(
+                    entries.iter().position(|entry| *entry == dxmt_unix).unwrap()
+                        < entries.iter().position(|entry| *entry == wine_unix).unwrap()
+                );
+            }
+            let _ = std::fs::remove_dir_all(&home);
+        }
+    }
+
+    #[test]
+    fn dxmt_winedllpath_prefers_route_surface_before_stock_wine() {
+        for pipeline_id in [PipelineId::M9, PipelineId::M10, PipelineId::M11] {
+            let node = get_pipeline(pipeline_id);
+            let dxmt_pos = node.winedllpath_dirs.iter().position(|path| path == &"lib/dxmt/x86_64-windows").unwrap();
+            let wine_pos = node.winedllpath_dirs.iter().position(|path| path == &"lib/wine/x86_64-windows");
+            if let Some(wine_pos) = wine_pos {
+                assert!(dxmt_pos < wine_pos, "{:?} should prepend DXMT before stock Wine DLL dirs", pipeline_id);
+            }
+        }
+        assert_eq!(get_pipeline(PipelineId::M12).winedllpath_dirs, vec!["lib/dxmt_m12/x86_64-windows"]);
     }
 
     #[test]

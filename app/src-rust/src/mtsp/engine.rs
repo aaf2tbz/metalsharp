@@ -163,7 +163,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some("winemetal,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec!["lib/dxmt/x86_64-windows", "lib/metalsharp/x86_64-windows"],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/dxmt/x86_64-windows", filename: "d3d11.dll", dest_filename: None },
@@ -222,11 +222,11 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 wine_overrides: Some(
                     "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
-                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec![
-                    "lib/wine/x86_64-windows",
                     "lib/dxmt/x86_64-windows",
                     "lib/metalsharp/x86_64-windows",
+                    "lib/wine/x86_64-windows",
                 ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d10.dll", dest_filename: None },
@@ -288,12 +288,12 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some("d3d9=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
-                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/x86_64-unix"],
+                dyld_paths: vec!["lib/dxmt/x86_64-unix", "lib/wine/x86_64-unix"],
                 winedllpath_dirs: vec![
-                    "lib/wine/x86_64-windows",
-                    "lib/wine/i386-windows",
                     "lib/dxmt/x86_64-windows",
                     "lib/metalsharp/x86_64-windows",
+                    "lib/wine/x86_64-windows",
+                    "lib/wine/i386-windows",
                 ],
                 deploy_dlls: vec![
                     DllDeploy { source_subpath: "lib/wine/x86_64-windows", filename: "d3d9.dll", dest_filename: None },

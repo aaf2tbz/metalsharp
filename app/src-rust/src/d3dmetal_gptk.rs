@@ -509,6 +509,7 @@ fn play_d3dmetal(body: &serde_json::Map<String, Value>) -> Result<Value, String>
         .env("WINEDLLPATH", &winedllpath)
         .env("WINEDLLOVERRIDES", GPTK_OVERRIDES)
         .env("DYLD_LIBRARY_PATH", &dyld_path)
+        .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld_path)
         .env("D3DMETAL_FRAMEWORK_PATH", &framework_path)
         .env("MS_GRAPHICS_BACKEND", "d3dmetal_native")
         .env("MS_ACTIVE_GRAPHICS_BACKEND", "d3dmetal_native")
@@ -1635,14 +1636,21 @@ fn d3dmetal_prefix_for_state(state: &D3DMetalGptkState) -> PathBuf {
 }
 
 fn gptk_dyld_path() -> String {
-    let root = staged_payload_dir();
-    let runtime = wine_runtime_root();
-    [root.join("x86_64-unix"), root.join("external"), runtime.join("lib").join("wine").join("x86_64-unix")]
-        .into_iter()
-        .filter(|path| path.is_dir())
-        .map(|path| path.to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join(":")
+    gptk_dyld_path_for(&staged_payload_dir(), &wine_runtime_root())
+}
+
+fn gptk_dyld_path_for(root: &Path, runtime: &Path) -> String {
+    [
+        root.join("x86_64-unix"),
+        root.join("external"),
+        runtime.join("lib"),
+        runtime.join("lib").join("wine").join("x86_64-unix"),
+    ]
+    .into_iter()
+    .filter(|path| path.is_dir())
+    .map(|path| path.to_string_lossy().to_string())
+    .collect::<Vec<_>>()
+    .join(":")
 }
 
 fn find_brew() -> Result<PathBuf, String> {
@@ -1751,6 +1759,27 @@ mod tests {
 "Installed"=dword:00000001
 "#;
         assert!(vcredist_registry_installed(x64_installed, "x64"));
+    }
+
+    #[test]
+    fn d3dmetal_dyld_path_includes_payload_and_rebuilt_runtime_support_libs() {
+        let root = std::env::temp_dir().join(format!("ms-d3dmetal-dyld-{}", now_secs()));
+        let payload = root.join("runtime").join("wine").join("lib").join("d3dmetal_native");
+        let runtime = root.join("runtime").join("wine");
+        for dir in [
+            payload.join("x86_64-unix"),
+            payload.join("external"),
+            runtime.join("lib"),
+            runtime.join("lib").join("wine").join("x86_64-unix"),
+        ] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let dyld = gptk_dyld_path_for(&payload, &runtime);
+        let entries: Vec<&str> = dyld.split(':').collect();
+        assert_eq!(entries[0], payload.join("x86_64-unix").to_string_lossy());
+        assert!(entries.contains(&runtime.join("lib").to_string_lossy().as_ref()));
+        assert!(entries.contains(&runtime.join("lib").join("wine").join("x86_64-unix").to_string_lossy().as_ref()));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
