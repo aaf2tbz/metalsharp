@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -19,6 +20,7 @@
 #include <mach/host_info.h>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 #endif
@@ -152,6 +154,9 @@ struct ProcessInfo {
     int pid = 0;
     double cpu = 0.0;
     double mem = 0.0;
+    double fps = -1.0;
+    bool fpsFresh = false;
+    bool nonSteamWine = false;
     std::string name;
     std::string command;
 };
@@ -160,6 +165,79 @@ std::string lower_copy(std::string s) {
     for (char& c : s)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
+}
+
+bool is_non_steam_wine_process_text(const std::string& name, const std::string& command) {
+    const std::string comm = lower_copy(name);
+    const std::string haystack = lower_copy(name + " " + command);
+    const bool is_steam = haystack.find("steam") != std::string::npos;
+    const bool is_wine =
+        comm == "wine" || comm == "wineserver" || comm.find("wine") == 0 ||
+        haystack.find("/wine") != std::string::npos || haystack.find("wineserver") != std::string::npos ||
+        haystack.find("wine-preloader") != std::string::npos ||
+        haystack.find("wine64-preloader") != std::string::npos || haystack.find("wineboot") != std::string::npos ||
+        haystack.find("drive_c/") != std::string::npos;
+    return is_wine && !is_steam;
+}
+
+double parse_json_number_field(const std::string& text, const std::string& key) {
+    const std::string quoted = "\"" + key + "\"";
+    const auto key_pos = text.find(quoted);
+    if (key_pos == std::string::npos)
+        return -1.0;
+    const auto colon = text.find(':', key_pos + quoted.size());
+    if (colon == std::string::npos)
+        return -1.0;
+    char* end = nullptr;
+    const double value = std::strtod(text.c_str() + colon + 1, &end);
+    if (end == text.c_str() + colon + 1)
+        return -1.0;
+    return value;
+}
+
+bool file_is_fresh(const std::string& path, int max_age_seconds) {
+#ifdef __APPLE__
+    struct stat st{};
+    if (stat(path.c_str(), &st) != 0)
+        return false;
+    const std::time_t now = std::time(nullptr);
+    return now >= st.st_mtime && (now - st.st_mtime) <= max_age_seconds;
+#else
+    (void)path;
+    (void)max_age_seconds;
+    return false;
+#endif
+}
+
+std::vector<std::string> fps_sidecar_candidates(int pid) {
+    std::vector<std::string> paths;
+    const char* home = std::getenv("METALSHARP_HOME");
+    if (home && *home) {
+        paths.push_back(std::string(home) + "/session-fps/" + std::to_string(pid) + ".json");
+        paths.push_back(std::string(home) + "/logs/fps/" + std::to_string(pid) + ".json");
+    }
+    paths.push_back("/tmp/metalsharp-fps-" + std::to_string(pid) + ".json");
+    paths.push_back("/tmp/metalsharp-fps/" + std::to_string(pid) + ".json");
+    return paths;
+}
+
+double read_fps_sidecar(int pid, bool& fresh) {
+    fresh = false;
+    for (const auto& path : fps_sidecar_candidates(pid)) {
+        if (!file_is_fresh(path, 3))
+            continue;
+        std::ifstream in(path);
+        if (!in.good())
+            continue;
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
+        const double fps = parse_json_number_field(buffer.str(), "fps");
+        if (fps >= 0.0 && fps < 2000.0) {
+            fresh = true;
+            return fps;
+        }
+    }
+    return -1.0;
 }
 
 double parse_gpu_value(const std::string& text, const std::string& key) {
@@ -322,6 +400,10 @@ std::vector<ProcessInfo> session_processes() {
         if (!p.command.empty() && p.command[0] == ' ')
             p.command.erase(0, 1);
         const std::string haystack = lower_copy(p.name + " " + p.command);
+        p.nonSteamWine = is_non_steam_wine_process_text(p.name, p.command);
+        if (p.nonSteamWine) {
+            p.fps = read_fps_sidecar(p.pid, p.fpsFresh);
+        }
         if (haystack.find("wine") == std::string::npos && haystack.find("steam") == std::string::npos &&
             haystack.find("metalsharp") == std::string::npos && haystack.find("gameoverlayui") == std::string::npos) {
             continue;
@@ -347,19 +429,28 @@ int main(int argc, char** argv) {
                                  ? sysctl_string("hw.model")
                                  : sysctl_string("machdep.cpu.brand_string");
 
-    // CPU temperature, process-presented frame rate, and GPU utilization need privileged/private
-    // sensors or a future in-process render hook. Emit nulls now so the overlay can show honest
-    // placeholders while the visual surface is built.
     const auto processes = session_processes();
     const double gpu = gpu_usage_percent();
     std::string temp_source;
     const double cpu_temp = cpu_temperature_c(temp_source);
+    double top_fps = -1.0;
+    int fps_pid = 0;
+    for (const auto& p : processes) {
+        if (p.nonSteamWine && p.fpsFresh && p.fps > top_fps) {
+            top_fps = p.fps;
+            fps_pid = p.pid;
+        }
+    }
 
     std::cout << "{"
               << "\"ok\":true,"
               << "\"source\":\"metalsharp-process-helper-cpp\","
               << "\"timestamp\":" << static_cast<unsigned long long>(std::time(nullptr)) << ","
-              << "\"fps\":null,"
+              << "\"fps\":" << (top_fps >= 0.0 ? std::to_string(top_fps) : "null") << ","
+              << "\"fps_source\":\""
+              << (top_fps >= 0.0 ? "non-Steam Wine PID " + std::to_string(fps_pid)
+                                 : "waiting for non-Steam Wine present telemetry")
+              << "\","
               << "\"cpu_percent\":" << (cpu >= 0.0 ? cpu : 0.0) << ","
               << "\"cpu_temp_c\":" << (cpu_temp > 0.0 ? std::to_string(cpu_temp) : "null") << ","
               << "\"cpu_temp_source\":\"" << json_escape(temp_source) << "\","
@@ -379,6 +470,9 @@ int main(int argc, char** argv) {
                   << "\"pid\":" << p.pid << ","
                   << "\"cpu_percent\":" << p.cpu << ","
                   << "\"mem_percent\":" << p.mem << ","
+                  << "\"fps\":" << (p.fpsFresh ? std::to_string(p.fps) : "null") << ","
+                  << "\"fps_fresh\":" << (p.fpsFresh ? "true" : "false") << ","
+                  << "\"non_steam_wine\":" << (p.nonSteamWine ? "true" : "false") << ","
                   << "\"name\":\"" << json_escape(p.name) << "\","
                   << "\"command\":\"" << json_escape(p.command) << "\""
                   << "}";

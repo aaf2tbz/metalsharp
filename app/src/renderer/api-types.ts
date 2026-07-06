@@ -60,6 +60,9 @@ interface ProcessManagerProcess {
   command: string;
   cpu_percent: number;
   mem_percent: number;
+  fps?: number | null;
+  fps_fresh?: boolean;
+  non_steam_wine?: boolean;
 }
 
 interface ProcessManagerSample {
@@ -67,6 +70,7 @@ interface ProcessManagerSample {
   source: string;
   timestamp: number;
   fps: number | null;
+  fps_source?: string;
   cpu_percent: number;
   cpu_temp_c: number | null;
   cpu_temp_source?: string;

@@ -19,7 +19,7 @@ const ramPercent = computed(() => {
 
 const cpuPercent = computed(() => Math.max(0, Math.min(100, sample.value?.cpu_percent ?? 0)));
 const gpuPercent = computed(() => Math.max(0, Math.min(100, sample.value?.gpu_percent ?? 0)));
-const fpsLabel = computed(() => (sample.value?.fps == null ? "HOOK" : Math.round(sample.value.fps).toString()));
+const fpsLabel = computed(() => (sample.value?.fps == null ? "WAIT" : Math.round(sample.value.fps).toString()));
 const tempLabel = computed(() => (sample.value?.cpu_temp_c == null ? "SENSOR" : `${Math.round(sample.value.cpu_temp_c)}°C`));
 const ramLabel = computed(() => {
   const s = sample.value;
@@ -67,7 +67,7 @@ async function runAction(action: "metalfx" | "gpu-acceleration" | "quit-game" | 
     gpuAccelOn.value = !gpuAccelOn.value;
     actionMessage.value = `GPU acceleration visual surface ${gpuAccelOn.value ? "armed" : "parked"}; runtime hook pending`;
   } else if (action === "quit-game") {
-    actionMessage.value = "Force-killing active Wine/Steam game session...";
+    actionMessage.value = "Force-killing non-Steam Wine game PIDs...";
   } else {
     actionMessage.value = "Bringing Steam forward...";
   }
@@ -76,7 +76,7 @@ async function runAction(action: "metalfx" | "gpu-acceleration" | "quit-game" | 
   if (!result?.ok) {
     actionMessage.value = result?.error ?? "Action failed";
   } else if (action === "quit-game") {
-    actionMessage.value = "Game/session kill signal sent";
+    actionMessage.value = "Non-Steam Wine game kill signal sent";
     await refresh();
   } else if (action === "view-steam") {
     actionMessage.value = "Steam focus requested";
@@ -120,7 +120,7 @@ onBeforeUnmount(() => {
         <article class="pm-stat pm-stat-fps">
           <span class="pm-label">Active FPS</span>
           <strong>{{ fpsLabel }}</strong>
-          <small>{{ sample?.fps == null ? "render hook pending" : "frames/sec" }}</small>
+          <small>{{ sample?.fps == null ? "waiting for non-Steam Wine FPS" : sample?.fps_source ?? "frames/sec" }}</small>
         </article>
         <article class="pm-stat">
           <span class="pm-label">CPU Temp</span>
@@ -156,7 +156,7 @@ onBeforeUnmount(() => {
         <button class="pm-action danger" type="button" @click="runAction('quit-game')">
           <span>Quit Game</span>
           <strong>Force Kill</strong>
-          <small>active Wine/Steam session</small>
+          <small>non-Steam Wine PIDs</small>
         </button>
         <button class="pm-action" :class="{ armed: gpuAccelOn }" type="button" @click="runAction('gpu-acceleration')">
           <span>GPU Acceleration</span>
@@ -185,6 +185,7 @@ onBeforeUnmount(() => {
               <strong>{{ proc.name.split('/').pop() }}</strong>
               <small>pid {{ proc.pid }} · {{ proc.command }}</small>
             </div>
+            <span>{{ proc.fps_fresh && proc.fps != null ? Math.round(proc.fps) + " FPS" : "-- FPS" }}</span>
             <span>{{ proc.cpu_percent.toFixed(1) }}% CPU</span>
             <span>{{ proc.mem_percent.toFixed(1) }}% MEM</span>
           </div>
@@ -417,7 +418,7 @@ h2 {
 .pm-process-row,
 .pm-empty {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 74px 74px;
+  grid-template-columns: minmax(0, 1fr) 64px 64px 64px;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;

@@ -709,16 +709,55 @@ async function processManagerSample() {
   return jsProcessManagerFallback();
 }
 
+function isNonSteamWineProcess(row: ProcessRow): boolean {
+  const command = row.command.toLowerCase();
+  const comm = path.basename(row.comm).toLowerCase();
+  const haystack = `${comm} ${command}`;
+  const isSteam = haystack.includes("steam");
+  const isWine =
+    comm === "wine" ||
+    comm === "wineserver" ||
+    comm.startsWith("wine") ||
+    command.includes("/wine") ||
+    command.includes("wineserver") ||
+    command.includes("wine-preloader") ||
+    command.includes("wine64-preloader") ||
+    command.includes("wineboot") ||
+    command.includes("drive_c/");
+  return row.pid > 0 && row.pid !== process.pid && isWine && !isSteam;
+}
+
 async function processManagerQuitGame() {
-  const backendResult = await requestBackend("POST", "/steam/stop", undefined, 5000);
-  if (process.platform === "darwin") {
-    for (const pattern of ["wine", "wineserver", "steam.exe", "steamwebhelper.exe", "GameOverlayUI.exe"]) {
-      try {
-        execFileSync("/usr/bin/pkill", ["-f", pattern], { stdio: "ignore" });
-      } catch {}
+  let rows: ProcessRow[] = [];
+  try {
+    rows = parseProcessRows(execFileSync("/bin/ps", ["-axo", "pid=,comm=,command="], { encoding: "utf8" }));
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error), killed: [] };
+  }
+
+  const targets = rows.filter(isNonSteamWineProcess);
+  const killed: number[] = [];
+  const errors: string[] = [];
+  for (const row of targets) {
+    try {
+      process.kill(row.pid, "SIGKILL");
+      killed.push(row.pid);
+    } catch (error) {
+      const code =
+        typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code) : "";
+      if (code !== "ESRCH") errors.push(`${row.pid}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { ok: true, backend: backendResult };
+
+  return {
+    ok: errors.length === 0,
+    killed,
+    errors,
+    skippedSteamWinePids: rows.filter((row) => {
+      const haystack = `${path.basename(row.comm).toLowerCase()} ${row.command.toLowerCase()}`;
+      return haystack.includes("wine") && haystack.includes("steam");
+    }).length,
+  };
 }
 
 async function processManagerViewSteam() {
