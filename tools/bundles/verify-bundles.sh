@@ -341,6 +341,9 @@ payload_at_least() {
 verify_scripts_tools_core() {
   verify_required_files "$1" "SCRIPTS TOOLS" \
     scripts/tools/configs/mtsp-rules.toml \
+    scripts/tools/runtime/mount-gptk4-dmg.py \
+    scripts/tools/runtime/stage-d3dmetal-native-payload.py \
+    scripts/tools/runtime/patch-d3dmetal-native-payload.py \
     scripts/tools/updater/update.py \
     scripts/tools/updater/update.sh
 }

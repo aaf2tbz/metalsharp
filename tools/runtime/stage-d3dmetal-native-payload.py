@@ -10,7 +10,7 @@ provenance and the Apple SLA status.
 
 Sources accepted:
   - A mounted GPTK DMG or extracted directory with redist/lib/{wine,external}
-  - A .dmg path (mounted read-only, auto-unmounted on exit)
+  - A .dmg path (extracted by mount-gptk4-dmg.py, then auto-unmounted)
 
 Layout produced under <runtime>/lib/d3dmetal_native/:
   manifest.json
@@ -36,10 +36,10 @@ import contextlib
 import hashlib
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -62,28 +62,25 @@ def sha256_file(path: Path) -> str:
 
 
 @contextlib.contextmanager
-def mounted_dmg(dmg: Path):
-    """Mount a DMG read-only (nobrowse), yield the redist root, unmount on exit."""
-    mountpoint = Path(f"/tmp/ms-gptk-stage-{os.getpid()}")
-    mountpoint.mkdir(parents=True, exist_ok=True)
-    proc = subprocess.run(
-        ["hdiutil", "attach", "-readonly", "-nobrowse", "-mountpoint", str(mountpoint), str(dmg)],
-        capture_output=True, text=True, check=False,
-    )
-    if proc.returncode != 0:
-        mountpoint.rmdir()
-        raise RuntimeError(f"failed to mount {dmg}: {proc.stderr.strip()}")
-    try:
-        redist = mountpoint / "redist"
-        if not (redist / "lib").exists() and (mountpoint / "lib").exists():
-            redist = mountpoint  # already the redist root
+def extracted_dmg_redist(dmg: Path):
+    """Extract a GPTK DMG redist tree with the dedicated mount helper."""
+    helper = Path(__file__).resolve().with_name("mount-gptk4-dmg.py")
+    if not helper.exists():
+        raise RuntimeError(f"GPTK DMG mount helper missing: {helper}")
+    with tempfile.TemporaryDirectory(prefix="metalsharp-gptk4-redist-") as temp_dir:
+        redist = Path(temp_dir) / "redist"
+        proc = subprocess.run(
+            [sys.executable, str(helper), str(dmg), "--extract-redist", str(redist), "--force", "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+            raise RuntimeError(f"failed to extract GPTK4 DMG {dmg}: {detail}")
         if not (redist / "lib" / "wine").exists():
-            raise RuntimeError(f"no GPTK redist layout (redist/lib/wine) found in {dmg}")
+            raise RuntimeError(f"GPTK4 DMG extraction missing redist/lib/wine: {redist}")
         yield redist
-    finally:
-        subprocess.run(["hdiutil", "detach", str(mountpoint), "-force"], capture_output=True)
-        with contextlib.suppress(OSError):
-            mountpoint.rmdir()
 
 
 def resolve_source(src: Path):
@@ -96,7 +93,7 @@ def resolve_source(src: Path):
             raise RuntimeError(f"{src} is not a GPTK redist layout (expected lib/wine)")
         return redist, None
     if src.suffix.lower() == ".dmg":
-        return src, mounted_dmg(src)
+        return src, extracted_dmg_redist(src)
     raise RuntimeError(f"{src} is neither a directory nor a .dmg")
 
 
