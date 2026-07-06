@@ -150,8 +150,8 @@ onBeforeUnmount(() => {
       <section class="pm-action-grid" aria-label="Process manager actions">
         <button class="pm-action" :class="{ armed: metalfxOn }" type="button" @click="runAction('metalfx')">
           <span>MetalFX</span>
-          <strong>{{ metalfxOn ? "Armed" : "Visual" }}</strong>
-          <small>upscaling hook pending</small>
+          <strong>Planned</strong>
+          <small>upscaling control coming soon</small>
         </button>
         <button class="pm-action danger" type="button" @click="runAction('quit-game')">
           <span>Quit Game</span>
@@ -160,8 +160,8 @@ onBeforeUnmount(() => {
         </button>
         <button class="pm-action" :class="{ armed: gpuAccelOn }" type="button" @click="runAction('gpu-acceleration')">
           <span>GPU Acceleration</span>
-          <strong>{{ gpuAccelOn ? "Armed" : "Visual" }}</strong>
-          <small>runtime toggle pending</small>
+          <strong>Planned</strong>
+          <small>runtime control coming soon</small>
         </button>
         <button class="pm-action cyan" type="button" @click="runAction('view-steam')">
           <span>View Steam</span>
