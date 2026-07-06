@@ -77,6 +77,7 @@ repair_assets_fnalibs_bundle() {
 
   rm -rf "$assets_root/assets/fnalibs"
   rm -rf "$assets_root/assets/eac-toggle"
+  rm -rf "$assets_root/assets/gptk"
   mkdir -p "$assets_root/assets"
   cp -R -p "$fnalibs_root/fnalibs" "$assets_root/assets/fnalibs"
   mkdir -p "$assets_root/assets/fna-kickstart/osx"
@@ -91,7 +92,7 @@ repair_assets_fnalibs_bundle() {
   zstd -q -19 -T0 -f "$tmp/metalsharp-assets.tar" -o "$assets_archive"
   chmod 0644 "$assets_archive"
   rm -rf "$tmp"
-  echo "repaired assets payload: $assets_archive (fnalibs refreshed, eac-toggle removed)"
+  echo "repaired assets payload: $assets_archive (fnalibs refreshed, stale eac-toggle/gptk payloads removed)"
 }
 
 while IFS=$'\t' read -r asset _root _platforms _notes; do

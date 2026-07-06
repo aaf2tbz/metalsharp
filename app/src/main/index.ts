@@ -771,25 +771,53 @@ function registerIpc() {
       return { ok: false, error: "Homebrew setup is only available on macOS." };
     }
 
-    const { exec } = require("child_process");
+    const metalsharpDir = getMetalsharpDir();
+    fs.mkdirSync(metalsharpDir, { recursive: true });
+    const scriptPath = path.join(metalsharpDir, "install-homebrew-metalsharp.command");
+    const script = `#!/bin/bash
+set -euo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
+echo "MetalSharp Homebrew setup"
+echo "=========================="
+echo
+if command -v brew >/dev/null 2>&1; then
+  echo "Homebrew is already installed: $(command -v brew)"
+else
+  echo "Installing Homebrew from the official installer..."
+  /bin/bash -c "$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+if [ -x /opt/homebrew/bin/brew ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [ -x /usr/local/bin/brew ]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+echo
+echo "Installing zstd, which MetalSharp uses to extract runtime bundles..."
+brew install zstd || true
+echo
+echo "Homebrew setup complete. Return to MetalSharp and click Continue."
+read -r -p "Press Return to close this window..." _
+`;
+    fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+    fs.chmodSync(scriptPath, 0o755);
+
+    const opened = await shell.openPath(scriptPath);
+    if (!opened) {
+      return { ok: true, message: "Terminal opened — complete the Homebrew install there", scriptPath };
+    }
+
     return new Promise((resolve) => {
-      const script = `/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`;
-      exec(
-        `osascript -e 'tell application "Terminal" to do script "${script.replace(/"/g, '\\\\"')}"'`,
-        (err: Error | null) => {
-          if (err) {
-            resolve({
-              ok: false,
-              error: "Failed to open Terminal for Homebrew install",
-            });
-          } else {
-            resolve({
-              ok: true,
-              message: "Terminal opened — complete the Homebrew install there",
-            });
-          }
-        },
-      );
+      const child = spawn("/usr/bin/open", ["-a", "Terminal", scriptPath], {
+        stdio: "ignore",
+        detached: true,
+      });
+      child.on("error", (err: Error) => {
+        resolve({ ok: false, error: `Failed to open Homebrew installer script: ${err.message}`, scriptPath });
+      });
+      child.on("spawn", () => {
+        child.unref();
+        resolve({ ok: true, message: "Terminal opened — complete the Homebrew install there", scriptPath });
+      });
     });
   });
 

@@ -95,8 +95,20 @@ pub fn runtime_library_env(ms_root: &std::path::Path) -> Option<(&'static str, S
 }
 
 pub fn set_runtime_library_env(cmd: &mut Command, ms_root: &std::path::Path) {
-    if let Some((key, value)) = runtime_library_env(ms_root) {
-        cmd.env(key, value);
+    let value = format!(
+        "{}:{}",
+        ms_root.join("lib").to_string_lossy(),
+        ms_root.join("lib").join("wine").join("x86_64-unix").to_string_lossy()
+    );
+    match current() {
+        HostPlatform::Macos => {
+            cmd.env("DYLD_LIBRARY_PATH", &value);
+            cmd.env("DYLD_FALLBACK_LIBRARY_PATH", &value);
+        },
+        HostPlatform::Linux => {
+            cmd.env("LD_LIBRARY_PATH", &value);
+        },
+        HostPlatform::Other => {},
     }
 }
 

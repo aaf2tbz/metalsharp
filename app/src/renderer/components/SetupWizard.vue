@@ -25,7 +25,7 @@ const brewChecking = ref(true);
 const brewInstalled = ref(false);
 const brewInstalling = ref(false);
 
-const steps = ["Welcome", "Homebrew", "Runtime", "VC++", "Done"];
+const steps = ["Welcome", "Prereqs", "Runtime", "Steam", "VC++", "Done"];
 
 const vcppX64Done = ref(false);
 const vcppX86Done = ref(false);
@@ -48,7 +48,8 @@ async function installHomebrew() {
     brewInstalling.value = false;
     return;
   }
-  toast.show("Terminal opened — complete the Homebrew install, then click Continue", "success");
+  toast.show("Homebrew installer opened — complete it, then click Continue", "success");
+  brewInstalling.value = false;
 }
 
 async function goToRuntimeStep() {
@@ -178,7 +179,7 @@ async function finish() {
 }
 
 async function goToDoneStep() {
-  step.value = 4;
+  step.value = 5;
   const gen = await api<{ name: string }>("GET", "/setup/device-name");
   if (gen?.name) deviceName.value = gen.name;
 }
@@ -271,20 +272,20 @@ async function installVcppX86() {
 
       <div v-if="step === 1" class="setup-body">
         <div class="setup-section-header">
-          <h1>Install Homebrew</h1>
-          <p>MetalSharp uses Homebrew for setup tools such as zstd and Rosetta checks. GPTK/D3DMetal is optional and is only installed later when you save a game as a D3DMetal bottle.</p>
+          <h1>Install Prerequisites</h1>
+          <p>MetalSharp needs Homebrew first so the runtime installer can install zstd and verify Rosetta 2 plus Xcode Command Line Tools before extracting Wine and Steam assets.</p>
         </div>
 
         <div class="setup-brew-step">
           <p class="setup-brew-instructions">
-            1. Click <strong>Open Terminal</strong> below<br />
-            2. Follow the prompts in Terminal to install Homebrew<br />
-            3. When finished, click <strong>Continue</strong>
+            1. Click <strong>Open Homebrew Installer</strong> below<br />
+            2. Complete the Terminal script. It installs Homebrew and zstd.<br />
+            3. Return here and click <strong>Continue</strong>. The next step installs Rosetta 2, zstd, Xcode CLI tools, then the runtime bundles.
           </p>
           <div class="setup-actions">
             <button class="btn btn-secondary" @click="step = 0">Back</button>
             <button class="btn btn-primary" :disabled="brewInstalling" @click="installHomebrew">
-              {{ brewInstalling ? "Opening..." : "Open Terminal" }}
+              {{ brewInstalling ? "Opening..." : "Open Homebrew Installer" }}
             </button>
             <button class="btn btn-primary btn-lg" @click="goToRuntimeStep">Continue</button>
           </div>
@@ -293,8 +294,8 @@ async function installVcppX86() {
 
       <div v-if="step === 2" class="setup-body">
         <div class="setup-section-header">
-          <h1>Install Runtime</h1>
-          <p>Install the MetalSharp-owned Wine runtime, DXMT graphics runtimes, Steam support files, Mono/FNA support, scripts, and bottle rules. GPTK is not installed during first-time setup.</p>
+          <h1>Install Runtime Bundles</h1>
+          <p>Installs prerequisites, then extracts the refreshed MetalSharp Wine 11.5 runtime, support assets, DXMT graphics DLLs, scripts/tools, Goldberg, FNA libraries, and Steam support files into ~/.metalsharp.</p>
         </div>
 
         <button
@@ -318,22 +319,33 @@ async function installVcppX86() {
           </div>
         </div>
 
-        <div v-if="installStatus === 'complete'" class="setup-steam-section">
-          <h2>Steam</h2>
-          <p>Install Windows Steam to download and play games through MetalSharp's Wine runtime.</p>
-          <span v-if="steamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">Steam installed</span>
-          <button v-else class="btn btn-primary" :disabled="steamInstalling" @click="installSteam">
-            {{ steamInstalling ? "Installing Steam..." : "Install Steam" }}
-          </button>
-        </div>
-
         <div class="setup-actions">
           <button class="btn btn-secondary" @click="step = 1">Back</button>
-          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Next: VC++ Runtimes</button>
+          <button v-if="installStatus === 'complete'" class="btn btn-primary btn-lg" @click="step = 3">Next: Install Steam</button>
         </div>
       </div>
 
       <div v-if="step === 3" class="setup-body">
+        <div class="setup-section-header">
+          <h1>Install Windows Steam</h1>
+          <p>Creates the MetalSharp Steam prefix, stages the Steam support bundle, runs SteamSetup.exe visibly, lets you click Finish, then watches Steam's updater/webhelper startup and force-stops Wine in the background so VC++ installs into a clean prefix.</p>
+        </div>
+
+        <div class="setup-steam-section">
+          <span v-if="steamInstalled" class="badge badge-ok" style="font-size:13px;padding:10px 20px;">Steam installed</span>
+          <button v-else class="btn btn-primary btn-lg" :disabled="steamInstalling" @click="installSteam">
+            {{ steamInstalling ? "Installing / polling Steam..." : "Install Steam" }}
+          </button>
+          <p v-if="steamInstalling" class="setup-hint" style="margin-top:12px;">Use the SteamSetup window normally. When you click Finish, MetalSharp keeps polling while Steam updates, then force-stops Wine automatically.</p>
+        </div>
+
+        <div class="setup-actions">
+          <button class="btn btn-secondary" @click="step = 2">Back</button>
+          <button class="btn btn-primary btn-lg" :disabled="!steamInstalled" @click="step = 4">Next: VC++ Runtimes</button>
+        </div>
+      </div>
+
+      <div v-if="step === 4" class="setup-body">
         <div class="setup-section-header">
           <h1>VC++ 2015-2022 Runtimes</h1>
           <p>Many Windows games depend on the Microsoft Visual C++ Redistributable. Install both x64 and x86 into the standard MetalSharp Wine prefix so Steam games can find the runtime DLLs they need at launch.</p>
@@ -364,12 +376,12 @@ async function installVcppX86() {
         </div>
 
         <div class="setup-actions">
-          <button class="btn btn-secondary" @click="step = 2">Back</button>
+          <button class="btn btn-secondary" @click="step = 3">Back</button>
           <button class="btn btn-primary btn-lg" @click="goToDoneStep">Continue</button>
         </div>
       </div>
 
-      <div v-if="step === 4" class="setup-body">
+      <div v-if="step === 5" class="setup-body">
         <div class="setup-complete">
           <div class="setup-complete-icon">
             <IconCheck width="36" height="36" />

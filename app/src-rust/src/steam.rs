@@ -18,6 +18,23 @@ fn steam_prefix() -> PathBuf {
     crate::platform::metalsharp_home_dir().join("prefix-steam")
 }
 
+fn ensure_steam_prefix_alias(prefix: &Path) {
+    let alias = crate::platform::metalsharp_home_dir().join("steam-prefix");
+    if alias.exists() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let _ = std::os::unix::fs::symlink(prefix, &alias);
+    }
+    if !alias.exists() {
+        let _ = std::fs::write(
+            crate::platform::metalsharp_home_dir().join("steam-prefix.path"),
+            prefix.to_string_lossy().as_ref(),
+        );
+    }
+}
+
 fn steam_exe_path() -> PathBuf {
     resolve_steam_dir().join("Steam.exe")
 }
@@ -374,7 +391,7 @@ fn spawn_wine_steam_with_env(args: &[&str], extra_env: &[(String, String)]) -> R
     let mut cmd = Command::new(&wine);
     cmd.current_dir(&steam_dir)
         .env("WINEPREFIX", &prefix_str)
-        .env("WINEDEBUG", "+vulkan,+d3d,+d3d11,+dxgi,+wined3d,+opengl")
+        .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
         .env("STEAM_RUNTIME", "0")
         .env("MS_FWD_COMPAT_GL_CTX", "1")
@@ -1486,15 +1503,25 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     let installer = metalsharp_dir.join("SteamSetup.exe");
     let _ = std::fs::remove_file(&installer);
 
-    let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
-    let output = Command::new("curl").args(["-sL", "-o", &installer.to_string_lossy(), url]).status()?;
-    if !output.success() {
-        if let Some(bundled) = find_bundled_steam_asset("SteamSetup.exe") {
-            let _ = std::fs::copy(&bundled, &installer);
+    if let Some(bundled) = find_bundled_steam_asset("SteamSetup.exe") {
+        let _ = std::fs::copy(&bundled, &installer);
+    }
+
+    if !installer.exists() {
+        let url = "https://steamcdn-a.akamaihd.net/client/installer/SteamSetup.exe";
+        let output = Command::new("/usr/bin/curl")
+            .args(["--fail", "--location", "--silent", "--show-error", "--retry", "3", "-o"])
+            .arg(&installer)
+            .arg(url)
+            .status()?;
+        if !output.success() {
+            if let Some(bundled) = find_bundled_steam_asset("SteamSetup.exe") {
+                let _ = std::fs::copy(&bundled, &installer);
+            }
         }
     }
     if !installer.exists() {
-        return Err("Failed to download Steam installer".into());
+        return Err("Failed to stage SteamSetup.exe from metalsharp-steam.tar.zst or Steam CDN".into());
     }
 
     let wine = ms_wine();
@@ -1504,6 +1531,7 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     let prefix = steam_prefix();
     std::fs::create_dir_all(&prefix)?;
+    ensure_steam_prefix_alias(&prefix);
 
     let prefix_str = prefix.to_string_lossy().to_string();
 
@@ -1559,10 +1587,14 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
     let steam_exe = steam_dir.join("Steam.exe");
     let steam_ui_dll = steam_dir.join("steamui.dll");
     let mut install_crashed = false;
-    for _ in 0..70 {
-        // Check if the installer process is still running before waiting.
+    let mut installer_finished = false;
+    for _ in 0..600 {
+        // Keep the visible installer alive until the user reaches and clicks Finish.
+        // Steam files may exist before the installer window exits, so do not advance
+        // solely on file presence.
         match install_child.try_wait() {
             Ok(Some(status)) => {
+                installer_finished = true;
                 if !status.success() {
                     eprintln!("steam: installer exited early with status {:?}", status.code());
                     install_crashed = true;
@@ -1575,10 +1607,13 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
                 break;
             },
         }
-        if steam_exe.exists() && steam_ui_dll.exists() {
-            break;
-        }
         std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
+    if !installer_finished {
+        eprintln!(
+            "steam: SteamSetup.exe did not exit within background poll window; continuing with installed-file checks"
+        );
     }
 
     // If installer crashed, wait briefly for any remaining file I/O to settle
@@ -1600,17 +1635,53 @@ fn run_install_steam() -> Result<String, Box<dyn std::error::Error>> {
 
     if steam_exe.exists() && steam_ui_dll.exists() {
         deploy_steamwebhelper_wrapper(&steam_dir);
+    } else {
+        return Err("Steam.exe or steamui.dll not found after SteamSetup.exe finished".into());
     }
 
-    for _ in 0..30 {
-        if !cef_subdirs(&steam_dir).is_empty() {
-            deploy_steamwebhelper_wrapper(&steam_dir);
+    wait_for_steam_post_install_update_then_stop(&steam_dir);
+
+    Ok("Steam install thread complete".into())
+}
+
+fn steam_webhelper_running() -> bool {
+    process_lines().iter().filter_map(|line| parse_process_line(line)).any(|(_, command)| {
+        let lower = command.to_lowercase();
+        lower.contains("steamwebhelper.exe") || lower.contains("steamwebhelper_real.exe")
+    })
+}
+
+fn steam_client_or_updater_running() -> bool {
+    process_lines().iter().filter_map(|line| parse_process_line(line)).any(|(_, command)| {
+        let lower = command.to_lowercase();
+        lower.contains("c:\\program files (x86)\\steam")
+            && (lower.contains("steam.exe")
+                || lower.contains("steamservice.exe")
+                || lower.contains("steamwebhelper.exe")
+                || lower.contains("steamwebhelper_real.exe"))
+    })
+}
+
+fn wait_for_steam_post_install_update_then_stop(steam_dir: &PathBuf) {
+    let mut saw_steam = false;
+    let mut saw_webhelper = false;
+    for _ in 0..240 {
+        if !cef_subdirs(steam_dir).is_empty() {
+            deploy_steamwebhelper_wrapper(steam_dir);
+        }
+        saw_steam |= steam_client_or_updater_running();
+        saw_webhelper |= steam_webhelper_running();
+        if saw_steam && saw_webhelper {
+            // Give Steam's post-install updater/CEF startup a short settle window,
+            // then force-stop Wine so the VC++ installers get a clean prefix.
+            std::thread::sleep(std::time::Duration::from_secs(20));
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
-
-    Ok("Steam install thread complete".into())
+    if saw_steam || saw_webhelper {
+        let _ = stop_wine_steam();
+    }
 }
 
 pub fn watch_steamapps() -> Vec<u32> {

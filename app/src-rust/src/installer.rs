@@ -17,6 +17,7 @@ fn mac_cmd(name: &str) -> Command {
         "softwareupdate" => "/usr/sbin/softwareupdate",
         "pkill" => "/usr/bin/pkill",
         "clang" => "/usr/bin/clang",
+        "open" => "/usr/bin/open",
         _ => name,
     };
     Command::new(path)
@@ -85,11 +86,31 @@ pub(crate) fn write_dxmt_m12_expected_test_files(dxmt_m12_dir: &Path) {
 
 const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/wine/bin/metalsharp-wine",
+    "runtime/wine/bin/wine",
+    "runtime/wine/bin/wineserver",
     "runtime/metalsharp-backend",
     "runtime/host/manifest.json",
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
+    "runtime/wine/lib/wine/x86_64-unix/d3dmetal.so",
+    "runtime/wine/lib/wine/x86_64-unix/ntdll.so",
+    "runtime/wine/lib/wine/x86_64-windows/d3d12.dll",
+    "runtime/wine/lib/wine/i386-windows/d3d12.dll",
+    "runtime/wine/lib/wine/arm-windows/d3d12.dll",
+    "runtime/wine/lib/wine/aarch64-windows/d3d12.dll",
+    "runtime/wine/share/wine/mono/wine-mono-11.0.0-x86.msi",
+    "runtime/wine/share/wine/gecko/wine-gecko-2.47.4-x86.msi",
+    "runtime/wine/share/wine/gecko/wine-gecko-2.47.4-x86_64.msi",
+    "runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json",
+    "runtime/wine/lib/libfreetype.6.dylib",
+    "runtime/wine/lib/libfontconfig.1.dylib",
+    "runtime/wine/lib/libgstreamer-1.0.0.dylib",
+    "runtime/wine/lib/libavcodec.62.dylib",
+    "runtime/wine/lib/libGL.1.dylib",
+    "runtime/wine/lib/libEGL.1.dylib",
+    "runtime/wine/lib/libvulkan.1.dylib",
+    "runtime/wine/lib/libMoltenVK.dylib",
 ];
 const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-unix/winemetal.so",
@@ -149,10 +170,11 @@ const STEAM_REQUIRED_ARCHIVE_FILES: &[&str] =
 
 const MAC_RUNTIME_BUNDLE_ASSETS: &[&str] = &[
     "metalsharp-runtime.tar.zst",
-    "metalsharp-graphics-dll.tar.zst",
     "metalsharp-assets.tar.zst",
-    "fnalibs.tar.zst",
+    "metalsharp-graphics-dll.tar.zst",
     "metalsharp-scripts-tools.tar.zst",
+    "goldberg.tar.zst",
+    "fnalibs.tar.zst",
     "metalsharp-steam.tar.zst",
 ];
 
@@ -262,18 +284,6 @@ fn run_install_all() {
         return;
     }
 
-    if !check_command("brew") {
-        write_progress(
-            0,
-            total,
-            "Homebrew",
-            "error",
-            "Homebrew is required but not installed. Please install it first from the setup wizard.",
-            Some("Homebrew not installed — install from https://brew.sh"),
-        );
-        return;
-    }
-
     for (i, (name, installer)) in steps.iter().enumerate() {
         let step_num = i + 1;
         write_progress(step_num, total, name, "installing", &format!("Installing {}...", name), None);
@@ -301,16 +311,19 @@ type InstallStep = (&'static str, Box<dyn Fn(&PathBuf) -> Result<bool, String>>)
 
 fn install_steps() -> Vec<InstallStep> {
     vec![
-        ("System Tools", Box::new(|_| install_xcode_cli())),
+        ("Homebrew", Box::new(install_homebrew)),
         ("Rosetta 2", Box::new(|_| install_rosetta())),
         ("Extract Tools (zstd)", Box::new(|_| ensure_zstd())),
+        ("Xcode Command Line Tools", Box::new(|_| install_xcode_cli())),
         ("Runtime Bundle Downloads", Box::new(ensure_runtime_bundle_assets)),
-        ("Runtime Assets", Box::new(install_metalsharp_bundle)),
+        ("MetalSharp Wine Runtime", Box::new(install_metalsharp_bundle)),
         ("Host Runtime ABI", Box::new(install_host_runtime)),
         ("Support Assets", Box::new(install_split_assets_bundle)),
-        ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("DXMT Graphics Runtimes", Box::new(|home| ensure_graphics_runtimes_ready(home))),
+        ("Scripts and Tools", Box::new(install_scripts_tools_bundle)),
         ("Goldberg Steam Emulator", Box::new(install_goldberg)),
+        ("FNA Native Libraries", Box::new(install_fnalibs_bundle)),
+        ("Steam Support Bundle", Box::new(install_steam_support_bundle)),
         ("Steam Bridge Shim", Box::new(install_steam_bridge)),
         ("Pipeline Rules", Box::new(install_mtsp_rules)),
         ("Mono Configs", Box::new(install_mono_configs)),
@@ -333,17 +346,18 @@ fn ensure_runtime_bundle_assets(_home: &PathBuf) -> Result<bool, String> {
             continue;
         }
 
-        write_progress(3, 14, "Runtime Bundle Downloads", "downloading", &format!("Downloading {}...", asset), None);
+        let total = install_steps().len();
+        write_progress(5, total, "Runtime Bundle Downloads", "downloading", &format!("Downloading {}...", asset), None);
         match download_bundled_file(asset) {
             Some(path) if file_nonempty(&path) && bundled_artifact_valid(asset, &path) => {
                 downloaded = true;
-                write_progress(3, 14, "Runtime Bundle Downloads", "done", &format!("Downloaded {}", asset), None);
+                write_progress(5, total, "Runtime Bundle Downloads", "done", &format!("Downloaded {}", asset), None);
             },
             _ => {
                 missing.push(*asset);
                 write_progress(
-                    3,
-                    14,
+                    5,
+                    total,
                     "Runtime Bundle Downloads",
                     "error",
                     &format!("Failed to download {}", asset),
@@ -384,6 +398,60 @@ fn bundled_file_valid_exists(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn install_homebrew(_home: &PathBuf) -> Result<bool, String> {
+    if check_command("brew") {
+        return Ok(false);
+    }
+
+    let script = crate::platform::metalsharp_home_dir().join("install-homebrew-metalsharp.command");
+    if let Some(parent) = script.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create Homebrew installer script dir: {}", e))?;
+    }
+    fs::write(
+        &script,
+        r#"#!/bin/bash
+set -euo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+echo "MetalSharp Homebrew setup"
+echo "=========================="
+echo
+if command -v brew >/dev/null 2>&1; then
+  echo "Homebrew is already installed: $(command -v brew)"
+else
+  echo "Installing Homebrew from the official installer..."
+  /bin/bash -c "$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+fi
+if [ -x /opt/homebrew/bin/brew ]; then
+  eval "$(/opt/homebrew/bin/brew shellenv)"
+elif [ -x /usr/local/bin/brew ]; then
+  eval "$(/usr/local/bin/brew shellenv)"
+fi
+echo
+echo "Installing zstd, which MetalSharp uses to extract runtime bundles..."
+brew install zstd || true
+echo
+echo "Homebrew setup complete. Return to MetalSharp and click Continue."
+read -r -p "Press Return to close this window..." _
+"#,
+    )
+    .map_err(|e| format!("write Homebrew installer script: {}", e))?;
+    make_executable(&script);
+
+    let status = mac_cmd("open")
+        .args(["-a", "Terminal"])
+        .arg(&script)
+        .status()
+        .map_err(|e| format!("open Terminal for Homebrew install: {}", e))?;
+    if status.success() {
+        Err(format!(
+            "Homebrew installer opened in Terminal. Complete it, then run Install Runtime again. Script: {}",
+            script.display()
+        ))
+    } else {
+        Err(format!("Homebrew is required. Run this script, then retry Install Runtime: {}", script.display()))
+    }
 }
 
 fn install_rosetta() -> Result<bool, String> {
@@ -1212,6 +1280,8 @@ fn install_graphics_runtime_surface(
         extract_zst(&archive, &tmp, GRAPHICS_DLL_BUNDLE)?;
 
         let src_root = tmp.join("Graphics").join("dll").join(bundle_surface);
+        let _ = fs::remove_dir_all(dst_dir);
+        fs::create_dir_all(dst_dir).map_err(|e| format!("create graphics runtime dir {}: {}", dst_dir.display(), e))?;
         copy_graphics_runtime_surface(&src_root, dst_dir)?;
         ensure_dxmt_runtime_compat_files(dst_dir)?;
         write_dxmt_runtime_manifest(dst_dir, "bundled:metalsharp-graphics-dll.tar.zst")?;
@@ -1573,6 +1643,74 @@ fn framework_has_resource_dylib(framework: &Path) -> bool {
         }
     }
     false
+}
+
+fn install_fnalibs_bundle(home: &PathBuf) -> Result<bool, String> {
+    let archive = find_bundled_archive(FNALIBS_BUNDLE)
+        .ok_or_else(|| "FNA native libraries bundle not found — fnalibs.tar.zst is missing".to_string())?;
+    let runtime_dir = crate::platform::metalsharp_home_dir_for(home).join("runtime");
+    let dest = runtime_dir.join("fnalibs");
+    if dest.join("libFNA3D.0.dylib").exists()
+        && dest.join("libSDL2-2.0.0.dylib").exists()
+        && split_bundle_current(home, FNALIBS_BUNDLE, &archive)
+    {
+        return Ok(false);
+    }
+
+    let tmp = std::env::temp_dir().join("metalsharp-fnalibs-extract");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| format!("create FNA libs extract dir: {}", e))?;
+    extract_zst(&archive, &tmp, FNALIBS_BUNDLE)?;
+    let src = tmp.join("fnalibs");
+    if !src.exists() {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err("fnalibs.tar.zst did not contain fnalibs/".into());
+    }
+    let _ = fs::remove_dir_all(&dest);
+    copy_dir_recursive(&src, &dest)?;
+    let _ = fs::remove_dir_all(&tmp);
+    if dest.join("libFNA3D.0.dylib").exists() && dest.join("libSDL2-2.0.0.dylib").exists() {
+        mark_split_bundle_installed(home, FNALIBS_BUNDLE, &archive);
+        Ok(true)
+    } else {
+        Err("FNA native libraries copied but required dylibs are missing".into())
+    }
+}
+
+fn install_steam_support_bundle(home: &PathBuf) -> Result<bool, String> {
+    let archive = find_bundled_archive(STEAM_BUNDLE)
+        .ok_or_else(|| "Steam support bundle not found — metalsharp-steam.tar.zst is missing".to_string())?;
+    let ms_dir = crate::platform::metalsharp_home_dir_for(home);
+    let dest = ms_dir.join("cache").join("steam");
+    if dest.join("SteamSetup.exe").exists()
+        && dest.join("steamwebhelper.exe").exists()
+        && split_bundle_current(home, STEAM_BUNDLE, &archive)
+    {
+        return Ok(false);
+    }
+
+    let tmp = std::env::temp_dir().join("metalsharp-steam-support-extract");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| format!("create Steam support extract dir: {}", e))?;
+    extract_zst(&archive, &tmp, STEAM_BUNDLE)?;
+    let src = tmp.join("steam");
+    if !src.exists() {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err("metalsharp-steam.tar.zst did not contain steam/".into());
+    }
+    let _ = fs::remove_dir_all(&dest);
+    copy_dir_recursive(&src, &dest)?;
+    let installer = ms_dir.join("SteamSetup.exe");
+    if dest.join("SteamSetup.exe").exists() {
+        let _ = fs::copy(dest.join("SteamSetup.exe"), &installer);
+    }
+    let _ = fs::remove_dir_all(&tmp);
+    if dest.join("SteamSetup.exe").exists() && dest.join("steamwebhelper.exe").exists() {
+        mark_split_bundle_installed(home, STEAM_BUNDLE, &archive);
+        Ok(true)
+    } else {
+        Err("Steam support bundle copied but SteamSetup.exe or steamwebhelper.exe is missing".into())
+    }
 }
 
 fn install_goldberg(home: &PathBuf) -> Result<bool, String> {
@@ -2113,6 +2251,10 @@ fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
 
     if name == ASSETS_BUNDLE || name == "metalsharp-assets.tar.zst" {
         return archive_required_files_valid(path, ASSETS_REQUIRED_ARCHIVE_FILES)
+            && archive_forbidden_paths_absent(
+                path,
+                &["assets/gptk/", "assets/eac-toggle/", "D3DMetal.framework", "libd3dshared.dylib"],
+            )
             && archive_fna_support_payloads_valid(path, "assets/fnalibs")
             && archive_fna_kickstart_payloads_valid(path, "assets/fna-kickstart/osx");
     }
@@ -2131,6 +2273,40 @@ fn bundled_artifact_valid(name: &str, path: &Path) -> bool {
     }
 
     true
+}
+
+fn archive_forbidden_paths_absent(path: &Path, forbidden: &[&str]) -> bool {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut decoder = match zstd::Decoder::new(file) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+
+    let mut tar_cmd = match mac_cmd("tar")
+        .arg("-tf")
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    if let Some(mut stdin) = tar_cmd.stdin.take() {
+        let _ = std::io::copy(&mut decoder, &mut stdin);
+    }
+
+    let output = match tar_cmd.wait_with_output() {
+        Ok(o) if o.status.success() => o,
+        _ => return false,
+    };
+    let listing = String::from_utf8_lossy(&output.stdout);
+    !listing.lines().any(|line| forbidden.iter().any(|needle| line.contains(needle)))
 }
 
 fn archive_dxmt_m12_hashes_valid(path: &Path) -> bool {
@@ -2489,10 +2665,11 @@ mod tests {
         let mac_assets = MAC_RUNTIME_BUNDLE_ASSETS;
         for expected in [
             "metalsharp-runtime.tar.zst",
-            "metalsharp-graphics-dll.tar.zst",
             "metalsharp-assets.tar.zst",
-            "fnalibs.tar.zst",
+            "metalsharp-graphics-dll.tar.zst",
             "metalsharp-scripts-tools.tar.zst",
+            "goldberg.tar.zst",
+            "fnalibs.tar.zst",
             "metalsharp-steam.tar.zst",
         ] {
             assert!(mac_assets.contains(&expected), "missing mac bundle asset {}", expected);
@@ -2500,13 +2677,19 @@ mod tests {
     }
 
     #[test]
-    fn install_order_runs_xcode_cli_before_rosetta() {
+    fn install_order_runs_homebrew_rosetta_zstd_before_xcode_and_bundles() {
         let names: Vec<&str> = install_steps().into_iter().map(|(name, _)| name).collect();
 
-        let xcode_idx = names.iter().position(|name| *name == "System Tools").expect("system tools step");
+        let homebrew_idx = names.iter().position(|name| *name == "Homebrew").expect("homebrew step");
         let rosetta_idx = names.iter().position(|name| *name == "Rosetta 2").expect("rosetta step");
+        let zstd_idx = names.iter().position(|name| *name == "Extract Tools (zstd)").expect("zstd step");
+        let xcode_idx = names.iter().position(|name| *name == "Xcode Command Line Tools").expect("xcode step");
+        let runtime_idx = names.iter().position(|name| *name == "MetalSharp Wine Runtime").expect("runtime step");
 
-        assert!(xcode_idx < rosetta_idx);
+        assert!(homebrew_idx < rosetta_idx);
+        assert!(rosetta_idx < zstd_idx);
+        assert!(zstd_idx < xcode_idx);
+        assert!(xcode_idx < runtime_idx);
     }
 
     #[test]

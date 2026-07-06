@@ -148,11 +148,31 @@ verify_required_files() {
 verify_runtime_core() {
   verify_required_files "$1" "RUNTIME" \
     runtime/wine/bin/metalsharp-wine \
+    runtime/wine/bin/wine \
+    runtime/wine/bin/wineserver \
     runtime/metalsharp-backend \
     runtime/host/manifest.json \
     runtime/host/HostRuntimeABI.h \
     runtime/host/libmetalsharp_host_runtime.dylib \
-    runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll
+    runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll \
+    runtime/wine/lib/wine/x86_64-unix/d3dmetal.so \
+    runtime/wine/lib/wine/x86_64-unix/ntdll.so \
+    runtime/wine/lib/wine/x86_64-windows/d3d12.dll \
+    runtime/wine/lib/wine/i386-windows/d3d12.dll \
+    runtime/wine/lib/wine/arm-windows/d3d12.dll \
+    runtime/wine/lib/wine/aarch64-windows/d3d12.dll \
+    runtime/wine/share/wine/mono/wine-mono-11.0.0-x86.msi \
+    runtime/wine/share/wine/gecko/wine-gecko-2.47.4-x86.msi \
+    runtime/wine/share/wine/gecko/wine-gecko-2.47.4-x86_64.msi \
+    runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json \
+    runtime/wine/lib/libfreetype.6.dylib \
+    runtime/wine/lib/libfontconfig.1.dylib \
+    runtime/wine/lib/libgstreamer-1.0.0.dylib \
+    runtime/wine/lib/libavcodec.62.dylib \
+    runtime/wine/lib/libGL.1.dylib \
+    runtime/wine/lib/libEGL.1.dylib \
+    runtime/wine/lib/libvulkan.1.dylib \
+    runtime/wine/lib/libMoltenVK.dylib
 }
 
 verify_graphics_core() {
@@ -226,7 +246,7 @@ verify_assets_core() {
     assets/goldberg/x86/steam_api.dll \
     assets/mono-arm64/bin/mono-sgen \
     assets/shims/libsteam_api.dylib &&
-    archive_not_contains "$path" '^assets/eac-toggle/' &&
+    archive_not_contains "$path" '(^assets/eac-toggle/|^assets/gptk/|D3DMetal.framework|libd3dshared\.dylib)' &&
     verify_fna_payloads "$path" "ASSETS" assets/fnalibs &&
     verify_fna_kickstart_payloads "$path" "ASSETS" assets/fna-kickstart/osx
 }
