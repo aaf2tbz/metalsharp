@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { ProcessManagerAction } from "./process-manager-types";
 
 contextBridge.exposeInMainWorld("metalsharp", {
   request: (method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) =>
@@ -32,4 +33,8 @@ contextBridge.exposeInMainWorld("metalsharp", {
   pickImageFile: () => ipcRenderer.invoke("app:pick-image-file"),
   pickDirectory: (title?: string) => ipcRenderer.invoke("app:pick-directory", title),
   gogOAuthLogin: (authUrl: string) => ipcRenderer.invoke("gog:oauth-login", authUrl),
+  processManagerToggle: () => ipcRenderer.invoke("process-manager:toggle"),
+  processManagerClose: () => ipcRenderer.invoke("process-manager:close"),
+  processManagerSample: () => ipcRenderer.invoke("process-manager:sample"),
+  processManagerAction: (action: ProcessManagerAction) => ipcRenderer.invoke("process-manager:action", action),
 });

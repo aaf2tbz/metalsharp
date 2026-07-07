@@ -397,9 +397,13 @@ pub fn launch_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal(appid, node)
-        },
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M10_32
+        | PipelineId::M11
+        | PipelineId::M11_32
+        | PipelineId::M12 => launch_dxmt_metal(appid, node),
         PipelineId::M13 | PipelineId::D3DMetal => launch_d3dmetal_gptk(appid, node),
         PipelineId::M32 => launch_wine_bare(appid, node),
         PipelineId::FnaArm64 => launch_fna_arm64(appid).map(|(pid, method, _)| (pid, method)),
@@ -422,10 +426,14 @@ pub fn launch_steam_bottle_with_pipeline(
     prepare_steam_api_for_pipeline(appid, pipeline_id);
 
     match pipeline_id {
-        PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => {
-            launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
-                .map(|(pid, method)| (pid, method, log_path))
-        },
+        PipelineId::Dxmt
+        | PipelineId::M9
+        | PipelineId::M10
+        | PipelineId::M10_32
+        | PipelineId::M11
+        | PipelineId::M11_32
+        | PipelineId::M12 => launch_dxmt_metal_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
+            .map(|(pid, method)| (pid, method, log_path)),
         PipelineId::M13 | PipelineId::D3DMetal => {
             launch_d3dmetal_gptk_with_context(appid, node, Some(prefix_path), extra_env, Some(&log_path))
                 .map(|(pid, method)| (pid, method, log_path))
@@ -503,7 +511,9 @@ pub fn prepare_steam_pipeline_env(
         PipelineId::Dxmt
         | PipelineId::M9
         | PipelineId::M10
+        | PipelineId::M10_32
         | PipelineId::M11
+        | PipelineId::M11_32
         | PipelineId::M12
         | PipelineId::M13
         | PipelineId::D3DMetal
@@ -1025,7 +1035,9 @@ pub fn launch_custom_with_options(
         PipelineId::Dxmt
         | PipelineId::M9
         | PipelineId::M10
+        | PipelineId::M10_32
         | PipelineId::M11
+        | PipelineId::M11_32
         | PipelineId::M12
         | PipelineId::M13
         | PipelineId::D3DMetal
@@ -1071,6 +1083,7 @@ pub fn launch_custom_with_options(
         .env("WINEDEBUG", wine_debug_value())
         .env("WINEDEBUGGER", "none");
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
+    apply_metalfx_home_env(&mut cmd, &home);
 
     if node.uses_winedllpath_routing() {
         let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
@@ -1393,6 +1406,7 @@ fn launch_d3dmetal_gptk_with_context(
         .env("DYLD_FALLBACK_LIBRARY_PATH", &dyld)
         .env("MS_GRAPHICS_BACKEND", node.graphics_backend)
         .env("WINEMSYNC", "1");
+    apply_metalfx_home_env(&mut cmd, &home);
 
     if node.uses_winedllpath_routing() {
         let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
@@ -1495,6 +1509,7 @@ fn launch_dxmt_metal_with_context(
         .env("WINEDEBUG", wine_debug_value())
         .env("WINEDEBUGGER", "none");
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
+    apply_metalfx_home_env(&mut cmd, &home);
 
     if node.uses_winedllpath_routing() {
         let winedllpath = build_winedllpath(&ms_root, &node.winedllpath_dirs);
@@ -1591,6 +1606,7 @@ fn launch_wine_bare_with_context(
         .env("WINEDEBUG", wine_debug_value())
         .env("WINEDEBUGGER", "none");
     apply_route_library_env(&mut cmd, &ms_root, &node.dyld_paths);
+    apply_metalfx_home_env(&mut cmd, &home);
 
     if let Some(overrides) = node.wine_overrides {
         cmd.env("WINEDLLOVERRIDES", overrides);
@@ -2069,6 +2085,13 @@ fn apply_route_library_env(cmd: &mut Command, ms_root: &PathBuf, paths: &[&str])
     for (key, value) in route_library_env_pairs(ms_root, paths) {
         cmd.env(key, value);
     }
+}
+
+/// Set METALSHARP_HOME on a Wine child process so the in-process ntdll-hook
+/// (x64 and i386) can resolve the MetalFX overlay state file and apply the
+/// `DXMT_METALFX_SPATIAL_SWAPCHAIN` toggle live (on the next swapchain recreate).
+fn apply_metalfx_home_env(cmd: &mut Command, home: &Path) {
+    cmd.env("METALSHARP_HOME", crate::platform::metalsharp_home_dir_for(home).to_string_lossy().to_string());
 }
 
 fn cleanup_metalsharp_dlls_from_game_dir(game_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {

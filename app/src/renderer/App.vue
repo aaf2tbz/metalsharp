@@ -4,6 +4,7 @@ import Sidebar from "./components/Sidebar.vue";
 import Toast from "./components/Toast.vue";
 import SetupWizard from "./components/SetupWizard.vue";
 import MigrationView from "./components/MigrationView.vue";
+import ProcessManagerOverlay from "./components/ProcessManagerOverlay.vue";
 import LibraryView from "./views/LibraryView.vue";
 import SharpView from "./views/SharpView.vue";
 import LogsView from "./views/LogsView.vue";
@@ -34,6 +35,8 @@ interface SteamLibrary {
 }
 
 const currentView = ref("library");
+const isProcessManagerOverlay =
+  new URLSearchParams(window.location.search).get("overlay") === "process-manager";
 const showSetup = ref(false);
 const showMigration = ref(false);
 const backendConnected = ref(false);
@@ -331,7 +334,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <MigrationView v-if="showMigration" />
+  <ProcessManagerOverlay v-if="isProcessManagerOverlay" />
+  <MigrationView v-else-if="showMigration" />
   <SetupWizard v-else-if="showSetup" @done="onSetupDone()" />
   <template v-else>
     <Sidebar

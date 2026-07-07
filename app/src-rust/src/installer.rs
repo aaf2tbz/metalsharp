@@ -43,6 +43,14 @@ const DXMT_REQUIRED_PE: &[&str] = &[
     "nvngx.dll",
 ];
 const DXMT_REQUIRED_UNIX: &[&str] = &["winemetal.so"];
+/// 32-bit (i386) PE DLLs the DXMT bundle ships for M11(32)/M10(32). These stage
+/// into `lib/dxmt/i386-windows/` and are surfaced in the runtime manifest so a
+/// migration that pulls a newer graphics bundle re-extracts and applies them.
+const DXMT_REQUIRED_I386_PE: &[&str] = &["d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"];
+/// 32-bit (i386) unix sidecar shipped beside the PE set. Stages into
+/// `lib/dxmt/i386-unix/`; M11(32)/M10(32) launch sets
+/// `DXMT_WINEMETAL_UNIXLIB=winemetal.so` and adds this dir to dyld fallbacks.
+const DXMT_REQUIRED_I386_UNIX: &[&str] = &["winemetal.so"];
 const DXMT_M12_REQUIRED_UNIX: &[&str] = &["winemetal.so", "libc++.1.dylib", "libc++abi.1.dylib", "libunwind.1.dylib"];
 #[cfg(not(test))]
 const DXMT_M12_EXPECTED_HASHES: &[(&str, &str)] = &[
@@ -90,6 +98,7 @@ const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
+    "runtime/wine/lib/metalsharp/i386-windows/metalsharp_ntdll_hook.dll",
 ];
 const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-unix/winemetal.so",
@@ -101,6 +110,12 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-windows/nvapi64.dll",
     "Graphics/dll/dxmt/x86_64-windows/nvngx.dll",
     "Graphics/dll/dxmt/x86_64-windows/winemetal.dll",
+    "Graphics/dll/dxmt/i386-unix/winemetal.so",
+    "Graphics/dll/dxmt/i386-windows/d3d10core.dll",
+    "Graphics/dll/dxmt/i386-windows/d3d11.dll",
+    "Graphics/dll/dxmt/i386-windows/dxgi.dll",
+    "Graphics/dll/dxmt/i386-windows/dxgi_dxmt.dll",
+    "Graphics/dll/dxmt/i386-windows/winemetal.dll",
     "Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so",
     "Graphics/dll/dxmt-m12/x86_64-unix/libc++.1.dylib",
     "Graphics/dll/dxmt-m12/x86_64-unix/libc++abi.1.dylib",
@@ -665,6 +680,7 @@ fn file_nonempty(path: &Path) -> bool {
 
 pub(crate) fn metalsharp_runtime_lib_ready(wine_dir: &Path) -> bool {
     file_nonempty(&wine_dir.join("lib").join("metalsharp").join("x86_64-windows").join(METALSHARP_NTDLL_HOOK_DLL))
+        && file_nonempty(&wine_dir.join("lib").join("metalsharp").join("i386-windows").join(METALSHARP_NTDLL_HOOK_DLL))
 }
 
 pub fn moltenvk_ready(wine_dir: &Path) -> bool {
@@ -1115,7 +1131,16 @@ pub fn ensure_dxmt_m12_runtime_ready(home: &Path) -> Result<bool, String> {
 pub fn ensure_graphics_runtimes_ready(home: &Path) -> Result<bool, String> {
     let dxmt_dir = dxmt_runtime_dir_for_home(home);
     let dxmt_m12_dir = dxmt_m12_runtime_dir_for_home(home);
-    if dxmt_runtime_current_for_dir(&dxmt_dir) && dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir) {
+    // Skip only when BOTH staged surfaces are current AND the bundled
+    // metalsharp-graphics-dll.tar.zst has not changed since the last stage.
+    // If the bundle carries new infrastructure (e.g. the i386 DXMT lanes for
+    // M11(32)/M10(32)) the staged surface can look "current" by version alone
+    // while still missing the new lanes, so we must re-extract (zst) and
+    // re-stage to apply it during a migration update.
+    if dxmt_runtime_current_for_dir(&dxmt_dir)
+        && dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir)
+        && !graphics_bundle_has_update(home)
+    {
         return Ok(false);
     }
 
@@ -1142,6 +1167,24 @@ pub fn ensure_graphics_runtimes_ready(home: &Path) -> Result<bool, String> {
 
 pub fn ensure_m12_runtime_ready(home: &Path) -> Result<bool, String> {
     ensure_dxmt_m12_runtime_ready(home)
+}
+
+/// True when a bundled `metalsharp-graphics-dll.tar.zst` exists whose sha256
+/// differs from the marker written by the last successful stage — i.e. the
+/// bundle carries new content (such as the i386 DXMT lanes) that the staged
+/// runtime surface has not yet absorbed. Returns false when no bundle is
+/// present so the no-bundle fallback path keeps its existing behavior.
+fn graphics_bundle_has_update(home: &Path) -> bool {
+    match find_bundled_archive(GRAPHICS_DLL_BUNDLE) {
+        Some(archive) => bundle_archive_has_update(home, GRAPHICS_DLL_BUNDLE, &archive),
+        None => false,
+    }
+}
+
+/// Pure, testable core of [`graphics_bundle_has_update`]: true when the given
+/// archive's sha256 does not match the staged marker for `bundle`.
+fn bundle_archive_has_update(home: &Path, bundle: &str, archive: &Path) -> bool {
+    !split_bundle_current(home, bundle, archive)
 }
 
 pub fn ensure_gptk_runtime_ready(home: &Path) -> Result<bool, String> {
@@ -1356,6 +1399,8 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
         "requiredFiles": {
             "dxmt/x86_64-unix": DXMT_REQUIRED_UNIX,
             "x86_64-windows": DXMT_REQUIRED_PE,
+            "dxmt/i386-unix": DXMT_REQUIRED_I386_UNIX,
+            "i386-windows": DXMT_REQUIRED_I386_PE,
             "dxmt_m12/x86_64-unix": DXMT_M12_REQUIRED_UNIX,
             "dxmt_m12/x86_64-windows": DXMT_REQUIRED_PE,
         },
@@ -1365,48 +1410,43 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
 }
 
 fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
-    let pe_dir = dxmt_dir.join("x86_64-windows");
-    let dxgi = pe_dir.join("dxgi.dll");
-    let dxgi_dxmt = pe_dir.join("dxgi_dxmt.dll");
+    for lane in ["x86_64-windows", "i386-windows"] {
+        let pe_dir = dxmt_dir.join(lane);
+        let dxgi = pe_dir.join("dxgi.dll");
+        let dxgi_dxmt = pe_dir.join("dxgi_dxmt.dll");
 
-    if !file_nonempty(&dxgi_dxmt) && file_nonempty(&dxgi) {
-        fs::copy(&dxgi, &dxgi_dxmt).map_err(|e| {
-            format!("copy legacy DXMT dxgi.dll to dxgi_dxmt.dll: {} -> {}: {}", dxgi.display(), dxgi_dxmt.display(), e)
-        })?;
+        if !file_nonempty(&dxgi_dxmt) && file_nonempty(&dxgi) {
+            fs::copy(&dxgi, &dxgi_dxmt).map_err(|e| {
+                format!(
+                    "copy legacy DXMT dxgi.dll to dxgi_dxmt.dll: {} -> {}: {}",
+                    dxgi.display(),
+                    dxgi_dxmt.display(),
+                    e
+                )
+            })?;
+        }
     }
 
     Ok(())
 }
 
 fn copy_graphics_runtime_surface(src_root: &Path, dst_root: &Path) -> Result<(), String> {
-    let src_x64_unix = src_root.join("x86_64-unix");
-    let src_x64_windows = src_root.join("x86_64-windows");
-
-    if src_x64_unix.exists() {
-        fs::create_dir_all(dst_root.join("x86_64-unix"))
-            .map_err(|e| format!("create DXMT Unix dir {}: {}", dst_root.display(), e))?;
-        for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read {}: {}", src_x64_unix.display(), e))? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            fs::copy(entry.path(), dst_root.join("x86_64-unix").join(entry.file_name())).map_err(|e| {
-                format!(
-                    "copy graphics Unix file {} to {}: {}",
-                    entry.path().display(),
-                    dst_root.join("x86_64-unix").display(),
-                    e
-                )
-            })?;
+    // Each lane is copied only if present in the bundle surface, so x86_64-only
+    // bundles keep working and i386 lanes stage when shipped.
+    for lane in ["x86_64-unix", "x86_64-windows", "i386-unix", "i386-windows"] {
+        let src_lane = src_root.join(lane);
+        if !src_lane.exists() {
+            continue;
         }
-    }
-    if src_x64_windows.exists() {
-        fs::create_dir_all(dst_root.join("x86_64-windows"))
-            .map_err(|e| format!("create DXMT PE dir {}: {}", dst_root.display(), e))?;
-        for entry in fs::read_dir(&src_x64_windows).map_err(|e| format!("read {}: {}", src_x64_windows.display(), e))? {
+        let dst_lane = dst_root.join(lane);
+        fs::create_dir_all(&dst_lane).map_err(|e| format!("create DXMT lane dir {}: {}", dst_lane.display(), e))?;
+        for entry in fs::read_dir(&src_lane).map_err(|e| format!("read {}: {}", src_lane.display(), e))? {
             let entry = entry.map_err(|e| e.to_string())?;
-            fs::copy(entry.path(), dst_root.join("x86_64-windows").join(entry.file_name())).map_err(|e| {
+            fs::copy(entry.path(), dst_lane.join(entry.file_name())).map_err(|e| {
                 format!(
-                    "copy graphics PE file {} to {}: {}",
+                    "copy graphics lane file {} to {}: {}",
                     entry.path().display(),
-                    dst_root.join("x86_64-windows").display(),
+                    dst_lane.join(entry.file_name()).display(),
                     e
                 )
             })?;
@@ -2767,5 +2807,46 @@ mod tests {
         for dll in DXMT_REQUIRED_PE {
             fs::write(m12_pe_dir.join(dll), b"dll").expect("write M12 DLL");
         }
+    }
+
+    #[test]
+    fn bundle_archive_has_update_detects_new_graphics_bundle_content() {
+        // The migration gate must treat a graphics bundle whose sha256 differs
+        // from the last-staged marker as carrying new infrastructure (e.g. the
+        // i386 DXMT lanes), so ensure_graphics_runtimes_ready re-extracts it
+        // instead of early-returning on a version-matching x86_64 surface.
+        let home = test_home("graphics-bundle-update-detector");
+        let marker_dir = split_bundle_marker_dir(&home);
+        fs::create_dir_all(&marker_dir).expect("create marker dir");
+        let archive = std::env::temp_dir().join(format!(
+            "metalsharp-graphics-bundle-update-{}-{}.tar.zst",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+        ));
+        fs::write(&archive, b"graphics-bundle-v2-with-i386-lanes").expect("write synthetic bundle");
+
+        // No marker yet -> the staged surface has never absorbed this bundle.
+        assert!(
+            bundle_archive_has_update(&home, GRAPHICS_DLL_BUNDLE, &archive),
+            "missing marker should signal an update is pending"
+        );
+
+        // Stale marker (wrong hash) -> bundle carries new content.
+        fs::write(split_bundle_marker_path(&home, GRAPHICS_DLL_BUNDLE), b"deadbeef").expect("write stale marker");
+        assert!(
+            bundle_archive_has_update(&home, GRAPHICS_DLL_BUNDLE, &archive),
+            "a sha mismatch should signal the bundle has new infrastructure"
+        );
+
+        // Current marker (matching hash) -> no update pending.
+        let hash = archive_sha256(&archive).expect("compute archive sha256 for test");
+        fs::write(split_bundle_marker_path(&home, GRAPHICS_DLL_BUNDLE), &hash).expect("write current marker");
+        assert!(
+            !bundle_archive_has_update(&home, GRAPHICS_DLL_BUNDLE, &archive),
+            "a matching marker should not signal an update"
+        );
+
+        let _ = fs::remove_file(&archive);
+        let _ = fs::remove_dir_all(&home);
     }
 }

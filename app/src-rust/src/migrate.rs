@@ -3066,6 +3066,7 @@ mod tests {
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvapi64.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-windows").join("nvngx.dll"),
             runtime_wine.join("lib").join("metalsharp").join("x86_64-windows").join("metalsharp_ntdll_hook.dll"),
+            runtime_wine.join("lib").join("metalsharp").join("i386-windows").join("metalsharp_ntdll_hook.dll"),
             runtime_wine.join("lib").join("dxmt").join("x86_64-unix").join("winemetal.so"),
             runtime_wine.join("lib").join("dxmt_m12").join("x86_64-unix").join("winemetal.so"),
             runtime_wine.join("lib").join("dxmt_m12").join("x86_64-unix").join("libc++.1.dylib"),

@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.50.0",
+  "version": "0.51.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -16,11 +16,12 @@
     "rust:build": "cd src-rust && cargo build --release",
     "rust:dev": "cd src-rust && cargo build",
     "build:all": "npm run rust:build && npm run build",
+    "build:native": "bash ../scripts/tools/native/build-helper.sh",
     "pack": "npm run build:all && electron-builder --dir",
     "prepare:native": "../tools/package/prepare-native-placeholders.sh",
     "fetch:bundles:mac": "../tools/dmg/create-bundles.sh",
     "fetch:bundles": "npm run fetch:bundles:mac",
-    "dist": "npm run prepare:native && npm run build:all && npm run fetch:bundles && electron-builder",
+    "dist": "npm run prepare:native && npm run build:all && npm run build:native && npm run fetch:bundles && electron-builder",
     "dmg": "npm run dist -- --mac dmg"
   },
   "dependencies": {

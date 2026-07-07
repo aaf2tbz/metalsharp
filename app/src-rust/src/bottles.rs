@@ -823,7 +823,9 @@ fn pipeline_preference_id(pipeline: crate::mtsp::engine::PipelineId) -> &'static
         crate::mtsp::engine::PipelineId::Dxmt => "dxmt",
         crate::mtsp::engine::PipelineId::M9 => "m9",
         crate::mtsp::engine::PipelineId::M10 => "m10",
+        crate::mtsp::engine::PipelineId::M10_32 => "m10_32",
         crate::mtsp::engine::PipelineId::M11 => "m11",
+        crate::mtsp::engine::PipelineId::M11_32 => "m11_32",
         crate::mtsp::engine::PipelineId::M12 => "m12",
         crate::mtsp::engine::PipelineId::M13 => "m13",
         crate::mtsp::engine::PipelineId::D3DMetal => "d3dmetal",
@@ -4902,14 +4904,23 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
         }
     }
 
-    let ntdll_hook_src =
+    let ntdll_hook_x64 =
         ms_root.join("lib").join("metalsharp").join("x86_64-windows").join("metalsharp_ntdll_hook.dll");
-    if ntdll_hook_src.exists() {
+    let ntdll_hook_i386 = ms_root.join("lib").join("metalsharp").join("i386-windows").join("metalsharp_ntdll_hook.dll");
+    {
         let system32 = prefix.join("drive_c").join("windows").join("system32");
         let _ = fs::create_dir_all(&system32);
-        let dst = system32.join("metalsharp_ntdll_hook.dll");
-        if !dst.exists() {
-            let _ = fs::copy(&ntdll_hook_src, &dst);
+        // system32 serves 64-bit processes; always (re)copy so the correct
+        // x64 hook is present even if a prior seed wrote the wrong arch.
+        if ntdll_hook_x64.exists() {
+            let _ = fs::copy(&ntdll_hook_x64, system32.join("metalsharp_ntdll_hook.dll"));
+        }
+        // syswow64 serves 32-bit processes (new-wow64); deploy the i386 hook
+        // there so the MetalFX live-toggle poller loads in 32-bit games too.
+        let syswow64 = prefix.join("drive_c").join("windows").join("syswow64");
+        let _ = fs::create_dir_all(&syswow64);
+        if ntdll_hook_i386.exists() {
+            let _ = fs::copy(&ntdll_hook_i386, syswow64.join("metalsharp_ntdll_hook.dll"));
         }
     }
 
@@ -4923,6 +4934,22 @@ pub fn seed_post_wineboot_config(prefix: &Path, log_path: &Path) -> Result<u32, 
     reg.push_str("\"AppInit_DLLs\"=\"metalsharp_ntdll_hook.dll\"\r\n");
     reg.push_str("\"LoadAppInit_DLLs\"=dword:00000001\r\n");
     reg.push_str("\"RequireSignedAppInit_DLLs\"=dword:00000000\r\n");
+    // 32-bit processes read AppInit_DLLs from the WOW6432Node view and resolve
+    // the DLL from syswow64; mirror the registration so 32-bit games load the
+    // i386 hook (MetalFX poller).
+    reg.push_str("\r\n[HKEY_LOCAL_MACHINE\\Software\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\Windows]\r\n");
+    reg.push_str("\"AppInit_DLLs\"=\"metalsharp_ntdll_hook.dll\"\r\n");
+    reg.push_str("\"LoadAppInit_DLLs\"=dword:00000001\r\n");
+    reg.push_str("\"RequireSignedAppInit_DLLs\"=dword:00000000\r\n");
+    // METALSHARP_HOME in the prefix environment so every Wine process (incl.
+    // Steam-launched games, x64 and i386) inherits it; the ntdll-hook poller
+    // resolves <Z:\<METALSHARP_HOME>>\etc\metalfx.overlay.json to apply the
+    // MetalFX toggle live.
+    let ms_home = crate::platform::metalsharp_home_dir().to_string_lossy().replace('\\', "/");
+    reg.push_str("\r\n[HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\Session Manager\\Environment]\r\n");
+    reg.push_str(&format!("\"METALSHARP_HOME\"=\"{}\"\r\n", ms_home.replace('/', "\\\\")));
+    reg.push_str("\r\n[HKEY_CURRENT_USER\\Environment]\r\n");
+    reg.push_str(&format!("\"METALSHARP_HOME\"=\"{}\"\r\n", ms_home.replace('/', "\\\\")));
 
     let reg_file = prefix.join("drive_c").join("metalsharp-post-wineboot.reg");
     fs::write(&reg_file, &reg)?;

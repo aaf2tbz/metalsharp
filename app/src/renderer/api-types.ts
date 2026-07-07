@@ -137,6 +137,60 @@ interface DependenciesResponse {
   dependencies: Dependency[];
 }
 
+interface ProcessManagerProcess {
+  pid: number;
+  name: string;
+  command: string;
+  cpu_percent: number;
+  mem_percent: number;
+  fps: number | null;
+  fps_fresh: boolean;
+}
+
+interface ProcessManagerSample {
+  ok: boolean;
+  source: string;
+  timestamp?: number;
+  fps: number | null;
+  fps_source?: string;
+  fps_fresh?: boolean;
+  cpu_percent: number;
+  cpu_temp_c: number | null;
+  cpu_temp_source?: string;
+  cores_used: number;
+  cores_total: number;
+  ram_used_bytes: number;
+  ram_total_bytes: number;
+  gpu_percent: number | null;
+  gpu_label?: string;
+  chip?: string;
+  processes: ProcessManagerProcess[];
+  helper_path?: string;
+}
+
+type ProcessManagerAction = "metalfx" | "gpu-acceleration" | "quit-game" | "view-steam";
+
+interface MetalFxState {
+  ok: boolean;
+  enabled: boolean;
+  factor: number;
+  conf_factor?: number;
+  source?: string;
+  applies?: string;
+  error?: string;
+}
+
+interface ProcessManagerActionResult {
+  ok: boolean;
+  error?: string;
+  visualOnly?: boolean;
+  action?: ProcessManagerAction;
+  killed?: number[];
+  errors?: string[];
+  skippedSteamWinePids?: number;
+  mode?: string;
+}
+
 type MetalsharpAPI = {
   request: (
     method: string,
@@ -180,4 +234,8 @@ type MetalsharpAPI = {
   pickImageFile: () => Promise<string | null>;
   pickDirectory: (title?: string) => Promise<string | null>;
   gogOAuthLogin: (authUrl: string) => Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>;
+  processManagerToggle: () => Promise<{ ok: boolean }>;
+  processManagerClose: () => Promise<{ ok: boolean }>;
+  processManagerSample: () => Promise<ProcessManagerSample>;
+  processManagerAction: (action: ProcessManagerAction) => Promise<ProcessManagerActionResult>;
 };

@@ -235,6 +235,10 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         PROJECT_ROOT / "lib" / "metalsharp" / "x86_64-windows" / "metalsharp_ntdll_hook.dll",
         "MetalSharp ntdll hook DLL",
     )
+    require_file(
+        PROJECT_ROOT / "lib" / "metalsharp" / "i386-windows" / "metalsharp_ntdll_hook.dll",
+        "MetalSharp ntdll hook DLL (i386, MetalFX poller for 32-bit games)",
+    )
     copy_tree(PROJECT_ROOT / "lib" / "metalsharp", roots["runtime"] / "wine" / "lib" / "metalsharp")
 
     copy_tree(source_dxmt / "x86_64-unix", roots["graphics"] / "dxmt" / "x86_64-unix")
