@@ -591,7 +591,7 @@ mod tests {
         // M11(32) ships its own WINEDLLOVERRIDES via the pipeline node; the
         // recipe must not carry a stale d3d9 override that would clobber it.
         assert!(
-            titan_quest.env.get("WINEDLLOVERRIDES").is_none(),
+            !titan_quest.env.contains_key("WINEDLLOVERRIDES"),
             "titan quest M11(32) recipe must not override the route's WINEDLLOVERRIDES"
         );
         assert!(titan_quest.check_dlls.contains(&"d3d11.dll".to_string()));
