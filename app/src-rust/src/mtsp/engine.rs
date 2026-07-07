@@ -7,7 +7,9 @@ pub enum PipelineId {
     Dxmt,
     M9,
     M10,
+    M10_32,
     M11,
+    M11_32,
     M12,
     M13,
     D3DMetal,
@@ -212,6 +214,56 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 shader_cache_subdir: Some("m11"),
             },
             PipelineNode {
+                id: PipelineId::M11_32,
+                name: "M11(32)",
+                description: "D3D11 -> Metal via DXMT (32-bit / i386)",
+                backend: "dxmt",
+                graphics_backend: "dxmt",
+                experimental: false,
+                requires_wine: true,
+                wine_overrides: Some(
+                    "d3d11,dxgi,dxgi_dxmt,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/i386-unix", "lib/wine"],
+                winedllpath_dirs: vec!["lib/dxmt/i386-windows", "lib/wine/i386-windows", "lib/wine/x86_64-windows"],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/dxmt/i386-windows", filename: "d3d11.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxmt/i386-windows", filename: "dxgi.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/i386-windows",
+                        filename: "dxgi_dxmt.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/i386-windows",
+                        filename: "d3d10core.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/i386-windows",
+                        filename: "winemetal.dll",
+                        dest_filename: None,
+                    },
+                ],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_WINEMETAL_UNIXLIB", value: "winemetal.so" },
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
+                ],
+                launch_args: vec![],
+                alternatives: vec![
+                    PipelineId::M11,
+                    PipelineId::M12,
+                    PipelineId::M10,
+                    PipelineId::M9,
+                    PipelineId::Steam,
+                    PipelineId::MacSteam,
+                    PipelineId::WineBare,
+                ],
+                shader_cache_subdir: Some("m11_32"),
+            },
+            PipelineNode {
                 id: PipelineId::M10,
                 name: "M10",
                 description: "D3D10 -> Metal via DXMT",
@@ -278,6 +330,58 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                     PipelineId::WineBare,
                 ],
                 shader_cache_subdir: Some("m10"),
+            },
+            PipelineNode {
+                id: PipelineId::M10_32,
+                name: "M10(32)",
+                description: "D3D10 -> Metal via DXMT (32-bit / i386)",
+                backend: "dxmt",
+                graphics_backend: "dxmt",
+                experimental: false,
+                requires_wine: true,
+                wine_overrides: Some(
+                    "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                ),
+                dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/i386-unix", "lib/wine"],
+                winedllpath_dirs: vec!["lib/wine/i386-windows", "lib/dxmt/i386-windows", "lib/wine/x86_64-windows"],
+                deploy_dlls: vec![
+                    DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d10.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/wine/i386-windows", filename: "d3d10_1.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxmt/i386-windows", filename: "d3d11.dll", dest_filename: None },
+                    DllDeploy { source_subpath: "lib/dxmt/i386-windows", filename: "dxgi.dll", dest_filename: None },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/i386-windows",
+                        filename: "dxgi_dxmt.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/i386-windows",
+                        filename: "d3d10core.dll",
+                        dest_filename: None,
+                    },
+                    DllDeploy {
+                        source_subpath: "lib/dxmt/i386-windows",
+                        filename: "winemetal.dll",
+                        dest_filename: None,
+                    },
+                ],
+                env_vars: vec![
+                    EnvVar { key: "DXMT_WINEMETAL_UNIXLIB", value: "winemetal.so" },
+                    EnvVar { key: "DXMT_METALFX_SPATIAL_SWAPCHAIN", value: "1" },
+                    EnvVar { key: "DXMT_ASYNC_PIPELINE_COMPILE", value: "1" },
+                    EnvVar { key: "DXMT_CONFIG", value: DXMT_70_PERCENT_UPSCALE_CONFIG },
+                ],
+                launch_args: vec![],
+                alternatives: vec![
+                    PipelineId::M10,
+                    PipelineId::M11_32,
+                    PipelineId::M11,
+                    PipelineId::M9,
+                    PipelineId::Steam,
+                    PipelineId::MacSteam,
+                    PipelineId::WineBare,
+                ],
+                shader_cache_subdir: Some("m10_32"),
             },
             PipelineNode {
                 id: PipelineId::M9,
@@ -461,7 +565,9 @@ impl PipelineId {
             PipelineId::M12
                 | PipelineId::D3DMetal
                 | PipelineId::M11
+                | PipelineId::M11_32
                 | PipelineId::M10
+                | PipelineId::M10_32
                 | PipelineId::M9
                 | PipelineId::FnaArm64
         )
@@ -472,7 +578,9 @@ impl PipelineId {
             PipelineId::M12 => Some("m12"),
             PipelineId::D3DMetal => Some("d3dmetal"),
             PipelineId::M11 => Some("m11"),
+            PipelineId::M11_32 => Some("m11_32"),
             PipelineId::M10 => Some("m10"),
+            PipelineId::M10_32 => Some("m10_32"),
             PipelineId::M9 => Some("m9"),
             PipelineId::FnaArm64 => Some("fna_arm64"),
             _ => None,
@@ -484,7 +592,9 @@ impl PipelineId {
             PipelineId::M12 => Some("M12"),
             PipelineId::D3DMetal => Some("D3DMetal"),
             PipelineId::M11 => Some("M11"),
+            PipelineId::M11_32 => Some("M11(32)"),
             PipelineId::M10 => Some("M10"),
+            PipelineId::M10_32 => Some("M10(32)"),
             PipelineId::M9 => Some("M9"),
             PipelineId::FnaArm64 => Some("Mono/FNA"),
             _ => None,
@@ -514,10 +624,12 @@ impl PipelineId {
         match normalized.as_str() {
             "dxmt" | "auto_dxmt" | "metalsharp_dxmt" => Some(PipelineId::Dxmt),
             "m11" | "d3d11" | "dx11" | "steam_d3dmetal_perf" | "steam_metalfx" => Some(PipelineId::M11),
+            "m11_32" | "d3d11_32" | "dx11_32" => Some(PipelineId::M11_32),
             "m12" | "d3d12" | "dx12" => Some(PipelineId::M12),
             "m13" | "gptk" | "steam_d3dmetal" => Some(PipelineId::M13),
             "d3dmetal" | "d3dmetal_native" => Some(PipelineId::D3DMetal),
             "m10" | "d3d10" | "dx10" => Some(PipelineId::M10),
+            "m10_32" | "d3d10_32" | "dx10_32" => Some(PipelineId::M10_32),
             "m9" | "d3d9" | "dx9" => Some(PipelineId::M9),
             "m32" | "m32_w" => Some(PipelineId::M32),
             "fna_arm64" | "fna_x86" | "mono_generic" | "fna_mono_xna" | "mono_fna_xna" => Some(PipelineId::FnaArm64),
@@ -530,7 +642,13 @@ impl PipelineId {
 
     pub fn to_legacy_method(self) -> &'static str {
         match self {
-            PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12 => "dxmt",
+            PipelineId::Dxmt
+            | PipelineId::M9
+            | PipelineId::M10
+            | PipelineId::M10_32
+            | PipelineId::M11
+            | PipelineId::M11_32
+            | PipelineId::M12 => "dxmt",
             PipelineId::M13 => "gptk_d3dmetal",
             PipelineId::D3DMetal => "d3dmetal",
             PipelineId::M32 => "wined3d_32",
@@ -694,6 +812,51 @@ mod tests {
     }
 
     #[test]
+    fn m11_32_and_m10_32_deploy_from_i386_dxmt_lane() {
+        let m11_32 = get_pipeline(PipelineId::M11_32);
+        let m10_32 = get_pipeline(PipelineId::M10_32);
+
+        // both are public, non-experimental, dxmt-backed 32-bit options
+        for node in [m11_32, m10_32] {
+            assert!(node.id.is_user_selectable(), "{:?} should be user-selectable", node.id);
+            assert!(!node.experimental);
+            assert_eq!(node.backend, "dxmt");
+            assert_eq!(node.graphics_backend, "dxmt");
+
+            // every deployed DLL comes from an i386-windows lane, never x86_64-windows
+            for dll in &node.deploy_dlls {
+                assert!(
+                    dll.source_subpath.contains("i386-windows"),
+                    "{:?} deploys {} from non-i386 lane {}",
+                    node.id,
+                    dll.filename,
+                    dll.source_subpath
+                );
+            }
+            // must carry the unix sidecar hint validated for 32-bit DXMT launches
+            let env_keys: std::collections::HashSet<_> = node.env_vars.iter().map(|e| e.key).collect();
+            assert!(env_keys.contains("DXMT_WINEMETAL_UNIXLIB"));
+            // dyld path must include the i386-unix lane
+            assert!(node.dyld_paths.iter().any(|p| p.contains("i386-unix")));
+        }
+
+        // M11(32) ships the D3D11 handoff set; no d3d12 / no nvapi
+        let m11_32_dlls: std::collections::HashSet<_> = m11_32.deploy_dlls.iter().map(|d| d.filename).collect();
+        for required in ["d3d11.dll", "dxgi.dll", "dxgi_dxmt.dll", "d3d10core.dll", "winemetal.dll"] {
+            assert!(m11_32_dlls.contains(required), "M11(32) missing {}", required);
+        }
+        for forbidden in ["d3d12.dll", "nvapi64.dll", "nvngx.dll"] {
+            assert!(!m11_32_dlls.contains(forbidden), "M11(32) must not ship {}", forbidden);
+        }
+
+        // M10(32) additionally ships the Wine d3d10/d3d10_1 public entrypoints
+        let m10_32_dlls: std::collections::HashSet<_> = m10_32.deploy_dlls.iter().map(|d| d.filename).collect();
+        for required in ["d3d10.dll", "d3d10_1.dll", "d3d11.dll", "dxgi.dll", "d3d10core.dll", "winemetal.dll"] {
+            assert!(m10_32_dlls.contains(required), "M10(32) missing {}", required);
+        }
+    }
+
+    #[test]
     fn m9_is_dxmt_family_without_dxvk_or_wined3d_fallbacks() {
         let m9 = get_pipeline(PipelineId::M9);
 
@@ -743,7 +906,9 @@ mod tests {
             vec![
                 PipelineId::M12,
                 PipelineId::M11,
+                PipelineId::M11_32,
                 PipelineId::M10,
+                PipelineId::M10_32,
                 PipelineId::M9,
                 PipelineId::D3DMetal,
                 PipelineId::FnaArm64
@@ -751,7 +916,7 @@ mod tests {
         );
 
         let labels: Vec<_> = selectable.iter().map(|pipeline| pipeline.user_selectable_name().unwrap()).collect();
-        assert_eq!(labels, vec!["M12", "M11", "M10", "M9", "D3DMetal", "Mono/FNA"]);
+        assert_eq!(labels, vec!["M12", "M11", "M11(32)", "M10", "M10(32)", "M9", "D3DMetal", "Mono/FNA"]);
 
         for hidden in [
             PipelineId::Dxmt,
