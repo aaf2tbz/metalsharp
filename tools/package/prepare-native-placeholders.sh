@@ -12,6 +12,7 @@ mkdir -p "$HOST_DIR"
 for file in \
   metalsharp \
   metalsharp_launcher \
+  metalsharp-process-manager-helper \
   d3d11.dylib \
   d3d12.dylib \
   dxgi.dylib \
