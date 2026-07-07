@@ -101,6 +101,12 @@ const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-windows/nvapi64.dll",
     "Graphics/dll/dxmt/x86_64-windows/nvngx.dll",
     "Graphics/dll/dxmt/x86_64-windows/winemetal.dll",
+    "Graphics/dll/dxmt/i386-unix/winemetal.so",
+    "Graphics/dll/dxmt/i386-windows/d3d10core.dll",
+    "Graphics/dll/dxmt/i386-windows/d3d11.dll",
+    "Graphics/dll/dxmt/i386-windows/dxgi.dll",
+    "Graphics/dll/dxmt/i386-windows/dxgi_dxmt.dll",
+    "Graphics/dll/dxmt/i386-windows/winemetal.dll",
     "Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so",
     "Graphics/dll/dxmt-m12/x86_64-unix/libc++.1.dylib",
     "Graphics/dll/dxmt-m12/x86_64-unix/libc++abi.1.dylib",
@@ -1365,48 +1371,43 @@ fn write_dxmt_runtime_manifest(dxmt_dir: &Path, source: &str) -> Result<(), Stri
 }
 
 fn ensure_dxmt_runtime_compat_files(dxmt_dir: &Path) -> Result<(), String> {
-    let pe_dir = dxmt_dir.join("x86_64-windows");
-    let dxgi = pe_dir.join("dxgi.dll");
-    let dxgi_dxmt = pe_dir.join("dxgi_dxmt.dll");
+    for lane in ["x86_64-windows", "i386-windows"] {
+        let pe_dir = dxmt_dir.join(lane);
+        let dxgi = pe_dir.join("dxgi.dll");
+        let dxgi_dxmt = pe_dir.join("dxgi_dxmt.dll");
 
-    if !file_nonempty(&dxgi_dxmt) && file_nonempty(&dxgi) {
-        fs::copy(&dxgi, &dxgi_dxmt).map_err(|e| {
-            format!("copy legacy DXMT dxgi.dll to dxgi_dxmt.dll: {} -> {}: {}", dxgi.display(), dxgi_dxmt.display(), e)
-        })?;
+        if !file_nonempty(&dxgi_dxmt) && file_nonempty(&dxgi) {
+            fs::copy(&dxgi, &dxgi_dxmt).map_err(|e| {
+                format!(
+                    "copy legacy DXMT dxgi.dll to dxgi_dxmt.dll: {} -> {}: {}",
+                    dxgi.display(),
+                    dxgi_dxmt.display(),
+                    e
+                )
+            })?;
+        }
     }
 
     Ok(())
 }
 
 fn copy_graphics_runtime_surface(src_root: &Path, dst_root: &Path) -> Result<(), String> {
-    let src_x64_unix = src_root.join("x86_64-unix");
-    let src_x64_windows = src_root.join("x86_64-windows");
-
-    if src_x64_unix.exists() {
-        fs::create_dir_all(dst_root.join("x86_64-unix"))
-            .map_err(|e| format!("create DXMT Unix dir {}: {}", dst_root.display(), e))?;
-        for entry in fs::read_dir(&src_x64_unix).map_err(|e| format!("read {}: {}", src_x64_unix.display(), e))? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            fs::copy(entry.path(), dst_root.join("x86_64-unix").join(entry.file_name())).map_err(|e| {
-                format!(
-                    "copy graphics Unix file {} to {}: {}",
-                    entry.path().display(),
-                    dst_root.join("x86_64-unix").display(),
-                    e
-                )
-            })?;
+    // Each lane is copied only if present in the bundle surface, so x86_64-only
+    // bundles keep working and i386 lanes stage when shipped.
+    for lane in ["x86_64-unix", "x86_64-windows", "i386-unix", "i386-windows"] {
+        let src_lane = src_root.join(lane);
+        if !src_lane.exists() {
+            continue;
         }
-    }
-    if src_x64_windows.exists() {
-        fs::create_dir_all(dst_root.join("x86_64-windows"))
-            .map_err(|e| format!("create DXMT PE dir {}: {}", dst_root.display(), e))?;
-        for entry in fs::read_dir(&src_x64_windows).map_err(|e| format!("read {}: {}", src_x64_windows.display(), e))? {
+        let dst_lane = dst_root.join(lane);
+        fs::create_dir_all(&dst_lane).map_err(|e| format!("create DXMT lane dir {}: {}", dst_lane.display(), e))?;
+        for entry in fs::read_dir(&src_lane).map_err(|e| format!("read {}: {}", src_lane.display(), e))? {
             let entry = entry.map_err(|e| e.to_string())?;
-            fs::copy(entry.path(), dst_root.join("x86_64-windows").join(entry.file_name())).map_err(|e| {
+            fs::copy(entry.path(), dst_lane.join(entry.file_name())).map_err(|e| {
                 format!(
-                    "copy graphics PE file {} to {}: {}",
+                    "copy graphics lane file {} to {}: {}",
                     entry.path().display(),
-                    dst_root.join("x86_64-windows").display(),
+                    dst_lane.join(entry.file_name()).display(),
                     e
                 )
             })?;

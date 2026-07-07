@@ -221,9 +221,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 graphics_backend: "dxmt",
                 experimental: false,
                 requires_wine: true,
-                wine_overrides: Some(
-                    "d3d11,dxgi,dxgi_dxmt,d3d10core,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
-                ),
+                wine_overrides: Some("d3d11,dxgi,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/i386-unix", "lib/wine"],
                 winedllpath_dirs: vec!["lib/dxmt/i386-windows", "lib/wine/i386-windows", "lib/wine/x86_64-windows"],
                 deploy_dlls: vec![
@@ -340,7 +338,7 @@ pub fn pipelines() -> &'static Vec<PipelineNode> {
                 experimental: false,
                 requires_wine: true,
                 wine_overrides: Some(
-                    "winemetal,d3d10,d3d10_1,dxgi,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+                    "d3d10,d3d10_1,d3d10core,d3d11,dxgi,winemetal=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
                 ),
                 dyld_paths: vec!["lib/wine/x86_64-unix", "lib/dxmt/i386-unix", "lib/wine"],
                 winedllpath_dirs: vec!["lib/wine/i386-windows", "lib/dxmt/i386-windows", "lib/wine/x86_64-windows"],

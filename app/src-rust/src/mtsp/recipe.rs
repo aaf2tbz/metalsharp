@@ -911,6 +911,15 @@ fn runtime_assets_for_node(node: &PipelineNode, ms_root: &Path) -> Vec<RuntimeAs
                 required: true,
             });
         },
+        PipelineId::M11_32 | PipelineId::M10_32 => {
+            let path = ms_root.join("lib").join("dxmt").join("i386-unix").join("winemetal.so");
+            assets.push(RuntimeAsset {
+                name: "lib/dxmt/i386-unix/winemetal.so".into(),
+                present: runtime_file_present(&path),
+                path,
+                required: true,
+            });
+        },
         _ => {},
     }
 
@@ -990,6 +999,25 @@ mod tests {
         assert!(m12_assets.iter().any(|asset| asset.name == "lib/dxmt_m12/x86_64-unix/libc++.1.dylib"));
         assert!(!m12_assets.iter().any(|asset| asset.name == "lib/dxmt/x86_64-unix/winemetal.so"));
 
+        let _ = std::fs::remove_dir_all(ms_root);
+    }
+
+    #[test]
+    fn m11_32_and_m10_32_validate_i386_winemetal_so_sidecar() {
+        let ms_root = test_dir("runtime-assets-i386-winemetal-lanes");
+        for id in [PipelineId::M11_32, PipelineId::M10_32] {
+            let node = super::super::engine::get_pipeline(id);
+            let assets = runtime_assets_for_node(node, &ms_root);
+            // doctor must surface the i386 unix sidecar as a required runtime asset
+            assert!(
+                assets.iter().any(|asset| asset.name == "lib/dxmt/i386-unix/winemetal.so"),
+                "{:?} missing i386-unix/winemetal.so runtime asset",
+                id
+            );
+            // and must not pull the x86_64-only M11/M12 sidecars
+            assert!(!assets.iter().any(|asset| asset.name == "lib/dxmt/x86_64-unix/winemetal.so"));
+            assert!(!assets.iter().any(|asset| asset.name.starts_with("lib/dxmt_m12/")));
+        }
         let _ = std::fs::remove_dir_all(ms_root);
     }
 
