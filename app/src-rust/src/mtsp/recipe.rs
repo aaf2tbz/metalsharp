@@ -74,7 +74,9 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         PipelineId::Dxmt
             | PipelineId::M9
             | PipelineId::M10
+            | PipelineId::M10_32
             | PipelineId::M11
+            | PipelineId::M11_32
             | PipelineId::M12
             | PipelineId::M13
             | PipelineId::D3DMetal
@@ -92,7 +94,9 @@ pub fn build_launch_recipe(appid: u32, node: &PipelineNode) -> Result<LaunchReci
         PipelineId::Dxmt
         | PipelineId::M9
         | PipelineId::M10
+        | PipelineId::M10_32
         | PipelineId::M11
+        | PipelineId::M11_32
         | PipelineId::M12
         | PipelineId::M13
         | PipelineId::D3DMetal
@@ -252,7 +256,9 @@ pub fn build_custom_launch_recipe(
         PipelineId::Dxmt
         | PipelineId::M9
         | PipelineId::M10
+        | PipelineId::M10_32
         | PipelineId::M11
+        | PipelineId::M11_32
         | PipelineId::M12
         | PipelineId::M13
         | PipelineId::M32
@@ -466,7 +472,9 @@ pub fn diagnose_recipe(recipe: LaunchRecipe) -> LaunchDoctorReport {
         PipelineId::Dxmt
             | PipelineId::M9
             | PipelineId::M10
+            | PipelineId::M10_32
             | PipelineId::M11
+            | PipelineId::M11_32
             | PipelineId::M12
             | PipelineId::M13
             | PipelineId::M32
@@ -1038,6 +1046,93 @@ mod tests {
     fn launcher_names_are_classified_as_launchers() {
         assert!(is_likely_launcher_exe(Path::new("DOOM-Eternal Launcher.exe")));
         assert!(!is_likely_launcher_exe(Path::new("DOOMEternalx64vk.exe")));
+    }
+
+    #[test]
+    fn m11_32_pipeline_resolves_exe_and_deploys_next_to_it() {
+        // Hades ships x64, x64Vk (Vulkan), and x86 builds. The M11(32) route
+        // must (a) accept a resolved 32-bit exe instead of forcing exe_path to
+        // None (the pre-fix `direct_wine_pipeline` match arm omitted M11_32),
+        // and (b) deploy the i386 DXMT DLLs next to that binary in x86/ rather
+        // than the game root. The exe_names rule itself is asserted in
+        // rules::tests::game_recipes_parse_hades_m11_32_exe_override.
+        let dir = test_dir("m11-32-exe-resolve");
+        std::fs::create_dir_all(dir.join("x86")).expect("create x86 dir");
+        std::fs::write(dir.join("x86/Hades.exe"), b"not pe").expect("write x86 exe");
+        std::fs::create_dir_all(dir.join("x64Vk")).expect("create x64Vk dir");
+        std::fs::write(dir.join("x64Vk/Hades.exe"), b"not pe").expect("write x64vk exe");
+
+        let node = super::super::engine::get_pipeline(PipelineId::M11_32);
+        let exe = dir.join("x86/Hades.exe");
+        let recipe = build_custom_launch_recipe(1145360, node, &dir, Some(&exe)).expect("build m11(32) recipe");
+
+        let resolved = recipe.exe_path.as_ref().expect("m11(32) kept the resolved exe");
+        assert_eq!(resolved, &exe, "M11(32) should retain the provided 32-bit exe");
+        assert!(!recipe.dlls.is_empty(), "M11(32) should deploy route DLLs");
+        for dll in &recipe.dlls {
+            assert!(
+                dll.dest_path.starts_with(dir.join("x86")),
+                "M11(32) DLL {} should target x86/, got {}",
+                dll.filename,
+                dll.dest_path.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn m10_32_pipeline_resolves_exe_and_deploys_next_to_it() {
+        let dir = test_dir("m10-32-exe-resolve");
+        std::fs::create_dir_all(dir.join("bin")).expect("create bin dir");
+        std::fs::write(dir.join("bin/game.exe"), b"not pe").expect("write game exe");
+
+        let node = super::super::engine::get_pipeline(PipelineId::M10_32);
+        let recipe = build_custom_launch_recipe(0, node, &dir, None).expect("build m10(32) recipe");
+
+        let exe = recipe.exe_path.as_ref().expect("m10(32) resolved an exe");
+        assert!(exe.ends_with("bin/game.exe"), "M10(32) should resolve bin/game.exe, got {}", exe.display());
+        let primary = exe.parent().expect("exe parent");
+        for dll in &recipe.dlls {
+            assert_eq!(
+                dll.dest_path.parent().map(|p| p == primary).unwrap_or(false),
+                true,
+                "M10(32) DLL {} should target the exe dir, got {}",
+                dll.filename,
+                dll.dest_path.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn titan_quest_m11_32_resolves_tq_exe_via_preferred_names() {
+        // Titan Quest has no exe_names in its rule; preferred_exe_names(475150)
+        // pins TQ.exe. Under M11(32) the resolver must still pick it (proving
+        // the (32) pipeline reaches resolve_game_exe_for_pipeline at all).
+        let dir = test_dir("tq-m11-32-exe");
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        std::fs::write(dir.join("TQ.exe"), b"not pe").expect("write tq exe");
+        std::fs::write(dir.join("Setup.exe"), b"not pe").expect("write setup exe");
+
+        let exe = resolve_game_exe_for_pipeline(475150, &dir, Some(PipelineId::M11_32)).expect("resolve tq exe");
+        assert_eq!(exe.file_name().unwrap().to_string_lossy(), "TQ.exe");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn m11_32_diagnose_reports_exe_check_instead_of_not_required() {
+        let dir = test_dir("m11-32-diagnose");
+        std::fs::create_dir_all(dir.join("x86")).expect("create x86 dir");
+        std::fs::write(dir.join("x86/Hades.exe"), b"not pe").expect("write x86 exe");
+
+        let node = super::super::engine::get_pipeline(PipelineId::M11_32);
+        let recipe = build_custom_launch_recipe(1145360, node, &dir, None).expect("build recipe");
+        let report = diagnose_recipe(recipe);
+        let exe_check = report.checks.iter().find(|c| c.id == "exe").expect("exe check present");
+        assert!(exe_check.detail != "Not required for this pipeline", "M11(32) must not skip the exe check");
+        let route_check = report.checks.iter().find(|c| c.id == "exe_route");
+        assert!(route_check.is_some(), "M11(32) must run route compatibility inspection");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

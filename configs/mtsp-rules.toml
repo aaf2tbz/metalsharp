@@ -55,17 +55,14 @@ exe_names = ["oriDE.exe"]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.475150]
-pipeline = "m9"
+pipeline = "m11_32"
 name = "Titan Quest Anniversary Edition"
 
 [overrides.475150.dependencies]
-components = ["vcrun2019", "directx_jun2010"]
-
-[overrides.475150.env]
-WINEDLLOVERRIDES = "d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+components = ["vcrun2019_x86", "directx_jun2010"]
 
 [overrides.475150.diagnostics]
-check_dlls = ["d3d9.dll", "dxgi.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.848450]
 pipeline = "m11"
@@ -413,8 +410,9 @@ pipeline = "fna_arm64"
 name = "Stardew Valley"
 
 [overrides.1145360]
-pipeline = "m11"
+pipeline = "m11_32"
 name = "Hades"
+exe_names = ["x86/Hades.exe"]
 
 [overrides.1145360.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]

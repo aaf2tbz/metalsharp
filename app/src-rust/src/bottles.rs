@@ -3431,7 +3431,9 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::GameInstall,
         crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
+        crate::mtsp::engine::PipelineId::M10_32 => RuntimeProfile::M10_32,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
+        crate::mtsp::engine::PipelineId::M11_32 => RuntimeProfile::M11_32,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
         crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
@@ -5877,6 +5879,36 @@ fn timestamp_secs() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mtsp::engine::PipelineId;
+
+    #[test]
+    fn m11_32_and_m10_32_pipelines_map_to_their_runtime_profiles() {
+        // M11(32)/M10(32) previously fell through to RuntimeProfile::Plain
+        // (empty component set), so Steam bottles for these routes showed no
+        // deployed-DLL surface, repair buttons, or OK state. They must map to
+        // their dedicated 32-bit profiles so the DXMT component set flows into
+        // the bottle dropdown.
+        assert_eq!(runtime_profile_for_pipeline(PipelineId::M11_32), RuntimeProfile::M11_32);
+        assert_eq!(runtime_profile_for_pipeline(PipelineId::M10_32), RuntimeProfile::M10_32);
+    }
+
+    #[test]
+    fn m11_32_runtime_profile_components_include_dxmt_route_dlls() {
+        let m11_32 = default_components_for(RuntimeProfile::M11_32);
+        let ids: Vec<&str> = m11_32.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"d3d11"), "M11(32) components must include d3d11, got {:?}", ids);
+        assert!(ids.contains(&"dxgi"), "M11(32) components must include dxgi, got {:?}", ids);
+        assert!(ids.contains(&"vcrun2019_x86"), "M11(32) components must include vcrun2019_x86, got {:?}", ids);
+    }
+
+    #[test]
+    fn m10_32_runtime_profile_components_include_dxmt_route_dlls() {
+        let m10_32 = default_components_for(RuntimeProfile::M10_32);
+        let ids: Vec<&str> = m10_32.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"d3d10"), "M10(32) components must include d3d10, got {:?}", ids);
+        assert!(ids.contains(&"dxgi"), "M10(32) components must include dxgi, got {:?}", ids);
+        assert!(ids.contains(&"vcrun2019_x86"), "M10(32) components must include vcrun2019_x86, got {:?}", ids);
+    }
 
     #[test]
     fn wineboot_state_prefix_missing_when_prefix_absent() {
