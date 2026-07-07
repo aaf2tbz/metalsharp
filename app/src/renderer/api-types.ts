@@ -170,6 +170,16 @@ interface ProcessManagerSample {
 
 type ProcessManagerAction = "metalfx" | "gpu-acceleration" | "quit-game" | "view-steam";
 
+interface MetalFxState {
+  ok: boolean;
+  enabled: boolean;
+  factor: number;
+  conf_factor?: number;
+  source?: string;
+  applies?: string;
+  error?: string;
+}
+
 interface ProcessManagerActionResult {
   ok: boolean;
   error?: string;

@@ -1,19 +1,65 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
-import { getAPI } from "../composables/useApi";
+import { getAPI, api } from "../composables/useApi";
 import type {
   ProcessManagerAction,
   ProcessManagerActionResult,
   ProcessManagerProcess,
   ProcessManagerSample,
+  MetalFxState,
 } from "../api-types";
 
 const sample = ref<ProcessManagerSample | null>(null);
 const sampling = ref(true);
-const metalfxArmed = ref(false);
 const gpuAccelArmed = ref(false);
 const status = ref("Cmd+P toggles this overlay mid-session");
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+// MetalFX Spatial Upscaling live toggle.
+// DXMT reads DXMT_METALFX_SPATIAL_SWAPCHAIN at CreateSwapChain, so on/off applies
+// on the game's next swapchain recreate (alt-enter / resolution change); the
+// factor writes to dxmt.conf and applies on relaunch (Config is a cached singleton).
+const metalfx = ref<MetalFxState | null>(null);
+const metalfxBusy = ref(false);
+const metalfxFactors = [1.5, 1.75, 2.0];
+
+async function refreshMetalfx(): Promise<void> {
+  try {
+    metalfx.value = await api<MetalFxState>("GET", "/metalfx/state");
+  } catch (e) {
+    console.error("metalfx state failed", e);
+  }
+}
+
+async function toggleMetalfx(enabled: boolean): Promise<void> {
+  if (metalfxBusy.value) return;
+  metalfxBusy.value = true;
+  try {
+    const factor = metalfx.value?.factor ?? 2.0;
+    const res = await api<MetalFxState>("POST", "/metalfx/toggle", { enabled, factor });
+    if (res) metalfx.value = res;
+    status.value = res?.ok
+      ? `MetalFX ${enabled ? "enabled" : "disabled"} — applies on next swapchain recreate (alt-enter/scene change)`
+      : `MetalFX toggle failed: ${res?.error ?? "unknown"}`;
+  } finally {
+    metalfxBusy.value = false;
+  }
+}
+
+async function setMetalfxFactor(factor: number): Promise<void> {
+  if (metalfxBusy.value) return;
+  metalfxBusy.value = true;
+  try {
+    const enabled = metalfx.value?.enabled ?? false;
+    const res = await api<MetalFxState>("POST", "/metalfx/toggle", { enabled, factor });
+    if (res) metalfx.value = res;
+    status.value = res?.ok
+      ? `MetalFX factor ${factor.toFixed(2)}× saved — applies on relaunch (DXMT Config reloads at launch)`
+      : `MetalFX factor failed: ${res?.error ?? "unknown"}`;
+  } finally {
+    metalfxBusy.value = false;
+  }
+}
 
 const ramPct = computed(() => {
   const s = sample.value;
@@ -67,8 +113,8 @@ async function close(): Promise<void> {
 
 async function runAction(action: ProcessManagerAction): Promise<void> {
   if (action === "metalfx") {
-    metalfxArmed.value = !metalfxArmed.value;
-    status.value = `MetalFX visual surface ${metalfxArmed.value ? "armed" : "parked"}; runtime hook pending`;
+    // Real toggle handled by toggleMetalfx; this branch is a no-op fallback.
+    return;
   } else if (action === "gpu-acceleration") {
     gpuAccelArmed.value = !gpuAccelArmed.value;
     status.value = `GPU acceleration visual surface ${gpuAccelArmed.value ? "armed" : "parked"}; runtime hook pending`;
@@ -105,6 +151,7 @@ onMounted(() => {
   document.body.classList.add("process-manager-overlay-body");
   window.addEventListener("keydown", onKey);
   void refresh();
+  void refreshMetalfx();
   pollTimer = setInterval(() => void refresh(), 1500);
 });
 
@@ -173,11 +220,30 @@ onBeforeUnmount(() => {
       </div>
 
       <section class="pm-action-grid" aria-label="Process manager actions">
-        <button class="pm-action" :class="{ armed: metalfxArmed }" type="button" @click="runAction('metalfx')">
-          <span>MetalFX</span>
-          <strong>Planned</strong>
-          <small>upscaling control coming soon</small>
-        </button>
+        <div class="pm-action pm-metalfx" :class="{ armed: metalfx?.enabled }">
+          <span>MetalFX Spatial</span>
+          <strong>{{ metalfx?.enabled ? "ON" : "OFF" }}</strong>
+          <small>{{ metalfx?.enabled ? "upscaling armed" : "native res" }}</small>
+          <div class="pm-metalfx-controls">
+            <button
+              class="pm-metalfx-toggle"
+              type="button"
+              :disabled="metalfxBusy"
+              @click="toggleMetalfx(!(metalfx?.enabled ?? false))"
+            >
+              {{ metalfx?.enabled ? "Disable" : "Enable" }}
+            </button>
+            <select
+              class="pm-metalfx-factor"
+              :value="metalfx?.factor ?? 2.0"
+              :disabled="metalfxBusy"
+              @change="setMetalfxFactor(parseFloat(($event.target as HTMLSelectElement).value))"
+            >
+              <option v-for="f in metalfxFactors" :key="f" :value="f">{{ f.toFixed(2) }}×</option>
+            </select>
+          </div>
+          <small class="pm-metalfx-note">on/off: next swapchain recreate · factor: relaunch</small>
+        </div>
         <button class="pm-action danger" type="button" @click="runAction('quit-game')">
           <span>Quit Game</span>
           <strong>Force Kill</strong>
@@ -400,6 +466,48 @@ onBeforeUnmount(() => {
 }
 .pm-action.cyan strong {
   color: var(--accent-hover);
+}
+.pm-metalfx {
+  text-align: left;
+  cursor: default;
+}
+.pm-metalfx-controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.pm-metalfx-toggle {
+  cursor: pointer;
+  color: var(--text-bright);
+  background: linear-gradient(135deg, #b9ff4d29, #00f5ff1f), #0d0b17bd;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.pm-metalfx-toggle:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+.pm-metalfx-factor {
+  cursor: pointer;
+  color: var(--text-bright);
+  background: #0d0b17bd;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.pm-metalfx-factor:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+.pm-metalfx-note {
+  margin-top: 6px;
+  color: var(--text-dim);
 }
 .pm-processes {
   border: 1px solid var(--border);

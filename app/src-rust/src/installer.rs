@@ -98,6 +98,7 @@ const RUNTIME_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "runtime/host/HostRuntimeABI.h",
     "runtime/host/libmetalsharp_host_runtime.dylib",
     "runtime/wine/lib/metalsharp/x86_64-windows/metalsharp_ntdll_hook.dll",
+    "runtime/wine/lib/metalsharp/i386-windows/metalsharp_ntdll_hook.dll",
 ];
 const GRAPHICS_REQUIRED_ARCHIVE_FILES: &[&str] = &[
     "Graphics/dll/dxmt/x86_64-unix/winemetal.so",
@@ -679,6 +680,7 @@ fn file_nonempty(path: &Path) -> bool {
 
 pub(crate) fn metalsharp_runtime_lib_ready(wine_dir: &Path) -> bool {
     file_nonempty(&wine_dir.join("lib").join("metalsharp").join("x86_64-windows").join(METALSHARP_NTDLL_HOOK_DLL))
+        && file_nonempty(&wine_dir.join("lib").join("metalsharp").join("i386-windows").join(METALSHARP_NTDLL_HOOK_DLL))
 }
 
 pub fn moltenvk_ready(wine_dir: &Path) -> bool {

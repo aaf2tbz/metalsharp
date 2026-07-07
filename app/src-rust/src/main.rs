@@ -29,6 +29,7 @@ mod installer;
 mod kernel_translation;
 mod launch;
 mod launcher_evidence;
+mod metalfx;
 mod migrate;
 mod mtsp;
 mod platform;
@@ -2142,6 +2143,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                     "pipeline_cache": cache_summary(&pipeline_dir),
                 }),
             )
+        },
+        (Method::Get, "/metalfx/state") => resp(200, metalfx::get_state()),
+        (Method::Post, "/metalfx/toggle") => {
+            let body = read_body(req);
+            resp(200, metalfx::set_state(&body))
         },
         _ => resp(404, json!({"ok": false, "error": "not found"})),
     }
