@@ -2717,7 +2717,20 @@ pub fn repair_component(
         let bottle_id = id.to_string();
         let cid = component_id.to_string();
         thread::spawn(move || {
-            match vcpp_install_into_prefix(&prefix_owned) {
+            // Run the VC++ installer interactively (non-quiet) via MetalSharp
+            // Wine so the user sees the real installer UI and we wait for it
+            // to finish. vcpp_ensure_and_install_* downloads the redist directly
+            // from Microsoft (aka.ms) and verifies the runtime DLLs landed in
+            // system32/syswow64 before reporting success.
+            let result = if cid == "vcrun2019_x86" {
+                vcpp_ensure_and_install_x86(&prefix_owned)
+            } else if cid == "vcrun2019_x64" {
+                vcpp_ensure_and_install_x64(&prefix_owned)
+            } else {
+                // legacy "vcrun2019" — install both, x64 first then x86
+                vcpp_ensure_and_install_x64(&prefix_owned).and_then(|_| vcpp_ensure_and_install_x86(&prefix_owned))
+            };
+            match &result {
                 Ok(()) => {
                     eprintln!("{}: VC++ 2015-2022 installed, verified={}", cid, vcpp_prefix_has_runtime(&prefix_owned));
                 },
@@ -2725,13 +2738,18 @@ pub fn repair_component(
                     eprintln!("{}: VC++ 2015-2022 install failed: {}", cid, e);
                 },
             }
-            let state = if vcpp_prefix_has_runtime(&prefix_owned) {
+            let state = if result.is_ok() && vcpp_prefix_has_runtime(&prefix_owned) {
                 ComponentState::Installed
             } else {
                 ComponentState::Missing
             };
             if let Ok(mut m) = load_bottle(&bottle_id) {
                 mark_component_state(&mut m, &cid, state);
+                if cid == "vcrun2019" {
+                    // legacy id covers both arches
+                    mark_component_state(&mut m, "vcrun2019_x64", state);
+                    mark_component_state(&mut m, "vcrun2019_x86", state);
+                }
                 m.health = if components_ready(&m.installed_components) {
                     BottleHealth::Ready
                 } else {

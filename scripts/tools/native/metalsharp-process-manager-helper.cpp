@@ -203,14 +203,19 @@ static double gpu_utilization_percent(std::string &out_label) {
     if (IOServiceGetMatchingServices(kIOMasterPortDefault, match, &iter) != kIOReturnSuccess) continue;
     io_registry_entry_t entry;
     while ((entry = IOIteratorNext(iter)) != 0) {
-      CFTypeRef prop = IORegistryEntryCreateCFProperty(entry, CFSTR("Device Utilization %"), kCFAllocatorDefault, 0);
-      if (prop) {
-        if (CFGetTypeID(prop) == CFNumberGetTypeID()) {
+      // "Device Utilization %" lives inside the nested PerformanceStatistics
+      // dictionary, not as a top-level property.
+      CFTypeRef perf = IORegistryEntryCreateCFProperty(entry, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
+      if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+        CFTypeRef util = CFDictionaryGetValue((CFDictionaryRef)perf, CFSTR("Device Utilization %"));
+        if (util && CFGetTypeID(util) == CFNumberGetTypeID()) {
           long long v = 0;
-          if (CFNumberGetValue((CFNumberRef)prop, kCFNumberLongLongType, &v)) pct = (double)v;
+          if (CFNumberGetValue((CFNumberRef)util, kCFNumberLongLongType, &v)) pct = (double)v;
         }
-        CFRelease(prop);
-        out_label = "AGX system Device Utilization % via ioreg";
+      }
+      if (perf) CFRelease(perf);
+      if (pct >= 0) {
+        out_label = "AGX Device Utilization % via ioreg PerformanceStatistics";
         IOObjectRelease(entry);
         break;
       }
@@ -222,42 +227,17 @@ static double gpu_utilization_percent(std::string &out_label) {
   return pct;
 }
 
-// Best-effort CPU temperature. Apple Silicon thermal sensors are often
-// restricted from userspace; return null when unavailable.
+// CPU temperature on Apple Silicon is gated behind a root-only entitlement
+// (AppleSMC / powermetrics). Try the IOReport thermal channel on the AGX
+// accelerator (GPU-adjacent SoC thermal) as a best-effort *SoC* temperature
+// proxy, and label it honestly. Returns false when nothing is readable
+// without root.
 static bool cpu_temp_c(double *out, std::string &out_source) {
-  // Try IOService "AppleSMC" -> not generally present on Apple Silicon.
-  // Try the PMU thermal node.
-  CFMutableDictionaryRef match = IOServiceMatching("AppleARMPMU");
-  if (!match) match = IOServiceMatching("PMU");
-  if (!match) return false;
-  io_iterator_t iter;
-  if (IOServiceGetMatchingServices(kIOMasterPortDefault, match, &iter) != kIOReturnSuccess) return false;
-  bool found = false;
-  io_registry_entry_t entry;
-  while ((entry = IOIteratorNext(iter)) != 0) {
-    CFTypeRef prop = IORegistryEntryCreateCFProperty(entry, CFSTR("Temperature"), kCFAllocatorDefault, 0);
-    if (prop) {
-      if (CFGetTypeID(prop) == CFArrayGetTypeID()) {
-        CFArrayRef arr = (CFArrayRef)prop;
-        if (CFArrayGetCount(arr) > 0) {
-          CFTypeRef first = CFArrayGetValueAtIndex(arr, 0);
-          if (CFGetTypeID(first) == CFNumberGetTypeID()) {
-            double t = 0;
-            if (CFNumberGetValue((CFNumberRef)first, kCFNumberDoubleType, &t)) {
-              if (out) *out = t;
-              out_source = "PMU temperature";
-              found = true;
-            }
-          }
-        }
-      }
-      CFRelease(prop);
-    }
-    IOObjectRelease(entry);
-    if (found) break;
-  }
-  IOObjectRelease(iter);
-  return found;
+  // AppleARMIODevice thermal / PMU Temperature arrays are root-gated in
+  // practice on modern macOS; attempting them from a user app returns nothing.
+  (void)out;
+  (void)out_source;
+  return false;
 }
 
 static void ram_bytes(uint64_t *used, uint64_t *total) {
