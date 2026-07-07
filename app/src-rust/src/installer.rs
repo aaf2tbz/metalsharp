@@ -1146,10 +1146,21 @@ pub fn ensure_graphics_runtimes_ready(home: &Path) -> Result<bool, String> {
 
     let home_buf = home.to_path_buf();
     let mut changed = false;
-    changed |= ensure_runtime_bundle_assets(&home_buf)?;
-    changed |= install_metalsharp_bundle(&home_buf)?;
-    changed |= install_host_runtime(&home_buf)?;
-    changed |= install_scripts_tools_bundle(&home_buf)?;
+    // Only the DXMT surfaces consume metalsharp-graphics-dll.tar.zst, so when
+    // we fall through here because the *graphics bundle* changed we re-stage
+    // just those two — not the runtime/host/scripts bundles, which have their
+    // own currency gates and would otherwise be needlessly re-extracted (the
+    // UI stalls on "DXMT Graphics Runtimes" for ~minutes while they rerun).
+    // The unrelated installers still run when the surfaces themselves are not
+    // current (e.g. a fresh install or a version bump).
+    let dxmt_current = dxmt_runtime_current_for_dir(&dxmt_dir);
+    let m12_current = dxmt_m12_runtime_current_for_dir(&dxmt_m12_dir);
+    if !dxmt_current || !m12_current {
+        changed |= ensure_runtime_bundle_assets(&home_buf)?;
+        changed |= install_metalsharp_bundle(&home_buf)?;
+        changed |= install_host_runtime(&home_buf)?;
+        changed |= install_scripts_tools_bundle(&home_buf)?;
+    }
     changed |= install_dxmt_runtime(&home_buf)?;
     changed |= install_dxmt_m12_runtime(&home_buf)?;
 
@@ -1239,6 +1250,8 @@ fn install_graphics_runtime_surface(
 ) -> Result<bool, String> {
     let _ = fs::create_dir_all(dst_dir.join("x86_64-unix"));
     let _ = fs::create_dir_all(dst_dir.join("x86_64-windows"));
+    let _ = fs::create_dir_all(dst_dir.join("i386-unix"));
+    let _ = fs::create_dir_all(dst_dir.join("i386-windows"));
 
     if let Some(archive) = find_bundled_archive(GRAPHICS_DLL_BUNDLE) {
         let tmp = std::env::temp_dir().join(format!("metalsharp-{}-extract", bundle_surface));

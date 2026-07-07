@@ -253,7 +253,9 @@ pub enum RuntimeProfile {
     GameInstall,
     M9,
     M10,
+    M10_32,
     M11,
+    M11_32,
     M12,
     M13,
     #[serde(rename = "d3dmetal")]
@@ -714,7 +716,9 @@ pub fn save_bottle(manifest: &BottleManifest) -> Result<(), Box<dyn std::error::
 
 fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
     let (lane, components): (&str, &[&str]) = match manifest.runtime_profile {
-        RuntimeProfile::M11 => ("dxmt", &["d3d11", "dxgi"]),
+        RuntimeProfile::M11 | RuntimeProfile::M11_32 | RuntimeProfile::M10 | RuntimeProfile::M10_32 => {
+            ("dxmt", &["d3d11", "dxgi"])
+        },
         RuntimeProfile::M12 => ("dxmt_m12", M12_RUNTIME_COMPONENT_IDS),
         _ => return,
     };
@@ -726,7 +730,9 @@ fn refresh_dxmt_runtime_before_save(manifest: &mut BottleManifest) {
     let runtime_ready = dirs::home_dir()
         .ok_or_else(|| "home directory could not be resolved".to_string())
         .and_then(|home| match manifest.runtime_profile {
-            RuntimeProfile::M11 => crate::installer::ensure_dxmt_runtime_ready(&home).map(|_| true),
+            RuntimeProfile::M11 | RuntimeProfile::M11_32 | RuntimeProfile::M10 | RuntimeProfile::M10_32 => {
+                crate::installer::ensure_dxmt_runtime_ready(&home).map(|_| true)
+            },
             RuntimeProfile::M12 => crate::installer::ensure_dxmt_m12_runtime_ready(&home)
                 .map(|_| crate::installer::dxmt_m12_runtime_current_for_home(&home)),
             _ => Ok(false),
@@ -1397,7 +1403,9 @@ pub fn classify_installer(source_installer: &Path) -> InstallerClassification {
             crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::GameInstall,
             crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
             crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
+            crate::mtsp::engine::PipelineId::M10_32 => RuntimeProfile::M10_32,
             crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
+            crate::mtsp::engine::PipelineId::M11_32 => RuntimeProfile::M11_32,
             crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
             crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
             crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
@@ -3200,7 +3208,9 @@ fn runtime_profile_definitions() -> Vec<RuntimeProfileDefinition> {
         RuntimeProfile::GameInstall,
         RuntimeProfile::M9,
         RuntimeProfile::M10,
+        RuntimeProfile::M10_32,
         RuntimeProfile::M11,
+        RuntimeProfile::M11_32,
         RuntimeProfile::M12,
         RuntimeProfile::M13,
         RuntimeProfile::Dotnet,
@@ -3248,12 +3258,26 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             &["d3d10", "d3d10_1", "dxgi", "vcrun2019_x64", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::M10,
         ),
+        RuntimeProfile::M10_32 => (
+            "D3D10 Metal (32-bit)",
+            BottleArch::Win32,
+            true,
+            &["d3d10", "d3d10_1", "dxgi", "vcrun2019_x86"][..],
+            crate::mtsp::engine::PipelineId::M10_32,
+        ),
         RuntimeProfile::M11 => (
             "D3D11 Metal",
             BottleArch::Win64,
             true,
             &["d3d11", "dxgi", "vcrun2019_x64", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::M11,
+        ),
+        RuntimeProfile::M11_32 => (
+            "D3D11 Metal (32-bit)",
+            BottleArch::Win32,
+            true,
+            &["d3d11", "dxgi", "vcrun2019_x86"][..],
+            crate::mtsp::engine::PipelineId::M11_32,
         ),
         RuntimeProfile::M12 => (
             "D3D12 Metal",
@@ -3418,7 +3442,9 @@ fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
         "game_install" | "gameinstall" => Some(RuntimeProfile::GameInstall),
         "m9" => Some(RuntimeProfile::M9),
         "m10" => Some(RuntimeProfile::M10),
+        "m10_32" => Some(RuntimeProfile::M10_32),
         "m11" => Some(RuntimeProfile::M11),
+        "m11_32" => Some(RuntimeProfile::M11_32),
         "m12" => Some(RuntimeProfile::M12),
         "m13" | "gptk" => Some(RuntimeProfile::M13),
         "d3dmetal" | "d3dmetal_native" => Some(RuntimeProfile::D3DMetal),
