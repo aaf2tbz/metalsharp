@@ -168,6 +168,36 @@ const d3dmetalLoading = ref(false);
 const bottleName = ref("");
 const bottlePreferredMode = ref("auto");
 const bottleSaving = ref(false);
+
+interface DefaultRuleEntry {
+  appid: number;
+  name: string;
+  default_pipeline: string;
+  default_pipeline_name: string;
+  custom_exe_fix: boolean;
+  exe_names: string[];
+}
+interface LaunchShape {
+  ok: boolean;
+  appid: number;
+  pipeline: string;
+  pipeline_name: string;
+  backend?: string;
+  is_default_rule: boolean;
+  custom_exe_fix: boolean;
+  exe_names: string[];
+  launch_shape?: {
+    wine_overrides?: string | null;
+    deploy_dlls?: { filename: string; source_subpath: string; arch: string }[];
+  };
+}
+const defaultRule = ref<DefaultRuleEntry | null>(null);
+const launchShapePreview = ref<LaunchShape | null>(null);
+
+const currentIsDefaultRule = computed(() => {
+  if (!defaultRule.value || !bottlePreferredMode.value || bottlePreferredMode.value === "auto") return true;
+  return defaultRule.value.default_pipeline === bottlePreferredMode.value;
+});
 const artworkLoadFailed = ref(false);
 const launchModeStorageKey = computed(() => `metalsharp-launch-mode-${props.game.appid}`);
 const userSelectablePipelineOrder = ["d3dmetal", "m12", "m11", "m11_32", "m10", "m10_32", "m9", "fna_arm64"];
@@ -405,6 +435,10 @@ watch(runtimeOpen, (open) => {
   if (!open) emit('expanded', props.game.appid, false);
 });
 
+watch(bottlePreferredMode, () => {
+  if (runtimeOpen.value) void refreshLaunchShapePreview();
+});
+
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
@@ -516,6 +550,8 @@ async function runRuntimeDoctor() {
     runtimeReport.value = result.report;
     bottleName.value = result.report.bottle_name || props.game.name;
     bottlePreferredMode.value = preferredBottlePipeline(result.report);
+    void refreshDefaultRule();
+    void refreshLaunchShapePreview();
     if (isD3DMetalBottleSelected()) {
       await loadD3DMetalStatus();
     } else {
@@ -772,6 +808,21 @@ function resetBottleName() {
   bottleName.value = "";
 }
 
+async function refreshDefaultRule() {
+  const result = await api<{ ok: boolean; rules: DefaultRuleEntry[] }>("GET", "/mtsp/default-rules");
+  if (result?.ok) {
+    defaultRule.value = result.rules.find((r) => r.appid === props.game.appid) ?? null;
+  }
+}
+
+async function refreshLaunchShapePreview() {
+  const mode = bottlePreferredMode.value && bottlePreferredMode.value !== "auto"
+    ? bottlePreferredMode.value
+    : "auto";
+  const result = await api<LaunchShape>(`GET`, `/mtsp/launch-shape?appid=${props.game.appid}&pipeline=${encodeURIComponent(mode)}`);
+  if (result?.ok) launchShapePreview.value = result;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -929,6 +980,24 @@ function formatBytes(bytes: number): string {
                     {{ option.name }}
                   </option>
                 </select>
+              </div>
+              <div v-if="defaultRule" class="bottle-default-rule">
+                <span class="doctor-check-state" :class="currentIsDefaultRule ? 'check-ok' : 'check-warn'">{{ currentIsDefaultRule ? "OK" : "~" }}</span>
+                <span>Default rule: {{ defaultRule.default_pipeline_name }} ({{ defaultRule.default_pipeline }})<span v-if="defaultRule.custom_exe_fix"> · direct exe: {{ defaultRule.exe_names.join(", ") }}</span></span>
+              </div>
+              <div v-if="launchShapePreview?.launch_shape" class="bottle-launch-shape">
+                <div class="launch-shape-line">
+                  <span class="launch-shape-label">Applies:</span>
+                  <span>{{ launchShapePreview.pipeline_name }} ({{ launchShapePreview.pipeline }})<span v-if="!launchShapePreview.is_default_rule"> · override</span></span>
+                </div>
+                <div v-if="launchShapePreview.launch_shape.wine_overrides" class="launch-shape-line">
+                  <span class="launch-shape-label">Overrides:</span>
+                  <code>{{ launchShapePreview.launch_shape.wine_overrides }}</code>
+                </div>
+                <div v-if="launchShapePreview.launch_shape.deploy_dlls?.length" class="launch-shape-line">
+                  <span class="launch-shape-label">Deploy DLLs:</span>
+                  <span>{{ launchShapePreview.launch_shape.deploy_dlls.map((d) => `${d.filename} (${d.arch})`).join(", ") }}</span>
+                </div>
               </div>
               <button class="btn btn-secondary btn-sm" :disabled="bottleSaving" @click="saveBottleEdit">
                 {{ bottleSaving ? "Saving..." : "Save Bottle" }}
@@ -1465,6 +1534,36 @@ function formatBytes(bytes: number): string {
   align-items: center;
   font-size: 11px;
   color: var(--text-secondary);
+}
+.bottle-default-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.bottle-launch-shape {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.launch-shape-line {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.launch-shape-line code {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.launch-shape-label {
+  color: var(--text-dim);
+  flex: 0 0 auto;
 }
 .bottle-input-row {
   display: flex;

@@ -31,6 +31,7 @@ mod launch;
 mod launcher_evidence;
 mod metalfx;
 mod migrate;
+mod mono;
 mod mtsp;
 mod platform;
 mod scan;
@@ -837,6 +838,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 Ok(cfg) => resp(200, cfg),
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
+        },
+        (Method::Get, "/mtsp/default-rules") => resp(200, mtsp::default_rules::handle_default_rules_catalog()),
+        (Method::Get, "/mtsp/launch-shape") => {
+            let url = req.url();
+            let appid: u32 = query_param(url, "appid").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let pipeline_str = query_param(url, "pipeline").unwrap_or_else(|| "auto".to_string());
+            let pipeline = if pipeline_str.eq_ignore_ascii_case("auto") {
+                mtsp::engine::PipelineId::Dxmt
+            } else {
+                mtsp::engine::PipelineId::from_str_flexible(&pipeline_str).unwrap_or(mtsp::engine::PipelineId::Dxmt)
+            };
+            resp(200, mtsp::default_rules::handle_launch_shape(appid, pipeline))
         },
         (Method::Get, "/mtsp/pipelines") => {
             let url_str = req.url().to_string();
@@ -1840,6 +1853,15 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let body = read_body(req);
             resp(200, gog::handle_uninstall(&Value::Object(body)))
         },
+        (Method::Get, "/wine-mono/status") => {
+            let prefix = query_param(req.url(), "prefix").unwrap_or_else(|| "gog".to_string());
+            resp(200, mono::handle_status(&prefix))
+        },
+        (Method::Post, "/wine-mono/install") => {
+            let body = read_body(req);
+            let prefix = body.get("prefix").and_then(|v| v.as_str()).unwrap_or("gog").to_string();
+            resp(200, mono::handle_install(&prefix))
+        },
         (Method::Post, "/sharp-library/install") => {
             let body = read_body(req);
             app_log(&format!("[SHARP-LIB] install: {}", body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("?")));
@@ -2155,6 +2177,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
 
 fn resp(code: u16, body: serde_json::Value) -> RouteResponse {
     RouteResponse::Json(code, body.to_string().into_bytes())
+}
+
+fn query_param(url: &str, key: &str) -> Option<String> {
+    let query = url.split('?').nth(1)?;
+    for pair in query.split('&') {
+        let mut it = pair.splitn(2, '=');
+        if it.next() == Some(key) {
+            return it.next().map(|v| v.to_string());
+        }
+    }
+    None
 }
 
 fn force_kill_metalsharp_processes() -> Value {

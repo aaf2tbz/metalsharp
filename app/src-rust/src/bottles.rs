@@ -1507,7 +1507,7 @@ pub fn set_runtime_profile(id: &str, profile: RuntimeProfile) -> Result<BottleMa
     }
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
-    if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
+    if let Some(game_dir) = stage_route_dlls_for_saved_steam_bottle(&manifest)? {
         manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
         manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
         manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
@@ -1544,6 +1544,43 @@ fn stage_m12_dlls_for_saved_steam_bottle(
 
     let (_env, recipe) = crate::mtsp::launcher::prepare_steam_pipeline_env(appid, crate::mtsp::engine::PipelineId::M12)
         .map_err(|e| format!("M12 DLL deployment failed while saving bottle: {}", e))?;
+    Ok(recipe.game_dir)
+}
+
+/// Stage the selected route's DLLs into the game folder on bottle save so a
+/// route switch applies the new launch shape immediately (the bottle card and
+/// launch doctor reflect the new route's artifacts before the next launch).
+/// This runs `prepare_steam_pipeline_env`, which quarantines/deletes stale
+/// route DLLs (copies that match a runtime source are discarded; irreplaceable
+/// files are moved aside) and deploys the new route's DLLs next to the exe.
+///
+/// M12 is handled by `stage_m12_dlls_for_saved_steam_bottle` (which also
+/// ensures the isolated M12 runtime is ready). This helper covers the other
+/// DXMT-family routes (M9/M10/M10_32/M11/M11_32); non-DXMT profiles return
+/// `None` and are staged at launch time as before.
+fn stage_route_dlls_for_saved_steam_bottle(
+    manifest: &BottleManifest,
+) -> Result<Option<PathBuf>, Box<dyn std::error::Error>> {
+    if matches!(manifest.runtime_profile, RuntimeProfile::M12) {
+        return stage_m12_dlls_for_saved_steam_bottle(manifest);
+    }
+    let Some(appid) = manifest.steam_app_id else {
+        return Ok(None);
+    };
+    let pipeline = runtime_profile_definition(manifest.runtime_profile).launch_pipeline;
+    if !pipeline.is_dxmt_family() {
+        return Ok(None);
+    }
+
+    let manifest_game_dir = manifest.game_install_path.as_ref().map(PathBuf::from).filter(|path| path.exists());
+    let scan_game_dir = crate::scan::resolve_dual_game_dir(appid).wine_dir.filter(|path| path.exists());
+    if manifest_game_dir.is_none() && scan_game_dir.is_none() {
+        return Ok(None);
+    }
+
+    let (_env, recipe) = crate::mtsp::launcher::prepare_steam_pipeline_env(appid, pipeline).map_err(|e| {
+        format!("{} DLL deployment failed while saving bottle: {}", pipeline.user_selectable_id().unwrap_or("route"), e)
+    })?;
     Ok(recipe.game_dir)
 }
 
@@ -1592,7 +1629,7 @@ pub fn edit_bottle(
     }
     manifest.updated_at = timestamp_secs();
     save_bottle(&manifest)?;
-    if let Some(game_dir) = stage_m12_dlls_for_saved_steam_bottle(&manifest)? {
+    if let Some(game_dir) = stage_route_dlls_for_saved_steam_bottle(&manifest)? {
         manifest.game_install_path = Some(normalized_existing_path_string(&game_dir));
         manifest.runtime_assets = detect_game_runtime_assets(&game_dir);
         manifest.installed_app_detections = detect_apps_in_game_dir(&game_dir);
@@ -3431,7 +3468,9 @@ fn runtime_profile_for_pipeline(pipeline: crate::mtsp::engine::PipelineId) -> Ru
         crate::mtsp::engine::PipelineId::Dxmt => RuntimeProfile::GameInstall,
         crate::mtsp::engine::PipelineId::M9 => RuntimeProfile::M9,
         crate::mtsp::engine::PipelineId::M10 => RuntimeProfile::M10,
+        crate::mtsp::engine::PipelineId::M10_32 => RuntimeProfile::M10_32,
         crate::mtsp::engine::PipelineId::M11 => RuntimeProfile::M11,
+        crate::mtsp::engine::PipelineId::M11_32 => RuntimeProfile::M11_32,
         crate::mtsp::engine::PipelineId::M12 => RuntimeProfile::M12,
         crate::mtsp::engine::PipelineId::M13 => RuntimeProfile::M13,
         crate::mtsp::engine::PipelineId::D3DMetal => RuntimeProfile::D3DMetal,
@@ -5877,6 +5916,36 @@ fn timestamp_secs() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mtsp::engine::PipelineId;
+
+    #[test]
+    fn m11_32_and_m10_32_pipelines_map_to_their_runtime_profiles() {
+        // M11(32)/M10(32) previously fell through to RuntimeProfile::Plain
+        // (empty component set), so Steam bottles for these routes showed no
+        // deployed-DLL surface, repair buttons, or OK state. They must map to
+        // their dedicated 32-bit profiles so the DXMT component set flows into
+        // the bottle dropdown.
+        assert_eq!(runtime_profile_for_pipeline(PipelineId::M11_32), RuntimeProfile::M11_32);
+        assert_eq!(runtime_profile_for_pipeline(PipelineId::M10_32), RuntimeProfile::M10_32);
+    }
+
+    #[test]
+    fn m11_32_runtime_profile_components_include_dxmt_route_dlls() {
+        let m11_32 = default_components_for(RuntimeProfile::M11_32);
+        let ids: Vec<&str> = m11_32.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"d3d11"), "M11(32) components must include d3d11, got {:?}", ids);
+        assert!(ids.contains(&"dxgi"), "M11(32) components must include dxgi, got {:?}", ids);
+        assert!(ids.contains(&"vcrun2019_x86"), "M11(32) components must include vcrun2019_x86, got {:?}", ids);
+    }
+
+    #[test]
+    fn m10_32_runtime_profile_components_include_dxmt_route_dlls() {
+        let m10_32 = default_components_for(RuntimeProfile::M10_32);
+        let ids: Vec<&str> = m10_32.iter().map(|c| c.id.as_str()).collect();
+        assert!(ids.contains(&"d3d10"), "M10(32) components must include d3d10, got {:?}", ids);
+        assert!(ids.contains(&"dxgi"), "M10(32) components must include dxgi, got {:?}", ids);
+        assert!(ids.contains(&"vcrun2019_x86"), "M10(32) components must include vcrun2019_x86, got {:?}", ids);
+    }
 
     #[test]
     fn wineboot_state_prefix_missing_when_prefix_absent() {

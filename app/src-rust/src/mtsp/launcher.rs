@@ -693,7 +693,10 @@ pub fn pipeline_dry_run_for(home: &Path, appid: u32, requested: Option<PipelineI
 fn quarantine_route_conflicts_for_recipe(
     recipe: &super::recipe::LaunchRecipe,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    if !matches!(recipe.pipeline, PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12) {
+    if !matches!(
+        recipe.pipeline,
+        PipelineId::M9 | PipelineId::M10 | PipelineId::M10_32 | PipelineId::M11 | PipelineId::M11_32 | PipelineId::M12
+    ) {
         return Ok(0);
     }
 
@@ -715,6 +718,10 @@ fn quarantine_route_conflicts_for_recipe(
         timestamp
     ));
     let mut moved = Vec::new();
+    let mut discarded = Vec::new();
+    let ms_root = dirs::home_dir()
+        .map(|home| crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine"))
+        .unwrap_or_else(|| PathBuf::from("runtime/wine"));
 
     for dir in candidate_dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -735,6 +742,22 @@ fn quarantine_route_conflicts_for_recipe(
                 continue;
             }
 
+            // Space-efficient cleanup: a stale route DLL in the game folder is a
+            // copy of a runtime source DLL (the "deploy from" location), and that
+            // source always retains the canonical copy. If the stale file matches
+            // any known runtime source for the same filename, just delete it
+            // instead of moving it into a quarantine folder that eats disk space.
+            // Only irreplaceable files with no matching source are moved aside.
+            if let Some(source) = runtime_source_for_dll(&path, &ms_root) {
+                if files_match(&source, &path) && std::fs::remove_file(&path).is_ok() {
+                    discarded.push(serde_json::json!({
+                        "path": path.to_string_lossy(),
+                        "matched_source": source.to_string_lossy(),
+                    }));
+                    continue;
+                }
+            }
+
             let rel = route_quarantine_relative_path(game_dir, &path);
             let target = unique_quarantine_target(&quarantine_root.join(rel));
             if let Some(parent) = target.parent() {
@@ -748,21 +771,22 @@ fn quarantine_route_conflicts_for_recipe(
         }
     }
 
-    let moved_count = moved.len();
-    if !moved.is_empty() {
+    let touched_count = moved.len() + discarded.len();
+    if touched_count > 0 {
         let marker_root = game_dir.join(".metalsharp").join("route-quarantine");
         std::fs::create_dir_all(&marker_root)?;
         let marker = marker_root.join("latest-manifest.json");
         let marker_json = serde_json::json!({
             "quarantined_at": timestamp,
             "pipeline": pipeline_quarantine_label(recipe.pipeline),
-            "reason": "Bottle profile save switched MetalSharp route DLLs; stale app-local route shims were moved aside before deploying the selected runtime",
+            "reason": "Bottle profile save switched MetalSharp route DLLs; stale app-local route shims were removed before deploying the selected runtime. Copies that match a runtime source were discarded (the source retains the canonical copy); irreplaceable files were moved aside.",
             "moved": moved,
+            "discarded": discarded,
         });
         std::fs::write(marker, serde_json::to_string_pretty(&marker_json)?)?;
     }
 
-    Ok(moved_count)
+    Ok(touched_count)
 }
 
 fn route_quarantine_candidate_dirs(recipe: &super::recipe::LaunchRecipe, game_dir: &Path) -> Vec<PathBuf> {
@@ -840,11 +864,43 @@ fn pipeline_quarantine_label(pipeline: PipelineId) -> &'static str {
     match pipeline {
         PipelineId::M9 => "m9",
         PipelineId::M10 => "m10",
+        PipelineId::M10_32 => "m10_32",
         PipelineId::M11 => "m11",
+        PipelineId::M11_32 => "m11_32",
         PipelineId::M12 => "m12",
         PipelineId::D3DMetal => "d3dmetal",
         _ => "route",
     }
+}
+
+/// Resolves the runtime "deploy from" source path for a route DLL filename.
+///
+/// Route DLLs deployed into a game folder are copies of canonical source DLLs
+/// that live under the MetalSharp wine runtime (e.g. `lib/dxmt/i386-windows`,
+/// `lib/dxmt/x86_64-windows`, `lib/dxmt_m12/x86_64-windows`, `lib/wine/...`).
+/// These sources always retain the canonical copy, so a stale deployed copy
+/// that matches its source can be safely deleted on a route switch instead of
+/// being quarantined. Returns the first matching source path, or `None` if no
+/// known runtime source carries that filename.
+fn runtime_source_for_dll(dll_path: &Path, ms_root: &Path) -> Option<PathBuf> {
+    let filename = dll_path.file_name()?.to_string_lossy().to_ascii_lowercase();
+    // Known deploy-from source roots, derived from the PipelineNode deploy_dlls
+    // source_subpath values across M9/M10/M10_32/M11/M11_32/M12.
+    const SOURCE_ROOTS: &[&str] = &[
+        "lib/dxmt/x86_64-windows",
+        "lib/dxmt/i386-windows",
+        "lib/dxmt_m12/x86_64-windows",
+        "lib/wine/x86_64-windows",
+        "lib/wine/i386-windows",
+        "lib/metalsharp/x86_64-windows",
+    ];
+    for root in SOURCE_ROOTS {
+        let candidate = ms_root.join(root).join(&filename);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn is_metalsharp_route_dll_conflict(path: &Path) -> bool {

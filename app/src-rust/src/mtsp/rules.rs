@@ -482,7 +482,7 @@ mod tests {
             (17410, PipelineId::M9),
             (312520, PipelineId::M11),
             (387290, PipelineId::M11),
-            (475150, PipelineId::M9),
+            (475150, PipelineId::M11_32),
             (504230, PipelineId::FnaArm64),
             (49520, PipelineId::M9),
             (508440, PipelineId::M11),
@@ -583,17 +583,34 @@ mod tests {
     }
 
     #[test]
-    fn game_recipes_parse_titan_quest_m9_32_bit_route() {
+    fn game_recipes_parse_titan_quest_m11_32_bit_route() {
         let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
         let titan_quest = recipes.get(&475150).expect("titan quest recipe");
-        assert_eq!(titan_quest.pipeline, PipelineId::M9);
+        assert_eq!(titan_quest.pipeline, PipelineId::M11_32);
         assert_eq!(titan_quest.name, "Titan Quest Anniversary Edition");
-        assert_eq!(
-            titan_quest.env.get("WINEDLLOVERRIDES").map(String::as_str),
-            Some("d3d9,dxgi=n,b;gameoverlayrenderer,gameoverlayrenderer64=d")
+        // M11(32) ships its own WINEDLLOVERRIDES via the pipeline node; the
+        // recipe must not carry a stale d3d9 override that would clobber it.
+        assert!(
+            !titan_quest.env.contains_key("WINEDLLOVERRIDES"),
+            "titan quest M11(32) recipe must not override the route's WINEDLLOVERRIDES"
         );
-        assert!(titan_quest.check_dlls.contains(&"d3d9.dll".to_string()));
+        assert!(titan_quest.check_dlls.contains(&"d3d11.dll".to_string()));
         assert!(titan_quest.check_dlls.contains(&"dxgi.dll".to_string()));
+        assert!(titan_quest.check_dlls.contains(&"winemetal.dll".to_string()));
+        assert!(titan_quest.components.contains(&"vcrun2019_x86".to_string()));
+        assert!(!titan_quest.components.contains(&"vcrun2019".to_string()));
+    }
+
+    #[test]
+    fn game_recipes_parse_hades_m11_32_exe_override() {
+        let (_, recipes) = parse_rules_full(include_str!("../../../../configs/mtsp-rules.toml"));
+        let hades = recipes.get(&1145360).expect("hades recipe");
+        assert_eq!(hades.pipeline, PipelineId::M11_32);
+        assert_eq!(hades.name, "Hades");
+        assert_eq!(hades.exe_names, vec!["x86/Hades.exe".to_string()]);
+        assert!(hades.check_dlls.contains(&"d3d11.dll".to_string()));
+        assert!(hades.check_dlls.contains(&"dxgi.dll".to_string()));
+        assert!(hades.check_dlls.contains(&"winemetal.dll".to_string()));
     }
 
     #[test]
