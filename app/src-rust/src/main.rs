@@ -839,6 +839,18 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 Err(e) => resp(500, json!({"ok": false, "error": e.to_string()})),
             }
         },
+        (Method::Get, "/mtsp/default-rules") => resp(200, mtsp::default_rules::handle_default_rules_catalog()),
+        (Method::Get, "/mtsp/launch-shape") => {
+            let url = req.url();
+            let appid: u32 = query_param(url, "appid").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let pipeline_str = query_param(url, "pipeline").unwrap_or_else(|| "auto".to_string());
+            let pipeline = if pipeline_str.eq_ignore_ascii_case("auto") {
+                mtsp::engine::PipelineId::Dxmt
+            } else {
+                mtsp::engine::PipelineId::from_str_flexible(&pipeline_str).unwrap_or(mtsp::engine::PipelineId::Dxmt)
+            };
+            resp(200, mtsp::default_rules::handle_launch_shape(appid, pipeline))
+        },
         (Method::Get, "/mtsp/pipelines") => {
             let url_str = req.url().to_string();
             let appid: u32 = url_str
