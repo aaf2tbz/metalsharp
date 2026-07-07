@@ -221,7 +221,13 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
             .append(true)
             .open(&log_path)
             .map_err(|e| format!("open wine-mono log: {}", e))?;
-        let _ = writeln!(log, "wine-mono install target={} prefix={} msi={}", WINE_MONO_LATEST_VERSION, prefix.display(), msi.display());
+        let _ = writeln!(
+            log,
+            "wine-mono install target={} prefix={} msi={}",
+            WINE_MONO_LATEST_VERSION,
+            prefix.display(),
+            msi.display()
+        );
     }
     let log_for_wine = log_path.clone();
 
@@ -233,10 +239,18 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
         .stdout(Stdio::from(
-            OpenOptions::new().create(true).append(true).open(&log_for_wine).map_err(|e| format!("open stdout log: {}", e))?,
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_for_wine)
+                .map_err(|e| format!("open stdout log: {}", e))?,
         ))
         .stderr(Stdio::from(
-            OpenOptions::new().create(true).append(true).open(&log_for_wine).map_err(|e| format!("open stderr log: {}", e))?,
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_for_wine)
+                .map_err(|e| format!("open stderr log: {}", e))?,
         ));
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
     let mut child = cmd.spawn().map_err(|e| format!("spawn wine msiexec: {}", e))?;
@@ -269,7 +283,8 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
                 // visible because upToDate is false.
                 s.last_error = Some(format!(
                     "Wine Mono installer exited but {} was not detected in {}",
-                    WINE_MONO_LATEST_VERSION, prefix_for_thread.display()
+                    WINE_MONO_LATEST_VERSION,
+                    prefix_for_thread.display()
                 ));
             }
         });
@@ -316,7 +331,7 @@ pub fn handle_install(prefix_kind: &str) -> Value {
                 s.last_error = Some(error.clone());
             });
             json!({"ok": false, "error": error, "status": wine_mono_status(&prefix, prefix_kind)})
-        }
+        },
     }
 }
 

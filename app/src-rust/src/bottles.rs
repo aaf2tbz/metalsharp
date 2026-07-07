@@ -1578,8 +1578,9 @@ fn stage_route_dlls_for_saved_steam_bottle(
         return Ok(None);
     }
 
-    let (_env, recipe) = crate::mtsp::launcher::prepare_steam_pipeline_env(appid, pipeline)
-        .map_err(|e| format!("{} DLL deployment failed while saving bottle: {}", pipeline.user_selectable_id().unwrap_or("route"), e))?;
+    let (_env, recipe) = crate::mtsp::launcher::prepare_steam_pipeline_env(appid, pipeline).map_err(|e| {
+        format!("{} DLL deployment failed while saving bottle: {}", pipeline.user_selectable_id().unwrap_or("route"), e)
+    })?;
     Ok(recipe.game_dir)
 }
 

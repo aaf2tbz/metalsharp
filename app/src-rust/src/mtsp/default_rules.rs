@@ -100,11 +100,7 @@ pub fn handle_default_rules_catalog() -> Value {
 /// M11). `pipeline=auto` resolves to the default rule.
 pub fn handle_launch_shape(appid: u32, pipeline: PipelineId) -> Value {
     let recipe = get_game_recipe(appid);
-    let resolved = if pipeline == PipelineId::Dxmt {
-        default_pipeline_for(appid)
-    } else {
-        pipeline
-    };
+    let resolved = if pipeline == PipelineId::Dxmt { default_pipeline_for(appid) } else { pipeline };
     let node = get_pipeline(resolved);
     let shape = deploy_shape_for_node(node);
     json!({
@@ -161,9 +157,15 @@ mod tests {
         assert_eq!(shape.get("custom_exe_fix").and_then(|v| v.as_bool()), Some(true));
 
         let launch_shape = shape.get("launch_shape").expect("launch_shape");
-        let overrides =
-            launch_shape.get("wine_overrides").and_then(|v| v.as_str()).unwrap_or_default();
-        assert!(overrides.contains("d3d11") && overrides.contains("dxgi") && overrides.contains("winemetal") && overrides.contains("=n,b"), "M11 route overrides must be present, got {}", overrides);
+        let overrides = launch_shape.get("wine_overrides").and_then(|v| v.as_str()).unwrap_or_default();
+        assert!(
+            overrides.contains("d3d11")
+                && overrides.contains("dxgi")
+                && overrides.contains("winemetal")
+                && overrides.contains("=n,b"),
+            "M11 route overrides must be present, got {}",
+            overrides
+        );
 
         let dlls = launch_shape.get("deploy_dlls").and_then(|v| v.as_array()).expect("deploy_dlls");
         let filenames: Vec<&str> = dlls.iter().filter_map(|d| d.get("filename").and_then(|v| v.as_str())).collect();
