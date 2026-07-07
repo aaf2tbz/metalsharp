@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, inject, onMounted, type Ref } from "vue";
+import { ref, inject, onMounted, onUnmounted, type Ref } from "vue";
 import { useToast } from "../composables/useToast";
 import { api, getAPI } from "../composables/useApi";
 import type { AppConfig, UpdateStatus } from "../api-types";
@@ -41,11 +41,74 @@ const pipelineCache = ref<CacheSummary | null>(null);
 const apiKeyInput = ref("");
 const graphicsRuntimeLogs = ref(false);
 
+interface WineMonoStatus {
+  latestVersion: string;
+  installedVersion?: string | null;
+  installed: boolean;
+  upToDate: boolean;
+  running: boolean;
+  pid?: number | null;
+  logPath?: string | null;
+  targetVersion: string;
+  lastError?: string | null;
+  msiCached: boolean;
+}
+const steamMonoStatus = ref<WineMonoStatus | null>(null);
+const steamMonoLoading = ref(false);
+const steamMonoPollHandle = ref<ReturnType<typeof setInterval> | null>(null);
+
+async function refreshSteamMonoStatus() {
+  const result = await api<{ ok: boolean; latestVersion: string; installedVersion?: string | null; installed: boolean; upToDate: boolean; running: boolean; pid?: number | null; logPath?: string | null; targetVersion: string; lastError?: string | null; msiCached: boolean }>("GET", "/wine-mono/status?prefix=steam");
+  if (result?.ok) steamMonoStatus.value = result;
+}
+
+async function upgradeSteamMono() {
+  steamMonoLoading.value = true;
+  const result = await api<{ ok: boolean; pid?: number; alreadyInstalled?: boolean; error?: string; status?: WineMonoStatus }>("POST", "/wine-mono/install", { prefix: "steam" }, 10 * 60 * 1000);
+  steamMonoLoading.value = false;
+  if (result?.ok) {
+    if (result.alreadyInstalled) {
+      await refreshSteamMonoStatus();
+      toast.show("Wine Mono is already up to date", "success");
+      return;
+    }
+    toast.show("Wine Mono installer launched — complete it in the Wine window", "success");
+    startSteamMonoPoll();
+  } else {
+    toast.show(result?.error ?? "Failed to launch Wine Mono installer", "error");
+    await refreshSteamMonoStatus();
+  }
+}
+
+function startSteamMonoPoll() {
+  if (steamMonoPollHandle.value) return;
+  steamMonoPollHandle.value = setInterval(async () => {
+    await refreshSteamMonoStatus();
+    const status = steamMonoStatus.value;
+    if (status?.upToDate) {
+      stopSteamMonoPoll();
+      toast.show(`Wine Mono ${status.latestVersion} installed`, "success");
+    } else if (status && !status.running) {
+      stopSteamMonoPoll();
+    }
+  }, 3000);
+}
+
+function stopSteamMonoPoll() {
+  if (steamMonoPollHandle.value) {
+    clearInterval(steamMonoPollHandle.value);
+    steamMonoPollHandle.value = null;
+  }
+}
+
 onMounted(async () => {
   apiKeyInput.value = steamApiKey.value ?? "";
   await refreshConfig();
   await refreshCacheSizes();
+  void refreshSteamMonoStatus();
 });
+
+onUnmounted(() => { stopSteamMonoPoll(); });
 
 async function refreshConfig() {
   const result = await api<AppConfig>("GET", "/config");
@@ -457,6 +520,37 @@ function uninstallMetalsharp() {
             />
             <span class="toggle-switch"></span>
           </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Runtime</h2>
+      <div v-if="steamMonoStatus && !steamMonoStatus.upToDate" class="settings-row">
+        <div>
+          <div class="settings-label">Wine Mono</div>
+          <div class="settings-desc">
+            Download and install Wine Mono {{ steamMonoStatus.latestVersion }} into the Steam prefix.
+            <span v-if="steamMonoStatus.installed">Installed: v{{ steamMonoStatus.installedVersion }}.</span>
+            <span v-else>No Wine Mono installed.</span>
+            The installer runs interactively in a Wine window.
+          </div>
+        </div>
+        <div class="settings-value">
+          <button class="btn btn-primary btn-sm" :disabled="steamMonoLoading || steamMonoStatus.running" @click="upgradeSteamMono">
+            <span v-if="steamMonoLoading">Installing…</span>
+            <span v-else-if="steamMonoStatus.running">Running…</span>
+            <span v-else>Upgrade Mono</span>
+          </button>
+        </div>
+      </div>
+      <div v-else-if="steamMonoStatus && steamMonoStatus.upToDate" class="settings-row">
+        <div>
+          <div class="settings-label">Wine Mono</div>
+          <div class="settings-desc">Wine Mono v{{ steamMonoStatus.installedVersion }} is up to date.</div>
+        </div>
+        <div class="settings-value">
+          <span class="badge badge-ok">Up to date</span>
         </div>
       </div>
     </div>

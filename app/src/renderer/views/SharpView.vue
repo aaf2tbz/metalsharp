@@ -223,6 +223,77 @@ const gogStatus = ref<GogStatus | null>(null);
 const gogGames = ref<GogGame[]>([]);
 const gogLoading = ref<Record<string, boolean>>({});
 const gogProgress = ref<Record<string, number>>({});
+
+interface WineMonoStatus {
+  latestVersion: string;
+  installedVersion?: string | null;
+  installed: boolean;
+  upToDate: boolean;
+  running: boolean;
+  pid?: number | null;
+  logPath?: string | null;
+  targetVersion: string;
+  lastError?: string | null;
+  msiCached: boolean;
+}
+const gogMonoStatus = ref<WineMonoStatus | null>(null);
+const gogMonoPollHandle = ref<ReturnType<typeof setInterval> | null>(null);
+
+const showGogInstallMono = computed(() => {
+  if (!gogStatus.value?.prefixInitialized) return false;
+  const status = gogMonoStatus.value;
+  if (!status) return true; // unknown — show until we confirm it is up to date
+  return !status.upToDate;
+});
+
+async function refreshGogMonoStatus() {
+  const result = await api<{ ok: boolean; latestVersion: string; installedVersion?: string | null; installed: boolean; upToDate: boolean; running: boolean; pid?: number | null; logPath?: string | null; targetVersion: string; lastError?: string | null; msiCached: boolean }>("GET", "/wine-mono/status?prefix=gog");
+  if (result?.ok) gogMonoStatus.value = result;
+}
+
+async function installGogMono() {
+  if (!gogStatus.value?.prefixInitialized) {
+    toast.show("Initialize the GOG prefix first", "error");
+    return;
+  }
+  gogLoading.value.mono = true;
+  const result = await api<{ ok: boolean; pid?: number; alreadyInstalled?: boolean; error?: string; status?: WineMonoStatus }>("POST", "/wine-mono/install", { prefix: "gog" }, 10 * 60 * 1000);
+  gogLoading.value.mono = false;
+  if (result?.ok) {
+    if (result.alreadyInstalled) {
+      await refreshGogMonoStatus();
+      toast.show("Wine Mono is already up to date", "success");
+      return;
+    }
+    toast.show("Wine Mono installer launched — complete it in the Wine window", "success");
+    startGogMonoPoll();
+  } else {
+    toast.show(result?.error ?? "Failed to launch Wine Mono installer", "error");
+    await refreshGogMonoStatus();
+  }
+}
+
+function startGogMonoPoll() {
+  if (gogMonoPollHandle.value) return;
+  gogMonoPollHandle.value = setInterval(async () => {
+    await refreshGogMonoStatus();
+    const status = gogMonoStatus.value;
+    if (status?.upToDate) {
+      stopGogMonoPoll();
+      toast.show(`Wine Mono ${status.latestVersion} installed`, "success");
+    } else if (status && !status.running) {
+      // Installer exited but did not land the latest version (user cancelled).
+      stopGogMonoPoll();
+    }
+  }, 3000);
+}
+
+function stopGogMonoPoll() {
+  if (gogMonoPollHandle.value) {
+    clearInterval(gogMonoPollHandle.value);
+    gogMonoPollHandle.value = null;
+  }
+}
 const engineOptions = [
   { id: "d3dmetal", name: "D3DMetal" },
   { id: "m12", name: "M12" },
@@ -337,6 +408,7 @@ async function load() {
       if (game.status === "downloading") void monitorGogProgress(game.productId);
     }
   }
+  if (gogStatus.value?.prefixInitialized) void refreshGogMonoStatus();
 }
 
 function setGogGames(games: GogGame[]) {
@@ -349,6 +421,7 @@ async function refreshGog() {
     api<{ ok: boolean; games: GogGame[]; status: GogStatus }>("GET", "/sharp-library/gog/games"),
   ]);
   if (statusResult?.ok) gogStatus.value = statusResult.status;
+  if (gogStatus.value?.prefixInitialized) void refreshGogMonoStatus();
   if (gamesResult?.ok) {
     setGogGames(gamesResult.games ?? []);
     gogStatus.value = gamesResult.status;
@@ -1107,7 +1180,7 @@ function closeDropdowns(e: MouseEvent) {
   if (!(e.target as HTMLElement).closest('.dropdown-wrap')) dropdownOpen.value = null;
 }
 onMounted(() => { document.addEventListener('click', closeDropdowns); load(); });
-onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
+onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopGogMonoPoll(); });
 </script>
 
 <template>
@@ -1144,6 +1217,15 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); });
         </button>
         <button v-if="sourceMode === 'gog'" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
           <span class="btn-label-long">{{ gogLoading.setup ? "Initializing…" : gogStatus?.prefixInitialized ? "Prefix Ready" : "Initialize GOG Prefix" }}</span><span class="btn-label-short">Prefix</span>
+        </button>
+        <button
+          v-if="sourceMode === 'gog' && showGogInstallMono"
+          class="btn btn-primary"
+          :disabled="gogLoading.mono"
+          :title="gogMonoStatus ? `Wine Mono ${gogMonoStatus.installedVersion ?? 'not installed'} → ${gogMonoStatus.latestVersion}` : 'Install Wine Mono'"
+          @click="installGogMono"
+        >
+          <span class="btn-label-long">{{ gogLoading.mono ? "Installing Mono…" : "Install Mono" }}</span><span class="btn-label-short">Mono</span>
         </button>
         <button v-if="sourceMode === 'gog'" class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized" @click="handleGogAuthButton">
           <span class="btn-label-long">{{ gogStatus?.authenticated ? "GOG Connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}</span><span class="btn-label-short">{{ gogStatus?.authenticated ? "Connected" : "Login" }}</span>
