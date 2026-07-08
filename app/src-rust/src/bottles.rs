@@ -2806,6 +2806,79 @@ pub fn repair_component(
         });
     }
 
+    if matches!(manifest.arch, BottleArch::Win32)
+        && matches!(component_id, "d3d11" | "dxgi" | "d3d10core" | "d3d10_1" | "winemetal")
+    {
+        let home = dirs::home_dir().ok_or("no home dir")?;
+        let ms_home = crate::platform::metalsharp_home_dir_for(&home);
+        let dxmt_i386 = ms_home.join("runtime").join("wine").join("lib").join("dxmt").join("i386-windows");
+        let wine_i386 = ms_home.join("runtime").join("wine").join("lib").join("wine").join("i386-windows");
+        let dxmt_i386_unix = ms_home.join("runtime").join("wine").join("lib").join("dxmt").join("i386-unix");
+        let system32 = prefix.join("drive_c").join("windows").join("system32");
+        fs::create_dir_all(&system32)?;
+
+        if dry_run {
+            let available = dxmt_i386.join(format!("{}.dll", component_id)).exists()
+                || wine_i386.join(format!("{}.dll", component_id)).exists();
+            return Ok(ComponentRepairReport {
+                id: component_id.to_string(),
+                status: if available { "runtime_repair_available" } else { "asset_missing" }.to_string(),
+                detail: if available {
+                    format!("32-bit {} can be staged into this bottle prefix", component_id)
+                } else {
+                    format!("32-bit {} runtime asset not found locally", component_id)
+                },
+                asset_path: None,
+                log_path: None,
+                pid: None,
+            });
+        }
+
+        let mut copied = 0u32;
+        let src_dll = if component_id == "d3d10_1" {
+            wine_i386.join(format!("{}.dll", component_id))
+        } else {
+            dxmt_i386.join(format!("{}.dll", component_id))
+        };
+        if src_dll.exists() {
+            fs::copy(&src_dll, system32.join(format!("{}.dll", component_id)))?;
+            copied += 1;
+        }
+        if component_id == "winemetal" {
+            let src_so = dxmt_i386_unix.join("winemetal.so");
+            if src_so.exists() {
+                fs::copy(&src_so, system32.join("winemetal.so"))?;
+                copied += 1;
+            }
+        }
+
+        let state = if copied > 0 && system32.join(format!("{}.dll", component_id)).exists() {
+            ComponentState::Installed
+        } else {
+            ComponentState::Missing
+        };
+        mark_component_state(&mut manifest, component_id, state);
+        manifest.health = if components_ready(&manifest.installed_components) {
+            BottleHealth::Ready
+        } else {
+            BottleHealth::NeedsRepair
+        };
+        manifest.updated_at = timestamp_secs();
+        save_bottle(&manifest)?;
+        return Ok(ComponentRepairReport {
+            id: component_id.to_string(),
+            status: if state == ComponentState::Installed { "installed" } else { "asset_missing" }.to_string(),
+            detail: if state == ComponentState::Installed {
+                format!("Staged {} 32-bit artifact(s) into bottle prefix", copied)
+            } else {
+                format!("32-bit {} runtime asset not found locally", component_id)
+            },
+            asset_path: None,
+            log_path: None,
+            pid: None,
+        });
+    }
+
     let Some(installer) = resolve_component_installer(component_id, manifest.arch)
         .or_else(|| resolve_game_runtime_asset_installer(&manifest, component_id))
     else {
@@ -3317,7 +3390,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D10 Metal (32-bit)",
             BottleArch::Win32,
             true,
-            &["d3d10", "d3d10_1", "dxgi", "vcrun2019_x86"][..],
+            &["d3d10core", "d3d10_1", "winemetal", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::M10_32,
         ),
         RuntimeProfile::M11 => (
@@ -3331,7 +3404,7 @@ fn runtime_profile_definition(profile: RuntimeProfile) -> RuntimeProfileDefiniti
             "D3D11 Metal (32-bit)",
             BottleArch::Win32,
             true,
-            &["d3d11", "dxgi", "vcrun2019_x86"][..],
+            &["d3d11", "dxgi", "winemetal", "vcrun2019_x86"][..],
             crate::mtsp::engine::PipelineId::M11_32,
         ),
         RuntimeProfile::M12 => (
@@ -3992,7 +4065,7 @@ fn inspect_component_state(prefix: &Path, id: &str, fallback: ComponentState) ->
                 ComponentState::Missing
             }
         },
-        "d3d9" | "d3d10" | "d3d10_1" | "d3d11" | "d3d12" | "dxgi" => {
+        "d3d9" | "d3d10" | "d3d10_1" | "d3d11" | "d3d12" | "dxgi" | "d3d10core" | "winemetal" => {
             inspect_runtime_dll_component(id).unwrap_or(fallback)
         },
         "webview2" => {
@@ -5276,6 +5349,8 @@ fn component_action_detail(id: &str) -> String {
         "physx" => "Install NVIDIA PhysX legacy runtime".to_string(),
         "d3d10" => "Verify MetalSharp D3D10 runtime DLLs".to_string(),
         "d3d10_1" => "Verify MetalSharp D3D10.1 runtime DLLs".to_string(),
+        "d3d10core" => "Stage 32-bit d3d10core.dll from DXMT i386 runtime".to_string(),
+        "winemetal" => "Stage 32-bit winemetal.dll and winemetal.so from DXMT i386 runtime".to_string(),
         id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
             format!("Apply Wine Windows version mode {}", id.trim_start_matches(WINDOWS_VERSION_COMPONENT_PREFIX))
         },
@@ -5935,6 +6010,7 @@ mod tests {
         let ids: Vec<&str> = m11_32.iter().map(|c| c.id.as_str()).collect();
         assert!(ids.contains(&"d3d11"), "M11(32) components must include d3d11, got {:?}", ids);
         assert!(ids.contains(&"dxgi"), "M11(32) components must include dxgi, got {:?}", ids);
+        assert!(ids.contains(&"winemetal"), "M11(32) components must include winemetal, got {:?}", ids);
         assert!(ids.contains(&"vcrun2019_x86"), "M11(32) components must include vcrun2019_x86, got {:?}", ids);
     }
 
@@ -5942,8 +6018,9 @@ mod tests {
     fn m10_32_runtime_profile_components_include_dxmt_route_dlls() {
         let m10_32 = default_components_for(RuntimeProfile::M10_32);
         let ids: Vec<&str> = m10_32.iter().map(|c| c.id.as_str()).collect();
-        assert!(ids.contains(&"d3d10"), "M10(32) components must include d3d10, got {:?}", ids);
-        assert!(ids.contains(&"dxgi"), "M10(32) components must include dxgi, got {:?}", ids);
+        assert!(ids.contains(&"d3d10core"), "M10(32) components must include d3d10core, got {:?}", ids);
+        assert!(ids.contains(&"d3d10_1"), "M10(32) components must include d3d10_1, got {:?}", ids);
+        assert!(ids.contains(&"winemetal"), "M10(32) components must include winemetal, got {:?}", ids);
         assert!(ids.contains(&"vcrun2019_x86"), "M10(32) components must include vcrun2019_x86, got {:?}", ids);
     }
 

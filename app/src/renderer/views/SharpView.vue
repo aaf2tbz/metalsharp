@@ -359,6 +359,8 @@ const componentDisplayName: Record<string, string> = {
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
+  "d3d10core": "D3D10core",
+  "winemetal": "Winemetal",
   "gptk": "GPTK",
   "gptk_prefix": "GPTK Prefix",
   "rosetta": "Rosetta",

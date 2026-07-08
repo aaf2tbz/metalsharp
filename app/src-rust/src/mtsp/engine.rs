@@ -554,7 +554,16 @@ pub fn get_pipeline(id: PipelineId) -> &'static PipelineNode {
 
 impl PipelineId {
     pub fn is_dxmt_family(self) -> bool {
-        matches!(self, PipelineId::Dxmt | PipelineId::M9 | PipelineId::M10 | PipelineId::M11 | PipelineId::M12)
+        matches!(
+            self,
+            PipelineId::Dxmt
+                | PipelineId::M9
+                | PipelineId::M10
+                | PipelineId::M10_32
+                | PipelineId::M11
+                | PipelineId::M11_32
+                | PipelineId::M12
+        )
     }
 
     pub fn is_user_selectable(self) -> bool {
