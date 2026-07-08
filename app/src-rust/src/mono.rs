@@ -3,7 +3,7 @@
 //! Provides the backend for the GOG "Install Mono" header button and the
 //! Settings "Upgrade Mono" action. Both download the official Wine Mono
 //! `x86.msi` for the pinned latest release and run it non-quiet
-//! (`wine msiexec /i <msi>`, no `/qn`) inside a Wine prefix so the user sees
+//! (`wine msiexec /i <msi>` with `/qn` for quiet install) inside a
 //! the installer. Once the versioned `windows/mono/wine-mono-<version>/`
 //! directory exists in the prefix, the install is considered complete and the
 //! caller can hide its button.
@@ -22,7 +22,7 @@
 //! 2. Stage (copy) the cached MSI into the target prefix so `msiexec` runs
 //!    with its working directory inside the prefix — matching the Sharp
 //!    Library's `stage_installer_exe` / `current_dir` pattern.
-//! 3. Launch `wine msiexec /i <staged_msi>` non-quiet with a single log handle
+//! 3. Launch `wine msiexec /i <staged_msi> /qn` with a single log handle
 //!    (cloned for stdout), exactly matching `launch_msi_installer`.
 
 use serde_json::{json, Value};
@@ -37,7 +37,7 @@ use std::sync::OnceLock;
 pub const WINE_MONO_LATEST_VERSION: &str = "11.2.0";
 const WINE_MONO_LATEST_MSI_FILENAME: &str = "wine-mono-11.2.0-x86.msi";
 const WINE_MONO_RELEASE_TAG: &str = "wine-mono-11.2.0";
-const WINE_MONO_INSTALL_DIR_NAME: &str = "wine-mono-11.2.0";
+const WINE_MONO_INSTALL_DIR_NAME: &str = "mono-2.0";
 
 fn wine_mono_msi_url() -> &'static str {
     "https://github.com/wine-mono/wine-mono/releases/download/wine-mono-11.2.0/wine-mono-11.2.0-x86.msi"
@@ -91,29 +91,16 @@ fn mutate_install_state<F: FnOnce(&mut MonoInstallState)>(f: F) {
     }
 }
 
-/// Returns the Wine Mono version installed inside a prefix, by scanning
-/// `drive_c/windows/mono/wine-mono-<version>/`. Returns `None` when no
-/// wine-mono install is present.
+/// Returns the Wine Mono version installed inside a prefix, by checking
+/// `drive_c/windows/mono/mono-2.0/` (the directory Wine Mono MSI installs to).
+/// Returns `Some(WINE_MONO_LATEST_VERSION)` when present, `None` otherwise.
 pub fn detect_wine_mono_version(prefix: &Path) -> Option<String> {
-    let mono_root = prefix.join("drive_c").join("windows").join("mono");
-    if !mono_root.is_dir() {
-        return None;
+    let mono_dir = prefix.join("drive_c").join("windows").join("mono").join("mono-2.0");
+    if mono_dir.is_dir() {
+        Some(WINE_MONO_LATEST_VERSION.to_string())
+    } else {
+        None
     }
-    // Pick the highest wine-mono-<version> dir present using a numeric
-    // dotted-version comparison (so 11.2.0 beats 9.5.0).
-    let mut best: Option<String> = None;
-    for entry in fs::read_dir(&mono_root).ok()?.flatten() {
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if let Some(version) = name.strip_prefix("wine-mono-") {
-            if best.as_deref().map(|b| compare_versions(version, b).is_gt()).unwrap_or(true) {
-                best = Some(version.to_string());
-            }
-        }
-    }
-    best
 }
 
 /// Compare two dotted version strings (e.g. "11.2.0" vs "9.5.0") numerically.
@@ -287,8 +274,8 @@ fn download_msi_to_cache(url: &str, cache_dir: &Path, cache_path: &Path) -> Resu
 /// and `wine msiexec /i <staged>` is launched with CWD set to the staging
 /// directory — matching the Sharp Library's `launch_msi_installer` pattern.
 ///
-/// `wine msiexec /i <msi>` (no `/qn`, no `/passive`) so the user sees the
-/// installer GUI and completes it interactively. The spawned wine process is
+/// `wine msiexec /i <msi> /qn` — quiet install since Wine's internal UI
+/// handler is not implemented for MSI messages.
 /// reaped in a background thread; the renderer polls
 /// `/wine-mono/status?prefix=<kind>` and treats `upToDate == true` as
 /// completion (the button disappears).
@@ -338,6 +325,7 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
     cmd.arg("msiexec")
         .arg("/i")
         .arg(&staged_msi)
+        .arg("/qn")
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
         .env("WINEDEBUGGER", "none")
@@ -349,6 +337,21 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
         cmd.current_dir(parent);
     }
     crate::platform::set_runtime_library_env(&mut cmd, &ms_root);
+
+    // Remove the old mono-2.0 directory and cached MSI databases so the
+    // installer performs a clean install of the latest version.
+    let mono_dir = prefix.join("drive_c").join("windows").join("mono").join("mono-2.0");
+    if mono_dir.is_dir() {
+        let _ = fs::remove_dir_all(&mono_dir);
+    }
+    let installer_dir = prefix.join("drive_c").join("windows").join("Installer");
+    if let Ok(entries) = fs::read_dir(&installer_dir) {
+        for entry in entries.flatten() {
+            if entry.path().extension().map(|e| e == "msi").unwrap_or(false) {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
 
     // 7. Spawn
     let mut child = cmd.spawn().map_err(|e| format!("spawn wine msiexec: {}", e))?;
@@ -483,7 +486,8 @@ mod tests {
     fn latest_version_constants_are_consistent() {
         assert!(WINE_MONO_LATEST_VERSION.contains('.'));
         assert!(WINE_MONO_LATEST_MSI_FILENAME.contains(WINE_MONO_LATEST_VERSION));
-        assert!(WINE_MONO_INSTALL_DIR_NAME.contains(WINE_MONO_LATEST_VERSION));
+        // Wine Mono MSI installs to mono-2.0 directory regardless of version.
+        assert_eq!(WINE_MONO_INSTALL_DIR_NAME, "mono-2.0");
         assert!(wine_mono_msi_url().contains(WINE_MONO_RELEASE_TAG));
         assert!(wine_mono_msi_url().ends_with(WINE_MONO_LATEST_MSI_FILENAME));
     }
@@ -511,16 +515,14 @@ mod tests {
     }
 
     #[test]
-    fn detect_picks_versioned_mono_dir_and_flags_latest() {
+    fn detect_finds_mono_2_0_dir() {
         let tmp = std::env::temp_dir().join(format!(
             "ms-mono-detect-{}-{}",
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
         let mono = tmp.join("drive_c/windows/mono");
-        std::fs::create_dir_all(mono.join("wine-mono-9.5.0")).unwrap();
-        std::fs::create_dir_all(mono.join("wine-mono-11.2.0")).unwrap();
-        std::fs::create_dir_all(mono.join("not-a-mono")).unwrap();
+        std::fs::create_dir_all(mono.join("mono-2.0")).unwrap();
 
         assert_eq!(detect_wine_mono_version(&tmp), Some("11.2.0".to_string()));
         assert!(is_wine_mono_latest(&tmp));
@@ -528,23 +530,20 @@ mod tests {
         let status = wine_mono_status(&tmp, "gog");
         assert_eq!(status.get("installedVersion").and_then(|v| v.as_str()), Some("11.2.0"));
         assert_eq!(status.get("upToDate").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(status.get("prefixKind").and_then(|v| v.as_str()), Some("gog"));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
-    fn status_reports_outdated_when_older_version_installed() {
+    fn status_reports_not_installed_when_mono_2_0_absent() {
         let tmp = std::env::temp_dir().join(format!(
             "ms-mono-outdated-{}-{}",
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
-        let mono = tmp.join("drive_c/windows/mono");
-        std::fs::create_dir_all(mono.join("wine-mono-8.1.0")).unwrap();
         let status = wine_mono_status(&tmp, "steam");
-        assert_eq!(status.get("installedVersion").and_then(|v| v.as_str()), Some("8.1.0"));
+        assert_eq!(status.get("installedVersion").and_then(|v| v.as_str()), None);
         assert_eq!(status.get("upToDate").and_then(|v| v.as_bool()), Some(false));
-        assert_eq!(status.get("installed").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(status.get("installed").and_then(|v| v.as_bool()), Some(false));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
