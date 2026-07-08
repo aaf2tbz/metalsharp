@@ -547,6 +547,10 @@ pub fn bottle_dir(id: &str) -> PathBuf {
     bottles_root().join(id)
 }
 
+pub fn bottle_dir_for(home: &Path, id: &str) -> PathBuf {
+    crate::platform::metalsharp_home_dir_for(home).join(BOTTLES_DIR).join(id)
+}
+
 pub fn bottle_manifest_path(id: &str) -> PathBuf {
     bottle_dir(id).join(MANIFEST_FILE)
 }

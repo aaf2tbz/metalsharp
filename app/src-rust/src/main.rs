@@ -1902,6 +1902,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
         },
         (Method::Get, "/sharp-library/gog/status") => resp(200, gog::handle_status()),
         (Method::Post, "/sharp-library/gog/initialize-prefix") => resp(200, gog::handle_initialize_prefix()),
+        (Method::Post, "/sharp-library/gog/remove-prefix") => resp(200, gog::handle_remove_prefix()),
         (Method::Post, "/sharp-library/gog/auth-code") => {
             let body = read_body(req);
             resp(200, gog::handle_auth_code(&Value::Object(body)))

@@ -577,6 +577,29 @@ async function initializeGogPrefix() {
   toast.show(result?.error ?? "Failed to initialize GOG prefix", "error");
 }
 
+async function removeGogPrefix() {
+  const message =
+    "Remove the GOG Wine prefix? " +
+    "This will permanently delete the isolated Wine prefix and all Wine Mono components. " +
+    "Downloaded GOG games will stay on disk but cannot launch until the prefix is re-created.";
+  if (!confirm(message)) return;
+  gogLoading.value.removing = true;
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>(
+    "POST",
+    "/sharp-library/gog/remove-prefix",
+    {},
+    30 * 1000,
+  );
+  gogLoading.value.removing = false;
+  if (result?.ok) {
+    if (result.status) gogStatus.value = result.status;
+    await refreshGog();
+    toast.show("GOG prefix removed", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to remove GOG prefix", "error");
+  }
+}
+
 async function disconnectGog() {
   if (!confirm("Disconnect GOG and show Login again? Installed games will stay on disk.")) return;
   gogLoading.value.login = true;
@@ -1341,8 +1364,24 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
           <IconUpload class="btn-icon" width="14" height="14" />
           <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
         </button>
-        <button v-if="sourceMode === 'gog'" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
-          <span class="btn-label-long">{{ gogLoading.setup ? "Initializing…" : gogStatus?.prefixInitialized ? "Prefix Ready" : "Initialize GOG Prefix" }}</span><span class="btn-label-short">Prefix</span>
+        <button
+          v-if="sourceMode === 'gog'"
+          class="btn btn-secondary"
+          :disabled="gogLoading.setup || gogLoading.removing"
+          :title="gogStatus?.prefixInitialized
+            ? 'Remove the GOG Wine prefix. Downloaded GOG games stay on disk but cannot launch until the prefix is re-created.'
+            : 'Create the isolated Wine prefix required to install and launch GOG games.'"
+          @click="gogStatus?.prefixInitialized ? removeGogPrefix() : initializeGogPrefix()"
+        >
+          <span class="btn-label-long">{{
+            gogLoading.removing
+              ? "Removing…"
+              : gogLoading.setup
+                ? "Initializing…"
+                : gogStatus?.prefixInitialized
+                  ? "Remove Prefix"
+                  : "Initialize GOG Prefix"
+          }}</span><span class="btn-label-short">Prefix</span>
         </button>
         <button
           v-if="sourceMode === 'gog' && showGogInstallMono"

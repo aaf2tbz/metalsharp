@@ -640,6 +640,41 @@ pub fn handle_logout() -> Value {
     json!({"ok": true, "status": status_value()})
 }
 
+pub fn handle_remove_prefix() -> Value {
+    let home = crate::platform::metalsharp_home_dir();
+    handle_remove_prefix_in(&home);
+    json!({"ok": true, "status": status_value()})
+}
+
+pub(crate) fn handle_remove_prefix_in(home: &Path) {
+    // Stop any in-flight wineprocesses so the on-disk prefix isn't locked.
+    let prefix = gog_prefix_for(home);
+    if let Some(parent) = prefix.parent() {
+        if parent.is_dir() {
+            let _ = Command::new(crate::platform::runtime_wineserver(&wine_root_for(home)))
+                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .arg("-k")
+                .output();
+        }
+    }
+    // Wipe the entire bottle directory (prefix + manifest). The bottle
+    // dir is recreated lazily on the next initialize_prefix() call.
+    let bottle = gog_bottle_dir_for(home);
+    let _ = fs::remove_dir_all(&bottle);
+}
+
+fn gog_prefix_for(home: &Path) -> PathBuf {
+    gog_bottle_dir_for(home).join("prefix")
+}
+
+fn gog_bottle_dir_for(home: &Path) -> PathBuf {
+    crate::bottles::bottle_dir_for(home, GOG_PREFIX_BOTTLE_ID)
+}
+
+fn wine_root_for(home: &Path) -> PathBuf {
+    home.join(".metalsharp").join("runtime").join("wine")
+}
+
 fn gogdl_info(product_id: &str, platform: &str) -> Result<Value, String> {
     let args = vec![
         "info".to_string(),
@@ -1197,5 +1232,37 @@ mod tests {
     #[test]
     fn exit_code_parser_finds_success() {
         assert_eq!(log_exit_code("abc\ngogdl exited with Some(0)\n"), Some(0));
+    }
+
+    #[test]
+    fn handle_remove_prefix_wipes_bottle_dir_under_private_home() {
+        // Stage a synthetic GOG bottle + prefix under a private temp home
+        // so we don't touch the real `~/.metalsharp` dir and don't have
+        // to mess with the process-global METALSHARP_HOME env var
+        // (which would race other tests in the suite).
+        let home = std::env::temp_dir().join(format!(
+            "metalsharp-gog-remove-prefix-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let bottle = home.join(".metalsharp").join("bottles").join(GOG_PREFIX_BOTTLE_ID);
+        let prefix = bottle.join("prefix").join("drive_c");
+        std::fs::create_dir_all(&prefix).unwrap();
+        std::fs::write(prefix.join("winetest.exe"), b"stub").unwrap();
+
+        // Run the wipe pointed at our private home.
+        handle_remove_prefix_in(&home);
+
+        assert!(!bottle.exists(), "bottle dir must be removed: {}", bottle.display());
+        assert!(!prefix.exists(), "prefix dir must be removed: {}", prefix.display());
+        // And re-running is a no-op (idempotent), so a freshly-removed
+        // prefix shouldn't crash on a second call.
+        handle_remove_prefix_in(&home);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
     }
 }
