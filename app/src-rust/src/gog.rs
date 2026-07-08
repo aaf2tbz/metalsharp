@@ -170,8 +170,7 @@ fn gog_oauth_helper_dest_dir() -> PathBuf {
 /// script, but we keep the dest dir for backward-compatible status checks.
 fn deploy_gog_oauth_helper() -> Result<PathBuf, String> {
     let dest = gog_oauth_helper_dest_dir();
-    fs::create_dir_all(&dest)
-        .map_err(|error| format!("failed to create {}: {}", dest.display(), error))?;
+    fs::create_dir_all(&dest).map_err(|error| format!("failed to create {}: {}", dest.display(), error))?;
     // Touch a marker so the frontend sees the helper as available.
     let marker = dest.join(".inline-helper");
     let _ = fs::write(&marker, b"");

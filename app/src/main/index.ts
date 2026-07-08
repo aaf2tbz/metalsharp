@@ -1165,7 +1165,8 @@ function registerIpc() {
     // Write the OAuth helper HTML to a temp file. We embed the GOG URL
     // directly so there is no async injection race with the webview.
     const escapedUrl = authUrl.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
-    const htmlContent = `<!DOCTYPE html>
+    const htmlContent =
+      `<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><title>Sign in to GOG</title>
 <style>
@@ -1221,7 +1222,8 @@ webview{flex:1;border:none}
     window.close();
   });
 })();
-<` + `/script>
+<` +
+      `/script>
 </body>
 </html>`;
 
@@ -1234,10 +1236,18 @@ webview{flex:1;border:none}
       const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
         if (settled) return;
         settled = true;
-        try { ipcMain.removeAllListeners("gog-oauth-code"); } catch {}
-        try { ipcMain.removeAllListeners("gog-oauth-error"); } catch {}
-        try { if (!win.isDestroyed()) win.close(); } catch {}
-        try { fs.unlinkSync(htmlPath); } catch {}
+        try {
+          ipcMain.removeAllListeners("gog-oauth-code");
+        } catch {}
+        try {
+          ipcMain.removeAllListeners("gog-oauth-error");
+        } catch {}
+        try {
+          if (!win.isDestroyed()) win.close();
+        } catch {}
+        try {
+          fs.unlinkSync(htmlPath);
+        } catch {}
         resolve(result);
       };
 

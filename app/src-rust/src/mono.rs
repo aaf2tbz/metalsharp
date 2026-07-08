@@ -500,12 +500,9 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
     //    detaching a hung msiexec REMOVE=ALL.
     //    REINSTALL=ALL forces every feature to install.
     let mut cmd = Command::new(&wine);
-    cmd.arg("msiexec")
-        .arg("/i")
-        .arg(&staged_msi);
+    cmd.arg("msiexec").arg("/i").arg(&staged_msi);
     if has_existing_mono {
-        cmd.arg("REINSTALLMODE=vomus")
-           .arg("REINSTALL=ALL");
+        cmd.arg("REINSTALLMODE=vomus").arg("REINSTALL=ALL");
     }
     cmd.arg("/qn")
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
