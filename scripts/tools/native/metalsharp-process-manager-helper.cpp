@@ -312,6 +312,26 @@ int main() {
 
   std::string gpu_label;
   double gpu = gpu_utilization_percent(gpu_label);
+  // Read renderer utilization and GPU memory from PerformanceStatistics
+  // (separate probe — avoids modifying the existing GPU util function)
+  double renderer_pct = -1;
+  uint64_t gpu_mem_used = 0;
+  io_iterator_t rit;
+  if (IOServiceGetMatchingServices(kIOMasterPortDefault, IOServiceMatching("AGXAccelerator"), &rit) == kIOReturnSuccess) {
+    io_registry_entry_t re;
+    while ((re = IOIteratorNext(rit)) != 0) {
+      CFTypeRef perf = IORegistryEntryCreateCFProperty(re, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
+      if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+        CFTypeRef rp = CFDictionaryGetValue((CFDictionaryRef)perf, CFSTR("Renderer Utilization %%"));
+        if (rp && CFGetTypeID(rp) == CFNumberGetTypeID()) { long long rv = 0; CFNumberGetValue((CFNumberRef)rp, kCFNumberLongLongType, &rv); renderer_pct = (double)rv; }
+        CFTypeRef mu = CFDictionaryGetValue((CFDictionaryRef)perf, CFSTR("In use system memory"));
+        if (mu && CFGetTypeID(mu) == CFNumberGetTypeID()) { long long mv = 0; CFNumberGetValue((CFNumberRef)mu, kCFNumberLongLongType, &mv); gpu_mem_used = (uint64_t)mv; }
+      }
+      if (perf) CFRelease(perf);
+      IOObjectRelease(re);
+    }
+    IOObjectRelease(rit);
+  }
 
   double cpu_temp = 0;
   std::string cpu_temp_source;
@@ -345,6 +365,8 @@ int main() {
   } else {
     o << "\"cpu_temp_c\":null,";
   }
+  if (renderer_pct >= 0) o << "\"renderer_percent\":" << renderer_pct << ",";
+  if (gpu_mem_used > 0) o << "\"gpu_mem_used_bytes\":" << gpu_mem_used << ",";
   if (gpu >= 0) {
     o << "\"gpu_percent\":" << std::round(gpu) << ",";
   } else {
