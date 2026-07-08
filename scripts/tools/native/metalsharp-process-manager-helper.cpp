@@ -193,9 +193,9 @@ static std::string sysctl_str(const char *key) {
 static double gpu_utilization_percent(std::string &out_label) {
   out_label = "system GPU telemetry unavailable";
   double pct = -1;
-  // IOGraphicsAccelerator is the parent class of AGXAccelerator on Apple
-  // Silicon; try it first, then AGXAccelerator explicitly.
-  const char *classes[] = {"IOGraphicsAccelerator", "AGXAccelerator"};
+  // On Apple Silicon, AGXAccelerator (and its subclass of AGXAcceleratorG16G)
+  // is the correct match. IOGraphicsAccelerator is the base class.
+  const char *classes[] = {"AGXAccelerator", "IOGraphicsAccelerator"};
   for (const char *cls : classes) {
     CFMutableDictionaryRef match = IOServiceMatching(cls);
     if (!match) continue;
@@ -228,13 +228,86 @@ static double gpu_utilization_percent(std::string &out_label) {
 }
 
 // CPU temperature on Apple Silicon is gated behind a root-only entitlement
-// (AppleSMC / powermetrics). Try the IOReport thermal channel on the AGX
-// accelerator (GPU-adjacent SoC thermal) as a best-effort *SoC* temperature
-// proxy, and label it honestly. Returns false when nothing is readable
-// without root.
+// (AppleSMC / powermetrics). As a best-effort proxy, we read the GPU's SoC
+// junction temperature via IOKit PerformanceStatistics. On Apple Silicon
+// (unified memory architecture), the GPU and CPU share the same package, so
+// the GPU's "hottests junc temp" reflects the SoC thermal state.
 static bool cpu_temp_c(double *out, std::string &out_source) {
-  // AppleARMIODevice thermal / PMU Temperature arrays are root-gated in
-  // practice on modern macOS; attempting them from a user app returns nothing.
+  // Try AGXAccelerator and its subclasses first — the PerformanceStatistics
+  // dictionary may contain a "hottests junc temp" or similar field.
+  const char *classes[] = {"AGXAccelerator", "IOGraphicsAccelerator"};
+  for (const char *cls : classes) {
+    CFMutableDictionaryRef match = IOServiceMatching(cls);
+    if (!match) continue;
+    io_iterator_t iter;
+    if (IOServiceGetMatchingServices(kIOMasterPortDefault, match, &iter) != kIOReturnSuccess) continue;
+    io_registry_entry_t entry;
+    while ((entry = IOIteratorNext(iter)) != 0) {
+      CFTypeRef perf = IORegistryEntryCreateCFProperty(entry, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
+      if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+        // Try known temperature keys in order of preference.
+        const char *temp_keys[] = {
+            "hottests junc temp",
+            "GPU Temperature",
+            "hottest junction temperature",
+            "hottest junc",
+            "junction temperature",
+            "junc temp",
+        };
+        for (const char *key : temp_keys) {
+          CFStringRef cf_key = CFStringCreateWithCString(kCFAllocatorDefault, key, kCFStringEncodingUTF8);
+          CFTypeRef val = CFDictionaryGetValue((CFDictionaryRef)perf, cf_key);
+          CFRelease(cf_key);
+          if (val) {
+            double v = 0;
+            if (CFGetTypeID(val) == CFNumberGetTypeID()) {
+              CFNumberGetValue((CFNumberRef)val, kCFNumberDoubleType, &v);
+            } else if (CFGetTypeID(val) == CFStringGetTypeID()) {
+              v = atof(CFStringGetCStringPtr((CFStringRef)val, kCFStringEncodingUTF8));
+            }
+            if (v > 0 && v < 200) {
+              *out = v;
+              char buf[256];
+              snprintf(buf, sizeof(buf), "GPU SoC temp via PerformanceStatistics \"%s\"", key);
+              out_source = buf;
+              CFRelease(perf);
+              IOObjectRelease(entry);
+              IOObjectRelease(iter);
+              return true;
+            }
+          }
+        }
+        // Fallback: look for any key containing "temp" in the performance stats.
+        CFIndex count = CFDictionaryGetCount((CFDictionaryRef)perf);
+        std::vector<CFTypeRef> keys(count), values(count);
+        CFDictionaryGetKeysAndValues((CFDictionaryRef)perf, keys.data(), values.data());
+        for (CFIndex i = 0; i < count; i++) {
+          if (CFGetTypeID(keys[i]) == CFStringGetTypeID()) {
+            const char *ks = CFStringGetCStringPtr((CFStringRef)keys[i], kCFStringEncodingUTF8);
+            if (ks && strstr(ks, "temp") && strstr(ks, "junc")) {
+              double v = 0;
+              if (CFGetTypeID(values[i]) == CFNumberGetTypeID()) {
+                CFNumberGetValue((CFNumberRef)values[i], kCFNumberDoubleType, &v);
+              }
+              if (v > 0 && v < 200) {
+                *out = v;
+                char buf[256];
+                snprintf(buf, sizeof(buf), "GPU SoC temp via PerformanceStatistics \"%s\"", ks);
+                out_source = buf;
+                CFRelease(perf);
+                IOObjectRelease(entry);
+                IOObjectRelease(iter);
+                return true;
+              }
+            }
+          }
+        }
+      }
+      if (perf) CFRelease(perf);
+      IOObjectRelease(entry);
+    }
+    IOObjectRelease(iter);
+  }
   (void)out;
   (void)out_source;
   return false;
