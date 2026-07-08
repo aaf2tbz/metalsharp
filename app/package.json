@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.53.5",
+  "version": "0.53.8",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -112,6 +112,10 @@
           "**/*",
           "!host/**"
         ]
+      },
+      {
+        "from": "../tools/gog-oauth-electron",
+        "to": "tools/gog-oauth-electron"
       },
       {
         "from": "../src/fna/shims",

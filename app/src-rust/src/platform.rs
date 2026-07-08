@@ -109,6 +109,10 @@ pub fn runtime_wine_binary(ms_root: &std::path::Path) -> PathBuf {
     ms_root.join("bin").join("wine")
 }
 
+pub fn runtime_wineserver(ms_root: &std::path::Path) -> PathBuf {
+    ms_root.join("bin").join("wineserver")
+}
+
 pub fn gptk_staged_app_root(home: &Path) -> PathBuf {
     metalsharp_home_dir_for(home).join("runtime").join("gptk").join("Game Porting Toolkit.app")
 }

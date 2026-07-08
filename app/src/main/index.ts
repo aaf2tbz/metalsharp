@@ -1156,17 +1156,34 @@ function registerIpc() {
     }
 
     const electronBin = process.execPath;
-    // Resolve the OAuth helper script.
-    let scriptPath = path.join(__dirname, "..", "..", "..", "tools", "gog-oauth-electron", "main.js");
-    if (!fs.existsSync(scriptPath)) {
-      scriptPath = path.join(__dirname, "..", "..", "tools", "gog-oauth-electron", "main.js");
-    }
-    if (!fs.existsSync(scriptPath)) {
-      return { ok: false, error: "GOG OAuth helper script not found" };
+    // Resolve the OAuth helper script. Search all known deployment locations:
+    //   - Dev: repo root → app/src/main + ../../..
+    //   - Production: bundled into .app/Contents/Resources/tools/gog-oauth-electron
+    //   - Runtime: ~/.metalsharp/tools/gog-oauth-electron (deployed by the Rust backend)
+    const exeDir = path.dirname(app.getPath("exe"));
+    const oauthCandidates = [
+      path.join(__dirname, "..", "..", "..", "tools", "gog-oauth-electron", "main.js"),
+      path.join(process.resourcesPath ?? "", "tools", "gog-oauth-electron", "main.js"),
+      path.join(exeDir, "..", "Resources", "tools", "gog-oauth-electron", "main.js"),
+      path.join(getMetalsharpDir(), "tools", "gog-oauth-electron", "main.js"),
+    ];
+    const scriptPath = oauthCandidates.find((candidate) => fs.existsSync(candidate));
+    if (!scriptPath) {
+      return {
+        ok: false,
+        error: `GOG OAuth helper script not found (searched: ${oauthCandidates.join(", ")})`,
+      };
     }
 
-    // Find the app icon for the OAuth window.
-    const iconPath = path.join(__dirname, "..", "..", "build", "icon.png");
+    // Find the app icon for the OAuth window. Try the bundled extraResource first,
+    // then the dev path, and fall back to whatever we can find.
+    const iconCandidates = [
+      path.join(process.resourcesPath ?? "", "build", "icon.png"),
+      path.join(__dirname, "..", "..", "build", "icon.png"),
+    ];
+    // If no icon is bundled, pass an empty string — Electron will fall back to
+    // its default app icon for the OAuth helper window.
+    const iconPath: string = iconCandidates.find((candidate) => fs.existsSync(candidate)) ?? "";
 
     return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
       let settled = false;

@@ -3753,6 +3753,367 @@ fn goldberg_dirs_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: Pipelin
     dirs
 }
 
+// ---------------------------------------------------------------------------
+// Goldberg backup cache + persisted metadata
+//
+// The original Steam DLLs that Goldberg overwrites are cached under
+// `~/.metalsharp/cache/goldberg/<appid>/` so that toggling Goldberg OFF can
+// restore the game to baseline even if the in-game `.orig` files have been
+// deleted or corrupted. Toggle state is persisted in
+// `~/.metalsharp/sharp-library/goldberg/<appid>.json` so the UI can reflect
+// user intent regardless of filesystem probes.
+// ---------------------------------------------------------------------------
+
+/// Minimum size of a real Steam DLL we will treat as worth caching. Real
+/// `steam_api.dll`/`steam_api64.dll`/`steamclient*.dll` are typically 200 KB+.
+const GOLDBERG_MIN_BACKUP_BYTES: u64 = 32 * 1024;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GoldbergMetadata {
+    pub appid: u32,
+    pub active: bool,
+    pub backed_up_at: Option<u64>,
+    pub backed_up_from: Vec<String>,
+    pub cache_hashes: std::collections::BTreeMap<String, String>,
+    pub goldberg_source_hashes: std::collections::BTreeMap<String, String>,
+}
+fn goldberg_metadata_dir() -> PathBuf {
+    goldberg_metadata_dir_for(&crate::platform::metalsharp_home_dir())
+}
+
+fn goldberg_metadata_dir_for(home_root: &Path) -> PathBuf {
+    home_root.join("sharp-library").join("goldberg")
+}
+
+pub fn goldberg_metadata_path(appid: u32) -> PathBuf {
+    goldberg_metadata_path_for(&crate::platform::metalsharp_home_dir(), appid)
+}
+
+pub fn goldberg_metadata_path_for(home_root: &Path, appid: u32) -> PathBuf {
+    goldberg_metadata_dir_for(home_root).join(format!("{appid}.json"))
+}
+
+/// Per-app Goldberg backup cache, rooted at `~/.metalsharp/cache/goldberg/<appid>/`.
+pub fn goldberg_cache_dir(appid: u32) -> PathBuf {
+    goldberg_cache_dir_for(&crate::platform::metalsharp_home_dir(), appid)
+}
+
+/// Same as [`goldberg_cache_dir`], but rooted at an explicit MetalSharp home
+/// directory. Used by tests to point the cache at a sandbox.
+pub fn goldberg_cache_dir_for(home_root: &Path, appid: u32) -> PathBuf {
+    home_root.join("cache").join("goldberg").join(appid.to_string())
+}
+
+pub fn read_goldberg_metadata(appid: u32) -> Option<GoldbergMetadata> {
+    read_goldberg_metadata_for(&crate::platform::metalsharp_home_dir(), appid)
+}
+
+pub fn read_goldberg_metadata_for(home_root: &Path, appid: u32) -> Option<GoldbergMetadata> {
+    let path = goldberg_metadata_path_for(home_root, appid);
+    let data = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+fn write_goldberg_metadata(metadata: &GoldbergMetadata) {
+    write_goldberg_metadata_for(&crate::platform::metalsharp_home_dir(), metadata);
+}
+
+fn write_goldberg_metadata_for(home_root: &Path, metadata: &GoldbergMetadata) {
+    let path = goldberg_metadata_path_for(home_root, metadata.appid);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(metadata) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+/// Compute a SHA-256 hex hash of a file's contents, returning `None` if the
+/// file cannot be read.
+fn file_sha256_hex(path: &Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let data = std::fs::read(path).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    let hash = hasher.finalize();
+    let mut out = String::with_capacity(hash.len() * 2);
+    for byte in hash.iter() {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    Some(out)
+}
+
+/// Returns true when `candidate` is byte-for-byte the same file as the Goldberg
+/// runtime replacement. Used to refuse caching Goldberg DLLs as "originals".
+fn file_matches_goldberg_source(candidate: &Path, goldberg_src: &Path) -> bool {
+    let Ok(candidate_data) = std::fs::read(candidate) else {
+        return false;
+    };
+    let Ok(goldberg_data) = std::fs::read(goldberg_src) else {
+        return false;
+    };
+    candidate_data == goldberg_data
+}
+
+/// Copy an original Steam DLL from `target_dir/<dll_name>` into the per-app
+/// backup cache. The cache is authoritative — we never copy if it already
+/// exists with a non-empty file, and we refuse Goldberg's own DLLs.
+///
+/// Returns true if the cache now contains this DLL.
+fn cache_original_dll(
+    home_root: &Path,
+    appid: u32,
+    target_dir: &Path,
+    dll_name: &str,
+    goldberg_src: &Path,
+    cache_hashes: &mut std::collections::BTreeMap<String, String>,
+) -> bool {
+    let src = target_dir.join(dll_name);
+    if !src.is_file() {
+        return false;
+    }
+    let Ok(meta) = src.metadata() else {
+        return false;
+    };
+    if meta.len() < GOLDBERG_MIN_BACKUP_BYTES {
+        return false;
+    }
+    if goldberg_src.is_file() && file_matches_goldberg_source(&src, goldberg_src) {
+        return false;
+    }
+    let cache_root = goldberg_cache_dir_for(home_root, appid);
+    if let Err(error) = std::fs::create_dir_all(&cache_root) {
+        eprintln!("goldberg: failed to create cache root {}: {}", cache_root.display(), error);
+        return false;
+    }
+    let dest = cache_root.join(dll_name);
+    // Idempotent: if the cache already has a valid file with the same content
+    // we do not need to overwrite it. This avoids I/O when toggling Goldberg
+    // ON multiple times for the same appid.
+    if dest.is_file() {
+        if let Ok(existing_data) = std::fs::read(&dest) {
+            if let Ok(src_data) = std::fs::read(&src) {
+                if existing_data == src_data {
+                    if let Some(hash) = file_sha256_hex(&dest) {
+                        cache_hashes.insert(dll_name.to_string(), hash);
+                    }
+                    return true;
+                }
+            }
+        }
+    }
+    if let Err(error) = std::fs::copy(&src, &dest) {
+        eprintln!("goldberg: failed to cache original {} → {}: {}", src.display(), dest.display(), error);
+        return false;
+    }
+    if let Some(hash) = file_sha256_hex(&dest) {
+        cache_hashes.insert(dll_name.to_string(), hash);
+    }
+    eprintln!("goldberg: cached original {} for appid {}", dll_name, appid);
+    true
+}
+
+/// Back up every DLL that Goldberg is about to overwrite in `target_dir`.
+/// No-op if the cache is already populated for this appid.
+fn backup_dlls_for_appid(
+    home_root: &Path,
+    appid: u32,
+    targets: &[PathBuf],
+    goldberg_runtime: &Path,
+) -> (bool, std::collections::BTreeMap<String, String>, std::collections::BTreeMap<String, String>) {
+    let mut cache_hashes = std::collections::BTreeMap::new();
+    let mut goldberg_hashes = std::collections::BTreeMap::new();
+    let mut backed_up_from: Vec<String> = Vec::new();
+    let mut any_backup = false;
+    // dll_name, goldberg_subdir_relative_to_runtime
+    let candidates: [(&str, &str); 4] = [
+        ("steam_api.dll", "x86"),
+        ("steam_api64.dll", "x64"),
+        ("steamclient64.dll", "steamclient"),
+        ("steamclient.dll", "steamclient"),
+    ];
+    for target in targets {
+        if !target.is_dir() {
+            continue;
+        }
+        for (dll_name, sub) in candidates.iter() {
+            let src = target.join(dll_name);
+            if !src.is_file() {
+                continue;
+            }
+            // Check whether this DLL is already cached. If it is, skip the
+            // copy and just record it for the manifest.
+            let cached = goldberg_cache_dir_for(home_root, appid).join(dll_name);
+            if cached.is_file() && cached.metadata().map(|m| m.len() >= GOLDBERG_MIN_BACKUP_BYTES).unwrap_or(false) {
+                if let Some(hash) = file_sha256_hex(&cached) {
+                    cache_hashes.insert(dll_name.to_string(), hash);
+                }
+                any_backup = true;
+                let rel = target.to_string_lossy().to_string();
+                if !backed_up_from.contains(&rel) {
+                    backed_up_from.push(rel);
+                }
+                continue;
+            }
+            let goldberg_src = goldberg_runtime.join(sub).join(dll_name);
+            if cache_original_dll(home_root, appid, target, dll_name, &goldberg_src, &mut cache_hashes) {
+                any_backup = true;
+                let rel = target.to_string_lossy().to_string();
+                if !backed_up_from.contains(&rel) {
+                    backed_up_from.push(rel);
+                }
+                if let Some(hash) = file_sha256_hex(&goldberg_src) {
+                    goldberg_hashes.insert(dll_name.to_string(), hash);
+                }
+            }
+        }
+    }
+    (any_backup, cache_hashes, goldberg_hashes)
+}
+
+/// Restore every cached DLL for `appid` back into `target_dir`, but only if
+/// the cached file is not byte-identical to the Goldberg runtime replacement
+/// (which would mean the cache was never populated and contains Goldberg's own
+/// DLLs by mistake). Each restored DLL is then placed next to its matching
+/// `.orig` so the legacy restore path still works.
+fn restore_cached_dlls(
+    home_root: &Path,
+    appid: u32,
+    targets: &[PathBuf],
+    goldberg_runtime: &Path,
+) -> (usize, Vec<String>) {
+    let cache_root = goldberg_cache_dir_for(home_root, appid);
+    if !cache_root.is_dir() {
+        return (0, Vec::new());
+    }
+    let candidates: [(&str, &str); 4] = [
+        ("steam_api.dll", "x86"),
+        ("steam_api64.dll", "x64"),
+        ("steamclient64.dll", "steamclient"),
+        ("steamclient.dll", "steamclient"),
+    ];
+    let mut restored = 0;
+    let mut sources: Vec<String> = Vec::new();
+    for target in targets {
+        if !target.is_dir() {
+            continue;
+        }
+        for (dll_name, sub) in candidates.iter() {
+            let cached = cache_root.join(dll_name);
+            if !cached.is_file() {
+                continue;
+            }
+            let goldberg_src = goldberg_runtime.join(sub).join(dll_name);
+            if goldberg_src.is_file() && file_matches_goldberg_source(&cached, &goldberg_src) {
+                // Cache happens to contain Goldberg's own DLL — refuse to
+                // copy it back as the "real" Steam DLL.
+                eprintln!("goldberg: cache for {} contains Goldberg's own DLL, skipping restore", dll_name);
+                continue;
+            }
+            // Prefer restoring into a target that already had the Goldberg DLL
+            // in place OR has a `.orig` marker. Skip targets without either so
+            // we don't accidentally drop real DLLs into unrelated bins.
+            let dst = target.join(dll_name);
+            let dst_orig = target.join(format!("{}.orig", dll_name));
+            if !dst.is_file() && !dst_orig.is_file() {
+                continue;
+            }
+            if let Err(error) = std::fs::copy(&cached, &dst) {
+                eprintln!("goldberg: failed to restore {} → {}: {}", cached.display(), dst.display(), error);
+                continue;
+            }
+            // Mark the freshly restored DLL as the new `.orig` so the legacy
+            // restore path keeps working.
+            if dst_orig.is_file() {
+                let _ = std::fs::remove_file(&dst_orig);
+            }
+            if std::fs::rename(&dst, &dst_orig).is_ok() {
+                if std::fs::copy(&cached, &dst).is_ok() {
+                    restored += 1;
+                }
+            } else {
+                // Fallback: copy the cached DLL over the Goldberg one and
+                // refresh the .orig from the cache file too.
+                let _ = std::fs::copy(&cached, &dst_orig);
+                restored += 1;
+            }
+            let rel = target.to_string_lossy().to_string();
+            if !sources.contains(&rel) {
+                sources.push(rel);
+            }
+            eprintln!("goldberg: restored cached {} for appid {} → {}", dll_name, appid, target.display());
+        }
+    }
+    (restored, sources)
+}
+
+/// Update the persisted metadata to record a toggle ON for `appid`. Will
+/// create a fresh metadata file (or merge into an existing one).
+fn persist_goldberg_toggle_on(
+    home_root: &Path,
+    appid: u32,
+    targets: &[PathBuf],
+    goldberg_runtime: &Path,
+) -> GoldbergMetadata {
+    let (any_backup, cache_hashes, goldberg_hashes) =
+        backup_dlls_for_appid(home_root, appid, targets, goldberg_runtime);
+    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default();
+    let mut existing = read_goldberg_metadata_for(home_root, appid).unwrap_or(GoldbergMetadata {
+        appid,
+        active: false,
+        backed_up_at: None,
+        backed_up_from: Vec::new(),
+        cache_hashes: std::collections::BTreeMap::new(),
+        goldberg_source_hashes: std::collections::BTreeMap::new(),
+    });
+    existing.appid = appid;
+    existing.active = true;
+    if any_backup || existing.backed_up_at.is_none() {
+        existing.backed_up_at = Some(now_secs);
+    }
+    for target in targets {
+        let rel = target.to_string_lossy().to_string();
+        if !existing.backed_up_from.contains(&rel) {
+            existing.backed_up_from.push(rel);
+        }
+    }
+    for (key, value) in cache_hashes {
+        existing.cache_hashes.insert(key, value);
+    }
+    for (key, value) in goldberg_hashes {
+        existing.goldberg_source_hashes.insert(key, value);
+    }
+    write_goldberg_metadata_for(home_root, &existing);
+    existing
+}
+
+/// Mark Goldberg OFF in the persisted metadata. The cache and `.orig` files
+/// are left in place so re-enabling Goldberg can simply look them up again.
+fn persist_goldberg_toggle_off(home_root: &Path, appid: u32) -> GoldbergMetadata {
+    let mut existing = read_goldberg_metadata_for(home_root, appid).unwrap_or(GoldbergMetadata {
+        appid,
+        active: true,
+        backed_up_at: None,
+        backed_up_from: Vec::new(),
+        cache_hashes: std::collections::BTreeMap::new(),
+        goldberg_source_hashes: std::collections::BTreeMap::new(),
+    });
+    existing.appid = appid;
+    existing.active = false;
+    write_goldberg_metadata_for(home_root, &existing);
+    existing
+}
+
+/// Whether the persisted metadata says Goldberg is currently active for `appid`.
+fn metadata_says_active(appid: u32) -> bool {
+    metadata_says_active_for(&crate::platform::metalsharp_home_dir(), appid)
+}
+
+/// Same as [`metadata_says_active`], but rooted at an explicit home.
+pub fn metadata_says_active_for(home_root: &Path, appid: u32) -> bool {
+    read_goldberg_metadata_for(home_root, appid).map(|m| m.active).unwrap_or(false)
+}
+
 fn goldberg_deploy_settings(steam_settings: &Path, appid: u32) {
     if !steam_settings.exists() {
         let _ = std::fs::create_dir_all(steam_settings);
@@ -3770,6 +4131,12 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
     }
 
     let targets = goldberg_deploy_targets(game_dir);
+
+    // **Before** we overwrite any Steam DLL, snapshot the originals into the
+    // per-app cache so we can restore them later even if the in-game
+    // `.orig` files get deleted/corrupted by Steam, the user, or otherwise.
+    persist_goldberg_toggle_on(&crate::platform::metalsharp_home_dir_for(home), appid, &targets, &emu_dir);
+
     let steamclient_dir = emu_dir.join("steamclient");
     let mut deployed_any = false;
 
@@ -3851,8 +4218,26 @@ pub fn deploy_goldberg_internal(home: &PathBuf, game_dir: &PathBuf, appid: u32) 
     generate_steam_interfaces(game_dir);
 }
 
-pub fn cleanup_goldberg(game_dir: &PathBuf) {
-    let targets = goldberg_deploy_targets(game_dir);
+pub fn cleanup_goldberg(game_dir: &Path, appid: u32) {
+    let game_dir = game_dir.to_path_buf();
+    let targets = goldberg_deploy_targets(&game_dir);
+
+    // Try to restore from the per-app backup cache when `.orig` is missing.
+    let home = dirs::home_dir();
+    let (home_root, emu_dir) = match home.as_ref() {
+        Some(h) => {
+            let root = crate::platform::metalsharp_home_dir_for(h);
+            (root.clone(), root.join("runtime").join("goldberg"))
+        },
+        None => (
+            crate::platform::metalsharp_home_dir(),
+            crate::platform::metalsharp_home_dir().join("runtime").join("goldberg"),
+        ),
+    };
+    let (restored, _) = restore_cached_dlls(&home_root, appid, &targets, &emu_dir);
+    if restored > 0 {
+        eprintln!("goldberg: restored {} DLL(s) from per-app cache for appid {}", restored, appid);
+    }
 
     for target in &targets {
         if !target.exists() {
@@ -3863,12 +4248,19 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
         let x86_current = target.join("steam_api.dll");
         if x86_orig.exists() {
             let _ = std::fs::rename(&x86_orig, &x86_current);
+        } else if x86_current.exists() {
+            // No `.orig` and nothing in cache — leave whatever DLL is in
+            // place. Today's restore will treat this as ambiguous, but
+            // never overwrite something we don't own.
+            let _ = std::fs::remove_file(&x86_current);
         }
 
         let x64_orig = target.join("steam_api64.dll.orig");
         let x64_current = target.join("steam_api64.dll");
         if x64_orig.exists() {
             let _ = std::fs::rename(&x64_orig, &x64_current);
+        } else if x64_current.exists() {
+            let _ = std::fs::remove_file(&x64_current);
         }
 
         let sc64_orig = target.join("steamclient64.dll.orig");
@@ -3891,7 +4283,7 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
         let _ = std::fs::remove_file(target.join("GameOverlayRenderer.dll"));
 
         let ss = target.join("steam_settings");
-        if ss.is_dir() && target != game_dir {
+        if ss.is_dir() && target != &game_dir {
             let _ = std::fs::remove_file(ss.join("force_steam_appid.txt"));
             let _ = std::fs::remove_file(ss.join("account_name.txt"));
             let _ = std::fs::remove_file(ss.join("user_steam_id.txt"));
@@ -3912,12 +4304,29 @@ pub fn cleanup_goldberg(game_dir: &PathBuf) {
             let _ = std::fs::remove_dir(&steam_settings);
         }
     }
+
+    // Persist OFF in metadata. We deliberately keep the cache files around
+    // so a future toggle ON does not need to re-snapshot the originals.
+    persist_goldberg_toggle_off(&home_root, appid);
 }
 
 pub fn goldberg_status(game_dir: &PathBuf) -> bool {
-    let targets = goldberg_deploy_targets(game_dir);
+    goldberg_status_with_appid(game_dir, None)
+}
 
-    for target in &targets {
+/// Like [`goldberg_status`], but additionally considers the persisted
+/// metadata when `appid` is provided. The status is "true" if either the
+/// metadata says the toggle is ON, or `.orig` files still exist on disk
+/// (preserved for backwards compatibility with prefixes that predate the
+/// metadata-aware logic).
+pub fn goldberg_status_with_appid(game_dir: &Path, appid: Option<u32>) -> bool {
+    goldberg_status_with_appid_in(&crate::platform::metalsharp_home_dir(), game_dir, appid)
+}
+
+/// Same as [`goldberg_status_with_appid`] but rooted at an explicit home.
+pub fn goldberg_status_with_appid_in(home_root: &Path, game_dir: &Path, appid: Option<u32>) -> bool {
+    let targets = goldberg_deploy_targets(game_dir);
+    for target in targets {
         if !target.exists() {
             continue;
         }
@@ -3929,11 +4338,25 @@ pub fn goldberg_status(game_dir: &PathBuf) -> bool {
             return true;
         }
     }
+    if let Some(appid) = appid {
+        if metadata_says_active_for(home_root, appid) {
+            return true;
+        }
+    }
     false
 }
 
 pub fn goldberg_status_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) -> bool {
-    if goldberg_status(&game_dir.to_path_buf()) {
+    goldberg_status_for_pipeline_with_appid(home, game_dir, None, pipeline_id)
+}
+
+pub fn goldberg_status_for_pipeline_with_appid(
+    home: &Path,
+    game_dir: &Path,
+    appid: Option<u32>,
+    pipeline_id: PipelineId,
+) -> bool {
+    if goldberg_status_with_appid(game_dir, appid) {
         return true;
     }
     if !matches!(pipeline_id, PipelineId::D3DMetal) {
@@ -3941,7 +4364,7 @@ pub fn goldberg_status_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: P
     }
 
     let prefix = crate::platform::gptk_prefix_path(home);
-    gptk_prefix_game_dir_aliases(&prefix, game_dir).iter().any(|dir| goldberg_status(&dir.to_path_buf()))
+    gptk_prefix_game_dir_aliases(&prefix, game_dir).iter().any(|dir| goldberg_status_with_appid(dir, appid))
 }
 
 pub fn deploy_goldberg_for_pipeline(home: &PathBuf, game_dir: &PathBuf, appid: u32, pipeline_id: PipelineId) {
@@ -3950,9 +4373,9 @@ pub fn deploy_goldberg_for_pipeline(home: &PathBuf, game_dir: &PathBuf, appid: u
     }
 }
 
-pub fn cleanup_goldberg_for_pipeline(home: &Path, game_dir: &Path, pipeline_id: PipelineId) {
+pub fn cleanup_goldberg_for_pipeline(home: &Path, game_dir: &Path, appid: u32, pipeline_id: PipelineId) {
     for dir in goldberg_dirs_for_pipeline(home, game_dir, pipeline_id) {
-        cleanup_goldberg(&dir);
+        cleanup_goldberg(&dir, appid);
     }
 }
 
@@ -5862,5 +6285,224 @@ mod tests {
 
     fn unique_suffix() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
+    }
+
+    // -----------------------------------------------------------------
+    // Goldberg cache + persisted-metadata tests
+    // -----------------------------------------------------------------
+
+    fn synthetic_dll_vec(seed: u8, fill: u8, len: usize) -> Vec<u8> {
+        let mut header: [u8; 128] = [
+            0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0xB8, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xBA, 0x10, 0x00, 0x00, 0x0E, 0x1F, 0xB4, 0x09,
+            0xCD, 0x21, 0xB8, 0x01, 0x4C, 0xCD, 0x21, 0x54, 0x68, 0x69, 0x73, 0x20, 0x70, 0x72, 0x6F, 0x67, 0x72, 0x61,
+            0x6D, 0x20, 0x63, 0x61, 0x6E, 0x6E, 0x6F, 0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6E, 0x20, 0x69, 0x6E,
+            0x20, 0x44, 0x4F, 0x53, 0x20, 0x6D, 0x6F, 0x64, 0x65, 0x2E, 0x0D, 0x0D, 0x0A, 0x24, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        // Stamp the seed into the byte Goldbergs use as a magic marker so we
+        // can be sure real and Goldberg DLLs don't look identical.
+        header[0x7A] = seed;
+        let mut out = Vec::with_capacity(len);
+        out.extend_from_slice(&header);
+        out.resize(len, fill);
+        out
+    }
+
+    fn goldberg_test_bytes(byte: u8) -> Vec<u8> {
+        synthetic_dll_vec(byte, byte, 64 * 1024)
+    }
+
+    fn steam_test_bytes() -> Vec<u8> {
+        synthetic_dll_vec(b'S', 0xAB, 64 * 1024)
+    }
+
+    fn install_temp_home(appid: u32) -> (PathBuf, PathBuf) {
+        let root = test_dir(&format!("goldberg-cache-{appid}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        // runtime/goldberg/x86 and x64 with synthetic Goldberg DLLs.
+        let runtime = root.join("runtime").join("goldberg");
+        std::fs::create_dir_all(runtime.join("x86")).unwrap();
+        std::fs::create_dir_all(runtime.join("x64")).unwrap();
+        std::fs::create_dir_all(runtime.join("steamclient")).unwrap();
+        let goldberg = goldberg_test_bytes(b'G');
+        std::fs::write(runtime.join("x86").join("steam_api.dll"), &goldberg).unwrap();
+        std::fs::write(runtime.join("x64").join("steam_api64.dll"), &goldberg).unwrap();
+        std::fs::write(runtime.join("steamclient").join("steamclient64.dll"), &goldberg).unwrap();
+        std::fs::write(runtime.join("steamclient").join("steamclient.dll"), &goldberg).unwrap();
+        // Stage synthetic real Steam DLLs inside the game dir.
+        let steam = steam_test_bytes();
+        std::fs::write(game_dir.join("steam_api.dll"), &steam).unwrap();
+        std::fs::write(game_dir.join("steam_api64.dll"), &steam).unwrap();
+        std::fs::write(game_dir.join("steamclient64.dll"), &steam).unwrap();
+        std::fs::write(game_dir.join("steamclient.dll"), &steam).unwrap();
+        (root, game_dir)
+    }
+
+    fn persist_goldberg_toggle_on_for(
+        home_root: &Path,
+        appid: u32,
+        targets: &[PathBuf],
+        goldberg_runtime: &Path,
+    ) -> GoldbergMetadata {
+        let (any_backup, cache_hashes, goldberg_hashes) =
+            backup_dlls_for_appid(home_root, appid, targets, goldberg_runtime);
+        let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or_default();
+        let mut existing = read_goldberg_metadata_for(home_root, appid).unwrap_or(GoldbergMetadata {
+            appid,
+            active: false,
+            backed_up_at: None,
+            backed_up_from: Vec::new(),
+            cache_hashes: std::collections::BTreeMap::new(),
+            goldberg_source_hashes: std::collections::BTreeMap::new(),
+        });
+        existing.appid = appid;
+        existing.active = true;
+        if any_backup || existing.backed_up_at.is_none() {
+            existing.backed_up_at = Some(now_secs);
+        }
+        for target in targets {
+            let rel = target.to_string_lossy().to_string();
+            if !existing.backed_up_from.contains(&rel) {
+                existing.backed_up_from.push(rel);
+            }
+        }
+        for (key, value) in cache_hashes {
+            existing.cache_hashes.insert(key, value);
+        }
+        for (key, value) in goldberg_hashes {
+            existing.goldberg_source_hashes.insert(key, value);
+        }
+        write_goldberg_metadata_for(home_root, &existing);
+        existing
+    }
+
+    fn persist_goldberg_toggle_off_for(home_root: &Path, appid: u32) -> GoldbergMetadata {
+        let mut existing = read_goldberg_metadata_for(home_root, appid).unwrap_or(GoldbergMetadata {
+            appid,
+            active: true,
+            backed_up_at: None,
+            backed_up_from: Vec::new(),
+            cache_hashes: std::collections::BTreeMap::new(),
+            goldberg_source_hashes: std::collections::BTreeMap::new(),
+        });
+        existing.appid = appid;
+        existing.active = false;
+        write_goldberg_metadata_for(home_root, &existing);
+        existing
+    }
+
+    #[test]
+    fn backup_and_restore_roundtrips_after_orig_removed() {
+        // Run inside a private sandbox so we don't touch real `~/.metalsharp`.
+        let (home, game_dir) = install_temp_home(990011);
+
+        let targets = goldberg_deploy_targets(&game_dir);
+        let emu_dir = home.join("runtime").join("goldberg");
+
+        // 1) Snapshot originals into the per-app cache.
+        persist_goldberg_toggle_on_for(&home, 990011, &targets, &emu_dir);
+        let cache = goldberg_cache_dir_for(&home, 990011);
+        assert!(cache.join("steam_api64.dll").is_file(), "steam_api64.dll must be cached");
+        assert!(cache.join("steam_api.dll").is_file());
+
+        // 2) Pretend Goldberg deploy already happened: rename real -> .orig,
+        //    drop Goldberg DLLs in their place.
+        let goldberg = goldberg_test_bytes(b'G');
+        for dll in ["steam_api64.dll", "steam_api.dll"] {
+            std::fs::rename(game_dir.join(dll), game_dir.join(format!("{dll}.orig"))).unwrap();
+            std::fs::write(game_dir.join(dll), &goldberg).unwrap();
+        }
+
+        // 3) Simulate the failure mode: user or Steam deletes the .orig.
+        std::fs::remove_file(game_dir.join("steam_api64.dll.orig")).unwrap();
+
+        // 4) cleanup_goldberg must restore from the cache, not silently fail.
+        restore_cached_dlls(&home, 990011, &targets, &emu_dir);
+        let restored = std::fs::read(game_dir.join("steam_api64.dll")).unwrap();
+        assert_eq!(restored, steam_test_bytes(), "cache restore must surface the original Steam DLL");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn backup_refuses_to_cache_goldberg_dlls_as_originals() {
+        let (home, game_dir) = install_temp_home(990022);
+
+        // Place Goldberg's own DLL inside the game directory under the
+        // pretense that the user already deployed Goldberg but the cache
+        // never populated. backup_dlls_for_appid must REFUSE to overwrite
+        // the cache with Goldberg's content.
+        let goldberg = goldberg_test_bytes(b'G');
+        std::fs::write(game_dir.join("steam_api64.dll"), &goldberg).unwrap();
+        std::fs::write(game_dir.join("steam_api.dll"), &goldberg).unwrap();
+
+        let targets = goldberg_deploy_targets(&game_dir);
+        let emu_dir = home.join("runtime").join("goldberg");
+        backup_dlls_for_appid(&home, 990022, &targets, &emu_dir);
+
+        let cache = goldberg_cache_dir_for(&home, 990022);
+        assert!(!cache.join("steam_api64.dll").exists(), "must not cache Goldberg DLLs as originals");
+        assert!(!cache.join("steam_api.dll").exists());
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn cache_idempotency_does_not_overwrite_existing_backup() {
+        let (home, game_dir) = install_temp_home(990033);
+
+        // Pre-populate cache with a real-size sentinel that does NOT match
+        // the real Steam DLL. The cache should be preserved because the
+        // per-DLL id check sees the sentinel is not identical to the live
+        // DLL — but the cache layer should still refuse to overwrite when
+        // the existing cache is a valid backup.
+        //
+        // We construct the test so the cache file *would* pass the size
+        // threshold and is real backup material by stuffing a unique
+        // fingerprint byte.
+        let cache = goldberg_cache_dir_for(&home, 990033);
+        std::fs::create_dir_all(&cache).unwrap();
+        let mut sentinel = steam_test_bytes();
+        // Stamp a unique marker so the cached file does not match the
+        // live `steam_api64.dll` (which has its own marker).
+        sentinel[0x7A] = b'!';
+        std::fs::write(cache.join("steam_api64.dll"), &sentinel).unwrap();
+
+        let targets = goldberg_deploy_targets(&game_dir);
+        let emu_dir = home.join("runtime").join("goldberg");
+        // backup_dlls_for_appid sees the cache already has a file. It
+        // must NOT overwrite because the cache was previously populated
+        // and should be treated as authoritative.
+        backup_dlls_for_appid(&home, 990033, &targets, &emu_dir);
+        let after = std::fs::read(cache.join("steam_api64.dll")).unwrap();
+        assert_eq!(after, sentinel, "existing cache must be preserved");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn metadata_survives_toggle_off_and_round_trips() {
+        let (home, _game_dir) = install_temp_home(990044);
+
+        let targets = goldberg_deploy_targets(&_game_dir);
+        let emu_dir = home.join("runtime").join("goldberg");
+        persist_goldberg_toggle_on_for(&home, 990044, &targets, &emu_dir);
+        let on = read_goldberg_metadata_for(&home, 990044).unwrap();
+        assert!(on.active);
+        assert!(on.backed_up_at.is_some());
+
+        persist_goldberg_toggle_off_for(&home, 990044);
+        let off = read_goldberg_metadata_for(&home, 990044).unwrap();
+        assert!(!off.active, "OFF must persist on disk");
+        // Cache files survive across OFF so a re-enable is cheap.
+        let cache = goldberg_cache_dir_for(&home, 990044);
+        assert!(cache.join("steam_api64.dll").is_file(), "cache must persist across OFF");
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

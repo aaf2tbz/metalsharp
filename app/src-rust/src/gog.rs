@@ -160,6 +160,10 @@ fn tools_dir() -> PathBuf {
     ms_home().join("tools")
 }
 
+fn gog_oauth_helper_dest_dir() -> PathBuf {
+    tools_dir().join("gog-oauth-electron")
+}
+
 fn gogdl_wrapper_path() -> PathBuf {
     tools_dir().join("gogdl")
 }
@@ -247,8 +251,54 @@ fn write_gogdl_wrapper() -> Result<(), String> {
     Ok(())
 }
 
+fn gog_oauth_helper_source_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        candidates.push(resources.join("tools").join("gog-oauth-electron"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("tools").join("gog-oauth-electron"));
+            // Walk up a few levels looking for tools/gog-oauth-electron
+            // (handles .../<AppName>.app/Contents/MacOS/<exe> layouts).
+            let mut probe = exe_dir.to_path_buf();
+            for _ in 0..6 {
+                if let Some(parent) = probe.parent() {
+                    candidates.push(parent.join("tools").join("gog-oauth-electron"));
+                    probe = parent.to_path_buf();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    candidates.into_iter().filter(|path| path.join("main.js").is_file() && path.join("index.html").is_file()).collect()
+}
+
+fn deploy_gog_oauth_helper() -> Result<PathBuf, String> {
+    let sources = gog_oauth_helper_source_candidates();
+    let Some(source) = sources.first() else {
+        return Err("GOG OAuth helper source not bundled; reinstall MetalSharp".to_string());
+    };
+    let dest = gog_oauth_helper_dest_dir();
+    fs::create_dir_all(&dest).map_err(|error| format!("failed to create {}: {}", dest.display(), error))?;
+    for name in ["main.js", "index.html"] {
+        let src = source.join(name);
+        let dst = dest.join(name);
+        if !src.is_file() {
+            return Err(format!("GOG OAuth helper missing {} at {}", name, source.display()));
+        }
+        fs::copy(&src, &dst)
+            .map_err(|error| format!("failed to copy {} -> {}: {}", src.display(), dst.display(), error))?;
+    }
+    Ok(dest)
+}
+
 fn ensure_gogdl_available() -> Result<(), String> {
     if gogdl_binary().is_some() {
+        // Even with gogdl already in place, make sure the OAuth helper is
+        // staged so the Electron main process can find it.
+        let _ = deploy_gog_oauth_helper();
         return Ok(());
     }
     if gogdl_venv_bin().is_file() {
@@ -297,6 +347,9 @@ fn ensure_gogdl_available() -> Result<(), String> {
     let mut command = Command::new(gogdl_wrapper_path());
     command.arg("--version");
     run_bootstrap_command(&mut command, "GOG support verification")?;
+    // Stage the OAuth helper next to the gogdl tool so the Electron main
+    // process can find it via process spawning.
+    deploy_gog_oauth_helper()?;
     Ok(())
 }
 
@@ -487,6 +540,8 @@ fn status_value() -> Value {
     let binary = gogdl_binary();
     let authenticated = file_nonempty(&gog_auth_config_path());
     let prefix = gog_prefix();
+    let oauth_dest = gog_oauth_helper_dest_dir();
+    let oauth_available = oauth_dest.join("main.js").is_file() && oauth_dest.join("index.html").is_file();
     let status = if binary.is_none() {
         "missing_gogdl"
     } else if !prefix.join("drive_c").is_dir() {
@@ -508,6 +563,9 @@ fn status_value() -> Value {
         "authConfigPath": gog_auth_config_path().to_string_lossy().to_string(),
         "configPath": gogdl_config_dir().to_string_lossy().to_string(),
         "supportPath": gogdl_support_dir().to_string_lossy().to_string(),
+        "oauthHelperPath": oauth_dest.to_string_lossy().to_string(),
+        "oauthHelperAvailable": oauth_available,
+        "oauthHelperScript": oauth_dest.join("main.js").to_string_lossy().to_string(),
         "bottleId": GOG_PREFIX_BOTTLE_ID,
         "winePrefix": prefix.to_string_lossy().to_string(),
         "prefixInitialized": prefix.join("drive_c").is_dir(),
@@ -580,6 +638,41 @@ pub fn handle_auth_code(body: &Value) -> Value {
 pub fn handle_logout() -> Value {
     let _ = fs::remove_file(gog_auth_config_path());
     json!({"ok": true, "status": status_value()})
+}
+
+pub fn handle_remove_prefix() -> Value {
+    let home = crate::platform::metalsharp_home_dir();
+    handle_remove_prefix_in(&home);
+    json!({"ok": true, "status": status_value()})
+}
+
+pub(crate) fn handle_remove_prefix_in(home: &Path) {
+    // Stop any in-flight wineprocesses so the on-disk prefix isn't locked.
+    let prefix = gog_prefix_for(home);
+    if let Some(parent) = prefix.parent() {
+        if parent.is_dir() {
+            let _ = Command::new(crate::platform::runtime_wineserver(&wine_root_for(home)))
+                .env("WINEPREFIX", prefix.to_string_lossy().to_string())
+                .arg("-k")
+                .output();
+        }
+    }
+    // Wipe the entire bottle directory (prefix + manifest). The bottle
+    // dir is recreated lazily on the next initialize_prefix() call.
+    let bottle = gog_bottle_dir_for(home);
+    let _ = fs::remove_dir_all(&bottle);
+}
+
+fn gog_prefix_for(home: &Path) -> PathBuf {
+    gog_bottle_dir_for(home).join("prefix")
+}
+
+fn gog_bottle_dir_for(home: &Path) -> PathBuf {
+    crate::bottles::bottle_dir_for(home, GOG_PREFIX_BOTTLE_ID)
+}
+
+fn wine_root_for(home: &Path) -> PathBuf {
+    home.join(".metalsharp").join("runtime").join("wine")
 }
 
 fn gogdl_info(product_id: &str, platform: &str) -> Result<Value, String> {
@@ -1139,5 +1232,37 @@ mod tests {
     #[test]
     fn exit_code_parser_finds_success() {
         assert_eq!(log_exit_code("abc\ngogdl exited with Some(0)\n"), Some(0));
+    }
+
+    #[test]
+    fn handle_remove_prefix_wipes_bottle_dir_under_private_home() {
+        // Stage a synthetic GOG bottle + prefix under a private temp home
+        // so we don't touch the real `~/.metalsharp` dir and don't have
+        // to mess with the process-global METALSHARP_HOME env var
+        // (which would race other tests in the suite).
+        let home = std::env::temp_dir().join(format!(
+            "metalsharp-gog-remove-prefix-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let bottle = home.join(".metalsharp").join("bottles").join(GOG_PREFIX_BOTTLE_ID);
+        let prefix = bottle.join("prefix").join("drive_c");
+        std::fs::create_dir_all(&prefix).unwrap();
+        std::fs::write(prefix.join("winetest.exe"), b"stub").unwrap();
+
+        // Run the wipe pointed at our private home.
+        handle_remove_prefix_in(&home);
+
+        assert!(!bottle.exists(), "bottle dir must be removed: {}", bottle.display());
+        assert!(!prefix.exists(), "prefix dir must be removed: {}", prefix.display());
+        // And re-running is a no-op (idempotent), so a freshly-removed
+        // prefix shouldn't crash on a second call.
+        handle_remove_prefix_in(&home);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    fn unique_suffix() -> u128 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
     }
 }

@@ -149,6 +149,9 @@ interface GogStatus {
   authenticated: boolean;
   gogdlAvailable: boolean;
   gogdlPath?: string | null;
+  oauthHelperPath?: string | null;
+  oauthHelperAvailable?: boolean;
+  oauthHelperScript?: string | null;
   winePrefix: string;
   prefixInitialized: boolean;
   winePath: string;
@@ -230,9 +233,12 @@ interface WineMonoStatus {
   installed: boolean;
   upToDate: boolean;
   running: boolean;
+  stalled?: boolean;
   pid?: number | null;
   logPath?: string | null;
   targetVersion: string;
+  startedAt?: number | null;
+  elapsedSeconds?: number | null;
   lastError?: string | null;
   msiCached: boolean;
   downloading: boolean;
@@ -279,9 +285,41 @@ async function installGogMono() {
     toast.show("Wine Mono installer launched — complete it in the Wine window", "success");
     startGogMonoPoll();
   } else {
-    toast.show(result?.error ?? "Failed to launch Wine Mono installer", "error");
+    const errMsg = result?.error ?? "Failed to launch Wine Mono installer";
+    toast.show(errMsg, "error", 12_000);
     await refreshGogMonoStatus();
   }
+}
+
+async function resetGogMonoInstall() {
+  gogLoading.value.mono = true;
+  const result = await api<{ ok: boolean; killedProcesses?: number; error?: string }>(
+    "POST",
+    "/wine-mono/reset",
+    { prefix: "gog" },
+    15 * 1000,
+  );
+  gogLoading.value.mono = false;
+  await refreshGogMonoStatus();
+  if (result?.ok) {
+    const killed = result.killedProcesses ?? 0;
+    toast.show(
+      killed > 0
+        ? `Cleared ${killed} stuck Mono processes; click Install Mono to retry`
+        : "Mono install state cleared; click Install Mono to retry",
+      "success",
+    );
+  } else {
+    toast.show(result?.error ?? "Failed to reset Wine Mono install", "error");
+  }
+}
+
+function formatElapsedSeconds(seconds: number | null | undefined): string {
+  if (!seconds || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function gogMonoButtonLabel(): string {
@@ -289,24 +327,60 @@ function gogMonoButtonLabel(): string {
   if (!s) return "Install Mono";
   if (s.downloading && s.downloadTotal > 0) {
     const raw = (s.downloadBytes / s.downloadTotal) * 100;
-    const pct = Math.min(100, Math.floor(raw / 15) * 15);
+    const pct = Math.min(100, Math.floor(raw / 5) * 5);
     return `Downloading ${pct}%…`;
   }
   if (s.downloading) return "Downloading Mono…";
-  if (s.running) return "Running…";
+  if (s.running && s.stalled) return "Stalled — tap to retry";
+  if (s.running) {
+    const elapsed = formatElapsedSeconds(s.elapsedSeconds);
+    return `Running… ${elapsed}`;
+  }
   if (gogLoading.value.mono) return "Installing Mono…";
   return "Install Mono";
 }
 
+function gogMonoButtonTitle(): string {
+  const s = gogMonoStatus.value;
+  if (!s) return "Install Wine Mono";
+  if (s.downloadError) {
+    return `Wine Mono download failed: ${s.downloadError}. Click to retry.`;
+  }
+  if (s.stalled) {
+    return s.lastError
+      ? `Wine Mono installer stalled: ${s.lastError}. Click to retry, or use Reset to clear stuck processes.`
+      : "Wine Mono installer stalled. Click to retry, or use Reset to clear stuck processes.";
+  }
+  const base = `Wine Mono ${s.installedVersion ?? "not installed"} → ${s.latestVersion}`;
+  return s.lastError ? `${base}. ${s.lastError}` : base;
+}
+
 function startGogMonoPoll() {
   if (gogMonoPollHandle.value) return;
+  let stalledToastShown = false;
   gogMonoPollHandle.value = setInterval(async () => {
     await refreshGogMonoStatus();
     const status = gogMonoStatus.value;
     if (!status) return;
 
+    // If the backend reports a hung install, surface a single recovery toast
+    // and let the user decide whether to retry or reset.
+    if (status.stalled === true && !stalledToastShown) {
+      stalledToastShown = true;
+      toast.show(
+        status.lastError
+          ? `Wine Mono installer stalled (${status.lastError}); tap Reset to clear or Install Mono to retry`
+          : "Wine Mono installer stalled; tap Reset to clear or Install Mono to retry",
+        "error",
+        10_000,
+      );
+    }
+    if (!status.stalled) {
+      stalledToastShown = false;
+    }
+
     // Download completed successfully → trigger the installer.
-    if (status.msiCached && !status.downloading && !status.running && !status.upToDate) {
+    if (status.msiCached && !status.downloading && !status.running && !status.upToDate && !status.stalled) {
       stopGogMonoPoll();
       gogLoading.value.mono = true;
       await installGogMono();
@@ -319,6 +393,9 @@ function startGogMonoPoll() {
     } else if (!status.running && !status.downloading) {
       // Installer exited without landing the latest version (user cancelled).
       stopGogMonoPoll();
+      if (status.lastError) {
+        toast.show(status.lastError, "error", 12_000);
+      }
     }
   }, 3000);
 }
@@ -500,6 +577,29 @@ async function initializeGogPrefix() {
   toast.show(result?.error ?? "Failed to initialize GOG prefix", "error");
 }
 
+async function removeGogPrefix() {
+  const message =
+    "Remove the GOG Wine prefix? " +
+    "This will permanently delete the isolated Wine prefix and all Wine Mono components. " +
+    "Downloaded GOG games will stay on disk but cannot launch until the prefix is re-created.";
+  if (!confirm(message)) return;
+  gogLoading.value.removing = true;
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>(
+    "POST",
+    "/sharp-library/gog/remove-prefix",
+    {},
+    30 * 1000,
+  );
+  gogLoading.value.removing = false;
+  if (result?.ok) {
+    if (result.status) gogStatus.value = result.status;
+    await refreshGog();
+    toast.show("GOG prefix removed", "success");
+  } else {
+    toast.show(result?.error ?? "Failed to remove GOG prefix", "error");
+  }
+}
+
 async function disconnectGog() {
   if (!confirm("Disconnect GOG and show Login again? Installed games will stay on disk.")) return;
   gogLoading.value.login = true;
@@ -524,10 +624,22 @@ async function handleGogAuthButton() {
 
 async function loginGog() {
   if (!gogStatus.value?.authUrl) return;
+  // If the Rust backend hasn't staged the OAuth helper yet, refresh status and
+  // try once more — this protects users who hit Login before the gogdl
+  // bootstrap has finished copying tools/gog-oauth-electron into ~/.metalsharp.
+  if (gogStatus.value?.oauthHelperAvailable === false) {
+    await refreshGog();
+  }
   gogLoading.value.login = true;
   const login = await getAPI().gogOAuthLogin(gogStatus.value.authUrl);
   if (!login.ok || !login.code) {
     gogLoading.value.login = false;
+    const helperMissing = login.error?.includes("OAuth helper script not found");
+    if (helperMissing) {
+      toast.show("GOG login helper unavailable; reinitializing the GOG prefix", "error");
+      await refreshGog();
+      return;
+    }
     toast.show(login.error ?? "GOG login cancelled", "error");
     return;
   }
@@ -737,6 +849,10 @@ async function saveD3DMetalBottle(bottle: BottleManifest) {
     return;
   }
   bottleLoading.value[bottle.id] = true;
+  // The first save downloads the GPTK fork via Homebrew, which can
+  // take several minutes. Surface a bottom-right toast so the bottle
+  // doesn't look stale while the request is in flight.
+  toast.show("Saving D3DMetal bottle — downloading GPTK runtime on first save…", "success");
   const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/save", {
     appid: bottle.steam_app_id,
     bottleId: bottle.id,
@@ -1252,19 +1368,52 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
           <IconUpload class="btn-icon" width="14" height="14" />
           <span class="btn-label-long">Install Windows Program</span><span class="btn-label-short">Install</span>
         </button>
-        <button v-if="sourceMode === 'gog'" class="btn btn-secondary" :disabled="gogLoading.setup" @click="initializeGogPrefix">
-          <span class="btn-label-long">{{ gogLoading.setup ? "Initializing…" : gogStatus?.prefixInitialized ? "Prefix Ready" : "Initialize GOG Prefix" }}</span><span class="btn-label-short">Prefix</span>
+        <button
+          v-if="sourceMode === 'gog'"
+          class="btn btn-secondary"
+          :disabled="gogLoading.setup || gogLoading.removing"
+          :title="gogStatus?.prefixInitialized
+            ? 'Remove the GOG Wine prefix. Downloaded GOG games stay on disk but cannot launch until the prefix is re-created.'
+            : 'Create the isolated Wine prefix required to install and launch GOG games.'"
+          @click="gogStatus?.prefixInitialized ? removeGogPrefix() : initializeGogPrefix()"
+        >
+          <span class="btn-label-long">{{
+            gogLoading.removing
+              ? "Removing…"
+              : gogLoading.setup
+                ? "Initializing…"
+                : gogStatus?.prefixInitialized
+                  ? "Remove Prefix"
+                  : "Initialize GOG Prefix"
+          }}</span><span class="btn-label-short">Prefix</span>
         </button>
         <button
           v-if="sourceMode === 'gog' && showGogInstallMono"
           class="btn btn-primary"
-          :disabled="gogLoading.mono || gogMonoStatus?.running || gogMonoStatus?.downloading"
-          :title="gogMonoStatus ? `Wine Mono ${gogMonoStatus.installedVersion ?? 'not installed'} → ${gogMonoStatus.latestVersion}${gogMonoStatus.downloadError ? ' (download failed)' : ''}` : 'Install Wine Mono'"
+          :disabled="gogLoading.mono || (gogMonoStatus?.running && !gogMonoStatus?.stalled) || (gogMonoStatus?.downloading && !gogMonoStatus?.stalled)"
+          :title="gogMonoButtonTitle()"
           @click="installGogMono"
         >
           <span class="btn-label-long">{{ gogMonoButtonLabel() }}</span><span class="btn-label-short">Mono</span>
         </button>
-        <button v-if="sourceMode === 'gog'" class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized" @click="handleGogAuthButton">
+        <button
+          v-if="sourceMode === 'gog' && showGogInstallMono && (gogMonoStatus?.stalled || gogMonoStatus?.running)"
+          class="btn btn-secondary btn-sm"
+          :disabled="gogLoading.mono"
+          title="Kill any stuck Wine Mono processes and reset the install state"
+          @click="resetGogMonoInstall"
+        >
+          <span class="btn-label-long">Reset</span><span class="btn-label-short">Reset</span>
+        </button>
+        <button
+          v-if="sourceMode === 'gog'"
+          class="btn btn-primary"
+          :disabled="gogLoading.login || !gogStatus?.prefixInitialized"
+          :title="gogStatus?.oauthHelperAvailable === false
+            ? 'GOG OAuth helper is missing; click “Prefix” or refresh to stage the new bundled helper.'
+            : 'Sign in to GOG to enable library sync and downloads'"
+          @click="handleGogAuthButton"
+        >
           <span class="btn-label-long">{{ gogStatus?.authenticated ? "GOG Connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}</span><span class="btn-label-short">{{ gogStatus?.authenticated ? "Connected" : "Login" }}</span>
         </button>
         <button class="btn btn-secondary" :disabled="sourceMode === 'gog' && gogLoading.sync" @click="refreshCurrentSource">
