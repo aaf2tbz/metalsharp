@@ -762,6 +762,10 @@ async function saveBottleEdit() {
       bottleSaving.value = false;
       return;
     }
+    // The first save downloads the GPTK fork via Homebrew, which can
+    // take several minutes. Surface a bottom-right toast so the bottle
+    // doesn't look stale while the request is in flight.
+    toast.show("Saving D3DMetal bottle — downloading GPTK runtime on first save…", "success");
     const d3dmetalResult = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/save", {
       appid: props.game.appid,
       bottleId,
@@ -909,7 +913,7 @@ function formatBytes(bytes: number): string {
         <div v-else-if="game.installed" class="game-card-actions-stack">
           <div class="primary-action-row">
             <button class="icon-button bottle-button" title="Bottle" @click="openBottleWorkspace">
-              <IconFlaskConical v-if="!runtimeLoading" width="17" height="17" />
+              <IconFlaskConical v-if="!runtimeLoading && !bottleSaving" width="17" height="17" />
               <span v-else class="spinner"></span>
             </button>
             <button class="btn btn-play" @click="playSelectedLaunchMode">Play</button>
@@ -986,6 +990,7 @@ function formatBytes(bytes: number): string {
           </div>
           <div v-if="runtimeOpen" class="doctor-panel">
             <div v-if="runtimeLoading" class="doctor-loading">Checking bottle runtime...</div>
+            <div v-else-if="bottleSaving && bottlePreferredMode === 'd3dmetal'" class="doctor-loading">Saving D3DMetal bottle — GPTK may download…</div>
             <template v-else-if="runtimeReport">
               <div class="doctor-summary">
                 <span class="badge" :class="runtimeReport.actions.length ? 'badge-warn' : 'badge-ok'">

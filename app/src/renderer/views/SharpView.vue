@@ -849,6 +849,10 @@ async function saveD3DMetalBottle(bottle: BottleManifest) {
     return;
   }
   bottleLoading.value[bottle.id] = true;
+  // The first save downloads the GPTK fork via Homebrew, which can
+  // take several minutes. Surface a bottom-right toast so the bottle
+  // doesn't look stale while the request is in flight.
+  toast.show("Saving D3DMetal bottle — downloading GPTK runtime on first save…", "success");
   const result = await api<D3DMetalGptkResponse>("POST", "/d3dmetal/bottles/save", {
     appid: bottle.steam_app_id,
     bottleId: bottle.id,
