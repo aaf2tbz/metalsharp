@@ -1155,130 +1155,56 @@ function registerIpc() {
       return { ok: false, error: "Refusing to open non-GOG auth URL." };
     }
 
+    const electronBin = process.execPath; // path to the running Electron binary
+    // Resolve the OAuth helper script. In dev the tools dir is at the project
+    // root; in production it lives alongside the app resources.
+    let scriptPath = path.join(__dirname, "..", "..", "..", "tools", "gog-oauth-electron", "main.js");
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(__dirname, "..", "..", "tools", "gog-oauth-electron", "main.js");
+    }
+    if (!fs.existsSync(scriptPath)) {
+      return { ok: false, error: "GOG OAuth helper script not found" };
+    }
+
     return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
       let settled = false;
-      let safariPoll: ReturnType<typeof setInterval> | null = null;
-      const safariDeadline = Date.now() + 5 * 60 * 1000;
-
-      const stopSafariPolling = () => {
-        if (safariPoll) clearInterval(safariPoll);
-        safariPoll = null;
-      };
+      let output = "";
 
       const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
         if (settled) return;
         settled = true;
-        stopSafariPolling();
         resolve(result);
       };
 
-      const runAppleScript = (script: string, args: string[] = []) =>
-        new Promise<string>((resolveScript, rejectScript) => {
-          execFile("/usr/bin/osascript", ["-e", script, ...args], { timeout: 5000 }, (error, stdout) => {
-            if (error) rejectScript(error);
-            else resolveScript(stdout.toString());
-          });
-        });
+      const child = spawn(electronBin, [scriptPath, authUrl], {
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 300_000, // 5 minutes
+      });
 
-      const safariUrlsScript = `
-tell application "Safari"
-  if (count of windows) = 0 then return ""
-  set output to ""
-  repeat with w in windows
-    repeat with t in tabs of w
-      try
-        set output to output & (URL of t as text) & linefeed
-      end try
-    end repeat
-  end repeat
-  return output
-end tell`;
+      child.stdout.on("data", (data: Buffer) => {
+        output += data.toString();
+      });
 
-      const closeSafariUrlScript = `
-on run argv
-  set targetUrl to item 1 of argv
-  tell application "Safari"
-    repeat with w in windows
-      repeat with i from (count of tabs of w) to 1 by -1
-        set t to tab i of w
-        try
-          if (URL of t as text) is targetUrl then
-            close t
-            if (count of tabs of w) is 0 then close w
-            return "closed"
-          end if
-        end try
-      end repeat
-    end repeat
-  end tell
-  return "not_found"
-end run`;
+      child.stderr.on("data", (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) console.error(`GOG OAuth helper: ${msg}`);
+      });
 
-      const closeSafariUrl = (url: string) => {
-        runAppleScript(closeSafariUrlScript, [url]).catch(() => undefined);
-      };
-
-      const gogCodeFromUrl = (redirect: URL) => {
-        const queryCode = redirect.searchParams.get("code");
-        if (queryCode) return queryCode;
-        const hash = redirect.hash.startsWith("#") ? redirect.hash.slice(1) : redirect.hash;
-        return new URLSearchParams(hash).get("code");
-      };
-
-      const isGogHost = (redirect: URL) => {
-        const host = redirect.hostname.toLowerCase();
-        return host === "gog.com" || host.endsWith(".gog.com");
-      };
-
-      const isGogCallbackUrl = (redirect: URL) => {
-        if (!isGogHost(redirect)) return false;
-        const path = redirect.pathname.toLowerCase().replace(/\/+$/, "");
-        return path.includes("on_login_success") || Boolean(gogCodeFromUrl(redirect));
-      };
-
-      const inspectUrl = (url: string) => {
-        try {
-          const redirect = new URL(url);
-          if (!isGogCallbackUrl(redirect)) return false;
-          const code = gogCodeFromUrl(redirect);
-          const callbackError = redirect.searchParams.get("error") ?? redirect.searchParams.get("error_description");
-          if (callbackError) {
-            finish({ ok: false, error: `GOG login callback failed: ${callbackError}`, redirectUrl: url });
-            return true;
-          }
-          if (!code) return true;
-          closeSafariUrl(url);
-          finish({ ok: true, code, redirectUrl: url });
-          return true;
-        } catch {
-          return false;
+      child.on("close", (code) => {
+        const trimmed = output.trim();
+        if (trimmed && trimmed.length > 4 && !trimmed.includes(" ")) {
+          // Looks like a valid authorization code.
+          finish({ ok: true, code: trimmed });
+        } else if (trimmed) {
+          finish({ ok: false, error: trimmed });
+        } else {
+          finish({ ok: false, error: `OAuth helper exited with code ${code ?? "null"}` });
         }
-      };
+      });
 
-      const pollSafari = async () => {
-        if (settled) return;
-        if (Date.now() > safariDeadline) {
-          finish({ ok: false, error: "Timed out waiting for the GOG login callback in Safari." });
-          return;
-        }
-        try {
-          const output = await runAppleScript(safariUrlsScript);
-          for (const url of output
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter(Boolean)) {
-            if (inspectUrl(url)) return;
-          }
-        } catch {}
-      };
-
-      safariPoll = setInterval(() => {
-        pollSafari().catch(() => undefined);
-      }, 500);
-      shell
-        .openExternal(authUrl)
-        .then(() => pollSafari().catch(() => undefined))
-        .catch((error) => finish({ ok: false, error: error.message, redirectUrl: authUrl }));
+      child.on("error", (err) => {
+        finish({ ok: false, error: `Failed to start OAuth helper: ${err.message}` });
+      });
     });
   });
 
