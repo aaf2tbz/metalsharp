@@ -233,9 +233,12 @@ interface WineMonoStatus {
   installed: boolean;
   upToDate: boolean;
   running: boolean;
+  stalled?: boolean;
   pid?: number | null;
   logPath?: string | null;
   targetVersion: string;
+  startedAt?: number | null;
+  elapsedSeconds?: number | null;
   lastError?: string | null;
   msiCached: boolean;
   downloading: boolean;
@@ -282,9 +285,41 @@ async function installGogMono() {
     toast.show("Wine Mono installer launched — complete it in the Wine window", "success");
     startGogMonoPoll();
   } else {
-    toast.show(result?.error ?? "Failed to launch Wine Mono installer", "error");
+    const errMsg = result?.error ?? "Failed to launch Wine Mono installer";
+    toast.show(errMsg, "error", 12_000);
     await refreshGogMonoStatus();
   }
+}
+
+async function resetGogMonoInstall() {
+  gogLoading.value.mono = true;
+  const result = await api<{ ok: boolean; killedProcesses?: number; error?: string }>(
+    "POST",
+    "/wine-mono/reset",
+    { prefix: "gog" },
+    15 * 1000,
+  );
+  gogLoading.value.mono = false;
+  await refreshGogMonoStatus();
+  if (result?.ok) {
+    const killed = result.killedProcesses ?? 0;
+    toast.show(
+      killed > 0
+        ? `Cleared ${killed} stuck Mono processes; click Install Mono to retry`
+        : "Mono install state cleared; click Install Mono to retry",
+      "success",
+    );
+  } else {
+    toast.show(result?.error ?? "Failed to reset Wine Mono install", "error");
+  }
+}
+
+function formatElapsedSeconds(seconds: number | null | undefined): string {
+  if (!seconds || seconds < 0) return "0:00";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function gogMonoButtonLabel(): string {
@@ -292,24 +327,60 @@ function gogMonoButtonLabel(): string {
   if (!s) return "Install Mono";
   if (s.downloading && s.downloadTotal > 0) {
     const raw = (s.downloadBytes / s.downloadTotal) * 100;
-    const pct = Math.min(100, Math.floor(raw / 15) * 15);
+    const pct = Math.min(100, Math.floor(raw / 5) * 5);
     return `Downloading ${pct}%…`;
   }
   if (s.downloading) return "Downloading Mono…";
-  if (s.running) return "Running…";
+  if (s.running && s.stalled) return "Stalled — tap to retry";
+  if (s.running) {
+    const elapsed = formatElapsedSeconds(s.elapsedSeconds);
+    return `Running… ${elapsed}`;
+  }
   if (gogLoading.value.mono) return "Installing Mono…";
   return "Install Mono";
 }
 
+function gogMonoButtonTitle(): string {
+  const s = gogMonoStatus.value;
+  if (!s) return "Install Wine Mono";
+  if (s.downloadError) {
+    return `Wine Mono download failed: ${s.downloadError}. Click to retry.`;
+  }
+  if (s.stalled) {
+    return s.lastError
+      ? `Wine Mono installer stalled: ${s.lastError}. Click to retry, or use Reset to clear stuck processes.`
+      : "Wine Mono installer stalled. Click to retry, or use Reset to clear stuck processes.";
+  }
+  const base = `Wine Mono ${s.installedVersion ?? "not installed"} → ${s.latestVersion}`;
+  return s.lastError ? `${base}. ${s.lastError}` : base;
+}
+
 function startGogMonoPoll() {
   if (gogMonoPollHandle.value) return;
+  let stalledToastShown = false;
   gogMonoPollHandle.value = setInterval(async () => {
     await refreshGogMonoStatus();
     const status = gogMonoStatus.value;
     if (!status) return;
 
+    // If the backend reports a hung install, surface a single recovery toast
+    // and let the user decide whether to retry or reset.
+    if (status.stalled === true && !stalledToastShown) {
+      stalledToastShown = true;
+      toast.show(
+        status.lastError
+          ? `Wine Mono installer stalled (${status.lastError}); tap Reset to clear or Install Mono to retry`
+          : "Wine Mono installer stalled; tap Reset to clear or Install Mono to retry",
+        "error",
+        10_000,
+      );
+    }
+    if (!status.stalled) {
+      stalledToastShown = false;
+    }
+
     // Download completed successfully → trigger the installer.
-    if (status.msiCached && !status.downloading && !status.running && !status.upToDate) {
+    if (status.msiCached && !status.downloading && !status.running && !status.upToDate && !status.stalled) {
       stopGogMonoPoll();
       gogLoading.value.mono = true;
       await installGogMono();
@@ -322,6 +393,9 @@ function startGogMonoPoll() {
     } else if (!status.running && !status.downloading) {
       // Installer exited without landing the latest version (user cancelled).
       stopGogMonoPoll();
+      if (status.lastError) {
+        toast.show(status.lastError, "error", 12_000);
+      }
     }
   }, 3000);
 }
@@ -1273,11 +1347,20 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
         <button
           v-if="sourceMode === 'gog' && showGogInstallMono"
           class="btn btn-primary"
-          :disabled="gogLoading.mono || gogMonoStatus?.running || gogMonoStatus?.downloading"
-          :title="gogMonoStatus ? `Wine Mono ${gogMonoStatus.installedVersion ?? 'not installed'} → ${gogMonoStatus.latestVersion}${gogMonoStatus.downloadError ? ' (download failed)' : ''}` : 'Install Wine Mono'"
+          :disabled="gogLoading.mono || (gogMonoStatus?.running && !gogMonoStatus?.stalled) || (gogMonoStatus?.downloading && !gogMonoStatus?.stalled)"
+          :title="gogMonoButtonTitle()"
           @click="installGogMono"
         >
           <span class="btn-label-long">{{ gogMonoButtonLabel() }}</span><span class="btn-label-short">Mono</span>
+        </button>
+        <button
+          v-if="sourceMode === 'gog' && showGogInstallMono && (gogMonoStatus?.stalled || gogMonoStatus?.running)"
+          class="btn btn-secondary btn-sm"
+          :disabled="gogLoading.mono"
+          title="Kill any stuck Wine Mono processes and reset the install state"
+          @click="resetGogMonoInstall"
+        >
+          <span class="btn-label-long">Reset</span><span class="btn-label-short">Reset</span>
         </button>
         <button
           v-if="sourceMode === 'gog'"

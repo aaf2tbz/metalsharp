@@ -1862,6 +1862,11 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let prefix = body.get("prefix").and_then(|v| v.as_str()).unwrap_or("gog").to_string();
             resp(200, mono::handle_install(&prefix))
         },
+        (Method::Post, "/wine-mono/reset") => {
+            let body = read_body(req);
+            let prefix = body.get("prefix").and_then(|v| v.as_str()).unwrap_or("gog").to_string();
+            resp(200, mono::handle_reset(&prefix))
+        },
         (Method::Post, "/sharp-library/install") => {
             let body = read_body(req);
             app_log(&format!("[SHARP-LIB] install: {}", body.get("srcPath").and_then(|v| v.as_str()).unwrap_or("?")));
