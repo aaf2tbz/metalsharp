@@ -3932,14 +3932,42 @@ fn backup_dlls_for_appid(
         ("steamclient64.dll", "steamclient"),
         ("steamclient.dll", "steamclient"),
     ];
+    // Fallback: the user's real Wine Steam installation. When the game dir
+    // doesn't already contain the original DLLs (because the game hasn't
+    // been run through Steam yet), we copy the official Steam DLLs from
+    // the prefix-steam Steam install into the cache so the "Backup Missing"
+    // status doesn't show when we have perfectly-good originals elsewhere.
+    let steam_install_dir = home_root.join("prefix-steam")
+        .join("drive_c").join("Program Files (x86)").join("Steam");
     for target in targets {
         if !target.is_dir() {
             continue;
         }
         for (dll_name, sub) in candidates.iter() {
             let src = target.join(dll_name);
+            // If the DLL isn't already in the game target, try copying
+            // the official Steam DLL from the user's Steam prefix. This
+            // ensures the backup always exists when the user has Steam
+            // installed (which is a prerequisite for using Goldberg).
             if !src.is_file() {
-                continue;
+                let steam_src = steam_install_dir.join(dll_name);
+                if steam_src.is_file() {
+                    if let Some(parent) = src.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    // Stage the original Steam DLL into the game target so
+                    // downstream code (cache_original_dll etc.) finds it.
+                    if std::fs::copy(&steam_src, &src).is_ok() {
+                        any_backup = true;
+                        let rel = target.to_string_lossy().to_string();
+                        if !backed_up_from.contains(&rel) {
+                            backed_up_from.push(rel);
+                        }
+                    }
+                }
+                if !src.is_file() {
+                    continue;
+                }
             }
             // Check whether this DLL is already cached. If it is, skip the
             // copy and just record it for the manifest.
