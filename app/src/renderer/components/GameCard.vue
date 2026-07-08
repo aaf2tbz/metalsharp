@@ -152,6 +152,8 @@ const emit = defineEmits<{
 
 const toast = useToast();
 const goldbergActive = ref(false);
+const goldbergBackedUpAt = ref<number | null>(null);
+const goldbergCacheOk = ref(true);
 const pipelineName = ref("Auto");
 const pipelineResolvedLocally = ref(false);
 const selectedLaunchMode = ref("auto");
@@ -408,11 +410,21 @@ onMounted(async () => {
       selectedLaunchMode.value = "auto";
     }
 
-    const gs = await api<{ ok: boolean; goldberg_active: boolean }>(
-      "GET",
-      `/goldberg/status?appid=${props.game.appid}`,
-    );
-    if (gs?.ok) goldbergActive.value = gs.goldberg_active;
+    const gs = await api<{
+      ok: boolean;
+      goldberg_active: boolean;
+      persisted_active?: boolean;
+      cache_files_ok?: boolean;
+      cache_files?: string[];
+      backed_up_at?: number | null;
+    }>("GET", `/goldberg/status?appid=${props.game.appid}`);
+    if (gs?.ok) {
+      goldbergActive.value = gs.goldberg_active;
+      if (typeof gs.backed_up_at === "number") {
+        goldbergBackedUpAt.value = gs.backed_up_at;
+      }
+      goldbergCacheOk.value = gs.cache_files_ok === true;
+    }
 
   }
 });
@@ -483,13 +495,32 @@ async function refreshPipelineMetadata() {
 }
 
 async function toggleGoldberg(enable: boolean) {
-  const result = await api<{ ok: boolean; goldberg_active: boolean }>("POST", "/goldberg/toggle", {
-    appid: props.game.appid,
-    enable,
-  });
+  const result = await api<{ ok: boolean; goldberg_active: boolean; cache_files_ok?: boolean; backed_up_at?: number | null }>(
+    "POST",
+    "/goldberg/toggle",
+    {
+      appid: props.game.appid,
+      enable,
+    },
+  );
   if (result?.ok) {
     goldbergActive.value = result.goldberg_active;
-    toast.show(enable ? "Steam Emu enabled" : "Steam Emu disabled", "success");
+    if (typeof result.backed_up_at === "number") {
+      goldbergBackedUpAt.value = result.backed_up_at;
+    }
+    if (typeof result.cache_files_ok === "boolean") {
+      goldbergCacheOk.value = result.cache_files_ok;
+    }
+    if (enable) {
+      toast.show(
+        result.cache_files_ok === false
+          ? "Steam Emu enabled, but no backup cache found — restore from OFF may rely on .orig files only"
+          : "Steam Emu enabled; original Steam DLLs cached for safe restore",
+        "success",
+      );
+    } else {
+      toast.show("Steam Emu disabled; original Steam DLLs restored", "success");
+    }
   } else {
     toast.show("Failed to toggle Steam Emu", "error");
   }
@@ -852,6 +883,17 @@ function formatBytes(bytes: number): string {
           <span class="toggle-switch"></span>
           <span class="toggle-text">Steam Emu</span>
         </label>
+        <span
+          v-if="game.installed && goldbergActive"
+          class="tool-chip steam-emu-cache"
+          :class="goldbergCacheOk ? 'cache-ok' : 'cache-missing'"
+          :title="goldbergCacheOk
+            ? 'Original Steam DLLs are cached at ~/.metalsharp/cache/goldberg/' + props.game.appid + '/. Toggling OFF will restore them even if the in-game .orig files were deleted.'
+            : 'Original Steam DLLs are NOT cached. Toggling OFF relies on the in-game .orig files only — restore may be incomplete if Steam or a manual edit has overwritten them.'"
+        >
+          <span class="cache-dot"></span>
+          {{ goldbergCacheOk ? "Backup cached" : "Backup missing" }}
+        </span>
         <span v-if="game.bottle_runtime_assets" class="game-card-size">{{ game.bottle_runtime_assets }} assets</span>
         <span v-if="game.size_bytes" class="game-card-size">{{ formatBytes(game.size_bytes) }}</span>
       </div>
@@ -1308,6 +1350,37 @@ function formatBytes(bytes: number): string {
   padding: 2px 6px;
   min-height: 22px;
   vertical-align: middle;
+}
+.steam-emu-cache {
+  font-size: 10px;
+  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+}
+.steam-emu-cache .cache-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.steam-emu-cache.cache-ok {
+  background: rgba(48, 209, 88, 0.12);
+  color: #30d158;
+  border: 1px solid rgba(48, 209, 88, 0.35);
+}
+.steam-emu-cache.cache-ok .cache-dot {
+  background: #30d158;
+}
+.steam-emu-cache.cache-missing {
+  background: rgba(255, 159, 10, 0.12);
+  color: #ff9f0a;
+  border: 1px solid rgba(255, 159, 10, 0.45);
+}
+.steam-emu-cache.cache-missing .cache-dot {
+  background: #ff9f0a;
 }
 .launch-mode-select {
   flex: 1 1 auto;

@@ -965,11 +965,40 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
             let active = game_dir
                 .as_ref()
                 .and_then(|d| {
-                    dirs::home_dir().map(|home| mtsp::launcher::goldberg_status_for_pipeline(&home, d, pipeline))
+                    dirs::home_dir().map(|home| {
+                        mtsp::launcher::goldberg_status_for_pipeline_with_appid(&home, d, Some(appid), pipeline)
+                    })
                 })
                 .unwrap_or(false);
+            let metadata = mtsp::launcher::read_goldberg_metadata(appid);
+            let backed_up_at = metadata.as_ref().and_then(|m| m.backed_up_at);
+            let persisted_active = metadata.as_ref().map(|m| m.active).unwrap_or(false);
+            let cache_root = mtsp::launcher::goldberg_cache_dir(appid);
+            let cache_files = if cache_root.is_dir() {
+                std::fs::read_dir(&cache_root)
+                    .ok()
+                    .map(|entries| {
+                        entries.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let pipeline_id = pipeline.user_selectable_id().unwrap_or_else(|| pipeline.to_legacy_method());
-            resp(200, json!({"ok": true, "appid": appid, "goldberg_active": active, "pipeline": pipeline_id}))
+            let cache_files_ok = cache_files.contains(&"steam_api64.dll".to_string());
+            resp(
+                200,
+                json!({
+                    "ok": true,
+                    "appid": appid,
+                    "goldberg_active": active,
+                    "persisted_active": persisted_active,
+                    "cache_files_ok": cache_files_ok,
+                    "backed_up_at": backed_up_at,
+                    "cache_files": cache_files,
+                    "pipeline": pipeline_id,
+                }),
+            )
         },
         (Method::Post, "/goldberg/toggle") => {
             let body = read_body(req);
@@ -989,12 +1018,57 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 let home = dirs::home_dir().unwrap_or_default();
                                 mtsp::launcher::deploy_goldberg_for_pipeline(&home, &dir.to_path_buf(), aid, pipeline);
                                 app_log(&format!("[STEAM_EMU] enabled for appid {}", aid));
-                                resp(200, json!({"ok": true, "goldberg_active": true, "pipeline": pipeline_id}))
+                                let cache_root = mtsp::launcher::goldberg_cache_dir(aid);
+                                let cache_files: Vec<String> = if cache_root.is_dir() {
+                                    std::fs::read_dir(&cache_root)
+                                        .ok()
+                                        .map(|entries| {
+                                            entries
+                                                .flatten()
+                                                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                };
+                                let cache_files_ok = cache_files.contains(&"steam_api64.dll".to_string());
+                                let metadata = mtsp::launcher::read_goldberg_metadata(aid);
+                                let backed_up_at = metadata.as_ref().and_then(|m| m.backed_up_at);
+                                resp(200, json!({
+                                    "ok": true,
+                                    "goldberg_active": true,
+                                    "cache_files_ok": cache_files_ok,
+                                    "backed_up_at": backed_up_at,
+                                    "cache_files": cache_files,
+                                    "pipeline": pipeline_id,
+                                }))
                             } else {
                                 let home = dirs::home_dir().unwrap_or_default();
-                                mtsp::launcher::cleanup_goldberg_for_pipeline(&home, &dir, pipeline);
+                                mtsp::launcher::cleanup_goldberg_for_pipeline(&home, &dir, aid, pipeline);
                                 app_log(&format!("[STEAM_EMU] disabled for appid {}", aid));
-                                resp(200, json!({"ok": true, "goldberg_active": false, "pipeline": pipeline_id}))
+                                let cache_root = mtsp::launcher::goldberg_cache_dir(aid);
+                                let cache_files: Vec<String> = if cache_root.is_dir() {
+                                    std::fs::read_dir(&cache_root)
+                                        .ok()
+                                        .map(|entries| {
+                                            entries
+                                                .flatten()
+                                                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                };
+                                let cache_files_ok = cache_files.contains(&"steam_api64.dll".to_string());
+                                resp(200, json!({
+                                    "ok": true,
+                                    "goldberg_active": false,
+                                    "cache_files_ok": cache_files_ok,
+                                    "cache_files": cache_files,
+                                    "pipeline": pipeline_id,
+                                }))
                             }
                         },
                         _ => resp(404, json!({"ok": false, "error": "game directory not found"})),
