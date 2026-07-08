@@ -2813,7 +2813,6 @@ pub fn repair_component(
         let ms_home = crate::platform::metalsharp_home_dir_for(&home);
         let dxmt_i386 = ms_home.join("runtime").join("wine").join("lib").join("dxmt").join("i386-windows");
         let wine_i386 = ms_home.join("runtime").join("wine").join("lib").join("wine").join("i386-windows");
-        let dxmt_i386_unix = ms_home.join("runtime").join("wine").join("lib").join("dxmt").join("i386-unix");
         let system32 = prefix.join("drive_c").join("windows").join("system32");
         fs::create_dir_all(&system32)?;
 
@@ -2843,13 +2842,6 @@ pub fn repair_component(
         if src_dll.exists() {
             fs::copy(&src_dll, system32.join(format!("{}.dll", component_id)))?;
             copied += 1;
-        }
-        if component_id == "winemetal" {
-            let src_so = dxmt_i386_unix.join("winemetal.so");
-            if src_so.exists() {
-                fs::copy(&src_so, system32.join("winemetal.so"))?;
-                copied += 1;
-            }
         }
 
         let state = if copied > 0 && system32.join(format!("{}.dll", component_id)).exists() {
@@ -5350,7 +5342,7 @@ fn component_action_detail(id: &str) -> String {
         "d3d10" => "Verify MetalSharp D3D10 runtime DLLs".to_string(),
         "d3d10_1" => "Verify MetalSharp D3D10.1 runtime DLLs".to_string(),
         "d3d10core" => "Stage 32-bit d3d10core.dll from DXMT i386 runtime".to_string(),
-        "winemetal" => "Stage 32-bit winemetal.dll and winemetal.so from DXMT i386 runtime".to_string(),
+        "winemetal" => "Stage 32-bit winemetal.dll from DXMT i386 runtime".to_string(),
         id if id.starts_with(WINDOWS_VERSION_COMPONENT_PREFIX) => {
             format!("Apply Wine Windows version mode {}", id.trim_start_matches(WINDOWS_VERSION_COMPONENT_PREFIX))
         },
