@@ -587,7 +587,6 @@ async function createWindow(migrating = false) {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: true,
     },
   });
 
@@ -1142,6 +1141,145 @@ function registerIpc() {
     }
 
     app.quit();
+  });
+
+  ipcMain.handle("gog:oauth-login", async (_e, authUrl: string) => {
+    if (!mainWindow) return { ok: false, error: "Main window is not ready." };
+    let parsed: URL;
+    try {
+      parsed = new URL(authUrl);
+    } catch {
+      return { ok: false, error: "Invalid GOG auth URL." };
+    }
+    if (parsed.hostname !== "auth.gog.com") {
+      return { ok: false, error: "Refusing to open non-GOG auth URL." };
+    }
+
+    return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
+      let settled = false;
+      let safariPoll: ReturnType<typeof setInterval> | null = null;
+      const safariDeadline = Date.now() + 5 * 60 * 1000;
+
+      const stopSafariPolling = () => {
+        if (safariPoll) clearInterval(safariPoll);
+        safariPoll = null;
+      };
+
+      const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        stopSafariPolling();
+        resolve(result);
+      };
+
+      const runAppleScript = (script: string, args: string[] = []) =>
+        new Promise<string>((resolveScript, rejectScript) => {
+          execFile("/usr/bin/osascript", ["-e", script, ...args], { timeout: 5000 }, (error, stdout) => {
+            if (error) rejectScript(error);
+            else resolveScript(stdout.toString());
+          });
+        });
+
+      const safariUrlsScript = `
+tell application "Safari"
+  if (count of windows) = 0 then return ""
+  set output to ""
+  repeat with w in windows
+    repeat with t in tabs of w
+      try
+        set output to output & (URL of t as text) & linefeed
+      end try
+    end repeat
+  end repeat
+  return output
+end tell`;
+
+      const closeSafariUrlScript = `
+on run argv
+  set targetUrl to item 1 of argv
+  tell application "Safari"
+    repeat with w in windows
+      repeat with i from (count of tabs of w) to 1 by -1
+        set t to tab i of w
+        try
+          if (URL of t as text) is targetUrl then
+            close t
+            if (count of tabs of w) is 0 then close w
+            return "closed"
+          end if
+        end try
+      end repeat
+    end repeat
+  end tell
+  return "not_found"
+end run`;
+
+      const closeSafariUrl = (url: string) => {
+        runAppleScript(closeSafariUrlScript, [url]).catch(() => undefined);
+      };
+
+      const gogCodeFromUrl = (redirect: URL) => {
+        const queryCode = redirect.searchParams.get("code");
+        if (queryCode) return queryCode;
+        const hash = redirect.hash.startsWith("#") ? redirect.hash.slice(1) : redirect.hash;
+        return new URLSearchParams(hash).get("code");
+      };
+
+      const isGogHost = (redirect: URL) => {
+        const host = redirect.hostname.toLowerCase();
+        return host === "gog.com" || host.endsWith(".gog.com");
+      };
+
+      const isGogCallbackUrl = (redirect: URL) => {
+        if (!isGogHost(redirect)) return false;
+        const path = redirect.pathname.toLowerCase().replace(/\/+$/, "");
+        return path.includes("on_login_success") || Boolean(gogCodeFromUrl(redirect));
+      };
+
+      const inspectUrl = (url: string) => {
+        try {
+          const redirect = new URL(url);
+          if (!isGogCallbackUrl(redirect)) return false;
+          const code = gogCodeFromUrl(redirect);
+          const callbackError = redirect.searchParams.get("error") ?? redirect.searchParams.get("error_description");
+          if (callbackError) {
+            finish({ ok: false, error: `GOG login callback failed: ${callbackError}`, redirectUrl: url });
+            return true;
+          }
+          if (!code) return true;
+          closeSafariUrl(url);
+          finish({ ok: true, code, redirectUrl: url });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      const pollSafari = async () => {
+        if (settled) return;
+        if (Date.now() > safariDeadline) {
+          finish({ ok: false, error: "Timed out waiting for the GOG login callback in Safari." });
+          return;
+        }
+        try {
+          const output = await runAppleScript(safariUrlsScript);
+          for (const url of output
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)) {
+            if (inspectUrl(url)) return;
+          }
+        } catch {}
+      };
+
+      safariPoll = setInterval(() => {
+        pollSafari().catch(() => undefined);
+      }, 500);
+      shell
+        .openExternal(authUrl)
+        .then(() => pollSafari().catch(() => undefined))
+        .catch((error) => finish({ ok: false, error: error.message, redirectUrl: authUrl }));
+    });
   });
 
   ipcMain.handle("app:pick-directory", async (_e, title?: string) => {
