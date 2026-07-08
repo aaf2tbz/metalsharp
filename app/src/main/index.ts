@@ -1155,74 +1155,123 @@ function registerIpc() {
       return { ok: false, error: "Refusing to open non-GOG auth URL." };
     }
 
-    const electronBin = process.execPath;
-    // Resolve the OAuth helper script. Search all known deployment locations:
-    //   - Dev: repo root → app/src/main + ../../..
-    //   - Production: bundled into .app/Contents/Resources/tools/gog-oauth-electron
-    //   - Runtime: ~/.metalsharp/tools/gog-oauth-electron (deployed by the Rust backend)
-    const exeDir = path.dirname(app.getPath("exe"));
-    const oauthCandidates = [
-      path.join(__dirname, "..", "..", "..", "tools", "gog-oauth-electron", "main.js"),
-      path.join(process.resourcesPath ?? "", "tools", "gog-oauth-electron", "main.js"),
-      path.join(exeDir, "..", "Resources", "tools", "gog-oauth-electron", "main.js"),
-      path.join(getMetalsharpDir(), "tools", "gog-oauth-electron", "main.js"),
-    ];
-    const scriptPath = oauthCandidates.find((candidate) => fs.existsSync(candidate));
-    if (!scriptPath) {
-      return {
-        ok: false,
-        error: `GOG OAuth helper script not found (searched: ${oauthCandidates.join(", ")})`,
-      };
-    }
-
-    // Find the app icon for the OAuth window. Try the bundled extraResource first,
-    // then the dev path, and fall back to whatever we can find.
+    // Match the icon path for the OAuth window.
     const iconCandidates = [
       path.join(process.resourcesPath ?? "", "build", "icon.png"),
       path.join(__dirname, "..", "..", "build", "icon.png"),
     ];
-    // If no icon is bundled, pass an empty string — Electron will fall back to
-    // its default app icon for the OAuth helper window.
     const iconPath: string = iconCandidates.find((candidate) => fs.existsSync(candidate)) ?? "";
+
+    // Write the OAuth helper HTML to a temp file. We embed the GOG URL
+    // directly so there is no async injection race with the webview.
+    const escapedUrl = authUrl.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;");
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Sign in to GOG</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{display:flex;flex-direction:column;height:100vh;background:#1c1c1e;font-family:-apple-system,sans-serif}
+#header{display:flex;align-items:center;background:#2c2c2e;padding:6px 10px;border-bottom:1px solid #3a3a3c;gap:8px;flex-shrink:0}
+#header span{font-weight:600;color:#f5f5f7;font-size:13px}
+#url-display{flex:1;color:#aeaeb2;font-size:12px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#cancel-btn{background:none;border:1px solid #48484a;color:#f5f5f7;padding:3px 10px;border-radius:6px;cursor:pointer;font-size:12px}
+#cancel-btn:hover{background:#3a3a3c}
+webview{flex:1;border:none}
+</style></head>
+<body>
+<div id="header">
+  <span>Sign in to GOG</span>
+  <span id="url-display">${escapedUrl}</span>
+  <button id="cancel-btn">Cancel</button>
+</div>
+<webview id="wv" src="${escapedUrl}" allowpopups></webview>
+<script>
+(function(){
+  const { ipcRenderer } = require('electron');
+  const wv = document.getElementById('wv');
+  const urlDisplay = document.getElementById('url-display');
+  let settled = false;
+  const CB_HOST = 'embed.gog.com', CB_PATH = '/on_login_success';
+
+  function done(code, err) {
+    if (settled) return;
+    settled = true;
+    if (code) ipcRenderer.send('gog-oauth-code', code);
+    else if (err) ipcRenderer.send('gog-oauth-error', err);
+  }
+  function checkUrl(url) {
+    if (!url) return;
+    try {
+      const u = new URL(url);
+      if (u.hostname !== CB_HOST || u.pathname !== CB_PATH) return;
+      const code = u.searchParams.get('code');
+      const err = u.searchParams.get('error') || u.searchParams.get('error_description');
+      if (code) done(code, null);
+      else if (err) done(null, err);
+    } catch(e) {}
+  }
+  wv.addEventListener('dom-ready', function() {
+    wv.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/200.0');
+  });
+  wv.addEventListener('did-navigate', function(e) { urlDisplay.textContent = e.url; checkUrl(e.url); });
+  wv.addEventListener('did-navigate-in-page', function(e) { urlDisplay.textContent = e.url; checkUrl(e.url); });
+  wv.addEventListener('new-window', function(e) { if (e.url) wv.loadURL(e.url); });
+  document.getElementById('cancel-btn').addEventListener('click', function() {
+    done(null, 'Cancelled');
+    window.close();
+  });
+})();
+<` + `/script>
+</body>
+</html>`;
+
+    const htmlPath = path.join(os.tmpdir(), `metalsharp-gog-oauth-${Date.now()}.html`);
+    fs.writeFileSync(htmlPath, htmlContent);
 
     return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
       let settled = false;
-      let output = "";
 
       const finish = (result: { ok: boolean; code?: string; redirectUrl?: string; error?: string }) => {
         if (settled) return;
         settled = true;
+        try { ipcMain.removeAllListeners("gog-oauth-code"); } catch {}
+        try { ipcMain.removeAllListeners("gog-oauth-error"); } catch {}
+        try { if (!win.isDestroyed()) win.close(); } catch {}
+        try { fs.unlinkSync(htmlPath); } catch {}
         resolve(result);
       };
 
-      const child = spawn(electronBin, [scriptPath, authUrl, "--icon", iconPath], {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 300_000, // 5 minutes
+      // Listen for IPC from the renderer (only once per listener type).
+      ipcMain.once("gog-oauth-code", (_event: import("electron").IpcMainEvent, code: string) => {
+        finish({ ok: true, code });
+      });
+      ipcMain.once("gog-oauth-error", (_event: import("electron").IpcMainEvent, err: string) => {
+        finish({ ok: false, error: err });
       });
 
-      child.stdout.on("data", (data: Buffer) => {
-        output += data.toString();
+      const win = new BrowserWindow({
+        width: 1024,
+        height: 700,
+        minWidth: 800,
+        minHeight: 600,
+        title: "Sign in to GOG",
+        icon: iconPath || undefined,
+        autoHideMenuBar: true,
+        backgroundColor: "#1c1c1e",
+        webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
+          contextIsolation: false,
+        },
+      });
+      win.setMenuBarVisibility(false);
+
+      win.on("closed", () => {
+        finish({ ok: false, error: "GOG OAuth window was closed before completing login" });
       });
 
-      child.stderr.on("data", (data: Buffer) => {
-        const msg = data.toString().trim();
-        if (msg) console.error(`GOG OAuth helper: ${msg}`);
-      });
-
-      child.on("close", (code) => {
-        const trimmed = output.trim();
-        if (trimmed && trimmed.length > 4 && !trimmed.includes(" ")) {
-          // Looks like a valid authorization code.
-          finish({ ok: true, code: trimmed });
-        } else if (trimmed) {
-          finish({ ok: false, error: trimmed });
-        } else {
-          finish({ ok: false, error: `OAuth helper exited with code ${code ?? "null"}` });
-        }
-      });
-
-      child.on("error", (err) => {
-        finish({ ok: false, error: `Failed to start OAuth helper: ${err.message}` });
+      win.loadFile(htmlPath).catch((err: Error) => {
+        finish({ ok: false, error: `Failed to load OAuth page: ${err.message}` });
       });
     });
   });
