@@ -3937,8 +3937,7 @@ fn backup_dlls_for_appid(
     // been run through Steam yet), we copy the official Steam DLLs from
     // the prefix-steam Steam install into the cache so the "Backup Missing"
     // status doesn't show when we have perfectly-good originals elsewhere.
-    let steam_install_dir = home_root.join("prefix-steam")
-        .join("drive_c").join("Program Files (x86)").join("Steam");
+    let steam_install_dir = home_root.join("prefix-steam").join("drive_c").join("Program Files (x86)").join("Steam");
     for target in targets {
         if !target.is_dir() {
             continue;
