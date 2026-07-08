@@ -248,8 +248,25 @@ export class RustBridge {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    this.proc.stdout?.on("data", (d: Buffer) => process.stdout.write(d));
-    this.proc.stderr?.on("data", (d: Buffer) => process.stderr.write(d));
+    this.proc.stdout?.on("data", (d: Buffer) => {
+      try {
+        process.stdout.write(d);
+      } catch {
+        /* parent pipe closed */
+      }
+    });
+    this.proc.stderr?.on("data", (d: Buffer) => {
+      try {
+        process.stderr.write(d);
+      } catch {
+        /* parent pipe closed */
+      }
+    });
+    // Prevent uncaught EPIPE when parent stdout/stderr pipes are broken
+    // (e.g. terminal closed). write() returns false on backpressure, then the
+    // stream emits 'error' asynchronously — outside try-catch reach.
+    process.stdout.on("error", () => {});
+    process.stderr.on("error", () => {});
 
     this.proc.on("error", (e) => {
       console.error(`metalsharp-backend failed to start: ${e.message}`);
