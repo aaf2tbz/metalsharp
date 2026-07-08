@@ -235,6 +235,10 @@ interface WineMonoStatus {
   targetVersion: string;
   lastError?: string | null;
   msiCached: boolean;
+  downloading: boolean;
+  downloadBytes: number;
+  downloadTotal: number;
+  downloadError?: string | null;
 }
 const gogMonoStatus = ref<WineMonoStatus | null>(null);
 const gogMonoPollHandle = ref<ReturnType<typeof setInterval> | null>(null);
@@ -247,7 +251,7 @@ const showGogInstallMono = computed(() => {
 });
 
 async function refreshGogMonoStatus() {
-  const result = await api<{ ok: boolean; latestVersion: string; installedVersion?: string | null; installed: boolean; upToDate: boolean; running: boolean; pid?: number | null; logPath?: string | null; targetVersion: string; lastError?: string | null; msiCached: boolean }>("GET", "/wine-mono/status?prefix=gog");
+  const result = await api<WineMonoStatus>("GET", "/wine-mono/status?prefix=gog");
   if (result?.ok) gogMonoStatus.value = result;
 }
 
@@ -257,7 +261,8 @@ async function installGogMono() {
     return;
   }
   gogLoading.value.mono = true;
-  const result = await api<{ ok: boolean; pid?: number; alreadyInstalled?: boolean; error?: string; status?: WineMonoStatus }>("POST", "/wine-mono/install", { prefix: "gog" }, 10 * 60 * 1000);
+  // Short timeout — the backend now returns immediately (kicks off download or launches installer).
+  const result = await api<{ ok: boolean; pid?: number; alreadyInstalled?: boolean; downloading?: boolean; error?: string; status?: WineMonoStatus }>("POST", "/wine-mono/install", { prefix: "gog" }, 30 * 1000);
   gogLoading.value.mono = false;
   if (result?.ok) {
     if (result.alreadyInstalled) {
@@ -265,6 +270,12 @@ async function installGogMono() {
       toast.show("Wine Mono is already up to date", "success");
       return;
     }
+    if (result.downloading) {
+      // Backend kicked off async download — poll for progress.
+      startGogMonoPoll();
+      return;
+    }
+    // Installer launched.
     toast.show("Wine Mono installer launched — complete it in the Wine window", "success");
     startGogMonoPoll();
   } else {
@@ -273,16 +284,40 @@ async function installGogMono() {
   }
 }
 
+function gogMonoButtonLabel(): string {
+  const s = gogMonoStatus.value;
+  if (!s) return "Install Mono";
+  if (s.downloading && s.downloadTotal > 0) {
+    const raw = (s.downloadBytes / s.downloadTotal) * 100;
+    const pct = Math.min(100, Math.floor(raw / 15) * 15);
+    return `Downloading ${pct}%…`;
+  }
+  if (s.downloading) return "Downloading Mono…";
+  if (s.running) return "Running…";
+  if (gogLoading.value.mono) return "Installing Mono…";
+  return "Install Mono";
+}
+
 function startGogMonoPoll() {
   if (gogMonoPollHandle.value) return;
   gogMonoPollHandle.value = setInterval(async () => {
     await refreshGogMonoStatus();
     const status = gogMonoStatus.value;
-    if (status?.upToDate) {
+    if (!status) return;
+
+    // Download completed successfully → trigger the installer.
+    if (status.msiCached && !status.downloading && !status.running && !status.upToDate) {
+      stopGogMonoPoll();
+      gogLoading.value.mono = true;
+      await installGogMono();
+      return;
+    }
+
+    if (status.upToDate) {
       stopGogMonoPoll();
       toast.show(`Wine Mono ${status.latestVersion} installed`, "success");
-    } else if (status && !status.running) {
-      // Installer exited but did not land the latest version (user cancelled).
+    } else if (!status.running && !status.downloading) {
+      // Installer exited without landing the latest version (user cancelled).
       stopGogMonoPoll();
     }
   }, 3000);
@@ -1221,11 +1256,11 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
         <button
           v-if="sourceMode === 'gog' && showGogInstallMono"
           class="btn btn-primary"
-          :disabled="gogLoading.mono"
-          :title="gogMonoStatus ? `Wine Mono ${gogMonoStatus.installedVersion ?? 'not installed'} → ${gogMonoStatus.latestVersion}` : 'Install Wine Mono'"
+          :disabled="gogLoading.mono || gogMonoStatus?.running || gogMonoStatus?.downloading"
+          :title="gogMonoStatus ? `Wine Mono ${gogMonoStatus.installedVersion ?? 'not installed'} → ${gogMonoStatus.latestVersion}${gogMonoStatus.downloadError ? ' (download failed)' : ''}` : 'Install Wine Mono'"
           @click="installGogMono"
         >
-          <span class="btn-label-long">{{ gogLoading.mono ? "Installing Mono…" : "Install Mono" }}</span><span class="btn-label-short">Mono</span>
+          <span class="btn-label-long">{{ gogMonoButtonLabel() }}</span><span class="btn-label-short">Mono</span>
         </button>
         <button v-if="sourceMode === 'gog'" class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized" @click="handleGogAuthButton">
           <span class="btn-label-long">{{ gogStatus?.authenticated ? "GOG Connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}</span><span class="btn-label-short">{{ gogStatus?.authenticated ? "Connected" : "Login" }}</span>

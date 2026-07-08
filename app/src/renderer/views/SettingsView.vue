@@ -52,19 +52,24 @@ interface WineMonoStatus {
   targetVersion: string;
   lastError?: string | null;
   msiCached: boolean;
+  downloading: boolean;
+  downloadBytes: number;
+  downloadTotal: number;
+  downloadError?: string | null;
 }
 const steamMonoStatus = ref<WineMonoStatus | null>(null);
 const steamMonoLoading = ref(false);
 const steamMonoPollHandle = ref<ReturnType<typeof setInterval> | null>(null);
 
 async function refreshSteamMonoStatus() {
-  const result = await api<{ ok: boolean; latestVersion: string; installedVersion?: string | null; installed: boolean; upToDate: boolean; running: boolean; pid?: number | null; logPath?: string | null; targetVersion: string; lastError?: string | null; msiCached: boolean }>("GET", "/wine-mono/status?prefix=steam");
+  const result = await api<WineMonoStatus>("GET", "/wine-mono/status?prefix=steam");
   if (result?.ok) steamMonoStatus.value = result;
 }
 
 async function upgradeSteamMono() {
   steamMonoLoading.value = true;
-  const result = await api<{ ok: boolean; pid?: number; alreadyInstalled?: boolean; error?: string; status?: WineMonoStatus }>("POST", "/wine-mono/install", { prefix: "steam" }, 10 * 60 * 1000);
+  // Short timeout — the backend now returns immediately (kicks off download or launches installer).
+  const result = await api<{ ok: boolean; pid?: number; alreadyInstalled?: boolean; downloading?: boolean; error?: string; status?: WineMonoStatus }>("POST", "/wine-mono/install", { prefix: "steam" }, 30 * 1000);
   steamMonoLoading.value = false;
   if (result?.ok) {
     if (result.alreadyInstalled) {
@@ -72,6 +77,12 @@ async function upgradeSteamMono() {
       toast.show("Wine Mono is already up to date", "success");
       return;
     }
+    if (result.downloading) {
+      // Backend kicked off async download — poll for progress.
+      startSteamMonoPoll();
+      return;
+    }
+    // Installer launched.
     toast.show("Wine Mono installer launched — complete it in the Wine window", "success");
     startSteamMonoPoll();
   } else {
@@ -80,15 +91,40 @@ async function upgradeSteamMono() {
   }
 }
 
+function steamMonoButtonLabel(): string {
+  const s = steamMonoStatus.value;
+  if (!s) return "Upgrade Mono";
+  if (s.downloading && s.downloadTotal > 0) {
+    const raw = (s.downloadBytes / s.downloadTotal) * 100;
+    const pct = Math.min(100, Math.floor(raw / 15) * 15);
+    return `Downloading Mono ${pct}%…`;
+  }
+  if (s.downloading) return "Downloading Mono…";
+  if (s.running) return "Running…";
+  if (steamMonoLoading.value) return "Installing…";
+  return "Upgrade Mono";
+}
+
 function startSteamMonoPoll() {
   if (steamMonoPollHandle.value) return;
   steamMonoPollHandle.value = setInterval(async () => {
     await refreshSteamMonoStatus();
     const status = steamMonoStatus.value;
-    if (status?.upToDate) {
+    if (!status) return;
+
+    // Download completed successfully → trigger the installer.
+    if (status.msiCached && !status.downloading && !status.running && !status.upToDate) {
+      stopSteamMonoPoll();
+      steamMonoLoading.value = true;
+      await upgradeSteamMono();
+      return;
+    }
+
+    if (status.upToDate) {
       stopSteamMonoPoll();
       toast.show(`Wine Mono ${status.latestVersion} installed`, "success");
-    } else if (status && !status.running) {
+    } else if (!status.running && !status.downloading) {
+      // Installer exited without landing the latest version (user cancelled).
       stopSteamMonoPoll();
     }
   }, 3000);
@@ -533,15 +569,21 @@ function uninstallMetalsharp() {
             Download and install Wine Mono {{ steamMonoStatus.latestVersion }} into the Steam prefix.
             <span v-if="steamMonoStatus.installed">Installed: v{{ steamMonoStatus.installedVersion }}.</span>
             <span v-else>No Wine Mono installed.</span>
+            <span v-if="steamMonoStatus.downloadError" class="download-error">Download failed: {{ steamMonoStatus.downloadError }}.</span>
             The installer runs interactively in a Wine window.
           </div>
         </div>
         <div class="settings-value">
-          <button class="btn btn-primary btn-sm" :disabled="steamMonoLoading || steamMonoStatus.running" @click="upgradeSteamMono">
-            <span v-if="steamMonoLoading">Installing…</span>
-            <span v-else-if="steamMonoStatus.running">Running…</span>
-            <span v-else>Upgrade Mono</span>
+          <button
+            class="btn btn-primary btn-sm"
+            :disabled="steamMonoLoading || steamMonoStatus.running || steamMonoStatus.downloading"
+            @click="upgradeSteamMono"
+          >
+            {{ steamMonoButtonLabel() }}
           </button>
+          <div v-if="steamMonoStatus.downloading && steamMonoStatus.downloadTotal > 0" class="mono-progress-bar">
+            <div class="mono-progress-fill" :style="{ width: Math.round((steamMonoStatus.downloadBytes / steamMonoStatus.downloadTotal) * 100) + '%' }"></div>
+          </div>
         </div>
       </div>
       <div v-else-if="steamMonoStatus && steamMonoStatus.upToDate" class="settings-row">
@@ -776,5 +818,23 @@ function uninstallMetalsharp() {
 }
 .btn-danger:hover {
   background: rgba(220, 60, 60, 0.25);
+}
+.download-error {
+  color: #dc3c3c;
+  font-weight: 500;
+}
+.mono-progress-bar {
+  width: 120px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.mono-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
 }
 </style>
