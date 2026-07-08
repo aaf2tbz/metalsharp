@@ -37,7 +37,7 @@ use std::sync::OnceLock;
 pub const WINE_MONO_LATEST_VERSION: &str = "11.2.0";
 const WINE_MONO_LATEST_MSI_FILENAME: &str = "wine-mono-11.2.0-x86.msi";
 const WINE_MONO_RELEASE_TAG: &str = "wine-mono-11.2.0";
-const WINE_MONO_INSTALL_DIR_NAME: &str = "mono-2.0";
+const WINE_MONO_INSTALL_DIR_NAME: &str = "wine-mono-11.2.0";
 
 fn wine_mono_msi_url() -> &'static str {
     "https://github.com/wine-mono/wine-mono/releases/download/wine-mono-11.2.0/wine-mono-11.2.0-x86.msi"
@@ -91,12 +91,14 @@ fn mutate_install_state<F: FnOnce(&mut MonoInstallState)>(f: F) {
     }
 }
 
-/// Returns the Wine Mono version installed inside a prefix, by checking
-/// `drive_c/windows/mono/mono-2.0/` (the directory Wine Mono MSI installs to).
-/// Returns `Some(WINE_MONO_LATEST_VERSION)` when present, `None` otherwise.
 pub fn detect_wine_mono_version(prefix: &Path) -> Option<String> {
-    let mono_dir = prefix.join("drive_c").join("windows").join("mono").join("mono-2.0");
-    if mono_dir.is_dir() {
+    // Check for the version marker directory created after a successful install.
+    let marker = prefix
+        .join("drive_c")
+        .join("windows")
+        .join("mono")
+        .join(WINE_MONO_INSTALL_DIR_NAME);
+    if marker.is_dir() {
         Some(WINE_MONO_LATEST_VERSION.to_string())
     } else {
         None
@@ -366,13 +368,22 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
         s.last_error = None;
     });
 
-    // Reap the installer process so it does not become a zombie. The renderer
-    // discovers completion via `upToDate` in the status poll, not via process
-    // exit, because the user may cancel the MSI GUI.
+    // Reap the installer process. On success, create a version marker
+    // directory so detection knows 11.2.0 is installed.
     let prefix_for_thread: PathBuf = prefix.to_path_buf();
     std::thread::spawn(move || {
-        let _ = child.wait();
-        let still_latest = detect_wine_mono_version(&prefix_for_thread).as_deref() == Some(WINE_MONO_LATEST_VERSION);
+        let status = child.wait();
+        // If the installer succeeded, create the version marker.
+        if status.map(|s| s.success()).unwrap_or(false) {
+            let marker = prefix_for_thread
+                .join("drive_c")
+                .join("windows")
+                .join("mono")
+                .join(WINE_MONO_INSTALL_DIR_NAME);
+            let _ = fs::create_dir_all(&marker);
+        }
+        let still_latest = detect_wine_mono_version(&prefix_for_thread).as_deref()
+            == Some(WINE_MONO_LATEST_VERSION);
         mutate_install_state(|s| {
             s.running = false;
             s.pid = None;
@@ -486,8 +497,7 @@ mod tests {
     fn latest_version_constants_are_consistent() {
         assert!(WINE_MONO_LATEST_VERSION.contains('.'));
         assert!(WINE_MONO_LATEST_MSI_FILENAME.contains(WINE_MONO_LATEST_VERSION));
-        // Wine Mono MSI installs to mono-2.0 directory regardless of version.
-        assert_eq!(WINE_MONO_INSTALL_DIR_NAME, "mono-2.0");
+        assert!(WINE_MONO_INSTALL_DIR_NAME.contains(WINE_MONO_LATEST_VERSION));
         assert!(wine_mono_msi_url().contains(WINE_MONO_RELEASE_TAG));
         assert!(wine_mono_msi_url().ends_with(WINE_MONO_LATEST_MSI_FILENAME));
     }
@@ -515,14 +525,14 @@ mod tests {
     }
 
     #[test]
-    fn detect_finds_mono_2_0_dir() {
+    fn detect_finds_version_marker_dir() {
         let tmp = std::env::temp_dir().join(format!(
             "ms-mono-detect-{}-{}",
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
-        let mono = tmp.join("drive_c/windows/mono");
-        std::fs::create_dir_all(mono.join("mono-2.0")).unwrap();
+        let marker = tmp.join("drive_c/windows/mono").join(WINE_MONO_INSTALL_DIR_NAME);
+        std::fs::create_dir_all(&marker).unwrap();
 
         assert_eq!(detect_wine_mono_version(&tmp), Some("11.2.0".to_string()));
         assert!(is_wine_mono_latest(&tmp));
