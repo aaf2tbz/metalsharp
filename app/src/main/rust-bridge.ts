@@ -249,10 +249,18 @@ export class RustBridge {
     });
 
     this.proc.stdout?.on("data", (d: Buffer) => {
-      try { process.stdout.write(d); } catch { /* parent pipe closed */ }
+      try {
+        process.stdout.write(d);
+      } catch {
+        /* parent pipe closed */
+      }
     });
     this.proc.stderr?.on("data", (d: Buffer) => {
-      try { process.stderr.write(d); } catch { /* parent pipe closed */ }
+      try {
+        process.stderr.write(d);
+      } catch {
+        /* parent pipe closed */
+      }
     });
     // Prevent uncaught EPIPE when parent stdout/stderr pipes are broken
     // (e.g. terminal closed). write() returns false on backpressure, then the
