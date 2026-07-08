@@ -33,12 +33,15 @@ export interface ProcessManagerSample {
   ram_total_bytes: number;
   gpu_percent: number | null;
   gpu_label?: string;
+  renderer_percent?: number | null;
+  gpu_mem_used_bytes?: number | null;
+  gpu_mem_alloc_bytes?: number | null;
   chip?: string;
   processes: ProcessManagerProcess[];
   helper_path?: string;
 }
 
-export type ProcessManagerAction = "metalfx" | "gpu-acceleration" | "quit-game" | "view-steam";
+export type ProcessManagerAction = "metalfx" | "gpu-acceleration" | "quit-game";
 
 export interface ProcessManagerActionResult {
   ok: boolean;

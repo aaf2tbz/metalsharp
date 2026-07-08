@@ -193,9 +193,9 @@ static std::string sysctl_str(const char *key) {
 static double gpu_utilization_percent(std::string &out_label) {
   out_label = "system GPU telemetry unavailable";
   double pct = -1;
-  // IOGraphicsAccelerator is the parent class of AGXAccelerator on Apple
-  // Silicon; try it first, then AGXAccelerator explicitly.
-  const char *classes[] = {"IOGraphicsAccelerator", "AGXAccelerator"};
+  // On Apple Silicon, AGXAccelerator (and its subclass of AGXAcceleratorG16G)
+  // is the correct match. IOGraphicsAccelerator is the base class.
+  const char *classes[] = {"AGXAccelerator", "IOGraphicsAccelerator"};
   for (const char *cls : classes) {
     CFMutableDictionaryRef match = IOServiceMatching(cls);
     if (!match) continue;
@@ -228,13 +228,48 @@ static double gpu_utilization_percent(std::string &out_label) {
 }
 
 // CPU temperature on Apple Silicon is gated behind a root-only entitlement
-// (AppleSMC / powermetrics). Try the IOReport thermal channel on the AGX
-// accelerator (GPU-adjacent SoC thermal) as a best-effort *SoC* temperature
-// proxy, and label it honestly. Returns false when nothing is readable
-// without root.
+// (AppleSMC / powermetrics / IOReport private SPI). On unified SoC (M-series),
+// CPU and GPU share the same package — the GPU junction temp IS the die temp.
+// We try the PerformanceStatistics dictionary first (which MAY contain
+// temperature keys on some GPU generations), then fall back to honest null.
+// When null, the overlay displays "SENSOR" as an honest label.
 static bool cpu_temp_c(double *out, std::string &out_source) {
-  // AppleARMIODevice thermal / PMU Temperature arrays are root-gated in
-  // practice on modern macOS; attempting them from a user app returns nothing.
+  const char *classes[] = {"AGXAccelerator", "IOGraphicsAccelerator"};
+  for (const char *cls : classes) {
+    CFMutableDictionaryRef match = IOServiceMatching(cls);
+    if (!match) continue;
+    io_iterator_t iter;
+    if (IOServiceGetMatchingServices(kIOMasterPortDefault, match, &iter) != kIOReturnSuccess) continue;
+    io_registry_entry_t entry;
+    while ((entry = IOIteratorNext(iter)) != 0) {
+      CFTypeRef perf = IORegistryEntryCreateCFProperty(entry, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
+      if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+        const char *temp_keys[] = {"hottests junc temp", "GPU Temperature", "hottest junc", "junction temperature"};
+        for (const char *key : temp_keys) {
+          CFStringRef cf_key = CFStringCreateWithCString(kCFAllocatorDefault, key, kCFStringEncodingUTF8);
+          CFTypeRef val = CFDictionaryGetValue((CFDictionaryRef)perf, cf_key);
+          CFRelease(cf_key);
+          if (val) {
+            double v = 0;
+            if (CFGetTypeID(val) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)val, kCFNumberDoubleType, &v);
+            if (v > 0 && v < 200) {
+              *out = v;
+              char buf[256];
+              snprintf(buf, sizeof(buf), "SoC temp via GPU PerformanceStatistics \"%s\"", key);
+              out_source = buf;
+              CFRelease(perf);
+              IOObjectRelease(entry);
+              IOObjectRelease(iter);
+              return true;
+            }
+          }
+        }
+      }
+      if (perf) CFRelease(perf);
+      IOObjectRelease(entry);
+    }
+    IOObjectRelease(iter);
+  }
   (void)out;
   (void)out_source;
   return false;
@@ -277,6 +312,26 @@ int main() {
 
   std::string gpu_label;
   double gpu = gpu_utilization_percent(gpu_label);
+  // Read renderer utilization and GPU memory from PerformanceStatistics
+  // (separate probe — avoids modifying the existing GPU util function)
+  double renderer_pct = -1;
+  uint64_t gpu_mem_used = 0;
+  io_iterator_t rit;
+  if (IOServiceGetMatchingServices(kIOMasterPortDefault, IOServiceMatching("AGXAccelerator"), &rit) == kIOReturnSuccess) {
+    io_registry_entry_t re;
+    while ((re = IOIteratorNext(rit)) != 0) {
+      CFTypeRef perf = IORegistryEntryCreateCFProperty(re, CFSTR("PerformanceStatistics"), kCFAllocatorDefault, 0);
+      if (perf && CFGetTypeID(perf) == CFDictionaryGetTypeID()) {
+        CFTypeRef rp = CFDictionaryGetValue((CFDictionaryRef)perf, CFSTR("Renderer Utilization %%"));
+        if (rp && CFGetTypeID(rp) == CFNumberGetTypeID()) { long long rv = 0; CFNumberGetValue((CFNumberRef)rp, kCFNumberLongLongType, &rv); renderer_pct = (double)rv; }
+        CFTypeRef mu = CFDictionaryGetValue((CFDictionaryRef)perf, CFSTR("In use system memory"));
+        if (mu && CFGetTypeID(mu) == CFNumberGetTypeID()) { long long mv = 0; CFNumberGetValue((CFNumberRef)mu, kCFNumberLongLongType, &mv); gpu_mem_used = (uint64_t)mv; }
+      }
+      if (perf) CFRelease(perf);
+      IOObjectRelease(re);
+    }
+    IOObjectRelease(rit);
+  }
 
   double cpu_temp = 0;
   std::string cpu_temp_source;
@@ -310,6 +365,8 @@ int main() {
   } else {
     o << "\"cpu_temp_c\":null,";
   }
+  if (renderer_pct >= 0) o << "\"renderer_percent\":" << renderer_pct << ",";
+  if (gpu_mem_used > 0) o << "\"gpu_mem_used_bytes\":" << gpu_mem_used << ",";
   if (gpu >= 0) {
     o << "\"gpu_percent\":" << std::round(gpu) << ",";
   } else {

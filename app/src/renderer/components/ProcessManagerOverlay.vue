@@ -68,9 +68,14 @@ const ramPct = computed(() => {
 const cpuPct = computed(() => Math.max(0, Math.min(100, sample.value?.cpu_percent ?? 0)));
 const gpuPct = computed(() => Math.max(0, Math.min(100, sample.value?.gpu_percent ?? 0)));
 const fpsLabel = computed(() => (sample.value?.fps == null ? "WAIT" : Math.round(sample.value.fps).toString()));
-const tempLabel = computed(() =>
-  sample.value?.cpu_temp_c == null ? "SENSOR" : `${Math.round(sample.value.cpu_temp_c)}°C`,
-);
+const tempLabel = computed(() => {
+  const s = sample.value;
+  if (s?.gpu_mem_used_bytes != null && s.gpu_mem_used_bytes > 0) {
+    const gb = s.gpu_mem_used_bytes / (1024*1024*1024);
+    return gb >= 1 ? `${gb.toFixed(1)}GB` : `${Math.round(s.gpu_mem_used_bytes/(1024*1024))}MB`;
+  }
+  return s?.cpu_temp_c != null ? `${Math.round(s.cpu_temp_c)}°C` : "VRAM";
+});
 const ramLabel = computed(() => {
   const s = sample.value;
   return s?.ram_total_bytes ? `${fmtBytes(s.ram_used_bytes)} / ${fmtBytes(s.ram_total_bytes)}` : "--";
@@ -134,8 +139,6 @@ async function runAction(action: ProcessManagerAction): Promise<void> {
     if (action === "quit-game") {
       status.value = "Non-Steam Wine game kill signal sent";
       await refresh();
-    } else if (action === "view-steam") {
-      status.value = "Steam focus requested";
     }
   } else {
     status.value = result?.error ?? "Action failed";
@@ -187,11 +190,9 @@ onBeforeUnmount(() => {
           }}</small>
         </article>
         <article class="pm-stat">
-          <span class="pm-label">CPU Temp</span>
+          <span class="pm-label">GPU Memory</span>
           <strong>{{ tempLabel }}</strong>
-          <small>{{
-            sample?.cpu_temp_c == null ? "private sensor unavailable" : sample?.cpu_temp_source ?? "private PMU sensor"
-          }}</small>
+          <small>{{ sample?.gpu_mem_used_bytes ? "allocated VRAM" : sample?.cpu_temp_c == null ? "unavailable" : sample?.cpu_temp_source ?? "PMU sensor" }}</small>
         </article>
         <article class="pm-stat">
           <span class="pm-label">Cores Used</span>
@@ -258,11 +259,6 @@ onBeforeUnmount(() => {
           <span>GPU Acceleration</span>
           <strong>Planned</strong>
           <small>runtime control coming soon</small>
-        </button>
-        <button class="pm-action cyan" type="button" @click="runAction('view-steam')">
-          <span>View Steam</span>
-          <strong>Focus</strong>
-          <small>bring client forward</small>
         </button>
       </section>
 

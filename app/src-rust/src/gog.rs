@@ -161,7 +161,20 @@ fn tools_dir() -> PathBuf {
 }
 
 fn gog_oauth_helper_dest_dir() -> PathBuf {
-    tools_dir().join("gog-oauth-electron")
+    tools_dir().join("gog-oauth-helper")
+}
+
+/// The OAuth login flow is now handled entirely by the Electron main
+/// process (app/src/main/index.ts) which creates a BrowserWindow with an
+/// inlined HTML page. We no longer need to deploy a standalone helper
+/// script, but we keep the dest dir for backward-compatible status checks.
+fn deploy_gog_oauth_helper() -> Result<PathBuf, String> {
+    let dest = gog_oauth_helper_dest_dir();
+    fs::create_dir_all(&dest).map_err(|error| format!("failed to create {}: {}", dest.display(), error))?;
+    // Touch a marker so the frontend sees the helper as available.
+    let marker = dest.join(".inline-helper");
+    let _ = fs::write(&marker, b"");
+    Ok(dest)
 }
 
 fn gogdl_wrapper_path() -> PathBuf {
@@ -249,49 +262,6 @@ fn write_gogdl_wrapper() -> Result<(), String> {
             .map_err(|error| format!("failed to mark {} executable: {}", wrapper.display(), error))?;
     }
     Ok(())
-}
-
-fn gog_oauth_helper_source_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(resources) = crate::platform::app_resources_dir() {
-        candidates.push(resources.join("tools").join("gog-oauth-electron"));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            candidates.push(exe_dir.join("tools").join("gog-oauth-electron"));
-            // Walk up a few levels looking for tools/gog-oauth-electron
-            // (handles .../<AppName>.app/Contents/MacOS/<exe> layouts).
-            let mut probe = exe_dir.to_path_buf();
-            for _ in 0..6 {
-                if let Some(parent) = probe.parent() {
-                    candidates.push(parent.join("tools").join("gog-oauth-electron"));
-                    probe = parent.to_path_buf();
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-    candidates.into_iter().filter(|path| path.join("main.js").is_file() && path.join("index.html").is_file()).collect()
-}
-
-fn deploy_gog_oauth_helper() -> Result<PathBuf, String> {
-    let sources = gog_oauth_helper_source_candidates();
-    let Some(source) = sources.first() else {
-        return Err("GOG OAuth helper source not bundled; reinstall MetalSharp".to_string());
-    };
-    let dest = gog_oauth_helper_dest_dir();
-    fs::create_dir_all(&dest).map_err(|error| format!("failed to create {}: {}", dest.display(), error))?;
-    for name in ["main.js", "index.html"] {
-        let src = source.join(name);
-        let dst = dest.join(name);
-        if !src.is_file() {
-            return Err(format!("GOG OAuth helper missing {} at {}", name, source.display()));
-        }
-        fs::copy(&src, &dst)
-            .map_err(|error| format!("failed to copy {} -> {}: {}", src.display(), dst.display(), error))?;
-    }
-    Ok(dest)
 }
 
 fn ensure_gogdl_available() -> Result<(), String> {
@@ -541,7 +511,7 @@ fn status_value() -> Value {
     let authenticated = file_nonempty(&gog_auth_config_path());
     let prefix = gog_prefix();
     let oauth_dest = gog_oauth_helper_dest_dir();
-    let oauth_available = oauth_dest.join("main.js").is_file() && oauth_dest.join("index.html").is_file();
+    let oauth_available = oauth_dest.join(".inline-helper").is_file();
     let status = if binary.is_none() {
         "missing_gogdl"
     } else if !prefix.join("drive_c").is_dir() {
@@ -565,7 +535,7 @@ fn status_value() -> Value {
         "supportPath": gogdl_support_dir().to_string_lossy().to_string(),
         "oauthHelperPath": oauth_dest.to_string_lossy().to_string(),
         "oauthHelperAvailable": oauth_available,
-        "oauthHelperScript": oauth_dest.join("main.js").to_string_lossy().to_string(),
+        "oauthHelperScript": "(inline Electron BrowserWindow)".to_string(),
         "bottleId": GOG_PREFIX_BOTTLE_ID,
         "winePrefix": prefix.to_string_lossy().to_string(),
         "prefixInitialized": prefix.join("drive_c").is_dir(),

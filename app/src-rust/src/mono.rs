@@ -99,13 +99,23 @@ fn mutate_install_state<F: FnOnce(&mut MonoInstallState)>(f: F) {
 }
 
 pub fn detect_wine_mono_version(prefix: &Path) -> Option<String> {
-    // Check for the version marker directory created after a successful install.
+    // The version marker is a synthetic directory we create after a
+    // successful install. Its presence means the current latest version
+    // was installed by us.
     let marker = prefix.join("drive_c").join("windows").join("mono").join(WINE_MONO_INSTALL_DIR_NAME);
     if marker.is_dir() {
         Some(WINE_MONO_LATEST_VERSION.to_string())
     } else {
         None
     }
+}
+
+/// True when ANY wine-mono is present in the prefix (either our version
+/// marker OR the mono-2.0 directory that the MSI creates). Used to decide
+/// fresh install vs upgrade.
+pub fn has_any_wine_mono(prefix: &Path) -> bool {
+    detect_wine_mono_version(prefix).is_some()
+        || prefix.join("drive_c").join("windows").join("mono").join("mono-2.0").is_dir()
 }
 
 /// Compare two dotted version strings (e.g. "11.2.0" vs "9.5.0") numerically.
@@ -129,15 +139,22 @@ fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// True when the prefix has the pinned latest Wine Mono installed.
+/// True when our version marker is present — the definitive signal that
+/// the latest version was installed AND the install completed.
 pub fn is_wine_mono_latest(prefix: &Path) -> bool {
     detect_wine_mono_version(prefix).as_deref() == Some(WINE_MONO_LATEST_VERSION)
+}
+
+/// For the UI status: "installed" means any mono exists.
+pub fn is_any_mono_installed(prefix: &Path) -> bool {
+    has_any_wine_mono(prefix)
 }
 
 /// Status payload shared by the GOG header button and the Settings row.
 /// `prefix_kind` is "gog" or "steam" so the renderer can label appropriately.
 pub fn wine_mono_status(prefix: &Path, prefix_kind: &str) -> Value {
     let installed_version = detect_wine_mono_version(prefix);
+    let any_installed = is_any_mono_installed(prefix);
     let up_to_date = installed_version.as_deref() == Some(WINE_MONO_LATEST_VERSION);
     let state = read_install_state();
     let started_at = state.started_at;
@@ -152,7 +169,7 @@ pub fn wine_mono_status(prefix: &Path, prefix_kind: &str) -> Value {
         "prefixKind": prefix_kind,
         "latestVersion": WINE_MONO_LATEST_VERSION,
         "installedVersion": installed_version,
-        "installed": installed_version.is_some(),
+        "installed": any_installed,
         "upToDate": up_to_date,
         "running": state.running,
         "stalled": stalled,
@@ -338,6 +355,7 @@ fn sweep_orphan_mono_processes(prefix: &Path) -> u32 {
         if pid == std::process::id() {
             continue;
         }
+
         // Match processes related to wine mono: msiexec working on the
         // mono MSI, the wine start.exe wrapper, winedevice remnants, or
         // anything running inside our prefix path.
@@ -367,22 +385,21 @@ fn sweep_orphan_mono_processes(prefix: &Path) -> u32 {
 /// we surface a clean state. Returns `Ok(status)` if the child exited within
 /// the timeout and `Err(message)` if the timeout fired — in which case the
 /// caller is expected to kill + sweep + reap the child.
-fn wait_with_sweep(child: &mut Child, prefix: &Path, sweep_log: &Path) -> Result<std::process::ExitStatus, String> {
+/// Wait for `child` to exit, polling every `WINE_MONO_WAIT_POLL`.
+/// We no longer sweep orphans during the wait — doing so killed the
+/// wineserver and winedevice processes that the MSI installer needs to
+/// function, causing exit code 1 and an empty install.
+/// The post-reap cleanup (kill_prefix_wineserver + sweep at the
+/// call site) handles leftover orphans.
+fn wait_with_sweep(child: &mut Child, _prefix: &Path, _sweep_log: &Path) -> Result<std::process::ExitStatus, String> {
     let deadline = Instant::now() + WINE_MONO_INSTALL_TIMEOUT;
     loop {
         if let Ok(Some(status)) = child.try_wait() {
             return Ok(status);
         }
         if Instant::now() >= deadline {
-            return Err(format!(
-                "Wine Mono installer exceeded {:?} budget; logs at {}",
-                WINE_MONO_INSTALL_TIMEOUT,
-                sweep_log.display()
-            ));
+            return Err(format!("Wine Mono installer exceeded {:?} budget", WINE_MONO_INSTALL_TIMEOUT));
         }
-        // Best-effort orphan sweep — keeps detached msiexec children from
-        // outliving the wineserver and pinning the reaper.
-        sweep_orphan_mono_processes(prefix);
         std::thread::sleep(WINE_MONO_WAIT_POLL);
     }
 }
@@ -411,10 +428,12 @@ fn cleanup_prefix_for_mono_install(prefix: &Path) {
 }
 
 pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32, String> {
-    // 1. Resolve wine binary
+    // 1. Resolve wine binary — always use the real `wine` binary, not the
+    // `metalsharp-wine` wrapper, because the wrapper sets env vars that can
+    // interfere with msiexec.
     let home = dirs::home_dir().ok_or_else(|| "no home dir".to_string())?;
     let ms_root = crate::platform::metalsharp_home_dir_for(&home).join("runtime").join("wine");
-    let wine = crate::platform::runtime_wine_binary(&ms_root);
+    let wine = ms_root.join("bin").join("wine");
     if !wine.exists() {
         return Err(format!("MetalSharp Wine not found: {}", wine.display()));
     }
@@ -441,6 +460,7 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
 
     let mut log = OpenOptions::new()
         .create(true)
+        .write(true)
         .truncate(true)
         .open(&log_path)
         .map_err(|e| format!("open wine-mono log: {}", e))?;
@@ -451,38 +471,44 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
     let _ = writeln!(log, "timeout={:?}; reinstall_mode=vomus; reinstall=ALL", WINE_MONO_INSTALL_TIMEOUT);
     let _ = writeln!(log, "--- wine output ---");
     let stdout = log.try_clone().map_err(|e| format!("clone log handle: {}", e))?;
+    let stderr = log.try_clone().map_err(|e| format!("clone stderr handle: {}", e))?;
 
-    // 6. Hygiene FIRST: kill any wineserver for the prefix and sweep
-    //    orphans from previous attempts. This must run before the cleanup
-    //    so the registry hive isn't locked.
+    // 6. Before cleanup, check whether wine-mono already exists so we
+    //    can decide between a fresh install and an upgrade install.
+    let has_existing_mono = has_any_wine_mono(prefix);
+
+    // 7. Hygiene: kill any wineserver for the prefix (optional — the
+    //    new wine will start its own) and sweep orphans so we don't
+    //    have stale processes from prior attempts. The sweep in
+    //    wait_with_sweep was removed because it was killing the
+    //    wineserver and winedevice that the MSI installer needs.
     kill_prefix_wineserver(prefix);
     sweep_orphan_mono_processes(prefix);
     cleanup_prefix_for_mono_install(prefix);
 
-    // 7. Build the install command.
+    // 8. Build the install command.
     //
-    //    REINSTALLMODE=vomus tells the MSI to overwrite, re-install
-    //    missing, and update the registry — patching the prior
+    //    For a FRESH install (no prior wine-mono in the prefix), we use
+    //    a plain `msiexec /i <msi> /qn` — the REINSTALL flags cause the
+    //    MSI to exit with code 67 (ERROR_INSTALL_FAILURE) when there is
+    //    nothing to reinstall.
+    //
+    //    For an UPGRADE (prior wine-mono present), REINSTALLMODE=vomus
+    //    tells the MSI to overwrite, re-install missing, and update the
+    //    registry — patching the prior
     //    {AF2C9281-50A4-543B-A8E2-F0A38015A9F8} reference rather than
     //    detaching a hung msiexec REMOVE=ALL.
     //    REINSTALL=ALL forces every feature to install.
     let mut cmd = Command::new(&wine);
-    cmd.arg("msiexec")
-        .arg("/i")
-        .arg(&staged_msi)
-        .arg("REINSTALLMODE=vomus")
-        .arg("REINSTALL=ALL")
-        .arg("/qn")
+    cmd.arg("msiexec").arg("/i").arg(&staged_msi);
+    if has_existing_mono {
+        cmd.arg("REINSTALLMODE=vomus").arg("REINSTALL=ALL");
+    }
+    cmd.arg("/qn")
         .env("WINEPREFIX", prefix.to_string_lossy().to_string())
         .env("WINEDEBUG", "-all")
-        .env("WINEDEBUGGER", "none")
-        .env("MSIINSTALLPERFECTIONISTIC", "1") // mirror: makes wine log more progress
         .stdout(Stdio::from(stdout))
-        .stderr(Stdio::piped());
-    // Re-clone the log for stderr now that stdout was split out.
-    if let Ok(stderr) = log.try_clone() {
-        cmd.stderr(Stdio::from(stderr));
-    }
+        .stderr(Stdio::from(stderr));
     if let Some(parent) = staged_msi.parent() {
         cmd.current_dir(parent);
     }
