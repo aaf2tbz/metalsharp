@@ -468,12 +468,28 @@ async function processManagerQuitGame(): Promise<ProcessManagerActionResult> {
 async function processManagerViewSteam(): Promise<ProcessManagerActionResult> {
   if (process.platform === "darwin") {
     try {
-      execFileSync("/usr/bin/osascript", [
-        "-e",
-        'tell application "System Events" to set frontmost of every process whose name contains "Steam" to true',
-      ]);
+      // Find the Steam.exe PID (Wine process), then activate it via
+      // NSRunningApplication.activateWithOptions. AppleScript can't see
+      // Wine windows (they don't register with System Events), but
+      // CoreFoundation can activate any PID.
+      const pidRaw = execFileSync("/bin/ps", ["-axo", "pid=,comm="], { encoding: "utf8" });
+      const steamPid = pidRaw
+        .split("\n")
+        .find((line) => line.includes("Steam.exe"))
+        ?.trim()
+        ?.split(/\s+/)[0];
+      if (!steamPid) return { ok: false, error: "Steam.exe not found in process list" };
+
+      const helperBin = processManagerHelperCandidates()
+        .map((c) => c.replace(/metalsharp-process-manager-helper$/, "metalsharp-activate-pid"))
+        .find((c) => fs.existsSync(c));
+      if (!helperBin) return { ok: false, error: "activate-pid helper not found" };
+
+      execFileSync(helperBin, [steamPid]);
       return { ok: true, mode: "activate-existing" };
-    } catch {}
+    } catch (e: unknown) {
+      return { ok: false, error: `Failed to activate Steam: ${(e as Error).message}` };
+    }
   }
   return (await requestBackend("POST", "/steam/launch", undefined, 10000)) as ProcessManagerActionResult;
 }

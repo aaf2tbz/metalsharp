@@ -27,3 +27,16 @@ cp "$APP_NATIVE/metalsharp-process-manager-helper" "$BUNDLE_NATIVE/metalsharp-pr
 echo "Built:"
 echo "  $APP_NATIVE/metalsharp-process-manager-helper   (electron-builder extraResources)"
 echo "  $BUNDLE_NATIVE/metalsharp-process-manager-helper (scripts-tools bundle)"
+
+# Also build activate-pid helper for bringing Steam to front
+ACTIVATE_SRC="$SCRIPT_DIR/metalsharp-activate-pid.m"
+ACTIVATE_APP="$APP_NATIVE/metalsharp-activate-pid"
+ACTIVATE_BUNDLE="$SCRIPT_DIR/metalsharp-activate-pid"
+
+if [ -f "$ACTIVATE_SRC" ]; then
+  echo "Compiling metalsharp-activate-pid ..."
+  clang -O2 -mmacosx-version-min=11.0 -framework Cocoa "$ACTIVATE_SRC" -o "$ACTIVATE_APP"
+  cp "$ACTIVATE_APP" "$ACTIVATE_BUNDLE"
+  echo "  $ACTIVATE_APP"
+  echo "  $ACTIVATE_BUNDLE"
+fi
