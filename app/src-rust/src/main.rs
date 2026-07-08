@@ -1035,14 +1035,17 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                 let cache_files_ok = cache_files.contains(&"steam_api64.dll".to_string());
                                 let metadata = mtsp::launcher::read_goldberg_metadata(aid);
                                 let backed_up_at = metadata.as_ref().and_then(|m| m.backed_up_at);
-                                resp(200, json!({
-                                    "ok": true,
-                                    "goldberg_active": true,
-                                    "cache_files_ok": cache_files_ok,
-                                    "backed_up_at": backed_up_at,
-                                    "cache_files": cache_files,
-                                    "pipeline": pipeline_id,
-                                }))
+                                resp(
+                                    200,
+                                    json!({
+                                        "ok": true,
+                                        "goldberg_active": true,
+                                        "cache_files_ok": cache_files_ok,
+                                        "backed_up_at": backed_up_at,
+                                        "cache_files": cache_files,
+                                        "pipeline": pipeline_id,
+                                    }),
+                                )
                             } else {
                                 let home = dirs::home_dir().unwrap_or_default();
                                 mtsp::launcher::cleanup_goldberg_for_pipeline(&home, &dir, aid, pipeline);
@@ -1062,13 +1065,16 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                                     Vec::new()
                                 };
                                 let cache_files_ok = cache_files.contains(&"steam_api64.dll".to_string());
-                                resp(200, json!({
-                                    "ok": true,
-                                    "goldberg_active": false,
-                                    "cache_files_ok": cache_files_ok,
-                                    "cache_files": cache_files,
-                                    "pipeline": pipeline_id,
-                                }))
+                                resp(
+                                    200,
+                                    json!({
+                                        "ok": true,
+                                        "goldberg_active": false,
+                                        "cache_files_ok": cache_files_ok,
+                                        "cache_files": cache_files,
+                                        "pipeline": pipeline_id,
+                                    }),
+                                )
                             }
                         },
                         _ => resp(404, json!({"ok": false, "error": "game directory not found"})),

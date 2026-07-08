@@ -4325,7 +4325,7 @@ pub fn goldberg_status_with_appid(game_dir: &Path, appid: Option<u32>) -> bool {
 
 /// Same as [`goldberg_status_with_appid`] but rooted at an explicit home.
 pub fn goldberg_status_with_appid_in(home_root: &Path, game_dir: &Path, appid: Option<u32>) -> bool {
-    let targets = goldberg_deploy_targets(&game_dir.to_path_buf());
+    let targets = goldberg_deploy_targets(game_dir);
     for target in targets {
         if !target.exists() {
             continue;
