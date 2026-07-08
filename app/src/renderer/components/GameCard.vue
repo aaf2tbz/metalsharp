@@ -177,22 +177,7 @@ interface DefaultRuleEntry {
   custom_exe_fix: boolean;
   exe_names: string[];
 }
-interface LaunchShape {
-  ok: boolean;
-  appid: number;
-  pipeline: string;
-  pipeline_name: string;
-  backend?: string;
-  is_default_rule: boolean;
-  custom_exe_fix: boolean;
-  exe_names: string[];
-  launch_shape?: {
-    wine_overrides?: string | null;
-    deploy_dlls?: { filename: string; source_subpath: string; arch: string }[];
-  };
-}
 const defaultRule = ref<DefaultRuleEntry | null>(null);
-const launchShapePreview = ref<LaunchShape | null>(null);
 
 const currentIsDefaultRule = computed(() => {
   if (!defaultRule.value || !bottlePreferredMode.value || bottlePreferredMode.value === "auto") return true;
@@ -231,6 +216,8 @@ const componentDisplayName: Record<string, string> = {
   "d3d12_agility": "D3D12 Agility",
   "gpu_vendor_stubs": "GPU Stubs",
   "gptk_amd_stub": "GPTK AMD Stub",
+  "d3d10core": "D3D10core",
+  "winemetal": "Winemetal",
   "gptk": "GPTK",
   "gptk_prefix": "GPTK Prefix",
   "rosetta": "Rosetta",
@@ -258,6 +245,19 @@ const runtimeProfileDisplayName: Record<string, string> = {
 
 function componentLabel(id: string): string {
   return componentDisplayName[id] ?? id;
+}
+
+function bottleComponentLabel(id: string): string {
+  const label = componentLabel(id);
+  const profile = runtimeReport.value?.runtime_profile;
+  if (profile === "m11_32" || profile === "m10_32") {
+    // Only suffix DLL component IDs, not runtime/VC components that already indicate arch
+    const dllIds = new Set(["d3d11", "dxgi", "d3d10core", "d3d10_1", "winemetal"]);
+    if (dllIds.has(id)) {
+      return `${label}(i386)`;
+    }
+  }
+  return label;
 }
 
 function runtimeProfileLabel(id: string): string {
@@ -435,10 +435,6 @@ watch(runtimeOpen, (open) => {
   if (!open) emit('expanded', props.game.appid, false);
 });
 
-watch(bottlePreferredMode, () => {
-  if (runtimeOpen.value) void refreshLaunchShapePreview();
-});
-
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
@@ -551,7 +547,6 @@ async function runRuntimeDoctor() {
     bottleName.value = result.report.bottle_name || props.game.name;
     bottlePreferredMode.value = preferredBottlePipeline(result.report);
     void refreshDefaultRule();
-    void refreshLaunchShapePreview();
     if (isD3DMetalBottleSelected()) {
       await loadD3DMetalStatus();
     } else {
@@ -815,14 +810,6 @@ async function refreshDefaultRule() {
   }
 }
 
-async function refreshLaunchShapePreview() {
-  const mode = bottlePreferredMode.value && bottlePreferredMode.value !== "auto"
-    ? bottlePreferredMode.value
-    : "auto";
-  const result = await api<LaunchShape>(`GET`, `/mtsp/launch-shape?appid=${props.game.appid}&pipeline=${encodeURIComponent(mode)}`);
-  if (result?.ok) launchShapePreview.value = result;
-}
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -981,27 +968,14 @@ function formatBytes(bytes: number): string {
                   </option>
                 </select>
               </div>
-              <div v-if="defaultRule" class="bottle-default-rule">
-                <span class="doctor-check-state" :class="currentIsDefaultRule ? 'check-ok' : 'check-warn'">{{ currentIsDefaultRule ? "OK" : "~" }}</span>
-                <span>Default rule: {{ defaultRule.default_pipeline_name }} ({{ defaultRule.default_pipeline }})<span v-if="defaultRule.custom_exe_fix"> · direct exe: {{ defaultRule.exe_names.join(", ") }}</span></span>
-              </div>
-              <div v-if="launchShapePreview?.launch_shape" class="bottle-launch-shape">
-                <div class="launch-shape-line">
-                  <span class="launch-shape-label">Applies:</span>
-                  <span>{{ launchShapePreview.pipeline_name }} ({{ launchShapePreview.pipeline }})<span v-if="!launchShapePreview.is_default_rule"> · override</span></span>
-                </div>
-                <div v-if="launchShapePreview.launch_shape.wine_overrides" class="launch-shape-line">
-                  <span class="launch-shape-label">Overrides:</span>
-                  <code>{{ launchShapePreview.launch_shape.wine_overrides }}</code>
-                </div>
-                <div v-if="launchShapePreview.launch_shape.deploy_dlls?.length" class="launch-shape-line">
-                  <span class="launch-shape-label">Deploy DLLs:</span>
-                  <span>{{ launchShapePreview.launch_shape.deploy_dlls.map((d) => `${d.filename} (${d.arch})`).join(", ") }}</span>
-                </div>
-              </div>
               <button class="btn btn-secondary btn-sm" :disabled="bottleSaving" @click="saveBottleEdit">
                 {{ bottleSaving ? "Saving..." : "Save Bottle" }}
               </button>
+              <div v-if="defaultRule" class="doctor-check" :class="currentIsDefaultRule ? 'check-ok' : 'check-warn'">
+                <span class="doctor-check-state">{{ currentIsDefaultRule ? 'OK' : '~' }}</span>
+                <span class="doctor-check-label">Bottle</span>
+                <span class="doctor-check-detail">{{ currentIsDefaultRule ? 'Default' : 'Custom' }}</span>
+              </div>
               <div v-if="isD3DMetalBottleSelected() && d3dmetalState" class="doctor-notes d3dmetal-actions">
                 <strong>D3DMetal GPTK</strong>
                 <div class="runtime-action-row">
@@ -1030,7 +1004,7 @@ function formatBytes(bytes: number): string {
               <div class="doctor-checks">
                 <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check" :class="componentStateClass(component.state)">
                   <span class="doctor-check-state">{{ componentStateIcon(component.state) }}</span>
-                  <span class="doctor-check-label">{{ componentLabel(component.id) }}</span>
+                  <span class="doctor-check-label">{{ bottleComponentLabel(component.id) }}</span>
                   <span class="doctor-check-detail">{{ component.state }}</span>
                 </div>
               </div>
@@ -1039,7 +1013,7 @@ function formatBytes(bytes: number): string {
               </div>
               <div v-if="runtimeReport.actions.length && !isD3DMetalBottleSelected()" class="doctor-notes blocked">
                 <div v-for="action in runtimeReport.actions" :key="action.id" class="runtime-action-row">
-                  <span>{{ componentLabel(action.id) }}: {{ action.detail }}</span>
+                  <span>{{ bottleComponentLabel(action.id) }}: {{ action.detail }}</span>
                   <button
                     class="btn btn-secondary btn-sm"
                     :disabled="runtimeLoading"
@@ -1534,36 +1508,6 @@ function formatBytes(bytes: number): string {
   align-items: center;
   font-size: 11px;
   color: var(--text-secondary);
-}
-.bottle-default-rule {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-.bottle-launch-shape {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  font-size: 11px;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-.launch-shape-line {
-  display: flex;
-  gap: 6px;
-  align-items: baseline;
-}
-.launch-shape-line code {
-  font-size: 10px;
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-.launch-shape-label {
-  color: var(--text-dim);
-  flex: 0 0 auto;
 }
 .bottle-input-row {
   display: flex;
