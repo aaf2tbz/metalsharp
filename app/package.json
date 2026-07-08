@@ -114,6 +114,10 @@
         ]
       },
       {
+        "from": "../tools/gog-oauth-electron",
+        "to": "tools/gog-oauth-electron"
+      },
+      {
         "from": "../src/fna/shims",
         "to": "runtime/shim-sources/fna/shims",
         "filter": [

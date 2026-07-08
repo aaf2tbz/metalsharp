@@ -149,6 +149,9 @@ interface GogStatus {
   authenticated: boolean;
   gogdlAvailable: boolean;
   gogdlPath?: string | null;
+  oauthHelperPath?: string | null;
+  oauthHelperAvailable?: boolean;
+  oauthHelperScript?: string | null;
   winePrefix: string;
   prefixInitialized: boolean;
   winePath: string;
@@ -524,10 +527,22 @@ async function handleGogAuthButton() {
 
 async function loginGog() {
   if (!gogStatus.value?.authUrl) return;
+  // If the Rust backend hasn't staged the OAuth helper yet, refresh status and
+  // try once more — this protects users who hit Login before the gogdl
+  // bootstrap has finished copying tools/gog-oauth-electron into ~/.metalsharp.
+  if (gogStatus.value?.oauthHelperAvailable === false) {
+    await refreshGog();
+  }
   gogLoading.value.login = true;
   const login = await getAPI().gogOAuthLogin(gogStatus.value.authUrl);
   if (!login.ok || !login.code) {
     gogLoading.value.login = false;
+    const helperMissing = login.error?.includes("OAuth helper script not found");
+    if (helperMissing) {
+      toast.show("GOG login helper unavailable; reinitializing the GOG prefix", "error");
+      await refreshGog();
+      return;
+    }
     toast.show(login.error ?? "GOG login cancelled", "error");
     return;
   }
@@ -1264,7 +1279,15 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
         >
           <span class="btn-label-long">{{ gogMonoButtonLabel() }}</span><span class="btn-label-short">Mono</span>
         </button>
-        <button v-if="sourceMode === 'gog'" class="btn btn-primary" :disabled="gogLoading.login || !gogStatus?.prefixInitialized" @click="handleGogAuthButton">
+        <button
+          v-if="sourceMode === 'gog'"
+          class="btn btn-primary"
+          :disabled="gogLoading.login || !gogStatus?.prefixInitialized"
+          :title="gogStatus?.oauthHelperAvailable === false
+            ? 'GOG OAuth helper is missing; click “Prefix” or refresh to stage the new bundled helper.'
+            : 'Sign in to GOG to enable library sync and downloads'"
+          @click="handleGogAuthButton"
+        >
           <span class="btn-label-long">{{ gogStatus?.authenticated ? "GOG Connected" : gogLoading.login ? "Connecting…" : "Login to GOG" }}</span><span class="btn-label-short">{{ gogStatus?.authenticated ? "Connected" : "Login" }}</span>
         </button>
         <button class="btn btn-secondary" :disabled="sourceMode === 'gog' && gogLoading.sync" @click="refreshCurrentSource">

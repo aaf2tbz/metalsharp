@@ -160,6 +160,10 @@ fn tools_dir() -> PathBuf {
     ms_home().join("tools")
 }
 
+fn gog_oauth_helper_dest_dir() -> PathBuf {
+    tools_dir().join("gog-oauth-electron")
+}
+
 fn gogdl_wrapper_path() -> PathBuf {
     tools_dir().join("gogdl")
 }
@@ -247,8 +251,54 @@ fn write_gogdl_wrapper() -> Result<(), String> {
     Ok(())
 }
 
+fn gog_oauth_helper_source_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(resources) = crate::platform::app_resources_dir() {
+        candidates.push(resources.join("tools").join("gog-oauth-electron"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.join("tools").join("gog-oauth-electron"));
+            // Walk up a few levels looking for tools/gog-oauth-electron
+            // (handles .../<AppName>.app/Contents/MacOS/<exe> layouts).
+            let mut probe = exe_dir.to_path_buf();
+            for _ in 0..6 {
+                if let Some(parent) = probe.parent() {
+                    candidates.push(parent.join("tools").join("gog-oauth-electron"));
+                    probe = parent.to_path_buf();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    candidates.into_iter().filter(|path| path.join("main.js").is_file() && path.join("index.html").is_file()).collect()
+}
+
+fn deploy_gog_oauth_helper() -> Result<PathBuf, String> {
+    let sources = gog_oauth_helper_source_candidates();
+    let Some(source) = sources.first() else {
+        return Err("GOG OAuth helper source not bundled; reinstall MetalSharp".to_string());
+    };
+    let dest = gog_oauth_helper_dest_dir();
+    fs::create_dir_all(&dest).map_err(|error| format!("failed to create {}: {}", dest.display(), error))?;
+    for name in ["main.js", "index.html"] {
+        let src = source.join(name);
+        let dst = dest.join(name);
+        if !src.is_file() {
+            return Err(format!("GOG OAuth helper missing {} at {}", name, source.display()));
+        }
+        fs::copy(&src, &dst)
+            .map_err(|error| format!("failed to copy {} -> {}: {}", src.display(), dst.display(), error))?;
+    }
+    Ok(dest)
+}
+
 fn ensure_gogdl_available() -> Result<(), String> {
     if gogdl_binary().is_some() {
+        // Even with gogdl already in place, make sure the OAuth helper is
+        // staged so the Electron main process can find it.
+        let _ = deploy_gog_oauth_helper();
         return Ok(());
     }
     if gogdl_venv_bin().is_file() {
@@ -297,6 +347,9 @@ fn ensure_gogdl_available() -> Result<(), String> {
     let mut command = Command::new(gogdl_wrapper_path());
     command.arg("--version");
     run_bootstrap_command(&mut command, "GOG support verification")?;
+    // Stage the OAuth helper next to the gogdl tool so the Electron main
+    // process can find it via process spawning.
+    deploy_gog_oauth_helper()?;
     Ok(())
 }
 
@@ -487,6 +540,8 @@ fn status_value() -> Value {
     let binary = gogdl_binary();
     let authenticated = file_nonempty(&gog_auth_config_path());
     let prefix = gog_prefix();
+    let oauth_dest = gog_oauth_helper_dest_dir();
+    let oauth_available = oauth_dest.join("main.js").is_file() && oauth_dest.join("index.html").is_file();
     let status = if binary.is_none() {
         "missing_gogdl"
     } else if !prefix.join("drive_c").is_dir() {
@@ -508,6 +563,9 @@ fn status_value() -> Value {
         "authConfigPath": gog_auth_config_path().to_string_lossy().to_string(),
         "configPath": gogdl_config_dir().to_string_lossy().to_string(),
         "supportPath": gogdl_support_dir().to_string_lossy().to_string(),
+        "oauthHelperPath": oauth_dest.to_string_lossy().to_string(),
+        "oauthHelperAvailable": oauth_available,
+        "oauthHelperScript": oauth_dest.join("main.js").to_string_lossy().to_string(),
         "bottleId": GOG_PREFIX_BOTTLE_ID,
         "winePrefix": prefix.to_string_lossy().to_string(),
         "prefixInitialized": prefix.join("drive_c").is_dir(),
