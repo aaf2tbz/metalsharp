@@ -93,11 +93,7 @@ fn mutate_install_state<F: FnOnce(&mut MonoInstallState)>(f: F) {
 
 pub fn detect_wine_mono_version(prefix: &Path) -> Option<String> {
     // Check for the version marker directory created after a successful install.
-    let marker = prefix
-        .join("drive_c")
-        .join("windows")
-        .join("mono")
-        .join(WINE_MONO_INSTALL_DIR_NAME);
+    let marker = prefix.join("drive_c").join("windows").join("mono").join(WINE_MONO_INSTALL_DIR_NAME);
     if marker.is_dir() {
         Some(WINE_MONO_LATEST_VERSION.to_string())
     } else {
@@ -375,15 +371,11 @@ pub fn install_wine_mono_latest(prefix: &Path, prefix_kind: &str) -> Result<u32,
         let status = child.wait();
         // If the installer succeeded, create the version marker.
         if status.map(|s| s.success()).unwrap_or(false) {
-            let marker = prefix_for_thread
-                .join("drive_c")
-                .join("windows")
-                .join("mono")
-                .join(WINE_MONO_INSTALL_DIR_NAME);
+            let marker =
+                prefix_for_thread.join("drive_c").join("windows").join("mono").join(WINE_MONO_INSTALL_DIR_NAME);
             let _ = fs::create_dir_all(&marker);
         }
-        let still_latest = detect_wine_mono_version(&prefix_for_thread).as_deref()
-            == Some(WINE_MONO_LATEST_VERSION);
+        let still_latest = detect_wine_mono_version(&prefix_for_thread).as_deref() == Some(WINE_MONO_LATEST_VERSION);
         mutate_install_state(|s| {
             s.running = false;
             s.pid = None;
