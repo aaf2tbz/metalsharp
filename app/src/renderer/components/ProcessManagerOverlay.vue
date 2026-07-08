@@ -139,8 +139,6 @@ async function runAction(action: ProcessManagerAction): Promise<void> {
     if (action === "quit-game") {
       status.value = "Non-Steam Wine game kill signal sent";
       await refresh();
-    } else if (action === "view-steam") {
-      status.value = "Steam focus requested";
     }
   } else {
     status.value = result?.error ?? "Action failed";
@@ -261,11 +259,6 @@ onBeforeUnmount(() => {
           <span>GPU Acceleration</span>
           <strong>Planned</strong>
           <small>runtime control coming soon</small>
-        </button>
-        <button class="pm-action cyan" type="button" @click="runAction('view-steam')">
-          <span>View Steam</span>
-          <strong>Focus</strong>
-          <small>bring client forward</small>
         </button>
       </section>
 

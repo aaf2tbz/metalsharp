@@ -465,35 +465,6 @@ async function processManagerQuitGame(): Promise<ProcessManagerActionResult> {
   return { ok: errors.length === 0, killed, errors, skippedSteamWinePids };
 }
 
-async function processManagerViewSteam(): Promise<ProcessManagerActionResult> {
-  if (process.platform === "darwin") {
-    try {
-      // Find the Steam.exe PID (Wine process), then activate it via
-      // NSRunningApplication.activateWithOptions. AppleScript can't see
-      // Wine windows (they don't register with System Events), but
-      // CoreFoundation can activate any PID.
-      const pidRaw = execFileSync("/bin/ps", ["-axo", "pid=,comm="], { encoding: "utf8" });
-      const steamPid = pidRaw
-        .split("\n")
-        .find((line) => line.includes("Steam.exe"))
-        ?.trim()
-        ?.split(/\s+/)[0];
-      if (!steamPid) return { ok: false, error: "Steam.exe not found in process list" };
-
-      const helperBin = processManagerHelperCandidates()
-        .map((c) => c.replace(/metalsharp-process-manager-helper$/, "metalsharp-activate-pid"))
-        .find((c) => fs.existsSync(c));
-      if (!helperBin) return { ok: false, error: "activate-pid helper not found" };
-
-      execFileSync(helperBin, [steamPid]);
-      return { ok: true, mode: "activate-existing" };
-    } catch (e: unknown) {
-      return { ok: false, error: `Failed to activate Steam: ${(e as Error).message}` };
-    }
-  }
-  return (await requestBackend("POST", "/steam/launch", undefined, 10000)) as ProcessManagerActionResult;
-}
-
 async function createProcessManagerWindow(): Promise<BrowserWindow> {
   if (processManagerWindow && !processManagerWindow.isDestroyed()) {
     return processManagerWindow;
@@ -804,7 +775,6 @@ function registerIpc() {
     "process-manager:action",
     async (_e, action: ProcessManagerAction): Promise<ProcessManagerActionResult> => {
       if (action === "quit-game") return processManagerQuitGame();
-      if (action === "view-steam") return processManagerViewSteam();
       if (action === "metalfx" || action === "gpu-acceleration") {
         return { ok: true, visualOnly: true, action };
       }

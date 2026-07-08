@@ -41,7 +41,7 @@ export interface ProcessManagerSample {
   helper_path?: string;
 }
 
-export type ProcessManagerAction = "metalfx" | "gpu-acceleration" | "quit-game" | "view-steam";
+export type ProcessManagerAction = "metalfx" | "gpu-acceleration" | "quit-game";
 
 export interface ProcessManagerActionResult {
   ok: boolean;
