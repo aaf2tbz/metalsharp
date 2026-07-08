@@ -520,25 +520,78 @@ async function handleGogAuthButton() {
   }
 }
 
-async function loginGog() {
+// --- GOG webview login ---
+const showGogLoginWebview = ref(false);
+const gogLoginWebview = ref<Electron.WebviewTag | null>(null);
+const gogLoginUrl = ref("");
+const GOG_CALLBACK_RE = /https:\/\/embed\.gog\.com\/on_login_success/;
+
+function startGogLoginWebview() {
   if (!gogStatus.value?.authUrl) return;
-  gogLoading.value.login = true;
-  const login = await getAPI().gogOAuthLogin(gogStatus.value.authUrl);
-  if (!login.ok || !login.code) {
-    gogLoading.value.login = false;
-    toast.show(login.error ?? "GOG login cancelled", "error");
-    return;
-  }
-  toast.show("GOG login code captured; finishing connection…", "success");
-  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>("POST", "/sharp-library/gog/auth-code", { code: login.code }, 90 * 1000);
+  gogLoginUrl.value = gogStatus.value.authUrl;
+  showGogLoginWebview.value = true;
+}
+
+function cancelGogLogin() {
+  showGogLoginWebview.value = false;
   gogLoading.value.login = false;
-  if (result?.ok && result.status) {
-    gogStatus.value = result.status;
-    toast.show("GOG connected", "success");
-    await syncGogLibrary();
-  } else {
-    toast.show(result?.error ?? "Failed to connect GOG", "error");
+}
+
+function onGogWebviewReady() {
+  const wv = gogLoginWebview.value;
+  if (!wv) return;
+  // Windows user agent so GOG doesn't block the embedded browser
+  wv.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/200.0");
+  checkGogCallback(wv.getURL());
+}
+
+function onGogWebviewNavigate(event: { url: string }) {
+  checkGogCallback(event.url);
+}
+
+function checkGogCallback(url: string) {
+  if (!GOG_CALLBACK_RE.test(url)) return;
+  try {
+    const parsed = new URL(url);
+    const code = parsed.searchParams.get("code");
+    const err =
+      parsed.searchParams.get("error") ??
+      parsed.searchParams.get("error_description");
+    if (err) {
+      toast.show(`GOG login failed: ${err}`, "error");
+      showGogLoginWebview.value = false;
+      gogLoading.value.login = false;
+      return;
+    }
+    if (!code) return; // page still loading, wait for navigate with code param
+    // Got the code — close overlay, exchange with backend
+    showGogLoginWebview.value = false;
+    exchangeGogCode(code);
+  } catch {
+    /* ignore parse errors on intermediate URLs */
   }
+}
+
+async function exchangeGogCode(code: string) {
+  gogLoading.value.login = true;
+  const result = await api<{ ok: boolean; status?: GogStatus; error?: string }>(
+    "POST",
+    "/sharp-library/gog/auth-code",
+    { code },
+    90 * 1000,
+  );
+  gogLoading.value.login = false;
+  if (result?.ok) {
+    if (result.status) gogStatus.value = result.status;
+    await refreshGog();
+    toast.show("GOG connected", "success");
+  } else {
+    toast.show(result?.error ?? "GOG login failed", "error");
+  }
+}
+
+async function loginGog() {
+  startGogLoginWebview();
 }
 
 async function syncGogLibrary() {
@@ -1513,6 +1566,23 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
       </section>
     </template>
   </div>
+
+  <!-- GOG Login Webview Overlay -->
+  <div v-if="showGogLoginWebview" class="gog-login-overlay">
+    <div class="gog-login-header">
+      <span class="gog-login-title">Sign in to GOG</span>
+      <button class="btn btn-sm btn-secondary" @click="cancelGogLogin">Cancel</button>
+    </div>
+    <webview
+      ref="gogLoginWebview"
+      class="gog-login-webview"
+      :src="gogLoginUrl"
+      allowpopups
+      partition="persist:gogauth"
+      @dom-ready="onGogWebviewReady"
+      @did-navigate="onGogWebviewNavigate"
+    />
+  </div>
 </template>
 
 <style scoped>
@@ -2358,5 +2428,31 @@ details[open] > .drawer-summary {
 }
 .empty-state p {
   font-size: 13px;
+}
+
+/* GOG login webview overlay */
+.gog-login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary, #0f0f0f);
+}
+.gog-login-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.gog-login-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.gog-login-webview {
+  flex: 1;
+  border: none;
 }
 </style>
