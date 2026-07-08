@@ -1155,9 +1155,8 @@ function registerIpc() {
       return { ok: false, error: "Refusing to open non-GOG auth URL." };
     }
 
-    const electronBin = process.execPath; // path to the running Electron binary
-    // Resolve the OAuth helper script. In dev the tools dir is at the project
-    // root; in production it lives alongside the app resources.
+    const electronBin = process.execPath;
+    // Resolve the OAuth helper script.
     let scriptPath = path.join(__dirname, "..", "..", "..", "tools", "gog-oauth-electron", "main.js");
     if (!fs.existsSync(scriptPath)) {
       scriptPath = path.join(__dirname, "..", "..", "tools", "gog-oauth-electron", "main.js");
@@ -1165,6 +1164,9 @@ function registerIpc() {
     if (!fs.existsSync(scriptPath)) {
       return { ok: false, error: "GOG OAuth helper script not found" };
     }
+
+    // Find the app icon for the OAuth window.
+    const iconPath = path.join(__dirname, "..", "..", "build", "icon.png");
 
     return new Promise<{ ok: boolean; code?: string; redirectUrl?: string; error?: string }>((resolve) => {
       let settled = false;
@@ -1176,7 +1178,7 @@ function registerIpc() {
         resolve(result);
       };
 
-      const child = spawn(electronBin, [scriptPath, authUrl], {
+      const child = spawn(electronBin, [scriptPath, authUrl, "--icon", iconPath], {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 300_000, // 5 minutes
       });

@@ -5,11 +5,19 @@
 // The authorization code is printed to stdout on success.
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
+const fs = require("fs");
 
 const authUrl = process.argv[2];
 if (!authUrl) {
-  console.error("Usage: electron main.js <gog-auth-url>");
+  console.error("Usage: electron main.js <gog-auth-url> [--icon <path>]");
   app.exit(1);
+}
+
+// Parse optional --icon argument
+let iconPath;
+const iconIdx = process.argv.indexOf("--icon");
+if (iconIdx !== -1 && process.argv[iconIdx + 1]) {
+  iconPath = process.argv[iconIdx + 1];
 }
 
 let parsed;
@@ -39,6 +47,7 @@ app.whenReady().then(() => {
     height: 780,
     title: "Sign in to GOG",
     titleBarStyle: "default",
+    icon: iconPath && fs.existsSync(iconPath) ? iconPath : undefined,
     webPreferences: {
       webviewTag: true,
       nodeIntegration: true,
