@@ -28,7 +28,7 @@
     "electron-store": "^10.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
+    "@biomejs/biome": "^2.5.3",
     "@electron/notarize": "^2.5.0",
     "@iconify-json/lucide": "^1.2.113",
     "@types/node": "^22.0.0",
