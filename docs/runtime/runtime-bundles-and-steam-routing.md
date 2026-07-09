@@ -1,4 +1,6 @@
 # Runtime Bundles and Steam Routing
+**Updated:** 2026-07-08
+
 
 This is the operational contract for bundle provenance and Wine Steam launch routing.
 

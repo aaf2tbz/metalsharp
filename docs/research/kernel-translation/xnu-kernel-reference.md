@@ -1,4 +1,6 @@
 # XNU Kernel Complete API Reference
+**Updated:** 2026-07-08
+
 ## macOS 26.6 (Tahoe) / arm64 — For Wine Anti-Cheat Compatibility Mapping
 
 > Source: apple-oss-distributions/xnu (latest)

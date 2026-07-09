@@ -1,4 +1,6 @@
 # M12 Native Vertex/Tessellation GPU Roadmap
+**Updated:** 2026-07-08
+
 
 Status: final source-backed roadmap for PR #230 follow-up work
 Branch/worktree: `feat/m12-fresh-proof-game-harness` at `/Volumes/AverySSD/MetalSharp-SM6-UE-Lab/10-worktrees/metalsharp-m12-fresh-proof-pr`

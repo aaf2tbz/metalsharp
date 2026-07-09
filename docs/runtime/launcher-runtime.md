@@ -1,4 +1,6 @@
 # MetalSharp Launcher Runtime
+**Updated:** 2026-07-08
+
 
 Status: Phase 3 foundation
 

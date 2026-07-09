@@ -1,6 +1,6 @@
 # Games Supported
 
-Updated: 2026-06-30
+Updated: 2026-07-08
 
 Tested and working games organized by pipeline. Only games confirmed playable are listed.
 
@@ -15,6 +15,7 @@ Games were tested from an external 1TB M.2 SSD (~5000 MB/s over USB-C 3.1) on an
 | **D3DMetal** | Homebrew GPTK / Apple D3DMetal | D3D11/D3D12 via Apple's D3DMetal framework. GPTK is installed through Homebrew and is not bundled by MetalSharp. |
 | **M12** | DXMT | D3D12 to Metal |
 | **M11** | DXMT | D3D11 to Metal |
+| **M11 (32-bit)** | DXMT | D3D11 to Metal, 32-bit prefix route |
 | **M10** | DXMT | D3D10 to Metal |
 | **M9** | DXMT | D3D9 to Metal |
 | **Mono/FNA** | MonoKickstart + FNA | XNA/FNA/MonoGame via native Mono runtime |
@@ -32,6 +33,8 @@ Games running through Homebrew GPTK and Apple's D3DMetal pipeline. D3DMetal bott
 | Elden Ring | 1245620 | Offline play. |
 | ARMORED CORE VI FIRES OF RUBICON | 1888160 | Offline play. |
 | High On Life | 1583230 | Also works on M12. |
+| Cyberpunk 2077 | 1091500 | Offline play. |
+| Ghostrunner | 1139900 | D3DMetal route confirmed. |
 
 ---
 
@@ -42,7 +45,6 @@ Games running through Homebrew GPTK and Apple's D3DMetal pipeline. D3DMetal bott
 | PEAK | 3527290 | Medium settings. |
 | Hollow Knight: Silksong | 1030300 | |
 | Schedule I | 3164500 | |
-| Ghostrunner | 1139900 | |
 | Yu-Gi-Oh! Master Duel | 1449850 | |
 | Dark Deception | 332950 | Runtime bootstrap required on first launch. |
 
@@ -58,9 +60,30 @@ Games running through Homebrew GPTK and Apple's D3DMetal pipeline. D3DMetal bott
 | The Wilds | 1028590 | |
 | The Long Dark | 305620 | Ultra settings verified. |
 | Subnautica | 264710 | |
+| Subnautica: Below Zero | 848450 | |
 | Rain World | 312520 | |
 | Hollow Knight | 367520 | |
-| Party Animals | 1823720 | Steam online play. |
+| Party Animals | 1260320 | Save M11 bottle, launch direct with Steam. |
+| Dave the Diver | 1868140 | |
+| Totally Accurate Battle Simulator | 508440 | |
+| Skul: The Hero Slayer | 1147560 | |
+| Crab Game | 1782210 | |
+| MECCHA CHAMELEON | 4704690 | |
+| SkyIsland | 2302640 | |
+| Lethal Company | 1966720 | |
+| Insurgency | 222880 | Launch with `-steam -secure` flags. |
+| Graveyard Keeper | 599140 | |
+| Brawlhalla | 291550 | |
+| Black Myth: Wukong | 2358720 | Compatibility Mode. |
+
+---
+
+## M11 (32-bit) — D3D11 to Metal, 32-bit prefix route
+
+| Game | AppID | Notes |
+|---|---:|---|
+| Inscryption | 1092790 | Binary: `Inscryption.exe`. |
+| Hades | 1145360 | Binary: `x86/Hades.exe`. |
 
 ---
 
@@ -74,12 +97,13 @@ Games running through Homebrew GPTK and Apple's D3DMetal pipeline. D3DMetal bott
 
 | Game | AppID | Notes |
 |---|---:|---|
-| Dave the Diver | 1868140 | 32-bit. Requires vcrun2019 + DX Jun2010. |
 | Mirror's Edge | 17410 | Sync-loading mitigation active. |
 | Half-Life 2 | 220 | |
 | Portal 2 | 620 | Steam Emu supported. |
 | Among Us | 945360 | Steam online play. |
 | Team Fortress 2 | 440 | Steam online play. VAC works. |
+| Nidhogg 2 | 535520 | |
+| Fallout: New Vegas | 22380 | Direct Steam Launch. |
 
 ---
 

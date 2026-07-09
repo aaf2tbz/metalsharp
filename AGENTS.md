@@ -1,4 +1,5 @@
 # AGENTS.md
+**Updated:** 2026-07-08
 
 Guide for AI agents working on the MetalSharp repository.
 
@@ -51,8 +52,9 @@ tools/
 ├── launcher/                    Native launcher (metalsharp binary + Wine prefix management)
 ├── dmg/                         DMG packaging scripts
 └── linux/                       DEB/Docker/runtime tarball/GHCR package scripts
-scripts/                         Per-game setup scripts (setup-rainworld-deps.sh, etc.)
-configs/                         Mono DLL maps for FNA games
+scripts/
+└── install-gptk-runtime.sh      Homebrew GPTK runtime install
+configs/                         MTSP rules + Mono DLL maps for FNA games
 docs/                            Architecture docs + game compatibility matrix
 CMakeLists.txt                   C++ build (native engine + tests)
 install.sh                       CLI build script (cmake + test runner)

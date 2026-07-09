@@ -1,4 +1,6 @@
 # Local Gates
+**Updated:** 2026-07-08
+
 
 The canonical local gates a PR must pass before merge. CI runs a subset of
 these; the graphics gates require a host Wine/Metal runtime and therefore run

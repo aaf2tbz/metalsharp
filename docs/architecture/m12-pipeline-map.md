@@ -1,4 +1,6 @@
 # M12 Pipeline Map
+**Updated:** 2026-07-08
+
 
 Last verified: 2026-06-13.
 

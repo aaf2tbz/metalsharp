@@ -1,4 +1,6 @@
 # Wine Kernel Compatibility Gap Analysis
+**Updated:** 2026-07-08
+
 ## Windows NT → macOS XNU Mapping for Anti-Cheat Game Compatibility
 ### macOS 26.6 (Tahoe) / arm64 (Apple Silicon) vs Windows 10/11 (NT 10.0+)
 

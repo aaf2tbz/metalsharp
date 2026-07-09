@@ -1,4 +1,6 @@
 # Launch Architecture
+**Updated:** 2026-07-08
+
 
 MetalSharp launches games through the Rust backend and the current MTSP pipeline resolver.
 

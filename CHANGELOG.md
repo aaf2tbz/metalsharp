@@ -1,5 +1,160 @@
 # Changelog
 
+## v0.54.5 — 2026-07-09
+
+Testing-surface hardening, pre-commit strictness, and compatibility database refresh.
+
+### Added
+
+- **`tools/ci/validate-rules-toml.py`** — lightweight Python validator for `configs/mtsp-rules.toml`. Catches: TOML parse errors, duplicate `[overrides.APPID]` sections, missing/empty `name`, missing/unknown `pipeline`, unrecognized sub-table keys. Runs in CI without the Rust toolchain.
+- **`tools/ci/check-doc-freshness.py`** — warns on docs without an `Updated:` header or older than 120 days; also verifies `CHANGELOG.md` has a section for the current version. Warn-only by default; `--strict` makes it an error.
+- **`.github/hooks/pre-commit`** + README — opt-in shared pre-commit hook. Runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test --lib`, `clang-format --dry-run --Werror`, `tsc --noEmit`, `biome ci`, `prettier --check`, and the rules-TOML/doc-freshness validators locally when relevant files are staged.
+- **`shipped_rules_toml_is_well_formed`** Rust test — same checks as the Python rules TOML validator, runs as part of `cargo test`.
+- **609 default rule entries** for Steam AppIDs — bulk-add of game compatibility rules for DX9/10/11/12 pipelines, sourced from Steam store data and community testing. Pipeline distribution: m9: 54, m10: 2, m11: 471, m11_32: 70, m12: 12.
+
+### Changed
+
+- **Pre-commit policy: fail-hard on missing toolchains.** Previously the pre-commit hook would warn and silently skip a check if the required toolchain (cargo, clang-format, node_modules, python3) wasn't installed. That made it possible for a `cargo fmt` violation to slip past locally and only get caught in CI. The hook now fails the commit in that case, with an install hint.
+- **Compatibility database** — `docs/compatibility/GAMES-SUPPORTED.md` now documents the M9, M10, M11, M11-32, M12, and D3DMetal pipeline coverage and corrects the Party Animals AppID (1260320; the prior 1823720 was incorrect).
+
+### Fixed
+
+- **Party Animals AppID correction** — was 1823720 (Mail Mole); correct ID is 1260320.
+- **rustfmt violation** in the new `shipped_rules_toml_is_well_formed` test caught in CI, fixed by collapsing the multi-line chain call.
+
+### Documentation
+
+- Added `**Updated:** 2026-07-08` headers to 37 docs that lacked a date stamp.
+- Archived 4 dead/historical roadmaps to `docs/archive/roadmaps/` (`metalsharp-final-roadmap.md`, `dx12-pipeline-complete-roadmap.md`, `beta7-dxmt-cohesion-roadmap.md`) and 1 phase PR summary to `docs/archive/optimization-roadmap/`. New `docs/archive/README.md` documents the archive policy.
+- Removed `docs/compatibility/game-compat.md` (a 4-line redirect stub pointing to GAMES-SUPPORTED.md).
+
+## v0.54.1 — 2026-07-08
+
+M11(32)/M10(32) bottle visual fix, GOG/OAuth hardening, Wine Mono bundling, Steam DLL cache, and D3DMetal save feedback.
+
+### Fixed
+
+- **M11(32)/M10(32) bottle visual dropdown** — (#256, #258) bottles and library cards now correctly surface the 32-bit variants; the dropdown expands only the active row, and `(32)` annotations appear in the right places.
+- **GOG OAuth** — (#258, #259) replace the Safari AppleScript browser polling with a bundled Electron `BrowserWindow` helper. Restores the app icon on the OAuth window and surfaces GOG as a fully-supported library source.
+- **Wine Mono install** — (#258) bundled wine-mono-11.2.0 installs asynchronously with progress; old mono is cleaned up before reinstall; `wine-mono-11.2.0.marker` written on success.
+- **Steam DLL cache** — (#258) for `steam_interfaces.txt` Goldberg toggle, ensure DLLs are present and the cache is regenerated if empty/incomplete.
+- **D3DMetal save feedback** — (#258) library cards now show the actual D3DMetal bottle state on save; stale manifests are normalized.
+- **`winemetal.so` deploy** — removed an incorrect copy of `winemetal.so` to `system32` during i386 repair that was being overwritten on every save.
+
+### Documentation
+
+- **README** — GOG compatibility section, Discord badge, and a few wording passes.
+
+## v0.53.5 — 2026-07-08
+
+M11(32)/M10(32) bottle save correctness.
+
+### Fixed
+
+- **Bottle save / DLL surface for 32-bit pipelines** — the i386 DXMT lanes now save bottles correctly. The previous implementation swapped DLLs but did not rebind the bottle manifest to the right `bottle_id`, so saves appeared to succeed but pointed at the wrong `drive_c` snapshot. Also resolves the `(32)` exe-resolution edge case where the loader would pick the 64-bit exe on a 32-bit pipeline.
+
+## v0.53.0 — 2026-07-08
+
+32-bit DXMT routes for M11/M10, MetalFX live toggle, and Process Manager GPU overlay.
+
+### Added
+
+- **M11(32) and M10(32) DXMT routes** — (#253) 32-bit D3D11 and D3D10 games now route through the i386 DXMT lanes. The new `M11_32` and `M10_32` PipelineId values are wired through the rules engine, the bottle doctor, and the graphics runtime repair path.
+- **M11(32)/M10(32) staging + doctor** — the i386 DXMT lanes are staged alongside the existing x86_64 lanes, and the bottle doctor checks the right DLLs for each variant.
+- **Process Manager performance overlay** — ported from the 0.51 branch, with an interactive vcrun2019 repair button and honest CPU temperature reporting (no more `kIO*` shim).
+- **MetalFX Spatial Upscaling live toggle** — in the Process Manager overlay, the user can flip MetalFX on/off per-process without restarting.
+- **GPU load overlay** — the Process Manager now reports real GPU utilization, not the placeholder value.
+
+### Fixed
+
+- **Hades + Titan Quest through M11(32)** — (#254) Hades and Titan Quest now resolve to the `(32)` exe and the bottle DLL surface checks the right DXMT files.
+- **GOG migration metadata** — preserves GOG bottle metadata across migrations.
+- **CI bundle hook list** — adds a missing line continuation in `verify-bundles.sh`'s runtime hook list.
+
+## v0.51.0 — 2026-07-01
+
+GOG MetalSharp Games launcher, M12 release path, D3DMetal GPTK explicit lane, dependency hygiene, and Electron theme polish.
+
+### Added
+
+- **GOG MetalSharp Games launcher** — (#242) a fully separate GOG launcher built on the `gogdl` downloader. GOG OAuth now flows through a bundled Electron `BrowserWindow` (replacing the previous Safari AppleScript bridge). GOG prefixes are managed end-to-end, GOG cards get artwork, and the GOG install path is shared with the Steam path for compatibility surface purposes.
+- **M12 release runtime path** — release CI now installs the DXMT build tools and MinGW toolchain and verifies the M12 archive layout. The `chore: bump release version` script verifies all 5 version locations are in sync.
+- **D3DMetal GPTK explicit lane** — #231 adds a dedicated `D3DMetal` lane separate from `M12`, with its own bottle repair actions, runtime staging, and Titan Quest M9 rule.
+- **D3DMetal → M12 route switching** — bottles can be switched between D3DMetal and M12 with the right DLLs swapped automatically.
+- **M12 winemetal sidecar validation** — release CI validates the staged `winemetal.dylib` and `winemetal.so` sidecars.
+- **Process Manager performance + process controls** — the in-game overlay now has explicit performance and process controls (per-process kill, GPU usage, etc.).
+- **Developer theme preview** — a new developer theme that uses neutral sidebar active text and an honest library card grid.
+
+### Changed
+
+- **Library card grid** — cards now lay out in a fixed 2-column grid; glass sidebar active route shimmers on route change; the developer theme is opt-in.
+- **Dependency bumps** — bumps `vue`, `lucide-icons`, `biome`, `electron`, and the `sha2` Rust crate. Patches vulnerable npm transitive deps.
+- **CI: CodeQL C** — restored and then removed (job was kept active in the meantime).
+- **Subnautica 2** — now launches directly on M12 (no more guard).
+
+### Fixed
+
+- **M12 normal launch pipeline** — guarded staging for normal launches (not just Steam).
+- **M12 Steam launch artifact staging** — guarded.
+- **GOG OAuth callback capture** — OAuth callback tabs are now captured correctly.
+- **GOG prefix setup state refresh** — GOGDL is provisioned during prefix setup.
+- **GOG uninstall + retry state** — hardened.
+- **Bottle profile save isolation** — saves no longer share state between D3DMetal and M12.
+- **M12 runtime repair contract** — CI checks added.
+- **M12 unix sidecar staging** — staged for game launches.
+- **M12 command/present milestone logging** — milestones are now logged in the runtime.
+
+## v0.50.0 — 2026-06-13
+
+M12 DXIL vertex input hardening, RE4 diagnostic capture, and the M12 cube pipeline CI gate.
+
+### Added
+
+- **M12 DXIL vertex input mapping** — uses vertex pulling for DXIL vertex inputs (replaces an earlier "share unix winemetal" attempt that was reverted). The shared IA metadata builder is now used by both the M12 cube runner and the game launch path.
+- **M12 fragment bindings hardened** — compute binding completeness logs added; zero-draw swapchain presents classified; direct swapchain clear work recorded; command list lifecycle traced.
+- **M12 render encode path hardened** — encodes go through the new M12 render encode path.
+- **M12 shader present path hardened** — and a defined M12 shader engine contract.
+- **M12 game-local launch path** — defined; a bottle repair checklist and a native repair fallback were added.
+- **Steam prefix init without wineboot** — speeds up launch on cold bottles.
+- **DXMT winemetal migration staging** — verified.
+- **Elden M12 shader corpus** — added for shader testing.
+- **MTSP game rules + M12 fallback DLL checks** — updated.
+- **Sharp artwork fallback** — uses fallback art for games missing images.
+- **Phase 1–9 hardening** — diagnostic observability, bottle route contract hardening, M12 artifact verification, shader/PSO cache diagnostics, Metal binding descriptor hardening, command replay/barriers/visibility contract, runtime/migration perf cleanup, Mono/FNA/XNA reliability, release gates.
+- **M12 cube pipeline CI check** — the standalone M12 cube runner is restored and hardens the M12 cube unix dylib staging; release CI runs it on every push.
+- **Ad-hoc deep signing for DMG packaging** — the DMG build now signs deeply (Developer ID + notarization).
+- **M12 dxmt surface isolated** — (#201) the updated M12 DXMT surface is isolated from M11.
+
+### Fixed
+
+- **RE4 DXMT diagnostics** — captured and staged.
+- **mscompatdb disabled for M12 launches** — bypass wrapper load for M12; the wrapper is no longer needed because M12 uses the native DXMT surface.
+
+## v0.46.5 — 2026-06-11
+
+Steam secure launch args for protected games, FNA asset repair, GPTK prefix seeding, and D3DMetal offline launches.
+
+### Added
+
+- **GPTK repair, launch routing, and library UI hardening** — (#197) GPTK repair status is now surfaced in the library UI, with a clear launch-routing decision.
+- **FNA runtime asset repair** — (#198) bottles with FNA games now repair their runtime assets (fnalibs bundle) on save.
+- **FNA asset bundle repair (release)** — (#199) the release DMG verifier checks the fnalibs bundle.
+- **GPTK prefix reseeding** — GPTK prefixes are now seeded with the D3DMetal DLLs and reseed themselves when the prefix is regenerated.
+- **Party Animals steam secure args** — `PartyAnimals` (correctly appid 1260320) now launches with `-steam -secure`.
+- **GTA V steam secure args** — `GTA5.exe` now launches with `-steam -secure`. Rockstar runtime prerequisites (C++ redist, scripthook) are preflighted.
+- **BeamNG M11 secure rule** — `BeamNG.drive` routed through M11 with secure args.
+- **Researched default launch args** — Epic and Ubisoft launcher bottles (and other researched titles) get default secure launch args.
+- **Sharp Library launcher defaults** — the Sharp Library store launches games with sane default args; PR review state warnings are fixed.
+- **D3DMetal offline launches** — D3DMetal Steam launches now default to running offline (no Steam client needed for single-player titles).
+- **GPTK VC redist seeding** — GPTK prefixes now include the VC redistributable.
+- **Mono FNA bottle save verification** — Mono FNA bottles are verified on save.
+
+### Changed
+
+- **Steam secure launch args** — deployed for `PartyAnimals`, `GTA5`, and `BeamNG.drive`; skipped on D3DMetal launches (which are offline).
+- **Migration post-wineboot Steam updater dismissal** — the post-wineboot Steam updater is dismissed during migration so it doesn't block completion.
+
+
 ## v0.46.0 — 2026-06-11
 
 Install hardening, backend lifecycle, Lucide icons, uninstall, and compatibility updates.

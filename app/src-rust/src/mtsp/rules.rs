@@ -493,10 +493,10 @@ mod tests {
             (1245620, PipelineId::M12),
             (1562430, PipelineId::FnaArm64),
             (1623730, PipelineId::M12),
-            (1868140, PipelineId::M9),
+            (1868140, PipelineId::M11),
             (1928870, PipelineId::M12),
             (1962700, PipelineId::M12),
-            (2358720, PipelineId::M12),
+            (2358720, PipelineId::M11),
             (2456740, PipelineId::M12),
             (275850, PipelineId::WineBare),
             (284160, PipelineId::M11),
@@ -504,6 +504,17 @@ mod tests {
             (1583230, PipelineId::M12),
             (3164500, PipelineId::M11),
             (3527290, PipelineId::M12),
+            (22380, PipelineId::M9),
+            (1030300, PipelineId::M12),
+            (222880, PipelineId::M11),
+            (305620, PipelineId::M11),
+            (1260320, PipelineId::M11),
+            (1782210, PipelineId::M11),
+            (1966720, PipelineId::M11),
+            (2302640, PipelineId::M11),
+            (291550, PipelineId::M11),
+            (599140, PipelineId::M11),
+            (4704690, PipelineId::M11),
         ] {
             assert_eq!(rules.get(&appid), Some(&pipeline), "appid {appid}");
         }
@@ -721,5 +732,56 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("system time").as_nanos()
         ))
+    }
+
+    /// Parse the shipped TOML once, and validate:
+    ///   1. No duplicate `[overrides.APPID]` headers
+    ///   2. Every override has both a `name` and a `pipeline`
+    ///   3. Every `pipeline` value is one of the known PipelineId strings
+    ///   4. No empty `name` strings
+    #[test]
+    fn shipped_rules_toml_is_well_formed() {
+        const SOURCE: &str = include_str!("../../../../configs/mtsp-rules.toml");
+        let mut seen_sections: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        for line in SOURCE.lines() {
+            let section = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or("");
+            if let Some(appid_str) = section.strip_prefix("overrides.") {
+                // Only the `[overrides.NNNN]` top-level table counts;
+                // sub-tables like `[overrides.NNNN.diagnostics]` are skipped.
+                if !appid_str.contains('.') {
+                    if let Ok(appid) = appid_str.parse::<u32>() {
+                        *seen_sections.entry(appid).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        for (appid, count) in &seen_sections {
+            if *count > 1 {
+                errors.push(format!("[overrides.{}] is defined {count} times", appid));
+            }
+        }
+
+        let (_, recipes) = parse_rules_full(SOURCE);
+        for (appid, recipe) in &recipes {
+            if recipe.name.trim().is_empty() {
+                errors.push(format!("[overrides.{}] has empty name", appid));
+            }
+        }
+
+        for line in SOURCE.lines() {
+            if let Some(rest) = line.strip_prefix("pipeline = ") {
+                let pipeline_str = rest.trim().trim_matches('"');
+                if PipelineId::from_str_flexible(pipeline_str).is_none() {
+                    errors.push(format!("unknown pipeline: {pipeline_str:?}"));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            let summary = format!("{} shipped-rules TOML validation error(s):", errors.len());
+            panic!("{summary}\n  {}", errors.join("\n  "));
+        }
     }
 }

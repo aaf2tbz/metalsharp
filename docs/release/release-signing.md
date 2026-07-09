@@ -1,4 +1,6 @@
 # Release Signing and Notarization
+**Updated:** 2026-07-08
+
 
 MetalSharp DMG releases must be signed with a Developer ID Application certificate and notarized before upload. Without that, macOS Gatekeeper can show the "Apple could not verify this app is free of malware" prompt and force users through Security & Privacy.
 

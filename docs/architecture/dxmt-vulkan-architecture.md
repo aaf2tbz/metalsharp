@@ -1,4 +1,6 @@
 # DXMT and Vulkan Architecture
+**Updated:** 2026-07-08
+
 
 MetalSharp has two graphics translation families:
 

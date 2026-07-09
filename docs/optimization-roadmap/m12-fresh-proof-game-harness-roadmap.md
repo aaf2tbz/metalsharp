@@ -1,4 +1,6 @@
 # M12 Fresh Proof Game Harness Roadmap
+**Updated:** 2026-07-08
+
 
 This roadmap is the first artifact for a new PR branch. It deliberately does not rely on prior probe results, prior proof directories, prior cached shader artifacts, or previous PR evidence. Every pass/fail claim for this PR must be produced again from fresh source inputs, fresh logs, and fresh machine-readable result files.
 

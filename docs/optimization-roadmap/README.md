@@ -1,4 +1,6 @@
 # MetalSharp Phased Optimization Roadmap
+**Updated:** 2026-07-08
+
 
 This directory documents the 9-phase optimization roadmap that hardens
 MetalSharp's launch routes, bottles, M12 artifact verification, shader/PSO

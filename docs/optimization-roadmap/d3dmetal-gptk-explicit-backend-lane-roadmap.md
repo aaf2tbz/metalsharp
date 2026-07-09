@@ -1,4 +1,6 @@
 # D3DMetal / GPTK Explicit Backend Lane Roadmap
+**Updated:** 2026-07-08
+
 
 ## Objective
 

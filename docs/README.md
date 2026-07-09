@@ -1,4 +1,6 @@
 # MetalSharp Docs
+**Updated:** 2026-07-08
+
 
 Use this page as the repo map before changing launch/runtime code.
 
@@ -10,7 +12,6 @@ Use this page as the repo map before changing launch/runtime code.
 
 ## Compatibility
 
-- [Game Compatibility](compatibility/game-compat.md) - short entrypoint to the current compatibility ledger.
 - [Supported Games](compatibility/GAMES-SUPPORTED.md) - current working/blocked game evidence and recommended public routes.
 - [Proof Targets](compatibility/proof-targets.md) - local evidence targets and runtime proof notes.
 
@@ -39,14 +40,20 @@ Use this page as the repo map before changing launch/runtime code.
 
 ## Historical Roadmaps
 
-These files are planning history and should not be treated as the current implementation contract without checking the code and runtime manifests first.
+These files are planning history and should not be treated as the current implementation contract without checking the code and runtime manifests first. Archived roadmaps have moved to `docs/archive/roadmaps/`.
 
-- [MetalSharp Final Roadmap](roadmaps/metalsharp-final-roadmap.md)
-- [DX12 Pipeline Complete Roadmap](roadmaps/dx12-pipeline-complete-roadmap.md)
-- [Beta7 DXMT Cohesion Roadmap](roadmaps/beta7-dxmt-cohesion-roadmap.md)
+### Active roadmaps (current planning)
+
 - [DXMT Proton-Parity Roadmap](roadmaps/dxmt-proton-parity-roadmap.md)
 - [Installer Runtime Roadmap](roadmaps/installer-runtime-roadmap.md)
 - [Anti-Cheat Hard Route Roadmap](roadmaps/anticheat-hard-route-roadmap.md)
+- [D3D12 Offline ABI Surface Matrix](roadmaps/d3d12-offline-abi-surface-matrix.md)
+- [D3D12 Offline Cache Preflight](roadmaps/d3d12-offline-cache-preflight.md)
+- [D3D12 Offline Gate Results](roadmaps/d3d12-offline-gate-results.md)
+
+### Archived roadmaps (historical, completed work)
+
+See [archive README](archive/README.md) for the full list. Do not cite archived roadmaps as current contracts.
 
 ## Research
 

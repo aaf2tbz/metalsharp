@@ -26,6 +26,27 @@ jobs:
       - name: ShellCheck maintained scripts
         run: tools/ci/shellcheck.sh
 
+  rules:
+    name: Rules TOML CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toml
+        run: pip3 install --user toml
+
+      - name: Validate mtsp-rules TOML
+        run: python3 tools/ci/validate-rules-toml.py
+
+  docs:
+    name: Doc Freshness CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check doc freshness (warn-only)
+        run: python3 tools/ci/check-doc-freshness.py
+
   metal:
     name: Metal CI
     runs-on: macos-14

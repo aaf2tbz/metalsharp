@@ -1,4 +1,6 @@
 # M9 Pipeline Map
+**Updated:** 2026-07-08
+
 
 M9 is the D3D9 engine path. It now uses the same DXMT-family launcher, cache, and Metal handoff conventions as M10, M11, and M12 instead of selecting the old DXVK/MoltenVK labels.
 

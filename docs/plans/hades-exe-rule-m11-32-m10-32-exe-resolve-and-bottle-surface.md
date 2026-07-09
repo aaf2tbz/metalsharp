@@ -1,4 +1,6 @@
 # Plan: Hades exe rule + M11(32)/M10(32) exe resolution + bottle DLL-surface surfacing
+**Updated:** 2026-07-08
+
 
 Branch: `plan/hades-exe-rule-m11-32-m10-32-exe-resolve-and-bottle-surface`
 Base: `main` @ `9208843` (0.51.2)
