@@ -746,10 +746,7 @@ mod tests {
         let mut errors: Vec<String> = Vec::new();
 
         for line in SOURCE.lines() {
-            let section = line
-                .strip_prefix('[')
-                .and_then(|s| s.strip_suffix(']'))
-                .unwrap_or("");
+            let section = line.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or("");
             if let Some(appid_str) = section.strip_prefix("overrides.") {
                 // Only the `[overrides.NNNN]` top-level table counts;
                 // sub-tables like `[overrides.NNNN.diagnostics]` are skipped.
