@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Pre-commit hook for the MetalSharp repo.
+#
+# Run quick local checks before allowing a commit. Skip with `git commit --no-verify`.
+#
+# What this does:
+#   - Stops on the first failure (`set -e`).
+#   - Skips checks that don't apply to the files being committed.
+#
+# Install with:
+#   ln -s ../../.github/hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "$ROOT_DIR"
+
+# Resolve all files that are about to be committed
+STAGED=()
+while IFS= read -r line; do
+    [ -n "$line" ] && STAGED+=("$line")
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+if [ ${#STAGED[@]} -eq 0 ]; then
+    exit 0
+fi
+
+log()  { echo -e "\033[0;36m[pre-commit]\033[0m $*"; }
+warn() { echo -e "\033[0;33m[pre-commit]\033[0m $*"; }
+fail() { echo -e "\033[0;31m[pre-commit]\033[0m $*" >&2; exit 1; }
+
+# 1. Rust fmt + clippy + test if any Rust file is staged
+if printf '%s\n' "${STAGED[@]}" | grep -qE '\.(rs|toml)$'; then
+    if [ -f app/src-rust/Cargo.toml ]; then
+        if command -v cargo >/dev/null 2>&1; then
+            log "cargo fmt --check (app/src-rust)"
+            (cd app/src-rust && cargo fmt --all -- --check) || fail "cargo fmt failed; run 'cd app/src-rust && cargo fmt'"
+
+            log "cargo clippy (app/src-rust)"
+            (cd app/src-rust && cargo clippy --all-targets -- -D warnings) || fail "cargo clippy failed"
+        else
+            warn "cargo not installed; skipping Rust fmt/clippy"
+        fi
+    fi
+fi
+
+# 2. C/C++/Obj-C clang-format if any of those files are staged
+if printf '%s\n' "${STAGED[@]}" | grep -qE '\.(c|cpp|h|hpp|mm|m)$'; then
+    if command -v clang-format >/dev/null 2>&1; then
+        log "clang-format --dry-run on staged C/C++/Obj-C files"
+        FAILED=0
+        for f in "${STAGED[@]}"; do
+            case "$f" in
+                *.c|*.cpp|*.h|*.hpp|*.mm|*.m)
+                    if [ -f "$f" ]; then
+                        if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then
+                            echo "  unformatted: $f"
+                            FAILED=1
+                        fi
+                    fi
+                    ;;
+            esac
+        done
+        [ "$FAILED" -eq 0 ] || fail "clang-format failed; run 'clang-format -i <file>' on the listed files"
+    else
+        warn "clang-format not installed; skipping C/C++/Obj-C format check"
+    fi
+fi
+
+# 3. TypeScript / Prettier if app/ source files are staged
+if printf '%s\n' "${STAGED[@]}" | grep -qE '^app/.*\.(ts|tsx|js|jsx|json|css|html)$'; then
+    if [ -d app/node_modules ]; then
+        if command -v npx >/dev/null 2>&1; then
+            log "Prettier check on staged app/ files"
+            (cd app && npx prettier --check $(printf '%s\n' "${STAGED[@]}" | grep -E '^app/' | tr '\n' ' ')) || fail "prettier failed; run 'cd app && npx prettier --write <files>'"
+        fi
+    else
+        warn "app/node_modules not present; skipping Prettier check (run 'cd app && npm ci' to enable)"
+    fi
+fi
+
+# 4. Rules TOML validation if rules file is staged
+if printf '%s\n' "${STAGED[@]}" | grep -q '^configs/mtsp-rules.toml$'; then
+    if command -v python3 >/dev/null 2>&1; then
+        log "validating configs/mtsp-rules.toml"
+        if ! python3 -c "import toml" 2>/dev/null; then
+            pip3 install --user toml >/dev/null 2>&1
+        fi
+        python3 tools/ci/validate-rules-toml.py || fail "rules TOML validation failed"
+    fi
+fi
+
+# 5. Doc freshness if docs are staged (warn-only)
+if printf '%s\n' "${STAGED[@]}" | grep -qE '(\.md$|^AGENTS\.md$|^README\.md$)'; then
+    if command -v python3 >/dev/null 2>&1; then
+        log "checking doc freshness (warn-only)"
+        python3 tools/ci/check-doc-freshness.py || warn "doc freshness warnings above"
+    fi
+fi
+
+log "all pre-commit checks passed"
