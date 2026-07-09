@@ -211,8 +211,11 @@ components = ["vcrun2019", "directx_jun2010"]
 check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.1868140]
-pipeline = "m9"
-name = "DAVE THE DIVER"
+pipeline = "m11"
+name = "Dave the Diver"
+
+[overrides.1868140.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.774361]
 pipeline = "m9"
@@ -429,8 +432,12 @@ pipeline = "fna_arm64"
 name = "DREDGE"
 
 [overrides.1092790]
-pipeline = "m11"
+pipeline = "m11_32"
 name = "Inscryption"
+exe_names = ["Inscryption.exe"]
+
+[overrides.1092790.dependencies]
+components = ["vcrun2019_x86", "directx_jun2010"]
 
 [overrides.1092790.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
@@ -465,14 +472,14 @@ name = "Sons Of The Forest"
 [overrides.1326470.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2358720]
-pipeline = "m12"
+pipeline = "m11"
 name = "Black Myth: Wukong"
 
 [overrides.2358720.dependencies]
-components = ["vcrun2019", "directx_jun2010", "gpu_vendor_stubs"]
+components = ["vcrun2019", "directx_jun2010"]
 
 [overrides.2358720.diagnostics]
-check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll", "nvapi64.dll", "nvngx.dll"]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.2456740]
 pipeline = "m12"
@@ -593,4 +600,82 @@ pipeline = "m11"
 name = "Counter-Strike 2"
 
 [overrides.730.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.22380]
+pipeline = "m9"
+name = "Fallout: New Vegas"
+
+[overrides.22380.diagnostics]
+check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll", "winemetal.dll"]
+
+[overrides.1030300]
+pipeline = "m12"
+name = "Hollow Knight: Silksong"
+offline_capable = true
+
+[overrides.1030300.diagnostics]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.222880]
+pipeline = "m11"
+name = "Insurgency"
+
+[overrides.222880.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.305620]
+pipeline = "m11"
+name = "The Long Dark"
+
+[overrides.305620.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.1260320]
+pipeline = "m11"
+name = "Party Animals"
+
+[overrides.1260320.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.1782210]
+pipeline = "m11"
+name = "Crab Game"
+
+[overrides.1782210.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.1966720]
+pipeline = "m11"
+name = "Lethal Company"
+
+[overrides.1966720.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.2302640]
+pipeline = "m11"
+name = "SkyIsland"
+
+[overrides.2302640.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.291550]
+pipeline = "m11"
+name = "Brawlhalla"
+
+[overrides.291550.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.599140]
+pipeline = "m11"
+name = "Graveyard Keeper"
+
+[overrides.599140.diagnostics]
+check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
+
+[overrides.4704690]
+pipeline = "m11"
+name = "MECCHA CHAMELEON"
+
+[overrides.4704690.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
