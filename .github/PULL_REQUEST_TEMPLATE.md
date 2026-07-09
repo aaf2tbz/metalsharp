@@ -10,6 +10,18 @@
 
 ## Checklist
 
+> **Install the pre-commit hook once per clone** (it catches the same things
+> as this checklist, and the same things as CI, locally in ~3s):
+>
+> ```bash
+> ln -s ../../.github/hooks/pre-commit .git/hooks/pre-commit
+> chmod +x .git/hooks/pre-commit
+> ```
+>
+> The hook **fails the commit** if any required toolchain is missing — it will
+> not silently skip `cargo fmt`, `clippy`, `tsc`, `prettier`, `biome`, etc.
+> See [`.github/hooks/README.md`](../.github/hooks/README.md) for details.
+
 > Run locally before pushing. All of these also run automatically in CI.
 
 - [ ] `cargo fmt --all -- --check` passes (Rust)
