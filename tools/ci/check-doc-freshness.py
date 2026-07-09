@@ -1,19 +1,29 @@
 #!/usr/bin/env python3
-"""Warn about stale docs.
+"""Warn about stale docs and missing CHANGELOG entries.
 
-A doc is considered stale if it has no `Updated:` / `Created:` / `Date:` line in
-its first 10 lines, or if the `Updated:` line is older than `STALE_DAYS`.
+Two checks:
 
-By default this is a warning-only check (exit 0) so it doesn't break CI while
-docs are being refreshed. Pass `--strict` to make it an error.
+  1. Doc freshness: a doc is considered stale if it has no
+     `Updated:` / `Created:` / `Date:` line in its first 20 lines, or if
+     the `Updated:` line is older than `STALE_DAYS`.
+
+  2. CHANGELOG in sync: `CHANGELOG.md` must contain a section header for
+     the current version reported by `app/package.json`. Catches the
+     failure mode where a `chore(release): bump version to X.Y.Z` commit
+     bumps the 5 version surfaces but forgets to update the changelog.
+
+By default this is a warning-only check (exit 0) so it doesn't break CI
+while docs are being refreshed. Pass `--strict` to make it an error.
 
 Usage:
     python3 tools/ci/check-doc-freshness.py [--strict] [--stale-days=120]
+                                             [--check-changelog] [--no-check-changelog]
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from datetime import date
@@ -23,6 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCS = ROOT / "docs"
 README = ROOT / "README.md"
 AGENTS = ROOT / "AGENTS.md"
+CHANGELOG = ROOT / "CHANGELOG.md"
+PACKAGE_JSON = ROOT / "app/package.json"
 
 DATE_RE = re.compile(
     r"(?i)(?:updated|created|last\s+updated|date|modified)[^0-9\n]{0,15}(\d{4}-\d{2}-\d{2})"
@@ -33,7 +45,6 @@ DEFAULT_STALE_DAYS = 120
 
 # Files that are exempt from this check
 EXEMPT = {
-    "docs/archive",  # Archived docs are historical
     "docs/README.md",  # Repo map
     "docs/compatibility/GAMES-SUPPORTED.md",  # Updated frequently
 }
@@ -56,6 +67,52 @@ def doc_date(path: Path) -> str | None:
     return max(matches)
 
 
+def get_current_version() -> str | None:
+    """Read the current app version from app/package.json."""
+    if not PACKAGE_JSON.exists():
+        return None
+    try:
+        data = json.loads(PACKAGE_JSON.read_text())
+        version = data.get("version")
+        return str(version) if version else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def check_changelog() -> tuple[str | None, bool, str | None]:
+    """Return (current_version, section_found, section_date).
+
+    - current_version: the version reported by `app/package.json`, or None
+      if the file is missing or unparseable.
+    - section_found: True if a `## v<version>` header was located.
+    - section_date: the date stamp embedded in the section header
+      (or None if the section has no date).
+
+    """
+    version = get_current_version()
+    if version is None:
+        return None, False, None
+
+    if not CHANGELOG.exists():
+        return version, False, None
+
+    # Match any header that starts with `## v<version>` (possibly followed by
+    # a date, an em-dash, parentheses, etc.). We don't enforce the format
+    # because changelogs are messy.
+    pattern = re.compile(
+        rf"^[ \t]*##[ \t]+v{re.escape(version)}\b[^\n]*$",
+        re.MULTILINE,
+    )
+    match = pattern.search(CHANGELOG.read_text(errors="replace"))
+    if match is None:
+        return version, False, None
+
+    # Try to extract a date from the section header.
+    header = match.group(0)
+    date_match = DATE_RE.search(header)
+    return version, True, (date_match.group(1) if date_match else None)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -68,6 +125,19 @@ def main() -> int:
         type=int,
         default=DEFAULT_STALE_DAYS,
         help=f"Days before a doc is considered stale (default: {DEFAULT_STALE_DAYS}).",
+    )
+    parser.add_argument(
+        "--check-changelog",
+        dest="check_changelog",
+        action="store_true",
+        default=True,
+        help="Verify CHANGELOG.md has a section for the current version (default: on).",
+    )
+    parser.add_argument(
+        "--no-check-changelog",
+        dest="check_changelog",
+        action="store_false",
+        help="Skip the CHANGELOG sync check.",
     )
     args = parser.parse_args()
 
@@ -98,6 +168,15 @@ def main() -> int:
         if doc_d.toordinal() < cutoff:
             stale.append((md, d, age))
 
+    changelog_status: str | None = None
+    changelog_section_date: str | None = None
+    if args.check_changelog:
+        version, section_found, section_date = check_changelog()
+        if version is not None and not section_found:
+            changelog_status = f"missing section for v{version}"
+        else:
+            changelog_section_date = section_date
+
     if missing_date:
         print(
             f"docs without `Updated:` header ({len(missing_date)}):",
@@ -127,14 +206,31 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    if not missing_date and not stale:
+    if changelog_status is not None:
         print(
+            f"CHANGELOG.md is missing a section for the current version: "
+            f"{changelog_status}",
+            file=sys.stderr,
+        )
+
+    problems = bool(missing_date or stale or changelog_status is not None)
+    if not problems:
+        parts = [
             f"doc freshness OK: all docs have `Updated:` headers and are within "
             f"{args.stale_days} days.",
-        )
+        ]
+        if args.check_changelog:
+            if changelog_section_date:
+                parts.append(
+                    f"CHANGELOG.md has a section for the current version "
+                    f"(dated {changelog_section_date})."
+                )
+            else:
+                parts.append("CHANGELOG.md has a section for the current version.")
+        print(" ".join(parts))
         return 0
 
-    if args.strict and (missing_date or stale):
+    if args.strict and problems:
         return 1
     return 0
 
