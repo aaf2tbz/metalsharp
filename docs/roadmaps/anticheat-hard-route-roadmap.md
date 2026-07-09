@@ -1,4 +1,6 @@
 # WTMKT Anti-Cheat Hard-Route Roadmap
+**Updated:** 2026-07-08
+
 
 This roadmap covers the post-VM plan for MetalSharp anti-cheat/runtime support. The current local Linux VMs are ARM64, so they cannot serve as clean x86_64 Steam/Proton control machines. MetalSharp has to collect its own evidence and reduce the failure to concrete runtime contracts.
 

@@ -1,4 +1,6 @@
 # CI Gating Notes
+**Updated:** 2026-07-08
+
 
 CI (`pr-ci.yml`) covers shell, Metal, Vue, Rust, Electron, DMG-workflow, and
 C/C++/Obj-C jobs. The **graphics gates** (D3D12 Metal SDK probes and contract

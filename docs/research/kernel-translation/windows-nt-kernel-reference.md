@@ -1,4 +1,6 @@
 # Windows NT Kernel Complete API Reference
+**Updated:** 2026-07-08
+
 ## Windows 10/11 (NT 10.0+) — For Wine Anti-Cheat Compatibility Mapping
 
 > Architecture: x86-64 / ARM64

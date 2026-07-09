@@ -1,4 +1,6 @@
 # Release Checklist
+**Updated:** 2026-07-08
+
 
 Before tagging a release (`vX.Y.Z`), verify every item below. This checklist
 exists so a release cannot accidentally imply M12 proof applies to M11, or

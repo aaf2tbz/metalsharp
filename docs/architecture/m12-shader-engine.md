@@ -1,4 +1,6 @@
 # M12 D3D12 Shader Engine
+**Updated:** 2026-07-08
+
 
 M12 treats shader translation as a defined engine, not as a single converter
 function. The engine boundary starts when a D3D12 game supplies DXBC or DXIL

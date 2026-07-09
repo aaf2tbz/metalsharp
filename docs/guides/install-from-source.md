@@ -1,4 +1,6 @@
 # Install from Source
+**Updated:** 2026-07-08
+
 
 Build MetalSharp from source without using the DMG. Requires macOS 14+ on Apple Silicon.
 

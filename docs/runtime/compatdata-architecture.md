@@ -1,4 +1,6 @@
 # MetalSharp Compatdata Architecture
+**Updated:** 2026-07-08
+
 
 Status: Phase 2 foundation
 

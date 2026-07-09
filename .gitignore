@@ -33,6 +33,12 @@ build-x86/
 app/bundles/*.tar.zst
 app/bundles/SteamSetup.exe
 
+# CMake build directories (in addition to the generic `build/`)
+/build-metal/
+/build-native/
+/build-x86/
+/build-clang/
+
 # Code intelligence
 .graphiq/
 metalsharp-*/
@@ -41,3 +47,22 @@ metalsharp-*/
 *.db-shm
 *.db-wal
 vkd3d-proton-reference/
+
+# Local MetalSharp runtime sidecars (NEVER commit user state)
+/.metalsharp/
+/.metalsharp-dev/
+
+# Local research artifacts (regeneratable from Steam API research)
+/game-database-*.md
+/tools/d3d12-metal-sdk/cache/
+/tools/d3d12-metal-sdk/external/
+
+# Electron build outputs (in addition to the generic `dist/`)
+/app/dist/
+/app/out/
+/app/release/
+
+# macOS app bundles (regeneratable)
+*.dmg
+*.pkg
+*.app/

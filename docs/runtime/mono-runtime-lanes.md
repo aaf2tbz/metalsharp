@@ -1,4 +1,6 @@
 # MetalSharp Mono Runtime Lanes
+**Updated:** 2026-07-08
+
 
 Status: June 2026 route hardening active
 

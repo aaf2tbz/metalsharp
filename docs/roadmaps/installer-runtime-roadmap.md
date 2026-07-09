@@ -1,4 +1,6 @@
 # MetalSharp Assorted Installer Runtime Roadmap
+**Updated:** 2026-07-08
+
 
 Status: Phase 9 active
 

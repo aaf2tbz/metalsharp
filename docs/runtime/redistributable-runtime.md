@@ -1,4 +1,6 @@
 # MetalSharp Redistributable Runtime
+**Updated:** 2026-07-08
+
 
 Status: Phase 4 foundation
 

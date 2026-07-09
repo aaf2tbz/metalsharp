@@ -1,4 +1,6 @@
 # MetalSharp Host Runtime ABI
+**Updated:** 2026-07-08
+
 
 Status: Phase 1 draft implementation
 

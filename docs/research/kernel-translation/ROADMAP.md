@@ -1,4 +1,6 @@
 # Kernel Translation Layer — Implementation Roadmap
+**Updated:** 2026-07-08
+
 
 > macOS XNU ↔ Windows NT kernel translation for MetalSharp Wine anti-cheat compatibility
 > No blockers — only drill-down targets. Everything below is buildable.

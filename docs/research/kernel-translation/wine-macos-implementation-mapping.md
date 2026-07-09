@@ -1,4 +1,6 @@
 # Wine for macOS — Complete NT Kernel → XNU Implementation Mapping
+**Updated:** 2026-07-08
+
 ## Every Windows NT kernel function/class/call paired to its macOS XNU equivalent, with Wine implementation instructions
 
 > Purpose: Build Wine for macOS. This is the master implementation reference.

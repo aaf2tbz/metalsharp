@@ -1,4 +1,6 @@
 # M10 Pipeline Map
+**Updated:** 2026-07-08
+
 
 M10 is the stable D3D10 engine path. It launches Windows D3D10 titles through Wine and DXMT, then hands rendering to Metal through DXMT's winemetal bridge.
 

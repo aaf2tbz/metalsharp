@@ -1,4 +1,6 @@
 # Wine Architecture
+**Updated:** 2026-07-08
+
 
 MetalSharp ships a self-contained Wine runtime at:
 
