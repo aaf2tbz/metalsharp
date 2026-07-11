@@ -30,16 +30,16 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@electron/notarize": "^2.5.0",
-    "@iconify-json/lucide": "^1.2.113",
+    "@iconify-json/lucide": "^1.2.116",
     "@types/node": "^22.0.0",
     "@vitejs/plugin-vue": "^6.0.7",
-    "electron": "^42.4.1",
+    "electron": "^43.1.0",
     "electron-builder": "^26.0.0",
     "prettier": "^3.8.3",
     "typescript": "^5.7.0",
     "unplugin-icons": "^23.0.1",
     "vite": "^8.0.16",
-    "vue": "^3.5.38"
+    "vue": "^3.5.39"
   },
   "build": {
     "appId": "com.metalsharp.app",
