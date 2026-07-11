@@ -39,7 +39,7 @@
     "typescript": "^5.7.0",
     "unplugin-icons": "^23.0.1",
     "vite": "^8.0.16",
-    "vue": "^3.5.38"
+    "vue": "^3.5.39"
   },
   "build": {
     "appId": "com.metalsharp.app",
