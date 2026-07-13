@@ -22,9 +22,15 @@ MetalSharp is an application designed to run Windows Steam and Windows Steam gam
 
 ## Quick Start
 
-Download the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), drag MetalSharp into `/Applications`, and open it. The setup wizard handles the rest.
+Download the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), double click the dmg, and drag it into applications. If gatekeeper flags it, open Security/privacy in settings -> open anyways. VirusTotal scans are included with most major releases. 
 
-If Gatekeeper cannot verify the app, open **System Settings → Privacy & Security** and choose **Open Anyway** for MetalSharp. VirusTotal scans are included with release notes when available.
+From here, metalsharp will install it's native runtime. It is recommended you install steam to download steam-windows games. Metalsharp will guide you through the installation, wait for the two steam update windows to complete. 
+
+After this -> install both the x64/x86 vc++ 2015-2022 distributables on the next step for better game compatability. 
+
+Lastly, add a steam-api key to sync your steam library with metalsharp if desired. and click 'launch wine steam' from the library header to enter your first session. 
+
+Any steam games downloaded will appear automatically in the library. Save a launch method, and hit play. Metalsharp handles the dll/ game needed asset deployment automatically in the background. 
 
 For building from source, see [Install from Source](docs/guides/install-from-source.md).
 
