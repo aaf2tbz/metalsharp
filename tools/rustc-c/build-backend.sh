@@ -60,7 +60,7 @@ target="$repo_root/app/src-rust/target"
 rm -rf "$generated"
 mkdir -p "$generated"
 RUSTC="$rust/build/aarch64-apple-darwin/stage1/bin/rustc" \
-  RUSTFLAGS='-C save-temps' RUSTC_CSOURCES_DIR="$generated" CARGO_TARGET_DIR="$target" \
+  RUSTFLAGS='-C save-temps --cfg sha2_backend="soft"' RUSTC_CSOURCES_DIR="$generated" CARGO_TARGET_DIR="$target" \
   cargo build --manifest-path "$repo_root/app/src-rust/Cargo.toml" --release
 
 backend="$target/release/metalsharp-backend"
