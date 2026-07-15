@@ -176,7 +176,7 @@ def check_workflows(assets: list[str]) -> None:
         "Publish Developer SDK Bundle",
         "Publish developer SDK package",
         "Publish complete release bundle set",
-        "Refresh graphics bundle with staged M12 runtime",
+        "Repair split bundles with staged M12 runtime",
         "Build DMG",
         "Check Apple signing credentials",
         "Verify Apple notarization",
@@ -195,11 +195,24 @@ def check_workflows(assets: list[str]) -> None:
         if publish_path not in release:
             fail(f"release workflow no longer publishes complete bundle asset: {publish_path}")
     for required in [
-        "METALSHARP_REPAIR_GRAPHICS_BUNDLE=1",
+        "METALSHARP_DXMT_M12_ROOT=\"$PWD/dist/dxmt_m12\"",
         "dist/developer-sdk/metalsharp-bundle-manifest.tsv",
     ]:
         if required not in release:
             fail(f"release workflow missing bundle refresh contract: {required}")
+    for repeated in [
+        "Prepare release Wine runtime for M12 build",
+        "Install DXMT build tools",
+        "Build staged M12 DXMT runtime",
+        'METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12"',
+    ]:
+        if release.count(repeated) != 2:
+            fail(f"developer SDK and DMG jobs must both perform the release bundle stage: {repeated}")
+    if "METALSHARP_REPAIR_BUNDLES=0" in release:
+        fail("release workflow must repair bundles in both developer SDK and DMG jobs")
+    for required in ["Build host runtime ABI", "make -C app/src-c verify"]:
+        if required not in release:
+            fail(f"release workflow must preserve the v0.45.5 build shape with the C backend: {required}")
     for required in [
         "tools/dmg/check-apple-signing-readiness.sh",
         "steps.apple-signing.outputs.ready == 'true'",

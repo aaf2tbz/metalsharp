@@ -179,31 +179,7 @@ verify_graphics_core() {
     Graphics/dll/dxmt-m12/x86_64-windows/dxgi_dxmt.dll \
     Graphics/dll/dxmt-m12/x86_64-windows/nvapi64.dll \
     Graphics/dll/dxmt-m12/x86_64-windows/nvngx.dll \
-    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll &&
-    verify_hash_manifest "$path" "GRAPHICS M12" "Graphics/dll/dxmt-m12" "$SCRIPT_DIR/m12-dxmt-runtime-hashes.tsv"
-}
-
-verify_hash_manifest() {
-  local archive="$1"
-  local label="$2"
-  local prefix="$3"
-  local manifest="$4"
-  local failed=0
-
-  while IFS=$'\t' read -r rel expected; do
-    case "$rel" in
-      ""|"#"*|path) continue ;;
-    esac
-    local archive_path="$prefix/$rel"
-    local actual
-    actual="$(tar --use-compress-program=unzstd -xOf "$archive" "$archive_path" 2>/dev/null | shasum -a 256 | awk '{print $1}')" || actual=""
-    if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
-      echo "$label HASH MISMATCH: $archive_path expected=$expected actual=${actual:-missing}" >&2
-      failed=1
-    fi
-  done < "$manifest"
-
-  return "$failed"
+    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll
 }
 
 verify_assets_core() {

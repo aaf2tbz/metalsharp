@@ -25,8 +25,19 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - name: Download and verify release split bundles
-        run: METALSHARP_REPAIR_BUNDLES=0 METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 tools/dmg/create-bundles.sh
+      - name: Build and validate committed C backend
+        run: make -C app/src-c verify
+
+      - name: Build host runtime ABI
+        run: |
+          mkdir -p build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build . --target metalsharp_host_runtime --parallel $(sysctl -n hw.ncpu)
+          cd ..
+          METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
+
+      - name: Download current split bundles
+        run: METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 tools/dmg/create-bundles.sh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,10 +68,8 @@ jobs:
           METALSHARP_WINE_ROOT: ${{ github.workspace }}/dist/release-runtime/runtime/wine
           METALSHARP_X86_LLVM_ROOT: ${{ runner.temp }}/metalsharp-toolchains
 
-      - name: Refresh graphics bundle with staged M12 runtime
+      - name: Repair split bundles with staged M12 runtime
         run: |
-          METALSHARP_REPAIR_BUNDLES=0 \
-          METALSHARP_REPAIR_GRAPHICS_BUNDLE=1 \
           METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 \
           METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12" \
             tools/dmg/create-bundles.sh
@@ -169,9 +178,41 @@ jobs:
       - name: Build TypeScript
         run: cd app && npm run build
 
+      - name: Download current split bundles
+        run: tools/dmg/create-bundles.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare release Wine runtime for M12 build
+        run: |
+          mkdir -p dist/release-runtime
+          tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C dist/release-runtime
+          test -x dist/release-runtime/runtime/wine/bin/winebuild
+
+      - name: Install DXMT build tools
+        run: |
+          brew list meson >/dev/null 2>&1 || brew install meson
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          brew list mingw-w64 >/dev/null 2>&1 || brew install mingw-w64
+          meson --version
+          ninja --version
+          x86_64-w64-mingw32-gcc --version
+          x86_64-w64-mingw32-g++ --version
+
+      - name: Build staged M12 DXMT runtime
+        run: |
+          tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+          python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py \
+            --build-dir vendor/dxmt/build-metalsharp-x64 \
+            --runtime-dir dist/dxmt_m12 \
+            --profile release-ci-m12-dmg
+        env:
+          METALSHARP_WINE_ROOT: ${{ github.workspace }}/dist/release-runtime/runtime/wine
+          METALSHARP_X86_LLVM_ROOT: ${{ runner.temp }}/metalsharp-toolchains
+
       - name: Download bundles for DMG
         run: |
-          METALSHARP_REPAIR_BUNDLES=0 tools/dmg/create-bundles.sh
+          METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12" tools/dmg/create-bundles.sh
           tools/dmg/stage-release-bundles.sh app/bundles dist/staged-bundles
           for required in \
             metalsharp-electron.tar.zst \
