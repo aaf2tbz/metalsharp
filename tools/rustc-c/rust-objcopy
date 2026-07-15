@@ -1,5 +1,0 @@
-#!/bin/sh
-# rustc_codegen_c invokes rust-objcopy after producing macOS proc-macro dylibs.
-# LLVM objcopy 21 currently corrupts their LINKEDIT string table.  The backend
-# does not need that post-link rewrite, so keep the Mach-O untouched.
-exit 0

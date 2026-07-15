@@ -124,12 +124,9 @@ def check_bundle_scripts() -> None:
     split_bundles = read("tools/bundles/create-split-bundles.py")
     if 'APP_DIR / "build" / "c-backend" / "metalsharp-backend"' not in split_bundles:
         fail("split bundle staging must use the C backend")
-    if 'APP_DIR / "src-rust" / "target"' in split_bundles:
-        fail("split bundle staging must not package a Cargo-built backend")
-
-    bridge = read("app/src/main/rust-bridge.ts")
-    if '"src-rust", "target"' in bridge:
-        fail("Electron backend selection must not fall back to a Cargo-built backend")
+    bridge = read("app/src/main/backend-bridge.ts")
+    if '"build", "c-backend", "metalsharp-backend"' not in bridge:
+        fail("Electron backend selection must use the Clang-built C artifact")
 
     stage_bundles = read("tools/dmg/stage-release-bundles.sh")
     if "asset-manifest.tsv" not in stage_bundles or "tar --use-compress-program=unzstd" not in stage_bundles:
@@ -140,6 +137,8 @@ def check_workflows(assets: list[str]) -> None:
     pr = read(".github/workflows/pr-ci.yml")
     main = read(".github/workflows/ci.yml")
     release = read(".github/workflows/release.yml")
+    if "tools/dmg/verify-dmg-clean-setup.sh" not in release:
+        fail("release workflow must run clean setup from the packaged DMG")
 
     if "DMG Workflow CI" not in pr:
         fail("PR CI must keep a lightweight DMG Workflow CI job")
@@ -213,6 +212,8 @@ def check_workflows(assets: list[str]) -> None:
     for required in ["Build host runtime ABI", "make -C app/src-c verify"]:
         if required not in release:
             fail(f"release workflow must preserve the v0.45.5 build shape with the C backend: {required}")
+    if release.count('verify-version-alignment.py --tag "$GITHUB_REF_NAME"') != 2:
+        fail("developer SDK and DMG jobs must both reject tag/C-backend version drift")
     for required in [
         "tools/dmg/check-apple-signing-readiness.sh",
         "steps.apple-signing.outputs.ready == 'true'",

@@ -1,0 +1,486 @@
+import { type ChildProcess, spawn } from "child_process";
+import { randomInt } from "crypto";
+import * as fs from "fs";
+import * as http from "http";
+import * as path from "path";
+import { BACKEND_CONTRACT_VERSION, type BackendStatus, compatibleContractVersion } from "../shared/backend-contract";
+
+function getShellPath(): string {
+  const home = process.env.HOME || "";
+  const candidates = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+  ];
+  const existing = new Set((process.env.PATH || "").split(":"));
+  const additions = candidates.filter((c) => !existing.has(c));
+  return [...additions, process.env.PATH].filter(Boolean).join(":");
+}
+
+const shellPath = getShellPath();
+
+interface BackendBridgeOptions {
+  devMode?: boolean;
+  metalsharpHome?: string;
+}
+
+function consumeBackendPortHandoff(metalsharpHome?: string): number | null {
+  if (!metalsharpHome) return null;
+  const handoffPath = path.join(metalsharpHome, ".backend-port");
+  try {
+    const port = Number.parseInt(fs.readFileSync(handoffPath, "utf8").trim(), 10);
+    fs.unlinkSync(handoffPath);
+    return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+// The spawned executable is the checked-in, Clang-built C backend.
+export class BackendBridge {
+  private proc: ChildProcess | null = null;
+  private port: number = 0;
+  private base: string;
+  private startPromise: Promise<{ ok: boolean; error?: string }> | null = null;
+  private devMode: boolean;
+  private metalsharpHome?: string;
+
+  constructor(options: BackendBridgeOptions = {}) {
+    this.devMode = options.devMode === true || process.env.METALSHARP_DEV === "1";
+    this.metalsharpHome = options.metalsharpHome || process.env.METALSHARP_HOME;
+    const configuredPort = Number.parseInt(process.env.METALSHARP_PORT || "", 10);
+    const handoffPort = consumeBackendPortHandoff(this.metalsharpHome);
+    // The checked-in C backend receives an app-private high port. Electron's
+    // renderer never receives that endpoint, so a separate local process
+    // cannot rely on the historic fixed port to issue mutating requests.
+    this.port =
+      Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort < 65536
+        ? configuredPort
+        : (handoffPort ?? randomInt(49152, 65536));
+    this.base = `http://127.0.0.1:${this.port}`;
+  }
+
+  getPort(): number {
+    return this.port;
+  }
+
+  async start(): Promise<{ ok: boolean; error?: string }> {
+    if (this.startPromise) return this.startPromise;
+
+    this.startPromise = this.startInner().finally(() => {
+      this.startPromise = null;
+    });
+
+    return this.startPromise;
+  }
+
+  async ensureRunning(maxMs = 15000): Promise<{ ok: boolean; error?: string }> {
+    if (await this.isAlive()) return this.ensureCompatibleContract();
+
+    // In dev mode, auto-restart the backend so binary swaps "just work".
+    // In production, the app owns the lifecycle — only start() spawns.
+    if (this.devMode) {
+      const started = await this.start();
+      if (!started.ok) return started;
+      try {
+        await this.waitForReady(maxMs);
+        return this.ensureCompatibleContract();
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    }
+
+    return { ok: false, error: "Backend is not running" };
+  }
+
+  private async startInner(): Promise<{ ok: boolean; error?: string }> {
+    const binPath = this.findBinary();
+    if (!binPath) {
+      console.warn("metalsharp-backend binary not found, running in offline mode");
+      return { ok: false, error: "metalsharp-backend binary not found" };
+    }
+
+    const needsRestart = await this.shouldRestart(binPath);
+    if (needsRestart) {
+      console.log("Backend version mismatch or not running — restarting...");
+      await this.killProcess();
+    } else if (await this.isAlive()) {
+      console.log("Backend already running and up to date");
+      return this.ensureCompatibleContract();
+    }
+
+    this.spawnBackend(binPath);
+    try {
+      await this.waitForReady();
+      return this.ensureCompatibleContract();
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  async restart(): Promise<{ ok: boolean; error?: string }> {
+    const binPath = this.findBinary();
+    if (!binPath) {
+      return { ok: false, error: "Backend binary not found" };
+    }
+
+    this.stop();
+    await this.killProcess();
+
+    try {
+      this.spawnBackend(binPath);
+      await this.waitForReady(10000);
+      return this.ensureCompatibleContract();
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
+
+  stop() {
+    this.killProcess();
+  }
+
+  async killProcess() {
+    // Kill the child we spawned (if any).
+    if (this.proc?.pid) {
+      try {
+        this.proc.kill("SIGTERM");
+      } catch {}
+    }
+    this.proc = null;
+
+    // Also find and kill any backend still listening on our port.
+    const pid = await this.getBackendPid();
+    if (pid) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {}
+
+      // Wait up to 3s for graceful shutdown, then force-kill.
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(pid, 0);
+          await new Promise((r) => setTimeout(r, 200));
+        } catch {
+          break;
+        }
+      }
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+
+    // Wait for the port to be released.
+    const portDeadline = Date.now() + 2000;
+    while (Date.now() < portDeadline) {
+      if (!(await this.isAlive())) break;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+
+  async isAlive(): Promise<boolean> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        res.resume();
+        resolve(true);
+      });
+      req.on("error", () => resolve(false));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(false);
+      });
+    });
+  }
+
+  async getBackendPid(): Promise<number | null> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            resolve(data.pid ?? null);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(null);
+      });
+    });
+  }
+
+  async request(method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const payload = body ? JSON.stringify(body) : "";
+      const opts: http.RequestOptions = {
+        hostname: "127.0.0.1",
+        port: this.port,
+        path: url,
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(payload),
+        },
+        timeout: timeoutMs ?? 30000,
+      };
+
+      const req = http.request(opts, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString()));
+          } catch {
+            resolve({});
+          }
+        });
+      });
+
+      req.on("error", reject);
+      req.on("timeout", () => {
+        req.destroy();
+        reject(new Error("request timeout"));
+      });
+
+      if (payload) req.write(payload);
+      req.end();
+    });
+  }
+
+  async requestBinary(url: string, timeoutMs = 10000): Promise<{ body: Buffer; contentType: string }> {
+    return new Promise((resolve, reject) => {
+      const req = http.get(`${this.base}${url}`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          if ((res.statusCode || 500) >= 400) {
+            reject(new Error(`backend asset request failed (${res.statusCode})`));
+            return;
+          }
+          resolve({
+            body: Buffer.concat(chunks),
+            contentType: String(res.headers["content-type"] || "application/octet-stream"),
+          });
+        });
+      });
+      req.on("error", reject);
+      req.setTimeout(timeoutMs, () => {
+        req.destroy();
+        reject(new Error("backend asset request timeout"));
+      });
+    });
+  }
+
+  private spawnBackend(binPath: string) {
+    this.proc = spawn(binPath, [], {
+      env: {
+        ...process.env,
+        PATH: shellPath,
+        METALSHARP_PORT: String(this.port),
+        ...(this.metalsharpHome ? { METALSHARP_HOME: this.metalsharpHome } : {}),
+        ...(this.devMode ? { METALSHARP_DEV: "1" } : {}),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    this.proc.stdout?.on("data", (d: Buffer) => {
+      try {
+        process.stdout.write(d);
+      } catch {
+        /* parent pipe closed */
+      }
+    });
+    this.proc.stderr?.on("data", (d: Buffer) => {
+      try {
+        process.stderr.write(d);
+      } catch {
+        /* parent pipe closed */
+      }
+    });
+    // Prevent uncaught EPIPE when parent stdout/stderr pipes are broken
+    // (e.g. terminal closed). write() returns false on backpressure, then the
+    // stream emits 'error' asynchronously — outside try-catch reach.
+    process.stdout.on("error", () => {});
+    process.stderr.on("error", () => {});
+
+    this.proc.on("error", (e) => {
+      console.error(`metalsharp-backend failed to start: ${e.message}`);
+      this.proc = null;
+    });
+
+    this.proc.on("exit", (code) => {
+      console.log(`metalsharp-backend exited with code ${code}`);
+      this.proc = null;
+    });
+  }
+
+  private async shouldRestart(binPath: string): Promise<boolean> {
+    if (!(await this.isAlive())) return true;
+
+    try {
+      const binStat = fs.statSync(binPath);
+      const runningPid = await this.getBackendPid();
+      if (!runningPid) return false;
+
+      const runningVersion = await this.getBackendVersion();
+      if (runningVersion && runningVersion !== this.getOwnVersion()) return true;
+
+      const runningPath = await this.getProcessPath(runningPid);
+      if (runningPath && runningPath !== binPath) return true;
+
+      const runningMtime = runningPath ? fs.statSync(runningPath).mtimeMs : 0;
+      if (binStat.mtimeMs > runningMtime + 1000) return true;
+    } catch {}
+
+    return false;
+  }
+
+  private getOwnVersion(): string {
+    const candidates = [
+      path.join(__dirname, "..", "package.json"),
+      path.join(__dirname, "..", "..", "package.json"),
+      path.join(process.resourcesPath || "", "app.asar", "package.json"),
+      path.join(process.resourcesPath || "", "app", "package.json"),
+    ];
+    for (const candidate of candidates) {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(candidate, "utf8"));
+        if (pkg.version) return pkg.version;
+      } catch {}
+    }
+    return "";
+  }
+
+  private async getBackendVersion(): Promise<string | null> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            resolve(data.version ?? null);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(null);
+      });
+    });
+  }
+
+  private async getBackendStatus(): Promise<BackendStatus | null> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString()) as BackendStatus);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(null);
+      });
+    });
+  }
+
+  private async ensureCompatibleContract(): Promise<{ ok: boolean; error?: string }> {
+    const status = await this.getBackendStatus();
+    if (!status?.ok || !status.version) {
+      return { ok: false, error: "Backend returned an invalid /status response" };
+    }
+    const actual = compatibleContractVersion(status);
+    if (actual !== BACKEND_CONTRACT_VERSION) {
+      return {
+        ok: false,
+        error: `Backend contract mismatch: Electron requires v${BACKEND_CONTRACT_VERSION}, backend ${status.version} provides ${actual ? `v${actual}` : "no supported contract"}. Update MetalSharp so the app and backend match.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  private async getProcessPath(pid: number): Promise<string | null> {
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return new Promise((resolve) => {
+      const { exec } = require("child_process");
+      exec(`ps -o comm= -p ${Math.floor(pid)} 2>/dev/null`, (err: Error | null, stdout: string) => {
+        if (err || !stdout.trim()) {
+          resolve(null);
+        } else {
+          resolve(stdout.trim());
+        }
+      });
+    });
+  }
+
+  private findBinary(): string | null {
+    // The shipped backend is the checked-in, Clang-built C artifact.
+    const devCandidates = [path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend")];
+    const packagedCandidates = [
+      path.join(process.resourcesPath || "", "runtime", "metalsharp-backend"),
+      path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
+      "/usr/local/bin/metalsharp-backend",
+      "/usr/bin/metalsharp-backend",
+    ];
+    const candidates = this.devMode ? [...devCandidates, ...packagedCandidates] : packagedCandidates;
+
+    for (const c of candidates) {
+      try {
+        fs.accessSync(c, fs.constants.X_OK);
+        return c;
+      } catch {}
+    }
+    return null;
+  }
+
+  private waitForReady(maxMs = 15000): Promise<void> {
+    const start = Date.now();
+    return new Promise((resolve, reject) => {
+      const check = () => {
+        if (Date.now() - start > maxMs) {
+          reject(new Error("backend did not start in time"));
+          return;
+        }
+        let settled = false;
+        const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+          if (settled) return;
+          settled = true;
+          res.resume();
+          resolve();
+        });
+        req.on("error", () => {
+          if (settled) return;
+          settled = true;
+          setTimeout(check, 200);
+        });
+        req.setTimeout(1000, () => {
+          if (settled) return;
+          settled = true;
+          req.destroy();
+          setTimeout(check, 200);
+        });
+      };
+      setTimeout(check, 300);
+    });
+  }
+}

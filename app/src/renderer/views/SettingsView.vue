@@ -474,7 +474,7 @@ function uninstallMetalsharp() {
         <div>
           <div class="settings-label">Game Runtime Backend</div>
           <div class="settings-desc">
-            The Rust backend handles game launches, Steam integration, and shader management
+            The C backend handles game launches, Steam integration, and shader management
           </div>
         </div>
         <div class="settings-value">

@@ -111,7 +111,7 @@ jobs:
       - name: Sign with EndpointSecurity entitlements
         run: |
           codesign --force --sign - \
-            --entitlements app/src-rust/entitlements.plist \
+            --entitlements app/src-c/entitlements.plist \
             app/build/c-backend/metalsharp-backend
 
   electron:

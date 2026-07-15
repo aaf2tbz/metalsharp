@@ -8,14 +8,12 @@ vice versa.
 
 ## Version synchronization
 
-All five files must carry the same version before the tag is pushed:
+All three files must carry the same version before the tag is pushed:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
 | `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
-| `app/src-rust/Cargo.toml` | `version = "X.Y.Z"` |
-| `app/src-rust/Cargo.lock` | `metalsharp-backend` package `version = "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
 
 Keep version bumps **separate** from graphics changes unless the PR is
@@ -43,8 +41,7 @@ explicitly a release PR.
 
 ## Bottle / route gates
 
-- [ ] `cargo test --manifest-path app/src-rust/Cargo.toml bottles::tests` passes
-- [ ] `cargo test --manifest-path app/src-rust/Cargo.toml mtsp` passes
+- [ ] `make -C app/src-c verify` passes all converted bottle and MTSP tests
 - [ ] `GET /bottles/route-contracts` reports every protected lane (M9, M10,
       M11, M12, FnaArm64, WineBare, D3DMetal)
 - [ ] `GET /update/migrate/report` shows the expected preserved/skipped

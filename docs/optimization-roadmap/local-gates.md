@@ -6,18 +6,14 @@ The canonical local gates a PR must pass before merge. CI runs a subset of
 these; the graphics gates require a host Wine/Metal runtime and therefore run
 locally, not in CI.
 
-## Rust backend (always required)
+## C backend (always required)
 
 ```bash
-cd app/src-rust
-cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test
-cargo build --release
+make -C app/src-c verify
 ```
 
-All four must pass. CI (`pr-ci.yml` → "Rust CI") enforces fmt, clippy, and
-test.
+This builds the C backend, rejects `.rs` sources, runs all 629 converted tests,
+and exercises soak plus HTTP conformance. CI enforces the same gate.
 
 ## TypeScript / Electron (required for app/UI changes)
 

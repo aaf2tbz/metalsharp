@@ -43,7 +43,7 @@ export interface AppConfig {
   nativeAvailable: boolean;
 }
 
-export interface RustResponse<T = unknown> {
+export interface BackendResponse<T = unknown> {
   ok: boolean;
   data?: T;
   error?: string;
