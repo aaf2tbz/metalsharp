@@ -697,7 +697,7 @@ app.whenReady().then(async () => {
 
   if (!backendStart.ok || !(await bridge.isAlive())) {
     console.log("Backend not responding after first start — retrying...");
-    const retryStart = await bridge.start();
+    const retryStart = await bridge.restart();
     if (!retryStart.ok) {
       console.warn(`MetalSharp backend retry failed: ${retryStart.error}`);
     }
@@ -1093,7 +1093,9 @@ function registerIpc() {
 
   ipcMain.handle("backend:is-alive", async () => {
     if (isUiOnlyRuntime()) return true;
-    return bridge.isAlive();
+    if (await bridge.isAlive()) return true;
+    const recovered = await bridge.ensureRunning(10000);
+    return recovered.ok && (await bridge.isAlive());
   });
 
   ipcMain.handle("updater:ensure-ready", async () => {

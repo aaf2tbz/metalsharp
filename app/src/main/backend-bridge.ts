@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "child_process";
+import { type ChildProcess, execFile, spawn } from "child_process";
 import { randomInt } from "crypto";
 import * as fs from "fs";
 import * as http from "http";
@@ -22,6 +22,7 @@ function getShellPath(): string {
 }
 
 const shellPath = getShellPath();
+let parentPipeErrorsHandled = false;
 
 interface BackendBridgeOptions {
   devMode?: boolean;
@@ -46,6 +47,7 @@ export class BackendBridge {
   private port: number = 0;
   private base: string;
   private startPromise: Promise<{ ok: boolean; error?: string }> | null = null;
+  private restartPromise: Promise<{ ok: boolean; error?: string }> | null = null;
   private devMode: boolean;
   private metalsharpHome?: string;
 
@@ -79,22 +81,27 @@ export class BackendBridge {
   }
 
   async ensureRunning(maxMs = 15000): Promise<{ ok: boolean; error?: string }> {
+    // A concurrent lifecycle operation owns readiness; callers must wait for
+    // it instead of sending work to a child that has only just been spawned.
+    if (this.restartPromise) return this.restartPromise;
+    if (this.startPromise) return this.startPromise;
+    // An owned child with no exit status is alive. Avoid probing /status before
+    // every renderer request: card mounts otherwise create a synchronized
+    // health-check storm before their actual backend calls.
+    if (this.proc && this.proc.exitCode === null && !this.proc.killed) return { ok: true };
     if (await this.isAlive()) return this.ensureCompatibleContract();
 
-    // In dev mode, auto-restart the backend so binary swaps "just work".
-    // In production, the app owns the lifecycle — only start() spawns.
-    if (this.devMode) {
-      const started = await this.start();
-      if (!started.ok) return started;
-      try {
-        await this.waitForReady(maxMs);
-        return this.ensureCompatibleContract();
-      } catch (e) {
-        return { ok: false, error: (e as Error).message };
-      }
+    // Requests are also a recovery boundary in packaged builds. If the owned
+    // C backend exited, serialize a fresh start instead of leaving the app
+    // permanently offline until it is relaunched.
+    const started = await this.start();
+    if (!started.ok) return started;
+    try {
+      await this.waitForReady(maxMs);
+      return this.ensureCompatibleContract();
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
     }
-
-    return { ok: false, error: "Backend is not running" };
   }
 
   private async startInner(): Promise<{ ok: boolean; error?: string }> {
@@ -123,12 +130,20 @@ export class BackendBridge {
   }
 
   async restart(): Promise<{ ok: boolean; error?: string }> {
+    if (this.restartPromise) return this.restartPromise;
+    this.restartPromise = this.restartInner().finally(() => {
+      this.restartPromise = null;
+    });
+    return this.restartPromise;
+  }
+
+  private async restartInner(): Promise<{ ok: boolean; error?: string }> {
+    if (this.startPromise) await this.startPromise;
     const binPath = this.findBinary();
     if (!binPath) {
       return { ok: false, error: "Backend binary not found" };
     }
 
-    this.stop();
     await this.killProcess();
 
     try {
@@ -140,36 +155,39 @@ export class BackendBridge {
     }
   }
 
-  stop() {
-    this.killProcess();
+  stop(): Promise<void> {
+    return this.killProcess();
   }
 
-  async killProcess() {
-    // Kill the child we spawned (if any).
-    if (this.proc?.pid) {
-      try {
-        this.proc.kill("SIGTERM");
-      } catch {}
-    }
+  async killProcess(): Promise<void> {
+    const childPid = this.proc?.pid ?? null;
+    const [reportedPid, listeningPids] = await Promise.all([this.getBackendPid(), this.getListeningPids()]);
+    const pids = new Set<number>(listeningPids);
+    if (childPid) pids.add(childPid);
+    if (reportedPid) pids.add(reportedPid);
     this.proc = null;
 
-    // Also find and kill any backend still listening on our port.
-    const pid = await this.getBackendPid();
-    if (pid) {
+    for (const pid of pids) {
       try {
         process.kill(pid, "SIGTERM");
       } catch {}
+    }
 
-      // Wait up to 3s for graceful shutdown, then force-kill.
-      const deadline = Date.now() + 3000;
-      while (Date.now() < deadline) {
+    // Wait up to 3s for graceful shutdown, then force-kill only processes
+    // that still exist. lsof coverage lets Restart recover an unresponsive
+    // backend that cannot answer /status.
+    const deadline = Date.now() + 3000;
+    while (pids.size > 0 && Date.now() < deadline) {
+      for (const pid of [...pids]) {
         try {
           process.kill(pid, 0);
-          await new Promise((r) => setTimeout(r, 200));
         } catch {
-          break;
+          pids.delete(pid);
         }
       }
+      if (pids.size > 0) await new Promise((r) => setTimeout(r, 200));
+    }
+    for (const pid of pids) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {}
@@ -181,6 +199,28 @@ export class BackendBridge {
       if (!(await this.isAlive())) break;
       await new Promise((r) => setTimeout(r, 150));
     }
+  }
+
+  private getListeningPids(): Promise<number[]> {
+    return new Promise((resolve) => {
+      execFile(
+        "/usr/sbin/lsof",
+        ["-nP", `-iTCP:${this.port}`, "-sTCP:LISTEN", "-t"],
+        { timeout: 2000 },
+        (error, stdout) => {
+          if (error && !stdout.trim()) {
+            resolve([]);
+            return;
+          }
+          resolve(
+            stdout
+              .split(/\s+/)
+              .map((value) => Number.parseInt(value, 10))
+              .filter((value) => Number.isInteger(value) && value > 0),
+          );
+        },
+      );
+    });
   }
 
   async isAlive(): Promise<boolean> {
@@ -282,7 +322,7 @@ export class BackendBridge {
   }
 
   private spawnBackend(binPath: string) {
-    this.proc = spawn(binPath, [], {
+    const child = spawn(binPath, [], {
       env: {
         ...process.env,
         PATH: shellPath,
@@ -292,15 +332,16 @@ export class BackendBridge {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    this.proc = child;
 
-    this.proc.stdout?.on("data", (d: Buffer) => {
+    child.stdout?.on("data", (d: Buffer) => {
       try {
         process.stdout.write(d);
       } catch {
         /* parent pipe closed */
       }
     });
-    this.proc.stderr?.on("data", (d: Buffer) => {
+    child.stderr?.on("data", (d: Buffer) => {
       try {
         process.stderr.write(d);
       } catch {
@@ -310,17 +351,21 @@ export class BackendBridge {
     // Prevent uncaught EPIPE when parent stdout/stderr pipes are broken
     // (e.g. terminal closed). write() returns false on backpressure, then the
     // stream emits 'error' asynchronously — outside try-catch reach.
-    process.stdout.on("error", () => {});
-    process.stderr.on("error", () => {});
+    if (!parentPipeErrorsHandled) {
+      parentPipeErrorsHandled = true;
+      process.stdout.on("error", () => {});
+      process.stderr.on("error", () => {});
+    }
 
-    this.proc.on("error", (e) => {
+    child.on("error", (e) => {
       console.error(`metalsharp-backend failed to start: ${e.message}`);
-      this.proc = null;
+      if (this.proc === child) this.proc = null;
     });
 
-    this.proc.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       console.log(`metalsharp-backend exited with code ${code}`);
-      this.proc = null;
+      if (signal) console.log(`metalsharp-backend exit signal: ${signal}`);
+      if (this.proc === child) this.proc = null;
     });
   }
 

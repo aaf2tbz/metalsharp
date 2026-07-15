@@ -791,13 +791,17 @@ async function refreshBottle(id: string) {
 
 async function doctorBottle(id: string) {
   bottleLoading.value[id] = true;
-  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>("POST", "/bottles/doctor", { id });
+  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>(
+    "POST",
+    "/bottles/doctor",
+    { id },
+    2 * 60 * 1000,
+  );
   bottleLoading.value[id] = false;
   if (result?.ok && result.report) {
     bottleReports.value[id] = result.report;
     const bottle = bottles.value.find((item) => item.id === id);
     if (bottle?.runtime_profile === "d3dmetal") await loadD3DMetalStatus(bottle);
-    await load();
   } else {
     toast.show(result?.error ?? "Bottle Doctor failed", "error");
   }
@@ -805,12 +809,16 @@ async function doctorBottle(id: string) {
 
 async function prepareBottle(id: string) {
   bottleLoading.value[id] = true;
-  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>("POST", "/bottles/prepare", { id });
+  const result = await api<{ ok: boolean; report?: BottleDiagnostic; error?: string }>(
+    "POST",
+    "/bottles/prepare",
+    { id },
+    10 * 60 * 1000,
+  );
   bottleLoading.value[id] = false;
   if (result?.ok && result.report) {
     bottleReports.value[id] = result.report;
     toast.show(result.report.ready ? "Bottle prepared" : "Bottle needs runtime repair", result.report.ready ? "success" : "error");
-    await load();
   } else {
     toast.show(result?.error ?? "Failed to prepare bottle", "error");
   }
@@ -922,10 +930,15 @@ async function runD3DMetalAction(bottle: BottleManifest, action: D3DMetalGptkAct
 
 async function repairBottleComponent(id: string, component: string) {
   bottleLoading.value[id] = true;
-  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
-    id,
-    component,
-  });
+  const result = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>(
+    "POST",
+    "/bottles/repair-component",
+    {
+      id,
+      component,
+    },
+    10 * 60 * 1000,
+  );
   if (result?.ok && result.repair) {
     const repair = result.repair;
     const failed = ["asset_missing", "failed", "install_failed"].includes(repair.status);
@@ -946,11 +959,16 @@ async function pollRepairDone(id: string, component: string) {
   const maxPolls = 120;
   for (let i = 0; i < maxPolls; i++) {
     await new Promise((r) => setTimeout(r, pollInterval));
-    const poll = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>("POST", "/bottles/repair-component", {
-      id,
-      component,
-      dryRun: true,
-    });
+    const poll = await api<{ ok: boolean; repair?: ComponentRepair; error?: string }>(
+      "POST",
+      "/bottles/repair-component",
+      {
+        id,
+        component,
+        dryRun: true,
+      },
+      2 * 60 * 1000,
+    );
     if (!poll?.ok || !poll.repair) break;
     const status = poll.repair.status;
     if (status === "already_installed") {
@@ -973,7 +991,6 @@ async function setBottleProfile(id: string, profile: string) {
     const bottle = bottles.value.find((item) => item.id === id);
     if (!bottle) return;
     await saveD3DMetalBottle(bottle);
-    await load();
     await doctorBottle(id);
     return;
   }

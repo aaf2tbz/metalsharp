@@ -51,7 +51,10 @@ def main() -> None:
     contract = json.loads(CONTRACT.read_text())
     port = free_port()
     home = Path(tempfile.mkdtemp(prefix="metalsharp-contract-"))
-    env = {**os.environ, "METALSHARP_HOME": str(home), "METALSHARP_PORT": str(port)}
+    # Keep host Steam/GOG libraries out of the language-neutral contract gate.
+    # Otherwise /steam/library can scan a developer's real, potentially large
+    # library and serialize every later conformance request behind it.
+    env = {**os.environ, "HOME": str(home), "METALSHARP_HOME": str(home), "METALSHARP_PORT": str(port)}
     process = subprocess.Popen([str(backend)], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         deadline = time.monotonic() + 12

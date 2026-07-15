@@ -217,7 +217,7 @@ async function launchGame(game: SteamGame, launchMethod = "auto") {
   }>("POST", launchEndpoint, {
     appid: game.appid,
     launchMethod,
-  });
+  }, 10 * 60 * 1000);
 
   launchingAppId.value = null;
 
@@ -345,7 +345,13 @@ watch([library, search, filter], () => {
     </div>
 
     <div v-else class="game-grid">
-      <div v-for="game in filteredGames" :key="game.appid" class="game-grid-item">
+      <div
+        v-for="game in filteredGames"
+        v-show="expandedAppId === null || expandedAppId === game.appid"
+        :key="game.appid"
+        class="game-grid-item"
+        :class="{ 'is-expanded': expandedAppId === game.appid }"
+      >
         <GameCard
           :game="game"
           :running="runningAppId === game.appid"
@@ -568,6 +574,12 @@ watch([library, search, filter], () => {
 
 .game-grid-item {
   min-width: 0;
+}
+
+.game-grid-item.is-expanded {
+  grid-column: 1 / -1;
+  width: min(100%, 920px);
+  justify-self: center;
 }
 
 .empty-state {
