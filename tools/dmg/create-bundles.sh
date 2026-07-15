@@ -19,10 +19,13 @@ download_asset() {
   local dest="$2"
   if [ -s "$dest" ]; then
     if "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$BUNDLE_DIR" "$asset" >/dev/null 2>&1; then
-      echo "SKIP bundle: $asset"
-      return 0
+      if python3 "$PROJECT_ROOT/tools/bundles/verify-release-inputs.py" \
+        --bundle-dir "$BUNDLE_DIR" --lock "$INPUT_LOCK" --asset "$asset" >/dev/null 2>&1; then
+        echo "SKIP bundle: $asset"
+        return 0
+      fi
     fi
-    echo "Refreshing stale bundle: $asset"
+    echo "Refreshing stale or unlocked bundle: $asset"
     rm -f "$dest"
   fi
   echo "Downloading bundle: $asset"
