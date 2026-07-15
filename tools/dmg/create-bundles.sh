@@ -112,7 +112,7 @@ if [ "$REPAIR_BUNDLES" = "1" ]; then
   "$PROJECT_ROOT/tools/dmg/repair-runtime-bundle.py" \
     --archive "$BUNDLE_DIR/metalsharp-runtime.tar.zst" \
     --host-dir "$PROJECT_ROOT/app/native/host" \
-    --backend "$PROJECT_ROOT/app/src-rust/target/release/metalsharp-backend"
+    --backend "$PROJECT_ROOT/app/build/c-backend/metalsharp-backend"
 else
   echo "bundle repair disabled; using verified release bundles as downloaded"
 fi

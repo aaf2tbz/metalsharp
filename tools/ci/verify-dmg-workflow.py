@@ -51,7 +51,7 @@ def check_package_resources(assets: list[str]) -> None:
         if isinstance(entry, dict)
     }
     required_pairs = {
-        ("src-rust/target/release/metalsharp-backend", "runtime/metalsharp-backend"),
+        ("build/c-backend/metalsharp-backend", "runtime/metalsharp-backend"),
         ("native/host", "runtime/host"),
         ("updater", "scripts/tools/updater"),
     }
@@ -123,9 +123,11 @@ def check_workflows() -> None:
         if forbidden in pr:
             fail(f"PR CI should not run the full DMG build path: {forbidden}")
 
-    for required in ["Shell CI", "Metal CI", "Vue CI", "Rust CI", "Electron CI", "C/C++/Obj-C CI", "DMG Workflow CI"]:
+    for required in ["Shell CI", "Metal CI", "Vue CI", "C Backend CI", "Electron CI", "C/C++/Obj-C CI", "DMG Workflow CI"]:
         if required not in main:
             fail(f"main CI missing validation job: {required}")
+    if "make -C app/src-c verify" not in main:
+        fail("main CI must validate the direct C backend")
     for forbidden in [
         "Verify Developer SDK Bundle",
         "Build DMG",
