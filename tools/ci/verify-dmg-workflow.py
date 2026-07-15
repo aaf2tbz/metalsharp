@@ -111,6 +111,16 @@ def check_bundle_scripts() -> None:
     if 'DEFAULT_BACKEND = PROJECT_ROOT / "app" / "build" / "c-backend" / "metalsharp-backend"' not in runtime_repair:
         fail("runtime-bundle repair must default to the C backend")
 
+    split_bundles = read("tools/bundles/create-split-bundles.py")
+    if 'APP_DIR / "build" / "c-backend" / "metalsharp-backend"' not in split_bundles:
+        fail("split bundle staging must use the C backend")
+    if 'APP_DIR / "src-rust" / "target"' in split_bundles:
+        fail("split bundle staging must not package a Cargo-built backend")
+
+    bridge = read("app/src/main/rust-bridge.ts")
+    if '"src-rust", "target"' in bridge:
+        fail("Electron backend selection must not fall back to a Cargo-built backend")
+
     stage_bundles = read("tools/dmg/stage-release-bundles.sh")
     if "asset-manifest.tsv" not in stage_bundles or "tar --use-compress-program=unzstd" not in stage_bundles:
         fail("stage-release-bundles.sh no longer stages bundle manifest archives")

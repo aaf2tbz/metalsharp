@@ -225,7 +225,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     wine_src = source1 / "wine-11.5"
     copy_tree(wine_src, roots["runtime"] / "wine")
     copy_tree(source2 / "wine" / "etc", roots["runtime"] / "wine" / "etc")
-    backend = APP_DIR / "src-rust" / "target" / "release" / "metalsharp-backend"
+    backend = APP_DIR / "build" / "c-backend" / "metalsharp-backend"
     require_file(backend, "runtime backend")
     copy_file(backend, roots["runtime"] / "metalsharp-backend")
     require_host_runtime(APP_DIR / "native" / "host")

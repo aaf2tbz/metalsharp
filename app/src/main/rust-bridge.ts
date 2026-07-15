@@ -390,16 +390,12 @@ export class RustBridge {
   }
 
   private findBinary(): string | null {
-    const devCandidates = [
-      path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
-    ];
+    // The shipped backend is the checked-in C artifact. Keep this bridge's
+    // legacy filename for now, but never fall back to a Cargo-built binary.
+    const devCandidates = [path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend")];
     const packagedCandidates = [
       path.join(process.resourcesPath || "", "runtime", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       "/usr/local/bin/metalsharp-backend",
       "/usr/bin/metalsharp-backend",
     ];
