@@ -13,7 +13,7 @@
     "start": "npm run build && electron .",
     "dev": "tsc -w & vite build --watch & electron .",
     "dev:vite": "vite",
-    "rust:build": "cd src-rust && cargo build --release",
+    "rust:build": "../tools/rustc-c/build-backend.sh",
     "rust:dev": "cd src-rust && cargo build",
     "build:all": "npm run rust:build && npm run build",
     "build:native": "bash ../scripts/tools/native/build-helper.sh",

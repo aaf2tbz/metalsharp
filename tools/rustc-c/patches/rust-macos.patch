@@ -1,0 +1,13 @@
+diff --git a/library/std/Cargo.toml b/library/std/Cargo.toml
+index 5c9ae52d9e6..1e9eaaf0a4c 100644
+--- a/library/std/Cargo.toml
++++ b/library/std/Cargo.toml
+@@ -10,7 +10,7 @@ edition = "2024"
+ autobenches = false
+ 
+ [lib]
+-crate-type = ["dylib", "rlib"]
++crate-type = ["rlib"]
+ 
+ [dependencies]
+ alloc = { path = "../alloc", public = true }

@@ -25,6 +25,8 @@ node_modules/
 
 # Rust build artifacts
 app/src-rust/target/
+app/src-c/generated/
+app/src-c/Makefile
 app/native/
 scripts/tools/native/metalsharp-process-manager-helper
 src/fna/FNA/
