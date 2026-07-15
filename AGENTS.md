@@ -170,7 +170,7 @@ Current CI is split between PR smoke coverage, lightweight main-push workflow va
 |----------|----------|-------------|
 | `pr-ci.yml` | PRs to `main` | Shell CI, Metal CI, Vue CI, C backend CI, Electron CI, C/C++/Obj-C CI, and lightweight `DMG Workflow CI` contract validation |
 | `ci.yml` | pushes to `main` | Main-branch smoke coverage plus `DMG Workflow CI` contract validation; it does not publish release artifacts |
-| `release.yml` | tags `v*` | Developer SDK publish, full arm64 DMG build, DMG runtime-asset verification, release artifact upload, and package publication |
+| `release.yml` | tags `v*` | Full arm64 DMG build, DMG runtime-asset verification, and release publication; optionally publishes the Developer SDK when the repository Actions variable `METALSHARP_DEVELOPER_SDK_CI=1` |
 | `publish-linux-packages.yml` | manual | Re-publish Linux DEB/runtime release assets to GHCR with ORAS |
 
 ## Version Bumping
