@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "electron-backend.v1.json"
+ELECTRON_CONTRACT = ROOT / "app" / "src" / "shared" / "backend-contract.ts"
 
 
 def fail(message: str) -> None:
@@ -30,6 +32,27 @@ def main() -> None:
     for version in ("0.54.5", "0.55.0"):
         if status.get("legacy_versions", {}).get(version) != "1":
             fail(f"the shipped {version} C backend must remain explicitly mapped to contract v1")
+
+    try:
+        electron_source = ELECTRON_CONTRACT.read_text()
+    except OSError as exc:
+        fail(str(exc))
+    legacy_map = re.search(
+        r"LEGACY_CONTRACT_BY_BACKEND_VERSION[^=]*=\s*\{(?P<body>.*?)\};",
+        electron_source,
+        re.DOTALL,
+    )
+    if legacy_map is None:
+        fail("Electron legacy contract map is missing")
+    electron_versions = set(
+        re.findall(r'"([^"]+)"\s*:\s*BACKEND_CONTRACT_VERSION', legacy_map.group("body"))
+    )
+    contract_versions = set(status.get("legacy_versions", {}))
+    if electron_versions != contract_versions:
+        fail(
+            "Electron legacy contract map does not match the wire contract: "
+            f"Electron={sorted(electron_versions)}, contract={sorted(contract_versions)}"
+        )
 
     names: set[str] = set()
     for route in contract.get("conformance_routes", []):

@@ -83,6 +83,7 @@ export type ContractRoute = keyof ContractResponses;
 
 export const LEGACY_CONTRACT_BY_BACKEND_VERSION: Readonly<Record<string, string>> = {
   "0.54.5": BACKEND_CONTRACT_VERSION,
+  "0.55.0": BACKEND_CONTRACT_VERSION,
 };
 
 export function compatibleContractVersion(
