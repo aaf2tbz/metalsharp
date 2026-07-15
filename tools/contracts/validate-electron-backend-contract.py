@@ -29,7 +29,7 @@ def main() -> None:
     status = contract.get("status")
     if not isinstance(status, dict) or status.get("path") != "/status" or status.get("method") != "GET":
         fail("status must describe GET /status")
-    for version in ("0.54.5", "0.55.0"):
+    for version in ("0.54.5", "0.55.0", "0.55.1"):
         if status.get("legacy_versions", {}).get(version) != "1":
             fail(f"the shipped {version} C backend must remain explicitly mapped to contract v1")
 

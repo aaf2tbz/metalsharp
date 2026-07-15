@@ -15,7 +15,8 @@
     "contract_version_field": "contract_version",
     "legacy_versions": {
       "0.54.5": "1",
-      "0.55.0": "1"
+      "0.55.0": "1",
+      "0.55.1": "1"
     }
   },
   "conformance_routes": [

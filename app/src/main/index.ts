@@ -782,11 +782,18 @@ async function requestMigrationBackend(
   return requestBackend(method, url, body, timeoutMs);
 }
 
+// Prefix creation, library synchronization, game installs, and runtime repairs
+// legitimately take longer than the default 30-second bridge timeout. Keep the
+// trusted-renderer boundary bounded, but permit the longest timeout used by the
+// renderer so valid requests are not rejected before reaching the C backend.
+const MAX_BACKEND_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
 function isAllowedBackendRequest(method: string, url: string, timeoutMs?: number): boolean {
   return (
     (method === "GET" || method === "POST") &&
     /^\/[a-z0-9][a-z0-9_\-/]*(\?[a-z0-9_=&%.-]+)?$/i.test(url) &&
-    (timeoutMs === undefined || (Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30000))
+    (timeoutMs === undefined ||
+      (Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_BACKEND_REQUEST_TIMEOUT_MS))
   );
 }
 
