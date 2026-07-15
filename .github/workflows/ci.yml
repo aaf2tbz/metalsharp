@@ -9,16 +9,15 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   actions: read
-  packages: write
 
 jobs:
   shell:
     name: Shell CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install ShellCheck
         run: |
@@ -32,7 +31,7 @@ jobs:
     name: Rules TOML CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install toml
         run: pip3 install --user toml
@@ -44,7 +43,7 @@ jobs:
     name: Doc Freshness CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Check doc freshness (warn-only)
         run: python3 tools/ci/check-doc-freshness.py
@@ -53,7 +52,7 @@ jobs:
     name: Backend Contract CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Validate versioned Electron/backend contract
         run: python3 tools/contracts/validate-electron-backend-contract.py
@@ -62,7 +61,7 @@ jobs:
     name: Metal CI
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Configure
         run: cmake -S . -B build-metal -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON
@@ -80,9 +79,9 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
@@ -104,7 +103,7 @@ jobs:
     name: C Backend CI
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Build and test committed C backend
         run: make -C app/src-c verify
@@ -122,9 +121,9 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
@@ -149,7 +148,7 @@ jobs:
     name: C/C++/Obj-C CI
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install clang-format
         run: brew install clang-format zstd
@@ -210,7 +209,7 @@ jobs:
     name: DMG Workflow CI
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Verify DMG workflow contract
         run: python3 tools/ci/verify-dmg-workflow.py

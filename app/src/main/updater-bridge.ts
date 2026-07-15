@@ -119,6 +119,8 @@ export class UpdaterBridge {
         dmgPath,
         "--backend-pid",
         String(backendPid),
+        "--backend-port",
+        String(this.backendPort),
         "--target-version",
         targetVersion,
         "--status-file",

@@ -9,9 +9,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
   actions: read
-  packages: write
 
 jobs:
   developer-sdk:
@@ -20,8 +19,11 @@ jobs:
     concurrency:
       group: metalsharp-developer-sdk-bundles
       cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Download and verify release split bundles
         run: METALSHARP_REPAIR_BUNDLES=0 METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 tools/dmg/create-bundles.sh
@@ -38,7 +40,7 @@ jobs:
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst
 
       - name: Setup ORAS
-        uses: oras-project/setup-oras@v2
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
 
       - name: Publish developer SDK package
         run: |
@@ -89,10 +91,10 @@ jobs:
     needs: [developer-sdk]
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -100,6 +102,9 @@ jobs:
 
       - name: Build and validate committed C backend
         run: make -C app/src-c verify
+
+      - name: Record release build provenance
+        run: tools/release/write-provenance.sh dist/release-provenance.tsv
 
       - name: Build C++ engine
         run: |
@@ -217,13 +222,14 @@ jobs:
             "Configure MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD, and one notarization credential set to produce a notarized DMG." \
             > dist/electron/DMG-SIGNING.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: MetalSharp-dmg
           path: |
             dist/electron/*.dmg
             dist/electron/DMG-SIGNING.txt
             dist/bundles/metalsharp-bundle-manifest.tsv
+            dist/release-provenance.tsv
             app/src-c/manifests/runtime-sources.txt
             app/src-c/manifests/test-sources.txt
             app/src-c/manifests/native-objects.txt
@@ -236,7 +242,7 @@ jobs:
       contents: write
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: MetalSharp-dmg
           path: release/
@@ -249,16 +255,19 @@ jobs:
           find release -type f -name '*.dmg' -exec cp {} release-flat/ \;
           find release -type f -name 'DMG-SIGNING.txt' -exec cp {} release-flat/ \;
           find release -type f -name 'metalsharp-bundle-manifest.tsv' -exec cp {} release-flat/ \;
+          find release -type f -name 'release-provenance.tsv' -exec cp {} release-flat/ \;
           test "$(find release-flat -type f -name '*.dmg' | wc -l | tr -d ' ')" -ge 1
           test -s release-flat/DMG-SIGNING.txt
           test -s release-flat/metalsharp-bundle-manifest.tsv
+          test -s release-flat/release-provenance.tsv
           find release-flat -type f -print | sort
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             release-flat/*.dmg
             release-flat/DMG-SIGNING.txt
             release-flat/metalsharp-bundle-manifest.tsv
+            release-flat/release-provenance.tsv
           generate_release_notes: true

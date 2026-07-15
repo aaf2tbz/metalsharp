@@ -31,9 +31,9 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: npm
@@ -42,12 +42,12 @@ jobs:
       - run: npm ci
         working-directory: app
 
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
         with:
           languages: javascript-typescript
           config-file: .github/codeql/codeql-typescript.yml
 
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
         with:
           category: '/language:javascript-typescript'
 
@@ -56,9 +56,9 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: github/codeql-action/init@v4
+      - uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
         with:
           languages: c-cpp
           build-mode: manual
@@ -68,6 +68,6 @@ jobs:
           cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
           cmake --build build-codeql --parallel $(sysctl -n hw.ncpu)
 
-      - uses: github/codeql-action/analyze@v4
+      - uses: github/codeql-action/analyze@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
         with:
           category: '/language:c-cpp'

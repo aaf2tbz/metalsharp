@@ -1,0 +1,9 @@
+# Immutable release inputs for the split bundles consumed by packaging CI.
+# source\tname\tsha256\tsize\tlicense-or-provenance
+github-release:317125068\tfnalibs.tar.zst\t1cf999b7fece522e138279d116ae38098be9bb60a83cca61baf9f1427ede9a47\t3198397\tFNA-XNA/fnalibs-dailies release artifact
+github-release:317125068\tmetalsharp-assets.tar.zst\t61518241c832cfeb312b3d1b906ff1e7a7b8af2f7988228c46955b48521beb73\t379851277\tMetalSharp bundles release artifact
+github-release:317125068\tmetalsharp-electron.tar.zst\tefc996f57bf8c6b1dd438b2c6f900b4fd50ec6becf3620fe053f1312da96ff73\t426879\tMetalSharp bundles release artifact
+github-release:317125068\tmetalsharp-graphics-dll.tar.zst\t1580afaf6820fd921bef07b5e5e4c9548001316a442a4e4e6780bcd372830035\t83961649\tMetalSharp bundles release artifact
+github-release:317125068\tmetalsharp-runtime.tar.zst\ta57473db178d24df64440f9bd25edc1f30d498e415240b174383c671e8e4fb81\t319193040\tMetalSharp bundles release artifact
+github-release:317125068\tmetalsharp-scripts-tools.tar.zst\ta596252ec13467267ac4824dd1d99db2580a46b1cb8b867bb2e5f63d4fdffed0\t36491\tMetalSharp bundles release artifact
+github-release:317125068\tmetalsharp-steam.tar.zst\t5090e08bdd2edbf7e550726e79c9c9b12c2fdaa501776024fe6d0cb18d2a983e\t2327667\tMetalSharp bundles release artifact
