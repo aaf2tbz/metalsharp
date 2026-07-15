@@ -6,29 +6,42 @@ on:
     - cron: "0 6 1 * *"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     name: Build FNA Kickstart
     runs-on: macos-14
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Install dependencies
         run: brew install zstd mono
 
       - name: Build universal kick.bin.osx
         run: |
-          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/kick.c" -o kick.c
-          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/binreloc.c" -o binreloc.c
-          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/binreloc.h" -o binreloc.h
-          mkdir -p include/mono-2.0/mono/metadata include/mono-2.0/mono/utils include/mono-2.0/mono/jit
+          MONOKICKSTART_REV=290303cd5bedfdc802582a7cb324de1f0619ab08
+          source_url="https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/$MONOKICKSTART_REV"
+          curl -fsSL "$source_url/kick.c" -o kick.c
+          curl -fsSL "$source_url/binreloc.c" -o binreloc.c
+          curl -fsSL "$source_url/binreloc.h" -o binreloc.h
+          mkdir -p include/mono-2.0/mono/metadata include/mono-2.0/mono/utils
           for f in mono-config.h assembly.h image.h; do
-            curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/precompiled/include/mono-2.0/mono/metadata/$f" -o "include/mono-2.0/mono/metadata/$f"
+            curl -fsSL "$source_url/precompiled/include/mono-2.0/mono/metadata/$f" -o "include/mono-2.0/mono/metadata/$f"
           done
-          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/precompiled/include/mono-2.0/mono/utils/mono-publib.h" -o "include/mono-2.0/mono/utils/mono-publib.h"
-          curl -sL "https://raw.githubusercontent.com/OutOfOrder/MonoKickstart/master/precompiled/include/mono-2.0/mono/jit/jit.h" -o "include/mono-2.0/mono/jit/jit.h"
+          curl -fsSL "$source_url/precompiled/include/mono-2.0/mono/utils/mono-publib.h" -o "include/mono-2.0/mono/utils/mono-publib.h"
+          cat > expected-mono-kickstart.sha256 <<'EOF'
+          70052b137c160c26cb670e49d011782128d028c83f0ac9a0b34eba8098265c8d  kick.c
+          bae70277554b318a1475c2f89d21254f4d34693b192888201ce64d258c21583c  binreloc.c
+          5f4388dfc2e379bbc4b82a770d23bf250a3db2c5b7578223e34ea723da2ce780  binreloc.h
+          1b31493c72012bb1a112f7676a43fedd225d562ea8a20bbccfc4d6a4350790e1  include/mono-2.0/mono/metadata/mono-config.h
+          b3a858273f6b29cc35698be58b93682f35075025e44556e30ea36005daadfc45  include/mono-2.0/mono/metadata/assembly.h
+          470bda81e89b5046c009a871a88886cb613f896f2d8fcb7996e16e3d4f988810  include/mono-2.0/mono/metadata/image.h
+          2c9779842fae4f72a2226fe6487c48f4a9b3ac703e440eef78b4d5a06fb33fcf  include/mono-2.0/mono/utils/mono-publib.h
+          EOF
+          shasum -a 256 --check expected-mono-kickstart.sha256
 
           MONO_LIB="/Library/Frameworks/Mono.framework/Versions/Current/lib"
           if [ ! -d "$MONO_LIB" ]; then

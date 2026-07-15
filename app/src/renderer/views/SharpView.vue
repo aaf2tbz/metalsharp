@@ -1437,7 +1437,7 @@ onUnmounted(() => { document.removeEventListener('click', closeDropdowns); stopG
         <div class="sharp-card-banner">
           <img
             v-if="app.cover"
-            :src="`http://127.0.0.1:9274/sharp-library/cover?id=${app.id}`"
+            :src="`metalsharp://backend/sharp-library/cover?id=${encodeURIComponent(app.id)}`"
             :alt="app.name"
             :style="{ objectPosition: coverPosition(app) }"
           />

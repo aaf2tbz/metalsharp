@@ -8,6 +8,7 @@ OUT_DIR="$PROJECT_ROOT/dist/bundles"
 RELEASE_TAG="${METALSHARP_BUNDLE_TAG:-bundles}"
 REPO="${METALSHARP_BUNDLE_REPO:-aaf2tbz/metalsharp}"
 MANIFEST="$PROJECT_ROOT/tools/bundles/asset-manifest.tsv"
+INPUT_LOCK="$PROJECT_ROOT/tools/bundles/release-inputs.lock.tsv"
 REPAIR_BUNDLES="${METALSHARP_REPAIR_BUNDLES:-1}"
 SKIP_DEVELOPER_SDK="${METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE:-0}"
 
@@ -127,6 +128,7 @@ if [ "$SKIP_DEVELOPER_SDK" = "1" ]; then
   done < "$MANIFEST"
 fi
 "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" "${VERIFY_ARGS[@]}"
+python3 "$PROJECT_ROOT/tools/bundles/verify-release-inputs.py" --bundle-dir "$BUNDLE_DIR" --lock "$INPUT_LOCK" --require-all
 
 rm -f "$OUT_DIR"/metalsharp-*.tar.zst
 while IFS=$'\t' read -r asset _root _platforms _notes; do

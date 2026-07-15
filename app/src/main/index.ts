@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "child_process";
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, protocol, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
@@ -531,7 +531,7 @@ function registerProcessManagerShortcut(): void {
 async function checkNeedsMigration(): Promise<boolean> {
   const marker = hasPostUpdateMigrationMarker();
   return new Promise((resolve) => {
-    const req = http.get("http://127.0.0.1:9274/update/migrate/check", (res) => {
+    const req = http.get(`http://127.0.0.1:${bridge.getPort()}/update/migrate/check`, (res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
@@ -652,6 +652,18 @@ app.whenReady().then(async () => {
   if (isDevRuntime()) process.env.METALSHARP_DEV = "1";
   ensureMetalsharpDirs();
   bridge = new BackendBridge({ devMode: isDevRuntime(), metalsharpHome: getMetalsharpDir() });
+  protocol.handle("metalsharp", async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname !== "backend" || url.pathname !== "/sharp-library/cover" || !url.searchParams.get("id")) {
+      return new Response("Not found", { status: 404 });
+    }
+    try {
+      const asset = await bridge.requestBinary(`${url.pathname}${url.search}`);
+      return new Response(new Uint8Array(asset.body), { headers: { "Content-Type": asset.contentType } });
+    } catch {
+      return new Response("Backend asset unavailable", { status: 503 });
+    }
+  });
   updaterBridge = new UpdaterBridge(bridge.getPort());
   const backendStart = await bridge.start();
   if (!backendStart.ok) {
@@ -745,10 +757,25 @@ async function requestMigrationBackend(
   return requestBackend(method, url, body, timeoutMs);
 }
 
+function isAllowedBackendRequest(method: string, url: string, timeoutMs?: number): boolean {
+  return (
+    (method === "GET" || method === "POST") &&
+    /^\/[a-z0-9][a-z0-9_\-/]*(\?[a-z0-9_=&%.-]+)?$/i.test(url) &&
+    (timeoutMs === undefined || (Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30000))
+  );
+}
+
+function isTrustedRenderer(sender: Electron.WebContents): boolean {
+  return sender === mainWindow?.webContents || sender === processManagerWindow?.webContents;
+}
+
 function registerIpc() {
   ipcMain.handle(
     "backend:request",
-    async (_e, method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => {
+    async (event, method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) => {
+      if (!isTrustedRenderer(event.sender) || !isAllowedBackendRequest(method, url, timeoutMs)) {
+        return { ok: false, error: "Rejected backend request" };
+      }
       return requestBackend(method, url, body, timeoutMs);
     },
   );

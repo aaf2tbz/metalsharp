@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.55.0 — 2026-07-14
+
+Release-input reproducibility and Electron/C-backend control-plane hardening.
+
+### Changed
+
+- Release bundles are verified against a checked-in SHA-256 and size lockfile; workflow actions and MonoKickstart sources are pinned to immutable revisions.
+- Workflow permissions now default to read-only, with publish permissions limited to the jobs that publish packages or releases.
+- Electron launches the C backend on a per-session high loopback port and keeps backend image requests behind a private Electron protocol.
+
+### Fixed
+
+- Migration checks now use the active C backend port rather than the historic fixed port.
+
 ## v0.54.5 — 2026-07-09
 
 Testing-surface hardening, pre-commit strictness, and compatibility database refresh.

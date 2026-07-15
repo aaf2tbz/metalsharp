@@ -171,6 +171,7 @@ def check_workflows() -> None:
         "Verify Apple notarization",
         "Mark unsigned DMG",
         "Create GitHub Release",
+        "Record release build provenance",
     ]:
         if required not in release:
             fail(f"release workflow missing publish step: {required}")
@@ -178,6 +179,7 @@ def check_workflows() -> None:
         "tools/dmg/check-apple-signing-readiness.sh",
         "steps.apple-signing.outputs.ready == 'true'",
         "DMG-SIGNING.txt",
+        "release-provenance.tsv",
     ]:
         if required not in release:
             fail(f"release workflow missing signing fallback contract: {required}")
