@@ -2,6 +2,7 @@ import { type ChildProcess, spawn } from "child_process";
 import * as fs from "fs";
 import * as http from "http";
 import * as path from "path";
+import { BACKEND_CONTRACT_VERSION, type BackendStatus, compatibleContractVersion } from "../shared/backend-contract";
 
 function getShellPath(): string {
   const home = process.env.HOME || "";
@@ -58,7 +59,7 @@ export class RustBridge {
   }
 
   async ensureRunning(maxMs = 15000): Promise<{ ok: boolean; error?: string }> {
-    if (await this.isAlive()) return { ok: true };
+    if (await this.isAlive()) return this.ensureCompatibleContract();
 
     // In dev mode, auto-restart the backend so binary swaps "just work".
     // In production, the app owns the lifecycle — only start() spawns.
@@ -67,7 +68,7 @@ export class RustBridge {
       if (!started.ok) return started;
       try {
         await this.waitForReady(maxMs);
-        return { ok: true };
+        return this.ensureCompatibleContract();
       } catch (e) {
         return { ok: false, error: (e as Error).message };
       }
@@ -89,13 +90,13 @@ export class RustBridge {
       await this.killProcess();
     } else if (await this.isAlive()) {
       console.log("Backend already running and up to date");
-      return { ok: true };
+      return this.ensureCompatibleContract();
     }
 
     this.spawnBackend(binPath);
     try {
       await this.waitForReady();
-      return { ok: true };
+      return this.ensureCompatibleContract();
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -113,7 +114,7 @@ export class RustBridge {
     try {
       this.spawnBackend(binPath);
       await this.waitForReady(10000);
-      return { ok: true };
+      return this.ensureCompatibleContract();
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }
@@ -338,6 +339,42 @@ export class RustBridge {
     });
   }
 
+  private async getBackendStatus(): Promise<BackendStatus | null> {
+    return new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${this.port}/status`, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => chunks.push(chunk));
+        res.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString()) as BackendStatus);
+          } catch {
+            resolve(null);
+          }
+        });
+      });
+      req.on("error", () => resolve(null));
+      req.setTimeout(1500, () => {
+        req.destroy();
+        resolve(null);
+      });
+    });
+  }
+
+  private async ensureCompatibleContract(): Promise<{ ok: boolean; error?: string }> {
+    const status = await this.getBackendStatus();
+    if (!status?.ok || !status.version) {
+      return { ok: false, error: "Backend returned an invalid /status response" };
+    }
+    const actual = compatibleContractVersion(status);
+    if (actual !== BACKEND_CONTRACT_VERSION) {
+      return {
+        ok: false,
+        error: `Backend contract mismatch: Electron requires v${BACKEND_CONTRACT_VERSION}, backend ${status.version} provides ${actual ? `v${actual}` : "no supported contract"}. Update MetalSharp so the app and backend match.`,
+      };
+    }
+    return { ok: true };
+  }
+
   private async getProcessPath(pid: number): Promise<string | null> {
     if (!Number.isInteger(pid) || pid <= 0) return null;
     return new Promise((resolve) => {
@@ -354,11 +391,13 @@ export class RustBridge {
 
   private findBinary(): string | null {
     const devCandidates = [
+      path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
     ];
     const packagedCandidates = [
       path.join(process.resourcesPath || "", "runtime", "metalsharp-backend"),
+      path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       "/usr/local/bin/metalsharp-backend",

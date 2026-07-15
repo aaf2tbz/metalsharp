@@ -165,6 +165,7 @@ fn route(req: &mut tiny_http::Request) -> RouteResponse {
                 json!({
                     "ok": true,
                     "version": env!("CARGO_PKG_VERSION"),
+                    "contract_version": "1",
                     "pid": std::process::id(),
                     "dev_mode": std::env::var("METALSHARP_DEV").map(|v| v == "1").unwrap_or(false),
                     "metalsharp_home": crate::platform::metalsharp_home_dir().to_string_lossy().to_string(),

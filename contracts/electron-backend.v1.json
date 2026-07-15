@@ -1,0 +1,1200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MetalSharp Electron to backend contract",
+  "contract_version": "1",
+  "description": "The implementation-independent HTTP boundary used by Electron and the shipped backend. A breaking change requires a new contract version and fixtures before it can be packaged.",
+  "status": {
+    "path": "/status",
+    "method": "GET",
+    "required": [
+      "ok",
+      "version",
+      "pid",
+      "metalsharp_home"
+    ],
+    "contract_version_field": "contract_version",
+    "legacy_versions": {
+      "0.54.5": "1"
+    }
+  },
+  "conformance_routes": [
+    {
+      "name": "setup",
+      "method": "GET",
+      "path": "/setup/state",
+      "status": 200,
+      "required": [
+        "ok",
+        "completed",
+        "step",
+        "steamApiKeySet"
+      ]
+    },
+    {
+      "name": "steam-status",
+      "method": "GET",
+      "path": "/steam/status",
+      "status": 200,
+      "required": [
+        "installed",
+        "running"
+      ]
+    },
+    {
+      "name": "steam-library",
+      "method": "GET",
+      "path": "/steam/library",
+      "status": 200,
+      "required": [
+        "ok",
+        "games",
+        "total"
+      ]
+    },
+    {
+      "name": "bottles",
+      "method": "GET",
+      "path": "/bottles",
+      "status": 200,
+      "required": [
+        "ok",
+        "bottles"
+      ]
+    },
+    {
+      "name": "logs",
+      "method": "GET",
+      "path": "/logs",
+      "status": 200,
+      "required": [
+        "ok",
+        "logs"
+      ]
+    },
+    {
+      "name": "log-stream",
+      "method": "GET",
+      "path": "/logs/stream?after=0",
+      "status": 200,
+      "required": [
+        "ok",
+        "lines",
+        "total"
+      ]
+    },
+    {
+      "name": "pipeline-dry-run",
+      "method": "GET",
+      "path": "/diagnostics/pipeline/dry-run?appid=0",
+      "status": 200,
+      "required": [
+        "appid",
+        "dry_run",
+        "env_pairs"
+      ]
+    },
+    {
+      "name": "m12-dry-run",
+      "method": "GET",
+      "path": "/diagnostics/m12/dry-run?appid=0",
+      "status": 200,
+      "required": [
+        "appid",
+        "dry_run",
+        "env_pairs"
+      ]
+    }
+  ],
+  "typed_routes": {
+    "GET /status": {
+      "response": "BackendStatus"
+    },
+    "GET /setup/state": {
+      "response": "SetupState"
+    },
+    "GET /steam/status": {
+      "response": "SteamStatus"
+    },
+    "GET /steam/library": {
+      "response": "SteamLibrary"
+    },
+    "GET /bottles": {
+      "response": "BottleList"
+    },
+    "GET /logs": {
+      "response": "LogList"
+    },
+    "GET /logs/stream": {
+      "response": "LogStream"
+    },
+    "GET /diagnostics/pipeline/dry-run": {
+      "response": "PipelineDryRun"
+    },
+    "GET /diagnostics/m12/dry-run": {
+      "response": "PipelineDryRun"
+    },
+    "POST /game/launch-auto": {
+      "request": "LaunchAutoRequest",
+      "response": "LaunchResult",
+      "process_launch": true
+    }
+  },
+  "route_inventory": [
+    {
+      "method": "GET",
+      "path": "/bottles"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/apply-font-subs"
+    },
+    {
+      "method": "GET",
+      "path": "/bottles/compatibility-matrix"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/edit"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/get"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/prepare"
+    },
+    {
+      "method": "GET",
+      "path": "/bottles/profiles"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/record-compatibility"
+    },
+    {
+      "method": "GET",
+      "path": "/bottles/redist-sources"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/refresh"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/relaunch-installer"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/repair-component"
+    },
+    {
+      "method": "GET",
+      "path": "/bottles/route-contracts"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/seed-post-wineboot"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/set-runtime-profile"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/set-windows-version"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/sync-steam"
+    },
+    {
+      "method": "POST",
+      "path": "/bottles/verify-directx"
+    },
+    {
+      "method": "POST",
+      "path": "/cache/clear"
+    },
+    {
+      "method": "GET",
+      "path": "/cache/size"
+    },
+    {
+      "method": "GET",
+      "path": "/config"
+    },
+    {
+      "method": "POST",
+      "path": "/config"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/install-homebrew-gptk"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/install-rosetta"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/install-x64-redist"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/play"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/repair-gptk-payload"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/save"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/seed-prefix"
+    },
+    {
+      "method": "POST",
+      "path": "/d3dmetal/bottles/status"
+    },
+    {
+      "method": "POST",
+      "path": "/diagnostics/binding-contract/validate"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/cache-doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/diagnostics/command-replay/validate"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/fna/classify"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/fna/explain"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/fna/signals"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/launch"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/launch/timing"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/m12/dry-run"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/pipeline/dry-run"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/pso-manifests"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/runtime-artifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/diagnostics/wineboot-state"
+    },
+    {
+      "method": "GET",
+      "path": "/game/dual-info"
+    },
+    {
+      "method": "POST",
+      "path": "/game/launch-auto"
+    },
+    {
+      "method": "POST",
+      "path": "/game/prepare"
+    },
+    {
+      "method": "POST",
+      "path": "/game/resolve-routing"
+    },
+    {
+      "method": "GET",
+      "path": "/game/running"
+    },
+    {
+      "method": "GET",
+      "path": "/goldberg/status"
+    },
+    {
+      "method": "POST",
+      "path": "/goldberg/toggle"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/add-sanitize-rule"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/check-results"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/filesystem-check"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/full-breakpoint-map"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/hw-breakpoint-map"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/module-sanitize"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/run-all-checks"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/simulate-check"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/status-survey"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/anti-debug/timing-analysis"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/allocate-trampoline"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/get-thread-context"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/inject-sequence"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/queue"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/queue-status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/set-thread-context"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/suspend-thread"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/test-alert"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/trampoline-status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/apc/wait-alertable"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/create-device"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/decode-ioctl"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/dispatch-irp"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/extension-template"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/list"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/list-devices"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/list-ioctls"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/list-irps"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/load"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/register-ioctl"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/type-mapping-survey"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/driver/unload"
+    },
+    {
+      "method": "GET",
+      "path": "/kernel-translation/es-live/events"
+    },
+    {
+      "method": "GET",
+      "path": "/kernel-translation/es-live/processes"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es-live/start"
+    },
+    {
+      "method": "GET",
+      "path": "/kernel-translation/es-live/status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es-live/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/create-ipc-channel"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/detect-events"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/fire-image-event"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/fire-process-event"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/fire-thread-event"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/image-events"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/ipc-channels"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/list-callbacks"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/nt-callback-bridge"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/process-events"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/register-callback"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/thread-events"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/es/unregister-callback"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/close"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/create"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/duplicate"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/enumerate"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/enumerate-fds"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/enumerate-ports"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/query"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/snapshot-all"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/system-info"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/table-status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/handle/unified-snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/host-probe"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/bottle-configure"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/bottle-get-config"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/bottle-list-configs"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-activate"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-crash"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-deactivate"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-install"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/extension-status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/fallback-mode"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/full-stack-status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/list-multi-ac"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/list-performance"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/log-translation"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/performance-profile"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/query-translation-log"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/register-multi-ac"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/runtime-doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/simulate-conflict"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integration/simulate-pipeline"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/list-modules"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/query-process-signing"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/query-signing-level"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/register-macho-module"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/register-pe-module"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/integrity/set-cached-signing-level"
+    },
+    {
+      "method": "GET",
+      "path": "/kernel-translation/ipc/handles"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ipc/start"
+    },
+    {
+      "method": "GET",
+      "path": "/kernel-translation/ipc/status"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ipc/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/access-log"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/capability-survey"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/list-protected"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/list-registrations"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/post-operations"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/pre-operations"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/protect-process"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/register-callback"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/simulate-operation"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/unprotect-process"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/ob/unregister-callback"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/probe"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/compute-delta"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/configure-notifications"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/create-watcher"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/destroy-watcher"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/info"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/list-deltas"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/list-watchers"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/mechanism-survey"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/poll-watcher"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/seed-demo"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/snapshot"
+    },
+    {
+      "method": "POST",
+      "path": "/kernel-translation/thread/watcher-status"
+    },
+    {
+      "method": "POST",
+      "path": "/kill"
+    },
+    {
+      "method": "POST",
+      "path": "/launch"
+    },
+    {
+      "method": "POST",
+      "path": "/launcher/evidence"
+    },
+    {
+      "method": "GET",
+      "path": "/logs"
+    },
+    {
+      "method": "GET",
+      "path": "/logs/crash-reports"
+    },
+    {
+      "method": "GET",
+      "path": "/logs/stream"
+    },
+    {
+      "method": "GET",
+      "path": "/metalfx/state"
+    },
+    {
+      "method": "POST",
+      "path": "/metalfx/toggle"
+    },
+    {
+      "method": "GET",
+      "path": "/mtsp/default-rules"
+    },
+    {
+      "method": "POST",
+      "path": "/mtsp/doctor"
+    },
+    {
+      "method": "GET",
+      "path": "/mtsp/launch-shape"
+    },
+    {
+      "method": "GET",
+      "path": "/mtsp/pipelines"
+    },
+    {
+      "method": "POST",
+      "path": "/mtsp/prepare"
+    },
+    {
+      "method": "POST",
+      "path": "/mtsp/recipe"
+    },
+    {
+      "method": "POST",
+      "path": "/processes/force-kill"
+    },
+    {
+      "method": "GET",
+      "path": "/runtime/host-abi"
+    },
+    {
+      "method": "GET",
+      "path": "/scan"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/agility-versions"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/dependencies"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/device-name"
+    },
+    {
+      "method": "POST",
+      "path": "/setup/install-all"
+    },
+    {
+      "method": "POST",
+      "path": "/setup/install-deps"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/install-progress"
+    },
+    {
+      "method": "POST",
+      "path": "/setup/install-vcpp-x64"
+    },
+    {
+      "method": "POST",
+      "path": "/setup/install-vcpp-x86"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/installing"
+    },
+    {
+      "method": "POST",
+      "path": "/setup/save"
+    },
+    {
+      "method": "GET",
+      "path": "/setup/state"
+    },
+    {
+      "method": "GET",
+      "path": "/sharp-library"
+    },
+    {
+      "method": "GET",
+      "path": "/sharp-library/cover"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/auth-code"
+    },
+    {
+      "method": "GET",
+      "path": "/sharp-library/gog/games"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/import"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/initialize-prefix"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/install"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/logout"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/play"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/progress"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/remove-prefix"
+    },
+    {
+      "method": "GET",
+      "path": "/sharp-library/gog/status"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/stop"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/sync"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/gog/uninstall"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/import-bottle-app"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/install"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/launch"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/set-cover"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/set-cover-position"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/set-engine"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/set-launch-args"
+    },
+    {
+      "method": "POST",
+      "path": "/sharp-library/uninstall"
+    },
+    {
+      "method": "GET",
+      "path": "/status"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/api-key"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/bridge-start"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/bridge-status"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/compatdata"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/d3d12-runtime-doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/install"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/install-game"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/install-recipe-deps"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/is-running"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/launch"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/launch-game"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/launch-offline"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/library"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/mac-install"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/mac-launch"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/mac-launch-game"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/mac-stop"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/runtime-doctor"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/save-api-key"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/status"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/stop"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/stop-targets"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/uninstall-game"
+    },
+    {
+      "method": "POST",
+      "path": "/steam/view-game"
+    },
+    {
+      "method": "GET",
+      "path": "/steam/watch-steamapps"
+    },
+    {
+      "method": "GET",
+      "path": "/update/check"
+    },
+    {
+      "method": "POST",
+      "path": "/update/cleanup"
+    },
+    {
+      "method": "GET",
+      "path": "/update/dmg-path"
+    },
+    {
+      "method": "GET",
+      "path": "/update/migrate/check"
+    },
+    {
+      "method": "GET",
+      "path": "/update/migrate/progress"
+    },
+    {
+      "method": "GET",
+      "path": "/update/migrate/report"
+    },
+    {
+      "method": "POST",
+      "path": "/update/migrate/start"
+    },
+    {
+      "method": "GET",
+      "path": "/update/progress"
+    },
+    {
+      "method": "POST",
+      "path": "/update/start"
+    },
+    {
+      "method": "POST",
+      "path": "/wine-mono/install"
+    },
+    {
+      "method": "POST",
+      "path": "/wine-mono/reset"
+    },
+    {
+      "method": "GET",
+      "path": "/wine-mono/status"
+    }
+  ]
+}
