@@ -18,7 +18,7 @@ LDFLAGS := -arch arm64 -mmacosx-version-min=$(DEPLOYMENT_TARGET) -isysroot $(SDK
 BACKEND := $(OUT_DIR)/metalsharp-backend
 TEST_BIN := $(OUT_DIR)/metalsharp-backend-tests
 
-.PHONY: integrity backend test-binary test smoke verify clean
+.PHONY: integrity backend test-binary test smoke contract verify clean
 integrity:
 	@test "$$(wc -l < manifests/runtime-sources.txt | tr -d ' ')" = 374
 	@test "$$(wc -l < manifests/test-sources.txt | tr -d ' ')" = 394
@@ -53,7 +53,11 @@ test: $(TEST_BIN)
 smoke: $(BACKEND)
 	"$(CURDIR)/../../tools/c-backend/soak.sh" "$(CURDIR)/$(BACKEND)"
 
-verify: integrity backend test smoke
+contract: $(BACKEND)
+	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
+	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(BACKEND)"
+
+verify: integrity backend test smoke contract
 
 clean:
 	rm -rf build $(OUT_DIR)

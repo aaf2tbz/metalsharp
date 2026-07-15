@@ -49,6 +49,15 @@ jobs:
       - name: Check doc freshness (warn-only)
         run: python3 tools/ci/check-doc-freshness.py
 
+  backend-contract:
+    name: Backend Contract CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate versioned Electron/backend contract
+        run: python3 tools/contracts/validate-electron-backend-contract.py
+
   metal:
     name: Metal CI
     runs-on: macos-14
