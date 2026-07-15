@@ -1,6 +1,6 @@
 # MetalSharp Backend Rust-to-C Migration Plan
 
-- **Status:** Implemented for the shipped Apple Silicon backend (issue #264)
+- **Status:** Completed; the repository and shipped Apple Silicon backend are C-only
 - **Baseline:** `origin/main` at `e7bcba2e` (2026-07-14)
 - **Planning branch:** `codex/rust-to-c-backend-plan`
 
@@ -11,11 +11,10 @@ native graphics engine because the main boundary is already process-oriented:
 Electron spawns `metalsharp-backend` and communicates with it over loopback
 HTTP. There is no Rust ABI embedded in Electron.
 
-The chosen end state is a C-compiled backend: Rust remains source input while a
-pinned open-source compiler lowers it to generated `.c` files and Xcode clang
-links the shipped arm64 executable. The generated source is an auditable build
-artifact (`app/src-c/generated`), not hand-maintained application code. This is
-a deliberately one-time compiler integration, not a MetalSharp compiler fork.
+The completed end state is a C-only backend. The 45 former modules and their
+629 tests are committed as auditable C translation units under `app/src-c` and
+Xcode clang links the shipped arm64 executable. Rust/Cargo sources and the
+one-time generation integration were removed after conversion.
 
 ## Implemented build path
 

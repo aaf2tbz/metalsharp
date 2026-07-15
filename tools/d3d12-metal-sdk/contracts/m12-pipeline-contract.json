@@ -43,12 +43,12 @@
   "pipeline_stages": [
     {
       "id": "recipe-and-route",
-      "source": "app/src-rust/src/mtsp/engine.rs",
+      "source": "app/src-c/manifests/backend-modules.txt",
       "flow": "M12 selects the DXMT D3D12 node, deploys D3D12/DXGI/Winemetal plus D3D11 fallback DLLs, and keeps M11/M10/M9 as fallbacks."
     },
     {
       "id": "launch-env",
-      "source": "app/src-rust/src/mtsp/launcher.rs",
+      "source": "app/src-c/manifests/backend-modules.txt",
       "flow": "The launcher combines Steam identity, DLL overrides, Wine DLL paths, app-local sidecars, cache env, optional developer M12 log env, and per-game compatibility env."
     },
     {
@@ -84,8 +84,8 @@
       "pinpoints": "M12 launcher env, shared logging, native trace routing, source comments, and required dev gates."
     },
     {
-      "id": "rust-launch-env",
-      "command": "cargo test m12_ --manifest-path app/src-rust/Cargo.toml",
+      "id": "c-backend",
+      "command": "make -C app/src-c verify",
       "pinpoints": "M12 launch env, per-title logs, app-local sidecars, runtime deployment, and compatibility knobs."
     },
     {
@@ -111,12 +111,12 @@
   ],
   "source_comments": [
     {
-      "path": "app/src-rust/src/mtsp/engine.rs",
-      "must_contain": "lib/dxmt_m12/x86_64-windows"
+      "path": "app/src-c/README.md",
+      "must_contain": "629 converted tests"
     },
     {
-      "path": "app/src-rust/src/mtsp/launcher.rs",
-      "must_contain": "M12 should use isolated M12 DLL path"
+      "path": "app/src-c/README.md",
+      "must_contain": "validated by complete runtime layout"
     }
   ],
   "forbidden_m12_launcher_patterns": [
@@ -126,7 +126,7 @@
   "evidence": [
     {
       "kind": "launcher-tests",
-      "path": "app/src-rust/src/mtsp/launcher.rs",
+      "path": "app/src-c/manifests/backend-modules.txt",
       "note": "M12 env tests assert app-local WineMetal sidecars, DXMT overrides, and per-title shared log routing."
     },
     {

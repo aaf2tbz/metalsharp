@@ -26,7 +26,9 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: Build and validate committed C backend
-        run: make -C app/src-c verify
+        run: |
+          python3 tools/c-backend/verify-version-alignment.py --tag "$GITHUB_REF_NAME"
+          make -C app/src-c verify
 
       - name: Build host runtime ABI
         run: |
@@ -154,7 +156,9 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - name: Build and validate committed C backend
-        run: make -C app/src-c verify
+        run: |
+          python3 tools/c-backend/verify-version-alignment.py --tag "$GITHUB_REF_NAME"
+          make -C app/src-c verify
 
       - name: Build C++ engine
         run: |
@@ -283,6 +287,9 @@ jobs:
 
       - name: Verify DMG runtime assets
         run: tools/dmg/verify-dmg-runtime-assets.sh dist/electron/MetalSharp-*-arm64.dmg
+
+      - name: Verify clean setup from DMG bundles
+        run: tools/dmg/verify-dmg-clean-setup.sh dist/electron/MetalSharp-*-arm64.dmg
 
       - name: Verify Apple notarization
         if: steps.apple-signing.outputs.ready == 'true'

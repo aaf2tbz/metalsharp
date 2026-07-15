@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "electron-backend.v1.json"
 RENDERER = ROOT / "app" / "src" / "renderer"
-BRIDGE = ROOT / "app" / "src" / "main" / "rust-bridge.ts"
+BRIDGE = ROOT / "app" / "src" / "main" / "backend-bridge.ts"
 MAIN = ROOT / "app" / "src" / "main" / "index.ts"
 
 # The renderer's generic `api<T>("METHOD", "/route")` calls may contain

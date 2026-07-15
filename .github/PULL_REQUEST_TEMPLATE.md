@@ -19,15 +19,12 @@
 > ```
 >
 > The hook **fails the commit** if any required toolchain is missing — it will
-> not silently skip `cargo fmt`, `clippy`, `tsc`, `prettier`, `biome`, etc.
+> not silently skip Clang, `tsc`, `prettier`, `biome`, etc.
 > See [`.github/hooks/README.md`](../.github/hooks/README.md) for details.
 
 > Run locally before pushing. All of these also run automatically in CI.
 
-- [ ] `cargo fmt --all -- --check` passes (Rust)
-- [ ] `cargo clippy --all-targets -- -D warnings` passes (Rust)
-- [ ] `cargo build --release` passes (Rust backend)
-- [ ] `cargo test` passes (Rust — 628+ tests)
+- [ ] `make -C app/src-c verify` passes (C backend and 629 converted tests)
 - [ ] C++ compiles if changed: `cmake -B build-native -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON && cmake --build build-native --parallel $(sysctl -n hw.ncpu)`
 - [ ] `clang-format --dry-run --Werror` passes on any changed C/C++/Obj-C file
 - [ ] `ctest --test-dir build-native` passes if tests changed

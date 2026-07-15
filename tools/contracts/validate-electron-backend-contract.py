@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import re
 import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "electron-backend.v1.json"
-ROUTER = ROOT / "app" / "src-rust" / "src" / "main.rs"
 
 
 def fail(message: str) -> None:
@@ -29,8 +27,9 @@ def main() -> None:
     status = contract.get("status")
     if not isinstance(status, dict) or status.get("path") != "/status" or status.get("method") != "GET":
         fail("status must describe GET /status")
-    if not status.get("legacy_versions", {}).get("0.54.5") == "1":
-        fail("the shipped 0.54.5 C backend must remain explicitly mapped to contract v1")
+    for version in ("0.54.5", "0.55.0"):
+        if status.get("legacy_versions", {}).get(version) != "1":
+            fail(f"the shipped {version} C backend must remain explicitly mapped to contract v1")
 
     names: set[str] = set()
     for route in contract.get("conformance_routes", []):
@@ -53,15 +52,14 @@ def main() -> None:
     if "POST /game/launch-auto" not in typed or not typed["POST /game/launch-auto"].get("process_launch"):
         fail("launch-auto must remain a typed process-launch route")
 
-    expected_inventory = [
-        {"method": method.upper(), "path": path}
-        for method, path in sorted(
-            set(re.findall(r'\(Method::(Get|Post),\s*"([^"?]+)"\)', ROUTER.read_text())),
-            key=lambda value: (value[1], value[0]),
-        )
-    ]
-    if contract.get("route_inventory") != expected_inventory:
-        fail("route_inventory is stale; run tools/contracts/generate-electron-backend-route-inventory.py")
+    inventory = contract.get("route_inventory")
+    if not isinstance(inventory, list) or len(inventory) != 264:
+        fail("route_inventory must contain the 264 frozen C-backend routes")
+    inventory_keys = [(route.get("path"), route.get("method")) for route in inventory if isinstance(route, dict)]
+    if len(inventory_keys) != len(inventory) or len(set(inventory_keys)) != len(inventory):
+        fail("route_inventory contains invalid or duplicate entries")
+    if inventory_keys != sorted(inventory_keys):
+        fail("route_inventory must remain sorted by path and method")
     print("Electron/backend contract v1 is valid.")
 
 

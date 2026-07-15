@@ -4,8 +4,8 @@ import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
 import * as path from "path";
+import { BackendBridge } from "./backend-bridge";
 import type { ProcessManagerAction, ProcessManagerActionResult, ProcessManagerSample } from "./process-manager-types";
-import { BackendBridge } from "./rust-bridge";
 import { UpdaterBridge } from "./updater-bridge";
 
 let shellPath: string | undefined;
@@ -21,7 +21,6 @@ function ensureShellPath() {
     "/bin",
     "/usr/sbin",
     "/sbin",
-    `${home}/.cargo/bin`,
   ];
   const existing = new Set((process.env.PATH || "").split(":"));
   const additions = candidates.filter((c) => !existing.has(c));

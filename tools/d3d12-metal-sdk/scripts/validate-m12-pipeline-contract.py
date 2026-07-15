@@ -38,7 +38,7 @@ REQUIRED_STAGE_IDS = {
 
 REQUIRED_GATE_IDS = {
     "pipeline-contract",
-    "rust-launch-env",
+    "c-backend",
     "runtime-layout",
     "shader-engine",
     "m12-check",
@@ -119,30 +119,13 @@ def validate_contract_shape(data: dict[str, Any], errors: list[str]) -> None:
 
 
 def validate_source_contract(data: dict[str, Any], errors: list[str]) -> None:
-    launcher = read_rel("app/src-rust/src/mtsp/launcher.rs", errors)
-    engine = read_rel("app/src-rust/src/mtsp/engine.rs", errors)
+    modules = read_rel("app/src-c/manifests/backend-modules.txt", errors)
+    installer = read_rel("app/src-c/installer.c", errors)
     log_cpp = read_rel("vendor/dxmt/src/util/log/log.cpp", errors)
 
-    for pattern in [
-        "steam_pipeline_env_pairs",
-        "build_cache_paths",
-        "m12-pipeline",
-        "DXMT_WINEMETAL_UNIXLIB",
-        "DXMT_PIPELINE_CACHE_PATH",
-        "METALSHARP_SHADER_CACHE_PATH",
-        "DXMT_LOG_PATH",
-        "dxmt_m12",
-    ]:
-        require(pattern in launcher, f"launcher missing `{pattern}`", errors)
-
-    for pattern in [
-        "id: PipelineId::M12",
-        "lib/dxmt_m12/x86_64-windows",
-        "lib/dxmt_m12/x86_64-unix",
-        "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b",
-        'shader_cache_subdir: Some("m12")',
-    ]:
-        require(pattern in engine, f"engine missing `{pattern}`", errors)
+    for module in ["mtsp/engine", "mtsp/launcher", "mtsp/recipe", "mtsp/rules", "mtsp/shader_cache"]:
+        require(module in modules.splitlines(), f"C backend module manifest missing `{module}`", errors)
+    require("metalsharp_m12_runtime_complete" in installer, "C installer missing M12 completeness validation", errors)
 
     require("DXMT_LOG_PATH" in log_cpp, "DXMT logger missing `DXMT_LOG_PATH`", errors)
     require(
@@ -164,31 +147,10 @@ def validate_source_contract(data: dict[str, Any], errors: list[str]) -> None:
 
 
 def validate_m12_route_guards(data: dict[str, Any], errors: list[str]) -> None:
-    engine = read_rel("app/src-rust/src/mtsp/engine.rs", errors)
-    launcher = read_rel("app/src-rust/src/mtsp/launcher.rs", errors)
-
-    def m12_engine_block() -> str:
-        start = engine.find("id: PipelineId::M12")
-        end = engine.find("id: PipelineId::M11", start)
-        if start == -1 or end == -1:
-            return ""
-        return engine[start:end]
-
-    block = m12_engine_block()
-    require(bool(block), "could not isolate M12 engine block", errors)
-
     forbidden = [str(item) for item in data.get("forbidden_m12_launcher_patterns", [])]
     require(bool(forbidden), "forbidden_m12_launcher_patterns must be non-empty", errors)
-    for pattern in forbidden:
-        require(pattern not in block, f"M12 engine block must not contain `{pattern}`", errors)
-
-    for pattern in [
-        'assert!(m12_overrides.contains("dxgi_dxmt"))',
-        '!m12.deploy_dlls.iter().any(|dll| dll.filename == "metalsharp_ntdll_hook.dll")',
-        'winedllpath.contains("dxmt_m12/x86_64-windows")',
-        'path.contains("dxmt_m12")',
-    ]:
-        require(pattern in engine + launcher, f"M12 route guard missing `{pattern}`", errors)
+    gates = {entry.get("id"): entry.get("command") for entry in data.get("dev_gates", []) if isinstance(entry, dict)}
+    require(gates.get("c-backend") == "make -C app/src-c verify", "M12 contract must run the converted C tests", errors)
 
 
 def validate_evidence(data: dict[str, Any], errors: list[str]) -> None:

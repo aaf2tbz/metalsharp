@@ -5,31 +5,26 @@ Guide for AI agents working on the MetalSharp repository.
 
 ## What This Project Is
 
-MetalSharp is a macOS app that runs Windows Steam games and Windows programs via Wine + Metal translation. It's an Electron app with a Rust HTTP backend, a C++ native D3D/Metal engine, per-game engine routing, runtime bottles, installer profiles, and Linux `.deb` packaging.
+MetalSharp is a macOS app that runs Windows Steam games and Windows programs via Wine + Metal translation. It's an Electron app with a C HTTP backend, a C++ native D3D/Metal engine, per-game engine routing, runtime bottles, installer profiles, and Linux `.deb` packaging.
 
 ## Repository Structure
 
 ```
 app/
-├── src-rust/                    Rust HTTP backend (tiny_http server on port 9274)
-│   └── src/
-│       ├── main.rs              HTTP router — all /launch, /steam/*, /setup/*, /config, /logs endpoints
-│       ├── bottles.rs           Runtime bottles, installer profiles, runtime doctor, redist/source checks
-│       ├── launch.rs            Engine detection + game launch — the core routing logic
-│       ├── steam.rs             Steam process management, library, install/uninstall, CEF wrapper
-│       ├── setup.rs             Per-game preparation (shim builds, DLL staging, FNA runtime)
-│       ├── installer.rs         Dependency installer (Wine bundle, Rosetta, Xcode CLI, GPTK, Mono)
-│       ├── migrate.rs           Runtime migration + preservation of Steam/prefix/game/bottle state
-│       ├── scan.rs              Game library scanner (Steam appmanifest parsing, wine path resolution)
-│       ├── sharp_library.rs     Sharp Library imports, installer launch, bottle app imports
-│       └── updater.rs           Self-update via GitHub releases DMG download
+├── src-c/                       Clang-built HTTP backend (port 9274)
+│   ├── runtime/c/               374 committed C translation units for all 45 backend modules
+│   ├── tests/c/                 394 committed C units for the 629-test suite
+│   ├── installer.c              C-owned bundle/runtime validation policy
+│   ├── installer.h              Installer validation interface
+│   ├── manifests/               Auditable source, object, and module inventories
+│   └── Makefile                 C-only build, test, soak, and contract gates
 ├── src/
 │   ├── main/                    Electron main process
 │   └── renderer/                Electron renderer (UI, library, setup wizard)
 ├── bundles/                     Pre-packaged deps (metalsharp_bundle.tar.zst, SteamSetup.exe, etc.)
 ├── updater/                     Python update runtime script
 ├── package.json                 Electron app manifest
-└── src-rust/Cargo.toml          Rust backend manifest
+└── build/c-backend/             Clang-built backend and test executables
 
 src/                             C++ native D3D11/D3D12/DXGI/XAudio2/XInput → Metal implementations
 ├── d3d/d3d11/                   D3D11 device, context, shaders, resources
@@ -95,7 +90,7 @@ Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, a
 - Game local copies: `~/.metalsharp/games/<appid>/`
 - Logs: `~/.metalsharp/logs/`
 
-### HTTP API (main.rs)
+### HTTP API (C backend)
 
 Backend listens on `127.0.0.1:9274` (override with `METALSHARP_PORT`). Key endpoints:
 
@@ -128,9 +123,9 @@ Backend listens on `127.0.0.1:9274` (override with `METALSHARP_PORT`). Key endpo
 
 ## Build Commands
 
-### Rust backend
+### C backend
 ```bash
-cd app/src-rust && cargo build --release
+make -C app/src-c verify
 ```
 
 ### Electron app
@@ -138,9 +133,10 @@ cd app/src-rust && cargo build --release
 cd app && npm install && npm run build
 ```
 
-### Everything (Rust + TypeScript)
+### Everything (C backend + TypeScript)
 ```bash
-cd app && npm run build:all
+make -C app/src-c verify
+cd app && npm run build
 ```
 
 ### C++ native engine + tests
@@ -172,24 +168,22 @@ Current CI is split between PR smoke coverage, lightweight main-push workflow va
 
 | Workflow | Triggers | What it does |
 |----------|----------|-------------|
-| `pr-ci.yml` | PRs to `main` | Shell CI, Metal CI, Vue CI, Rust CI, Electron CI, C/C++/Obj-C CI, and lightweight `DMG Workflow CI` contract validation |
+| `pr-ci.yml` | PRs to `main` | Shell CI, Metal CI, Vue CI, C backend CI, Electron CI, C/C++/Obj-C CI, and lightweight `DMG Workflow CI` contract validation |
 | `ci.yml` | pushes to `main` | Main-branch smoke coverage plus `DMG Workflow CI` contract validation; it does not publish release artifacts |
 | `release.yml` | tags `v*` | Developer SDK publish, full arm64 DMG build, DMG runtime-asset verification, release artifact upload, and package publication |
 | `publish-linux-packages.yml` | manual | Re-publish Linux DEB/runtime release assets to GHCR with ORAS |
 
 ## Version Bumping
 
-Five files must be updated together for a version bump:
+Three files must be updated together for a version bump:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
 | `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
-| `app/src-rust/Cargo.toml` | `version = "X.Y.Z"` |
-| `app/src-rust/Cargo.lock` | `metalsharp-backend` package `version = "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
 
-The Rust backend reads its version from `CARGO_PKG_VERSION` (set by Cargo.toml). The CI release workflow (`ci.yml`) reads the version from the git tag — if the tag version differs from `package.json`, it rewrites `package.json` before building.
+The committed C backend embeds the synchronized version. Release CI rejects a tag, package metadata, CMake version, or committed-C version mismatch.
 
 ### Tag and release process
 
@@ -204,7 +198,7 @@ git push origin v<X.Y.Z>
 
 The `ci.yml` release job only triggers on tag pushes matching `v*`. It builds the full app, packages the DMG and DEB, creates Linux runtime tarballs, publishes Linux OCI package assets, and uploads release artifacts with auto-generated release notes.
 
-The updater module (`updater.rs`) checks for new releases by hitting `https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest` and comparing the tag to `CARGO_PKG_VERSION`.
+The converted C updater checks `https://api.github.com/repos/aaf2tbz/metalsharp/releases/latest` and compares the tag to the embedded backend version.
 
 ## Suggested Tests Before Committing
 
@@ -212,13 +206,9 @@ The updater module (`updater.rs`) checks for new releases by hitting `https://ap
 > for the full local gate set, including the D3D12 Metal SDK probes CI cannot
 > run and the Phase 1–8 backend diagnostic routes.
 
-### Rust changes
+### C backend changes
 ```bash
-cd app/src-rust
-cargo fmt --all -- --check     # must pass (CI enforces)
-cargo clippy --all-targets -- -D warnings  # must pass (CI enforces)
-cargo test                     # unit tests
-cargo build --release          # verify build
+make -C app/src-c verify
 ```
 
 ### C++ changes
@@ -251,7 +241,7 @@ npx biome check src/           # lint (CI enforces)
 - **Shader cache is per-appid** (`~/.metalsharp/shader-cache/<engine>/<appid>/`), not per-exename
 - **Celeste (504230) and Terraria (105600) are Mono/FNA** — they use the native Mono/XNA/FNA lane with Steamworks/audio/native-library shims.
 - **Goat Simulator (265930) is currently an M9/D3D9 investigation target** — it still needs native .NET 4.0 CLR work before it can be promoted.
-- **CMakeLists.txt version must match Cargo.toml and package.json** — all three are independently read
+- **CMakeLists.txt version must match package.json and committed C** — release CI checks all independently
 - **app/package-lock.json version must match package.json** — npm package metadata and release automation both see it
 - **Steam game bottles are launch-authoritative, but Steam stays alive as the client** — bottles preflight and bind runtime assets; env-dependent routes spawn the game process with `SteamAppId`/`SteamGameId` while Wine Steam remains connected
 - **Installer bottles use their own prefixes** — apps imported from installer bottles must keep `bottle_id` so Sharp Library launches them from that bottle
