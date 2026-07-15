@@ -48,7 +48,7 @@ build/tests/%.o: tests/c/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: $(TEST_BIN)
-	cd ../src-rust && "$(CURDIR)/$(TEST_BIN)" --test-threads=1
+	"$(CURDIR)/../../tools/c-backend/run-tests.sh" "$(CURDIR)/$(TEST_BIN)" "$(CURDIR)/../src-rust"
 
 smoke: $(BACKEND)
 	"$(CURDIR)/../../tools/c-backend/soak.sh" "$(CURDIR)/$(BACKEND)"
