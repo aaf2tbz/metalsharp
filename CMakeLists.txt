@@ -6,6 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(METALSHARP_WINE_ARCH "x86_64" CACHE STRING "Architecture for Wine/Rosetta PE-facing targets")
 set(METALSHARP_HOST_ARCH "arm64" CACHE STRING "Architecture for macOS host-side targets")
+# Existing native tests and PE-facing targets inherit the Wine/Rosetta default;
+# host-only targets below explicitly override it to arm64.
+set(CMAKE_OSX_ARCHITECTURES "${METALSHARP_WINE_ARCH}" CACHE STRING "Default architecture for Wine/Rosetta targets" FORCE)
 
 function(metalsharp_wine_target target)
     set_target_properties(${target} PROPERTIES OSX_ARCHITECTURES "${METALSHARP_WINE_ARCH}")
