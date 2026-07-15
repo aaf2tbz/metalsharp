@@ -176,6 +176,44 @@
       ]
     },
     {
+      "name": "migration-check",
+      "method": "GET",
+      "path": "/update/migrate/check",
+      "status": 200,
+      "required": [
+        "ok",
+        "needed",
+        "reason"
+      ]
+    },
+    {
+      "name": "migration-progress",
+      "method": "GET",
+      "path": "/update/migrate/progress",
+      "status": 200,
+      "required": [
+        "status",
+        "step",
+        "total",
+        "message",
+        "error",
+        "version"
+      ]
+    },
+    {
+      "name": "migration-report",
+      "method": "GET",
+      "path": "/update/migrate/report",
+      "status": 200,
+      "required": [
+        "status",
+        "summary",
+        "entries",
+        "schema_version",
+        "version"
+      ]
+    },
+    {
       "name": "logs",
       "method": "GET",
       "path": "/logs",

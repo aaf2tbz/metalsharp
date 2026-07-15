@@ -562,8 +562,14 @@ async function checkNeedsMigration(): Promise<boolean> {
       res.on("end", () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString());
-          const needed = data.ok && data.needed === true;
-          if (!needed && !marker.needed) clearPostUpdateMigrationMarker();
+          const backendNeedsMigration = data.ok && data.needed === true;
+          // The updater marker is the durable handoff across replacing the app
+          // and backend. A freshly installed backend can legitimately report a
+          // complete runtime before the one-shot post-update migration has
+          // preserved/restored user state, so neither side may override the
+          // other here.
+          const needed = backendNeedsMigration || marker.needed;
+          if (!needed) clearPostUpdateMigrationMarker();
           resolve(needed);
         } catch {
           resolve(marker.needed);

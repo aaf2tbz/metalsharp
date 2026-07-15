@@ -108,6 +108,15 @@ static NSDictionary *fetchJSON(NSString *urlString, NSString *method) {
     return result;
 }
 
+static NSString *backendURL(NSString *route) {
+    NSString *configured = NSProcessInfo.processInfo.environment[@"METALSHARP_PORT"];
+    NSInteger port = configured.integerValue;
+    if (port < 1 || port > 65535 || ![configured isEqualToString:[NSString stringWithFormat:@"%ld", (long)port]]) {
+        port = 9274; // Legacy standalone fallback; packaged updates pass the private port.
+    }
+    return [NSString stringWithFormat:@"http://127.0.0.1:%ld%@", (long)port, route];
+}
+
 static void relaunchApp() {
     NSURL *appURL = [NSURL fileURLWithPath:@"/Applications/MetalSharp.app"];
     if ([[NSFileManager defaultManager] fileExistsAtPath:appURL.path]) {
@@ -119,7 +128,7 @@ static void relaunchApp() {
 }
 
 static void pollProgress() {
-    NSDictionary *progress = fetchJSON(@"http://127.0.0.1:9274/update/migrate/progress", @"GET");
+    NSDictionary *progress = fetchJSON(backendURL(@"/update/migrate/progress"), @"GET");
     if (!progress) return;
 
     NSString *status = progress[@"status"] ?: @"";
@@ -224,7 +233,7 @@ static void pollProgress() {
     [contentView setNeedsDisplay:YES];
     [[NSRunLoop currentRunLoop] addTimer:[NSTimer scheduledTimerWithTimeInterval:0.05 target:contentView selector:@selector(setNeedsDisplay:) userInfo:nil repeats:YES] forMode:NSDefaultRunLoopMode];
 
-    fetchJSON(@"http://127.0.0.1:9274/update/migrate/start", @"POST");
+    fetchJSON(backendURL(@"/update/migrate/start"), @"POST");
 
     gPollTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(pollTick) userInfo:nil repeats:YES];
     [[NSRunLoop currentRunLoop] addTimer:gPollTimer forMode:NSDefaultRunLoopMode];

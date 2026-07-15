@@ -460,7 +460,7 @@ def main():
     if compatible_contract(version, contract_version) == "1":
         write_status(
             sf,
-            "error",
+            "complete",
             100,
             "Update installed. C backend contract v1 verified; opening migration wizard...",
             new_version=tv,
@@ -468,8 +468,8 @@ def main():
     else:
         write_status(
             sf,
-            "complete",
-            100,
+            "error",
+            95,
             "Update installed, but the C backend contract was not ready on its launch port.",
             error="backend_contract_unavailable",
             new_version=tv,

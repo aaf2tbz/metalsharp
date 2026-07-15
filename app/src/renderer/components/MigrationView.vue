@@ -13,6 +13,8 @@ const spinnerEpoch = ref(0);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let spinnerWatchdog: ReturnType<typeof setInterval> | null = null;
+let pollInFlight = false;
+let pollFailures = 0;
 
 const percent = computed(() => {
   if (total.value === 0) return 0;
@@ -67,9 +69,21 @@ function shouldRetryBackendError(errorText: string) {
 }
 
 async function pollProgress() {
+  if (pollInFlight || complete.value || !!error.value) return;
+  pollInFlight = true;
   try {
     const res = await window.metalsharp.migrateProgress();
-    if (!res) return;
+    if (!res || res.ok === false) {
+      pollFailures += 1;
+      message.value = "Reconnecting to the migration backend...";
+      if (pollFailures >= 3) {
+        error.value = res?.error ?? "Migration backend stopped responding";
+        message.value = `Error: ${error.value}`;
+        stopPolling();
+      }
+      return;
+    }
+    pollFailures = 0;
     const data = res.data ?? res;
     status.value = data.status ?? "idle";
     step.value = data.step ?? 0;
@@ -83,10 +97,21 @@ async function pollProgress() {
     } else if (status.value === "error") {
       stopPolling();
     }
-  } catch {}
+  } catch (e: unknown) {
+    pollFailures += 1;
+    if (pollFailures >= 3) {
+      error.value = e instanceof Error ? e.message : "Migration backend stopped responding";
+      message.value = `Error: ${error.value}`;
+      stopPolling();
+    }
+  } finally {
+    pollInFlight = false;
+  }
 }
 
 function startPolling() {
+  if (pollTimer) return;
+  void pollProgress();
   pollTimer = setInterval(pollProgress, 500);
 }
 
@@ -95,6 +120,19 @@ function stopPolling() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+}
+
+async function retryMigration() {
+  stopPolling();
+  pollFailures = 0;
+  pollInFlight = false;
+  error.value = null;
+  complete.value = false;
+  status.value = "idle";
+  step.value = 0;
+  total.value = 0;
+  message.value = "Restarting migration...";
+  await startMigration();
 }
 
 function startSpinnerWatchdog() {
@@ -170,7 +208,8 @@ onUnmounted(() => {
       <button v-if="complete" class="restart-btn" :disabled="launching" @click="restartApp()">
         {{ launching ? "Launching..." : "Launch MetalSharp" }}
       </button>
-      <p v-if="error" class="error-hint">Try restarting the app. If the issue persists, check the logs.</p>
+      <button v-if="error && !complete" class="restart-btn" @click="retryMigration()">Retry Migration</button>
+      <p v-if="error" class="error-hint">The backend will be restarted automatically. If retry still fails, check the logs.</p>
     </div>
   </div>
 </template>
