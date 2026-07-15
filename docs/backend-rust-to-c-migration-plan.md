@@ -19,18 +19,17 @@ a deliberately one-time compiler integration, not a MetalSharp compiler fork.
 
 ## Implemented build path
 
-`tools/rustc-c/build-backend.sh` is the only release entry point. It pins
+`tools/rustc-c/build-backend.sh` is generation tooling only. It pins
 `rustic-compiler/rustc_codegen_c` and its matching Rust 1.94.1 source tree,
-applies the minimal Apple Silicon compatibility patches, builds a stage-1 C
-compiler and standard library, and writes the existing executable path:
+then produces auditable C units for review and promotion. The release path
+builds the checked-in C source directly with:
 
-`app/src-rust/target/release/metalsharp-backend`
+`make -C app/src-c backend`
 
-This preserves Electron's executable name and packaged runtime location. It
-also writes all generated C into `app/src-c/generated`, alongside a SHA-256
-manifest and compiler/deployment-target provenance. Those artifacts are
-ignored locally and attached to release CI; the release product contains no
-Rust dynamic library.
+That command writes `app/build/c-backend/metalsharp-backend`, which is the
+only executable Electron, DMG repair, split bundles, and release packaging
+may select. The release product contains no Rust runtime or Cargo-built
+backend fallback.
 
 The integration uses `ureq` with macOS native TLS (rather than Rustls/ring) and
 pins `rusqlite` 0.39 because the selected code generator cannot compile the
