@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "configurePresets": [
+    { "name": "macos-developer", "generator": "Ninja", "binaryDir": "${sourceDir}/build/macos-developer", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "BUILD_TESTS": "ON", "METALSHARP_WINE_ARCH": "x86_64", "METALSHARP_HOST_ARCH": "arm64" } },
+    { "name": "macos-release", "generator": "Ninja", "binaryDir": "${sourceDir}/build/macos-release", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "BUILD_TESTS": "OFF", "METALSHARP_WINE_ARCH": "x86_64", "METALSHARP_HOST_ARCH": "arm64" } }
+  ]
+}

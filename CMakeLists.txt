@@ -4,7 +4,16 @@ project(metalsharp VERSION 0.54.5 LANGUAGES C CXX OBJC OBJCXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Build for Rosetta 2 — Windows PE code executes natively under x86_64 translation")
+set(METALSHARP_WINE_ARCH "x86_64" CACHE STRING "Architecture for Wine/Rosetta PE-facing targets")
+set(METALSHARP_HOST_ARCH "arm64" CACHE STRING "Architecture for macOS host-side targets")
+
+function(metalsharp_wine_target target)
+    set_target_properties(${target} PROPERTIES OSX_ARCHITECTURES "${METALSHARP_WINE_ARCH}")
+endfunction()
+
+function(metalsharp_host_target target)
+    set_target_properties(${target} PROPERTIES OSX_ARCHITECTURES "${METALSHARP_HOST_ARCH}")
+endfunction()
 
 find_library(METAL_FRAMEWORK Metal REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
@@ -93,62 +102,46 @@ target_link_libraries(metalsharp_core PUBLIC
     ${APPKIT_FRAMEWORK}
 )
 target_compile_options(metalsharp_core PRIVATE -fobjc-arc)
+metalsharp_wine_target(metalsharp_core)
 
 add_library(metalsharp_host_runtime SHARED
     src/runtime/host/HostRuntimeABI.cpp
 )
 target_include_directories(metalsharp_host_runtime PUBLIC include)
 set_target_properties(metalsharp_host_runtime PROPERTIES OUTPUT_NAME "metalsharp_host_runtime")
+metalsharp_host_target(metalsharp_host_runtime)
 
-add_library(metalsharp_d3d11 SHARED
-    src/d3d/d3d11/D3D11Device.cpp
-    src/d3d/d3d11/D3D11DeviceContext.mm
-    src/d3d/d3d11/D3D11Texture2D.cpp
-    src/d3d/d3d11/D3D11Buffer.cpp
-    src/d3d/d3d11/D3D11RenderTargetView.cpp
-    src/d3d/d3d11/D3D11DepthStencilView.cpp
-    src/d3d/d3d11/D3D11ShaderResourceView.cpp
-    src/d3d/d3d11/D3D11InputLayout.cpp
-    src/d3d/d3d11/D3D11VertexShader.cpp
-    src/d3d/d3d11/D3D11PixelShader.cpp
-    src/d3d/d3d11/D3D11ComputeShader.cpp
-    src/d3d/d3d11/D3D11SamplerState.cpp
-    src/d3d/d3d11/D3D11RasterizerState.cpp
-    src/d3d/d3d11/D3D11DepthStencilState.cpp
-    src/d3d/d3d11/D3D11BlendState.cpp
-    src/d3d/d3d11/DeferredContext.cpp
-    src/d3d/d3d11/EntryPoint.cpp
-)
+set(METALSHARP_D3D11_SOURCES
+    src/d3d/d3d11/D3D11Device.cpp src/d3d/d3d11/D3D11DeviceContext.mm src/d3d/d3d11/D3D11Texture2D.cpp
+    src/d3d/d3d11/D3D11Buffer.cpp src/d3d/d3d11/D3D11RenderTargetView.cpp src/d3d/d3d11/D3D11DepthStencilView.cpp
+    src/d3d/d3d11/D3D11ShaderResourceView.cpp src/d3d/d3d11/D3D11InputLayout.cpp src/d3d/d3d11/D3D11VertexShader.cpp
+    src/d3d/d3d11/D3D11PixelShader.cpp src/d3d/d3d11/D3D11ComputeShader.cpp src/d3d/d3d11/D3D11SamplerState.cpp
+    src/d3d/d3d11/D3D11RasterizerState.cpp src/d3d/d3d11/D3D11DepthStencilState.cpp src/d3d/d3d11/D3D11BlendState.cpp
+    src/d3d/d3d11/DeferredContext.cpp src/d3d/d3d11/EntryPoint.cpp)
+set(METALSHARP_D3D12_SOURCES
+    src/d3d/d3d12/D3D12Device.cpp src/d3d/d3d12/D3D12CommandQueue.cpp src/d3d/d3d12/D3D12CommandList.mm
+    src/d3d/d3d12/D3D12ResourceStateTracker.cpp src/d3d/d3d12/D3D12Resource.cpp src/d3d/d3d12/D3D12DescriptorHeap.cpp
+    src/d3d/d3d12/D3D12RootSignature.cpp src/d3d/d3d12/D3D12PipelineState.cpp src/d3d/d3d12/D3D12Fence.cpp src/d3d/d3d12/EntryPoint.cpp)
+set(METALSHARP_DXGI_SOURCES
+    src/dxgi/DXGIFactory.cpp src/dxgi/DXGIAdapter.cpp src/dxgi/DXGIOutput.mm src/dxgi/DXGISwapChain.mm src/dxgi/EntryPoint.cpp)
+
+add_library(metalsharp_d3d11 SHARED ${METALSHARP_D3D11_SOURCES})
 target_link_libraries(metalsharp_d3d11 PRIVATE metalsharp_core metalsharp_dxgi)
 target_compile_options(metalsharp_d3d11 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_d3d11 PROPERTIES OUTPUT_NAME "d3d11" PREFIX "")
+metalsharp_wine_target(metalsharp_d3d11)
 
-add_library(metalsharp_d3d12 SHARED
-    src/d3d/d3d12/D3D12Device.cpp
-    src/d3d/d3d12/D3D12CommandQueue.cpp
-    src/d3d/d3d12/D3D12CommandList.mm
-    src/d3d/d3d12/D3D12ResourceStateTracker.cpp
-    src/d3d/d3d12/D3D12Resource.cpp
-    src/d3d/d3d12/D3D12DescriptorHeap.cpp
-    src/d3d/d3d12/D3D12RootSignature.cpp
-    src/d3d/d3d12/D3D12PipelineState.cpp
-    src/d3d/d3d12/D3D12Fence.cpp
-    src/d3d/d3d12/EntryPoint.cpp
-)
+add_library(metalsharp_d3d12 SHARED ${METALSHARP_D3D12_SOURCES})
 target_link_libraries(metalsharp_d3d12 PRIVATE metalsharp_core)
 target_compile_options(metalsharp_d3d12 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_d3d12 PROPERTIES OUTPUT_NAME "d3d12" PREFIX "")
+metalsharp_wine_target(metalsharp_d3d12)
 
-add_library(metalsharp_dxgi SHARED
-    src/dxgi/DXGIFactory.cpp
-    src/dxgi/DXGIAdapter.cpp
-    src/dxgi/DXGIOutput.mm
-    src/dxgi/DXGISwapChain.mm
-    src/dxgi/EntryPoint.cpp
-)
+add_library(metalsharp_dxgi SHARED ${METALSHARP_DXGI_SOURCES})
 target_link_libraries(metalsharp_dxgi PRIVATE metalsharp_core)
 target_compile_options(metalsharp_dxgi PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_dxgi PROPERTIES OUTPUT_NAME "dxgi" PREFIX "")
+metalsharp_wine_target(metalsharp_dxgi)
 
 add_library(metalsharp_audio SHARED
     src/audio/XAudio2Engine.cpp
@@ -161,6 +154,7 @@ add_library(metalsharp_audio SHARED
 )
 target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK})
 set_target_properties(metalsharp_audio PROPERTIES OUTPUT_NAME "xaudio2_9" PREFIX "")
+metalsharp_wine_target(metalsharp_audio)
 
 add_library(metalsharp_input SHARED
     src/input/XInputEngine.cpp
@@ -170,6 +164,7 @@ add_library(metalsharp_input SHARED
 target_link_libraries(metalsharp_input PRIVATE metalsharp_core ${GAMECONTROLLER_FRAMEWORK})
 target_compile_options(metalsharp_input PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_input PROPERTIES OUTPUT_NAME "xinput1_4" PREFIX "")
+metalsharp_wine_target(metalsharp_input)
 
 add_executable(metalsharp_launcher
     tools/launcher/main.cpp
@@ -179,42 +174,14 @@ add_executable(metalsharp_launcher
     tools/launcher/SteamIntegration.cpp
 )
 target_link_libraries(metalsharp_launcher PRIVATE metalsharp_core ${FOUNDATION_FRAMEWORK})
+metalsharp_wine_target(metalsharp_launcher)
 
 add_library(metalsharp_loader STATIC
     src/loader/PELoader.cpp
     src/loader/D3DShims.cpp
-    src/d3d/d3d11/D3D11Device.cpp
-    src/d3d/d3d11/D3D11DeviceContext.mm
-    src/d3d/d3d11/D3D11Texture2D.cpp
-    src/d3d/d3d11/D3D11Buffer.cpp
-    src/d3d/d3d11/D3D11RenderTargetView.cpp
-    src/d3d/d3d11/D3D11DepthStencilView.cpp
-    src/d3d/d3d11/D3D11ShaderResourceView.cpp
-    src/d3d/d3d11/D3D11InputLayout.cpp
-    src/d3d/d3d11/D3D11VertexShader.cpp
-    src/d3d/d3d11/D3D11PixelShader.cpp
-    src/d3d/d3d11/D3D11ComputeShader.cpp
-    src/d3d/d3d11/D3D11SamplerState.cpp
-    src/d3d/d3d11/D3D11RasterizerState.cpp
-    src/d3d/d3d11/D3D11DepthStencilState.cpp
-    src/d3d/d3d11/D3D11BlendState.cpp
-    src/d3d/d3d11/DeferredContext.cpp
-    src/d3d/d3d11/EntryPoint.cpp
-    src/d3d/d3d12/D3D12Device.cpp
-    src/d3d/d3d12/D3D12CommandQueue.cpp
-    src/d3d/d3d12/D3D12CommandList.mm
-    src/d3d/d3d12/D3D12ResourceStateTracker.cpp
-    src/d3d/d3d12/D3D12Resource.cpp
-    src/d3d/d3d12/D3D12DescriptorHeap.cpp
-    src/d3d/d3d12/D3D12RootSignature.cpp
-    src/d3d/d3d12/D3D12PipelineState.cpp
-    src/d3d/d3d12/D3D12Fence.cpp
-    src/d3d/d3d12/EntryPoint.cpp
-    src/dxgi/DXGIFactory.cpp
-    src/dxgi/DXGIAdapter.cpp
-    src/dxgi/DXGIOutput.mm
-    src/dxgi/DXGISwapChain.mm
-    src/dxgi/EntryPoint.cpp
+    ${METALSHARP_D3D11_SOURCES}
+    ${METALSHARP_D3D12_SOURCES}
+    ${METALSHARP_DXGI_SOURCES}
     src/win32/kernel32/Kernel32Shim.cpp
     src/win32/kernel32/NtdllShim.cpp
     src/win32/kernel32/Kernel32Extra.cpp
@@ -231,18 +198,21 @@ target_include_directories(metalsharp_loader PUBLIC include)
 target_link_libraries(metalsharp_loader PRIVATE metalsharp_core ${SECURITY_FRAMEWORK})
 target_compile_options(metalsharp_loader PRIVATE -fobjc-arc)
 target_compile_definitions(metalsharp_loader PRIVATE METALSHARP_NATIVE_LOADER)
+metalsharp_wine_target(metalsharp_loader)
 
 add_executable(metalsharp_native
     tools/launcher/NativeLauncher.cpp
 )
 target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core)
 set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
+metalsharp_wine_target(metalsharp_native)
 
 add_executable(metalsharp_migrator
     tools/migrator/main.m
 )
 target_link_libraries(metalsharp_migrator PRIVATE ${APPKIT_FRAMEWORK} ${FOUNDATION_FRAMEWORK})
 set_target_properties(metalsharp_migrator PROPERTIES OUTPUT_NAME "MetalSharpMigrator")
+metalsharp_host_target(metalsharp_migrator)
 
 if(BUILD_TESTS)
     enable_testing()
