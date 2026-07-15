@@ -89,40 +89,20 @@ jobs:
       - name: Build renderer
         run: npx vite build
 
-  rust:
-    name: Rust CI
+  c-backend:
+    name: C Backend CI
     runs-on: macos-14
-    defaults:
-      run:
-        working-directory: app/src-rust
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: app/src-rust
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Build
-        run: cargo build --release
+      - name: Build and test committed C backend
+        run: make -C app/src-c verify
 
       - name: Sign with EndpointSecurity entitlements
         run: |
           codesign --force --sign - \
-            --entitlements entitlements.plist \
-            target/release/metalsharp-backend
-
-      - name: Test
-        run: cargo test
+            --entitlements app/src-rust/entitlements.plist \
+            app/build/c-backend/metalsharp-backend
 
   electron:
     name: Electron CI

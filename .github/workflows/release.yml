@@ -98,11 +98,8 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build Rust backend
-        run: cd app/src-rust && cargo build --release
+      - name: Build and validate committed C backend
+        run: make -C app/src-c verify
 
       - name: Build C++ engine
         run: |
@@ -178,7 +175,7 @@ jobs:
             echo "Developer ID signing enabled; skipping ad-hoc pre-sign."
             exit 0
           fi
-          codesign --force --sign - app/src-rust/target/release/metalsharp-backend || true
+          codesign --force --sign - app/build/c-backend/metalsharp-backend || true
           for f in app/native/*.dylib app/native/metalsharp app/native/metalsharp_launcher; do
             codesign --force --sign - "$f" 2>/dev/null || true
           done
@@ -227,6 +224,9 @@ jobs:
             dist/electron/*.dmg
             dist/electron/DMG-SIGNING.txt
             dist/bundles/metalsharp-bundle-manifest.tsv
+            app/src-c/manifests/runtime-sources.txt
+            app/src-c/manifests/test-sources.txt
+            app/src-c/manifests/native-objects.txt
 
   release:
     name: Release

@@ -51,7 +51,7 @@ def check_package_resources(assets: list[str]) -> None:
         if isinstance(entry, dict)
     }
     required_pairs = {
-        ("src-rust/target/release/metalsharp-backend", "runtime/metalsharp-backend"),
+        ("build/c-backend/metalsharp-backend", "runtime/metalsharp-backend"),
         ("native/host", "runtime/host"),
         ("updater", "scripts/tools/updater"),
     }
@@ -107,6 +107,10 @@ def check_bundle_scripts() -> None:
         if needle not in create_bundles:
             fail(f"create-bundles.sh no longer performs {needle}")
 
+    runtime_repair = read("tools/dmg/repair-runtime-bundle.py")
+    if 'DEFAULT_BACKEND = PROJECT_ROOT / "app" / "build" / "c-backend" / "metalsharp-backend"' not in runtime_repair:
+        fail("runtime-bundle repair must default to the C backend")
+
     stage_bundles = read("tools/dmg/stage-release-bundles.sh")
     if "asset-manifest.tsv" not in stage_bundles or "tar --use-compress-program=unzstd" not in stage_bundles:
         fail("stage-release-bundles.sh no longer stages bundle manifest archives")
@@ -123,9 +127,11 @@ def check_workflows() -> None:
         if forbidden in pr:
             fail(f"PR CI should not run the full DMG build path: {forbidden}")
 
-    for required in ["Shell CI", "Metal CI", "Vue CI", "Rust CI", "Electron CI", "C/C++/Obj-C CI", "DMG Workflow CI"]:
+    for required in ["Shell CI", "Metal CI", "Vue CI", "C Backend CI", "Electron CI", "C/C++/Obj-C CI", "DMG Workflow CI"]:
         if required not in main:
             fail(f"main CI missing validation job: {required}")
+    if "make -C app/src-c verify" not in main:
+        fail("main CI must validate the direct C backend")
     for forbidden in [
         "Verify Developer SDK Bundle",
         "Build DMG",
@@ -137,6 +143,14 @@ def check_workflows() -> None:
             fail(f"main CI should not run the full DMG build path: {forbidden}")
     if "group: metalsharp-developer-sdk-bundles" in main:
         fail("main CI verifier must not share the release SDK publish concurrency group")
+
+    for required in [
+        "make -C app/src-c verify",
+        "app/build/c-backend/metalsharp-backend",
+        "electron-builder --mac dmg --arm64 --publish never",
+    ]:
+        if required not in release:
+            fail(f"release workflow must build, validate, and package the C backend: {required}")
 
     for required in [
         "Publish Developer SDK Bundle",

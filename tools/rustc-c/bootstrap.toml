@@ -1,0 +1,7 @@
+change-id = "ignore"
+profile = "dist"
+llvm.download-ci-llvm = true
+rust.codegen-backends = ["c"]
+rust.lld = false
+build.extended = false
+install.prefix = "./"

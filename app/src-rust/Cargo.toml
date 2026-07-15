@@ -10,9 +10,9 @@ tiny_http = "0.12"
 dirs = "6"
 walkdir = "2"
 zstd = "0.13"
-ureq = { version = "3", features = ["json"] }
+ureq = { version = "3", default-features = false, features = ["json", "native-tls"] }
 toml = "0.8"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
 ctrlc = "3"
 libc = "0.2"
 zip = { version = "8", default-features = false, features = ["deflate"] }
