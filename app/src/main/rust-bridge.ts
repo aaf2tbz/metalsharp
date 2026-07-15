@@ -23,12 +23,14 @@ function getShellPath(): string {
 
 const shellPath = getShellPath();
 
-interface RustBridgeOptions {
+interface BackendBridgeOptions {
   devMode?: boolean;
   metalsharpHome?: string;
 }
 
-export class RustBridge {
+// This compatibility filename remains while import paths migrate. The spawned
+// executable is the C-compiled MetalSharp backend, never a Cargo binary.
+export class BackendBridge {
   private proc: ChildProcess | null = null;
   private port: number = 9274;
   private base: string;
@@ -36,7 +38,7 @@ export class RustBridge {
   private devMode: boolean;
   private metalsharpHome?: string;
 
-  constructor(options: RustBridgeOptions = {}) {
+  constructor(options: BackendBridgeOptions = {}) {
     this.devMode = options.devMode === true || process.env.METALSHARP_DEV === "1";
     this.metalsharpHome = options.metalsharpHome || process.env.METALSHARP_HOME;
     const defaultPort = this.devMode ? "9276" : "9274";
@@ -390,16 +392,12 @@ export class RustBridge {
   }
 
   private findBinary(): string | null {
-    const devCandidates = [
-      path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
-    ];
+    // The shipped backend is the checked-in C artifact. Keep this bridge's
+    // legacy filename for now, but never fall back to a Cargo-built binary.
+    const devCandidates = [path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend")];
     const packagedCandidates = [
       path.join(process.resourcesPath || "", "runtime", "metalsharp-backend"),
       path.join(__dirname, "..", "..", "build", "c-backend", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "release", "metalsharp-backend"),
-      path.join(__dirname, "..", "..", "src-rust", "target", "debug", "metalsharp-backend"),
       "/usr/local/bin/metalsharp-backend",
       "/usr/bin/metalsharp-backend",
     ];

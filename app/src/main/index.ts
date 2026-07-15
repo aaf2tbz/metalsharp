@@ -5,7 +5,7 @@ import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 import type { ProcessManagerAction, ProcessManagerActionResult, ProcessManagerSample } from "./process-manager-types";
-import { RustBridge } from "./rust-bridge";
+import { BackendBridge } from "./rust-bridge";
 import { UpdaterBridge } from "./updater-bridge";
 
 let shellPath: string | undefined;
@@ -31,7 +31,7 @@ function ensureShellPath() {
 
 let mainWindow: BrowserWindow | null = null;
 let processManagerWindow: BrowserWindow | null = null;
-let bridge: RustBridge;
+let bridge: BackendBridge;
 let updaterBridge: UpdaterBridge;
 let steamappsWatcher: fs.FSWatcher | null = null;
 
@@ -651,7 +651,7 @@ app.whenReady().then(async () => {
   process.env.METALSHARP_HOME = getMetalsharpDir();
   if (isDevRuntime()) process.env.METALSHARP_DEV = "1";
   ensureMetalsharpDirs();
-  bridge = new RustBridge({ devMode: isDevRuntime(), metalsharpHome: getMetalsharpDir() });
+  bridge = new BackendBridge({ devMode: isDevRuntime(), metalsharpHome: getMetalsharpDir() });
   updaterBridge = new UpdaterBridge(bridge.getPort());
   const backendStart = await bridge.start();
   if (!backendStart.ok) {

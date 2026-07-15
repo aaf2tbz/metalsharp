@@ -134,6 +134,9 @@ jobs:
       - name: TypeScript
         run: npx tsc --noEmit
 
+      - name: Electron/C backend bindings
+        run: python3 ../tools/contracts/validate-electron-c-backend-bindings.py
+
       - name: Biome
         run: npx @biomejs/biome ci src/main src/shared
 

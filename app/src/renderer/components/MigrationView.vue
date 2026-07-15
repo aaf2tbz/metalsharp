@@ -9,20 +9,17 @@ const message = ref("Checking migration status...");
 const error = ref<string | null>(null);
 const complete = ref(false);
 const launching = ref(false);
+const spinnerEpoch = ref(0);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let spinnerWatchdog: ReturnType<typeof setInterval> | null = null;
 
 const percent = computed(() => {
   if (total.value === 0) return 0;
   return Math.round((step.value / total.value) * 100);
 });
 
-const stages = [
-  { name: "[D3D]" },
-  { name: "[DXMT]" },
-  { name: "[x86_64]" },
-  { name: "[Metal]" },
-];
+const stages = [{ name: "[D3D]" }, { name: "[DXMT]" }, { name: "[x86_64]" }, { name: "[Metal]" }];
 
 const MAX_START_RETRIES = 20;
 const START_RETRY_DELAY_MS = 500;
@@ -100,6 +97,19 @@ function stopPolling() {
   }
 }
 
+function startSpinnerWatchdog() {
+  spinnerWatchdog = setInterval(() => {
+    if (!complete.value && !error.value) spinnerEpoch.value += 1;
+  }, 4000);
+}
+
+function stopSpinnerWatchdog() {
+  if (spinnerWatchdog) {
+    clearInterval(spinnerWatchdog);
+    spinnerWatchdog = null;
+  }
+}
+
 async function restartApp() {
   launching.value = true;
   message.value = "Closing old MetalSharp, stopping the backend, and launching the updated app...";
@@ -112,11 +122,13 @@ async function restartApp() {
 }
 
 onMounted(async () => {
+  startSpinnerWatchdog();
   await startMigration();
 });
 
 onUnmounted(() => {
   stopPolling();
+  stopSpinnerWatchdog();
 });
 </script>
 
@@ -124,13 +136,18 @@ onUnmounted(() => {
   <div class="migration-overlay">
     <div class="migration-card">
       <div class="migration-header">
-        <div class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
+        <div :key="spinnerEpoch" class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
         <h1 class="migration-title">MetalSharp Update Migration</h1>
         <p class="migration-subtitle">Preserving your settings and refreshing the runtime</p>
       </div>
 
       <div class="pipeline-vis">
-        <div v-for="(stage, i) in stages" :key="stage.name" class="pipeline-stage" :class="{ active: !complete && !error }">
+        <div
+          v-for="(stage, i) in stages"
+          :key="stage.name"
+          class="pipeline-stage"
+          :class="{ active: !complete && !error }"
+        >
           <span class="stage-label">{{ stage.name }}</span>
           <div v-if="i < stages.length - 1" class="pipeline-arrow">
             <IconArrowRight width="16" height="12" />
@@ -248,12 +265,19 @@ onUnmounted(() => {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pipeline-arrow {
