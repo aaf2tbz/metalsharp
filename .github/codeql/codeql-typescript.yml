@@ -1,0 +1,3 @@
+paths:
+  - app/src
+  - app/vite.config.ts

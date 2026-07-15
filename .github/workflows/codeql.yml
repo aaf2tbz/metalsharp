@@ -26,8 +26,8 @@ permissions:
   security-events: write
 
 jobs:
-  vue:
-    name: CodeQL Vue
+  typescript:
+    name: CodeQL TypeScript
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -45,33 +45,29 @@ jobs:
       - uses: github/codeql-action/init@v4
         with:
           languages: javascript-typescript
-          config-file: .github/codeql/codeql-vue.yml
+          config-file: .github/codeql/codeql-typescript.yml
 
       - uses: github/codeql-action/analyze@v4
         with:
-          category: '/language:vue'
+          category: '/language:javascript-typescript'
 
-  js:
-    name: CodeQL JS
+  c-cpp-objc:
+    name: CodeQL C/C++/Objective-C
     runs-on: macos-14
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-
-      - run: npm ci
-        working-directory: app
-
       - uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
-          config-file: .github/codeql/codeql-js.yml
+          languages: c-cpp
+          build-mode: manual
+
+      - name: Build C/C++/Objective-C targets for CodeQL
+        run: |
+          cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+          cmake --build build-codeql --parallel $(sysctl -n hw.ncpu)
 
       - uses: github/codeql-action/analyze@v4
         with:
-          category: '/language:javascript'
+          category: '/language:c-cpp'
