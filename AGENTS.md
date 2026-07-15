@@ -170,18 +170,28 @@ Current CI is split between PR smoke coverage, lightweight main-push workflow va
 |----------|----------|-------------|
 | `pr-ci.yml` | PRs to `main` | Shell CI, Metal CI, Vue CI, C backend CI, Electron CI, C/C++/Obj-C CI, and lightweight `DMG Workflow CI` contract validation |
 | `ci.yml` | pushes to `main` | Main-branch smoke coverage plus `DMG Workflow CI` contract validation; it does not publish release artifacts |
-| `release.yml` | tags `v*` | Developer SDK publish, full arm64 DMG build, DMG runtime-asset verification, release artifact upload, and package publication |
+| `release.yml` | tags `v*` | Full arm64 DMG build, DMG runtime-asset verification, and release publication; optionally publishes the Developer SDK when the repository Actions variable `METALSHARP_DEVELOPER_SDK_CI=1` |
 | `publish-linux-packages.yml` | manual | Re-publish Linux DEB/runtime release assets to GHCR with ORAS |
 
 ## Version Bumping
 
-Three files must be updated together for a version bump:
+Use the synchronized bump script for every release version change:
+
+```bash
+tools/release/set-version.sh X.Y.Z
+python3 tools/c-backend/verify-version-alignment.py --tag vX.Y.Z
+```
+
+The script updates every release surface together:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
 | `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
+| committed C runtime and tests | encoded backend version strings |
+| `contracts/electron-backend.v1.json` | legacy wire-contract compatibility |
+| `app/src/shared/backend-contract.ts` | Electron compatibility fallback |
 
 The committed C backend embeds the synchronized version. Release CI rejects a tag, package metadata, CMake version, or committed-C version mismatch.
 

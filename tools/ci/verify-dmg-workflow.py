@@ -101,6 +101,30 @@ def check_updater_handoff() -> None:
         if "127.0.0.1:9274" in updater:
             fail(f"{path} must not use the retired fixed backend port")
 
+    if '"complete",\n            100,\n            "Update installed. C backend contract v1 verified' not in python_updater:
+        fail("Python updater must report verified C-backend handoff as complete")
+    if '"error",\n            95,\n            "Update installed, but the C backend contract was not ready' not in python_updater:
+        fail("Python updater must report a failed C-backend handoff as error")
+
+    electron_main = read("app/src/main/index.ts")
+    for needle in [
+        "backendNeedsMigration || marker.needed",
+        'requestMigrationBackend("GET", "/update/migrate/check")',
+        'requestMigrationBackend("POST", "/update/migrate/start"',
+        'requestMigrationBackend("GET", "/update/migrate/progress")',
+    ]:
+        if needle not in electron_main:
+            fail(f"Electron migration handoff is missing: {needle}")
+
+    migration_view = read("app/src/renderer/components/MigrationView.vue")
+    for needle in ["pollInFlight", "Retry Migration", "Reconnecting to the migration backend"]:
+        if needle not in migration_view:
+            fail(f"migration wizard recovery is missing: {needle}")
+
+    native_migrator = read("tools/migrator/main.m")
+    if "METALSHARP_PORT" not in native_migrator or "127.0.0.1:9274" in native_migrator:
+        fail("native migrator must follow the private C-backend port")
+
 
 def check_bundle_scripts() -> None:
     create_bundles = read("tools/dmg/create-bundles.sh")
@@ -185,6 +209,12 @@ def check_workflows(assets: list[str]) -> None:
     ]:
         if required not in release:
             fail(f"release workflow missing publish step: {required}")
+    if "vars.METALSHARP_DEVELOPER_SDK_CI == '1'" not in release:
+        fail("release Developer SDK job must be opt-in with METALSHARP_DEVELOPER_SDK_CI=1")
+    if "needs.developer-sdk.result == 'skipped'" not in release:
+        fail("a skipped optional Developer SDK job must not suppress the DMG release")
+    if "needs.developer-sdk.result == 'success'" not in release:
+        fail("an enabled Developer SDK job must succeed before the DMG release")
     for asset in assets:
         publish_path = (
             f"dist/developer-sdk/{asset}"

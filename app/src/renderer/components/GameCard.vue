@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from "vue";
+import { computed, nextTick, ref, onMounted, watch } from "vue";
 import { useToast } from "../composables/useToast";
 import { api } from "../composables/useApi";
 import sharpLogoUrl from "../icon.png";
@@ -548,6 +548,9 @@ async function runRuntimeDoctor() {
   runtimeOpen.value = true;
   emit('expanded', props.game.appid, true);
   runtimeLoading.value = true;
+  // Let Vue paint the focused bottle workspace and spinner before starting
+  // filesystem/runtime inspection through IPC.
+  await nextTick();
   const savedD3DMetalRoute = hasSavedD3DMetalRoute();
   runtimeReport.value = null;
   if (savedD3DMetalRoute) {
@@ -570,6 +573,7 @@ async function runRuntimeDoctor() {
       appid: props.game.appid,
       pipeline: runtimeDoctorPipelineRequest(),
     },
+    2 * 60 * 1000,
   );
   runtimeLoading.value = false;
 
@@ -589,6 +593,11 @@ async function runRuntimeDoctor() {
 }
 
 async function openBottleWorkspace() {
+  if (runtimeLoading.value) {
+    runtimeOpen.value = false;
+    emit('expanded', props.game.appid, false);
+    return;
+  }
   if (runtimeOpen.value && runtimeReport.value) {
     runtimeOpen.value = false;
     emit('expanded', props.game.appid, false);
@@ -698,6 +707,7 @@ async function repairRuntimeComponent(component: string) {
       id: runtimeReport.value.bottle_id,
       component,
     },
+    10 * 60 * 1000,
   );
   if (result?.ok && result.repair) {
     const failed = ["asset_missing", "failed", "install_failed"].includes(result.repair.status);
@@ -727,6 +737,7 @@ async function pollRuntimeRepairDone(bottleId: string, component: string) {
         component,
         dryRun: true,
       },
+      2 * 60 * 1000,
     );
     if (!poll?.ok || !poll.repair) break;
     const status = poll.repair.status;

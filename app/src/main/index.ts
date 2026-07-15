@@ -562,8 +562,14 @@ async function checkNeedsMigration(): Promise<boolean> {
       res.on("end", () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString());
-          const needed = data.ok && data.needed === true;
-          if (!needed && !marker.needed) clearPostUpdateMigrationMarker();
+          const backendNeedsMigration = data.ok && data.needed === true;
+          // The updater marker is the durable handoff across replacing the app
+          // and backend. A freshly installed backend can legitimately report a
+          // complete runtime before the one-shot post-update migration has
+          // preserved/restored user state, so neither side may override the
+          // other here.
+          const needed = backendNeedsMigration || marker.needed;
+          if (!needed) clearPostUpdateMigrationMarker();
           resolve(needed);
         } catch {
           resolve(marker.needed);
@@ -697,7 +703,7 @@ app.whenReady().then(async () => {
 
   if (!backendStart.ok || !(await bridge.isAlive())) {
     console.log("Backend not responding after first start — retrying...");
-    const retryStart = await bridge.start();
+    const retryStart = await bridge.restart();
     if (!retryStart.ok) {
       console.warn(`MetalSharp backend retry failed: ${retryStart.error}`);
     }
@@ -782,11 +788,18 @@ async function requestMigrationBackend(
   return requestBackend(method, url, body, timeoutMs);
 }
 
+// Prefix creation, library synchronization, game installs, and runtime repairs
+// legitimately take longer than the default 30-second bridge timeout. Keep the
+// trusted-renderer boundary bounded, but permit the longest timeout used by the
+// renderer so valid requests are not rejected before reaching the C backend.
+const MAX_BACKEND_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
 function isAllowedBackendRequest(method: string, url: string, timeoutMs?: number): boolean {
   return (
     (method === "GET" || method === "POST") &&
     /^\/[a-z0-9][a-z0-9_\-/]*(\?[a-z0-9_=&%.-]+)?$/i.test(url) &&
-    (timeoutMs === undefined || (Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 30000))
+    (timeoutMs === undefined ||
+      (Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_BACKEND_REQUEST_TIMEOUT_MS))
   );
 }
 
@@ -1086,7 +1099,9 @@ function registerIpc() {
 
   ipcMain.handle("backend:is-alive", async () => {
     if (isUiOnlyRuntime()) return true;
-    return bridge.isAlive();
+    if (await bridge.isAlive()) return true;
+    const recovered = await bridge.ensureRunning(10000);
+    return recovered.ok && (await bridge.isAlive());
   });
 
   ipcMain.handle("updater:ensure-ready", async () => {

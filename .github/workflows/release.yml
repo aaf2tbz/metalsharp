@@ -15,6 +15,9 @@ permissions:
 jobs:
   developer-sdk:
     name: Publish Developer SDK Bundle
+    # Opt in with the repository Actions variable
+    # METALSHARP_DEVELOPER_SDK_CI=1. Tag releases skip this job by default.
+    if: ${{ vars.METALSHARP_DEVELOPER_SDK_CI == '1' }}
     runs-on: macos-14
     concurrency:
       group: metalsharp-developer-sdk-bundles
@@ -144,6 +147,10 @@ jobs:
   build:
     name: Build DMG
     needs: [developer-sdk]
+    # A skipped optional SDK job must not suppress the normal DMG release.
+    # When explicitly enabled, an SDK failure still blocks the release so a
+    # stale or partial SDK bundle cannot be published as current.
+    if: ${{ always() && (needs.developer-sdk.result == 'success' || needs.developer-sdk.result == 'skipped') }}
     runs-on: macos-14
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

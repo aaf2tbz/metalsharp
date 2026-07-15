@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = ROOT / "contracts" / "electron-backend.v1.json"
 ELECTRON_CONTRACT = ROOT / "app" / "src" / "shared" / "backend-contract.ts"
+PACKAGE = ROOT / "app" / "package.json"
 
 
 def fail(message: str) -> None:
@@ -29,9 +30,12 @@ def main() -> None:
     status = contract.get("status")
     if not isinstance(status, dict) or status.get("path") != "/status" or status.get("method") != "GET":
         fail("status must describe GET /status")
-    for version in ("0.54.5", "0.55.0"):
-        if status.get("legacy_versions", {}).get(version) != "1":
-            fail(f"the shipped {version} C backend must remain explicitly mapped to contract v1")
+    current_version = json.loads(PACKAGE.read_text()).get("version")
+    if not isinstance(current_version, str):
+        fail("app/package.json version is missing")
+    for version in ("0.54.5", current_version):
+        if status.get("legacy_versions", {}).get(version) != contract.get("contract_version"):
+            fail(f"the shipped {version} C backend must remain explicitly mapped to the current contract")
 
     try:
         electron_source = ELECTRON_CONTRACT.read_text()
@@ -67,7 +71,30 @@ def main() -> None:
         if route.get("status") != 200 or not route.get("required"):
             fail(f"{name} needs an explicit successful status and response shape")
 
-    required = {"setup", "steam-status", "steam-library", "bottles", "logs", "log-stream", "pipeline-dry-run", "m12-dry-run"}
+    required = {
+        "setup",
+        "setup-device-name",
+        "steam-status",
+        "steam-library",
+        "bottles",
+        "bottle-profiles",
+        "bottle-redist-sources",
+        "bottle-repair-rejection",
+        "sharp-library",
+        "sharp-library-launch-rejection",
+        "gog-status",
+        "gog-games",
+        "gog-play-rejection",
+        "cache-size",
+        "migration-check",
+        "migration-progress",
+        "migration-report",
+        "logs",
+        "crash-reports",
+        "log-stream",
+        "pipeline-dry-run",
+        "m12-dry-run",
+    }
     if names != required:
         fail(f"conformance coverage mismatch: expected {sorted(required)}, got {sorted(names)}")
 

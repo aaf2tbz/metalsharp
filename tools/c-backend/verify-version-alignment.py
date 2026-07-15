@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+CONTRACT = ROOT / "contracts/electron-backend.v1.json"
+ELECTRON_CONTRACT = ROOT / "app/src/shared/backend-contract.ts"
 
 
 def fail(message: str) -> None:
@@ -46,8 +48,19 @@ def main() -> None:
 
     encoded = ", ".join(f"0x{byte:02x}" for byte in expected.encode())
     runtime_c = "\n".join(path.read_text(errors="ignore") for path in sorted((ROOT / "app/src-c/runtime/c").glob("*.c")))
+    test_c = "\n".join(path.read_text(errors="ignore") for path in sorted((ROOT / "app/src-c/tests/c").glob("*.c")))
     if encoded not in runtime_c:
         fail(f"committed C backend does not contain version {expected}")
+    if encoded not in test_c:
+        fail(f"committed C backend tests do not contain version {expected}")
+
+    contract = json.loads(CONTRACT.read_text())
+    contract_version = contract.get("contract_version")
+    if contract.get("status", {}).get("legacy_versions", {}).get(expected) != contract_version:
+        fail(f"wire contract compatibility map does not contain version {expected}")
+    electron_contract = ELECTRON_CONTRACT.read_text()
+    if f'"{expected}": BACKEND_CONTRACT_VERSION' not in electron_contract:
+        fail(f"Electron contract compatibility map does not contain version {expected}")
 
     print(f"MetalSharp version alignment verified: {expected}")
 

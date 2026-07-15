@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 C_ROOT = ROOT / "app/src-c/runtime/c"
+TEST_C_ROOT = ROOT / "app/src-c/tests/c"
 MODULES = ROOT / "app/src-c/manifests/backend-modules.txt"
 
 
@@ -78,6 +79,22 @@ def main() -> int:
     for present, label in requirements:
         if not present:
             print(f"missing C installer ownership contract: {label}", file=sys.stderr)
+            return 1
+
+    # This C-only build includes ureq's native-tls connector, not Rustls. The
+    # converted default is a one-byte TlsProvider discriminant: 0 = Rustls and
+    # 1 = NativeTls. Leaving it at zero makes every HTTPS-backed route panic,
+    # including update checks and M12 Agility SDK repair.
+    tls_default = re.compile(
+        r"_t2947 = .*?24ULL.*?"
+        r"_t2948 = \(int8_t\)\(1ULL\);.*?"
+        r"\*\(int8_t \*\)_t2947 = _t2948;",
+        re.DOTALL,
+    )
+    for source_root, label in ((C_ROOT, "runtime"), (TEST_C_ROOT, "test")):
+        ureq_units = sorted(source_root.glob("ureq-*.c"))
+        if not any(tls_default.search(path.read_text(errors="ignore")) for path in ureq_units):
+            print(f"{label} ureq default must select NativeTls", file=sys.stderr)
             return 1
 
     print(f"C-only backend alignment verified for {len(modules)} modules and {len(c_files)} C units.")
