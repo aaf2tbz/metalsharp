@@ -92,6 +92,11 @@ def check_updater_handoff() -> None:
         for needle in ["hdiutil", "attach", "-mountpoint", "metalsharp-update-mount", "detach_mount(mount_point" if path.endswith(".py") else "detach_mount"]:
             if needle not in updater:
                 fail(f"{path} no longer mounts the downloaded DMG on a private update mount point before install")
+        for needle in ["--backend-port", "METALSHARP_PORT", ".backend-port", "contract_version"]:
+            if needle not in updater:
+                fail(f"{path} must preserve and verify the C backend launch port: {needle}")
+        if "127.0.0.1:9274" in updater:
+            fail(f"{path} must not use the retired fixed backend port")
 
 
 def check_bundle_scripts() -> None:

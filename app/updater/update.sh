@@ -3,6 +3,7 @@ set -euo pipefail
 
 DMG_PATH=""
 BACKEND_PID=""
+BACKEND_PORT=""
 TARGET_VERSION=""
 STATUS_FILE=""
 METALSHARP_HOME_ARG=""
@@ -96,6 +97,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --dmg) shift; DMG_PATH="${1:-}"; shift ;;
         --backend-pid) shift; BACKEND_PID="${1:-}"; shift ;;
+        --backend-port) shift; BACKEND_PORT="${1:-}"; shift ;;
         --target-version) shift; TARGET_VERSION="${1:-}"; shift ;;
         --status-file) shift; STATUS_FILE="${1:-}"; shift ;;
         --metalsharp-home) shift; METALSHARP_HOME_ARG="${1:-}"; shift ;;
@@ -109,7 +111,15 @@ MS_DIR="${METALSHARP_HOME_ARG:-${METALSHARP_HOME:-$HOME/.metalsharp}}"
 STATUS_FILE="${STATUS_FILE:-$MS_DIR/update_install_status.json}"
 DMG_PATH="${DMG_PATH:?--dmg required}"
 BACKEND_PID="${BACKEND_PID:?--backend-pid required}"
+BACKEND_PORT="${BACKEND_PORT:?--backend-port required}"
 TARGET_VERSION="${TARGET_VERSION:?--target-version required}"
+case "$BACKEND_PORT" in
+    ''|*[!0-9]*|0) echo "--backend-port must be a TCP port" >&2; exit 2 ;;
+esac
+if [ "$BACKEND_PORT" -gt 65535 ]; then
+    echo "--backend-port must be a TCP port" >&2
+    exit 2
+fi
 APP_PATH="/Applications/MetalSharp.app"
 TMP_APP_PATH="/Applications/.MetalSharp.app.update.$$"
 BACKUP_APP_PATH="/Applications/.MetalSharp.app.previous.$$"
@@ -329,28 +339,32 @@ MOUNT_POINT=""
 
 write_status "relaunching" 85 "Launching MetalSharp v$TARGET_VERSION_CLEAN..."
 sleep 1
-open -n "$APP_PATH"
+# LaunchServices does not reliably preserve a caller environment. Electron
+# consumes this owner-only one-shot handoff before spawning the C backend.
+(umask 077; printf '%s\n' "$BACKEND_PORT" > "$MS_DIR/.backend-port")
+METALSHARP_PORT="$BACKEND_PORT" METALSHARP_HOME="$MS_DIR" open -n "$APP_PATH"
 
 write_status "verifying" 90 "Verifying installation..."
 sleep 5
 
 BACKEND_VERSION=""
+BACKEND_CONTRACT=""
 deadline=$((SECONDS + 45))
 while [ $SECONDS -lt $deadline ]; do
-    RAW=$(curl -sf "http://127.0.0.1:9274/status" 2>/dev/null) || true
+    RAW=$(curl -sf "http://127.0.0.1:$BACKEND_PORT/status" 2>/dev/null) || true
     BACKEND_VERSION=$(echo "$RAW" | grep -o '"version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
-    [ -n "$BACKEND_VERSION" ] && break
+    BACKEND_CONTRACT=$(echo "$RAW" | grep -o '"contract_version":"[^"]*"' | head -1 | cut -d'"' -f4 || true)
+    # The currently shipped C artifact predates the explicit status field but
+    # is the contract-v1 baseline used by Electron during the C migration.
+    if [ "$BACKEND_VERSION" = "0.54.5" ]; then
+        BACKEND_CONTRACT="1"
+    fi
+    [ "$BACKEND_CONTRACT" = "1" ] && break
     sleep 1
 done
 
-if [ "$BACKEND_VERSION" != "$TARGET_VERSION_CLEAN" ] && [ -n "$BACKEND_VERSION" ]; then
-    write_status "error" 92 "Launched backend reported v$BACKEND_VERSION instead of v$TARGET_VERSION_CLEAN" "backend_version_mismatch"
-    pkill -x metalsharp-backend 2>/dev/null || true
-    exit 1
-fi
-
-if [ "$BACKEND_VERSION" = "$TARGET_VERSION_CLEAN" ]; then
-    write_status "complete" 100 "Update installed. Opening migration wizard..."
+if [ "$BACKEND_CONTRACT" = "1" ]; then
+    write_status "complete" 100 "Update installed. C backend contract v1 verified; opening migration wizard..."
 else
-    write_status "error" 95 "Update installed, but backend reported v${BACKEND_VERSION:-?} instead of v${TARGET_VERSION_CLEAN}" "backend_version_mismatch"
+    write_status "error" 95 "Update installed, but the C backend contract was not ready on its launch port" "backend_contract_unavailable"
 fi

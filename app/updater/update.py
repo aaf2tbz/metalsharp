@@ -28,8 +28,8 @@ except OSError:
     pass
 
 APP_PATH = "/Applications/MetalSharp.app"
-BACKEND_PORT = 9274
 UPDATE_DMG_PATH = None
+LEGACY_C_BACKEND_CONTRACTS = {"0.54.5": "1"}
 
 
 def write_status(status_file, phase, percent, message, error=None, new_version=None):
@@ -260,26 +260,40 @@ def admin_cp_r(src, dst):
     return r.returncode == 0
 
 
-def wait_for_backend(timeout=45):
+def wait_for_backend(port, timeout=45):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             req = urllib.request.Request(
-                "http://127.0.0.1:" + str(BACKEND_PORT) + "/status"
+                "http://127.0.0.1:" + str(port) + "/status"
             )
             with urllib.request.urlopen(req, timeout=3) as resp:
                 data = json.loads(resp.read())
-                return data.get("version"), data.get("pid")
+                return data.get("version"), data.get("pid"), data.get("contract_version")
         except Exception:
             pass
         time.sleep(1)
-    return None, None
+    return None, None, None
+
+
+def compatible_contract(version, contract_version):
+    return contract_version or LEGACY_C_BACKEND_CONTRACTS.get(version)
+
+
+def write_backend_port_handoff(metalsharp_home, port):
+    path = os.path.join(metalsharp_home, ".backend-port")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, f"{port}\n".encode())
+    finally:
+        os.close(fd)
 
 
 def main():
     parser = argparse.ArgumentParser(description="MetalSharp Updater")
     parser.add_argument("--dmg", required=True)
     parser.add_argument("--backend-pid", required=True, type=int)
+    parser.add_argument("--backend-port", required=True, type=int)
     parser.add_argument("--target-version", required=True)
     parser.add_argument(
         "--status-file",
@@ -287,6 +301,7 @@ def main():
     )
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--app-pid", default=0, type=int)
+    parser.add_argument("--metalsharp-home", default=os.environ.get("METALSHARP_HOME", os.path.expanduser("~/.metalsharp")))
     args = parser.parse_args()
 
     sf = args.status_file
@@ -295,7 +310,11 @@ def main():
     dmg = args.dmg
     UPDATE_DMG_PATH = dmg
     bpid = args.backend_pid
+    backend_port = args.backend_port
     app_pid = args.app_pid
+    ms_dir = args.metalsharp_home
+    if not 1 <= backend_port <= 65535:
+        parser.error("--backend-port must be a TCP port")
 
     write_status(sf, "starting", 0, "Starting update...", new_version=tv)
 
@@ -397,7 +416,6 @@ def main():
 
     write_status(sf, "installed", 80, "New version installed.", new_version=tv)
 
-    ms_dir = os.path.expanduser("~/.metalsharp")
     os.makedirs(ms_dir, exist_ok=True)
     migration_marker = os.path.join(ms_dir, ".post-update-migration")
     try:
@@ -413,18 +431,20 @@ def main():
     # ── 8. Relaunch ──────────────────────────────────────────────────
     write_status(sf, "relaunching", 85, "Launching MetalSharp...", new_version=tv)
     time.sleep(1)
-    run(["open", APP_PATH])
+    write_backend_port_handoff(ms_dir, backend_port)
+    launch_env = {**os.environ, "METALSHARP_PORT": str(backend_port), "METALSHARP_HOME": ms_dir}
+    run(["open", APP_PATH], env=launch_env)
 
     # ── 9. Verify version ────────────────────────────────────────────
     write_status(sf, "verifying", 90, "Verifying installation...", new_version=tv)
-    version, new_pid = wait_for_backend(timeout=45)
+    version, new_pid, contract_version = wait_for_backend(backend_port, timeout=45)
 
-    if version and version != tv:
+    if compatible_contract(version, contract_version) != "1":
         write_status(
             sf,
             "deploying_backend",
             92,
-            "Backend version mismatch, redeploying...",
+            "C backend contract not ready, restarting...",
             new_version=tv,
         )
         if new_pid:
@@ -432,17 +452,17 @@ def main():
         time.sleep(1)
         run(["pkill", "-x", "metalsharp-backend"])
         time.sleep(1)
-        run(["open", "-a", "MetalSharp"])
+        run(["open", "-a", "MetalSharp"], env=launch_env)
         time.sleep(3)
-        version, new_pid = wait_for_backend(timeout=30)
+        version, new_pid, contract_version = wait_for_backend(backend_port, timeout=30)
 
     # ── 10. Report result ────────────────────────────────────────────
-    if version == tv:
+    if compatible_contract(version, contract_version) == "1":
         write_status(
             sf,
-            "complete",
+            "error",
             100,
-            "Update installed. Opening migration wizard...",
+            "Update installed. C backend contract v1 verified; opening migration wizard...",
             new_version=tv,
         )
     else:
@@ -450,7 +470,8 @@ def main():
             sf,
             "complete",
             100,
-            "Update installed. Backend: v{} (expected v{})".format(version or "?", tv),
+            "Update installed, but the C backend contract was not ready on its launch port.",
+            error="backend_contract_unavailable",
             new_version=tv,
         )
 

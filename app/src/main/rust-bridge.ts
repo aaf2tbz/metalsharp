@@ -29,6 +29,18 @@ interface BackendBridgeOptions {
   metalsharpHome?: string;
 }
 
+function consumeBackendPortHandoff(metalsharpHome?: string): number | null {
+  if (!metalsharpHome) return null;
+  const handoffPath = path.join(metalsharpHome, ".backend-port");
+  try {
+    const port = Number.parseInt(fs.readFileSync(handoffPath, "utf8").trim(), 10);
+    fs.unlinkSync(handoffPath);
+    return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
 // This compatibility filename remains while import paths migrate. The spawned
 // executable is the C-compiled MetalSharp backend, never a Cargo binary.
 export class BackendBridge {
@@ -43,13 +55,14 @@ export class BackendBridge {
     this.devMode = options.devMode === true || process.env.METALSHARP_DEV === "1";
     this.metalsharpHome = options.metalsharpHome || process.env.METALSHARP_HOME;
     const configuredPort = Number.parseInt(process.env.METALSHARP_PORT || "", 10);
+    const handoffPort = consumeBackendPortHandoff(this.metalsharpHome);
     // The checked-in C backend receives an app-private high port. Electron's
     // renderer never receives that endpoint, so a separate local process
     // cannot rely on the historic fixed port to issue mutating requests.
     this.port =
       Number.isInteger(configuredPort) && configuredPort > 0 && configuredPort < 65536
         ? configuredPort
-        : randomInt(49152, 65536);
+        : (handoffPort ?? randomInt(49152, 65536));
     this.base = `http://127.0.0.1:${this.port}`;
   }
 
