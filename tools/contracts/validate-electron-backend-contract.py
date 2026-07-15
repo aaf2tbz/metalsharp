@@ -71,7 +71,27 @@ def main() -> None:
         if route.get("status") != 200 or not route.get("required"):
             fail(f"{name} needs an explicit successful status and response shape")
 
-    required = {"setup", "steam-status", "steam-library", "bottles", "logs", "log-stream", "pipeline-dry-run", "m12-dry-run"}
+    required = {
+        "setup",
+        "setup-device-name",
+        "steam-status",
+        "steam-library",
+        "bottles",
+        "bottle-profiles",
+        "bottle-redist-sources",
+        "bottle-repair-rejection",
+        "sharp-library",
+        "sharp-library-launch-rejection",
+        "gog-status",
+        "gog-games",
+        "gog-play-rejection",
+        "cache-size",
+        "logs",
+        "crash-reports",
+        "log-stream",
+        "pipeline-dry-run",
+        "m12-dry-run",
+    }
     if names != required:
         fail(f"conformance coverage mismatch: expected {sorted(required)}, got {sorted(names)}")
 

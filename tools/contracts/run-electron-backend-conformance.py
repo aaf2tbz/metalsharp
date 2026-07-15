@@ -31,8 +31,10 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def request(port: int, method: str, path: str) -> tuple[int, dict]:
-    req = Request(f"http://127.0.0.1:{port}{path}", method=method)
+def request(port: int, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+    payload = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    req = Request(f"http://127.0.0.1:{port}{path}", data=payload, headers=headers, method=method)
     with urlopen(req, timeout=3) as response:
         body = json.loads(response.read().decode("utf-8"))
         if not isinstance(body, dict):
@@ -81,7 +83,10 @@ def main() -> None:
             fail(f"/status reported incompatible contract {reported_contract!r}; expected {expected!r}")
 
         for route in contract["conformance_routes"]:
-            code, body = request(port, route["method"], route["path"])
+            try:
+                code, body = request(port, route["method"], route["path"], route.get("request_body"))
+            except (URLError, ConnectionError, TimeoutError) as exc:
+                fail(f"{route['name']} request failed: {exc}")
             if code != route["status"]:
                 fail(f"{route['name']} returned HTTP {code}, expected {route['status']}")
             missing = [key for key in route["required"] if key not in body]

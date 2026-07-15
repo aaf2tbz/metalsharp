@@ -64,6 +64,118 @@
       ]
     },
     {
+      "name": "bottle-profiles",
+      "method": "GET",
+      "path": "/bottles/profiles",
+      "status": 200,
+      "required": [
+        "ok",
+        "profiles"
+      ]
+    },
+    {
+      "name": "bottle-redist-sources",
+      "method": "GET",
+      "path": "/bottles/redist-sources",
+      "status": 200,
+      "required": [
+        "ok",
+        "sources"
+      ]
+    },
+    {
+      "name": "bottle-repair-rejection",
+      "method": "POST",
+      "path": "/bottles/repair-component",
+      "request_body": {
+        "id": "contract-missing-bottle",
+        "component": "agility_sdk"
+      },
+      "status": 200,
+      "required": [
+        "ok",
+        "error"
+      ]
+    },
+    {
+      "name": "sharp-library",
+      "method": "GET",
+      "path": "/sharp-library",
+      "status": 200,
+      "required": [
+        "ok",
+        "apps"
+      ]
+    },
+    {
+      "name": "sharp-library-launch-rejection",
+      "method": "POST",
+      "path": "/sharp-library/launch",
+      "request_body": {
+        "id": "contract-missing-app"
+      },
+      "status": 200,
+      "required": [
+        "ok",
+        "error"
+      ]
+    },
+    {
+      "name": "gog-status",
+      "method": "GET",
+      "path": "/sharp-library/gog/status",
+      "status": 200,
+      "required": [
+        "ok",
+        "status"
+      ]
+    },
+    {
+      "name": "gog-games",
+      "method": "GET",
+      "path": "/sharp-library/gog/games",
+      "status": 200,
+      "required": [
+        "ok",
+        "games",
+        "status"
+      ]
+    },
+    {
+      "name": "gog-play-rejection",
+      "method": "POST",
+      "path": "/sharp-library/gog/play",
+      "request_body": {
+        "productId": ""
+      },
+      "status": 200,
+      "required": [
+        "ok",
+        "error"
+      ]
+    },
+    {
+      "name": "cache-size",
+      "method": "GET",
+      "path": "/cache/size",
+      "status": 200,
+      "required": [
+        "ok",
+        "shader_cache",
+        "pipeline_cache"
+      ]
+    },
+    {
+      "name": "setup-device-name",
+      "method": "GET",
+      "path": "/setup/device-name",
+      "status": 200,
+      "required": [
+        "ok",
+        "name"
+      ]
+    },
+    {
       "name": "logs",
       "method": "GET",
       "path": "/logs",
@@ -71,6 +183,16 @@
       "required": [
         "ok",
         "logs"
+      ]
+    },
+    {
+      "name": "crash-reports",
+      "method": "GET",
+      "path": "/logs/crash-reports",
+      "status": 200,
+      "required": [
+        "ok",
+        "reports"
       ]
     },
     {
