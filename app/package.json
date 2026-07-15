@@ -13,9 +13,9 @@
     "start": "npm run build && electron .",
     "dev": "tsc -w & vite build --watch & electron .",
     "dev:vite": "vite",
-    "rust:build": "../tools/rustc-c/build-backend.sh",
-    "rust:dev": "cd src-rust && cargo build",
-    "build:all": "npm run rust:build && npm run build",
+    "c:build": "make -C src-c backend",
+    "c:test": "make -C src-c test",
+    "build:all": "npm run c:build && npm run build",
     "build:native": "bash ../scripts/tools/native/build-helper.sh",
     "pack": "npm run build:all && electron-builder --dir",
     "prepare:native": "../tools/package/prepare-native-placeholders.sh",
@@ -98,7 +98,7 @@
     ],
     "extraResources": [
       {
-        "from": "src-rust/target/release/metalsharp-backend",
+        "from": "build/c-backend/metalsharp-backend",
         "to": "runtime/metalsharp-backend"
       },
       {

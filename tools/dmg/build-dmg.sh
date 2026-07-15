@@ -23,9 +23,8 @@ if [[ "$(uname)" != "Darwin" ]]; then
     fail "DMG creation requires macOS"
 fi
 
-info "Building Rust backend..."
-cd "$APP_DIR/src-rust"
-cargo build --release 2>&1 | tail -5
+info "Building committed C backend..."
+make -C "$APP_DIR/src-c" backend 2>&1 | tail -5
 
 info "Copying runtime files to ~/.metalsharp/runtime/..."
 HOME_DIR="$HOME"

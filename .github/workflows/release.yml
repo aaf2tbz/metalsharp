@@ -98,27 +98,8 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - name: Cache pinned Rust-to-C compiler bootstrap
-        uses: actions/cache@v4
-        with:
-          path: .cache/rustc-c
-          key: rustc-c-macos-arm64-${{ hashFiles('tools/rustc-c/**', 'app/src-rust/Cargo.lock') }}
-
-      - name: Build C-compiled backend
-        run: tools/rustc-c/build-backend.sh
-
-      - name: Verify C backend readiness contract
-        run: |
-          set -euo pipefail
-          app/src-rust/target/release/metalsharp-backend >/tmp/metalsharp-backend.log 2>&1 &
-          backend_pid=$!
-          trap 'kill "$backend_pid" 2>/dev/null || true' EXIT
-          for _ in $(seq 1 40); do
-            curl --fail --silent http://127.0.0.1:9274/status && exit 0
-            sleep 0.25
-          done
-          cat /tmp/metalsharp-backend.log
-          exit 1
+      - name: Build and validate committed C backend
+        run: make -C app/src-c verify
 
       - name: Build C++ engine
         run: |
@@ -194,7 +175,7 @@ jobs:
             echo "Developer ID signing enabled; skipping ad-hoc pre-sign."
             exit 0
           fi
-          codesign --force --sign - app/src-rust/target/release/metalsharp-backend || true
+          codesign --force --sign - app/build/c-backend/metalsharp-backend || true
           for f in app/native/*.dylib app/native/metalsharp app/native/metalsharp_launcher; do
             codesign --force --sign - "$f" 2>/dev/null || true
           done
@@ -243,8 +224,9 @@ jobs:
             dist/electron/*.dmg
             dist/electron/DMG-SIGNING.txt
             dist/bundles/metalsharp-bundle-manifest.tsv
-            app/src-c/generated/PROVENANCE.txt
-            app/src-c/generated/SHA256SUMS
+            app/src-c/manifests/runtime-sources.txt
+            app/src-c/manifests/test-sources.txt
+            app/src-c/manifests/native-objects.txt
 
   release:
     name: Release
