@@ -3,24 +3,31 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BUNDLE_DIR="$PROJECT_ROOT/app/bundles"
-OUT_DIR="$PROJECT_ROOT/dist/bundles"
+BUNDLE_DIR="${METALSHARP_BUNDLE_DIR:-$PROJECT_ROOT/app/bundles}"
+OUT_DIR="${METALSHARP_BUNDLE_OUT_DIR:-$PROJECT_ROOT/dist/bundles}"
 RELEASE_TAG="${METALSHARP_BUNDLE_TAG:-bundles}"
 REPO="${METALSHARP_BUNDLE_REPO:-aaf2tbz/metalsharp}"
 MANIFEST="$PROJECT_ROOT/tools/bundles/asset-manifest.tsv"
-INPUT_LOCK="$PROJECT_ROOT/tools/bundles/release-inputs.lock.tsv"
+REMOTE_MANIFEST="$OUT_DIR/source-metalsharp-bundle-manifest.tsv"
 REPAIR_BUNDLES="${METALSHARP_REPAIR_BUNDLES:-1}"
+REPAIR_GRAPHICS="${METALSHARP_REPAIR_GRAPHICS_BUNDLE:-$REPAIR_BUNDLES}"
+REPAIR_ASSETS="${METALSHARP_REPAIR_ASSETS_BUNDLE:-$REPAIR_BUNDLES}"
+REPAIR_RUNTIME="${METALSHARP_REPAIR_RUNTIME_BUNDLE:-$REPAIR_BUNDLES}"
 SKIP_DEVELOPER_SDK="${METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE:-0}"
 
 mkdir -p "$BUNDLE_DIR" "$OUT_DIR"
+
+echo "Downloading bundle manifest from release: $RELEASE_TAG"
+curl -fL --retry 3 -o "$REMOTE_MANIFEST" \
+  "https://github.com/$REPO/releases/download/$RELEASE_TAG/metalsharp-bundle-manifest.tsv"
 
 download_asset() {
   local asset="$1"
   local dest="$2"
   if [ -s "$dest" ]; then
     if "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$BUNDLE_DIR" "$asset" >/dev/null 2>&1; then
-      if python3 "$PROJECT_ROOT/tools/bundles/verify-release-inputs.py" \
-        --bundle-dir "$BUNDLE_DIR" --lock "$INPUT_LOCK" --asset "$asset" >/dev/null 2>&1; then
+      if python3 "$PROJECT_ROOT/tools/bundles/verify-bundle-manifest.py" \
+        --bundle-dir "$BUNDLE_DIR" --manifest "$REMOTE_MANIFEST" "$asset" >/dev/null 2>&1; then
         echo "SKIP bundle: $asset"
         return 0
       fi
@@ -30,6 +37,8 @@ download_asset() {
   fi
   echo "Downloading bundle: $asset"
   curl -fL --retry 3 -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$asset"
+  python3 "$PROJECT_ROOT/tools/bundles/verify-bundle-manifest.py" \
+    --bundle-dir "$BUNDLE_DIR" --manifest "$REMOTE_MANIFEST" "$asset"
 }
 
 repair_graphics_m12_bundle() {
@@ -109,15 +118,19 @@ while IFS=$'\t' read -r asset _root _platforms _notes; do
   download_asset "$asset" "$BUNDLE_DIR/$asset"
 done < "$MANIFEST"
 
-if [ "$REPAIR_BUNDLES" = "1" ]; then
+if [ "$REPAIR_GRAPHICS" = "1" ]; then
   repair_graphics_m12_bundle
+fi
+if [ "$REPAIR_ASSETS" = "1" ]; then
   repair_assets_fnalibs_bundle
-
+fi
+if [ "$REPAIR_RUNTIME" = "1" ]; then
   "$PROJECT_ROOT/tools/dmg/repair-runtime-bundle.py" \
     --archive "$BUNDLE_DIR/metalsharp-runtime.tar.zst" \
     --host-dir "$PROJECT_ROOT/app/native/host" \
     --backend "$PROJECT_ROOT/app/build/c-backend/metalsharp-backend"
-else
+fi
+if [ "$REPAIR_GRAPHICS" != "1" ] && [ "$REPAIR_ASSETS" != "1" ] && [ "$REPAIR_RUNTIME" != "1" ]; then
   echo "bundle repair disabled; using verified release bundles as downloaded"
 fi
 
@@ -131,7 +144,6 @@ if [ "$SKIP_DEVELOPER_SDK" = "1" ]; then
   done < "$MANIFEST"
 fi
 "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" "${VERIFY_ARGS[@]}"
-python3 "$PROJECT_ROOT/tools/bundles/verify-release-inputs.py" --bundle-dir "$BUNDLE_DIR" --lock "$INPUT_LOCK" --require-all
 
 rm -f "$OUT_DIR"/metalsharp-*.tar.zst
 while IFS=$'\t' read -r asset _root _platforms _notes; do
@@ -159,6 +171,19 @@ done < "$MANIFEST"
     printf '%s\t%s\t%s\t%s\t%s\n' "$asset" "$root" "$hash" "$size" "$notes"
   done < "$MANIFEST"
 } > "$OUT_DIR/metalsharp-bundle-manifest.tsv"
+
+OUTPUT_ASSETS=()
+while IFS=$'\t' read -r asset _root _platforms _notes; do
+  case "$asset" in
+    ""|\#*) continue ;;
+  esac
+  if [ "$SKIP_DEVELOPER_SDK" = "1" ] && [ "$asset" = "metalsharp-d3d12-developer-sdk.tar.zst" ]; then
+    continue
+  fi
+  OUTPUT_ASSETS+=("$asset")
+done < "$MANIFEST"
+python3 "$PROJECT_ROOT/tools/bundles/verify-bundle-manifest.py" \
+  --bundle-dir "$OUT_DIR" --manifest "$OUT_DIR/metalsharp-bundle-manifest.tsv" "${OUTPUT_ASSETS[@]}"
 
 echo ""
 echo "=== Split Bundle Summary ==="

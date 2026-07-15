@@ -30,6 +30,43 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare release Wine runtime for M12 build
+        run: |
+          mkdir -p dist/release-runtime
+          tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C dist/release-runtime
+          test -x dist/release-runtime/runtime/wine/bin/winebuild
+
+      - name: Install DXMT build tools
+        run: |
+          brew list meson >/dev/null 2>&1 || brew install meson
+          brew list ninja >/dev/null 2>&1 || brew install ninja
+          brew list mingw-w64 >/dev/null 2>&1 || brew install mingw-w64
+          meson --version
+          ninja --version
+          x86_64-w64-mingw32-gcc --version
+          x86_64-w64-mingw32-g++ --version
+
+      - name: Build staged M12 DXMT runtime
+        run: |
+          tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
+          python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py \
+            --build-dir vendor/dxmt/build-metalsharp-x64 \
+            --runtime-dir dist/dxmt_m12 \
+            --profile release-ci-m12
+        env:
+          METALSHARP_WINE_ROOT: ${{ github.workspace }}/dist/release-runtime/runtime/wine
+          METALSHARP_X86_LLVM_ROOT: ${{ runner.temp }}/metalsharp-toolchains
+
+      - name: Refresh graphics bundle with staged M12 runtime
+        run: |
+          METALSHARP_REPAIR_BUNDLES=0 \
+          METALSHARP_REPAIR_GRAPHICS_BUNDLE=1 \
+          METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 \
+          METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12" \
+            tools/dmg/create-bundles.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build self-contained developer SDK
         run: |
           tools/bundles/create-developer-sdk.py \
@@ -78,9 +115,16 @@ jobs:
           ! tar --use-compress-program=unzstd -tf dist/bundles/metalsharp-assets.tar.zst \
             | grep -E '^assets/eac-toggle/'
 
-      - name: Publish developer SDK bundle
+      - name: Publish complete release bundle set
         run: |
           tools/bundles/publish-release-assets.sh bundles \
+            dist/bundles/metalsharp-electron.tar.zst \
+            dist/bundles/metalsharp-graphics-dll.tar.zst \
+            dist/bundles/metalsharp-runtime.tar.zst \
+            dist/bundles/metalsharp-assets.tar.zst \
+            dist/bundles/fnalibs.tar.zst \
+            dist/bundles/metalsharp-scripts-tools.tar.zst \
+            dist/bundles/metalsharp-steam.tar.zst \
             dist/developer-sdk/metalsharp-d3d12-developer-sdk.tar.zst \
             dist/developer-sdk/metalsharp-bundle-manifest.tsv
         env:
@@ -102,9 +146,6 @@ jobs:
 
       - name: Build and validate committed C backend
         run: make -C app/src-c verify
-
-      - name: Record release build provenance
-        run: tools/release/write-provenance.sh dist/release-provenance.tsv
 
       - name: Build C++ engine
         run: |
@@ -147,6 +188,9 @@ jobs:
           find dist/staged-bundles -type d | sort | sed -n '1,120p'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Record release build provenance
+        run: tools/release/write-provenance.sh dist/release-provenance.tsv
 
       - name: Check Apple signing credentials
         id: apple-signing

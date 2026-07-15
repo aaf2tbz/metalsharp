@@ -54,6 +54,7 @@ def check_package_resources(assets: list[str]) -> None:
         ("build/c-backend/metalsharp-backend", "runtime/metalsharp-backend"),
         ("native/host", "runtime/host"),
         ("updater", "scripts/tools/updater"),
+        ("../dist/bundles/metalsharp-bundle-manifest.tsv", "bundles/metalsharp-bundle-manifest.tsv"),
     }
     required_pairs.update((f"bundles/{asset}", f"bundles/{asset}") for asset in assets)
 
@@ -76,6 +77,8 @@ def check_dmg_verifier(assets: list[str]) -> None:
         "scripts/tools/updater/update.py",
         "scripts/tools/updater/update.sh",
         "tools/bundles/verify-bundles.sh",
+        "tools/bundles/verify-bundle-manifest.py",
+        "metalsharp-bundle-manifest.tsv",
     ]:
         if needle not in verifier:
             fail(f"DMG verifier no longer checks {needle}")
@@ -106,8 +109,8 @@ def check_bundle_scripts() -> None:
         "repair_assets_fnalibs_bundle",
         "tools/bundles/verify-bundles.sh",
         "--bundle-dir \"$BUNDLE_DIR\" \"$asset\"",
-        "verify-release-inputs.py",
-        "--asset \"$asset\"",
+        "verify-bundle-manifest.py",
+        "source-metalsharp-bundle-manifest.tsv",
         "Refreshing stale or unlocked bundle",
         "metalsharp-bundle-manifest.tsv",
     ]:
@@ -133,7 +136,7 @@ def check_bundle_scripts() -> None:
         fail("stage-release-bundles.sh no longer stages bundle manifest archives")
 
 
-def check_workflows() -> None:
+def check_workflows(assets: list[str]) -> None:
     pr = read(".github/workflows/pr-ci.yml")
     main = read(".github/workflows/ci.yml")
     release = read(".github/workflows/release.yml")
@@ -172,7 +175,8 @@ def check_workflows() -> None:
     for required in [
         "Publish Developer SDK Bundle",
         "Publish developer SDK package",
-        "Publish developer SDK bundle",
+        "Publish complete release bundle set",
+        "Refresh graphics bundle with staged M12 runtime",
         "Build DMG",
         "Check Apple signing credentials",
         "Verify Apple notarization",
@@ -182,6 +186,20 @@ def check_workflows() -> None:
     ]:
         if required not in release:
             fail(f"release workflow missing publish step: {required}")
+    for asset in assets:
+        publish_path = (
+            f"dist/developer-sdk/{asset}"
+            if asset == "metalsharp-d3d12-developer-sdk.tar.zst"
+            else f"dist/bundles/{asset}"
+        )
+        if publish_path not in release:
+            fail(f"release workflow no longer publishes complete bundle asset: {publish_path}")
+    for required in [
+        "METALSHARP_REPAIR_GRAPHICS_BUNDLE=1",
+        "dist/developer-sdk/metalsharp-bundle-manifest.tsv",
+    ]:
+        if required not in release:
+            fail(f"release workflow missing bundle refresh contract: {required}")
     for required in [
         "tools/dmg/check-apple-signing-readiness.sh",
         "steps.apple-signing.outputs.ready == 'true'",
@@ -219,7 +237,7 @@ def main() -> int:
     check_dmg_verifier(assets)
     check_updater_handoff()
     check_bundle_scripts()
-    check_workflows()
+    check_workflows(assets)
     print(f"DMG workflow contract verified ({len(assets)} mac bundle assets).")
     return 0
 

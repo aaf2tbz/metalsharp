@@ -45,7 +45,8 @@ for required in \
   "$BUNDLES/fnalibs.tar.zst" \
   "$BUNDLES/metalsharp-scripts-tools.tar.zst" \
   "$BUNDLES/metalsharp-steam.tar.zst" \
-  "$BUNDLES/metalsharp-d3d12-developer-sdk.tar.zst"
+  "$BUNDLES/metalsharp-d3d12-developer-sdk.tar.zst" \
+  "$BUNDLES/metalsharp-bundle-manifest.tsv"
 do
   if [ ! -s "$required" ]; then
     echo "DMG missing required runtime asset: ${required#$APP_DIR/}" >&2
@@ -62,5 +63,7 @@ fi
 
 cp "$BUNDLES"/*.tar.zst "$LIST_DIR"/
 "$PROJECT_ROOT/tools/bundles/verify-bundles.sh" --bundle-dir "$LIST_DIR" --require mac
+python3 "$PROJECT_ROOT/tools/bundles/verify-bundle-manifest.py" \
+  --bundle-dir "$LIST_DIR" --manifest "$BUNDLES/metalsharp-bundle-manifest.tsv" --require-all
 
 echo "DMG runtime assets verified: $DMG"
