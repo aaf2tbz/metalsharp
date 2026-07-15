@@ -21,13 +21,19 @@ def main() -> int:
     parser.add_argument("--bundle-dir", type=Path, required=True)
     parser.add_argument("--lock", type=Path, default=Path(__file__).with_name("release-inputs.lock.tsv"))
     parser.add_argument("--require-all", action="store_true")
+    parser.add_argument("--asset", action="append", default=[])
     args = parser.parse_args()
     failures: list[str] = []
     checked = 0
+    requested = set(args.asset)
+    found: set[str] = set()
     for line in args.lock.read_text(encoding="utf-8").splitlines():
         if not line or line.startswith("#"):
             continue
         source, name, expected_hash, expected_size, _provenance = line.split(r"\t", 4)
+        if requested and name not in requested:
+            continue
+        found.add(name)
         path = args.bundle_dir / name
         if not path.is_file():
             if args.require_all:
@@ -40,6 +46,9 @@ def main() -> int:
             failures.append(f"SHA-256 mismatch for {name}")
             continue
         checked += 1
+    missing_lock_entries = requested - found
+    if missing_lock_entries:
+        failures.extend(f"asset is not locked: {name}" for name in sorted(missing_lock_entries))
     if failures:
         print("release input verification failed:\n- " + "\n- ".join(failures), file=sys.stderr)
         return 1
