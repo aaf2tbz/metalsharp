@@ -8,13 +8,16 @@ vice versa.
 
 ## Version synchronization
 
-All three files must carry the same version before the tag is pushed:
+Run `tools/release/set-version.sh X.Y.Z`; it updates all synchronized release
+surfaces before the tag is pushed:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
 | `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
+| committed C runtime and tests | encoded backend version strings |
+| backend wire contract | C backend and Electron compatibility maps |
 
 Keep version bumps **separate** from graphics changes unless the PR is
 explicitly a release PR.

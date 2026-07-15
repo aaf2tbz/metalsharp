@@ -384,7 +384,8 @@ is ready:
 - `app/package.json` build scripts and `extraResources` source path;
 - `.github/workflows/{pr-ci,ci,release}.yml`;
 - `tools/dmg/build-dmg.sh`, `tools/dmg/create-bundles.sh`, and bundle verifiers;
-- `tools/release/set-version.sh` and the five-location version contract;
+- `tools/release/set-version.sh`, `tools/release/bump-version.py`, and the
+  all-surface release-version contract;
 - updater process/version verification;
 - `AGENTS.md`, local gates, issue templates, and CodeQL/Dependabot configuration.
 

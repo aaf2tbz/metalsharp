@@ -175,13 +175,23 @@ Current CI is split between PR smoke coverage, lightweight main-push workflow va
 
 ## Version Bumping
 
-Three files must be updated together for a version bump:
+Use the synchronized bump script for every release version change:
+
+```bash
+tools/release/set-version.sh X.Y.Z
+python3 tools/c-backend/verify-version-alignment.py --tag vX.Y.Z
+```
+
+The script updates every release surface together:
 
 | File | Field |
 |------|-------|
 | `app/package.json` | `"version": "X.Y.Z"` |
 | `app/package-lock.json` | root/package lock `"version": "X.Y.Z"` |
 | `CMakeLists.txt` | `project(metalsharp VERSION X.Y.Z ...)` |
+| committed C runtime and tests | encoded backend version strings |
+| `contracts/electron-backend.v1.json` | legacy wire-contract compatibility |
+| `app/src/shared/backend-contract.ts` | Electron compatibility fallback |
 
 The committed C backend embeds the synchronized version. Release CI rejects a tag, package metadata, CMake version, or committed-C version mismatch.
 
