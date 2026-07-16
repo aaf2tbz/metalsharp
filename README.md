@@ -1,7 +1,7 @@
 <div align="center">
 
 # MetalSharp
-**Updated:** 2026-07-08
+**Updated:** 2026-07-16
 
 **Run Windows games on macOS Silicon with Metal.**
 
@@ -22,15 +22,11 @@ MetalSharp is an application designed to run Windows Steam and Windows Steam gam
 
 ## Quick Start
 
-Download the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), double click the dmg, and drag it into applications. If gatekeeper flags it, open Security/privacy in settings -> open anyways. VirusTotal scans are included with most major releases. 
+1) Download the latest DMG from [Releases](https://github.com/aaf2tbz/metalsharp/releases), double click the dmg, and drag it into applications. If gatekeeper flags it, open Security/privacy in settings -> open anyways. VirusTotal scans are included with most major releases. 
 
-From here, metalsharp will install it's native runtime. It is recommended you install steam to download steam-windows games. Metalsharp will guide you through the installation, wait for the two steam update windows to complete. 
+2) From here, Metalsharp will install it's native runtime. It is recommended you install steam to download steam-windows games. Metalsharp will guide you through the installation, wait for the two steam update windows to complete. 
 
-After this -> install both the x64/x86 vc++ 2015-2022 distributables on the next step for better game compatability. 
-
-Lastly, add a steam-api key to sync your steam library with metalsharp if desired. and click 'launch wine steam' from the library header to enter your first session. 
-
-Any steam games downloaded will appear automatically in the library. Save a launch method, and hit play. Metalsharp handles the dll/ game needed asset deployment automatically in the background. 
+3) After this -> install both the x64/x86 vc++ 2015-2022 distributables on the next step for better game compatability. Add your steam-API key on the next page if you wish to sync your steam library into Metalsharp's UI. Any steam games downloaded will appear automatically in the library. Save a launch method, and hit play. Metalsharp handles the dll/ game needed asset deployment automatically in the background. 
 
 For building from source, see [Install from Source](docs/guides/install-from-source.md).
 
@@ -38,7 +34,7 @@ For building from source, see [Install from Source](docs/guides/install-from-sou
 
 | Route | Engine |
 |---|---|
-| **M12** | D3D12 to Metal (experimental DXMT) |
+| **M12** | D3D12 to Metal (Experimental DXMT) |
 | **M11** | D3D11 to Metal (DXMT) |
 | **M11(32)** | D3D11 i386 to Metal (DXMT) |
 | **M10** | D3D10 to Metal (DXMT) |
