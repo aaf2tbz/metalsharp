@@ -1,27 +1,25 @@
 #include "installer.h"
 
+#include <errno.h>
 #include <limits.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
-static const char *const m12_required_files[] = {
-    "x86_64-windows/d3d10core.dll",
-    "x86_64-windows/d3d11.dll",
-    "x86_64-windows/d3d12.dll",
-    "x86_64-windows/dxgi.dll",
-    "x86_64-windows/dxgi_dxmt.dll",
-    "x86_64-windows/winemetal.dll",
-    "x86_64-windows/nvapi64.dll",
-    "x86_64-windows/nvngx.dll",
-    "x86_64-unix/winemetal.so",
-    "x86_64-unix/libc++.1.dylib",
-    "x86_64-unix/libc++abi.1.dylib",
-    "x86_64-unix/libunwind.1.dylib",
+extern char** environ;
+
+static const char* const m12_required_files[] = {
+    "x86_64-windows/d3d10core.dll", "x86_64-windows/d3d11.dll",      "x86_64-windows/d3d12.dll",
+    "x86_64-windows/dxgi.dll",      "x86_64-windows/dxgi_dxmt.dll",  "x86_64-windows/winemetal.dll",
+    "x86_64-windows/nvapi64.dll",   "x86_64-windows/nvngx.dll",      "x86_64-unix/winemetal.so",
+    "x86_64-unix/libc++.1.dylib",   "x86_64-unix/libc++abi.1.dylib", "x86_64-unix/libunwind.1.dylib",
 };
 
-static bool copy_slice(char *out, size_t out_size, const char *value, size_t value_len) {
+static bool copy_slice(char* out, size_t out_size, const char* value, size_t value_len) {
     if (value == NULL || value_len == 0 || value_len >= out_size) {
         return false;
     }
@@ -30,12 +28,97 @@ static bool copy_slice(char *out, size_t out_size, const char *value, size_t val
     return true;
 }
 
-static bool regular_nonempty_file(const char *path) {
+static bool regular_nonempty_file(const char* path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0;
 }
 
-static bool allowed_relative_path(const char *relative_path) {
+static bool run_tool(const char* tool, char* const arguments[]) {
+    pid_t process = 0;
+    const int spawn_result = posix_spawn(&process, tool, NULL, NULL, arguments, environ);
+    if (spawn_result != 0) {
+        return false;
+    }
+
+    int status = 0;
+    while (waitpid(process, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return false;
+        }
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static bool remove_tree(const char* path) {
+    char* const arguments[] = {"rm", "-rf", "--", (char*)path, NULL};
+    return run_tool("/bin/rm", arguments);
+}
+
+static bool agility_payload_complete(const char* root) {
+    static const char* const required[] = {
+        "build/native/bin/x64/D3D12Core.dll",
+        "build/native/bin/x64/d3d12SDKLayers.dll",
+    };
+    for (size_t index = 0; index < sizeof(required) / sizeof(required[0]); ++index) {
+        char artifact[PATH_MAX];
+        const int written = snprintf(artifact, sizeof(artifact), "%s/%s", root, required[index]);
+        if (written < 0 || (size_t)written >= sizeof(artifact) || !regular_nonempty_file(artifact)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool metalsharp_extract_agility_package(const char* archive, size_t archive_len, const char* destination,
+                                        size_t destination_len) {
+    char archive_path[PATH_MAX];
+    char destination_path[PATH_MAX];
+    if (!copy_slice(archive_path, sizeof(archive_path), archive, archive_len) ||
+        !copy_slice(destination_path, sizeof(destination_path), destination, destination_len) ||
+        !regular_nonempty_file(archive_path)) {
+        return false;
+    }
+
+    char extracting[PATH_MAX];
+    char previous[PATH_MAX];
+    const int extracting_len = snprintf(extracting, sizeof(extracting), "%s.extracting", destination_path);
+    const int previous_len = snprintf(previous, sizeof(previous), "%s.previous", destination_path);
+    if (extracting_len < 0 || (size_t)extracting_len >= sizeof(extracting) || previous_len < 0 ||
+        (size_t)previous_len >= sizeof(previous)) {
+        return false;
+    }
+
+    if (!remove_tree(extracting) || mkdir(extracting, 0700) != 0) {
+        return false;
+    }
+
+    char* const unzip_arguments[] = {
+        "unzip", "-qq", archive_path, "build/native/bin/x64/*", "-d", extracting, NULL,
+    };
+    if (!run_tool("/usr/bin/unzip", unzip_arguments) || !agility_payload_complete(extracting)) {
+        remove_tree(extracting);
+        return false;
+    }
+
+    if (!remove_tree(previous)) {
+        remove_tree(extracting);
+        return false;
+    }
+    const bool had_destination = rename(destination_path, previous) == 0;
+    if (rename(extracting, destination_path) != 0) {
+        if (had_destination) {
+            rename(previous, destination_path);
+        }
+        remove_tree(extracting);
+        return false;
+    }
+    if (had_destination) {
+        remove_tree(previous);
+    }
+    return true;
+}
+
+static bool allowed_relative_path(const char* relative_path) {
     const size_t count = sizeof(m12_required_files) / sizeof(m12_required_files[0]);
     for (size_t index = 0; index < count; ++index) {
         if (strcmp(relative_path, m12_required_files[index]) == 0) {
@@ -45,7 +128,7 @@ static bool allowed_relative_path(const char *relative_path) {
     return false;
 }
 
-bool metalsharp_m12_runtime_complete(const char *root, size_t root_len) {
+bool metalsharp_m12_runtime_complete(const char* root, size_t root_len) {
     char root_path[PATH_MAX];
     if (!copy_slice(root_path, sizeof(root_path), root, root_len)) {
         return false;
@@ -62,22 +145,17 @@ bool metalsharp_m12_runtime_complete(const char *root, size_t root_len) {
     return true;
 }
 
-bool metalsharp_m12_runtime_artifact_valid(
-    const char *home,
-    size_t home_len,
-    const char *relative_path,
-    size_t relative_path_len
-) {
+bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, const char* relative_path,
+                                           size_t relative_path_len) {
     char home_path[PATH_MAX];
     char relative[PATH_MAX];
-    if (!copy_slice(home_path, sizeof(home_path), home, home_len)
-        || !copy_slice(relative, sizeof(relative), relative_path, relative_path_len)
-        || !allowed_relative_path(relative)) {
+    if (!copy_slice(home_path, sizeof(home_path), home, home_len) ||
+        !copy_slice(relative, sizeof(relative), relative_path, relative_path_len) || !allowed_relative_path(relative)) {
         return false;
     }
 
     char root[PATH_MAX];
-    const char *metalsharp_home = getenv("METALSHARP_HOME");
+    const char* metalsharp_home = getenv("METALSHARP_HOME");
     int written;
     if (metalsharp_home != NULL && metalsharp_home[0] != '\0') {
         written = snprintf(root, sizeof(root), "%s/runtime/wine/lib/dxmt_m12", metalsharp_home);
