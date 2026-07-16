@@ -179,7 +179,9 @@ verify_graphics_core() {
     Graphics/dll/dxmt-m12/x86_64-windows/dxgi_dxmt.dll \
     Graphics/dll/dxmt-m12/x86_64-windows/nvapi64.dll \
     Graphics/dll/dxmt-m12/x86_64-windows/nvngx.dll \
-    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll
+    Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll \
+    Graphics/dll/dxmt-surfaces.json &&
+    python3 "$SCRIPT_DIR/verify-dxmt-surfaces.py" --archive "$path"
 }
 
 verify_assets_core() {
