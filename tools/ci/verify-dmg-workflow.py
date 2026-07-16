@@ -211,10 +211,9 @@ def check_workflows(assets: list[str]) -> None:
             fail(f"release workflow missing publish step: {required}")
     if "vars.METALSHARP_DEVELOPER_SDK_CI == '1'" not in release:
         fail("release Developer SDK job must be opt-in with METALSHARP_DEVELOPER_SDK_CI=1")
-    if "needs.developer-sdk.result == 'skipped'" not in release:
-        fail("a skipped optional Developer SDK job must not suppress the DMG release")
-    if "needs.developer-sdk.result == 'success'" not in release:
-        fail("an enabled Developer SDK job must succeed before the DMG release")
+    build_job = release.split("\n  build:\n", 1)[1].split("\n  release:\n", 1)[0]
+    if "needs: [developer-sdk]" in build_job or "needs.developer-sdk" in build_job:
+        fail("the optional Developer SDK job must not be in the DMG dependency graph")
     for asset in assets:
         publish_path = (
             f"dist/developer-sdk/{asset}"
