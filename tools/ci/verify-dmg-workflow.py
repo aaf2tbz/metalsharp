@@ -183,14 +183,14 @@ def check_workflows(assets: list[str]) -> None:
     for needle in [
         "verify-dxmt-surfaces.py",
         "metalsharp-bottle-deployment-tests",
-        "--winemetal-abi-only",
-        "--loader-only",
-        "--mini-only",
         "metalsharp-runtime.tar.zst",
         "metalsharp-graphics-dll.tar.zst",
     ]:
         if needle not in production_gate:
             fail(f"production DXMT conformance gate no longer checks {needle}")
+    for forbidden in ["run-probes.sh", "--winemetal-abi-only", "--loader-only", "--mini-only"]:
+        if forbidden in production_gate:
+            fail(f"production DXMT conformance gate must not execute Wine probes: {forbidden}")
 
     clean_setup = read("tools/dmg/verify-dmg-clean-setup.sh")
     for needle in [
