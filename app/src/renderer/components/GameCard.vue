@@ -152,7 +152,6 @@ const emit = defineEmits<{
   stop: [];
   install: [];
   uninstall: [];
-  expanded: [appid: number, open: boolean];
   artworkMissing: [appid: number];
 }>();
 
@@ -473,13 +472,6 @@ function onArtworkError() {
   emit("artworkMissing", props.game.appid);
 }
 
-watch(doctorOpen, (open) => {
-  if (!open) emit('expanded', props.game.appid, false);
-});
-watch(runtimeOpen, (open) => {
-  if (!open) emit('expanded', props.game.appid, false);
-});
-
 watch(selectedLaunchMode, (mode) => {
   localStorage.setItem(launchModeStorageKey.value, mode);
 });
@@ -561,7 +553,6 @@ async function toggleGoldberg(enable: boolean) {
 
 async function runDoctor() {
   doctorOpen.value = true;
-  emit('expanded', props.game.appid, true);
   doctorLoading.value = true;
   doctorReport.value = null;
   const result = await api<{ ok: boolean; report?: LaunchDoctorReport; error?: string }>("POST", "/mtsp/doctor", {
@@ -579,9 +570,8 @@ async function runDoctor() {
 
 async function runRuntimeDoctor() {
   runtimeOpen.value = true;
-  emit('expanded', props.game.appid, true);
   runtimeLoading.value = true;
-  // Let Vue paint the focused bottle workspace and spinner before starting
+  // Let Vue paint the bottle workspace and spinner before starting
   // filesystem/runtime inspection through IPC.
   await nextTick();
   const savedD3DMetalRoute = hasSavedD3DMetalRoute();
@@ -628,12 +618,10 @@ async function runRuntimeDoctor() {
 async function openBottleWorkspace() {
   if (runtimeLoading.value) {
     runtimeOpen.value = false;
-    emit('expanded', props.game.appid, false);
     return;
   }
   if (runtimeOpen.value && runtimeReport.value) {
     runtimeOpen.value = false;
-    emit('expanded', props.game.appid, false);
     return;
   }
   await runRuntimeDoctor();

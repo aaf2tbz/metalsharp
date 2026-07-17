@@ -22,7 +22,7 @@ body {
   font-family: var(--font-body);
   font-size: 14px;
   color: var(--text-primary);
-  background: var(--bg-deep);
+  background: transparent;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -33,10 +33,7 @@ body {
   width: 100vw;
   min-width: 0;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 4% 14%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 30%),
-    radial-gradient(circle at 2% 88%, color-mix(in srgb, var(--accent-dim) 15%, transparent), transparent 34%),
-    var(--bg-deep);
+  background: transparent;
 }
 
 ::-webkit-scrollbar {

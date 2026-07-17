@@ -13,16 +13,23 @@ function readSavedTheme(): ThemeName {
 
 const theme = ref<ThemeName>(readSavedTheme());
 
+function syncNativeTheme(value: ThemeName) {
+  const metalsharp = (window as unknown as { metalsharp?: MetalsharpAPI }).metalsharp;
+  if (metalsharp?.setTheme) void metalsharp.setTheme(value);
+}
+
 watch(theme, (val) => {
   document.documentElement.dataset.theme = val;
   document.body.classList.toggle("light", val === "light");
   document.body.classList.toggle("developer", val === "developer");
   localStorage.setItem("metalsharp-theme", val);
+  syncNativeTheme(val);
 });
 
 document.documentElement.dataset.theme = theme.value;
 document.body.classList.toggle("light", theme.value === "light");
 document.body.classList.toggle("developer", theme.value === "developer");
+syncNativeTheme(theme.value);
 
 export function useTheme() {
   function toggle() {

@@ -199,6 +199,7 @@ type MetalsharpAPI = {
     timeoutMs?: number,
   ) => Promise<BackendResponse>;
   isFirstLaunch: () => Promise<boolean>;
+  setTheme: (theme: "dark" | "light" | "developer") => Promise<boolean>;
   isMigrationMode: () => Promise<boolean>;
   restartAfterMigration: () => Promise<{ ok: boolean; error?: string; deletedDmg?: string | null; launched?: string }>;
   ejectDmg: () => Promise<void>;
