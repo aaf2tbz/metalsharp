@@ -92,8 +92,10 @@ static bool m12_receipt_valid(const char* root) {
     const bool read_ok = !ferror(receipt);
     fclose(receipt);
     contents[count] = '\0';
-    return read_ok && strstr(contents, "\"schema\": \"metalsharp.dxmt-runtime.v2\"") != NULL &&
-           strstr(contents, "\"surface_id\": \"" METALSHARP_DXMT_M12_SURFACE_ID "\"") != NULL;
+    return read_ok && strstr(contents, "\"schema\": \"metalsharp.dxmt-runtime.v1\"") != NULL &&
+           strstr(contents, "\"version\": \"" METALSHARP_DXMT_M12_RUNTIME_VERSION "\"") != NULL &&
+           strstr(contents, "\"surface_id\": \"" METALSHARP_DXMT_M12_SURFACE_ID "\"") != NULL &&
+           strstr(contents, "\"lane\": \"dxmt_m12\"") != NULL;
 }
 
 static bool write_m12_receipt(const char* root) {
@@ -105,11 +107,13 @@ static bool write_m12_receipt(const char* root) {
     if (receipt == NULL)
         return false;
     const int result = fprintf(receipt,
-                               "{\n  \"schema\": \"metalsharp.dxmt-runtime.v2\",\n"
-                               "  \"surface_id\": \"%s\",\n  \"lane\": \"dxmt_m12\",\n"
+                               "{\n  \"schema\": \"metalsharp.dxmt-runtime.v1\",\n"
+                               "  \"version\": \"%s\",\n  \"surface_id\": \"%s\",\n"
+                               "  \"lane\": \"dxmt_m12\",\n"
+                               "  \"source\": \"bundled:metalsharp-graphics-dll.tar.zst\",\n"
                                "  \"source_bundle\": \"Dependency Bundles\",\n"
                                "  \"artifact_count\": %zu\n}\n",
-                               METALSHARP_DXMT_M12_SURFACE_ID,
+                               METALSHARP_DXMT_M12_RUNTIME_VERSION, METALSHARP_DXMT_M12_SURFACE_ID,
                                sizeof(m12_artifacts) / sizeof(m12_artifacts[0]));
     bool ok = result > 0 && fflush(receipt) == 0 && fsync(fileno(receipt)) == 0;
     if (fclose(receipt) != 0)
