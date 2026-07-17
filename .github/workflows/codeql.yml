@@ -42,12 +42,12 @@ jobs:
       - run: npm ci
         working-directory: app
 
-      - uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+      - uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           languages: javascript-typescript
           config-file: .github/codeql/codeql-typescript.yml
 
-      - uses: github/codeql-action/analyze@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+      - uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           category: '/language:javascript-typescript'
 
@@ -58,7 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+      - uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           languages: c-cpp
           build-mode: manual
@@ -68,6 +68,6 @@ jobs:
           cmake -S . -B build-codeql -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
           cmake --build build-codeql --parallel $(sysctl -n hw.ncpu)
 
-      - uses: github/codeql-action/analyze@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+      - uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           category: '/language:c-cpp'

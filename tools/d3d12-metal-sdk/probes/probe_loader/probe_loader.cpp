@@ -166,7 +166,7 @@ int main() {
     }
     if (!probes[0].has_symbol || !probes[0].has_ordinal)
         pass = false;
-    if (!probes[1].has_symbol)
+    if (!probes[1].has_symbol || !probes[2].has_symbol)
         pass = false;
     if (!expected_windows.empty()) {
         for (const auto& probe : probes) {

@@ -46,41 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare release Wine runtime for M12 build
-        run: |
-          mkdir -p dist/release-runtime
-          tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C dist/release-runtime
-          test -x dist/release-runtime/runtime/wine/bin/winebuild
-
-      - name: Install DXMT build tools
-        run: |
-          brew list meson >/dev/null 2>&1 || brew install meson
-          brew list ninja >/dev/null 2>&1 || brew install ninja
-          brew list mingw-w64 >/dev/null 2>&1 || brew install mingw-w64
-          meson --version
-          ninja --version
-          x86_64-w64-mingw32-gcc --version
-          x86_64-w64-mingw32-g++ --version
-
-      - name: Build staged M12 DXMT runtime
-        run: |
-          tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
-          python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py \
-            --build-dir vendor/dxmt/build-metalsharp-x64 \
-            --runtime-dir dist/dxmt_m12 \
-            --profile release-ci-m12
-        env:
-          METALSHARP_WINE_ROOT: ${{ github.workspace }}/dist/release-runtime/runtime/wine
-          METALSHARP_X86_LLVM_ROOT: ${{ runner.temp }}/metalsharp-toolchains
-
-      - name: Repair split bundles with staged M12 runtime
-        run: |
-          METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE=1 \
-          METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12" \
-            tools/dmg/create-bundles.sh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Build self-contained developer SDK
         run: |
           tools/bundles/create-developer-sdk.py \
@@ -189,36 +154,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare release Wine runtime for M12 build
-        run: |
-          mkdir -p dist/release-runtime
-          tar --use-compress-program=unzstd -xf app/bundles/metalsharp-runtime.tar.zst -C dist/release-runtime
-          test -x dist/release-runtime/runtime/wine/bin/winebuild
-
-      - name: Install DXMT build tools
-        run: |
-          brew list meson >/dev/null 2>&1 || brew install meson
-          brew list ninja >/dev/null 2>&1 || brew install ninja
-          brew list mingw-w64 >/dev/null 2>&1 || brew install mingw-w64
-          meson --version
-          ninja --version
-          x86_64-w64-mingw32-gcc --version
-          x86_64-w64-mingw32-g++ --version
-
-      - name: Build staged M12 DXMT runtime
-        run: |
-          tools/d3d12-metal-sdk/scripts/prepare-dxmt-x86-llvm15.sh
-          python3 tools/d3d12-metal-sdk/scripts/stage-dxmt-runtime.py \
-            --build-dir vendor/dxmt/build-metalsharp-x64 \
-            --runtime-dir dist/dxmt_m12 \
-            --profile release-ci-m12-dmg
-        env:
-          METALSHARP_WINE_ROOT: ${{ github.workspace }}/dist/release-runtime/runtime/wine
-          METALSHARP_X86_LLVM_ROOT: ${{ runner.temp }}/metalsharp-toolchains
-
       - name: Download bundles for DMG
         run: |
-          METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12" tools/dmg/create-bundles.sh
           tools/dmg/stage-release-bundles.sh app/bundles dist/staged-bundles
           for required in \
             metalsharp-electron.tar.zst \
@@ -235,6 +172,13 @@ jobs:
           find dist/staged-bundles -type d | sort | sed -n '1,120p'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Require production DXMT bundle and launch conformance
+        run: |
+          brew install mingw-w64
+          tools/bundles/verify-production-dxmt-conformance.sh \
+            app/bundles/metalsharp-graphics-dll.tar.zst \
+            app/bundles/metalsharp-runtime.tar.zst
 
       - name: Record release build provenance
         run: tools/release/write-provenance.sh dist/release-provenance.tsv
@@ -327,6 +271,8 @@ jobs:
             app/src-c/manifests/runtime-sources.txt
             app/src-c/manifests/test-sources.txt
             app/src-c/manifests/native-objects.txt
+            app/src-c/manifests/maintained-sources.txt
+            app/src-c/manifests/maintained-test-sources.txt
 
   release:
     name: Release
@@ -357,7 +303,7 @@ jobs:
           find release-flat -type f -print | sort
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           files: |
             release-flat/*.dmg

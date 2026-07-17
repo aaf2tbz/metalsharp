@@ -75,9 +75,93 @@ if find "$HOME_DIR/cache/bundles" -type f 2>/dev/null | grep -q .; then
 fi
 
 tar --use-compress-program=unzstd -xf "$BUNDLE" -C "$EXTRACT_DIR"
-while IFS= read -r -d '' source; do
-  relative="${source#"$EXTRACT_DIR/Graphics/dll/dxmt-m12/"}"
-  cmp "$source" "$HOME_DIR/runtime/wine/lib/dxmt_m12/$relative"
-done < <(find "$EXTRACT_DIR/Graphics/dll/dxmt-m12" -type f -print0)
+compare_tree() {
+  local source_root="$1"
+  local target_root="$2"
+  while IFS= read -r -d '' source; do
+    relative="${source#"$source_root/"}"
+    cmp "$source" "$target_root/$relative"
+  done < <(find "$source_root" -type f -print0)
+}
 
-echo "DMG clean setup verified: 15/15 steps, no fallback downloads, exact M12 payload."
+# Canonical runtime lanes must be byte-identical to the archive embedded in the DMG.
+compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt" "$HOME_DIR/runtime/wine/lib/dxmt"
+compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt-m12" "$HOME_DIR/runtime/wine/lib/dxmt_m12"
+
+# Wine's active loader mirrors must use the promoted M12 bridge, not a stale runtime copy.
+cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so" \
+  "$HOME_DIR/runtime/wine/lib/wine/x86_64-unix/winemetal.so"
+cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll" \
+  "$HOME_DIR/runtime/wine/lib/wine/x86_64-windows/winemetal.dll"
+
+stage_test_bottle() {
+  local appid="$1"
+  local profile="$2"
+  local executable="$3"
+  local prefix="$HOME_DIR/clean-dmg-prefix-$profile"
+  local game="$HOME_DIR/clean-dmg-game-$profile"
+  local bottle="$HOME_DIR/bottles/steam_$appid"
+  mkdir -p "$prefix" "$game" "$bottle"
+  printf 'clean DMG direct launch probe\n' >"$game/$executable"
+  python3 - "$bottle/bottle.json" "$appid" "$profile" "$prefix" "$game" <<'PY'
+import json, sys
+path, appid, profile, prefix, game = sys.argv[1:]
+with open(path, "w") as output:
+    json.dump({
+        "id": f"steam_{appid}",
+        "name": f"Clean DMG {profile.upper()} probe",
+        "custom_name": None,
+        "bottle_type": "steam",
+        "steam_app_id": int(appid),
+        "prefix_path": prefix,
+        "arch": "wow64" if profile == "m12" else "win64",
+        "runtime_profile": profile,
+        "preferred_pipeline": profile,
+        "installed_components": [],
+        "source_installer_path": None,
+        "installer_kind": None,
+        "game_install_path": game,
+        "runtime_assets": [],
+        "installed_app_detections": [],
+        "health": "ready",
+        "last_launch_log": None,
+        "last_launch_pid": None,
+        "last_launch_status": None,
+        "last_launch_finished_at": None,
+        "created_at": "0",
+        "updated_at": "0",
+    }, output)
+PY
+  curl -fsS -H 'Content-Type: application/json' -X POST \
+    -d "{\"id\":\"steam_$appid\",\"profile\":\"$profile\"}" \
+    "http://127.0.0.1:$PORT/bottles/set-runtime-profile" >"$HOME_DIR/save-$profile.json"
+  python3 - "$HOME_DIR/save-$profile.json" <<'PY'
+import json, sys
+response = json.load(open(sys.argv[1]))
+assert response.get("ok") is True, response
+PY
+}
+
+stage_test_bottle 1245620 m12 start_protected_game.exe
+stage_test_bottle 312520 m11 RainWorld.exe
+
+# Prefix and game-local routes must also be exact archive bytes. These two live
+# acceptance shapes cover the promoted D3D12 and D3D11 x64 surfaces.
+for entry in \
+  d3d12.dll d3d11.dll d3d10core.dll dxgi.dll dxgi_dxmt.dll winemetal.dll nvapi64.dll nvngx.dll
+do
+  cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-windows/$entry" \
+    "$HOME_DIR/clean-dmg-prefix-m12/drive_c/windows/system32/$entry"
+  cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-windows/$entry" \
+    "$HOME_DIR/clean-dmg-game-m12/$entry"
+done
+for entry in d3d11.dll d3d10core.dll dxgi.dll dxgi_dxmt.dll winemetal.dll; do
+  cmp "$EXTRACT_DIR/Graphics/dll/dxmt/x86_64-windows/$entry" \
+    "$HOME_DIR/clean-dmg-prefix-m11/drive_c/windows/system32/$entry"
+  cmp "$EXTRACT_DIR/Graphics/dll/dxmt/x86_64-windows/$entry" \
+    "$HOME_DIR/clean-dmg-game-m11/$entry"
+done
+test ! -e "$HOME_DIR/clean-dmg-prefix-m11/drive_c/windows/system32/d3d12.dll"
+test ! -e "$HOME_DIR/clean-dmg-game-m11/d3d12.dll"
+
+echo "DMG clean setup verified: 15/15 steps, no fallback downloads, exact canonical, Wine-mirror, prefix, and game payloads."

@@ -39,7 +39,7 @@ verify_staged_dxmt_m12() {
   if [ "$failed" -ne 0 ]; then
     exit 1
   fi
-  echo "VERIFIED: staged Graphics/dll/dxmt-m12 contains the complete rebuilt runtime"
+  echo "VERIFIED: staged Graphics/dll/dxmt-m12 contains the complete pinned runtime"
 }
 
 rm -rf "$STAGE_DIR"
@@ -59,6 +59,10 @@ while IFS=$'\t' read -r asset root platforms _notes; do
   if [ ! -s "$archive" ]; then
     echo "Missing bundle archive: $archive" >&2
     exit 1
+  fi
+
+  if [ "$asset" = "metalsharp-graphics-dll.tar.zst" ]; then
+    python3 "$PROJECT_ROOT/tools/bundles/verify-dxmt-surfaces.py" --archive "$archive"
   fi
 
   tar --use-compress-program=unzstd -xf "$archive" -C "$STAGE_DIR"

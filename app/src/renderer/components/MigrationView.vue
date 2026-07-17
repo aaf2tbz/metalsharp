@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from "vue";
-import IconArrowRight from "~icons/lucide/arrow-right";
+import IconCheck from "~icons/lucide/check";
+import IconInfo from "~icons/lucide/info";
 
 const status = ref("idle");
 const step = ref(0);
@@ -18,10 +19,31 @@ let pollFailures = 0;
 
 const percent = computed(() => {
   if (total.value === 0) return 0;
-  return Math.round((step.value / total.value) * 100);
+  return Math.min(100, Math.max(0, Math.round((step.value / total.value) * 100)));
 });
 
-const stages = [{ name: "[D3D]" }, { name: "[DXMT]" }, { name: "[x86_64]" }, { name: "[Metal]" }];
+const stages = [
+  { name: "Preserve data", detail: "Settings, bottles, prefixes" },
+  { name: "Install runtime", detail: "Matched graphics components" },
+  { name: "Refresh bottles", detail: "Update profile-owned DLLs" },
+  { name: "Verify", detail: "Runtime and saved routes" },
+];
+
+const activeStage = computed(() => {
+  if (complete.value) return stages.length;
+  const detail = message.value.toLowerCase();
+  if (detail.includes("preserv") || detail.includes("backup")) return 0;
+  if (detail.includes("verif") || detail.includes("ready")) return 3;
+  if (detail.includes("bottle") || detail.includes("prefix") || detail.includes("restor")) return 2;
+  if (detail.includes("install") || detail.includes("runtime") || detail.includes("extract")) return 1;
+  return Math.min(stages.length - 1, Math.floor(percent.value / (100 / stages.length)));
+});
+
+const title = computed(() => {
+  if (complete.value) return "Update complete";
+  if (error.value) return "Migration needs attention";
+  return "Updating MetalSharp";
+});
 
 const MAX_START_RETRIES = 20;
 const START_RETRY_DELAY_MS = 500;
@@ -76,7 +98,7 @@ async function pollProgress() {
     if (!res || res.ok === false) {
       pollFailures += 1;
       message.value = "Reconnecting to the migration backend...";
-      if (pollFailures >= 3) {
+      if (pollFailures >= 12) {
         error.value = res?.error ?? "Migration backend stopped responding";
         message.value = `Error: ${error.value}`;
         stopPolling();
@@ -88,7 +110,7 @@ async function pollProgress() {
     status.value = data.status ?? "idle";
     step.value = data.step ?? 0;
     total.value = data.total ?? 0;
-    message.value = data.message ?? "";
+    if (typeof data.message === "string" && data.message.trim()) message.value = data.message;
     error.value = data.error ?? null;
 
     if (status.value === "complete") {
@@ -99,7 +121,7 @@ async function pollProgress() {
     }
   } catch (e: unknown) {
     pollFailures += 1;
-    if (pollFailures >= 3) {
+    if (pollFailures >= 12) {
       error.value = e instanceof Error ? e.message : "Migration backend stopped responding";
       message.value = `Error: ${error.value}`;
       stopPolling();
@@ -175,20 +197,26 @@ onUnmounted(() => {
     <div class="migration-card">
       <div class="migration-header">
         <div :key="spinnerEpoch" class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
-        <h1 class="migration-title">MetalSharp Update Migration</h1>
-        <p class="migration-subtitle">Preserving your settings and refreshing the runtime</p>
+        <h1 class="migration-title">{{ title }}</h1>
+        <p class="migration-subtitle">
+          Your game files, settings, bottles, and prefixes stay in place while runtime components are refreshed.
+        </p>
       </div>
 
-      <div class="pipeline-vis">
+      <div class="stage-list" aria-label="Migration stages">
         <div
           v-for="(stage, i) in stages"
           :key="stage.name"
-          class="pipeline-stage"
-          :class="{ active: !complete && !error }"
+          class="migration-stage"
+          :class="{ active: activeStage === i && !error, completed: activeStage > i, pending: activeStage < i }"
         >
-          <span class="stage-label">{{ stage.name }}</span>
-          <div v-if="i < stages.length - 1" class="pipeline-arrow">
-            <IconArrowRight width="16" height="12" />
+          <div class="stage-marker" aria-hidden="true">
+            <IconCheck v-if="activeStage > i" width="14" height="14" />
+            <span v-else>{{ i + 1 }}</span>
+          </div>
+          <div class="stage-copy">
+            <span class="stage-name">{{ stage.name }}</span>
+            <span class="stage-detail">{{ stage.detail }}</span>
           </div>
         </div>
       </div>
@@ -203,13 +231,22 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <p class="status-message" :class="{ error: !!error, complete }">{{ message }}</p>
+      <div class="status-panel" :class="{ error: !!error, complete }" role="status" aria-live="polite">
+        <p class="status-message">{{ message }}</p>
+      </div>
+
+      <p v-if="!complete && !error" class="migration-note">
+        <IconInfo width="14" height="14" aria-hidden="true" />
+        Keep MetalSharp open. Large runtime updates and Wine prefix upgrades can take several minutes.
+      </p>
 
       <button v-if="complete" class="restart-btn" :disabled="launching" @click="restartApp()">
         {{ launching ? "Launching..." : "Launch MetalSharp" }}
       </button>
       <button v-if="error && !complete" class="restart-btn" @click="retryMigration()">Retry Migration</button>
-      <p v-if="error" class="error-hint">The backend will be restarted automatically. If retry still fails, check the logs.</p>
+      <p v-if="error" class="error-hint">
+        The backend will be restarted automatically. If retry still fails, check the logs.
+      </p>
     </div>
   </div>
 </template>
@@ -218,7 +255,9 @@ onUnmounted(() => {
 .migration-overlay {
   position: fixed;
   inset: 0;
-  background: #1b2838;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(67, 145, 194, 0.2), transparent 42%),
+    linear-gradient(160deg, #182838 0%, #101a24 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -226,13 +265,20 @@ onUnmounted(() => {
 }
 
 .migration-card {
-  text-align: center;
-  width: min(560px, calc(100vw - 40px));
-  padding: 40px 28px;
+  width: min(620px, calc(100vw - 40px));
+  padding: 34px;
+  color: #f4f8fb;
+  background: rgba(16, 29, 41, 0.78);
+  border: 1px solid rgba(133, 192, 226, 0.18);
+  border-radius: 18px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px) saturate(120%);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
 }
 
 .migration-header {
-  margin-bottom: 32px;
+  text-align: center;
+  margin-bottom: 26px;
 }
 
 .loading-icon {
@@ -256,7 +302,7 @@ onUnmounted(() => {
 }
 
 .migration-title {
-  font-size: 24px;
+  font-size: 25px;
   font-weight: 700;
   color: #fff;
   margin: 0 0 8px 0;
@@ -264,53 +310,44 @@ onUnmounted(() => {
 
 .migration-subtitle {
   font-size: 14px;
-  color: #66c0f4;
-  opacity: 0.8;
-  margin: 0;
+  line-height: 1.5;
+  color: rgba(226, 239, 247, 0.7);
+  max-width: 510px;
+  margin: 0 auto;
 }
 
-.pipeline-vis {
+.stage-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 26px;
+}
+
+.migration-stage {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0;
-  margin-bottom: 32px;
-  flex-wrap: nowrap;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  transition:
+    border-color 180ms ease,
+    background 180ms ease;
 }
 
-.pipeline-stage {
-  display: flex;
-  align-items: center;
-  gap: 0;
+.migration-stage.active {
+  border-color: rgba(102, 192, 244, 0.5);
+  background: rgba(102, 192, 244, 0.1);
 }
 
-.stage-label {
-  font-family: "SF Mono", "Menlo", monospace;
-  font-size: 11px;
-  font-weight: 600;
-  color: #66c0f4;
-  background: rgba(102, 192, 244, 0.08);
-  border: 1px solid rgba(102, 192, 244, 0.2);
-  border-radius: 6px;
-  padding: 4px 10px;
-  transition: all 0.3s ease;
-  white-space: nowrap;
+.migration-stage.completed {
+  border-color: rgba(80, 190, 125, 0.24);
 }
 
-.pipeline-stage.active .stage-label {
-  animation: pulse 2s ease-in-out infinite;
-  background: rgba(102, 192, 244, 0.15);
-  border-color: rgba(102, 192, 244, 0.4);
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
+.migration-stage.pending {
+  opacity: 0.55;
 }
 
 @keyframes spin {
@@ -319,9 +356,48 @@ onUnmounted(() => {
   }
 }
 
-.pipeline-arrow {
-  color: rgba(102, 192, 244, 0.3);
-  margin: 0 4px;
+.stage-marker {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.active .stage-marker {
+  color: #66c0f4;
+  border-color: #66c0f4;
+}
+
+.completed .stage-marker {
+  color: #79d59d;
+  border-color: rgba(80, 190, 125, 0.55);
+  background: rgba(80, 190, 125, 0.1);
+}
+
+.stage-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stage-name {
+  font-size: 11px;
+  font-weight: 650;
+  color: rgba(255, 255, 255, 0.9);
+  white-space: nowrap;
+}
+
+.stage-detail {
+  font-size: 9px;
+  line-height: 1.25;
+  color: rgba(255, 255, 255, 0.42);
 }
 
 .progress-section {
@@ -359,19 +435,43 @@ onUnmounted(() => {
   color: rgba(255, 255, 255, 0.5);
 }
 
-.status-message {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
-  margin: 0 0 24px 0;
-  min-height: 20px;
+.status-panel {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 12px;
+  margin-top: 16px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-.status-message.complete {
+.status-message {
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.status-panel.complete .status-message {
   color: #4caf50;
 }
 
-.status-message.error {
+.status-panel.error .status-message {
   color: #ef5350;
+}
+
+.migration-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 13px 0 0;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
 }
 
 .restart-btn {
@@ -384,6 +484,8 @@ onUnmounted(() => {
   font-weight: 600;
   cursor: pointer;
   transition: background 0.2s;
+  display: block;
+  margin: 20px auto 0;
 }
 
 .restart-btn:hover {
@@ -394,5 +496,15 @@ onUnmounted(() => {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.3);
   margin-top: 12px;
+}
+
+@media (max-width: 620px) {
+  .migration-card {
+    padding: 26px 20px;
+  }
+
+  .stage-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>
