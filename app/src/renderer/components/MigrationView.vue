@@ -11,6 +11,10 @@ const error = ref<string | null>(null);
 const complete = ref(false);
 const launching = ref(false);
 const spinnerEpoch = ref(0);
+const restoringData = ref(false);
+
+type MigrationStageIndex = 0 | 1 | 2 | 3;
+const currentStage = ref<MigrationStageIndex>(0);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let spinnerWatchdog: ReturnType<typeof setInterval> | null = null;
@@ -22,22 +26,54 @@ const percent = computed(() => {
   return Math.min(100, Math.max(0, Math.round((step.value / total.value) * 100)));
 });
 
-const stages = [
-  { name: "Preserve data", detail: "Settings, bottles, prefixes" },
-  { name: "Install runtime", detail: "Matched graphics components" },
-  { name: "Refresh bottles", detail: "Update profile-owned DLLs" },
+const stages = computed(() => [
+  { name: restoringData.value ? "Restore Data" : "Preserve Data", detail: "Settings, bottles, prefixes" },
+  { name: "Install Runtime", detail: "Matched graphics components" },
+  { name: "Refresh Bottles", detail: "Update profile-owned DLLs" },
   { name: "Verify", detail: "Runtime and saved routes" },
-];
+]);
 
-const activeStage = computed(() => {
-  if (complete.value) return stages.length;
-  const detail = message.value.toLowerCase();
+function stageFromMessage(value: string): MigrationStageIndex | null {
+  const detail = value.toLowerCase();
+
+  // Restore intentionally returns to the first card after runtime installation.
+  // Check it before bottle/prefix terms because restore messages can contain both.
+  if (detail.includes("restor")) return 0;
+  if (
+    detail.includes("refreshing saved bottle") ||
+    detail.includes("refreshing bottle") ||
+    detail.includes("bottle refresh")
+  )
+    return 2;
+  if (detail.includes("verif") || detail.includes("migration ready") || detail.includes("update ready")) return 3;
   if (detail.includes("preserv") || detail.includes("backup")) return 0;
-  if (detail.includes("verif") || detail.includes("ready")) return 3;
-  if (detail.includes("bottle") || detail.includes("prefix") || detail.includes("restor")) return 2;
-  if (detail.includes("install") || detail.includes("runtime") || detail.includes("extract")) return 1;
-  return Math.min(stages.length - 1, Math.floor(percent.value / (100 / stages.length)));
-});
+  if (detail.includes("install") || detail.includes("runtime") || detail.includes("cleaning stale")) return 1;
+  return null;
+}
+
+function updateVisualStage(value: string) {
+  const detectedStage = stageFromMessage(value);
+  if (detectedStage === null) return;
+  if (detectedStage === 0 && value.toLowerCase().includes("restor")) restoringData.value = true;
+  currentStage.value = detectedStage;
+}
+
+function stageCompleted(index: number) {
+  if (complete.value) return true;
+
+  if (restoringData.value) {
+    if (currentStage.value === 0) return index === 1;
+    if (currentStage.value === 1) return index === 0;
+  }
+
+  return index < currentStage.value;
+}
+
+function stageClasses(index: number) {
+  const active = currentStage.value === index && !complete.value && !error.value;
+  const completed = !active && stageCompleted(index);
+  return { active, completed, pending: !active && !completed };
+}
 
 const title = computed(() => {
   if (complete.value) return "Update complete";
@@ -110,7 +146,10 @@ async function pollProgress() {
     status.value = data.status ?? "idle";
     step.value = data.step ?? 0;
     total.value = data.total ?? 0;
-    if (typeof data.message === "string" && data.message.trim()) message.value = data.message;
+    if (typeof data.message === "string" && data.message.trim()) {
+      message.value = data.message;
+      updateVisualStage(data.message);
+    }
     error.value = data.error ?? null;
 
     if (status.value === "complete") {
@@ -150,6 +189,8 @@ async function retryMigration() {
   pollInFlight = false;
   error.value = null;
   complete.value = false;
+  restoringData.value = false;
+  currentStage.value = 0;
   status.value = "idle";
   step.value = 0;
   total.value = 0;
@@ -206,18 +247,17 @@ onUnmounted(() => {
       <div class="stage-list" aria-label="Migration stages">
         <div
           v-for="(stage, i) in stages"
-          :key="stage.name"
+          :key="i"
           class="migration-stage"
-          :class="{ active: activeStage === i && !error, completed: activeStage > i, pending: activeStage < i }"
+          :class="stageClasses(i)"
+          :aria-current="currentStage === i && !complete ? 'step' : undefined"
         >
+          <span class="stage-name">{{ stage.name }}</span>
           <div class="stage-marker" aria-hidden="true">
-            <IconCheck v-if="activeStage > i" width="14" height="14" />
+            <IconCheck v-if="stageCompleted(i) && (complete || currentStage !== i)" width="14" height="14" />
             <span v-else>{{ i + 1 }}</span>
           </div>
-          <div class="stage-copy">
-            <span class="stage-name">{{ stage.name }}</span>
-            <span class="stage-detail">{{ stage.detail }}</span>
-          </div>
+          <span class="stage-detail">{{ stage.detail }}</span>
         </div>
       </div>
 
@@ -255,9 +295,7 @@ onUnmounted(() => {
 .migration-overlay {
   position: fixed;
   inset: 0;
-  background:
-    radial-gradient(circle at 50% 18%, rgba(67, 145, 194, 0.2), transparent 42%),
-    linear-gradient(160deg, #182838 0%, #101a24 100%);
+  background: #101d29;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -265,15 +303,15 @@ onUnmounted(() => {
 }
 
 .migration-card {
-  width: min(620px, calc(100vw - 40px));
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
   padding: 34px;
   color: #f4f8fb;
-  background: rgba(16, 29, 41, 0.78);
-  border: 1px solid rgba(133, 192, 226, 0.18);
-  border-radius: 18px;
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(18px) saturate(120%);
-  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  background: #101d29;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .migration-header {
@@ -325,10 +363,15 @@ onUnmounted(() => {
 
 .migration-stage {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 9px;
+  justify-content: flex-start;
+  gap: 5px;
   min-width: 0;
-  padding: 10px;
+  min-height: 86px;
+  box-sizing: border-box;
+  padding: 10px 8px 8px;
+  text-align: center;
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.025);
@@ -380,24 +423,19 @@ onUnmounted(() => {
   background: rgba(80, 190, 125, 0.1);
 }
 
-.stage-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 .stage-name {
   font-size: 11px;
   font-weight: 650;
   color: rgba(255, 255, 255, 0.9);
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .stage-detail {
   font-size: 9px;
   line-height: 1.25;
   color: rgba(255, 255, 255, 0.42);
+  text-align: center;
 }
 
 .progress-section {
