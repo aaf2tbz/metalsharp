@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #define METALSHARP_DXMT_SURFACE_ID "metalsharp-dxmt-pr230-20260716-v1"
+#define METALSHARP_DXMT_SURFACE_VERSION "0.56.0-m12-isolated-surface-v2"
 
 /*
  * Verify the frozen PR-230 x64 surface and, when requested, promote it from
