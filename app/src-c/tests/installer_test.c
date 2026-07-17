@@ -45,7 +45,8 @@ int main(void) {
         assert(fclose(file) == 0);
     }
 
-    assert(metalsharp_m12_runtime_complete(temp, strlen(temp)));
+    /* Presence alone must never authenticate a graphics surface. */
+    assert(!metalsharp_m12_runtime_complete(temp, strlen(temp)));
     char missing[4096];
     snprintf(missing, sizeof(missing), "%s/%s", temp, required[0]);
     assert(unlink(missing) == 0);

@@ -1,4 +1,5 @@
 #include "installer.h"
+#include "runtime_surface.h"
 
 #include <errno.h>
 #include <limits.h>
@@ -142,7 +143,8 @@ bool metalsharp_m12_runtime_complete(const char* root, size_t root_len) {
             return false;
         }
     }
-    return true;
+    return metalsharp_reconcile_dxmt_surface(root_path, strlen(root_path)) &&
+           metalsharp_dxmt_surface_current(root_path, strlen(root_path));
 }
 
 bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, const char* relative_path,
@@ -168,5 +170,6 @@ bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, co
 
     char artifact[PATH_MAX];
     written = snprintf(artifact, sizeof(artifact), "%s/%s", root, relative);
-    return written >= 0 && (size_t)written < sizeof(artifact) && regular_nonempty_file(artifact);
+    return written >= 0 && (size_t)written < sizeof(artifact) && metalsharp_dxmt_surface_current(root, strlen(root)) &&
+           metalsharp_dxmt_artifact_current(root, strlen(root), relative, strlen(relative));
 }

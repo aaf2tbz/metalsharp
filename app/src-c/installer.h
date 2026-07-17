@@ -5,9 +5,9 @@
 #include <stddef.h>
 
 /*
- * C-owned runtime validation used by the shipped backend. Release payloads
- * are intentionally not pinned to compiler-output hashes: CI rebuilds M12,
- * while the bundle manifest authenticates the archive as a whole.
+ * C-owned runtime validation and migration used by the shipped backend.
+ * The frozen PR-230 surface is pinned by identity, size, and SHA-256; a
+ * successful check also proves both installed lanes and Wine mirrors agree.
  */
 bool metalsharp_m12_runtime_complete(const char* root, size_t root_len);
 bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, const char* relative_path,
