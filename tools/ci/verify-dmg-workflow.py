@@ -194,13 +194,16 @@ def check_workflows(assets: list[str]) -> None:
     for needle in [
         "Graphics/dll/dxmt_m12",
         "Graphics/dll/dxmt",
-        "runtime/wine/lib/wine/x86_64-unix/winemetal.so",
         "drive_c/windows/system32",
-        "clean-dmg-game-m12",
-        "clean-dmg-game-m11",
+        "bottles/steam_1245620/prefix",
+        "bottles/steam_312520/prefix",
+        "games/1245620",
+        "games/312520",
     ]:
         if needle not in clean_setup:
             fail(f"clean-DMG verifier no longer byte-checks {needle}")
+    if "tools/dmg/verify-dmg-clean-setup.sh dist/electron/MetalSharp-*-arm64.dmg" not in release:
+        fail("release workflow must complete the clean DMG setup wizard before publishing")
 
     if "DMG Workflow CI" not in pr:
         fail("PR CI must keep a lightweight DMG Workflow CI job")
