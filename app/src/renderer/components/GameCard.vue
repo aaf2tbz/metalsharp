@@ -378,8 +378,35 @@ const visibleD3DMetalActions = computed(() =>
   d3dmetalActions.value.filter((action) => action.id !== "play_d3dmetal"),
 );
 
+const pendingD3DMetalActions = computed(() =>
+  visibleD3DMetalActions.value.filter((action) => !d3dmetalActionReady(action)),
+);
+
+const d3dmetalStatusItems = computed(() => {
+  const state = d3dmetalState.value;
+  if (!state) return [];
+  return [
+    { label: "GPTK", ready: d3dmetalStateReady(state.gptk_payload) },
+    { label: "Rosetta", ready: d3dmetalStateReady(state.rosetta) },
+    { label: "VC++", ready: d3dmetalStateReady(state.x64_redist) },
+    { label: "Prefix", ready: d3dmetalStateReady(state.seed) },
+  ];
+});
+
+const unresolvedRuntimeComponents = computed(() =>
+  (runtimeReport.value?.components ?? []).filter((component) => !["installed", "ready"].includes(component.state)),
+);
+
+const runtimeComponentsVerified = computed(
+  () => (runtimeReport.value?.components.length ?? 0) > 0 && unresolvedRuntimeComponents.value.length === 0,
+);
+
+function d3dmetalStateReady(state: string) {
+  return ["installed", "updated", "seeded"].includes(state);
+}
+
 function d3dmetalActionReady(action: D3DMetalGptkAction) {
-  return ["installed", "updated", "seeded"].includes(action.state);
+  return d3dmetalStateReady(action.state);
 }
 
 function clearD3DMetalPanelState() {
@@ -1029,49 +1056,48 @@ function formatBytes(bytes: number): string {
               <button class="btn btn-secondary btn-sm" :disabled="bottleSaving" @click="saveBottleEdit">
                 {{ bottleSaving ? "Saving..." : "Save Bottle" }}
               </button>
-              <div v-if="defaultRule" class="doctor-check" :class="currentIsDefaultRule ? 'check-ok' : 'check-warn'">
-                <span class="doctor-check-state">{{ currentIsDefaultRule ? 'OK' : '~' }}</span>
-                <span class="doctor-check-label">Bottle</span>
-                <span class="doctor-check-detail">{{ currentIsDefaultRule ? 'Default' : 'Custom' }}</span>
+              <div v-if="defaultRule && !currentIsDefaultRule" class="compact-runtime-note">
+                Custom route
               </div>
-              <div v-if="isD3DMetalBottleSelected() && d3dmetalState" class="doctor-notes d3dmetal-actions">
-                <strong>D3DMetal GPTK</strong>
-                <div class="runtime-action-row">
-                  <span>Homebrew GPTK: {{ d3dmetalState.gptk_homebrew }} / Homebrew payload: {{ d3dmetalState.gptk_payload }}</span>
-                </div>
-                <div class="runtime-action-row">
-                  <span>VC runtimes: {{ d3dmetalState.x64_redist }} / Seed: {{ d3dmetalState.seed }}</span>
+              <div v-if="isD3DMetalBottleSelected() && d3dmetalState" class="compact-runtime-status">
+                <div class="runtime-status-chips" aria-label="D3DMetal runtime status">
+                  <span
+                    v-for="item in d3dmetalStatusItems"
+                    :key="item.label"
+                    class="runtime-status-chip"
+                    :class="item.ready ? 'ready' : 'attention'"
+                  >
+                    <span class="runtime-status-dot"></span>{{ item.label }}
+                  </span>
                 </div>
                 <div v-if="d3dmetalState.last_error" class="doctor-notes blocked">{{ d3dmetalState.last_error }}</div>
-                <div v-for="action in visibleD3DMetalActions" :key="action.id" class="runtime-action-row">
-                  <span>{{ action.detail }}</span>
-                  <span v-if="d3dmetalActionReady(action)" class="d3dmetal-ready-state">
-                    <span class="doctor-check-state">OK</span>
-                    <span>Ready</span>
-                  </span>
+                <div v-for="action in pendingD3DMetalActions" :key="action.id" class="runtime-action-row compact-repair-row">
+                  <span>{{ action.label }}</span>
                   <button
-                    v-else
                     class="btn btn-secondary btn-sm"
                     :disabled="d3dmetalLoading || !action.enabled"
                     @click="runD3DMetalPanelAction(action)"
                   >
-                    {{ d3dmetalLoading ? "Working..." : action.label }}
+                    {{ d3dmetalLoading ? "Working..." : "Fix" }}
                   </button>
                 </div>
               </div>
-              <div class="doctor-checks">
-                <div v-for="component in runtimeReport.components" :key="component.id" class="doctor-check" :class="componentStateClass(component.state)">
+              <div v-if="!isD3DMetalBottleSelected() && unresolvedRuntimeComponents.length" class="doctor-checks">
+                <div v-for="component in unresolvedRuntimeComponents" :key="component.id" class="doctor-check" :class="componentStateClass(component.state)">
                   <span class="doctor-check-state">{{ componentStateIcon(component.state) }}</span>
                   <span class="doctor-check-label">{{ bottleComponentLabel(component.id) }}</span>
                   <span class="doctor-check-detail">{{ component.state }}</span>
                 </div>
               </div>
-              <div v-if="runtimeReport.runtime_assets.length" class="doctor-notes">
-                {{ runtimeReport.runtime_assets.length }} runtime assets detected near this install.
+              <div
+                v-else-if="!isD3DMetalBottleSelected() && runtimeComponentsVerified"
+                class="compact-runtime-note"
+              >
+                Runtime verified
               </div>
               <div v-if="runtimeReport.actions.length && !isD3DMetalBottleSelected()" class="doctor-notes blocked">
                 <div v-for="action in runtimeReport.actions" :key="action.id" class="runtime-action-row">
-                  <span>{{ bottleComponentLabel(action.id) }}: {{ action.detail }}</span>
+                  <span>{{ bottleComponentLabel(action.id) }}</span>
                   <button
                     class="btn btn-secondary btn-sm"
                     :disabled="runtimeLoading"
@@ -1582,13 +1608,48 @@ function formatBytes(bytes: number): string {
 .runtime-action-row span {
   overflow-wrap: anywhere;
 }
-.d3dmetal-ready-state {
+.compact-runtime-status {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.runtime-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.runtime-status-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  color: var(--success);
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 10px;
   font-weight: 700;
-  white-space: nowrap;
+}
+.runtime-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.runtime-status-chip.ready .runtime-status-dot {
+  background: var(--success);
+}
+.runtime-status-chip.attention .runtime-status-dot {
+  background: var(--warning, #facc15);
+}
+.compact-repair-row {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.compact-runtime-note {
+  color: var(--text-dim);
+  font-size: 10px;
 }
 .bottle-edit-row {
   display: grid;
