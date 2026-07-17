@@ -64,13 +64,9 @@ int main(void) {
     char fixture[4096];
     char fixture_bin[4096];
     char archive[4096];
-    char agility[4096];
-    char extracting[4096];
     snprintf(fixture, sizeof(fixture), "%s-fixture", temp);
     snprintf(fixture_bin, sizeof(fixture_bin), "%s/build/native/bin/x64", fixture);
     snprintf(archive, sizeof(archive), "%s-agility.nupkg", temp);
-    snprintf(agility, sizeof(agility), "%s/agility/1.611.2", temp);
-    snprintf(extracting, sizeof(extracting), "%s.extracting", agility);
     mkdirs(fixture_bin);
     const char* const agility_files[] = {"D3D12Core.dll", "d3d12SDKLayers.dll"};
     for (size_t index = 0; index < sizeof(agility_files) / sizeof(agility_files[0]); ++index) {
@@ -81,20 +77,38 @@ int main(void) {
         assert(fwrite("agility", 1, 7, file) == 7);
         assert(fclose(file) == 0);
     }
-    mkdirs(extracting);
+    snprintf(command, sizeof(command), "cd '%s' && /usr/bin/zip -qr '%s' build", fixture, archive);
+    assert(system(command) == 0);
+    const char* const agility_versions[] = {
+        "1.4.10",          "1.600.10",        "1.602.4",         "1.606.4",         "1.608.3",
+        "1.610.4",         "1.611.2",         "1.613.3",         "1.614.1",         "1.615.1",
+        "1.616.1",         "1.618.5",         "1.619.3",         "1.700.10-preview", "1.706.4-preview",
+        "1.710.0-preview", "1.711.3-preview", "1.714.0-preview", "1.715.0-preview",  "1.716.1-preview",
+        "1.717.1-preview", "1.719.1-preview", "1.720.0-preview", "1.721.0-preview",
+    };
+    for (size_t index = 0; index < sizeof(agility_versions) / sizeof(agility_versions[0]); ++index) {
+        char agility[4096];
+        char installed[4096];
+        snprintf(agility, sizeof(agility), "%s/agility/%s", temp, agility_versions[index]);
+        assert(metalsharp_extract_agility_package(archive, strlen(archive), agility, strlen(agility)));
+        for (size_t file_index = 0; file_index < sizeof(agility_files) / sizeof(agility_files[0]); ++file_index) {
+            snprintf(installed, sizeof(installed), "%s/build/native/bin/x64/%s", agility,
+                     agility_files[file_index]);
+            assert(access(installed, R_OK) == 0);
+        }
+    }
+    char agility[4096];
+    char extracting[4096];
     char stale[4096];
+    snprintf(agility, sizeof(agility), "%s/agility/1.611.2", temp);
+    snprintf(extracting, sizeof(extracting), "%s.extracting", agility);
+    mkdirs(extracting);
     snprintf(stale, sizeof(stale), "%s/stale", extracting);
     FILE* stale_file = fopen(stale, "wb");
     assert(stale_file != NULL);
     assert(fwrite("stale", 1, 5, stale_file) == 5);
     assert(fclose(stale_file) == 0);
-
-    snprintf(command, sizeof(command), "cd '%s' && /usr/bin/zip -qr '%s' build", fixture, archive);
-    assert(system(command) == 0);
     assert(metalsharp_extract_agility_package(archive, strlen(archive), agility, strlen(agility)));
-    char installed[4096];
-    snprintf(installed, sizeof(installed), "%s/build/native/bin/x64/D3D12Core.dll", agility);
-    assert(access(installed, R_OK) == 0);
     assert(access(stale, F_OK) != 0);
     assert(!metalsharp_extract_agility_package("/missing", 8, agility, strlen(agility)));
 
