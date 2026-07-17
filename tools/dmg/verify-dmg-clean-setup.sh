@@ -44,7 +44,7 @@ curl -fsS -X POST "http://127.0.0.1:$PORT/setup/install-all" >/dev/null
 for _ in $(seq 1 300); do
   status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status", ""))' "$HOME_DIR/install_progress.json" 2>/dev/null || true)"
   [ "$status" = complete ] && break
-  if [ "$status" = failed ]; then
+  if [ "$status" = failed ] || [ "$status" = error ]; then
     cat "$HOME_DIR/install_progress.json" >&2
     exit 1
   fi
@@ -88,19 +88,16 @@ compare_tree() {
 compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt" "$HOME_DIR/runtime/wine/lib/dxmt"
 compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt_m12" "$HOME_DIR/runtime/wine/lib/dxmt_m12"
 
-# Wine's active loader mirrors must use the promoted M12 bridge, not a stale runtime copy.
-cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-unix/winemetal.so" \
-  "$HOME_DIR/runtime/wine/lib/wine/x86_64-unix/winemetal.so"
-cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-windows/winemetal.dll" \
-  "$HOME_DIR/runtime/wine/lib/wine/x86_64-windows/winemetal.dll"
+# M12 is intentionally isolated from lib/wine. Validate its active copies through
+# the bottle prefix and game-local route surfaces below.
 
 stage_test_bottle() {
   local appid="$1"
   local profile="$2"
   local executable="$3"
-  local prefix="$HOME_DIR/clean-dmg-prefix-$profile"
-  local game="$HOME_DIR/clean-dmg-game-$profile"
   local bottle="$HOME_DIR/bottles/steam_$appid"
+  local prefix="$bottle/prefix"
+  local game="$HOME_DIR/games/$appid"
   mkdir -p "$prefix" "$game" "$bottle"
   printf 'clean DMG direct launch probe\n' >"$game/$executable"
   python3 - "$bottle/bottle.json" "$appid" "$profile" "$prefix" "$game" <<'PY'
@@ -151,17 +148,17 @@ for entry in \
   d3d12.dll d3d11.dll d3d10core.dll dxgi.dll dxgi_dxmt.dll winemetal.dll nvapi64.dll nvngx.dll
 do
   cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-windows/$entry" \
-    "$HOME_DIR/clean-dmg-prefix-m12/drive_c/windows/system32/$entry"
+    "$HOME_DIR/bottles/steam_1245620/prefix/drive_c/windows/system32/$entry"
   cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-windows/$entry" \
-    "$HOME_DIR/clean-dmg-game-m12/$entry"
+    "$HOME_DIR/games/1245620/$entry"
 done
 for entry in d3d11.dll d3d10core.dll dxgi.dll dxgi_dxmt.dll winemetal.dll; do
   cmp "$EXTRACT_DIR/Graphics/dll/dxmt/x86_64-windows/$entry" \
-    "$HOME_DIR/clean-dmg-prefix-m11/drive_c/windows/system32/$entry"
+    "$HOME_DIR/bottles/steam_312520/prefix/drive_c/windows/system32/$entry"
   cmp "$EXTRACT_DIR/Graphics/dll/dxmt/x86_64-windows/$entry" \
-    "$HOME_DIR/clean-dmg-game-m11/$entry"
+    "$HOME_DIR/games/312520/$entry"
 done
-test ! -e "$HOME_DIR/clean-dmg-prefix-m11/drive_c/windows/system32/d3d12.dll"
-test ! -e "$HOME_DIR/clean-dmg-game-m11/d3d12.dll"
+test ! -e "$HOME_DIR/bottles/steam_312520/prefix/drive_c/windows/system32/d3d12.dll"
+test ! -e "$HOME_DIR/games/312520/d3d12.dll"
 
-echo "DMG clean setup verified: 15/15 steps, no fallback downloads, exact canonical, Wine-mirror, prefix, and game payloads."
+echo "DMG clean setup verified: 15/15 steps, no fallback downloads, exact canonical, prefix, and game payloads."

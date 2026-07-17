@@ -29,7 +29,7 @@ LDFLAGS := -arch arm64 -mmacosx-version-min=$(DEPLOYMENT_TARGET) -isysroot $(SDK
 BACKEND := $(OUT_DIR)/metalsharp-backend
 TEST_BIN := $(OUT_DIR)/metalsharp-backend-tests
 
-.PHONY: integrity backend test-binary installer-test surface-test policy-test bottle-deployment-test test smoke contract verify clean
+.PHONY: integrity backend graphics-archive-contract test-binary installer-test surface-test policy-test bottle-deployment-test test smoke contract verify clean
 integrity:
 	@test "$$(wc -l < manifests/runtime-sources.txt | tr -d ' ')" = 374
 	@test "$$(wc -l < manifests/test-sources.txt | tr -d ' ')" = 394
@@ -57,6 +57,13 @@ integrity:
 	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 5 maintained runtime, 4 maintained test units)."
 
 backend: $(BACKEND)
+
+graphics-archive-contract: $(BACKEND)
+	@strings "$(BACKEND)" | grep -q 'Graphics/dll/dxmt_m12/x86_64-windows/d3d12.dll'
+	@strings "$(BACKEND)" | grep -q 'Graphics/dll/dxmt_m12/x86_64-unix/winemetal.so'
+	@! strings "$(BACKEND)" | grep -q 'Graphics/dll/dxmt-m12/'
+	@echo "Backend graphics archive contract uses the canonical Graphics/dll/dxmt_m12 lane."
+
 test-binary: $(TEST_BIN)
 
 $(BACKEND): $(RUNTIME_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
@@ -117,7 +124,7 @@ contract: $(BACKEND)
 	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
 	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(BACKEND)"
 
-verify: integrity backend installer-test surface-test policy-test bottle-deployment-test test smoke contract
+verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test test smoke contract
 
 clean:
 	rm -rf build $(OUT_DIR)
