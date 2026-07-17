@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[2]
 C_ROOT = ROOT / "app/src-c/runtime/c"
 TEST_C_ROOT = ROOT / "app/src-c/tests/c"
 MODULES = ROOT / "app/src-c/manifests/backend-modules.txt"
+MAINTAINED = ROOT / "app/src-c/manifests/maintained-sources.txt"
+MAINTAINED_TESTS = ROOT / "app/src-c/manifests/maintained-test-sources.txt"
 
 
 def module_parts(module: str) -> list[str]:
@@ -71,14 +73,20 @@ def main() -> int:
             print(f"generated C retains forbidden Rust-era path: {label}", file=sys.stderr)
             return 1
 
+    maintained = [line.strip() for line in MAINTAINED.read_text().splitlines() if line.strip()]
+    maintained_tests = [line.strip() for line in MAINTAINED_TESTS.read_text().splitlines() if line.strip()]
     requirements = [
-        ((ROOT / "app/src-c/installer.c").is_file(), "app/src-c/installer.c"),
-        ("INSTALLER_OBJ" in makefile, "installer.c backend linkage"),
+        (set(maintained) == {"bottles.c", "installer.c", "launcher.c", "runtime_surface.c"},
+         "maintained C runtime manifest"),
+        ("tests/policy_test.c" in maintained_tests, "maintained bottle/launcher policy tests"),
+        ("MAINTAINED_OBJS" in makefile, "maintained C backend linkage"),
         ("metalsharp_m12_runtime_complete" in generated, "generated-to-native installer bridge"),
+        ("metalsharp_launcher_runtime_ready" in (ROOT / "app/src-c/installer.c").read_text(),
+         "generated bottle/launch readiness to maintained C policy bridge"),
     ]
     for present, label in requirements:
         if not present:
-            print(f"missing C installer ownership contract: {label}", file=sys.stderr)
+            print(f"missing maintained C ownership contract: {label}", file=sys.stderr)
             return 1
 
     # This C-only build includes ureq's native-tls connector, not Rustls. The

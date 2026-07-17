@@ -1,4 +1,6 @@
 #include "installer.h"
+#include "bottles.h"
+#include "launcher.h"
 #include "runtime_surface.h"
 
 #include <errno.h>
@@ -144,7 +146,7 @@ bool metalsharp_m12_runtime_complete(const char* root, size_t root_len) {
         }
     }
     return metalsharp_reconcile_dxmt_surface(root_path, strlen(root_path)) &&
-           metalsharp_dxmt_surface_current(root_path, strlen(root_path));
+           metalsharp_launcher_runtime_ready("m12", root_path, strlen(root_path));
 }
 
 bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, const char* relative_path,
@@ -170,6 +172,9 @@ bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, co
 
     char artifact[PATH_MAX];
     written = snprintf(artifact, sizeof(artifact), "%s/%s", root, relative);
-    return written >= 0 && (size_t)written < sizeof(artifact) && metalsharp_dxmt_surface_current(root, strlen(root)) &&
+    const MetalsharpBottlePolicy* policy = metalsharp_bottle_policy("m12");
+    return written >= 0 && (size_t)written < sizeof(artifact) &&
+           metalsharp_bottle_artifact_required(policy, relative) &&
+           metalsharp_launcher_runtime_ready("m12", root, strlen(root)) &&
            metalsharp_dxmt_artifact_current(root, strlen(root), relative, strlen(relative));
 }

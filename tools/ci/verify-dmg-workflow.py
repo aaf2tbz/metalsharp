@@ -137,6 +137,10 @@ def check_bundle_scripts() -> None:
         "source-metalsharp-bundle-manifest.tsv",
         "Refreshing stale or unlocked bundle",
         "metalsharp-bundle-manifest.tsv",
+        "verify-bundle-manifest.py",
+        "GRAPHICS_SHA_BEFORE",
+        "verify-dxmt-surfaces.py",
+        "Frozen graphics bundle changed during release staging",
     ]:
         if needle not in create_bundles:
             fail(f"create-bundles.sh no longer performs {needle}")
@@ -155,6 +159,15 @@ def check_bundle_scripts() -> None:
     stage_bundles = read("tools/dmg/stage-release-bundles.sh")
     if "asset-manifest.tsv" not in stage_bundles or "tar --use-compress-program=unzstd" not in stage_bundles:
         fail("stage-release-bundles.sh no longer stages bundle manifest archives")
+    if "verify-dxmt-surfaces.py" not in stage_bundles:
+        fail("stage-release-bundles.sh must byte-verify the frozen DXMT surface before extraction")
+    for forbidden in [
+        "repair_graphics_m12_bundle",
+        "METALSHARP_REPAIR_GRAPHICS_BUNDLE",
+        "METALSHARP_DXMT_M12_ROOT",
+    ]:
+        if forbidden in create_bundles:
+            fail(f"create-bundles.sh must not mutate the frozen graphics bundle: {forbidden}")
 
 
 def check_workflows(assets: list[str]) -> None:
@@ -199,7 +212,6 @@ def check_workflows(assets: list[str]) -> None:
         "Publish Developer SDK Bundle",
         "Publish developer SDK package",
         "Publish complete release bundle set",
-        "Repair split bundles with staged M12 runtime",
         "Build DMG",
         "Check Apple signing credentials",
         "Verify Apple notarization",
@@ -222,22 +234,19 @@ def check_workflows(assets: list[str]) -> None:
         )
         if publish_path not in release:
             fail(f"release workflow no longer publishes complete bundle asset: {publish_path}")
-    for required in [
-        "METALSHARP_DXMT_M12_ROOT=\"$PWD/dist/dxmt_m12\"",
-        "dist/developer-sdk/metalsharp-bundle-manifest.tsv",
-    ]:
+    for required in ["dist/developer-sdk/metalsharp-bundle-manifest.tsv"]:
         if required not in release:
-            fail(f"release workflow missing bundle refresh contract: {required}")
-    for repeated in [
+            fail(f"release workflow missing immutable bundle contract: {required}")
+    for forbidden in [
         "Prepare release Wine runtime for M12 build",
         "Install DXMT build tools",
         "Build staged M12 DXMT runtime",
-        'METALSHARP_DXMT_M12_ROOT="$PWD/dist/dxmt_m12"',
+        "prepare-dxmt-x86-llvm15.sh",
+        "stage-dxmt-runtime.py",
+        "METALSHARP_DXMT_M12_ROOT",
     ]:
-        if release.count(repeated) != 2:
-            fail(f"developer SDK and DMG jobs must both perform the release bundle stage: {repeated}")
-    if "METALSHARP_REPAIR_BUNDLES=0" in release:
-        fail("release workflow must repair bundles in both developer SDK and DMG jobs")
+        if forbidden in release:
+            fail(f"release workflow must package the frozen DXMT surface without rebuilding it: {forbidden}")
     for required in ["Build host runtime ABI", "make -C app/src-c verify"]:
         if required not in release:
             fail(f"release workflow must preserve the v0.45.5 build shape with the C backend: {required}")

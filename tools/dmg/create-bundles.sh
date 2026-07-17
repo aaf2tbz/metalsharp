@@ -10,7 +10,6 @@ REPO="${METALSHARP_BUNDLE_REPO:-aaf2tbz/metalsharp}"
 MANIFEST="$PROJECT_ROOT/tools/bundles/asset-manifest.tsv"
 REMOTE_MANIFEST="$OUT_DIR/source-metalsharp-bundle-manifest.tsv"
 REPAIR_BUNDLES="${METALSHARP_REPAIR_BUNDLES:-1}"
-REPAIR_GRAPHICS="${METALSHARP_REPAIR_GRAPHICS_BUNDLE:-$REPAIR_BUNDLES}"
 REPAIR_ASSETS="${METALSHARP_REPAIR_ASSETS_BUNDLE:-$REPAIR_BUNDLES}"
 REPAIR_RUNTIME="${METALSHARP_REPAIR_RUNTIME_BUNDLE:-$REPAIR_BUNDLES}"
 SKIP_DEVELOPER_SDK="${METALSHARP_SKIP_DEVELOPER_SDK_BUNDLE:-0}"
@@ -39,31 +38,6 @@ download_asset() {
   curl -fL --retry 3 -o "$dest" "https://github.com/$REPO/releases/download/$RELEASE_TAG/$asset"
   python3 "$PROJECT_ROOT/tools/bundles/verify-bundle-manifest.py" \
     --bundle-dir "$BUNDLE_DIR" --manifest "$REMOTE_MANIFEST" "$asset"
-}
-
-repair_graphics_m12_bundle() {
-  local archive="$BUNDLE_DIR/metalsharp-graphics-dll.tar.zst"
-  local m12_root="${METALSHARP_DXMT_M12_ROOT:-$HOME/.metalsharp/runtime/wine/lib/dxmt_m12}"
-  if [ ! -s "$archive" ] || [ ! -d "$m12_root/x86_64-windows" ] || [ ! -d "$m12_root/x86_64-unix" ]; then
-    return 0
-  fi
-
-  local tmp root
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/metalsharp-graphics-m12.XXXXXX")"
-  root="$tmp/root"
-  mkdir -p "$root"
-  tar --use-compress-program=unzstd -xf "$archive" -C "$root"
-  mkdir -p "$root/Graphics/dll/dxmt-m12/x86_64-unix" "$root/Graphics/dll/dxmt-m12/x86_64-windows"
-  cp -R -p "$m12_root/x86_64-unix/." "$root/Graphics/dll/dxmt-m12/x86_64-unix/"
-  cp -R -p "$m12_root/x86_64-windows/." "$root/Graphics/dll/dxmt-m12/x86_64-windows/"
-  (
-    cd "$root"
-    tar -cf "$tmp/metalsharp-graphics-dll.tar" Graphics
-  )
-  zstd -q -19 -T0 -f "$tmp/metalsharp-graphics-dll.tar" -o "$archive"
-  chmod 0644 "$archive"
-  rm -rf "$tmp"
-  echo "repaired graphics M12 payload: $archive from $m12_root"
 }
 
 repair_assets_fnalibs_bundle() {
@@ -118,9 +92,10 @@ while IFS=$'\t' read -r asset _root _platforms _notes; do
   download_asset "$asset" "$BUNDLE_DIR/$asset"
 done < "$MANIFEST"
 
-if [ "$REPAIR_GRAPHICS" = "1" ]; then
-  repair_graphics_m12_bundle
-fi
+GRAPHICS_ARCHIVE="$BUNDLE_DIR/metalsharp-graphics-dll.tar.zst"
+GRAPHICS_SHA_BEFORE="$(shasum -a 256 "$GRAPHICS_ARCHIVE" | awk '{print $1}')"
+GRAPHICS_SIZE_BEFORE="$(wc -c < "$GRAPHICS_ARCHIVE" | tr -d ' ')"
+
 if [ "$REPAIR_ASSETS" = "1" ]; then
   repair_assets_fnalibs_bundle
 fi
@@ -130,9 +105,18 @@ if [ "$REPAIR_RUNTIME" = "1" ]; then
     --host-dir "$PROJECT_ROOT/app/native/host" \
     --backend "$PROJECT_ROOT/app/build/c-backend/metalsharp-backend"
 fi
-if [ "$REPAIR_GRAPHICS" != "1" ] && [ "$REPAIR_ASSETS" != "1" ] && [ "$REPAIR_RUNTIME" != "1" ]; then
+if [ "$REPAIR_ASSETS" != "1" ] && [ "$REPAIR_RUNTIME" != "1" ]; then
   echo "bundle repair disabled; using verified release bundles as downloaded"
 fi
+
+GRAPHICS_SHA_AFTER="$(shasum -a 256 "$GRAPHICS_ARCHIVE" | awk '{print $1}')"
+GRAPHICS_SIZE_AFTER="$(wc -c < "$GRAPHICS_ARCHIVE" | tr -d ' ')"
+if [ "$GRAPHICS_SHA_BEFORE" != "$GRAPHICS_SHA_AFTER" ] || [ "$GRAPHICS_SIZE_BEFORE" != "$GRAPHICS_SIZE_AFTER" ]; then
+  echo "Frozen graphics bundle changed during release staging" >&2
+  exit 1
+fi
+python3 "$PROJECT_ROOT/tools/bundles/verify-dxmt-surfaces.py" --archive "$GRAPHICS_ARCHIVE"
+echo "VERIFIED: frozen graphics bundle preserved byte-for-byte ($GRAPHICS_SHA_AFTER)"
 
 VERIFY_ARGS=(--bundle-dir "$BUNDLE_DIR" --require mac)
 if [ "$SKIP_DEVELOPER_SDK" = "1" ]; then
