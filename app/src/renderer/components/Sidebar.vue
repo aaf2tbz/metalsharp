@@ -175,7 +175,7 @@ const navItems: NavItem[] = [
   color: var(--sidebar-text);
   cursor: pointer;
   padding: 4px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -268,13 +268,12 @@ const navItems: NavItem[] = [
   border-color: var(--border);
 }
 .sidebar-nav-item.active {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 56%), var(--sidebar-active);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 60%), var(--sidebar-active);
   color: var(--sidebar-text-active);
-  border-color: rgba(95, 183, 232, 0.32);
+  border-color: rgba(95, 183, 232, 0.18);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 0 18px rgba(95, 183, 232, 0.08),
-    0 0 0 1px rgba(95, 183, 232, 0.04);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 12px rgba(95, 183, 232, 0.04);
 }
 .sidebar-nav-item.active::before,
 .sidebar-nav-item.active::after {
@@ -288,18 +287,18 @@ const navItems: NavItem[] = [
   background:
     linear-gradient(90deg, transparent 0%, rgba(130, 219, 255, 0.34) 48%, transparent 100%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 64%);
-  opacity: 0.26;
-  filter: blur(9px);
+  opacity: 0.12;
+  filter: blur(12px);
   transform: translateX(-64%);
   animation: sidebar-active-sheen 7.5s ease-in-out infinite;
 }
 .sidebar-nav-item.active::after {
   inset: 0;
-  border: 1px solid rgba(122, 210, 255, 0.2);
+  border: 1px solid rgba(122, 210, 255, 0.1);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
-    inset 0 0 14px rgba(95, 183, 232, 0.08);
-  opacity: 0.72;
+    inset 0 0 0 1px rgba(255, 255, 255, 0.025),
+    inset 0 0 10px rgba(95, 183, 232, 0.04);
+  opacity: 0.48;
 }
 
 .sidebar-nav-icon {
@@ -323,7 +322,7 @@ const navItems: NavItem[] = [
     opacity: 0;
   }
   42% {
-    opacity: 0.28;
+    opacity: 0.14;
   }
   68%,
   100% {
@@ -333,23 +332,22 @@ const navItems: NavItem[] = [
 }
 
 :global(:root[data-theme="light"] .sidebar-nav-item.active) {
-  border-color: rgba(52, 127, 186, 0.26);
+  border-color: rgba(52, 127, 186, 0.16);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 0 18px rgba(52, 127, 186, 0.06),
-    0 0 0 1px rgba(52, 127, 186, 0.03);
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    inset 0 0 12px rgba(52, 127, 186, 0.035);
 }
 :global(:root[data-theme="light"] .sidebar-nav-item.active::before) {
   background:
     linear-gradient(90deg, transparent 0%, rgba(52, 127, 186, 0.2) 48%, transparent 100%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 64%);
-  opacity: 0.22;
+  opacity: 0.12;
 }
 :global(:root[data-theme="light"] .sidebar-nav-item.active::after) {
-  border-color: rgba(52, 127, 186, 0.16);
+  border-color: rgba(52, 127, 186, 0.1);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
-    inset 0 0 14px rgba(52, 127, 186, 0.05);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 0 10px rgba(52, 127, 186, 0.03);
 }
 
 :global(:root[data-theme="developer"] .sidebar::before) {
@@ -359,26 +357,25 @@ const navItems: NavItem[] = [
 }
 
 :global(:root[data-theme="developer"] .sidebar-nav-item.active) {
-  border-color: rgba(185, 255, 77, 0.48);
+  border-color: rgba(185, 255, 77, 0.24);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    inset 0 0 22px rgba(255, 46, 247, 0.12),
-    0 0 0 1px rgba(0, 245, 255, 0.16),
-    0 0 24px rgba(185, 255, 77, 0.12);
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 0 0 14px rgba(255, 46, 247, 0.06),
+    0 0 0 1px rgba(0, 245, 255, 0.07);
 }
 
 :global(:root[data-theme="developer"] .sidebar-nav-item.active::before) {
   background:
     linear-gradient(90deg, transparent 0%, rgba(185, 255, 77, 0.45) 45%, rgba(0, 245, 255, 0.28) 52%, transparent 100%),
     linear-gradient(180deg, rgba(255, 46, 247, 0.16), transparent 64%);
-  opacity: 0.34;
+  opacity: 0.18;
 }
 
 :global(:root[data-theme="developer"] .sidebar-nav-item.active::after) {
-  border-color: rgba(0, 245, 255, 0.32);
+  border-color: rgba(0, 245, 255, 0.18);
   box-shadow:
-    inset 0 0 0 1px rgba(185, 255, 77, 0.14),
-    inset 0 0 18px rgba(255, 46, 247, 0.1);
+    inset 0 0 0 1px rgba(185, 255, 77, 0.07),
+    inset 0 0 12px rgba(255, 46, 247, 0.05);
 }
 
 @media (prefers-reduced-motion: reduce) {
