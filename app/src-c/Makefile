@@ -9,6 +9,7 @@ NATIVE_OBJS := $(shell awk '{print "./" $$0}' manifests/native-objects.txt)
 MAINTAINED_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-sources.txt)
 MAINTAINED_TEST_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-test-sources.txt)
 LAUNCH_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.03.rcgu.c
+MIGRATION_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.08.rcgu.c
 RUNTIME_OBJS := $(patsubst ./runtime/c/%.c,build/runtime/%.o,$(RUNTIME_SRCS))
 TEST_OBJS := $(patsubst ./tests/c/%.c,build/tests/%.o,$(TEST_SRCS))
 MAINTAINED_OBJS := $(patsubst ./%.c,build/maintained/%.o,$(MAINTAINED_SRCS))
@@ -31,7 +32,7 @@ integrity:
 	@test "$$(wc -l < manifests/runtime-sources.txt | tr -d ' ')" = 374
 	@test "$$(wc -l < manifests/test-sources.txt | tr -d ' ')" = 394
 	@test "$$(wc -l < manifests/native-objects.txt | tr -d ' ')" = 38
-	@test "$$(wc -l < manifests/maintained-sources.txt | tr -d ' ')" = 4
+	@test "$$(wc -l < manifests/maintained-sources.txt | tr -d ' ')" = 5
 	@test "$$(wc -l < manifests/maintained-test-sources.txt | tr -d ' ')" = 4
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/runtime-sources.txt
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/test-sources.txt
@@ -40,9 +41,10 @@ integrity:
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/maintained-test-sources.txt
 	@grep -q 'metalsharp_launcher_preflight(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_launcher_prepare_eac(_arg0' "$(LAUNCH_ADAPTER_SRC)"
+	@grep -q 'metalsharp_migration_refresh_saved_bottles()' "$(MIGRATION_ADAPTER_SRC)"
 	@python3 ../../tools/c-backend/verify-module-alignment.py
 	@python3 ../../tools/c-backend/verify-version-alignment.py
-	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 4 maintained runtime, 4 maintained test units)."
+	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 5 maintained runtime, 4 maintained test units)."
 
 backend: $(BACKEND)
 test-binary: $(TEST_BIN)
@@ -84,9 +86,9 @@ $(POLICY_TEST): bottles.c bottles.h launcher.c launcher.h runtime_surface.c runt
 policy-test: $(POLICY_TEST)
 	"$(CURDIR)/$(POLICY_TEST)"
 
-$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h launcher.c launcher.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
+$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h launcher.c launcher.h migration.c migration.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) bottles.c launcher.c runtime_surface.c tests/bottle_deployment_test.c -o $@
+	$(CC) $(CFLAGS) bottles.c launcher.c migration.c runtime_surface.c tests/bottle_deployment_test.c -o $@
 
 bottle-deployment-test: $(BOTTLE_DEPLOYMENT_TEST) $(DXMT_SURFACE_TEST)
 	"$(CURDIR)/../../tools/bundles/test-bottle-deployment.sh"

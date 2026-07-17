@@ -1,5 +1,6 @@
 #include "../bottles.h"
 #include "../launcher.h"
+#include "../migration.h"
 #include "../runtime_surface.h"
 
 #include <assert.h>
@@ -242,8 +243,51 @@ int main(int argc, char** argv) {
     assert_contains(path, "\"launch_mode\": \"direct_executable\"");
     assert_contains(path, "\"steam_client\": \"background\"");
 
+    /* Update migration preserves bottle manifests and prefixes, then refreshes
+       every managed DLL set from the newly installed surface. */
+    snprintf(path, sizeof(path), "%s/drive_c/windows/system32/d3d12.dll", prefixes[0]);
+    write_text(path, "old-prefix-surface");
+    snprintf(path, sizeof(path), "%s/d3d12.dll", games[1]);
+    write_text(path, "old-game-surface");
+    snprintf(path, sizeof(path), "%s/steam_%u/dxmt-deployment.json", bottles, profiles[0].appid);
+    replace_text(path, m12_policy->surface_id, "stale-surface");
+
+    char unmanaged[PATH_MAX], unmanaged_manifest[PATH_MAX];
+    snprintf(unmanaged, sizeof(unmanaged), "%s/custom-gptk", bottles);
+    mkdir_required(unmanaged);
+    snprintf(unmanaged_manifest, sizeof(unmanaged_manifest), "%s/bottle.json", unmanaged);
+    write_text(unmanaged_manifest, "{\"runtime_profile\":\"d3dmetal\"}\n");
+
+    MetalsharpMigrationBottleSummary migration = {0};
+    assert(setenv("METALSHARP_TEST_BOTTLE_FAIL_AFTER_PROMOTION", "1", 1) == 0);
+    assert(!metalsharp_migration_refresh_bottles(home, strlen(home), &migration));
+    assert(migration.failed == 5);
+    snprintf(path, sizeof(path), "%s/logs/migration-bottle-refresh-latest.json", home);
+    assert_contains(path, "\"status\": \"needs_repair\"");
+    assert(unsetenv("METALSHARP_TEST_BOTTLE_FAIL_AFTER_PROMOTION") == 0);
+
+    migration = (MetalsharpMigrationBottleSummary){0};
+    assert(metalsharp_migration_refresh_bottles(home, strlen(home), &migration));
+    assert(migration.discovered == 6);
+    assert(migration.managed == 5);
+    assert(migration.refreshed == 5);
+    assert(migration.skipped == 1);
+    assert(migration.failed == 0);
+    snprintf(path, sizeof(path), "%s/steam_%u/dxmt-deployment.json", bottles, profiles[0].appid);
+    assert_contains(path, expected_surface);
+    snprintf(path, sizeof(path), "%s/drive_c/windows/system32/d3d12.dll", prefixes[0]);
+    char refreshed[16384];
+    read_text(path, refreshed, sizeof(refreshed));
+    assert(strstr(refreshed, "old-prefix-surface") == NULL);
+    snprintf(path, sizeof(path), "%s/d3d12.dll", games[1]);
+    read_text(path, refreshed, sizeof(refreshed));
+    assert(strstr(refreshed, "old-game-surface") == NULL);
+    snprintf(path, sizeof(path), "%s/logs/migration-bottle-refresh-latest.json", home);
+    assert_contains(path, "\"status\": \"ready\"");
+    assert_contains(path, "\"refreshed\": 5");
+
     puts("DXMT M12, M11, M10, M11(32), and M10(32) deployment/launch conformance passed, including saved "
-         "M11-to-M12 promotion, mixed PE/Unix, cross-architecture, missing-sidecar, partial-copy, stale-receipt, "
-         "EAC, and rollback negatives.");
+         "M11-to-M12 promotion, migration-wide bottle refresh, mixed PE/Unix, cross-architecture, missing-sidecar, "
+         "partial-copy, stale-receipt, EAC, and rollback negatives.");
     return 0;
 }

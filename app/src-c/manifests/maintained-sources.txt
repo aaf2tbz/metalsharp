@@ -1,4 +1,5 @@
 bottles.c
 installer.c
 launcher.c
+migration.c
 runtime_surface.c

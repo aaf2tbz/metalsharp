@@ -76,13 +76,15 @@ def main() -> int:
     maintained = [line.strip() for line in MAINTAINED.read_text().splitlines() if line.strip()]
     maintained_tests = [line.strip() for line in MAINTAINED_TESTS.read_text().splitlines() if line.strip()]
     requirements = [
-        (set(maintained) == {"bottles.c", "installer.c", "launcher.c", "runtime_surface.c"},
+        (set(maintained) == {"bottles.c", "installer.c", "launcher.c", "migration.c", "runtime_surface.c"},
          "maintained C runtime manifest"),
         ("tests/policy_test.c" in maintained_tests, "maintained bottle/launcher policy tests"),
         ("MAINTAINED_OBJS" in makefile, "maintained C backend linkage"),
         ("metalsharp_m12_runtime_complete" in generated, "generated-to-native installer bridge"),
         ("metalsharp_launcher_runtime_ready" in (ROOT / "app/src-c/installer.c").read_text(),
          "generated bottle/launch readiness to maintained C policy bridge"),
+        ("metalsharp_migration_refresh_saved_bottles" in generated,
+         "generated migration to maintained bottle refresh bridge"),
     ]
     for present, label in requirements:
         if not present:
