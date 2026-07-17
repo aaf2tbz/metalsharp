@@ -117,9 +117,23 @@ def check_updater_handoff() -> None:
             fail(f"Electron migration handoff is missing: {needle}")
 
     migration_view = read("app/src/renderer/components/MigrationView.vue")
-    for needle in ["pollInFlight", "Retry Migration", "Reconnecting to the migration backend"]:
+    for needle in [
+        "pollInFlight",
+        "Retry Migration",
+        "Reconnecting to the migration backend",
+        "Update Prefixes",
+        "Required Wine prefix changes",
+    ]:
         if needle not in migration_view:
             fail(f"migration wizard recovery is missing: {needle}")
+
+    migration_runtime = read(
+        "app/src-c/runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.08.rcgu.c"
+    )
+    if "Required Wine prefix updates complete; saved bottle DLLs unchanged." not in migration_runtime:
+        fail("migration does not report the prefix-only update contract")
+    if "if (!metalsharp_migration_refresh_saved_bottles())" in migration_runtime:
+        fail("migration still rewrites saved bottle DLLs")
 
     native_migrator = read("tools/migrator/main.m")
     if "METALSHARP_PORT" not in native_migrator or "127.0.0.1:9274" in native_migrator:
