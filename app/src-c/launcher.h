@@ -21,4 +21,12 @@ bool metalsharp_launch_policy_valid(const MetalsharpLaunchPolicy* policy);
 bool metalsharp_launcher_reserved_env_key(const char* pipeline_id, const char* key);
 bool metalsharp_launcher_runtime_ready(const char* pipeline_id, const char* m12_root, size_t m12_root_len);
 
+/* PipelineId discriminants are passed by the narrow generated-C launch adapter. */
+bool metalsharp_launcher_preflight(unsigned int appid, unsigned char pipeline_code, const char* prefix,
+                                   size_t prefix_len, const char* working_directory, size_t working_directory_len,
+                                   const char* executable, size_t executable_len);
+
+/* Own the idempotent direct-executable preparation for mapped EAC titles. */
+bool metalsharp_launcher_prepare_eac(unsigned int appid, const char* game_directory, size_t game_directory_len);
+
 #endif

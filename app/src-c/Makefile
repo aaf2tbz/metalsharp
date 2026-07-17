@@ -8,6 +8,7 @@ TEST_SRCS := $(shell awk '{print "./" $$0}' manifests/test-sources.txt)
 NATIVE_OBJS := $(shell awk '{print "./" $$0}' manifests/native-objects.txt)
 MAINTAINED_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-sources.txt)
 MAINTAINED_TEST_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-test-sources.txt)
+LAUNCH_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.03.rcgu.c
 RUNTIME_OBJS := $(patsubst ./runtime/c/%.c,build/runtime/%.o,$(RUNTIME_SRCS))
 TEST_OBJS := $(patsubst ./tests/c/%.c,build/tests/%.o,$(TEST_SRCS))
 MAINTAINED_OBJS := $(patsubst ./%.c,build/maintained/%.o,$(MAINTAINED_SRCS))
@@ -37,6 +38,8 @@ integrity:
 	@while IFS= read -r object; do file "$$object" | grep -q arm64; done < manifests/native-objects.txt
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/maintained-sources.txt
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/maintained-test-sources.txt
+	@grep -q 'metalsharp_launcher_preflight(_arg0' "$(LAUNCH_ADAPTER_SRC)"
+	@grep -q 'metalsharp_launcher_prepare_eac(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@python3 ../../tools/c-backend/verify-module-alignment.py
 	@python3 ../../tools/c-backend/verify-version-alignment.py
 	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 4 maintained runtime, 4 maintained test units)."
@@ -81,9 +84,9 @@ $(POLICY_TEST): bottles.c bottles.h launcher.c launcher.h runtime_surface.c runt
 policy-test: $(POLICY_TEST)
 	"$(CURDIR)/$(POLICY_TEST)"
 
-$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
+$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h launcher.c launcher.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) bottles.c runtime_surface.c tests/bottle_deployment_test.c -o $@
+	$(CC) $(CFLAGS) bottles.c launcher.c runtime_surface.c tests/bottle_deployment_test.c -o $@
 
 bottle-deployment-test: $(BOTTLE_DEPLOYMENT_TEST) $(DXMT_SURFACE_TEST)
 	"$(CURDIR)/../../tools/bundles/test-bottle-deployment.sh"
