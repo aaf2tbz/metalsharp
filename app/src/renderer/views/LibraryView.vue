@@ -50,7 +50,6 @@ const filter = ref<"all" | "installed" | "not_installed">("all");
 const runningAppId = ref<number | null>(null);
 const runningPid = ref<number | null>(null);
 const launchingAppId = ref<number | null>(null);
-const expandedAppId = ref<number | null>(null);
 let artworkRetryTimer: number | null = null;
 const artworkRetryRequestedAppIds = new Set<number>();
 
@@ -127,10 +126,6 @@ function applyFilter() {
     games = games.filter((g) => g.name.toLowerCase().includes(q));
   }
   filteredGames.value = [...games].sort(gameNameSort);
-}
-
-function onCardExpanded(appid: number, open: boolean) {
-  expandedAppId.value = open ? appid : null;
 }
 
 function requestArtworkRetry(appid: number) {
@@ -356,10 +351,8 @@ watch([library, search, filter], () => {
     <div v-else class="game-grid">
       <div
         v-for="game in filteredGames"
-        v-show="expandedAppId === null || expandedAppId === game.appid"
         :key="game.appid"
         class="game-grid-item"
-        :class="{ 'is-expanded': expandedAppId === game.appid }"
       >
         <GameCard
           :game="game"
@@ -372,7 +365,6 @@ watch([library, search, filter], () => {
           @stop="stopGame(game)"
           @install="installGame(game)"
           @uninstall="uninstallGame(game)"
-          @expanded="onCardExpanded"
           @artwork-missing="requestArtworkRetry"
         />
       </div>
@@ -583,12 +575,6 @@ watch([library, search, filter], () => {
 
 .game-grid-item {
   min-width: 0;
-}
-
-.game-grid-item.is-expanded {
-  grid-column: 1 / -1;
-  width: min(100%, 920px);
-  justify-self: center;
 }
 
 .empty-state {
