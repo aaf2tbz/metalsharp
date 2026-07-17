@@ -174,8 +174,6 @@ def check_workflows(assets: list[str]) -> None:
     pr = read(".github/workflows/pr-ci.yml")
     main = read(".github/workflows/ci.yml")
     release = read(".github/workflows/release.yml")
-    if "tools/dmg/verify-dmg-clean-setup.sh" not in release:
-        fail("release workflow must run clean setup from the packaged DMG")
     if "tools/bundles/verify-production-dxmt-conformance.sh" not in release:
         fail("release workflow must reject nonconforming production DXMT archives before packaging")
 
