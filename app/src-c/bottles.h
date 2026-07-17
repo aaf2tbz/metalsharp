@@ -29,4 +29,11 @@ bool metalsharp_bottle_policy_valid(const MetalsharpBottlePolicy* policy);
 bool metalsharp_bottle_artifact_required(const MetalsharpBottlePolicy* policy, const char* relative_path);
 bool metalsharp_bottle_runtime_ready(const char* profile_id, const char* m12_root, size_t m12_root_len);
 
+/*
+ * Reconcile the DXMT deployment bound to a freshly saved bottle manifest.
+ * On failure, promoted files are rolled back and the persisted bottle health
+ * is changed to needs_repair before this function returns false.
+ */
+bool metalsharp_reconcile_bottle_manifest(const char* manifest_path, size_t manifest_path_len);
+
 #endif

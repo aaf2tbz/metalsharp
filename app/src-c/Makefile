@@ -14,6 +14,7 @@ MAINTAINED_OBJS := $(patsubst ./%.c,build/maintained/%.o,$(MAINTAINED_SRCS))
 INSTALLER_TEST := $(OUT_DIR)/metalsharp-installer-tests
 DXMT_SURFACE_TEST := $(OUT_DIR)/metalsharp-dxmt-surface-tests
 POLICY_TEST := $(OUT_DIR)/metalsharp-policy-tests
+BOTTLE_DEPLOYMENT_TEST := $(OUT_DIR)/metalsharp-bottle-deployment-tests
 CFLAGS := -std=c11 -w -Werror=implicit-function-declaration -fwrapv -fno-strict-aliasing \
   -funwind-tables -fno-stack-protector -ffunction-sections -fdata-sections \
   -fno-optimize-sibling-calls -fPIC -mno-outline-atomics -O1 -arch arm64 \
@@ -24,13 +25,13 @@ LDFLAGS := -arch arm64 -mmacosx-version-min=$(DEPLOYMENT_TARGET) -isysroot $(SDK
 BACKEND := $(OUT_DIR)/metalsharp-backend
 TEST_BIN := $(OUT_DIR)/metalsharp-backend-tests
 
-.PHONY: integrity backend test-binary installer-test surface-test policy-test test smoke contract verify clean
+.PHONY: integrity backend test-binary installer-test surface-test policy-test bottle-deployment-test test smoke contract verify clean
 integrity:
 	@test "$$(wc -l < manifests/runtime-sources.txt | tr -d ' ')" = 374
 	@test "$$(wc -l < manifests/test-sources.txt | tr -d ' ')" = 394
 	@test "$$(wc -l < manifests/native-objects.txt | tr -d ' ')" = 38
 	@test "$$(wc -l < manifests/maintained-sources.txt | tr -d ' ')" = 4
-	@test "$$(wc -l < manifests/maintained-test-sources.txt | tr -d ' ')" = 3
+	@test "$$(wc -l < manifests/maintained-test-sources.txt | tr -d ' ')" = 4
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/runtime-sources.txt
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/test-sources.txt
 	@while IFS= read -r object; do file "$$object" | grep -q arm64; done < manifests/native-objects.txt
@@ -38,7 +39,7 @@ integrity:
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/maintained-test-sources.txt
 	@python3 ../../tools/c-backend/verify-module-alignment.py
 	@python3 ../../tools/c-backend/verify-version-alignment.py
-	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 4 maintained runtime, 3 maintained test units)."
+	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 4 maintained runtime, 4 maintained test units)."
 
 backend: $(BACKEND)
 test-binary: $(TEST_BIN)
@@ -80,6 +81,13 @@ $(POLICY_TEST): bottles.c bottles.h launcher.c launcher.h runtime_surface.c runt
 policy-test: $(POLICY_TEST)
 	"$(CURDIR)/$(POLICY_TEST)"
 
+$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) bottles.c runtime_surface.c tests/bottle_deployment_test.c -o $@
+
+bottle-deployment-test: $(BOTTLE_DEPLOYMENT_TEST) $(DXMT_SURFACE_TEST)
+	"$(CURDIR)/../../tools/bundles/test-bottle-deployment.sh"
+
 build/tests/%.o: tests/c/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -94,7 +102,7 @@ contract: $(BACKEND)
 	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
 	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(BACKEND)"
 
-verify: integrity backend installer-test surface-test policy-test test smoke contract
+verify: integrity backend installer-test surface-test policy-test bottle-deployment-test test smoke contract
 
 clean:
 	rm -rf build $(OUT_DIR)
