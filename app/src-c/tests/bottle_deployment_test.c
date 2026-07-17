@@ -141,6 +141,15 @@ int main(int argc, char** argv) {
         assert(access(path, R_OK) == 0);
         snprintf(path, sizeof(path), "%s/steam_%u/dxmt-deployment.json", bottles, profile->appid);
         assert_contains(path, "\"status\": \"ready\"");
+        if (strcmp(profile->profile, "m12") == 0) {
+            snprintf(path, sizeof(path), "%s/steam_%u/m12-dry-run.json", bottles, profile->appid);
+            assert_contains(path, "\"dry_run\": true");
+            assert_contains(path, "\"unix_sidecars\"");
+            assert_contains(path, "\"winemetal.so\"");
+            /* Match PR #230 launch ordering: substitute the protected
+               launcher before validating its direct-executable launch. */
+            assert(metalsharp_launcher_prepare_eac(profile->appid, games[i], strlen(games[i])));
+        }
         assert(preflight(profile, prefixes[i], games[i]));
         snprintf(path, sizeof(path), "%s/steam_%u/dxmt-launch-preflight.json", bottles, profile->appid);
         assert_contains(path, "\"launch_mode\": \"direct_executable\"");
@@ -176,6 +185,14 @@ int main(int argc, char** argv) {
     assert_contains(path, "direct-launch-test");
     snprintf(path, sizeof(path), "%s/start_protected_game.exe", games[0]);
     assert_contains(path, "elden-ring");
+    assert(preflight(&profiles[0], prefixes[0], games[0]));
+    char protected_path[PATH_MAX], protected_old[PATH_MAX], protected_real[PATH_MAX];
+    snprintf(protected_path, sizeof(protected_path), "%s/start_protected_game.exe", games[0]);
+    snprintf(protected_old, sizeof(protected_old), "%s/start_protected_game.old", games[0]);
+    snprintf(protected_real, sizeof(protected_real), "%s/eldenring.exe", games[0]);
+    copy_file(protected_old, protected_path);
+    assert(!preflight(&profiles[0], prefixes[0], games[0]));
+    copy_file(protected_real, protected_path);
     assert(preflight(&profiles[0], prefixes[0], games[0]));
     assert(!metalsharp_launcher_preflight(1245620, 4, prefixes[0], strlen(prefixes[0]), games[0], strlen(games[0]),
                                           profiles[0].executable, strlen(profiles[0].executable)));
@@ -260,6 +277,9 @@ int main(int argc, char** argv) {
     assert_contains(path, "\"executable\": \"RainWorld.exe\"");
     assert_contains(path, "\"launch_mode\": \"direct_executable\"");
     assert_contains(path, "\"steam_client\": \"background\"");
+    snprintf(path, sizeof(path), "%s/steam_%u/m12-dry-run.json", bottles, rain_world_m12.appid);
+    assert_contains(path, "\"dry_run\": true");
+    assert_contains(path, "\"unix_sidecars\"");
 
     /* Update migration preserves bottle manifests and prefixes, then refreshes
        every managed DLL set from the newly installed surface. */

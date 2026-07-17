@@ -578,6 +578,47 @@ static bool write_failure_receipt(const char* receipt, const BottleManifest* man
     return true;
 }
 
+/*
+ * Saving an M12 bottle also records the read-only portion of the PR #230
+ * launch check.  Reconciliation has already verified the canonical M12
+ * payload byte-for-byte; this receipt makes the isolated PE lane and every
+ * Unix winemetal sidecar explicit without deploying or spawning anything.
+ */
+static bool write_m12_dry_run_receipt(const char* bottle_dir, const char* home, const BottleManifest* manifest,
+                                      const MetalsharpBottlePolicy* policy) {
+    char receipt[PATH_MAX], temporary[PATH_MAX], runtime_root[PATH_MAX], windows_dir[PATH_MAX], unix_dir[PATH_MAX];
+    if (!join_path(receipt, sizeof(receipt), bottle_dir, "m12-dry-run.json") ||
+        snprintf(temporary, sizeof(temporary), "%s.tmp-%d", receipt, getpid()) >= (int)sizeof(temporary) ||
+        !join_path(runtime_root, sizeof(runtime_root), home, "runtime/wine") ||
+        !join_path(windows_dir, sizeof(windows_dir), runtime_root, "lib/dxmt_m12/x86_64-windows") ||
+        !join_path(unix_dir, sizeof(unix_dir), runtime_root, "lib/dxmt_m12/x86_64-unix") ||
+        strpbrk(bottle_dir, "\"\\\n\r") != NULL || strpbrk(home, "\"\\\n\r") != NULL)
+        return false;
+
+    FILE* file = fopen(temporary, "wb");
+    if (file == NULL)
+        return false;
+    const int result =
+        fprintf(file,
+                "{\n  \"schema\": \"metalsharp.m12-dry-run.v1\",\n  \"ok\": true,\n"
+                "  \"dry_run\": true,\n  \"appid\": %lu,\n  \"bottle_id\": \"%s\",\n"
+                "  \"pipeline\": \"m12\",\n  \"surface_id\": \"%s\",\n"
+                "  \"runtime_root\": \"%s\",\n  \"windows_dll_dir\": \"%s\",\n"
+                "  \"unix_lib_dir\": \"%s\",\n"
+                "  \"unix_sidecars\": [\"winemetal.so\", \"libc++.1.dylib\", \"libc++abi.1.dylib\", "
+                "\"libunwind.1.dylib\"],\n  \"status\": \"ready\"\n}\n",
+                manifest->has_steam_app_id ? manifest->steam_app_id : 0UL, manifest->id, policy->surface_id,
+                runtime_root, windows_dir, unix_dir);
+    bool ok = result > 0 && fflush(file) == 0 && fsync(fileno(file)) == 0;
+    if (fclose(file) != 0)
+        ok = false;
+    if (ok)
+        ok = rename(temporary, receipt) == 0;
+    if (!ok)
+        unlink(temporary);
+    return ok;
+}
+
 bool metalsharp_reconcile_bottle_manifest(const char* manifest_path_value, size_t manifest_path_len) {
     char manifest_path[PATH_MAX], home[PATH_MAX], m12_root[PATH_MAX], lib_root[PATH_MAX], lane_root[PATH_MAX];
     char* json = NULL;
@@ -695,6 +736,8 @@ bool metalsharp_reconcile_bottle_manifest(const char* manifest_path_value, size_
         ok = verify_entries(entries, count);
     if (ok)
         ok = atomic_health(manifest_path, "ready");
+    if (ok && strcmp(policy->profile_id, "m12") == 0)
+        ok = write_m12_dry_run_receipt(bottle_dir, home, &manifest, policy);
     if (!ok) {
         rollback_entries(entries, count);
         atomic_health(manifest_path, "needs_repair");

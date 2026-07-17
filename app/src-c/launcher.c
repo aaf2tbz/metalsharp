@@ -319,8 +319,14 @@ bool metalsharp_launcher_preflight(unsigned int appid, unsigned char pipeline_co
         return false;
 
     const char* mapped_executable = NULL;
-    if (mapped_eac_executable(appid, &mapped_executable) && strcasecmp(executable, "start_protected_game.exe") != 0)
-        return false;
+    if (mapped_eac_executable(appid, &mapped_executable)) {
+        char real_executable_path[PATH_MAX], protected_backup[PATH_MAX];
+        if (strcasecmp(executable, "start_protected_game.exe") != 0 ||
+            !join_path(real_executable_path, sizeof(real_executable_path), working_directory, mapped_executable) ||
+            !join_path(protected_backup, sizeof(protected_backup), working_directory, "start_protected_game.old") ||
+            !regular_file(protected_backup) || !files_equal(executable_path, real_executable_path))
+            return false;
+    }
 
     for (size_t i = 0; i < bottle->artifact_count; ++i) {
         if (strstr(bottle->artifacts[i], "-windows/") == NULL)
