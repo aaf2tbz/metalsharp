@@ -10,6 +10,7 @@ MAINTAINED_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-sources.t
 MAINTAINED_TEST_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-test-sources.txt)
 LAUNCH_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.03.rcgu.c
 MIGRATION_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.08.rcgu.c
+INSTALLER_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.12.rcgu.c
 AGILITY_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.05.rcgu.c
 BOTTLE_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.01.rcgu.c
 RUNTIME_OBJS := $(patsubst ./runtime/c/%.c,build/runtime/%.o,$(RUNTIME_SRCS))
@@ -44,6 +45,9 @@ integrity:
 	@grep -q 'metalsharp_launcher_preflight(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_launcher_prepare_eac(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_migration_refresh_saved_bottles()' "$(MIGRATION_ADAPTER_SRC)"
+	@grep -q 'return metalsharp_m12_runtime_complete((const char \*)_arg0, (size_t)_arg1);' "$(INSTALLER_ADAPTER_SRC)"
+	@grep -q '_bytes1023\[\].*0x64, 0x78, 0x6d, 0x74, 0x2d, 0x6d, 0x31, 0x32' "$(INSTALLER_ADAPTER_SRC)"
+	@grep -q '_bytes1452\[\].*0x64, 0x78, 0x6d, 0x74, 0x5f, 0x6d, 0x31, 0x32' "$(INSTALLER_ADAPTER_SRC)"
 	@grep -q 'metalsharp_game_requires_agility(_arg1, _arg2)' "$(AGILITY_ADAPTER_SRC)"
 	@grep -q 'metalsharp_find_bytes(_arg0, _arg1, _arg2, _arg3' "$(AGILITY_ADAPTER_SRC)"
 	@grep -q '_metalsharp_m12_components' "$(BOTTLE_ADAPTER_SRC)"

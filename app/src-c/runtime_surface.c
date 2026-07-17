@@ -136,10 +136,12 @@ static bool write_receipt(const char* root) {
         return false;
     const int result =
         fprintf(file,
-                "{\n  \"schema\": \"metalsharp.dxmt-runtime.v2\",\n  \"surface_id\": \"%s\",\n"
+                "{\n  \"schema\": \"metalsharp.dxmt-runtime.v2\",\n  \"version\": \"%s\",\n"
+                "  \"surface_id\": \"%s\",\n"
                 "  \"source_pr\": 230,\n  \"source_commit\": \"d53ddf32f6f2729476382b8ea11716b90649ca20\",\n"
                 "  \"x64_artifact_count\": %zu,\n  \"i386_policy\": \"preserve-and-verify\"\n}\n",
-                METALSHARP_DXMT_SURFACE_ID, sizeof(x64_artifacts) / sizeof(x64_artifacts[0]));
+                METALSHARP_DXMT_SURFACE_VERSION, METALSHARP_DXMT_SURFACE_ID,
+                sizeof(x64_artifacts) / sizeof(x64_artifacts[0]));
     bool ok = result > 0 && fflush(file) == 0 && fsync(fileno(file)) == 0;
     if (fclose(file) != 0)
         ok = false;
@@ -161,6 +163,7 @@ static bool receipt_valid(const char* root) {
     fclose(file);
     buffer[count] = '\0';
     return read_ok && strstr(buffer, "\"schema\": \"metalsharp.dxmt-runtime.v2\"") != NULL &&
+           strstr(buffer, "\"version\": \"" METALSHARP_DXMT_SURFACE_VERSION "\"") != NULL &&
            strstr(buffer, "\"surface_id\": \"" METALSHARP_DXMT_SURFACE_ID "\"") != NULL;
 }
 
