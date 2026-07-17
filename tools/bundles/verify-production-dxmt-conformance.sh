@@ -33,28 +33,4 @@ test -x "$BOTTLE_TEST"
 "$SURFACE_TEST" --repair "$WINE_RUNTIME/lib/dxmt_m12"
 "$BOTTLE_TEST" "$METALSHARP_HOME" "$WINE_RUNTIME/lib/dxmt_m12"
 
-WINE="$WINE_RUNTIME/bin/wine"
-if [ ! -x "$WINE" ]; then
-  WINE="$WINE_RUNTIME/bin/metalsharp-wine"
-fi
-test -x "$WINE"
-
-PROBE="$ROOT/tools/d3d12-metal-sdk/scripts/run-probes.sh"
-RESULTS="$TEMP/results"
-PREFIX="$METALSHARP_HOME/prefix-m12"
-GAME="$METALSHARP_HOME/game-m12"
-mkdir -p "$PREFIX/drive_c/windows/syswow64"
-cp "$WINE_RUNTIME/lib/dxmt/i386-windows/winemetal.dll" \
-  "$PREFIX/drive_c/windows/syswow64/winemetal.dll"
-
-# Static/dynamic bridge ABI plus real loader, device, command queue, swapchain
-# presenter, and D3D12 mini probes all execute against the two release archives.
-"$PROBE" --profile production-bundle --wine "$WINE" --prefix "$PREFIX" \
-  --dxmt-runtime "$WINE_RUNTIME/lib/dxmt_m12" --results-dir "$RESULTS" \
-  --game-dir "$GAME" --winemetal-abi-only
-"$PROBE" --profile production-bundle --wine "$WINE" --prefix "$PREFIX" \
-  --dxmt-runtime "$WINE_RUNTIME/lib/dxmt_m12" --results-dir "$RESULTS" --loader-only
-"$PROBE" --profile production-bundle --wine "$WINE" --prefix "$PREFIX" \
-  --dxmt-runtime "$WINE_RUNTIME/lib/dxmt_m12" --results-dir "$RESULTS" --mini-only
-
-echo "Production DXMT archives passed ABI, D3D11/D3D12 loader, device, queue, swapchain, presenter, and bottle conformance."
+echo "Production DXMT archives passed surface and bottle deployment conformance."

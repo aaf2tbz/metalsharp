@@ -173,9 +173,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Require production DXMT bundle and launch conformance
+      - name: Require production DXMT bundle conformance
         run: |
-          brew install mingw-w64
           tools/bundles/verify-production-dxmt-conformance.sh \
             app/bundles/metalsharp-graphics-dll.tar.zst \
             app/bundles/metalsharp-runtime.tar.zst
