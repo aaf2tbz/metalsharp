@@ -246,8 +246,8 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     m12_root_env = os.environ.get("METALSHARP_DXMT_M12_ROOT")
     m12_root = Path(m12_root_env).expanduser() if m12_root_env else Path.home() / ".metalsharp" / "runtime" / "wine" / "lib" / "dxmt_m12"
     if m12_root.exists():
-        copy_tree(m12_root / "x86_64-unix", roots["graphics"] / "dxmt-m12" / "x86_64-unix")
-        copy_tree(m12_root / "x86_64-windows", roots["graphics"] / "dxmt-m12" / "x86_64-windows")
+        copy_tree(m12_root / "x86_64-unix", roots["graphics"] / "dxmt_m12" / "x86_64-unix")
+        copy_tree(m12_root / "x86_64-windows", roots["graphics"] / "dxmt_m12" / "x86_64-windows")
 
     for name in ["mono-arm64", "goldberg", "shims", "shader-cache"]:
         copy_tree(source2 / name, roots["assets"] / name)
@@ -293,7 +293,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
     copy_tree(roots["runtime"] / "host", roots["sdk"] / "runtime" / "host")
     copy_file(roots["runtime"] / "metalsharp-backend", roots["sdk"] / "runtime" / "metalsharp-backend")
     copy_tree(roots["graphics"] / "dxmt", roots["sdk"] / "runtime" / "dxmt")
-    copy_tree(roots["graphics"] / "dxmt-m12", roots["sdk"] / "runtime" / "dxmt_m12")
+    copy_tree(roots["graphics"] / "dxmt_m12", roots["sdk"] / "runtime" / "dxmt_m12")
     write_sdk_runtime_manifest(
         roots["sdk"],
         SOURCE_BUNDLES / "metalsharp_bundle.tar.zst",

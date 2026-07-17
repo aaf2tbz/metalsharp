@@ -88,7 +88,7 @@ M11/M10/M9 read from the legacy runtime surface:
 M12 reads from the isolated D3D12 surface:
 
 ```text
-~/.metalsharp/runtime/wine/lib/dxmt-m12
+~/.metalsharp/runtime/wine/lib/dxmt_m12
 ```
 
 M11/M10 copy:

@@ -4,13 +4,15 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define METALSHARP_DXMT_SURFACE_ID "metalsharp-dxmt-pr230-20260716-v1"
+#define METALSHARP_DXMT_LEGACY_SURFACE_ID "metalsharp-dxmt-0.55.1-v1"
+#define METALSHARP_DXMT_M12_SURFACE_ID "metalsharp-dxmt-m12-pr230-v2"
+#define METALSHARP_DXMT_SURFACE_ID METALSHARP_DXMT_M12_SURFACE_ID
 
 /*
- * Verify the frozen PR-230 x64 surface and, when requested, promote it from
- * dxmt_m12 into both x64 lanes and Wine's loader mirrors. The i386 lane is
- * copied from the installed dxmt tree and verified before and after commit.
+ * The M12 v2 contract is independent from baseline DXMT. Reconciliation writes
+ * only the v2 receipt; it must never promote M12 files into legacy dxmt.
  */
+bool metalsharp_m12_dxmt_surface_current(const char* root, size_t root_len);
 bool metalsharp_dxmt_surface_current(const char* m12_root, size_t m12_root_len);
 bool metalsharp_reconcile_dxmt_surface(const char* m12_root, size_t m12_root_len);
 bool metalsharp_dxmt_artifact_current(const char* m12_root, size_t m12_root_len, const char* relative_path,

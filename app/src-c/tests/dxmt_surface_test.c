@@ -7,7 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static void corrupt_dxmt(const char* m12_root) {
+static void corrupt_legacy_dxmt(const char* m12_root) {
     char path[4096];
     snprintf(path, sizeof(path), "%.*s/dxmt/x86_64-windows/dxgi.dll", (int)(strlen(m12_root) - strlen("/dxmt_m12")),
              m12_root);
@@ -35,9 +35,9 @@ int main(int argc, char** argv) {
     assert(argc == 2);
     const char* m12 = argv[1];
     const size_t m12_len = strlen(m12);
-    /* The archive may carry an older receipt; promotion upgrades identity. */
+    /* The archive receipt is normalized in place. No legacy files are touched. */
     assert(metalsharp_reconcile_dxmt_surface(m12, m12_len));
-    assert(metalsharp_dxmt_surface_current(m12, m12_len));
+    assert(metalsharp_m12_dxmt_surface_current(m12, m12_len));
 
     char sentinel[4096];
     snprintf(sentinel, sizeof(sentinel), "%.*s/dxmt/i386-windows/m1132-preserved.sentinel",
@@ -47,22 +47,16 @@ int main(int argc, char** argv) {
     assert(fputs("preserve-me", marker) >= 0);
     assert(fclose(marker) == 0);
 
-    corrupt_dxmt(m12);
-    assert(!metalsharp_dxmt_surface_current(m12, m12_len));
+    corrupt_legacy_dxmt(m12);
+    assert(metalsharp_m12_dxmt_surface_current(m12, m12_len));
     assert(metalsharp_reconcile_dxmt_surface(m12, m12_len));
-    assert(metalsharp_dxmt_surface_current(m12, m12_len));
     assert_sentinel(sentinel);
 
-    corrupt_dxmt(m12);
-    assert(setenv("METALSHARP_TEST_DXMT_FAIL_AFTER_ROOT_PROMOTION", "1", 1) == 0);
-    assert(!metalsharp_reconcile_dxmt_surface(m12, m12_len));
-    assert(unsetenv("METALSHARP_TEST_DXMT_FAIL_AFTER_ROOT_PROMOTION") == 0);
-    assert(!metalsharp_dxmt_surface_current(m12, m12_len));
-    assert_sentinel(sentinel);
+    /* An M12-only repair never repairs, replaces, or deletes legacy bytes. */
     assert(metalsharp_reconcile_dxmt_surface(m12, m12_len));
-    assert(metalsharp_dxmt_surface_current(m12, m12_len));
+    assert(metalsharp_m12_dxmt_surface_current(m12, m12_len));
     assert_sentinel(sentinel);
 
-    puts("DXMT surface promotion, i386 preservation, and rollback passed.");
+    puts("Isolated M12 v2 DXMT surface checks passed without changing baseline dxmt.");
     return 0;
 }

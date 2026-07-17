@@ -188,7 +188,7 @@ libunwind.1.dylib
 Define artifact truth before further implementation:
 
 - `metalsharp-runtime.tar.zst` contains Wine, host ABI, backend, and MetalSharp hook DLL.
-- `metalsharp-graphics-dll.tar.zst` contains both `Graphics/dll/dxmt` and `Graphics/dll/dxmt-m12`.
+- `metalsharp-graphics-dll.tar.zst` contains both `Graphics/dll/dxmt` and `Graphics/dll/dxmt_m12`.
 - `metalsharp-d3d12-developer-sdk.tar.zst` is regenerated from the repaired runtime + repaired graphics bundles.
 - `metalsharp-bundle-manifest.tsv` is regenerated after runtime, graphics, and SDK changes.
 

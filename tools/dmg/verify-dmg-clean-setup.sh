@@ -86,12 +86,12 @@ compare_tree() {
 
 # Canonical runtime lanes must be byte-identical to the archive embedded in the DMG.
 compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt" "$HOME_DIR/runtime/wine/lib/dxmt"
-compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt-m12" "$HOME_DIR/runtime/wine/lib/dxmt_m12"
+compare_tree "$EXTRACT_DIR/Graphics/dll/dxmt_m12" "$HOME_DIR/runtime/wine/lib/dxmt_m12"
 
 # Wine's active loader mirrors must use the promoted M12 bridge, not a stale runtime copy.
-cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-unix/winemetal.so" \
+cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-unix/winemetal.so" \
   "$HOME_DIR/runtime/wine/lib/wine/x86_64-unix/winemetal.so"
-cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-windows/winemetal.dll" \
+cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-windows/winemetal.dll" \
   "$HOME_DIR/runtime/wine/lib/wine/x86_64-windows/winemetal.dll"
 
 stage_test_bottle() {
@@ -150,9 +150,9 @@ stage_test_bottle 312520 m11 RainWorld.exe
 for entry in \
   d3d12.dll d3d11.dll d3d10core.dll dxgi.dll dxgi_dxmt.dll winemetal.dll nvapi64.dll nvngx.dll
 do
-  cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-windows/$entry" \
+  cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-windows/$entry" \
     "$HOME_DIR/clean-dmg-prefix-m12/drive_c/windows/system32/$entry"
-  cmp "$EXTRACT_DIR/Graphics/dll/dxmt-m12/x86_64-windows/$entry" \
+  cmp "$EXTRACT_DIR/Graphics/dll/dxmt_m12/x86_64-windows/$entry" \
     "$HOME_DIR/clean-dmg-game-m12/$entry"
 done
 for entry in d3d11.dll d3d10core.dll dxgi.dll dxgi_dxmt.dll winemetal.dll; do

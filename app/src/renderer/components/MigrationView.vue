@@ -10,6 +10,7 @@ const message = ref("Checking migration status...");
 const error = ref<string | null>(null);
 const complete = ref(false);
 const launching = ref(false);
+const retrying = ref(false);
 const spinnerEpoch = ref(0);
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -111,12 +112,14 @@ async function pollProgress() {
     step.value = data.step ?? 0;
     total.value = data.total ?? 0;
     if (typeof data.message === "string" && data.message.trim()) message.value = data.message;
-    error.value = data.error ?? null;
+    error.value = typeof data.error === "string" && data.error.trim() ? data.error : null;
 
     if (status.value === "complete") {
       complete.value = true;
       stopPolling();
     } else if (status.value === "error") {
+      error.value ??= "Migration stopped before it could complete.";
+      message.value = `Error: ${error.value}`;
       stopPolling();
     }
   } catch (e: unknown) {
@@ -145,6 +148,8 @@ function stopPolling() {
 }
 
 async function retryMigration() {
+  if (retrying.value) return;
+  retrying.value = true;
   stopPolling();
   pollFailures = 0;
   pollInFlight = false;
@@ -154,7 +159,11 @@ async function retryMigration() {
   step.value = 0;
   total.value = 0;
   message.value = "Restarting migration...";
-  await startMigration();
+  try {
+    await startMigration();
+  } finally {
+    retrying.value = false;
+  }
 }
 
 function startSpinnerWatchdog() {
@@ -171,12 +180,18 @@ function stopSpinnerWatchdog() {
 }
 
 async function restartApp() {
+  if (launching.value) return;
   launching.value = true;
   message.value = "Closing old MetalSharp, stopping the backend, and launching the updated app...";
-  const result = await window.metalsharp.restartAfterMigration();
-  if (!result?.ok) {
+  try {
+    const result = await window.metalsharp.restartAfterMigration();
+    if (result?.ok) return;
     launching.value = false;
     error.value = result?.error ?? "Failed to launch the updated MetalSharp app";
+    message.value = `Error: ${error.value}`;
+  } catch (e: unknown) {
+    launching.value = false;
+    error.value = e instanceof Error ? e.message : "Failed to launch the updated MetalSharp app";
     message.value = `Error: ${error.value}`;
   }
 }
@@ -243,7 +258,9 @@ onUnmounted(() => {
       <button v-if="complete" class="restart-btn" :disabled="launching" @click="restartApp()">
         {{ launching ? "Launching..." : "Launch MetalSharp" }}
       </button>
-      <button v-if="error && !complete" class="restart-btn" @click="retryMigration()">Retry Migration</button>
+      <button v-if="error && !complete" class="restart-btn" :disabled="retrying" @click="retryMigration()">
+        {{ retrying ? "Retrying..." : "Retry Migration" }}
+      </button>
       <p v-if="error" class="error-hint">
         The backend will be restarted automatically. If retry still fails, check the logs.
       </p>

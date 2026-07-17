@@ -96,9 +96,9 @@ $(POLICY_TEST): bottles.c bottles.h launcher.c launcher.h runtime_surface.c runt
 policy-test: $(POLICY_TEST)
 	"$(CURDIR)/$(POLICY_TEST)"
 
-$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h launcher.c launcher.h migration.c migration.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
+$(BOTTLE_DEPLOYMENT_TEST): bottles.c bottles.h installer.c installer.h launcher.c launcher.h migration.c migration.h runtime_surface.c runtime_surface.h tests/bottle_deployment_test.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) bottles.c launcher.c migration.c runtime_surface.c tests/bottle_deployment_test.c -o $@
+	$(CC) $(CFLAGS) bottles.c installer.c launcher.c migration.c runtime_surface.c tests/bottle_deployment_test.c -o $@
 
 bottle-deployment-test: $(BOTTLE_DEPLOYMENT_TEST) $(DXMT_SURFACE_TEST)
 	"$(CURDIR)/../../tools/bundles/test-bottle-deployment.sh"

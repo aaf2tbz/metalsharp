@@ -194,7 +194,7 @@ def check_workflows(assets: list[str]) -> None:
 
     clean_setup = read("tools/dmg/verify-dmg-clean-setup.sh")
     for needle in [
-        "Graphics/dll/dxmt-m12",
+        "Graphics/dll/dxmt_m12",
         "Graphics/dll/dxmt",
         "runtime/wine/lib/wine/x86_64-unix/winemetal.so",
         "drive_c/windows/system32",

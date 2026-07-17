@@ -56,7 +56,7 @@ prepare_runtime() {
   fi
 
   tar --use-compress-program=unzstd -xf "$BUNDLE_DIR/metalsharp-graphics-dll.tar.zst" -C "$TMP_DXMT"
-  local bundle_dxmt_root="$TMP_DXMT/Graphics/dll/dxmt-m12"
+  local bundle_dxmt_root="$TMP_DXMT/Graphics/dll/dxmt_m12"
   if [[ ! -d "$bundle_dxmt_root" ]]; then
     bundle_dxmt_root="$TMP_DXMT/Graphics/dll/dxmt"
   fi

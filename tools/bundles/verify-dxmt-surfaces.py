@@ -31,7 +31,7 @@ def load_manifest(path: Path) -> dict:
         manifest = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read manifest {path}: {error}") from error
-    if manifest.get("schema") != "metalsharp.dxmt.surface-set.v1":
+    if manifest.get("schema") != "metalsharp.dxmt.surface-set.v2":
         raise ValueError(f"unsupported DXMT surface manifest schema in {path}")
     if not manifest.get("surface_set_id") or not manifest.get("surfaces"):
         raise ValueError(f"incomplete DXMT surface manifest {path}")
@@ -92,11 +92,16 @@ def verify_archive(archive: Path, manifest_path: Path) -> None:
                 raise ValueError(f"surface {surface_id} has no artifacts or bundle roots")
 
             role = surface.get("role")
+            runtime_lane = surface.get("runtime_lane")
             pipelines = set(surface.get("pipelines", []))
-            if role == "upgraded-shared-x64" and pipelines != {"m10", "m11", "m12"}:
-                raise ValueError("upgraded x64 surface must remain authoritative for M10, M11, and M12")
-            if role == "preserved-legacy-i386" and pipelines != {"m10_32", "m11_32"}:
-                raise ValueError("preserved i386 surface must remain authoritative for M10(32) and M11(32)")
+            if role == "legacy-v1" and pipelines != {"m10", "m11", "m10_32", "m11_32"}:
+                raise ValueError("legacy v1 surface must remain authoritative for every non-M12 pipeline")
+            if role == "legacy-v1" and runtime_lane != "dxmt":
+                raise ValueError("legacy v1 surface must own only the dxmt runtime lane")
+            if role == "isolated-m12-v2" and pipelines != {"m12"}:
+                raise ValueError("isolated M12 v2 surface must be authoritative only for M12")
+            if role == "isolated-m12-v2" and runtime_lane != "dxmt_m12":
+                raise ValueError("isolated M12 v2 surface must own only the dxmt_m12 runtime lane")
 
             for bundle_root_text in bundle_roots:
                 bundle_root = Path(bundle_root_text)

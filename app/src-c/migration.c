@@ -1,6 +1,7 @@
 #include "migration.h"
 
 #include "bottles.h"
+#include "installer.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -71,16 +72,19 @@ static void write_report(const char* home, const MetalsharpMigrationBottleSummar
         return;
 
     const MetalsharpBottlePolicy* m12 = metalsharp_bottle_policy("m12");
+    const MetalsharpBottlePolicy* legacy = metalsharp_bottle_policy("m11");
     FILE* file = fopen(temporary, "wb");
     if (file == NULL)
         return;
     const int result =
         fprintf(file,
                 "{\n  \"schema\": \"metalsharp.migration-bottle-refresh.v1\",\n"
-                "  \"surface_id\": \"%s\",\n  \"manifest_sha256\": \"%s\",\n"
+                "  \"legacy_surface_id\": \"%s\",\n  \"m12_surface_id\": \"%s\",\n"
+                "  \"manifest_sha256\": \"%s\",\n"
                 "  \"discovered\": %zu,\n  \"managed\": %zu,\n  \"refreshed\": %zu,\n"
                 "  \"skipped\": %zu,\n  \"failed\": %zu,\n  \"status\": \"%s\"\n}\n",
-                m12 == NULL ? "unknown" : m12->surface_id, m12 == NULL ? "unknown" : m12->manifest_sha256,
+                legacy == NULL ? "unknown" : legacy->surface_id, m12 == NULL ? "unknown" : m12->surface_id,
+                m12 == NULL ? "unknown" : m12->manifest_sha256,
                 summary->discovered, summary->managed, summary->refreshed, summary->skipped, summary->failed,
                 summary->failed == 0 ? "ready" : "needs_repair");
     bool ok = result > 0 && fflush(file) == 0 && fsync(fileno(file)) == 0;
@@ -100,6 +104,18 @@ bool metalsharp_migration_refresh_bottles(const char* home_value, size_t home_le
         *summary = result;
     if (!copy_slice(home, sizeof(home), home_value, home_len) || !join_path(bottles, sizeof(bottles), home, "bottles"))
         return false;
+
+    /* The baseline installer continues to own legacy dxmt verification. The
+     * migration extension adds only the isolated M12 v2 contract. */
+    char m12_root[PATH_MAX];
+    if (!join_path(m12_root, sizeof(m12_root), home, "runtime/wine/lib/dxmt_m12") ||
+        !metalsharp_m12_runtime_complete(m12_root, strlen(m12_root))) {
+        result.failed = 1;
+        write_report(home, &result);
+        if (summary != NULL)
+            *summary = result;
+        return false;
+    }
 
     DIR* entries = opendir(bottles);
     if (entries == NULL) {

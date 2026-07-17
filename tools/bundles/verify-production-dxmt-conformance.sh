@@ -20,7 +20,7 @@ mkdir -p "$WINE_RUNTIME/lib/wine/x86_64-unix" "$WINE_RUNTIME/lib/wine/x86_64-win
 cp -R "$TEMP/runtime/." "$METALSHARP_HOME/runtime/"
 rm -rf "$WINE_RUNTIME/lib/dxmt" "$WINE_RUNTIME/lib/dxmt_m12"
 cp -R "$TEMP/Graphics/dll/dxmt" "$WINE_RUNTIME/lib/dxmt"
-cp -R "$TEMP/Graphics/dll/dxmt-m12" "$WINE_RUNTIME/lib/dxmt_m12"
+cp -R "$TEMP/Graphics/dll/dxmt_m12" "$WINE_RUNTIME/lib/dxmt_m12"
 cp "$WINE_RUNTIME/lib/dxmt_m12/x86_64-unix/winemetal.so" \
   "$WINE_RUNTIME/lib/wine/x86_64-unix/winemetal.so"
 cp "$WINE_RUNTIME/lib/dxmt_m12/x86_64-windows/winemetal.dll" \

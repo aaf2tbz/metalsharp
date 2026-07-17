@@ -27,10 +27,10 @@ explicitly a release PR.
 - [ ] Runtime bundle hash recorded and matches the shipped bundle.
 - [ ] Developer SDK hash recorded.
 - [ ] `GET /diagnostics/runtime-artifacts` reports `ok: true` (every required
-      M11 `lib/dxmt` and M12 `lib/dxmt-m12` file present with a sha256).
+      M11 `lib/dxmt` and M12 `lib/dxmt_m12` file present with a sha256).
 - [ ] M12 sidecars present: `winemetal.so`, `libc++.1.dylib`,
       `libc++abi.1.dylib`, `libunwind.1.dylib` under
-      `lib/dxmt-m12/x86_64-unix/`.
+      `lib/dxmt_m12/x86_64-unix/`.
 - [ ] Legacy DXMT surface present: `lib/dxmt/x86_64-unix/winemetal.so` and the
       `DXMT_REQUIRED_PE` set under `lib/dxmt/x86_64-windows/`.
 

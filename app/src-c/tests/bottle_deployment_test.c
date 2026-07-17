@@ -152,6 +152,24 @@ int main(int argc, char** argv) {
         assert((access(path, F_OK) == 0) == profile->includes_d3d12);
     }
 
+    /* Non-M12 bottles must reject the M12 payload and restore from baseline
+       dxmt; their save path must stay usable if the isolated lane is absent. */
+    char m12_d3d11[PATH_MAX];
+    snprintf(m12_d3d11, sizeof(m12_d3d11), "%s/x86_64-windows/d3d11.dll", m12);
+    char m12_d3d11_backup[PATH_MAX];
+    snprintf(m12_d3d11_backup, sizeof(m12_d3d11_backup), "%s.baseline-test", m12_d3d11);
+    snprintf(path, sizeof(path), "%s/d3d11.dll", games[1]);
+    copy_file(m12_d3d11, path);
+    assert(!preflight(&profiles[1], prefixes[1], games[1]));
+    assert(metalsharp_reconcile_bottle_manifest(manifests[1], strlen(manifests[1])));
+    assert(preflight(&profiles[1], prefixes[1], games[1]));
+
+    assert(rename(m12_d3d11, m12_d3d11_backup) == 0);
+    assert(metalsharp_reconcile_bottle_manifest(manifests[2], strlen(manifests[2])));
+    assert(!metalsharp_reconcile_bottle_manifest(manifests[0], strlen(manifests[0])));
+    assert(rename(m12_d3d11_backup, m12_d3d11) == 0);
+    assert(metalsharp_reconcile_bottle_manifest(manifests[0], strlen(manifests[0])));
+
     /* Elden Ring's EAC title contract is a direct executable substitution, never a Steam launch. */
     assert(metalsharp_launcher_prepare_eac(1245620, games[0], strlen(games[0])));
     snprintf(path, sizeof(path), "%s/start_protected_game.old", games[0]);
@@ -285,6 +303,15 @@ int main(int argc, char** argv) {
     snprintf(path, sizeof(path), "%s/logs/migration-bottle-refresh-latest.json", home);
     assert_contains(path, "\"status\": \"ready\"");
     assert_contains(path, "\"refreshed\": 5");
+
+    /* Migration explicitly validates v2, but it never re-routes a baseline
+       bottle through dxmt_m12. */
+    assert(rename(m12_d3d11, m12_d3d11_backup) == 0);
+    migration = (MetalsharpMigrationBottleSummary){0};
+    assert(!metalsharp_migration_refresh_bottles(home, strlen(home), &migration));
+    assert(migration.failed == 1);
+    assert(rename(m12_d3d11_backup, m12_d3d11) == 0);
+    assert(metalsharp_migration_refresh_bottles(home, strlen(home), &migration));
 
     puts("DXMT M12, M11, M10, M11(32), and M10(32) deployment/launch conformance passed, including saved "
          "M11-to-M12 promotion, migration-wide bottle refresh, mixed PE/Unix, cross-architecture, missing-sidecar, "

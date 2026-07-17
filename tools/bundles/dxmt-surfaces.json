@@ -1,24 +1,13 @@
 {
-  "schema": "metalsharp.dxmt.surface-set.v1",
-  "surface_set_id": "metalsharp-dxmt-pr230-20260716-v1",
-  "promoted_at": "2026-07-16",
+  "schema": "metalsharp.dxmt.surface-set.v2",
+  "surface_set_id": "metalsharp-dxmt-legacy-v1-plus-isolated-m12-v2",
+  "promoted_at": "2026-07-17",
   "source": {
-    "repository": "https://github.com/aaf2tbz/metalsharp",
-    "revision": "d53ddf32f6f2729476382b8ea11716b90649ca20",
-    "pull_request": 230,
-    "build_profile": "metalsharp-x64",
-    "toolchain": {
-      "xcode": "27.0 (27A5218g)",
-      "llvm": "15.0.7 x86_64-apple-darwin",
-      "mingw_gcc": "16.1.0"
-    },
-    "build_compatibility_edits": [
-      "vendor/dxmt/src/util/com/com_guid.cpp: include <iomanip> for GCC 16",
-      "vendor/dxmt/src/airconv/shaders/air_tessellation.metal: pass __METAL_MEMORY_FLAGS_NONE__ to the Metal 27 atomic builtin"
-    ]
+    "legacy": "MetalSharp 0.55.1 arm64 DMG",
+    "m12": "Dependency Bundles metalsharp-graphics-dll.tar.zst",
+    "policy": "Legacy dxmt is immutable; dxmt_m12 is M12-only."
   },
   "validation": {
-    "host": "Apple M4",
     "d3d12": "Elden Ring rendered through start_protected_game.exe",
     "d3d11": "Rain World rendered through RainWorld.exe",
     "launch_wrapper": "metalsharp-wine",
@@ -27,101 +16,48 @@
   },
   "surfaces": [
     {
-      "surface_id": "dxmt-pr230-d53ddf32-x86_64-v1",
-      "role": "upgraded-shared-x64",
-      "guest_pe_architecture": "x86_64",
-      "unix_bridge_architecture": "x86_64",
-      "pipelines": ["m10", "m11", "m12"],
-      "bundle_roots": [
-        "Graphics/dll/dxmt",
-        "Graphics/dll/dxmt-m12"
-      ],
+      "surface_id": "metalsharp-dxmt-0.55.1-v1",
+      "role": "legacy-v1",
+      "runtime_lane": "dxmt",
+      "pipelines": ["m10", "m11", "m10_32", "m11_32"],
+      "bundle_roots": ["Graphics/dll/dxmt"],
       "artifacts": {
-        "x86_64-windows/d3d10core.dll": {
-          "sha256": "cc4f9a99a53bc6e67747d4c00eb7b3932b4338f54d03205280ffb51bac7654cd",
-          "size": 14733671
-        },
-        "x86_64-windows/d3d11.dll": {
-          "sha256": "41c8eed15dc4e92ed1457645e5122f45afa42c10ec5dfdcd269f54884833aefb",
-          "size": 72646279
-        },
-        "x86_64-windows/d3d12.dll": {
-          "sha256": "f021efbe95e99c58b3d44d8dfe6277f22e50794de6e260d690da9f638e923805",
-          "size": 53311968
-        },
-        "x86_64-windows/dxgi.dll": {
-          "sha256": "1b3460d6857b93c3105d7cacb3bc3a8ef0cc62914de758c860558a4a8ad243a0",
-          "size": 67527
-        },
-        "x86_64-windows/dxgi_dxmt.dll": {
-          "sha256": "be295d8e0fc143365e769b8a2d25775e68d2d2ac5dcce10f4636b77b0c0875f3",
-          "size": 20411737
-        },
-        "x86_64-windows/nvapi64.dll": {
-          "sha256": "8c42f56450c28316af78ebaa28cc0847b998b47b5530ab0a089a44dd5b7f0054",
-          "size": 16447624
-        },
-        "x86_64-windows/nvngx.dll": {
-          "sha256": "e5021f37c8ac502e04d8a59f8171f7d508a422f00cc1cfeda11ae6d540916c31",
-          "size": 16377711
-        },
-        "x86_64-windows/winemetal.dll": {
-          "sha256": "ea4ec713d48963caa93deabf1073d13fd3ebed396dbe193fa059fa76bea89ced",
-          "size": 280952
-        },
-        "x86_64-unix/winemetal.so": {
-          "sha256": "92228116d30dd187f92a77fbb2316f0cc692de0ac60d4ec8cc664f7b9984e855",
-          "size": 46848096
-        },
-        "x86_64-unix/libc++.1.dylib": {
-          "sha256": "3f0da0b4025c6fb5e50fc23c8a1feea67c839b40df93baff3b2781089b42ad35",
-          "size": 1052800
-        },
-        "x86_64-unix/libc++abi.1.dylib": {
-          "sha256": "9a95b4ce2be40951b688c394db99f79b7e0b81fa2372e5e49615319869e72e49",
-          "size": 303856
-        },
-        "x86_64-unix/libunwind.1.dylib": {
-          "sha256": "964d4e5d6242163e4e8099efd08ba75540f253257b834bf5b7a45f8c84b4ea78",
-          "size": 96040
-        }
+        "x86_64-windows/d3d10core.dll": {"sha256": "630c5d990da0d95a95f0a6458b7e9156073cf8fa335708b92a25babde80bfbe8", "size": 13496020},
+        "x86_64-windows/nvapi64.dll": {"sha256": "0ad95777863b97a5757adfecc45e4ee55195a9befd05878cbc975a4f6c8ac841", "size": 1738320},
+        "x86_64-windows/nvngx.dll": {"sha256": "3c47b6f378fa0f75cd3002791a59e63c899a0421d013f1cadc89012a6fe6fd82", "size": 1463952},
+        "x86_64-windows/dxgi_dxmt.dll": {"sha256": "4c86d66ac32248f80f42c2e0b86bb245e1295ef6f1b67ad522562b9fa81eb05d", "size": 14564082},
+        "x86_64-windows/d3d11.dll": {"sha256": "15785d6c75d4ae5f0e3ab9b61f56b534d933ab6b691ffbc02eae30cee25b5bbc", "size": 21274806},
+        "x86_64-windows/d3d12.dll": {"sha256": "3f83bb97e8daa3513a8b4b7cb8dfc473622eba19be070941b5e691ddaea7e180", "size": 50191427},
+        "x86_64-windows/winemetal.dll": {"sha256": "ee0bb6001c53031c39be6ec82376fc1bf37a1c08fa50fb52971b016b5e066378", "size": 275421},
+        "x86_64-windows/dxgi.dll": {"sha256": "4c86d66ac32248f80f42c2e0b86bb245e1295ef6f1b67ad522562b9fa81eb05d", "size": 14564082},
+        "x86_64-unix/winemetal.so": {"sha256": "274d190f304d1b96a4273610e136bff80d4d19e548aa8f115b721f76eb34e66d", "size": 46752584},
+        "i386-unix/winemetal.so": {"sha256": "3d50d7f39c64778c71d0af2fce1cde818d09ffbce7c4f7b8ae24ae1df567c0ca", "size": 31805040},
+        "i386-windows/d3d10core.dll": {"sha256": "c5a26310d14a30c3e1700a4d0c9865be28a11351a5c4dc5b83ab1bd8fcf7662f", "size": 1506849},
+        "i386-windows/d3d11.dll": {"sha256": "9afc2b3419818618c4c87274435a28935b0df002caa4b9a8d3a88d3dc846b17d", "size": 5689830},
+        "i386-windows/dxgi.dll": {"sha256": "7df8cdf66e12a108410002abc77b01f70aa59b8a36a70fa0bc6ae3b056841319", "size": 1901340},
+        "i386-windows/dxgi_dxmt.dll": {"sha256": "7df8cdf66e12a108410002abc77b01f70aa59b8a36a70fa0bc6ae3b056841319", "size": 1901340},
+        "i386-windows/winemetal.dll": {"sha256": "20a6865facebdaac92b6c06fadf37d2efb5a242b22ca1c349bb57d7ad43df8e3", "size": 69299}
       }
     },
     {
-      "surface_id": "dxmt-preserved-i386-22dacc4d-v1",
-      "role": "preserved-legacy-i386",
-      "provenance": "Preserved byte-for-byte from metalsharp-graphics-dll.tar.zst sha256:22dacc4db1ba67af83192b718e481044cd38048107ee537ce62bfb3fa288e8a9",
-      "guest_pe_architecture": "i386",
-      "unix_bridge_architecture": "x86_64",
-      "pipelines": ["m10_32", "m11_32"],
-      "bundle_roots": [
-        "Graphics/dll/dxmt"
-      ],
+      "surface_id": "metalsharp-dxmt-m12-pr230-v2",
+      "role": "isolated-m12-v2",
+      "runtime_lane": "dxmt_m12",
+      "pipelines": ["m12"],
+      "bundle_roots": ["Graphics/dll/dxmt_m12"],
       "artifacts": {
-        "i386-windows/d3d10core.dll": {
-          "sha256": "c5a26310d14a30c3e1700a4d0c9865be28a11351a5c4dc5b83ab1bd8fcf7662f",
-          "size": 1506849
-        },
-        "i386-windows/d3d11.dll": {
-          "sha256": "9afc2b3419818618c4c87274435a28935b0df002caa4b9a8d3a88d3dc846b17d",
-          "size": 5689830
-        },
-        "i386-windows/dxgi.dll": {
-          "sha256": "7df8cdf66e12a108410002abc77b01f70aa59b8a36a70fa0bc6ae3b056841319",
-          "size": 1901340
-        },
-        "i386-windows/dxgi_dxmt.dll": {
-          "sha256": "7df8cdf66e12a108410002abc77b01f70aa59b8a36a70fa0bc6ae3b056841319",
-          "size": 1901340
-        },
-        "i386-windows/winemetal.dll": {
-          "sha256": "20a6865facebdaac92b6c06fadf37d2efb5a242b22ca1c349bb57d7ad43df8e3",
-          "size": 69299
-        },
-        "i386-unix/winemetal.so": {
-          "sha256": "3d50d7f39c64778c71d0af2fce1cde818d09ffbce7c4f7b8ae24ae1df567c0ca",
-          "size": 31805040
-        }
+        "x86_64-windows/d3d10core.dll": {"sha256": "cc4f9a99a53bc6e67747d4c00eb7b3932b4338f54d03205280ffb51bac7654cd", "size": 14733671},
+        "x86_64-windows/d3d11.dll": {"sha256": "41c8eed15dc4e92ed1457645e5122f45afa42c10ec5dfdcd269f54884833aefb", "size": 72646279},
+        "x86_64-windows/d3d12.dll": {"sha256": "f021efbe95e99c58b3d44d8dfe6277f22e50794de6e260d690da9f638e923805", "size": 53311968},
+        "x86_64-windows/dxgi.dll": {"sha256": "1b3460d6857b93c3105d7cacb3bc3a8ef0cc62914de758c860558a4a8ad243a0", "size": 67527},
+        "x86_64-windows/dxgi_dxmt.dll": {"sha256": "be295d8e0fc143365e769b8a2d25775e68d2d2ac5dcce10f4636b77b0c0875f3", "size": 20411737},
+        "x86_64-windows/nvapi64.dll": {"sha256": "8c42f56450c28316af78ebaa28cc0847b998b47b5530ab0a089a44dd5b7f0054", "size": 16447624},
+        "x86_64-windows/nvngx.dll": {"sha256": "e5021f37c8ac502e04d8a59f8171f7d508a422f00cc1cfeda11ae6d540916c31", "size": 16377711},
+        "x86_64-windows/winemetal.dll": {"sha256": "ea4ec713d48963caa93deabf1073d13fd3ebed396dbe193fa059fa76bea89ced", "size": 280952},
+        "x86_64-unix/winemetal.so": {"sha256": "92228116d30dd187f92a77fbb2316f0cc692de0ac60d4ec8cc664f7b9984e855", "size": 46848096},
+        "x86_64-unix/libc++.1.dylib": {"sha256": "3f0da0b4025c6fb5e50fc23c8a1feea67c839b40df93baff3b2781089b42ad35", "size": 1052800},
+        "x86_64-unix/libc++abi.1.dylib": {"sha256": "9a95b4ce2be40951b688c394db99f79b7e0b81fa2372e5e49615319869e72e49", "size": 303856},
+        "x86_64-unix/libunwind.1.dylib": {"sha256": "964d4e5d6242163e4e8099efd08ba75540f253257b834bf5b7a45f8c84b4ea78", "size": 96040}
       }
     }
   ]
