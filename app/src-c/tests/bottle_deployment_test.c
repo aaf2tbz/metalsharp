@@ -10,6 +10,24 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+typedef struct {
+    const char* profile;
+    unsigned char pipeline;
+    unsigned int appid;
+    const char* executable;
+    const char* route;
+    const char* required_dll;
+    bool includes_d3d12;
+} ProfileCase;
+
+static const ProfileCase profiles[] = {
+    {"m12", 6, 1245620, "start_protected_game.exe", "system32", "d3d12.dll", true},
+    {"m11", 4, 312520, "RainWorld.exe", "system32", "d3d11.dll", false},
+    {"m10", 2, 910010, "m10-test.exe", "system32", "d3d10core.dll", false},
+    {"m11_32", 5, 9101132, "m11-32-test.exe", "syswow64", "d3d11.dll", false},
+    {"m10_32", 3, 9101032, "m10-32-test.exe", "syswow64", "d3d10core.dll", false},
+};
+
 static void mkdir_required(const char* path) {
     assert(mkdir(path, 0700) == 0 || access(path, F_OK) == 0);
 }
@@ -30,31 +48,54 @@ static void read_text(const char* path, char* output, size_t size) {
     assert(fclose(file) == 0);
 }
 
-static void save_manifest(const char* bottles, const char* profile, const char* prefix, const char* game,
+static void copy_file(const char* source, const char* target) {
+    FILE* input = fopen(source, "rb");
+    FILE* output = fopen(target, "wb");
+    char buffer[65536];
+    assert(input != NULL && output != NULL);
+    size_t count;
+    while ((count = fread(buffer, 1, sizeof(buffer), input)) != 0)
+        assert(fwrite(buffer, 1, count, output) == count);
+    assert(!ferror(input));
+    assert(fclose(input) == 0);
+    assert(fclose(output) == 0);
+}
+
+static void replace_text(const char* path, const char* before, const char* after) {
+    char contents[16384], updated[16384];
+    read_text(path, contents, sizeof(contents));
+    char* match = strstr(contents, before);
+    assert(match != NULL);
+    *match = '\0';
+    const int count = snprintf(updated, sizeof(updated), "%s%s%s", contents, after, match + strlen(before));
+    assert(count > 0 && count < (int)sizeof(updated));
+    write_text(path, updated);
+}
+
+static void save_manifest(const char* bottles, const ProfileCase* profile, const char* prefix, const char* game,
                           char manifest[PATH_MAX]) {
     char directory[PATH_MAX], json[PATH_MAX * 3];
-    const char* id = strcmp(profile, "m12") == 0 ? "steam_1245620" : NULL;
-    char generated_id[64];
-    if (id == NULL) {
-        snprintf(generated_id, sizeof(generated_id), "test_%s", profile);
-        id = generated_id;
-    }
-    snprintf(directory, sizeof(directory), "%s/%s", bottles, id);
+    snprintf(directory, sizeof(directory), "%s/steam_%u", bottles, profile->appid);
     mkdir_required(directory);
     snprintf(manifest, PATH_MAX, "%s/bottle.json", directory);
     const int count =
         snprintf(json, sizeof(json),
-                 "{\n  \"id\": \"%s\",\n  \"steam_app_id\": 1245620,\n  \"prefix_path\": \"%s\",\n"
-                 "  \"runtime_profile\": \"%s\",\n  \"game_install_path\": %s%s%s,\n  \"health\": \"ready\"\n}\n",
-                 id, prefix, profile, game == NULL ? "" : "\"", game == NULL ? "null" : game, game == NULL ? "" : "\"");
+                 "{\n  \"id\": \"steam_%u\",\n  \"steam_app_id\": %u,\n  \"prefix_path\": \"%s\",\n"
+                 "  \"runtime_profile\": \"%s\",\n  \"game_install_path\": \"%s\",\n  \"health\": \"ready\"\n}\n",
+                 profile->appid, profile->appid, prefix, profile->profile, game);
     assert(count > 0 && count < (int)sizeof(json));
     write_text(manifest, json);
 }
 
 static void assert_contains(const char* path, const char* expected) {
-    char contents[8192];
+    char contents[16384];
     read_text(path, contents, sizeof(contents));
     assert(strstr(contents, expected) != NULL);
+}
+
+static bool preflight(const ProfileCase* profile, const char* prefix, const char* game) {
+    return metalsharp_launcher_preflight(profile->appid, profile->pipeline, prefix, strlen(prefix), game, strlen(game),
+                                         profile->executable, strlen(profile->executable));
 }
 
 int main(int argc, char** argv) {
@@ -64,86 +105,121 @@ int main(int argc, char** argv) {
     assert(setenv("METALSHARP_HOME", home, 1) == 0);
     assert(metalsharp_reconcile_dxmt_surface(m12, strlen(m12)));
 
-    char bottles[PATH_MAX], prefix[PATH_MAX], system32[PATH_MAX], syswow64[PATH_MAX], game[PATH_MAX],
-        wine_dir[PATH_MAX], wine[PATH_MAX];
+    char bottles[PATH_MAX], wine_dir[PATH_MAX], wine[PATH_MAX];
     snprintf(bottles, sizeof(bottles), "%s/bottles", home);
-    snprintf(prefix, sizeof(prefix), "%s/test-prefix", home);
-    snprintf(system32, sizeof(system32), "%s/drive_c/windows/system32", prefix);
-    snprintf(syswow64, sizeof(syswow64), "%s/drive_c/windows/syswow64", prefix);
-    snprintf(game, sizeof(game), "%s/test-game", home);
     snprintf(wine_dir, sizeof(wine_dir), "%s/runtime/wine/bin", home);
     snprintf(wine, sizeof(wine), "%s/metalsharp-wine", wine_dir);
     mkdir_required(bottles);
-    mkdir_required(prefix);
-    mkdir_required(game);
     mkdir_required(wine_dir);
     write_text(wine, "#!/bin/sh\n");
     assert(chmod(wine, 0700) == 0);
 
-    char manifest[PATH_MAX], path[PATH_MAX];
-    snprintf(path, sizeof(path), "%s/start_protected_game.exe", game);
-    write_text(path, "eac-stub");
-    snprintf(path, sizeof(path), "%s/eldenring.exe", game);
-    write_text(path, "elden-ring");
-    save_manifest(bottles, "m12", prefix, game, manifest);
-    assert(metalsharp_reconcile_bottle_manifest(manifest, strlen(manifest)));
-    snprintf(path, sizeof(path), "%s/d3d12.dll", system32);
-    assert(access(path, R_OK) == 0);
-    snprintf(path, sizeof(path), "%s/d3d12.dll", game);
-    assert(access(path, R_OK) == 0);
-    snprintf(path, sizeof(path), "%s/steam_appid.txt", game);
-    assert_contains(path, "1245620");
-    snprintf(path, sizeof(path), "%s/steam_1245620/dxmt-deployment.json", bottles);
-    assert_contains(path, "\"surface_id\": \"" METALSHARP_DXMT_SURFACE_ID "\"");
-    assert_contains(path, "\"status\": \"ready\"");
-    assert(metalsharp_launcher_prepare_eac(1245620, game, strlen(game)));
-    snprintf(path, sizeof(path), "%s/start_protected_game.old", game);
-    assert_contains(path, "eac-stub");
-    snprintf(path, sizeof(path), "%s/start_protected_game.exe", game);
-    assert_contains(path, "elden-ring");
-    assert(metalsharp_launcher_prepare_eac(1245620, game, strlen(game)));
-    assert(metalsharp_launcher_preflight(1245620, 6, prefix, strlen(prefix), game, strlen(game),
-                                         "start_protected_game.exe", strlen("start_protected_game.exe")));
-    snprintf(path, sizeof(path), "%s/steam_1245620/dxmt-launch-preflight.json", bottles);
-    assert_contains(path, "\"launch_mode\": \"direct_executable\"");
-    assert_contains(path, "\"steam_client\": \"background\"");
-    assert(!metalsharp_launcher_preflight(1245620, 4, prefix, strlen(prefix), game, strlen(game),
-                                          "start_protected_game.exe", strlen("start_protected_game.exe")));
-    snprintf(path, sizeof(path), "%s/d3d12.dll", game);
-    write_text(path, "wrong-runtime");
-    assert(!metalsharp_launcher_preflight(1245620, 6, prefix, strlen(prefix), game, strlen(game),
-                                          "start_protected_game.exe", strlen("start_protected_game.exe")));
-    assert(metalsharp_reconcile_bottle_manifest(manifest, strlen(manifest)));
-    assert(metalsharp_launcher_preflight(1245620, 6, prefix, strlen(prefix), game, strlen(game),
-                                         "start_protected_game.exe", strlen("start_protected_game.exe")));
+    char manifests[sizeof(profiles) / sizeof(profiles[0])][PATH_MAX];
+    char prefixes[sizeof(profiles) / sizeof(profiles[0])][PATH_MAX];
+    char games[sizeof(profiles) / sizeof(profiles[0])][PATH_MAX];
+    char path[PATH_MAX];
 
-    save_manifest(bottles, "m11", prefix, game, manifest);
-    assert(metalsharp_reconcile_bottle_manifest(manifest, strlen(manifest)));
-    snprintf(path, sizeof(path), "%s/d3d12.dll", system32);
-    assert(access(path, F_OK) != 0);
-    snprintf(path, sizeof(path), "%s/d3d12.dll", game);
-    assert(access(path, F_OK) != 0);
+    for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i) {
+        const ProfileCase* profile = &profiles[i];
+        snprintf(prefixes[i], PATH_MAX, "%s/prefix-%s", home, profile->profile);
+        snprintf(games[i], PATH_MAX, "%s/game-%s", home, profile->profile);
+        mkdir_required(prefixes[i]);
+        mkdir_required(games[i]);
+        snprintf(path, sizeof(path), "%s/%s", games[i], profile->executable);
+        write_text(path, "direct-launch-test");
+        if (strcmp(profile->profile, "m12") == 0) {
+            snprintf(path, sizeof(path), "%s/eldenring.exe", games[i]);
+            write_text(path, "elden-ring");
+        }
+        save_manifest(bottles, profile, prefixes[i], games[i], manifests[i]);
+        assert(metalsharp_reconcile_bottle_manifest(manifests[i], strlen(manifests[i])));
 
-    const char* remaining[] = {"m10", "m11_32", "m10_32"};
-    for (size_t i = 0; i < sizeof(remaining) / sizeof(remaining[0]); ++i) {
-        save_manifest(bottles, remaining[i], prefix, NULL, manifest);
-        assert(metalsharp_reconcile_bottle_manifest(manifest, strlen(manifest)));
-        snprintf(path, sizeof(path), "%s/test_%s/dxmt-deployment.json", bottles, remaining[i]);
+        snprintf(path, sizeof(path), "%s/drive_c/windows/%s/%s", prefixes[i], profile->route, profile->required_dll);
+        assert(access(path, R_OK) == 0);
+        snprintf(path, sizeof(path), "%s/%s", games[i], profile->required_dll);
+        assert(access(path, R_OK) == 0);
+        snprintf(path, sizeof(path), "%s/steam_%u/dxmt-deployment.json", bottles, profile->appid);
         assert_contains(path, "\"status\": \"ready\"");
-    }
-    snprintf(path, sizeof(path), "%s/d3d11.dll", syswow64);
-    assert(access(path, R_OK) == 0);
+        assert(preflight(profile, prefixes[i], games[i]));
+        snprintf(path, sizeof(path), "%s/steam_%u/dxmt-launch-preflight.json", bottles, profile->appid);
+        assert_contains(path, "\"launch_mode\": \"direct_executable\"");
+        assert_contains(path, "\"steam_client\": \"background\"");
 
-    save_manifest(bottles, "m11", prefix, game, manifest);
-    snprintf(path, sizeof(path), "%s/d3d11.dll", system32);
+        snprintf(path, sizeof(path), "%s/drive_c/windows/%s/d3d12.dll", prefixes[i], profile->route);
+        assert((access(path, F_OK) == 0) == profile->includes_d3d12);
+        snprintf(path, sizeof(path), "%s/d3d12.dll", games[i]);
+        assert((access(path, F_OK) == 0) == profile->includes_d3d12);
+    }
+
+    /* Elden Ring's EAC title contract is a direct executable substitution, never a Steam launch. */
+    assert(metalsharp_launcher_prepare_eac(1245620, games[0], strlen(games[0])));
+    snprintf(path, sizeof(path), "%s/start_protected_game.old", games[0]);
+    assert_contains(path, "direct-launch-test");
+    snprintf(path, sizeof(path), "%s/start_protected_game.exe", games[0]);
+    assert_contains(path, "elden-ring");
+    assert(preflight(&profiles[0], prefixes[0], games[0]));
+    assert(!metalsharp_launcher_preflight(1245620, 4, prefixes[0], strlen(prefixes[0]), games[0], strlen(games[0]),
+                                          profiles[0].executable, strlen(profiles[0].executable)));
+
+    /* Partial/corrupt game copies must fail until bottle reconciliation restores exact bytes. */
+    snprintf(path, sizeof(path), "%s/d3d12.dll", games[0]);
+    write_text(path, "partial-copy");
+    assert(!preflight(&profiles[0], prefixes[0], games[0]));
+    assert(metalsharp_reconcile_bottle_manifest(manifests[0], strlen(manifests[0])));
+    assert(preflight(&profiles[0], prefixes[0], games[0]));
+
+    /* A cross-architecture DLL cannot authorize a 32-bit launch. */
+    char x64_d3d11[PATH_MAX];
+    snprintf(x64_d3d11, sizeof(x64_d3d11), "%s/runtime/wine/lib/dxmt/x86_64-windows/d3d11.dll", home);
+    snprintf(path, sizeof(path), "%s/d3d11.dll", games[3]);
+    copy_file(x64_d3d11, path);
+    assert(!preflight(&profiles[3], prefixes[3], games[3]));
+    assert(metalsharp_reconcile_bottle_manifest(manifests[3], strlen(manifests[3])));
+    assert(preflight(&profiles[3], prefixes[3], games[3]));
+
+    /* A cross-architecture receipt cannot authorize launch either. */
+    snprintf(path, sizeof(path), "%s/steam_%u/dxmt-deployment.json", bottles, profiles[3].appid);
+    replace_text(path, "\"architecture\": \"i386\"", "\"architecture\": \"x86_64\"");
+    assert(!preflight(&profiles[3], prefixes[3], games[3]));
+    assert(metalsharp_reconcile_bottle_manifest(manifests[3], strlen(manifests[3])));
+    assert(preflight(&profiles[3], prefixes[3], games[3]));
+
+    /* A stale receipt cannot authorize launch. */
+    snprintf(path, sizeof(path), "%s/steam_%u/dxmt-deployment.json", bottles, profiles[1].appid);
+    replace_text(path, "\"status\": \"ready\"", "\"status\": \"stale\"");
+    assert(!preflight(&profiles[1], prefixes[1], games[1]));
+    assert(metalsharp_reconcile_bottle_manifest(manifests[1], strlen(manifests[1])));
+    assert(preflight(&profiles[1], prefixes[1], games[1]));
+
+    /* Mixed PE/Unix payloads and missing sidecars invalidate every launch shape. */
+    char unix_bridge[PATH_MAX], unix_backup[PATH_MAX], pe_bridge[PATH_MAX], sidecar[PATH_MAX], sidecar_backup[PATH_MAX];
+    snprintf(unix_bridge, sizeof(unix_bridge), "%s/x86_64-unix/winemetal.so", m12);
+    snprintf(unix_backup, sizeof(unix_backup), "%s.negative-backup", unix_bridge);
+    snprintf(pe_bridge, sizeof(pe_bridge), "%s/x86_64-windows/winemetal.dll", m12);
+    assert(rename(unix_bridge, unix_backup) == 0);
+    copy_file(pe_bridge, unix_bridge);
+    assert(!preflight(&profiles[0], prefixes[0], games[0]));
+    assert(unlink(unix_bridge) == 0);
+    assert(rename(unix_backup, unix_bridge) == 0);
+    assert(preflight(&profiles[0], prefixes[0], games[0]));
+
+    snprintf(sidecar, sizeof(sidecar), "%s/x86_64-unix/libc++abi.1.dylib", m12);
+    snprintf(sidecar_backup, sizeof(sidecar_backup), "%s.negative-backup", sidecar);
+    assert(rename(sidecar, sidecar_backup) == 0);
+    assert(!preflight(&profiles[0], prefixes[0], games[0]));
+    assert(rename(sidecar_backup, sidecar) == 0);
+    assert(preflight(&profiles[0], prefixes[0], games[0]));
+
+    /* A failed promotion must preserve prior bytes and mark the manifest for repair. */
+    snprintf(path, sizeof(path), "%s/drive_c/windows/system32/d3d11.dll", prefixes[1]);
     write_text(path, "preserve-me");
     assert(setenv("METALSHARP_TEST_BOTTLE_FAIL_AFTER_PROMOTION", "1", 1) == 0);
-    assert(!metalsharp_reconcile_bottle_manifest(manifest, strlen(manifest)));
+    assert(!metalsharp_reconcile_bottle_manifest(manifests[1], strlen(manifests[1])));
     assert(unsetenv("METALSHARP_TEST_BOTTLE_FAIL_AFTER_PROMOTION") == 0);
     assert_contains(path, "preserve-me");
-    assert_contains(manifest, "\"health\": \"needs_repair\"");
+    assert_contains(manifests[1], "\"health\": \"needs_repair\"");
 
-    puts("DXMT bottle deployment, direct launch, EAC bypass, receipt, profile subset, Steam staging, and rollback "
-         "tests passed.");
+    puts("DXMT M12, M11, M10, M11(32), and M10(32) deployment/launch conformance passed, including mixed "
+         "PE/Unix, cross-architecture, missing-sidecar, partial-copy, stale-receipt, EAC, and rollback negatives.");
     return 0;
 }

@@ -176,6 +176,33 @@ def check_workflows(assets: list[str]) -> None:
     release = read(".github/workflows/release.yml")
     if "tools/dmg/verify-dmg-clean-setup.sh" not in release:
         fail("release workflow must run clean setup from the packaged DMG")
+    if "tools/bundles/verify-production-dxmt-conformance.sh" not in release:
+        fail("release workflow must reject nonconforming production DXMT archives before packaging")
+
+    production_gate = read("tools/bundles/verify-production-dxmt-conformance.sh")
+    for needle in [
+        "verify-dxmt-surfaces.py",
+        "metalsharp-bottle-deployment-tests",
+        "--winemetal-abi-only",
+        "--loader-only",
+        "--mini-only",
+        "metalsharp-runtime.tar.zst",
+        "metalsharp-graphics-dll.tar.zst",
+    ]:
+        if needle not in production_gate:
+            fail(f"production DXMT conformance gate no longer checks {needle}")
+
+    clean_setup = read("tools/dmg/verify-dmg-clean-setup.sh")
+    for needle in [
+        "Graphics/dll/dxmt-m12",
+        "Graphics/dll/dxmt",
+        "runtime/wine/lib/wine/x86_64-unix/winemetal.so",
+        "drive_c/windows/system32",
+        "clean-dmg-game-m12",
+        "clean-dmg-game-m11",
+    ]:
+        if needle not in clean_setup:
+            fail(f"clean-DMG verifier no longer byte-checks {needle}")
 
     if "DMG Workflow CI" not in pr:
         fail("PR CI must keep a lightweight DMG Workflow CI job")

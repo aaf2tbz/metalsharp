@@ -57,6 +57,17 @@ def verify_archive(archive: Path, manifest_path: Path) -> None:
     if not archive.is_file() or archive.stat().st_size == 0:
         raise ValueError(f"graphics bundle missing or empty: {archive}")
     manifest = load_manifest(manifest_path)
+    validation = manifest.get("validation", {})
+    live_references = {
+        "d3d12": "Elden Ring rendered through start_protected_game.exe",
+        "d3d11": "Rain World rendered through RainWorld.exe",
+        "launch_wrapper": "metalsharp-wine",
+        "graphics_backend": "dxmt",
+        "unix_bridge": "winemetal.so",
+    }
+    for key, expected in live_references.items():
+        if validation.get(key) != expected:
+            raise ValueError(f"live acceptance reference {key} must remain {expected!r}")
     members = archive_members(archive)
     member_set = set(members)
     if str(INTERNAL_MANIFEST) not in member_set:
@@ -79,6 +90,13 @@ def verify_archive(archive: Path, manifest_path: Path) -> None:
             bundle_roots = surface.get("bundle_roots", [])
             if not artifacts or not bundle_roots:
                 raise ValueError(f"surface {surface_id} has no artifacts or bundle roots")
+
+            role = surface.get("role")
+            pipelines = set(surface.get("pipelines", []))
+            if role == "upgraded-shared-x64" and pipelines != {"m10", "m11", "m12"}:
+                raise ValueError("upgraded x64 surface must remain authoritative for M10, M11, and M12")
+            if role == "preserved-legacy-i386" and pipelines != {"m10_32", "m11_32"}:
+                raise ValueError("preserved i386 surface must remain authoritative for M10(32) and M11(32)")
 
             for bundle_root_text in bundle_roots:
                 bundle_root = Path(bundle_root_text)

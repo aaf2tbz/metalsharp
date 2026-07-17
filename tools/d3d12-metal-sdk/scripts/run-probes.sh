@@ -70,6 +70,7 @@ Options:
   --agility-sdk-path REL
                         Override exported D3D12SDKPath for Agility-sensitive probes.
   --no-loader           Skip probe_loader.
+  --loader-only         Run only the D3D12/D3D11/DXGI loader and export probe.
   --no-agility          Skip probe_agility_ue5.
   --agility-only        Run only the Agility SDK surface probe.
   --no-caps             Skip probe_device_caps.
@@ -165,6 +166,31 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-loader)
       RUN_LOADER=0
+      shift
+      ;;
+    --loader-only)
+      RUN_LOADER=1
+      RUN_AGILITY=0
+      RUN_CAPS=0
+      RUN_DXGI=0
+      RUN_RESOURCES=0
+      RUN_QUEUES=0
+      RUN_DESCRIPTORS=0
+      RUN_SHADERS=0
+      RUN_DXIL_SEMANTICS=0
+      RUN_SHADER_CORPUS=0
+      RUN_SM66_CAPABILITIES=0
+      RUN_WAVE_OPS=0
+      RUN_REFLECTION_ABI=0
+      RUN_RENDER_HEADLESS=0
+      RUN_GRAPHICS_PSO=0
+      RUN_COMPUTE_PSO=0
+      RUN_COMMAND_REPLAY=0
+      RUN_BARRIERS_RENDER_PASS=0
+      RUN_RESOURCE_VIEWS_FORMATS=0
+      RUN_MINI=0
+      RUN_WINEMETAL_ABI=0
+      RUN_PRESENT_WINDOWED=0
       shift
       ;;
     --no-agility)
