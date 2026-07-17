@@ -295,7 +295,12 @@ onUnmounted(() => {
 .migration-overlay {
   position: fixed;
   inset: 0;
-  background: #101d29;
+  background:
+    radial-gradient(circle at 18% 8%, rgba(102, 192, 244, 0.18), transparent 38%),
+    radial-gradient(circle at 86% 88%, rgba(80, 190, 125, 0.1), transparent 42%),
+    linear-gradient(145deg, rgba(10, 24, 36, 0.76), rgba(8, 17, 27, 0.88));
+  backdrop-filter: blur(28px) saturate(135%);
+  -webkit-backdrop-filter: blur(28px) saturate(135%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -308,7 +313,9 @@ onUnmounted(() => {
   box-sizing: border-box;
   padding: 34px;
   color: #f4f8fb;
-  background: #101d29;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 45%),
+    rgba(12, 28, 41, 0.42);
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -372,9 +379,16 @@ onUnmounted(() => {
   box-sizing: border-box;
   padding: 10px 8px 8px;
   text-align: center;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.018)),
+    rgba(8, 20, 31, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 8px 24px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(14px) saturate(125%);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
   transition:
     border-color 180ms ease,
     background 180ms ease;
@@ -382,7 +396,12 @@ onUnmounted(() => {
 
 .migration-stage.active {
   border-color: rgba(102, 192, 244, 0.5);
-  background: rgba(102, 192, 244, 0.1);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), transparent),
+    rgba(102, 192, 244, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 28px rgba(28, 128, 184, 0.12);
 }
 
 .migration-stage.completed {
@@ -445,7 +464,8 @@ onUnmounted(() => {
 .progress-bar-track {
   width: 100%;
   height: 6px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(2, 10, 17, 0.36);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.22);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -481,8 +501,13 @@ onUnmounted(() => {
   padding: 9px 12px;
   margin-top: 16px;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent),
+    rgba(5, 17, 27, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(14px) saturate(125%);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
 }
 
 .status-message {
