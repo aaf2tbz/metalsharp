@@ -3,12 +3,15 @@
 #include "launcher.h"
 #include "runtime_surface.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <limits.h>
 #include <spawn.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -34,6 +37,108 @@ static bool copy_slice(char* out, size_t out_size, const char* value, size_t val
 static bool regular_nonempty_file(const char* path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0;
+}
+
+bool metalsharp_find_bytes(const void* haystack, size_t haystack_len, const void* needle, size_t needle_len,
+                           size_t* offset) {
+    if (haystack == NULL || needle == NULL || needle_len == 0 || haystack_len < needle_len) {
+        return false;
+    }
+
+    const uint8_t* bytes = haystack;
+    const uint8_t* marker = needle;
+    size_t index = 0;
+    while (index <= haystack_len - needle_len) {
+        const uint8_t* candidate = memchr(bytes + index, marker[0], haystack_len - needle_len - index + 1);
+        if (candidate == NULL) {
+            return false;
+        }
+        index = (size_t)(candidate - bytes);
+        if (memcmp(candidate, marker, needle_len) == 0) {
+            if (offset != NULL) {
+                *offset = index;
+            }
+            return true;
+        }
+        ++index;
+    }
+    return false;
+}
+
+static bool executable_declares_agility(const char* path) {
+    static const char* const markers[] = {
+        "D3D12SDKVersion",
+        "D3D12SDKPath",
+        ".\\D3D12\\x64\\",
+    };
+    FILE* file = fopen(path, "rb");
+    if (file == NULL) {
+        return false;
+    }
+
+    enum { chunk_size = 64 * 1024, overlap_size = 32 };
+    uint8_t buffer[chunk_size + overlap_size];
+    size_t overlap = 0;
+    bool found = false;
+    while (!found) {
+        const size_t read = fread(buffer + overlap, 1, chunk_size, file);
+        const size_t available = overlap + read;
+        for (size_t index = 0; index < sizeof(markers) / sizeof(markers[0]); ++index) {
+            if (metalsharp_find_bytes(buffer, available, markers[index], strlen(markers[index]), NULL)) {
+                found = true;
+                break;
+            }
+        }
+        if (read < chunk_size) {
+            break;
+        }
+        overlap = available < overlap_size ? available : overlap_size;
+        memmove(buffer, buffer + available - overlap, overlap);
+    }
+    fclose(file);
+    return found;
+}
+
+static bool has_exe_extension(const char* name) {
+    const size_t length = strlen(name);
+    return length >= 4 && strcasecmp(name + length - 4, ".exe") == 0;
+}
+
+static bool game_path_requires_agility(const char* path, unsigned depth) {
+    struct stat info;
+    if (stat(path, &info) != 0) {
+        return false;
+    }
+    if (S_ISREG(info.st_mode)) {
+        return has_exe_extension(path) && executable_declares_agility(path);
+    }
+    if (!S_ISDIR(info.st_mode) || depth > 6) {
+        return false;
+    }
+
+    DIR* directory = opendir(path);
+    if (directory == NULL) {
+        return false;
+    }
+    bool found = false;
+    struct dirent* entry;
+    while (!found && (entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        char child[PATH_MAX];
+        const int written = snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+        if (written >= 0 && (size_t)written < sizeof(child)) {
+            found = game_path_requires_agility(child, depth + 1);
+        }
+    }
+    closedir(directory);
+    return found;
+}
+
+bool metalsharp_game_requires_agility(const char* game_path, size_t game_path_len) {
+    char path[PATH_MAX];
+    return copy_slice(path, sizeof(path), game_path, game_path_len) && game_path_requires_agility(path, 0);
 }
 
 static bool run_tool(const char* tool, char* const arguments[]) {

@@ -10,6 +10,8 @@ MAINTAINED_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-sources.t
 MAINTAINED_TEST_SRCS := $(shell awk '{print "./" $$0}' manifests/maintained-test-sources.txt)
 LAUNCH_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.03.rcgu.c
 MIGRATION_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.08.rcgu.c
+AGILITY_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.05.rcgu.c
+BOTTLE_ADAPTER_SRC := runtime/c/metalsharp_backend-be5c1ce78fdf154a.metalsharp_backend.821b1f24846112cc-cgu.01.rcgu.c
 RUNTIME_OBJS := $(patsubst ./runtime/c/%.c,build/runtime/%.o,$(RUNTIME_SRCS))
 TEST_OBJS := $(patsubst ./tests/c/%.c,build/tests/%.o,$(TEST_SRCS))
 MAINTAINED_OBJS := $(patsubst ./%.c,build/maintained/%.o,$(MAINTAINED_SRCS))
@@ -42,6 +44,14 @@ integrity:
 	@grep -q 'metalsharp_launcher_preflight(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_launcher_prepare_eac(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_migration_refresh_saved_bottles()' "$(MIGRATION_ADAPTER_SRC)"
+	@grep -q 'metalsharp_game_requires_agility(_arg1, _arg2)' "$(AGILITY_ADAPTER_SRC)"
+	@grep -q 'metalsharp_find_bytes(_arg0, _arg1, _arg2, _arg3' "$(AGILITY_ADAPTER_SRC)"
+	@grep -q '_metalsharp_m12_components' "$(BOTTLE_ADAPTER_SRC)"
+	@grep -q '(void \*)_metalsharp_m12_components' "$(BOTTLE_ADAPTER_SRC)"
+	@grep -q '\*(__rustc_usize \*)_t41016 = 10ULL' "$(BOTTLE_ADAPTER_SRC)"
+	@! sed -n '/_metalsharp_m12_components\[\]/,/^};/p' "$(BOTTLE_ADAPTER_SRC)" | grep -q '_bytes2971'
+	@grep -q '!metalsharp_game_requires_agility(_t21441, _t21443)' "$(BOTTLE_ADAPTER_SRC)"
+	@grep -q 'if (_arg4) goto bb_823_bb1364' "$(BOTTLE_ADAPTER_SRC)"
 	@python3 ../../tools/c-backend/verify-module-alignment.py
 	@python3 ../../tools/c-backend/verify-version-alignment.py
 	@echo "C source manifests are complete (374 converted runtime, 394 converted test, 5 maintained runtime, 4 maintained test units)."

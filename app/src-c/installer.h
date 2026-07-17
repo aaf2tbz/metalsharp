@@ -20,4 +20,12 @@ bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, co
 bool metalsharp_extract_agility_package(const char* archive, size_t archive_len, const char* destination,
                                         size_t destination_len);
 
+/*
+ * Converted slice-window searches are prohibitively slow on large PE images.
+ * Keep the byte scan and the Agility opt-in decision in maintained C.
+ */
+bool metalsharp_find_bytes(const void* haystack, size_t haystack_len, const void* needle, size_t needle_len,
+                           size_t* offset);
+bool metalsharp_game_requires_agility(const char* game_path, size_t game_path_len);
+
 #endif

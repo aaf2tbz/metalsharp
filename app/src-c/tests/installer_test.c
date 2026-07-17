@@ -32,6 +32,14 @@ int main(void) {
     char command[8192];
     assert(mkdtemp(temp) != NULL);
 
+    const unsigned char scan_fixture[] = {'x', 'x', 'D', '3', 'D', '1', '2', 'S', 'D',
+                                          'K', 'V', 'e', 'r', 's', 'i', 'o', 'n', 'x'};
+    size_t marker_offset = 0;
+    assert(metalsharp_find_bytes(scan_fixture, sizeof(scan_fixture), "D3D12SDKVersion", 15, &marker_offset));
+    assert(marker_offset == 2);
+    assert(!metalsharp_find_bytes(scan_fixture, sizeof(scan_fixture), "missing", 7, NULL));
+    assert(!metalsharp_find_bytes(scan_fixture, sizeof(scan_fixture), "", 0, NULL));
+
     for (size_t index = 0; index < sizeof(required) / sizeof(required[0]); ++index) {
         char path[4096];
         snprintf(path, sizeof(path), "%s/%s", temp, required[index]);
@@ -89,6 +97,22 @@ int main(void) {
     assert(access(installed, R_OK) == 0);
     assert(access(stale, F_OK) != 0);
     assert(!metalsharp_extract_agility_package("/missing", 8, agility, strlen(agility)));
+
+    char ordinary_game[4096];
+    char agility_game[4096];
+    snprintf(ordinary_game, sizeof(ordinary_game), "%s/ordinary.exe", temp);
+    snprintf(agility_game, sizeof(agility_game), "%s/agility.exe", temp);
+    FILE* ordinary = fopen(ordinary_game, "wb");
+    assert(ordinary != NULL);
+    assert(fwrite("ordinary D3D12 game", 1, 19, ordinary) == 19);
+    assert(fclose(ordinary) == 0);
+    assert(!metalsharp_game_requires_agility(ordinary_game, strlen(ordinary_game)));
+    FILE* agility_executable = fopen(agility_game, "wb");
+    assert(agility_executable != NULL);
+    assert(fwrite(scan_fixture, 1, sizeof(scan_fixture), agility_executable) == sizeof(scan_fixture));
+    assert(fclose(agility_executable) == 0);
+    assert(metalsharp_game_requires_agility(agility_game, strlen(agility_game)));
+    assert(metalsharp_game_requires_agility(temp, strlen(temp)));
 
     snprintf(command, sizeof(command), "/bin/rm -rf -- '%s' '%s' '%s' '%s'", temp, fixture, archive, agility);
     assert(system(command) == 0);
