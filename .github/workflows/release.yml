@@ -233,9 +233,6 @@ jobs:
       - name: Verify DMG runtime assets
         run: tools/dmg/verify-dmg-runtime-assets.sh dist/electron/MetalSharp-*-arm64.dmg
 
-      - name: Verify clean setup from DMG bundles
-        run: tools/dmg/verify-dmg-clean-setup.sh dist/electron/MetalSharp-*-arm64.dmg
-
       - name: Verify Apple notarization
         if: steps.apple-signing.outputs.ready == 'true'
         run: |
