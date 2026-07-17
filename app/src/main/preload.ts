@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("metalsharp", {
   request: (method: string, url: string, body?: Record<string, unknown>, timeoutMs?: number) =>
     ipcRenderer.invoke("backend:request", method, url, body, timeoutMs),
   isFirstLaunch: () => ipcRenderer.invoke("app:is-first-launch"),
+  setTheme: (theme: "dark" | "light" | "developer") => ipcRenderer.invoke("app:set-theme", theme),
   isMigrationMode: () => ipcRenderer.invoke("app:is-migration-mode"),
   restartAfterMigration: () => ipcRenderer.invoke("app:restart-after-migration"),
   ejectDmg: () => ipcRenderer.invoke("app:eject-dmg"),

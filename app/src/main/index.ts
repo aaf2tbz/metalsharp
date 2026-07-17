@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "child_process";
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, protocol, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, nativeTheme, protocol, shell } from "electron";
 import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
@@ -597,7 +597,7 @@ async function createWindow(migrating = false) {
     frame: !uiOnly,
     transparent: migrating,
     vibrancy: migrating ? "under-window" : uiOnly ? undefined : "sidebar",
-    visualEffectState: migrating || !uiOnly ? "active" : undefined,
+    visualEffectState: migrating ? "active" : undefined,
     backgroundMaterial: migrating || uiOnly ? undefined : "acrylic",
     icon: path.join(__dirname, "..", "..", "build", "icon.png"),
     titleBarStyle: uiOnly ? undefined : "hiddenInset",
@@ -822,6 +822,12 @@ function registerIpc() {
   ipcMain.handle("app:is-first-launch", () => {
     if (isUiOnlyRuntime()) return false;
     return isFirstLaunch();
+  });
+
+  ipcMain.handle("app:set-theme", (event, theme: string) => {
+    if (!isTrustedRenderer(event.sender) || !["dark", "light", "developer"].includes(theme)) return false;
+    nativeTheme.themeSource = theme === "light" ? "light" : "dark";
+    return true;
   });
 
   ipcMain.handle("app:is-migration-mode", () => {

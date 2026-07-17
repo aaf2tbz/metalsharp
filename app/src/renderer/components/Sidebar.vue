@@ -95,14 +95,14 @@ const navItems: NavItem[] = [
   width: var(--sidebar-width-expanded);
   height: 100vh;
   min-height: 0;
-  background-color: color-mix(in srgb, var(--bg-surface) 12%, transparent);
-  backdrop-filter: blur(58px) saturate(235%) brightness(1.14) contrast(1.04);
-  -webkit-backdrop-filter: blur(58px) saturate(235%) brightness(1.14) contrast(1.04);
-  border-right: 1px solid color-mix(in srgb, white 28%, var(--border));
+  background-color: color-mix(in srgb, var(--bg-surface) 32%, transparent);
+  backdrop-filter: blur(42px) saturate(210%) brightness(1.12);
+  -webkit-backdrop-filter: blur(42px) saturate(210%) brightness(1.12);
+  border-right: 1px solid color-mix(in srgb, white 18%, var(--border));
   box-shadow:
-    inset 1px 0 rgba(255, 255, 255, 0.13),
-    inset -1px 0 rgba(255, 255, 255, 0.12),
-    18px 0 48px rgba(0, 0, 0, 0.14);
+    inset 1px 0 rgba(255, 255, 255, 0.09),
+    inset -1px 0 rgba(255, 255, 255, 0.08),
+    16px 0 42px rgba(0, 0, 0, 0.18);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
@@ -117,16 +117,27 @@ const navItems: NavItem[] = [
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 16% 3%, rgba(255, 255, 255, 0.19), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.19), transparent 26%),
     linear-gradient(
       112deg,
-      color-mix(in srgb, var(--accent) 11%, transparent),
-      transparent 44%,
-      rgba(255, 255, 255, 0.055)
+      color-mix(in srgb, var(--accent) 22%, transparent),
+      transparent 46%,
+      rgba(255, 255, 255, 0.085)
     );
   pointer-events: none;
   z-index: 0;
+}
+
+:global(:root[data-theme="dark"] .sidebar) {
+  background-color: rgba(18, 28, 40, 0.32);
+}
+
+:global(:root[data-theme="light"] .sidebar) {
+  background-color: rgba(255, 255, 255, 0.32);
+}
+
+:global(:root[data-theme="developer"] .sidebar) {
+  background-color: rgba(9, 7, 15, 0.32);
 }
 
 :global(:root[data-low-performance="true"] .sidebar) {
@@ -137,18 +148,8 @@ const navItems: NavItem[] = [
   box-shadow: none;
 }
 
-:global(:root[data-low-performance="true"] .sidebar::before),
-:global(:root[data-low-performance="true"] .sidebar::after) {
+:global(:root[data-low-performance="true"] .sidebar::before) {
   display: none;
-}
-.sidebar::after {
-  content: "";
-  position: absolute;
-  inset: 0 0 0 auto;
-  width: 1px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 42%, transparent 82%);
-  pointer-events: none;
-  z-index: 0;
 }
 .sidebar > * {
   position: relative;
