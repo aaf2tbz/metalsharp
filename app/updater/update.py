@@ -29,7 +29,12 @@ except OSError:
 
 APP_PATH = "/Applications/MetalSharp.app"
 UPDATE_DMG_PATH = None
-LEGACY_C_BACKEND_CONTRACTS = {"0.54.5": "1"}
+LEGACY_C_BACKEND_CONTRACTS = {
+    "0.54.5": "1",
+    "0.55.0": "1",
+    "0.55.1": "1",
+    "0.56.0": "1",
+}
 
 
 def write_status(status_file, phase, percent, message, error=None, new_version=None):
