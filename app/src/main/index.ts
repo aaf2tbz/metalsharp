@@ -597,7 +597,7 @@ async function createWindow(migrating = false) {
     frame: !uiOnly,
     transparent: migrating,
     vibrancy: migrating ? "under-window" : uiOnly ? undefined : "sidebar",
-    visualEffectState: migrating ? "active" : undefined,
+    visualEffectState: migrating || !uiOnly ? "active" : undefined,
     backgroundMaterial: migrating || uiOnly ? undefined : "acrylic",
     icon: path.join(__dirname, "..", "..", "build", "icon.png"),
     titleBarStyle: uiOnly ? undefined : "hiddenInset",
