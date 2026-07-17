@@ -95,13 +95,14 @@ const navItems: NavItem[] = [
   width: var(--sidebar-width-expanded);
   height: 100vh;
   min-height: 0;
-  background-color: color-mix(in srgb, var(--sidebar-bg) 76%, transparent);
-  backdrop-filter: blur(30px) saturate(175%) brightness(1.06);
-  -webkit-backdrop-filter: blur(30px) saturate(175%) brightness(1.06);
-  border-right: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  background-color: color-mix(in srgb, var(--bg-surface) 32%, transparent);
+  backdrop-filter: blur(42px) saturate(210%) brightness(1.12);
+  -webkit-backdrop-filter: blur(42px) saturate(210%) brightness(1.12);
+  border-right: 1px solid color-mix(in srgb, white 18%, var(--border));
   box-shadow:
-    inset -1px 0 rgba(255, 255, 255, 0.05),
-    14px 0 38px rgba(0, 0, 0, 0.16);
+    inset 1px 0 rgba(255, 255, 255, 0.09),
+    inset -1px 0 rgba(255, 255, 255, 0.08),
+    16px 0 42px rgba(0, 0, 0, 0.18);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
@@ -116,12 +117,12 @@ const navItems: NavItem[] = [
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.11), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.19), transparent 26%),
     linear-gradient(
       112deg,
-      color-mix(in srgb, var(--accent) 17%, transparent),
-      transparent 48%,
-      rgba(255, 255, 255, 0.045)
+      color-mix(in srgb, var(--accent) 22%, transparent),
+      transparent 46%,
+      rgba(255, 255, 255, 0.085)
     );
   pointer-events: none;
   z-index: 0;
