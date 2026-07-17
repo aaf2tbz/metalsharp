@@ -27,7 +27,17 @@ static void mkdirs(const char* path) {
     mkdir(buffer, 0700);
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+    if (argc == 3 && strcmp(argv[1], "--check-home") == 0) {
+        const bool ready = metalsharp_graphics_runtimes_complete(argv[2], strlen(argv[2]));
+        printf("graphics runtimes: %s\n", ready ? "ready" : "not ready");
+        return ready ? 0 : 1;
+    }
+    if (argc == 3 && strcmp(argv[1], "--check-lane") == 0) {
+        const bool ready = metalsharp_graphics_runtime_lane_complete(argv[2], strlen(argv[2]));
+        printf("graphics runtime lane: %s\n", ready ? "ready" : "not ready");
+        return ready ? 0 : 1;
+    }
     char temp[] = "/tmp/metalsharp-installer-c.XXXXXX";
     char command[8192];
     assert(mkdtemp(temp) != NULL);
@@ -55,6 +65,10 @@ int main(void) {
 
     /* Presence alone must never authenticate a graphics surface. */
     assert(!metalsharp_m12_runtime_complete(temp, strlen(temp)));
+    assert(!metalsharp_graphics_runtimes_complete(temp, strlen(temp)));
+    assert(setenv("METALSHARP_HOME", temp, 1) == 0);
+    assert(!metalsharp_graphics_runtime_lane_complete("/legacy/runtime/dxmt", 20));
+    assert(unsetenv("METALSHARP_HOME") == 0);
     char missing[4096];
     snprintf(missing, sizeof(missing), "%s/%s", temp, required[0]);
     assert(unlink(missing) == 0);

@@ -46,6 +46,9 @@ integrity:
 	@grep -q 'metalsharp_launcher_prepare_eac(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_migration_refresh_saved_bottles()' "$(MIGRATION_ADAPTER_SRC)"
 	@grep -q 'return metalsharp_m12_runtime_complete((const char \*)_arg0, (size_t)_arg1);' "$(INSTALLER_ADAPTER_SRC)"
+	@grep -q 'return metalsharp_graphics_runtimes_complete((const char \*)_arg0, (size_t)_arg1);' "$(INSTALLER_ADAPTER_SRC)"
+	@test "$$(grep -c 'return metalsharp_graphics_runtimes_complete((const char \*)_arg0, (size_t)_arg1);' "$(INSTALLER_ADAPTER_SRC)")" = 3
+	@grep -q 'return metalsharp_graphics_runtime_lane_complete((const char \*)_arg0, (size_t)_arg1);' "$(INSTALLER_ADAPTER_SRC)"
 	@grep -q '_bytes1023\[\].*0x64, 0x78, 0x6d, 0x74, 0x2d, 0x6d, 0x31, 0x32' "$(INSTALLER_ADAPTER_SRC)"
 	@grep -q '_bytes1452\[\].*0x64, 0x78, 0x6d, 0x74, 0x5f, 0x6d, 0x31, 0x32' "$(INSTALLER_ADAPTER_SRC)"
 	@grep -q 'metalsharp_game_requires_agility(_arg1, _arg2)' "$(AGILITY_ADAPTER_SRC)"

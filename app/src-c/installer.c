@@ -254,6 +254,46 @@ bool metalsharp_m12_runtime_complete(const char* root, size_t root_len) {
            metalsharp_launcher_runtime_ready("m12", root_path, strlen(root_path));
 }
 
+bool metalsharp_graphics_runtime_lane_complete(const char* root, size_t root_len) {
+    char lane_root[PATH_MAX];
+    if (!copy_slice(lane_root, sizeof(lane_root), root, root_len)) {
+        return false;
+    }
+    if (strstr(lane_root, "/runtime/wine/lib/") == NULL) {
+        const char* metalsharp_home = getenv("METALSHARP_HOME");
+        if (metalsharp_home == NULL || metalsharp_home[0] == '\0') {
+            return false;
+        }
+        const int written = snprintf(lane_root, sizeof(lane_root), "%s/runtime/wine/lib/dxmt_m12", metalsharp_home);
+        if (written < 0 || (size_t)written >= sizeof(lane_root)) {
+            return false;
+        }
+        root_len = (size_t)written;
+    }
+    static const char legacy_suffix[] = "/dxmt";
+    const size_t suffix_len = sizeof(legacy_suffix) - 1;
+    if (root_len >= suffix_len && strcmp(lane_root + root_len - suffix_len, legacy_suffix) == 0) {
+        const int written = snprintf(lane_root + root_len, sizeof(lane_root) - root_len, "_m12");
+        if (written != 4) {
+            return false;
+        }
+        root_len += (size_t)written;
+    }
+    return metalsharp_reconcile_dxmt_surface(lane_root, root_len) &&
+           metalsharp_m12_runtime_complete(lane_root, root_len);
+}
+
+bool metalsharp_graphics_runtimes_complete(const char* metalsharp_home, size_t metalsharp_home_len) {
+    char home_path[PATH_MAX];
+    char m12_root[PATH_MAX];
+    if (!copy_slice(home_path, sizeof(home_path), metalsharp_home, metalsharp_home_len)) {
+        return false;
+    }
+    const int written = snprintf(m12_root, sizeof(m12_root), "%s/runtime/wine/lib/dxmt_m12", home_path);
+    return written >= 0 && (size_t)written < sizeof(m12_root) &&
+           metalsharp_graphics_runtime_lane_complete(m12_root, (size_t)written);
+}
+
 bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, const char* relative_path,
                                            size_t relative_path_len) {
     char home_path[PATH_MAX];

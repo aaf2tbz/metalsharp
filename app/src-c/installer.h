@@ -10,6 +10,8 @@
  * successful check also proves both installed lanes and Wine mirrors agree.
  */
 bool metalsharp_m12_runtime_complete(const char* root, size_t root_len);
+bool metalsharp_graphics_runtime_lane_complete(const char* root, size_t root_len);
+bool metalsharp_graphics_runtimes_complete(const char* metalsharp_home, size_t metalsharp_home_len);
 bool metalsharp_m12_runtime_artifact_valid(const char* home, size_t home_len, const char* relative_path,
                                            size_t relative_path_len);
 

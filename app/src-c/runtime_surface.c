@@ -233,9 +233,14 @@ static void rollback_file(const char* target, const char* backup, bool had_targe
 bool metalsharp_reconcile_dxmt_surface(const char* m12_root_value, size_t m12_root_len) {
     char m12_root[PATH_MAX], lib[PATH_MAX], dxmt[PATH_MAX];
     if (!copy_slice(m12_root, sizeof(m12_root), m12_root_value, m12_root_len) || !derive_paths(m12_root, lib, dxmt) ||
-        !verify_artifacts(m12_root, x64_artifacts, sizeof(x64_artifacts) / sizeof(x64_artifacts[0])) ||
         !verify_artifacts(dxmt, i386_artifacts, sizeof(i386_artifacts) / sizeof(i386_artifacts[0])))
         return false;
+    const char* x64_source = m12_root;
+    if (!verify_artifacts(m12_root, x64_artifacts, sizeof(x64_artifacts) / sizeof(x64_artifacts[0]))) {
+        if (!verify_artifacts(dxmt, x64_artifacts, sizeof(x64_artifacts) / sizeof(x64_artifacts[0])))
+            return false;
+        x64_source = dxmt;
+    }
     if (verify_complete(m12_root))
         return true;
 
@@ -254,7 +259,7 @@ bool metalsharp_reconcile_dxmt_surface(const char* m12_root_value, size_t m12_ro
               mkdir_if_needed(stage_m12);
     const char* x64_lanes[] = {"x86_64-windows", "x86_64-unix"};
     for (size_t i = 0; ok && i < 2; ++i) {
-        ok = copy_lane(m12_root, x64_lanes[i], stage_dxmt) && copy_lane(m12_root, x64_lanes[i], stage_m12);
+        ok = copy_lane(x64_source, x64_lanes[i], stage_dxmt) && copy_lane(x64_source, x64_lanes[i], stage_m12);
     }
     const char* i386_lanes[] = {"i386-windows", "i386-unix"};
     for (size_t i = 0; ok && i < 2; ++i)

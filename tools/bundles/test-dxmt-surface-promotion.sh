@@ -17,3 +17,14 @@ LIB="$TEMP/runtime/wine/lib"
 
 "$TEST_BIN" "$LIB/dxmt_m12"
 test -d "$LIB/.metalsharp-dxmt-backups"
+
+# The updater's combined bundle can temporarily leave both x64 and i386 lanes
+# under dxmt. Reconciliation must recreate the isolated M12 root from that
+# layout without discarding the i386 lane.
+/bin/rm -rf -- "$LIB/dxmt_m12"
+"$TEST_BIN" --repair "$LIB/dxmt_m12"
+test -f "$LIB/dxmt_m12/x86_64-windows/d3d12.dll"
+test -f "$LIB/dxmt/i386-windows/d3d11.dll"
+grep -q 'metalsharp.dxmt-runtime.v2' "$LIB/dxmt_m12/metalsharp-dxmt-runtime.json"
+METALSHARP_HOME="$TEMP" "$ROOT/app/build/c-backend/metalsharp-installer-tests" --check-home "$TEMP"
+METALSHARP_HOME="$TEMP" "$ROOT/app/build/c-backend/metalsharp-installer-tests" --check-lane "$TEMP/runtime/dxmt"
