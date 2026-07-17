@@ -43,7 +43,9 @@ integrity:
 	@while IFS= read -r source; do test -f "$$source"; done < manifests/maintained-test-sources.txt
 	@grep -q 'metalsharp_launcher_preflight(_arg0' "$(LAUNCH_ADAPTER_SRC)"
 	@grep -q 'metalsharp_launcher_prepare_eac(_arg0' "$(LAUNCH_ADAPTER_SRC)"
-	@grep -q 'metalsharp_migration_refresh_saved_bottles()' "$(MIGRATION_ADAPTER_SRC)"
+	@grep -q 'extern bool metalsharp_migration_refresh_saved_bottles(void);' "$(MIGRATION_ADAPTER_SRC)"
+	@grep -q 'Required Wine prefix updates complete; saved bottle DLLs unchanged.' "$(MIGRATION_ADAPTER_SRC)"
+	@! grep -q 'if (!metalsharp_migration_refresh_saved_bottles())' "$(MIGRATION_ADAPTER_SRC)"
 	@grep -q 'metalsharp_game_requires_agility(_arg1, _arg2)' "$(AGILITY_ADAPTER_SRC)"
 	@grep -q 'metalsharp_find_bytes(_arg0, _arg1, _arg2, _arg3' "$(AGILITY_ADAPTER_SRC)"
 	@grep -q '_metalsharp_m12_components' "$(BOTTLE_ADAPTER_SRC)"

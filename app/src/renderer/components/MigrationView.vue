@@ -30,7 +30,7 @@ const percent = computed(() => {
 const stages = computed(() => [
   { name: restoringData.value ? "Restore Data" : "Preserve Data", detail: "Settings, bottles, prefixes" },
   { name: "Install Runtime", detail: "Matched graphics components" },
-  { name: "Refresh Bottles", detail: "Update profile-owned DLLs" },
+  { name: "Update Prefixes", detail: "Required Wine prefix changes" },
   { name: "Verify", detail: "Runtime and saved routes" },
 ]);
 
@@ -41,6 +41,8 @@ function stageFromMessage(value: string): MigrationStageIndex | null {
   // Check it before bottle/prefix terms because restore messages can contain both.
   if (detail.includes("restor")) return 0;
   if (
+    detail.includes("prefix updates complete") ||
+    detail.includes("updating wine prefix") ||
     detail.includes("refreshing saved bottle") ||
     detail.includes("refreshing bottle") ||
     detail.includes("bottle refresh")
@@ -255,7 +257,7 @@ onUnmounted(() => {
         <div :key="spinnerEpoch" class="loading-icon" :class="{ complete, error: !!error }" aria-hidden="true" />
         <h1 class="migration-title">{{ title }}</h1>
         <p class="migration-subtitle">
-          Your game files, settings, bottles, and prefixes stay in place while runtime components are refreshed.
+          Your game files, settings, and bottles stay unchanged while required runtime and prefix updates are applied.
         </p>
       </div>
 

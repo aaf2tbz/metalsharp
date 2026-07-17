@@ -83,8 +83,8 @@ def main() -> int:
         ("metalsharp_m12_runtime_complete" in generated, "generated-to-native installer bridge"),
         ("metalsharp_launcher_runtime_ready" in (ROOT / "app/src-c/installer.c").read_text(),
          "generated bottle/launch readiness to maintained C policy bridge"),
-        ("metalsharp_migration_refresh_saved_bottles" in generated,
-         "generated migration to maintained bottle refresh bridge"),
+        ("extern bool metalsharp_migration_refresh_saved_bottles(void);" in generated,
+         "legacy migration bottle-refresh bridge declaration"),
     ]
     for present, label in requirements:
         if not present:
