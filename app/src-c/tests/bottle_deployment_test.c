@@ -219,7 +219,31 @@ int main(int argc, char** argv) {
     assert_contains(path, "preserve-me");
     assert_contains(manifests[1], "\"health\": \"needs_repair\"");
 
-    puts("DXMT M12, M11, M10, M11(32), and M10(32) deployment/launch conformance passed, including mixed "
-         "PE/Unix, cross-architecture, missing-sidecar, partial-copy, stale-receipt, EAC, and rollback negatives.");
+    /* Saving M12 over a title whose catalog default is M11 must select the full
+       generic M12 deployment and direct-launch shape without applying Elden's
+       app-specific EAC executable substitution. */
+    const ProfileCase rain_world_m12 = {"m12", 6, 312520, "RainWorld.exe", "system32", "d3d12.dll", true};
+    replace_text(manifests[1], "\"runtime_profile\": \"m11\"", "\"runtime_profile\": \"m12\"");
+    assert(metalsharp_reconcile_bottle_manifest(manifests[1], strlen(manifests[1])));
+    snprintf(path, sizeof(path), "%s/drive_c/windows/system32/d3d12.dll", prefixes[1]);
+    assert(access(path, R_OK) == 0);
+    snprintf(path, sizeof(path), "%s/d3d12.dll", games[1]);
+    assert(access(path, R_OK) == 0);
+    assert(preflight(&rain_world_m12, prefixes[1], games[1]));
+    snprintf(path, sizeof(path), "%s/steam_%u/dxmt-launch-preflight.json", bottles, rain_world_m12.appid);
+    char expected_surface[512];
+    const MetalsharpBottlePolicy* m12_policy = metalsharp_bottle_policy("m12");
+    assert(m12_policy != NULL);
+    snprintf(expected_surface, sizeof(expected_surface), "\"surface_id\": \"%s\"", m12_policy->surface_id);
+    assert_contains(path, "\"pipeline\": \"m12\"");
+    assert_contains(path, expected_surface);
+    assert_contains(path, "\"graphics_backend\": \"dxmt\"");
+    assert_contains(path, "\"executable\": \"RainWorld.exe\"");
+    assert_contains(path, "\"launch_mode\": \"direct_executable\"");
+    assert_contains(path, "\"steam_client\": \"background\"");
+
+    puts("DXMT M12, M11, M10, M11(32), and M10(32) deployment/launch conformance passed, including saved "
+         "M11-to-M12 promotion, mixed PE/Unix, cross-architecture, missing-sidecar, partial-copy, stale-receipt, "
+         "EAC, and rollback negatives.");
     return 0;
 }

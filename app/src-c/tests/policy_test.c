@@ -22,7 +22,14 @@ int main(void) {
     assert(m12->includes_d3d12);
     assert(metalsharp_bottle_artifact_required(m12, "x86_64-windows/d3d12.dll"));
     assert(metalsharp_bottle_artifact_required(m12, "x86_64-unix/winemetal.so"));
-    assert(strstr(metalsharp_launch_policy("m12")->windows_dll_path, "dxmt_m12") != NULL);
+    const MetalsharpLaunchPolicy* m12_launch = metalsharp_launch_policy("m12");
+    assert(strcmp(m12_launch->windows_dll_path, "lib/dxmt_m12/x86_64-windows") == 0);
+    assert(strcmp(m12_launch->unix_library_path, "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix") == 0);
+    assert(strcmp(m12_launch->dll_overrides,
+                  "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d") ==
+           0);
+    assert(m12_launch->direct_executable);
+    assert(m12_launch->steam_background_client);
     assert(metalsharp_launcher_reserved_env_key("m12", "MS_GRAPHICS_BACKEND"));
     assert(metalsharp_launcher_reserved_env_key("m12", "DXMT_WINEMETAL_UNIXLIB"));
     assert(!metalsharp_launcher_reserved_env_key("m11", "MS_GRAPHICS_BACKEND"));

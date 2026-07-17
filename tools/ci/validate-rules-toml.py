@@ -10,6 +10,8 @@ without needing the Rust toolchain. It checks:
 4. Every `pipeline` value is one of the known pipeline ids.
 5. Sub-tables (e.g. `[overrides.APPID.diagnostics]`) only use the keys we expect
    (`dependencies`, `env`, `diagnostics`) — anything else is a typo.
+6. The default M12 rule is the proven Elden Ring dependency/diagnostic surface
+   plus the generic direct-executable DXMT M12 launch contract.
 
 Exit code 0 on success, 1 on any validation error.
 """
@@ -54,6 +56,22 @@ VALID_PIPELINES = {
 
 VALID_SUB_KEYS = {"dependencies", "env", "diagnostics"}
 
+M12_LAUNCH_CONTRACT = {
+    "pipeline": "m12",
+    "wine_binary": "bin/metalsharp-wine",
+    "graphics_backend": "dxmt",
+    "runtime_lane": "dxmt_m12",
+    "winemetal_unixlib": "winemetal.so",
+    "windows_dll_path": "lib/dxmt_m12/x86_64-windows",
+    "unix_library_path": "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix",
+    "dll_overrides": (
+        "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;"
+        "gameoverlayrenderer,gameoverlayrenderer64=d"
+    ),
+    "steam_client": "background",
+    "launch_mode": "direct_executable",
+}
+
 
 def fail(errors: list[str]) -> None:
     print(
@@ -83,6 +101,7 @@ def main() -> int:
         return 1
 
     overrides = data.get("overrides", {})
+    pipeline_defaults = data.get("pipeline_defaults", {})
 
     # 2. No duplicate `[overrides.APPID]` top-level sections.
     #    The `toml` parser already raises on duplicates, but we also do a
@@ -139,13 +158,44 @@ def main() -> int:
                 )
             seen_sub_keys.setdefault(appid, set()).add(key)
 
+    # 6. A user-selected M12 bottle must inherit Elden Ring's proven runtime
+    #    surface without inheriting its app-specific EAC executable mapping.
+    m12_default = pipeline_defaults.get("m12", {})
+    if not isinstance(m12_default, dict):
+        errors.append("[pipeline_defaults.m12] is not a table")
+    else:
+        for key, expected in M12_LAUNCH_CONTRACT.items():
+            if m12_default.get(key) != expected:
+                errors.append(
+                    f"[pipeline_defaults.m12] `{key}` must be {expected!r}"
+                )
+
+        elden = overrides.get("1245620", overrides.get(1245620, {}))
+        for section, key in (
+            ("dependencies", "components"),
+            ("diagnostics", "check_dlls"),
+        ):
+            default_values = m12_default.get(section, {}).get(key)
+            elden_values = elden.get(section, {}).get(key)
+            if default_values != elden_values:
+                errors.append(
+                    f"[pipeline_defaults.m12.{section}] `{key}` must match "
+                    f"[overrides.1245620.{section}]"
+                )
+
+        if "exe_names" in m12_default:
+            errors.append(
+                "[pipeline_defaults.m12] must not inherit Elden Ring's EAC executable mapping"
+            )
+
     if errors:
         fail(errors)
 
     print(
         f"mtsp-rules TOML OK: {len(overrides)} override entries, "
         f"{len(section_counts)} top-level sections, "
-        f"{sum(len(v) for v in seen_sub_keys.values())} sub-tables."
+        f"{sum(len(v) for v in seen_sub_keys.values())} sub-tables; "
+        "default M12 contract matches Elden Ring."
     )
     return 0
 
