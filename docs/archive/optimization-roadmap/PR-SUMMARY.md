@@ -129,10 +129,10 @@ before debugging games.
   — a read-only verifier that runs through the **same environment builder**
   (`steam_pipeline_env_pairs`) as `launch_dxmt_metal`. It reports, without
   launching Steam or the game:
-  - the resolved `lib/dxmt-m12/x86_64-windows` dir + each deploy DLL
+  - the resolved `lib/dxmt_m12/x86_64-windows` dir + each deploy DLL
     (`d3d12.dll`, `dxgi.dll`, `d3d11.dll`, `d3d10core.dll`, `winemetal.dll`,
     …) with presence, sha256, and size
-  - the `lib/dxmt-m12/x86_64-unix` sidecars (`winemetal.so`, `libc++.1.dylib`,
+  - the `lib/dxmt_m12/x86_64-unix` sidecars (`winemetal.so`, `libc++.1.dylib`,
     `libc++abi.1.dylib`, `libunwind.1.dylib`) for the M12/M13 lane
   - the exact env pairs the launch path sets, with an `env_keys_present` map
     for `WINEDLLOVERRIDES`, `DXMT_SHADER_CACHE_PATH`, `DYLD_FALLBACK_LIBRARY_PATH`,
@@ -148,8 +148,8 @@ before debugging games.
   `run-probes.sh --profile metalsharp --mini-only`, `validate-contracts.py`.
 
 **New tests (5):** M12 deploy list includes d3d12 and uses isolated
-`lib/dxmt-m12` surface; M11 deploy list excludes d3d12 and never touches
-`lib/dxmt-m12`; M12 dry-run includes d3d12 / M11 does not + env keys;
+`lib/dxmt_m12` surface; M11 deploy list excludes d3d12 and never touches
+`lib/dxmt_m12`; M12 dry-run includes d3d12 / M11 does not + env keys;
 M12 dry-run verifies unix sidecars and flags missing artifacts;
 M12 env vars set winemetal overrides + isolated `m12` shader cache.
 
@@ -329,7 +329,7 @@ trace patterns the validator accepts in clean form.
 **What landed:**
 - `installer::runtime_artifact_report[_for]` — per-artifact verification that
   goes beyond the existing `file_nonempty` presence checks by recording sha256
-  + size for EACH required file (M11 `lib/dxmt` and M12 `lib/dxmt-m12`, both
+  + size for EACH required file (M11 `lib/dxmt` and M12 `lib/dxmt_m12`, both
   PE and unix sidecars). A missing M12 sidecar is now reported by name.
 - `installer::missing_m12_sidecars[_for]` — explicitly named missing M12
   DLLs/dylibs/so, for the regression gate.

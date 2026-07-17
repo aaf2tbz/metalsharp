@@ -85,6 +85,7 @@ export const LEGACY_CONTRACT_BY_BACKEND_VERSION: Readonly<Record<string, string>
   "0.54.5": BACKEND_CONTRACT_VERSION,
   "0.55.0": BACKEND_CONTRACT_VERSION,
   "0.55.1": BACKEND_CONTRACT_VERSION,
+  "0.56.0": BACKEND_CONTRACT_VERSION,
 };
 
 export function compatibleContractVersion(

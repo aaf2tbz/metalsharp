@@ -95,10 +95,13 @@ const navItems: NavItem[] = [
   width: var(--sidebar-width-expanded);
   height: 100vh;
   min-height: 0;
-  background: var(--sidebar-bg);
-  backdrop-filter: blur(34px) saturate(190%);
-  -webkit-backdrop-filter: blur(34px) saturate(190%);
-  border-right: 1px solid rgba(140, 170, 200, 0.16);
+  background-color: color-mix(in srgb, var(--sidebar-bg) 76%, transparent);
+  backdrop-filter: blur(30px) saturate(175%) brightness(1.06);
+  -webkit-backdrop-filter: blur(30px) saturate(175%) brightness(1.06);
+  border-right: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border));
+  box-shadow:
+    inset -1px 0 rgba(255, 255, 255, 0.05),
+    14px 0 38px rgba(0, 0, 0, 0.16);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
@@ -106,16 +109,34 @@ const navItems: NavItem[] = [
   flex-shrink: 0;
   -webkit-app-region: drag;
   position: relative;
+  isolation: isolate;
 }
 .sidebar::before {
   content: "";
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 22%),
-    linear-gradient(115deg, rgba(95, 183, 232, 0.12), transparent 44%, rgba(255, 255, 255, 0.04));
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), transparent 24%),
+    linear-gradient(
+      112deg,
+      color-mix(in srgb, var(--accent) 17%, transparent),
+      transparent 48%,
+      rgba(255, 255, 255, 0.045)
+    );
   pointer-events: none;
   z-index: 0;
+}
+
+:global(:root[data-low-performance="true"] .sidebar) {
+  background-color: var(--bg-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-right-color: var(--border);
+  box-shadow: none;
+}
+
+:global(:root[data-low-performance="true"] .sidebar::before) {
+  display: none;
 }
 .sidebar > * {
   position: relative;
@@ -171,7 +192,13 @@ const navItems: NavItem[] = [
   font-family: var(--font-logo);
   font-size: 10px;
   color: transparent;
-  background: linear-gradient(90deg, var(--sidebar-logo-color), var(--sidebar-logo-accent), var(--sidebar-logo-color), var(--sidebar-logo-accent));
+  background: linear-gradient(
+    90deg,
+    var(--sidebar-logo-color),
+    var(--sidebar-logo-accent),
+    var(--sidebar-logo-color),
+    var(--sidebar-logo-accent)
+  );
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -182,8 +209,12 @@ const navItems: NavItem[] = [
   animation: logo-shift 6s linear infinite;
 }
 @keyframes logo-shift {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 100% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
 }
 
 .sidebar-nav {
@@ -224,9 +255,7 @@ const navItems: NavItem[] = [
   border-color: var(--border);
 }
 .sidebar-nav-item.active {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 56%),
-    var(--sidebar-active);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 56%), var(--sidebar-active);
   color: var(--sidebar-text-active);
   border-color: rgba(95, 183, 232, 0.32);
   box-shadow:
@@ -245,7 +274,7 @@ const navItems: NavItem[] = [
   inset: -1px;
   background:
     linear-gradient(90deg, transparent 0%, rgba(130, 219, 255, 0.34) 48%, transparent 100%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.10), transparent 64%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 64%);
   opacity: 0.26;
   filter: blur(9px);
   transform: translateX(-64%);
@@ -253,7 +282,7 @@ const navItems: NavItem[] = [
 }
 .sidebar-nav-item.active::after {
   inset: 0;
-  border: 1px solid rgba(122, 210, 255, 0.20);
+  border: 1px solid rgba(122, 210, 255, 0.2);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.04),
     inset 0 0 14px rgba(95, 183, 232, 0.08);
@@ -275,14 +304,16 @@ const navItems: NavItem[] = [
 }
 
 @keyframes sidebar-active-sheen {
-  0%, 18% {
+  0%,
+  18% {
     transform: translateX(-70%);
     opacity: 0;
   }
   42% {
     opacity: 0.28;
   }
-  68%, 100% {
+  68%,
+  100% {
     transform: translateX(70%);
     opacity: 0;
   }
@@ -297,7 +328,7 @@ const navItems: NavItem[] = [
 }
 :global(:root[data-theme="light"] .sidebar-nav-item.active::before) {
   background:
-    linear-gradient(90deg, transparent 0%, rgba(52, 127, 186, 0.20) 48%, transparent 100%),
+    linear-gradient(90deg, transparent 0%, rgba(52, 127, 186, 0.2) 48%, transparent 100%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 64%);
   opacity: 0.22;
 }
@@ -311,7 +342,7 @@ const navItems: NavItem[] = [
 :global(:root[data-theme="developer"] .sidebar::before) {
   background:
     linear-gradient(180deg, rgba(255, 46, 247, 0.16) 0%, transparent 34%),
-    linear-gradient(115deg, rgba(185, 255, 77, 0.10), transparent 42%, rgba(0, 245, 255, 0.08));
+    linear-gradient(115deg, rgba(185, 255, 77, 0.1), transparent 42%, rgba(0, 245, 255, 0.08));
 }
 
 :global(:root[data-theme="developer"] .sidebar-nav-item.active) {
@@ -334,7 +365,7 @@ const navItems: NavItem[] = [
   border-color: rgba(0, 245, 255, 0.32);
   box-shadow:
     inset 0 0 0 1px rgba(185, 255, 77, 0.14),
-    inset 0 0 18px rgba(255, 46, 247, 0.10);
+    inset 0 0 18px rgba(255, 46, 247, 0.1);
 }
 
 @media (prefers-reduced-motion: reduce) {

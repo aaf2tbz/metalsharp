@@ -92,6 +92,10 @@ def main() -> None:
             missing = [key for key in route["required"] if key not in body]
             if missing:
                 fail(f"{route['name']} missing required keys: {missing}")
+            if route["name"] == "m12-dry-run":
+                env_pairs = {pair["key"]: pair["value"] for pair in body["env_pairs"]}
+                if env_pairs.get("MS_GRAPHICS_BACKEND") != "dxmt_m12":
+                    fail("m12-dry-run did not select the isolated dxmt_m12 graphics backend")
         print(f"Electron/backend contract v{expected} passed against {backend.name} in isolated METALSHARP_HOME.")
     finally:
         process.terminate()

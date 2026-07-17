@@ -1,0 +1,4 @@
+tests/dxmt_surface_test.c
+tests/installer_test.c
+tests/policy_test.c
+tests/bottle_deployment_test.c

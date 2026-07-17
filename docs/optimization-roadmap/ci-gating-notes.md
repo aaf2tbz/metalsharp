@@ -45,7 +45,7 @@ and are also exposed as routes for live introspection:
 
 ## M12 isolation
 
-M12 (`lib/dxmt-m12`) is an isolated lane that may advance independently.
+M12 (`lib/dxmt_m12`) is an isolated lane that may advance independently.
 M9/M10/M11 are protected compatibility lanes that share the legacy `lib/dxmt`
 surface. A graphics PR that touches M12 must not disturb M9/M10/M11 artifact
 paths; the contract tests in `mtsp::launcher::tests` enforce this.

@@ -76,6 +76,12 @@ interface BottleManifest {
   installed_app_detections: { name: string; exe_path: string; source: string }[];
 }
 
+interface M12DryRun {
+  ok: boolean;
+  dry_run: boolean;
+  missing?: Array<{ filename?: string }>;
+}
+
 interface BottleDiagnostic {
   id: string;
   ready: boolean;
@@ -1001,9 +1007,20 @@ async function setBottleProfile(id: string, profile: string) {
   });
   bottleLoading.value[id] = false;
   if (result?.ok && result.bottle) {
+    const appid = result.bottle.steam_app_id ?? 0;
+    const m12DryRun = profile === "m12"
+      ? await api<M12DryRun>("GET", `/diagnostics/m12/dry-run?appid=${appid}`)
+      : null;
     upsertBottle(result.bottle);
     if (result.bottle.runtime_profile !== "d3dmetal") clearD3DMetalBottleState(id);
-    toast.show("Bottle profile updated", "success");
+    if (m12DryRun?.ok === false) {
+      const missing = m12DryRun.missing?.map((entry) => entry.filename).filter(Boolean).join(", ");
+      toast.show(`M12 bottle saved, but its dry run failed${missing ? `: ${missing}` : ""}`, "error");
+    } else if (!m12DryRun) {
+      toast.show("M12 bottle saved, but its dry run could not be completed", "error");
+    } else {
+      toast.show("Bottle profile updated", "success");
+    }
     await doctorBottle(id);
   } else {
     toast.show(result?.error ?? "Failed to update bottle profile", "error");

@@ -1,0 +1,62 @@
+#include "../runtime_surface.h"
+
+#include <assert.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+static void corrupt_legacy_dxmt(const char* m12_root) {
+    char path[4096];
+    snprintf(path, sizeof(path), "%.*s/dxmt/x86_64-windows/dxgi.dll", (int)(strlen(m12_root) - strlen("/dxmt_m12")),
+             m12_root);
+    int fd = open(path, O_WRONLY | O_TRUNC);
+    assert(fd >= 0);
+    assert(write(fd, "stale", 5) == 5);
+    assert(close(fd) == 0);
+}
+
+static void assert_sentinel(const char* path) {
+    char value[32] = {0};
+    FILE* marker = fopen(path, "r");
+    assert(marker != NULL);
+    assert(fread(value, 1, sizeof(value) - 1, marker) == strlen("preserve-me"));
+    assert(fclose(marker) == 0);
+    assert(strcmp(value, "preserve-me") == 0);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 3 && strcmp(argv[1], "--repair") == 0) {
+        const bool repaired = metalsharp_reconcile_dxmt_surface(argv[2], strlen(argv[2]));
+        fprintf(stderr, "%s: %s\n", METALSHARP_DXMT_SURFACE_ID, repaired ? "reconciled" : "failed");
+        return repaired ? 0 : 1;
+    }
+    assert(argc == 2);
+    const char* m12 = argv[1];
+    const size_t m12_len = strlen(m12);
+    /* The archive receipt is normalized in place. No legacy files are touched. */
+    assert(metalsharp_reconcile_dxmt_surface(m12, m12_len));
+    assert(metalsharp_m12_dxmt_surface_current(m12, m12_len));
+
+    char sentinel[4096];
+    snprintf(sentinel, sizeof(sentinel), "%.*s/dxmt/i386-windows/m1132-preserved.sentinel",
+             (int)(m12_len - strlen("/dxmt_m12")), m12);
+    FILE* marker = fopen(sentinel, "w");
+    assert(marker != NULL);
+    assert(fputs("preserve-me", marker) >= 0);
+    assert(fclose(marker) == 0);
+
+    corrupt_legacy_dxmt(m12);
+    assert(metalsharp_m12_dxmt_surface_current(m12, m12_len));
+    assert(metalsharp_reconcile_dxmt_surface(m12, m12_len));
+    assert_sentinel(sentinel);
+
+    /* An M12-only repair never repairs, replaces, or deletes legacy bytes. */
+    assert(metalsharp_reconcile_dxmt_surface(m12, m12_len));
+    assert(metalsharp_m12_dxmt_surface_current(m12, m12_len));
+    assert_sentinel(sentinel);
+
+    puts("Isolated M12 v2 DXMT surface checks passed without changing baseline dxmt.");
+    return 0;
+}

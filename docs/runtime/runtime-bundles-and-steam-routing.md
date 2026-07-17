@@ -38,14 +38,14 @@ The graphics bundle has two runtime surfaces:
 
 ```text
 Graphics/dll/dxmt/      -> legacy DXMT payload for M9, M10, and M11
-Graphics/dll/dxmt-m12/  -> updated D3D12/DXGI/winemetal payload for M12 only
+Graphics/dll/dxmt_m12/  -> updated D3D12/DXGI/winemetal payload for M12 only
 ```
 
 After install those surfaces live under:
 
 ```text
 ~/.metalsharp/runtime/wine/lib/dxmt/
-~/.metalsharp/runtime/wine/lib/dxmt-m12/
+~/.metalsharp/runtime/wine/lib/dxmt_m12/
 ```
 
 Installed DXMT runtime state is recorded in:

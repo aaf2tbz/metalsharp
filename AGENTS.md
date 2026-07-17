@@ -76,8 +76,8 @@ Internal route ids such as `dxmt`, `wine_bare`, `m32`, `steam`, `macos_steam`, a
 - Wine runtime: `~/.metalsharp/runtime/wine/`
 - Wine prefix: `~/.metalsharp/prefix-steam/`
 - DXMT PE DLLs for M9/M10/M11: `~/.metalsharp/runtime/wine/lib/dxmt/x86_64-windows/`
-- DXMT M12 PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt-m12/x86_64-windows/`
-- DXMT M12 Unix bridge and sidecars: `~/.metalsharp/runtime/wine/lib/dxmt-m12/x86_64-unix/`
+- DXMT M12 PE DLLs: `~/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-windows/`
+- DXMT M12 Unix bridge and sidecars: `~/.metalsharp/runtime/wine/lib/dxmt_m12/x86_64-unix/`
 - DXVK i386 DLLs: `~/.metalsharp/runtime/wine/lib/dxvk/i386-windows/`
 - MoltenVK ICD: `~/.metalsharp/runtime/wine/etc/vulkan/icd.d/MoltenVK_icd.json`
 - DXMT config: `~/.metalsharp/runtime/wine/etc/dxmt.conf`

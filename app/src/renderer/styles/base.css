@@ -33,7 +33,10 @@ body {
   width: 100vw;
   min-width: 0;
   overflow: hidden;
-  background: var(--bg-deep);
+  background:
+    radial-gradient(circle at 4% 14%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 30%),
+    radial-gradient(circle at 2% 88%, color-mix(in srgb, var(--accent-dim) 15%, transparent), transparent 34%),
+    var(--bg-deep);
 }
 
 ::-webkit-scrollbar {
@@ -354,6 +357,7 @@ textarea {
 }
 
 :root[data-low-performance="true"] .content,
+:root[data-low-performance="true"] #app,
 :root[data-low-performance="true"] .sidebar,
 :root[data-low-performance="true"] .update-banner,
 :root[data-low-performance="true"] .sharp-card,
@@ -379,4 +383,13 @@ textarea {
 :root[data-low-performance="true"] .setup-progress-fill,
 :root[data-low-performance="true"] .migration-progress-fill {
   transition: width 120ms linear !important;
+}
+
+/* Progress motion is functional feedback: keep active work from looking frozen. */
+:root[data-low-performance="true"] .spinner {
+  animation: spin 0.6s linear infinite !important;
+}
+
+:root[data-low-performance="true"] .loading-icon:not(.complete):not(.error) {
+  animation: spin 0.9s linear infinite !important;
 }

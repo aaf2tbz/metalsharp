@@ -186,7 +186,7 @@ jobs:
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt"
             mkdir -p "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12"
             cp -R "$tmp_dxmt/Graphics/dll/dxmt"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt/"
-            cp -R "$tmp_dxmt/Graphics/dll/dxmt-m12"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12/"
+            cp -R "$tmp_dxmt/Graphics/dll/dxmt_m12"/. "$HOME/.metalsharp/runtime/wine/lib/dxmt_m12/"
           }
 
           python3 tools/d3d12-metal-sdk/scripts/validate-contracts.py

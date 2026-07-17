@@ -1,6 +1,6 @@
 {
   "name": "metalsharp",
-  "version": "0.55.1",
+  "version": "0.56.0",
   "description": "MetalSharp — D3D→Metal translation layer frontend",
   "author": "MetalSharp",
   "repository": {
@@ -28,13 +28,13 @@
     "electron-store": "^10.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.3",
+    "@biomejs/biome": "^2.5.4",
     "@electron/notarize": "^2.5.0",
-    "@iconify-json/lucide": "^1.2.116",
+    "@iconify-json/lucide": "^1.2.117",
     "@types/node": "^26.1.1",
     "@vitejs/plugin-vue": "^6.0.7",
     "electron": "^43.1.0",
-    "electron-builder": "^26.0.0",
+    "electron-builder": "^26.15.3",
     "prettier": "^3.8.3",
     "typescript": "^5.7.0",
     "unplugin-icons": "^23.0.1",

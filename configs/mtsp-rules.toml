@@ -19,6 +19,29 @@
 #     components    - list of component ids (e.g. "vcrun2019", "directx_jun2010")
 #   env             (optional) - extra environment variables for launch
 #   diagnostics    (optional) - DLLs to verify in prefix before launch
+#
+# Pipeline defaults are the contract applied when a bottle is explicitly saved
+# with that pipeline, even when the title's catalog override names a different
+# pipeline. EAC executable substitution remains app-specific; it must never be
+# inherited by an arbitrary M12 title.
+
+[pipeline_defaults.m12]
+pipeline = "m12"
+wine_binary = "bin/metalsharp-wine"
+graphics_backend = "dxmt"
+runtime_lane = "dxmt_m12"
+winemetal_unixlib = "winemetal.so"
+windows_dll_path = "lib/dxmt_m12/x86_64-windows"
+unix_library_path = "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix"
+dll_overrides = "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d"
+steam_client = "background"
+launch_mode = "direct_executable"
+
+[pipeline_defaults.m12.dependencies]
+components = ["vcrun2019", "vcrun2013", "directx_jun2010"]
+
+[pipeline_defaults.m12.diagnostics]
+check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.dll"]
 
 [overrides.105600]
 pipeline = "fna_arm64"
@@ -6769,4 +6792,3 @@ components = ["vcrun2019_x86", "directx_jun2010"]
 
 [overrides.4498220.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
-
