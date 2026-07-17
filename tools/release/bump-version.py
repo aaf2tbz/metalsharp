@@ -43,6 +43,17 @@ def encoded_bytes(version: str) -> str:
     return ", ".join(f"0x{byte:02x}" for byte in version.encode("ascii"))
 
 
+def replace_release_versions(source: str, current: str, target: str) -> tuple[str, int, int]:
+    """Replace app versions without changing independently versioned M12 surfaces."""
+    old_encoded = encoded_bytes(current)
+    new_encoded = encoded_bytes(target)
+    surface_suffix = f", {encoded_bytes('-m12-isolated-surface-v')}"
+    pattern = re.compile(re.escape(old_encoded) + rf"(?!{re.escape(surface_suffix)})")
+    updated, replacements = pattern.subn(new_encoded, source)
+    protected = source.count(f"{old_encoded}{surface_suffix}")
+    return updated, replacements, protected
+
+
 def read_json(path: Path) -> dict:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -105,16 +116,23 @@ def main() -> None:
     if not runtime_sources or not test_sources:
         fail("committed C backend runtime or test sources are missing")
     c_sources = runtime_sources + test_sources
-    old_encoded = encoded_bytes(current)
-    new_encoded = encoded_bytes(target)
-    runtime_occurrences = sum(path.read_text(errors="ignore").count(old_encoded) for path in runtime_sources)
-    test_occurrences = sum(path.read_text(errors="ignore").count(old_encoded) for path in test_sources)
+    runtime_results = [
+        replace_release_versions(path.read_text(errors="ignore"), current, target)
+        for path in runtime_sources
+    ]
+    test_results = [
+        replace_release_versions(path.read_text(errors="ignore"), current, target)
+        for path in test_sources
+    ]
+    runtime_occurrences = sum(result[1] for result in runtime_results)
+    test_occurrences = sum(result[1] for result in test_results)
     if runtime_occurrences == 0 or test_occurrences == 0:
         fail(
             f"committed C surfaces do not both contain encoded version {current}: "
             f"runtime={runtime_occurrences} tests={test_occurrences}"
         )
     encoded_occurrences = runtime_occurrences + test_occurrences
+    protected_surfaces = sum(result[2] for result in runtime_results + test_results)
 
     contract = read_json(contract_path)
     contract_version = str(contract.get("contract_version", ""))
@@ -159,12 +177,14 @@ def main() -> None:
     electron_contract_path.write_text(electron_contract, encoding="utf-8")
     for path in c_sources:
         source = path.read_text(encoding="utf-8", errors="ignore")
-        if old_encoded in source:
-            path.write_text(source.replace(old_encoded, new_encoded), encoding="utf-8")
+        updated, replacements, _ = replace_release_versions(source, current, target)
+        if replacements:
+            path.write_text(updated, encoding="utf-8")
 
     print(
         f"Updated MetalSharp {current} -> {target}: 4 metadata fields, "
-        f"2 contract maps, and {encoded_occurrences} committed-C version strings."
+        f"2 contract maps, and {encoded_occurrences} committed-C version strings; "
+        f"preserved {protected_surfaces} independently versioned M12 surface strings."
     )
 
 

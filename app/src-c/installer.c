@@ -162,6 +162,35 @@ static bool remove_tree(const char* path) {
     return run_tool("/bin/rm", arguments);
 }
 
+static bool ensure_parent_directories(const char* path) {
+    char parent[PATH_MAX];
+    const size_t length = strlen(path);
+    if (length == 0 || length >= sizeof(parent)) {
+        return false;
+    }
+    memcpy(parent, path, length + 1);
+    char* final_separator = strrchr(parent, '/');
+    if (final_separator == NULL) {
+        return true;
+    }
+    *final_separator = '\0';
+    for (char* cursor = parent + 1; *cursor != '\0'; ++cursor) {
+        if (*cursor != '/') {
+            continue;
+        }
+        *cursor = '\0';
+        if (mkdir(parent, 0700) != 0 && errno != EEXIST) {
+            return false;
+        }
+        *cursor = '/';
+    }
+    if (mkdir(parent, 0700) != 0 && errno != EEXIST) {
+        return false;
+    }
+    struct stat info;
+    return stat(parent, &info) == 0 && S_ISDIR(info.st_mode);
+}
+
 static bool agility_payload_complete(const char* root) {
     static const char* const required[] = {
         "build/native/bin/x64/D3D12Core.dll",
@@ -196,7 +225,7 @@ bool metalsharp_extract_agility_package(const char* archive, size_t archive_len,
         return false;
     }
 
-    if (!remove_tree(extracting) || mkdir(extracting, 0700) != 0) {
+    if (!ensure_parent_directories(extracting) || !remove_tree(extracting) || mkdir(extracting, 0700) != 0) {
         return false;
     }
 

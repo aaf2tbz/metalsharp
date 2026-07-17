@@ -69,7 +69,7 @@ int main(void) {
     snprintf(fixture, sizeof(fixture), "%s-fixture", temp);
     snprintf(fixture_bin, sizeof(fixture_bin), "%s/build/native/bin/x64", fixture);
     snprintf(archive, sizeof(archive), "%s-agility.nupkg", temp);
-    snprintf(agility, sizeof(agility), "%s-agility", temp);
+    snprintf(agility, sizeof(agility), "%s/agility/1.611.2", temp);
     snprintf(extracting, sizeof(extracting), "%s.extracting", agility);
     mkdirs(fixture_bin);
     const char* const agility_files[] = {"D3D12Core.dll", "d3d12SDKLayers.dll"};
