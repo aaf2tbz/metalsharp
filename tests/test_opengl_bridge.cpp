@@ -531,6 +531,84 @@ int main() {
         CHECK(bridge.state().depthTestEnabled == false, "Default state().depthTestEnabled is still false after init");
     }
 
+    {
+        printf("\n--- Legacy fixed-function passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for legacy fixed-function passthroughs");
+
+        // Symbol resolution: every GL 1.0 / GL 3.0 extension entry point
+        // added in phases 1n-1v must resolve through the macOS OpenGL
+        // framework, which exports the full legacy profile.
+        const char* legacySymbols[] = {
+            // 1n: Pixel storage / transfer
+            "glPixelStorei",
+            "glPixelStoref",
+            "glReadBuffer",
+            "glDrawBuffer",
+            // 1o: State queries
+            "glGetBooleanv",
+            "glGetFloatv",
+            "glGetDoublev",
+            "glGetTexEnviv",
+            "glGetTexEnvfv",
+            "glGetError",
+            "glIsEnabled",
+            "glGetStringi",
+            // 1p: Misc commands
+            "glFlush",
+            "glFinish",
+            "glHint",
+            // 1q: Display lists
+            "glGenLists",
+            "glNewList",
+            "glEndList",
+            "glCallList",
+            "glCallLists",
+            "glDeleteLists",
+            "glIsList",
+            // 1r: Immediate-mode vertex data
+            "glVertex2f",
+            "glVertex3f",
+            "glVertex4f",
+            "glNormal3f",
+            "glTexCoord1f",
+            "glTexCoord2f",
+            "glTexCoord3f",
+            "glTexCoord4f",
+            "glColor3ub",
+            "glColor4ub",
+            "glColorMaterial",
+            // 1s: Lighting / material
+            "glLightfv",
+            "glLightModelfv",
+            "glMaterialfv",
+            "glShadeModel",
+            // 1t: Fog
+            "glFogfv",
+            "glFogi",
+            // 1u: Alpha test
+            "glAlphaFunc",
+            // 1v: Clip planes
+            "glClipPlane",
+        };
+        for (const char* name : legacySymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: legacy fixed-function entry points (pixel
+        // storage, display lists, immediate-mode vertex data, lighting,
+        // fog, alpha test, clip planes, hint, flush/finish, state
+        // queries) intentionally do not introduce new binding slots.
+        // The bridge must report a clean state after init, with the
+        // viewport still at its default of zero until the application
+        // calls glViewport.
+        CHECK(bridge.state().viewportWidth == 0, "Default state().viewportWidth is still 0 after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

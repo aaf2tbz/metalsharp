@@ -314,6 +314,92 @@ GL_PASSTHROUGH2(void, glDepthRange, double, nearVal, double, farVal)
 GL_PASSTHROUGH1(void, glClearDepth, double, depth)
 
 // ---------------------------------------------------------------------------
+// Pixel storage / transfer (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glPixelStorei, uint32_t, pname, int32_t, param)
+GL_PASSTHROUGH2(void, glPixelStoref, uint32_t, pname, float, param)
+GL_PASSTHROUGH1(void, glReadBuffer, uint32_t, mode)
+GL_PASSTHROUGH1(void, glDrawBuffer, uint32_t, mode)
+
+// ---------------------------------------------------------------------------
+// State queries (GL 1.0-1.1)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glGetBooleanv, uint32_t, pname, unsigned char*, params)
+GL_PASSTHROUGH2(void, glGetFloatv, uint32_t, pname, float*, params)
+GL_PASSTHROUGH2(void, glGetDoublev, uint32_t, pname, double*, params)
+GL_PASSTHROUGH3(void, glGetTexEnviv, uint32_t, target, uint32_t, pname, int32_t*, params)
+GL_PASSTHROUGH3(void, glGetTexEnvfv, uint32_t, target, uint32_t, pname, float*, params)
+GL_PASSTHROUGH0(uint32_t, glGetError)
+GL_PASSTHROUGH1(unsigned char, glIsEnabled, uint32_t, cap)
+
+// glGetStringi is hand-written following the glGetString pattern.
+extern "C" const uint8_t* glGetStringi(uint32_t name, uint32_t index) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<const uint8_t* (*)(uint32_t, uint32_t)>(g_glBridge.getGLProcAddress("glGetStringi"));
+    if (fn) {
+        return fn(name, index);
+    }
+    return reinterpret_cast<const uint8_t*>("");
+}
+
+// ---------------------------------------------------------------------------
+// Misc commands (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH0(void, glFlush)
+GL_PASSTHROUGH0(void, glFinish)
+GL_PASSTHROUGH2(void, glHint, uint32_t, target, uint32_t, mode)
+
+// ---------------------------------------------------------------------------
+// Display lists (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH1(uint32_t, glGenLists, int32_t, range)
+GL_PASSTHROUGH2(void, glNewList, uint32_t, list, uint32_t, mode)
+GL_PASSTHROUGH0(void, glEndList)
+GL_PASSTHROUGH1(void, glCallList, uint32_t, list)
+GL_PASSTHROUGH3(void, glCallLists, int32_t, n, uint32_t, type, const void*, lists)
+GL_PASSTHROUGH2(void, glDeleteLists, uint32_t, list, int32_t, range)
+GL_PASSTHROUGH1(unsigned char, glIsList, uint32_t, list)
+
+// ---------------------------------------------------------------------------
+// Immediate-mode vertex data (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glVertex2f, float, x, float, y)
+GL_PASSTHROUGH3(void, glVertex3f, float, x, float, y, float, z)
+GL_PASSTHROUGH4(void, glVertex4f, float, x, float, y, float, z, float, w)
+GL_PASSTHROUGH3(void, glNormal3f, float, nx, float, ny, float, nz)
+GL_PASSTHROUGH1(void, glTexCoord1f, float, s)
+GL_PASSTHROUGH2(void, glTexCoord2f, float, s, float, t)
+GL_PASSTHROUGH3(void, glTexCoord3f, float, s, float, t, float, r)
+GL_PASSTHROUGH4(void, glTexCoord4f, float, s, float, t, float, r, float, q)
+GL_PASSTHROUGH3(void, glColor3ub, unsigned char, r, unsigned char, g, unsigned char, b)
+GL_PASSTHROUGH4(void, glColor4ub, unsigned char, r, unsigned char, g, unsigned char, b, unsigned char, a)
+GL_PASSTHROUGH2(void, glColorMaterial, uint32_t, face, uint32_t, mode)
+
+// ---------------------------------------------------------------------------
+// Lighting / material (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH3(void, glLightfv, uint32_t, light, uint32_t, pname, const float*, params)
+GL_PASSTHROUGH2(void, glLightModelfv, uint32_t, pname, const float*, params)
+GL_PASSTHROUGH3(void, glMaterialfv, uint32_t, face, uint32_t, pname, const float*, params)
+GL_PASSTHROUGH1(void, glShadeModel, uint32_t, mode)
+
+// ---------------------------------------------------------------------------
+// Fog (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glFogfv, uint32_t, pname, const float*, params)
+GL_PASSTHROUGH2(void, glFogi, uint32_t, pname, int32_t, param)
+
+// ---------------------------------------------------------------------------
+// Alpha test (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glAlphaFunc, uint32_t, func, float, ref)
+
+// ---------------------------------------------------------------------------
+// Clip planes (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glClipPlane, uint32_t, plane, const double*, equation)
+
+// ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH1(void, glMatrixMode, uint32_t, mode)
