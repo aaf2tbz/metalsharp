@@ -68,6 +68,11 @@ template <typename Ret, typename... Args> Ret glDispatch(const char* name, Args.
         return glDispatch<ret, T1, T2, T3, T4>(#name, (a1), (a2), (a3), (a4));                                         \
     }
 
+#define GL_PASSTHROUGH5(ret, name, T1, a1, T2, a2, T3, a3, T4, a4, T5, a5)                                             \
+    extern "C" ret name(T1 a1, T2 a2, T3 a3, T4 a4, T5 a5) {                                                           \
+        return glDispatch<ret, T1, T2, T3, T4, T5>(#name, (a1), (a2), (a3), (a4), (a5));                               \
+    }
+
 #define GL_PASSTHROUGH6(ret, name, T1, a1, T2, a2, T3, a3, T4, a4, T5, a5, T6, a6)                                     \
     extern "C" ret name(T1 a1, T2 a2, T3 a3, T4 a4, T5 a5, T6 a6) {                                                    \
         return glDispatch<ret, T1, T2, T3, T4, T5, T6>(#name, (a1), (a2), (a3), (a4), (a5), (a6));                     \
@@ -150,6 +155,47 @@ GL_PASSTHROUGH4(void, glVertexPointer, int32_t, size, uint32_t, type, int32_t, s
 GL_PASSTHROUGH4(void, glTexCoordPointer, int32_t, size, uint32_t, type, int32_t, stride, const void*, ptr)
 GL_PASSTHROUGH4(void, glColorPointer, int32_t, size, uint32_t, type, int32_t, stride, const void*, ptr)
 GL_PASSTHROUGH3(void, glNormalPointer, uint32_t, type, int32_t, stride, const void*, ptr)
+
+// ---------------------------------------------------------------------------
+// Vertex attributes (GL 2.0)
+// ---------------------------------------------------------------------------
+
+// glEnableVertexAttribArray / glDisableVertexAttribArray are hand-written
+// because they must mirror the per-index enable state into GLState so
+// subsequent draw calls can observe which attribute streams are active.
+// The native call is still issued so the framework context state stays
+// in sync with the shim's view.
+extern "C" void glEnableVertexAttribArray(uint32_t index) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t)>(g_glBridge.getGLProcAddress("glEnableVertexAttribArray"));
+    if (fn) {
+        fn(index);
+    }
+    if (index < metalsharp::kMaxVertexAttribs) {
+        g_glBridge.state().vertexAttribEnabled[index] = true;
+    }
+}
+
+extern "C" void glDisableVertexAttribArray(uint32_t index) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t)>(g_glBridge.getGLProcAddress("glDisableVertexAttribArray"));
+    if (fn) {
+        fn(index);
+    }
+    if (index < metalsharp::kMaxVertexAttribs) {
+        g_glBridge.state().vertexAttribEnabled[index] = false;
+    }
+}
+
+GL_PASSTHROUGH6(void, glVertexAttribPointer, uint32_t, index, int32_t, size, uint32_t, type, unsigned char, normalized,
+                int32_t, stride, const void*, pointer)
+GL_PASSTHROUGH2(void, glVertexAttrib1f, uint32_t, index, float, v0)
+GL_PASSTHROUGH3(void, glVertexAttrib2f, uint32_t, index, float, v0, float, v1)
+GL_PASSTHROUGH4(void, glVertexAttrib3f, uint32_t, index, float, v0, float, v1, float, v2)
+GL_PASSTHROUGH5(void, glVertexAttrib4f, uint32_t, index, float, v0, float, v1, float, v2, float, v3)
+GL_PASSTHROUGH3(void, glGetVertexAttribiv, uint32_t, index, uint32_t, pname, int32_t*, params)
+GL_PASSTHROUGH3(void, glGetVertexAttribPointerv, uint32_t, index, uint32_t, pname, void**, pointer)
+GL_PASSTHROUGH2(void, glVertexAttribDivisor, uint32_t, index, uint32_t, divisor)
 
 // ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
