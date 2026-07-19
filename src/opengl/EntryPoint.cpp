@@ -342,6 +342,31 @@ extern "C" void glCopyTexSubImage2D(uint32_t target, int32_t level, int32_t xoff
 }
 
 // ---------------------------------------------------------------------------
+// Framebuffer objects (GL 3.0 / EXT_framebuffer_object)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glGenFramebuffers, int32_t, n, uint32_t*, framebuffers)
+GL_PASSTHROUGH2(void, glDeleteFramebuffers, int32_t, n, const uint32_t*, framebuffers)
+GL_PASSTHROUGH5(void, glFramebufferTexture2D, uint32_t, target, uint32_t, attachment, uint32_t, textarget, uint32_t,
+                texture, int32_t, level)
+GL_PASSTHROUGH4(void, glFramebufferRenderbuffer, uint32_t, target, uint32_t, attachment, uint32_t, renderbuffertarget,
+                uint32_t, renderbuffer)
+GL_PASSTHROUGH1(uint32_t, glCheckFramebufferStatus, uint32_t, target)
+GL_PASSTHROUGH1(unsigned char, glIsFramebuffer, uint32_t, framebuffer)
+
+// glBindFramebuffer is hand-written because it must mirror the binding into
+// GLState so subsequent framebuffer attachment calls can observe which
+// framebuffer is currently bound. The native call is still issued so the
+// framework context state stays in sync with the shim's view.
+extern "C" void glBindFramebuffer(uint32_t target, uint32_t framebuffer) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t, uint32_t)>(g_glBridge.getGLProcAddress("glBindFramebuffer"));
+    if (fn) {
+        fn(target, framebuffer);
+    }
+    g_glBridge.state().boundFramebuffer = framebuffer;
+}
+
+// ---------------------------------------------------------------------------
 // Info queries (return non-default values — declared by hand instead of
 // via GL_PASSTHROUGH).
 // ---------------------------------------------------------------------------

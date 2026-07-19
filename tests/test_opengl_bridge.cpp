@@ -358,6 +358,33 @@ int main() {
         CHECK(bridge.state().boundTexture2D == 0, "Default state().boundTexture2D is 0 after init");
     }
 
+    {
+        printf("\n--- Framebuffer passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for framebuffer passthroughs");
+
+        // Symbol resolution: every GL 3.0 / EXT_framebuffer_object entry
+        // point must resolve through the macOS OpenGL framework, which
+        // exports the full legacy profile (including framebuffer objects
+        // via EXT_framebuffer_object on macOS).
+        const char* framebufferSymbols[] = {
+            "glGenFramebuffers",         "glDeleteFramebuffers",     "glBindFramebuffer", "glFramebufferTexture2D",
+            "glFramebufferRenderbuffer", "glCheckFramebufferStatus", "glIsFramebuffer",
+        };
+        for (const char* name : framebufferSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: after init, no framebuffer is bound by default.
+        // The framework reports a clean state until the application calls
+        // glBindFramebuffer(GL_FRAMEBUFFER, ...).
+        CHECK(bridge.state().boundFramebuffer == 0, "Default state().boundFramebuffer is 0 after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
