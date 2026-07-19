@@ -70,6 +70,27 @@ if(METALSHARP_SDL_VERSION STREQUAL "3" AND SDL3_FOUND)
     set(METALSHARP_HAS_SDL_GPU TRUE)
 endif()
 
+# SPIRV-Cross: GLSL→SPIR-V→MSL shader translation backends.
+# Used by the OpenGL 3.x/4.x bridge to translate guest GLSL shaders into MSL
+# via the Khronos SPIRV-Cross reference implementation. We only need the
+# C++ static libs we actually link against (core + GLSL backend + MSL backend);
+# CLI, C API wrappers, HLSL/CPP/Reflect/Util backends and tests are disabled
+# to keep build time and binary size small. SPIRV-Cross's CMakeLists.txt
+# declares cmake_minimum_required(VERSION 3.0); CMake >=3.27 refuses anything
+# below 3.5, so we relax the policy to 3.5 for the vendored project.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_GLSL ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_MSL ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_CPP OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_REFLECT OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_C_API ON CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_UTIL OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+add_subdirectory(vendor/SPIRV-Cross EXCLUDE_FROM_ALL)
+
 add_library(metalsharp_core STATIC
     src/metal/device/Device.cpp
     src/metal/device/Device.mm
@@ -301,7 +322,7 @@ add_library(metalsharp_opengl32 SHARED
     src/opengl/WGLShim.cpp
 )
 target_include_directories(metalsharp_opengl32 PRIVATE include)
-target_link_libraries(metalsharp_opengl32 PRIVATE metalsharp_core ${OPENGL_FRAMEWORK})
+target_link_libraries(metalsharp_opengl32 PRIVATE metalsharp_core ${OPENGL_FRAMEWORK} spirv-cross-core spirv-cross-glsl spirv-cross-msl)
 target_compile_options(metalsharp_opengl32 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_opengl32 PROPERTIES OUTPUT_NAME "opengl32" PREFIX "")
 metalsharp_wine_target(metalsharp_opengl32)

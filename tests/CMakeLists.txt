@@ -179,3 +179,9 @@ add_executable(test_roadmap
 target_link_libraries(test_roadmap PRIVATE metalsharp_d3d12 metalsharp_core)
 
 add_test(NAME roadmap COMMAND test_roadmap)
+
+add_executable(test_spirv_cross_sanity
+    test_spirv_cross_sanity.cpp
+)
+target_link_libraries(test_spirv_cross_sanity PRIVATE spirv-cross-c spirv-cross-glsl spirv-cross-msl spirv-cross-core)
+add_test(NAME spirv_cross_sanity COMMAND test_spirv_cross_sanity)

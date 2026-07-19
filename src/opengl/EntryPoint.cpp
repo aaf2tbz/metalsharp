@@ -17,6 +17,12 @@
 #include <metalsharp/OpenGLBridge.h>
 #include <mutex>
 
+#if __has_include(<spirv_cross_c.h>)
+#define METALSHARP_HAS_SPIRV_CROSS 1
+#else
+#define METALSHARP_HAS_SPIRV_CROSS 0
+#endif
+
 namespace {
 
 metalsharp::OpenGLBridge g_glBridge;
