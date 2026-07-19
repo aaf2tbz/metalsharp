@@ -107,7 +107,6 @@ GL_PASSTHROUGH1(void, glEnable, uint32_t, cap)
 GL_PASSTHROUGH1(void, glDisable, uint32_t, cap)
 GL_PASSTHROUGH2(void, glBlendFunc, uint32_t, sfactor, uint32_t, dfactor)
 GL_PASSTHROUGH1(void, glDepthFunc, uint32_t, func)
-GL_PASSTHROUGH2(void, glBindTexture, uint32_t, target, uint32_t, texture)
 
 // ---------------------------------------------------------------------------
 // Buffer objects (GL 1.5)
@@ -302,6 +301,45 @@ GL_PASSTHROUGH9(void, glTexImage2D, uint32_t, target, int32_t, level, int32_t, i
                 int32_t, border, uint32_t, format, uint32_t, type, const void*, data)
 GL_PASSTHROUGH7(void, glReadPixels, int32_t, x, int32_t, y, int32_t, w, int32_t, h, uint32_t, format, uint32_t, type,
                 void*, data)
+
+// ---------------------------------------------------------------------------
+// Texture objects (GL 1.1-1.3)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glGenTextures, int32_t, n, uint32_t*, textures)
+GL_PASSTHROUGH2(void, glDeleteTextures, int32_t, n, const uint32_t*, textures)
+GL_PASSTHROUGH2(void, glBindTexture, uint32_t, target, uint32_t, texture)
+GL_PASSTHROUGH1(void, glActiveTexture, uint32_t, texture)
+GL_PASSTHROUGH3(void, glTexParameteri, uint32_t, target, uint32_t, pname, int32_t, param)
+GL_PASSTHROUGH3(void, glTexParameterf, uint32_t, target, uint32_t, pname, float, param)
+GL_PASSTHROUGH9(void, glTexSubImage2D, uint32_t, target, int32_t, level, int32_t, xoffset, int32_t, yoffset, int32_t,
+                width, int32_t, height, uint32_t, format, uint32_t, type, const void*, pixels)
+GL_PASSTHROUGH3(void, glTexEnvi, uint32_t, target, uint32_t, pname, int32_t, param)
+GL_PASSTHROUGH3(void, glTexEnvf, uint32_t, target, uint32_t, pname, float, param)
+GL_PASSTHROUGH3(void, glGetTexParameteriv, uint32_t, target, uint32_t, pname, int32_t*, params)
+GL_PASSTHROUGH3(void, glGetTexParameterfv, uint32_t, target, uint32_t, pname, float*, params)
+GL_PASSTHROUGH1(unsigned char, glIsTexture, uint32_t, texture)
+
+// glCopyTexImage2D and glCopyTexSubImage2D are hand-written because they
+// take 8 arguments each and GL_PASSTHROUGH8 does not exist.
+extern "C" void glCopyTexImage2D(uint32_t target, int32_t level, uint32_t internalformat, int32_t x, int32_t y,
+                                 int32_t width, int32_t height, int32_t border) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t, int32_t, uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t)>(
+        g_glBridge.getGLProcAddress("glCopyTexImage2D"));
+    if (fn) {
+        fn(target, level, internalformat, x, y, width, height, border);
+    }
+}
+
+extern "C" void glCopyTexSubImage2D(uint32_t target, int32_t level, int32_t xoffset, int32_t yoffset, int32_t x,
+                                    int32_t y, int32_t width, int32_t height) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t)>(
+        g_glBridge.getGLProcAddress("glCopyTexSubImage2D"));
+    if (fn) {
+        fn(target, level, xoffset, yoffset, x, y, width, height);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Info queries (return non-default values — declared by hand instead of

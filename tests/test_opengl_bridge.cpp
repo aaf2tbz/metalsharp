@@ -330,6 +330,34 @@ int main() {
         CHECK(bridge.state().currentProgram == 0, "Default state().currentProgram is 0 after init");
     }
 
+    {
+        printf("\n--- Texture passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for texture passthroughs");
+
+        // Symbol resolution: every GL 1.1-1.3 texture entry point must
+        // resolve through the macOS OpenGL framework, which exports the
+        // full legacy profile (texture objects, parameters, env, copy,
+        // and the GL 1.3 texture query entry points).
+        const char* textureSymbols[] = {
+            "glGenTextures",   "glDeleteTextures", "glBindTexture",       "glActiveTexture",     "glTexParameteri",
+            "glTexParameterf", "glTexImage2D",     "glTexSubImage2D",     "glCopyTexImage2D",    "glCopyTexSubImage2D",
+            "glTexEnvi",       "glTexEnvf",        "glGetTexParameteriv", "glGetTexParameterfv", "glIsTexture",
+        };
+        for (const char* name : textureSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: after init, no 2D texture is bound by default.
+        // The framework reports a clean state until the application calls
+        // glBindTexture(GL_TEXTURE_2D, ...).
+        CHECK(bridge.state().boundTexture2D == 0, "Default state().boundTexture2D is 0 after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
