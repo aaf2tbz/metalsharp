@@ -1,7 +1,9 @@
+#import <CoreHaptics/CoreHaptics.h>
 #include <cstring>
 #import <GameController/GameController.h>
 #include <metalsharp/GameControllerBridge.h>
 #include <metalsharp/Logger.h>
+#include <mutex>
 
 namespace metalsharp {
 
@@ -69,6 +71,10 @@ static uint32_t assignSlot(ControllerSlot* slots, GCController* gc) {
 struct GameControllerBridge::Impl {
     ControllerSlot slots[4] = {};
     float lastHaptics[4][2] = {};
+    std::mutex m_lock;
+    // Lazily created per-slot CoreHaptics engines. Storing as `id` keeps the .mm
+    // file self-contained without forcing CoreHaptics types into C++ layouts.
+    id hapticEngines[4] = {};
 };
 
 GameControllerBridge::GameControllerBridge() : m_impl(new Impl()) {
@@ -88,6 +94,7 @@ bool GameControllerBridge::init() {
                                                        queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification* note) {
                                                     GCController* gc = note.object;
+                                                    std::lock_guard<std::mutex> lock(impl->m_lock);
                                                     uint32_t slot = assignSlot(impl->slots, gc);
                                                     if (slot < 4)
                                                         m_connected[slot] = true;
@@ -99,12 +106,16 @@ bool GameControllerBridge::init() {
                      queue:[NSOperationQueue mainQueue]
                 usingBlock:^(NSNotification* note) {
                   GCController* gc = note.object;
+                  std::lock_guard<std::mutex> lock(impl->m_lock);
                   for (uint32_t i = 0; i < 4; i++) {
                       if (impl->slots[i].controller == gc) {
                           MS_INFO("GameControllerBridge: controller %u disconnected", i);
                           impl->slots[i].controller = nil;
                           impl->slots[i].type = ControllerType::Unknown;
                           impl->slots[i].connected = false;
+                          impl->hapticEngines[i] = nil;
+                          impl->lastHaptics[i][0] = 0.0f;
+                          impl->lastHaptics[i][1] = 0.0f;
                           m_connected[i] = false;
                           break;
                       }
@@ -112,10 +123,13 @@ bool GameControllerBridge::init() {
                 }];
 
     NSArray<GCController*>* connected = [GCController controllers];
-    for (NSUInteger i = 0; i < connected.count && i < MAX_CONTROLLERS; i++) {
-        uint32_t slot = assignSlot(impl->slots, connected[i]);
-        if (slot < 4)
-            m_connected[slot] = true;
+    {
+        std::lock_guard<std::mutex> lock(impl->m_lock);
+        for (NSUInteger i = 0; i < connected.count && i < MAX_CONTROLLERS; i++) {
+            uint32_t slot = assignSlot(impl->slots, connected[i]);
+            if (slot < 4)
+                m_connected[slot] = true;
+        }
     }
 
     return true;
@@ -179,13 +193,13 @@ static WORD readButtons(GCExtendedGamepad* gamepad, GCController* gc, Controller
         if (@available(macOS 11.3, *)) {
             GCDualSenseGamepad* ds = (GCDualSenseGamepad*)gamepad;
             if (ds.touchpadButton.isPressed)
-                buttons |= XINPUT_BACK;
+                buttons |= XINPUT_GUIDE;
         }
     } else if (type == ControllerType::DualShock4) {
         if (@available(macOS 11.0, *)) {
             GCDualShockGamepad* ds4 = (GCDualShockGamepad*)gamepad;
             if (ds4.touchpadButton.isPressed)
-                buttons |= XINPUT_BACK;
+                buttons |= XINPUT_GUIDE;
         }
     }
 
@@ -197,34 +211,49 @@ static WORD readButtons(GCExtendedGamepad* gamepad, GCController* gc, Controller
     return buttons;
 }
 
+// Poll one slot into the provided state. Caller must hold Impl::m_lock.
+// Pulled out so both poll() and getState() can refresh state without
+// recursing on the (non-recursive) mutex.
+static void pollOneSlot(uint32_t i, const ControllerSlot& slot, XInputState& state) {
+    (void)i;
+    if (!slot.controller)
+        return;
+    GCExtendedGamepad* gamepad = slot.controller.extendedGamepad;
+    if (!gamepad)
+        return;
+
+    state.packetNumber++;
+    state.Gamepad.wButtons = readButtons(gamepad, slot.controller, slot.type);
+    state.Gamepad.bLeftTrigger = (BYTE)(gamepad.leftTrigger.value * 255.0f);
+    state.Gamepad.bRightTrigger = (BYTE)(gamepad.rightTrigger.value * 255.0f);
+    state.Gamepad.sThumbLX = (SHORT)(gamepad.leftThumbstick.xAxis.value * 32767.0f);
+    state.Gamepad.sThumbLY = (SHORT)(gamepad.leftThumbstick.yAxis.value * 32767.0f);
+    state.Gamepad.sThumbRX = (SHORT)(gamepad.rightThumbstick.xAxis.value * 32767.0f);
+    state.Gamepad.sThumbRY = (SHORT)(gamepad.rightThumbstick.yAxis.value * 32767.0f);
+}
+
 void GameControllerBridge::poll() {
+    std::lock_guard<std::mutex> lock(m_impl->m_lock);
     for (uint32_t i = 0; i < MAX_CONTROLLERS; i++) {
-        if (!m_impl->slots[i].controller)
-            continue;
-
-        GCExtendedGamepad* gamepad = m_impl->slots[i].controller.extendedGamepad;
-        if (!gamepad)
-            continue;
-
-        m_states[i].packetNumber++;
-        m_states[i].Gamepad.wButtons = readButtons(gamepad, m_impl->slots[i].controller, m_impl->slots[i].type);
-        m_states[i].Gamepad.bLeftTrigger = (BYTE)(gamepad.leftTrigger.value * 255.0f);
-        m_states[i].Gamepad.bRightTrigger = (BYTE)(gamepad.rightTrigger.value * 255.0f);
-        m_states[i].Gamepad.sThumbLX = (SHORT)(gamepad.leftThumbstick.xAxis.value * 32767.0f);
-        m_states[i].Gamepad.sThumbLY = (SHORT)(gamepad.leftThumbstick.yAxis.value * 32767.0f);
-        m_states[i].Gamepad.sThumbRX = (SHORT)(gamepad.rightThumbstick.xAxis.value * 32767.0f);
-        m_states[i].Gamepad.sThumbRY = (SHORT)(gamepad.rightThumbstick.yAxis.value * 32767.0f);
+        pollOneSlot(i, m_impl->slots[i], m_states[i]);
     }
 }
 
 bool GameControllerBridge::getState(uint32_t index, XInputState* pState) {
     if (!pState || index >= MAX_CONTROLLERS)
         return false;
+
+    std::lock_guard<std::mutex> lock(m_impl->m_lock);
     if (!m_connected[index]) {
         memset(pState, 0, sizeof(XInputState));
         return false;
     }
-    poll();
+
+    // Refresh every slot so the returned state is current; preserves the
+    // pre-existing behavior of getState triggering a full poll.
+    for (uint32_t i = 0; i < MAX_CONTROLLERS; i++) {
+        pollOneSlot(i, m_impl->slots[i], m_states[i]);
+    }
     *pState = m_states[index];
     return true;
 }
@@ -234,11 +263,102 @@ void GameControllerBridge::refresh() {
 }
 
 bool GameControllerBridge::setState(uint32_t index, uint16_t leftMotor, uint16_t rightMotor) {
-    if (index >= MAX_CONTROLLERS || !m_impl->slots[index].controller)
+    if (index >= MAX_CONTROLLERS)
         return false;
 
-    m_impl->lastHaptics[index][0] = leftMotor / 65535.0f;
-    m_impl->lastHaptics[index][1] = rightMotor / 65535.0f;
+    float left = leftMotor / 65535.0f;
+    float right = rightMotor / 65535.0f;
+    GCController* gc = nil;
+    bool haveEngine = false;
+
+    {
+        std::lock_guard<std::mutex> lock(m_impl->m_lock);
+        gc = m_impl->slots[index].controller;
+        if (!gc) {
+            // Controller was disconnected (or never connected). Clear any
+            // cached haptic engine and bail out.
+            m_impl->hapticEngines[index] = nil;
+            m_impl->lastHaptics[index][0] = 0.0f;
+            m_impl->lastHaptics[index][1] = 0.0f;
+            return false;
+        }
+        m_impl->lastHaptics[index][0] = left;
+        m_impl->lastHaptics[index][1] = right;
+        haveEngine = (m_impl->hapticEngines[index] != nil);
+    }
+
+    if (@available(macOS 11.0, *)) {
+        GCDeviceHaptics* deviceHaptics = gc.haptics;
+        if (!deviceHaptics)
+            return true;
+
+        if (!haveEngine) {
+            // Lazily create the haptic engine. Synchronous on macOS 11+.
+            CHHapticEngine* createdEngine = [deviceHaptics createEngineWithLocality:GCHapticsLocalityDefault];
+            if (!createdEngine) {
+                MS_WARN("GameControllerBridge: haptic engine creation failed (slot %u)", index);
+                return true;
+            }
+            std::lock_guard<std::mutex> lock(m_impl->m_lock);
+            m_impl->hapticEngines[index] = createdEngine;
+            haveEngine = true;
+        }
+
+        CHHapticEngine* engine = nil;
+        {
+            std::lock_guard<std::mutex> lock(m_impl->m_lock);
+            engine = (CHHapticEngine*)m_impl->hapticEngines[index];
+        }
+        if (!engine)
+            return true;
+
+        if (leftMotor == 0 && rightMotor == 0) {
+            [engine stopWithCompletionHandler:nil];
+            return true;
+        }
+
+        // Average motor intensity drives the continuous haptic; the high-frequency
+        // (right) motor drives sharpness, matching typical XInput rumble curves.
+        float intensity = (left + right) / 2.0f;
+        float sharpness = right;
+
+        CHHapticEventParameter* intensityParam =
+            [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticIntensity
+                                                          value:intensity];
+        CHHapticEventParameter* sharpnessParam =
+            [[CHHapticEventParameter alloc] initWithParameterID:CHHapticEventParameterIDHapticSharpness
+                                                          value:sharpness];
+        CHHapticEvent* event = [[CHHapticEvent alloc] initWithEventType:CHHapticEventTypeHapticContinuous
+                                                             parameters:@[ intensityParam, sharpnessParam ]
+                                                           relativeTime:0
+                                                               duration:GCHapticDurationInfinite];
+
+        NSError* patternError = nil;
+        CHHapticPattern* pattern = [[CHHapticPattern alloc] initWithEvents:@[ event ]
+                                                                parameters:@[]
+                                                                     error:&patternError];
+        if (!pattern || patternError) {
+            MS_WARN("GameControllerBridge: haptic pattern creation failed (slot %u): %s", index,
+                    patternError ? patternError.localizedDescription.UTF8String : "unknown error");
+            return true;
+        }
+
+        NSError* playerError = nil;
+        id<CHHapticPatternPlayer> player = [engine createPlayerWithPattern:pattern error:&playerError];
+        if (!player || playerError) {
+            MS_WARN("GameControllerBridge: haptic player creation failed (slot %u): %s", index,
+                    playerError ? playerError.localizedDescription.UTF8String : "unknown error");
+            return true;
+        }
+
+        [engine startWithCompletionHandler:nil];
+        NSError* startError = nil;
+        [player startAtTime:0 error:&startError];
+        if (startError) {
+            MS_WARN("GameControllerBridge: haptic player start failed (slot %u): %s", index,
+                    startError.localizedDescription.UTF8String);
+        }
+    }
 
     return true;
 }
@@ -246,6 +366,8 @@ bool GameControllerBridge::setState(uint32_t index, uint16_t leftMotor, uint16_t
 bool GameControllerBridge::getCapabilities(uint32_t index, XInputCapabilities* pCaps) {
     if (!pCaps || index >= MAX_CONTROLLERS)
         return false;
+
+    std::lock_guard<std::mutex> lock(m_impl->m_lock);
     if (!m_connected[index])
         return false;
 
@@ -254,7 +376,7 @@ bool GameControllerBridge::getCapabilities(uint32_t index, XInputCapabilities* p
     pCaps->SubType = 1;
 
     GCController* gc = m_impl->slots[index].controller;
-    if (gc.extendedGamepad) {
+    if (gc && gc.extendedGamepad) {
         pCaps->Flags = 0x0004;
     }
 

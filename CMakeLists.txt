@@ -27,6 +27,7 @@ find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
 
 find_library(SECURITY_FRAMEWORK Security REQUIRED)
 find_library(GAMECONTROLLER_FRAMEWORK GameController REQUIRED)
+find_library(COREHAPTICS_FRAMEWORK CoreHaptics)
 find_library(METALFX_FRAMEWORK MetalFX)
 
 find_path(METALIRCONVERTER_INCLUDE_DIR
@@ -164,7 +165,7 @@ add_library(metalsharp_input SHARED
     src/input/GameControllerBridge.mm
     src/input/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_input PRIVATE metalsharp_core ${GAMECONTROLLER_FRAMEWORK})
+target_link_libraries(metalsharp_input PRIVATE metalsharp_core ${GAMECONTROLLER_FRAMEWORK} ${COREHAPTICS_FRAMEWORK})
 target_compile_options(metalsharp_input PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_input PROPERTIES OUTPUT_NAME "xinput1_4" PREFIX "")
 metalsharp_wine_target(metalsharp_input)
@@ -207,7 +208,7 @@ add_executable(metalsharp_native
     tools/launcher/NativeLauncher.cpp
     src/input/GameControllerBridge.mm
 )
-target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core ${GAMECONTROLLER_FRAMEWORK})
+target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core ${GAMECONTROLLER_FRAMEWORK} ${COREHAPTICS_FRAMEWORK})
 target_compile_options(metalsharp_native PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
 metalsharp_wine_target(metalsharp_native)
