@@ -10,6 +10,7 @@
 #include <metalsharp/MSABITrampolines.h>
 #include <metalsharp/NetworkContext.h>
 #include <metalsharp/NtdllShim.h>
+#include <metalsharp/OpenGLBridge.h>
 #include <metalsharp/PEHeader.h>
 #include <metalsharp/PELoader.h>
 #include <metalsharp/PipelineCache.h>
@@ -97,6 +98,75 @@ static ShimHRESULT MSABI xinputRefreshShim() {
     ensureXInputBridgeInit();
     g_xinputBridge.refresh();
     return S_OK;
+}
+
+// ---------------------------------------------------------------------------
+// OpenGL bridge — Phase 4b.
+// The opengl32 shim's exported entry points live in src/opengl/WGLShim.cpp
+// (wglCreateContext, wglMakeCurrent, wglDeleteContext, wglGetProcAddress) and
+// src/opengl/EntryPoint.cpp (the GL 1.x/2.x passthroughs). Wine resolves most
+// GL entry points itself via wglGetProcAddress, so the launcher's opengl32.dll
+// registration only needs to forward the four WGL entry points plus a small
+// set of static entry points that some games bind directly.
+//
+// The launcher provides its own WGL shim implementations (defined below) that
+// delegate to the OpenGLBridge. The src/opengl/WGLShim.cpp dylib exports the
+// same symbols for binaries loaded via Wine — both copies are kept in sync
+// because they share the same opengl32.dll contract.
+// ---------------------------------------------------------------------------
+
+extern "C" {
+
+// WGL entry-point shims. Bodies are defined below so this TU links cleanly
+// without taking a runtime dependency on the opengl32.dylib.
+void* wglCreateContext(void* hdc);
+int32_t wglMakeCurrent(void* hdc, void* hglrc);
+int32_t wglDeleteContext(void* hglrc);
+void* wglGetProcAddress(const char* name);
+
+} // extern "C"
+
+static std::once_flag g_openglInitFlag;
+static metalsharp::OpenGLBridge g_openglBridge;
+
+static void ensureOpenGLBridgeInit() {
+    std::call_once(g_openglInitFlag, [] { g_openglBridge.init(); });
+}
+
+// ---------------------------------------------------------------------------
+// WGL shim implementations (Phase 4b).
+// These match the contract in src/opengl/WGLShim.cpp so binaries loaded
+// either via Wine (which loads the dylib) or directly by the launcher get
+// consistent behaviour. Phase 4c will replace the sentinel returns with
+// real NSOpenGLContext management.
+// ---------------------------------------------------------------------------
+
+extern "C" void* wglCreateContext(void* hdc) {
+    ensureOpenGLBridgeInit();
+    (void)hdc;
+    // Non-null sentinel. Phase 4c: create NSOpenGLContext here.
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(0x1));
+}
+
+extern "C" int32_t wglMakeCurrent(void* hdc, void* hglrc) {
+    ensureOpenGLBridgeInit();
+    (void)hdc;
+    (void)hglrc;
+    return 1; // TRUE
+}
+
+extern "C" int32_t wglDeleteContext(void* hglrc) {
+    ensureOpenGLBridgeInit();
+    (void)hglrc;
+    return 1; // TRUE
+}
+
+extern "C" void* wglGetProcAddress(const char* name) {
+    ensureOpenGLBridgeInit();
+    if (!name) {
+        return nullptr;
+    }
+    return g_openglBridge.getGLProcAddress(name);
 }
 
 static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
@@ -254,6 +324,32 @@ int main(int argc, char* argv[]) {
         ShimLibrary xinput13 = xinput14;
         xinput13.name = "xinput1_3.dll";
         loader.registerShim("xinput1_3.dll", std::move(xinput13));
+    }
+
+    // Register OpenGL shim (Phase 4b). The opengl32 shim is thin — most GL
+    // functions are loaded by Wine via wglGetProcAddress, so we only need
+    // to forward the WGL entry points plus a small set of static entry
+    // points that some games bind directly. We initialize the bridge here
+    // so the first wglGetProcAddress call is warm.
+    ensureOpenGLBridgeInit();
+    printf("Registering OpenGL shim...\n");
+    {
+        auto glFn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+        ShimLibrary opengl32;
+        opengl32.name = "opengl32.dll";
+        // Static entry points. Bound directly by some binaries that don't go
+        // through wglGetProcAddress. They forward to no-ops for now; real
+        // work happens through the WGL bridge.
+        opengl32.functions["glBegin"] = glFn((void*)+[](uint32_t) -> void {});
+        opengl32.functions["glEnd"] = glFn((void*)+[]() -> void {});
+        opengl32.functions["glClear"] = glFn((void*)+[](uint32_t) -> void {});
+        opengl32.functions["glClearColor"] = glFn((void*)+[](float, float, float, float) -> void {});
+        // WGL entry points — these resolve to the WGLShim.cpp implementations.
+        opengl32.functions["wglCreateContext"] = glFn((void*)wglCreateContext);
+        opengl32.functions["wglMakeCurrent"] = glFn((void*)wglMakeCurrent);
+        opengl32.functions["wglDeleteContext"] = glFn((void*)wglDeleteContext);
+        opengl32.functions["wglGetProcAddress"] = glFn((void*)wglGetProcAddress);
+        loader.registerShim("opengl32.dll", std::move(opengl32));
     }
 
     auto apiSets = {

@@ -28,12 +28,42 @@ cmake_minimum_required(VERSION 3.24) project(metalsharp VERSION 0.56.1 LANGUAGES
                                     REQUIRED) find_library(COREHAPTICS_FRAMEWORK
                                                                CoreHaptics) find_library(METALFX_FRAMEWORK MetalFX)
 
+                                                               find_library(OPENGL_FRAMEWORK OpenGL)
+
                                 find_path(METALIRCONVERTER_INCLUDE_DIR NAMES metal_irconverter /
                                           metal_irconverter.h PATHS / usr / local /
                                           include) find_library(METALIRCONVERTER_LIBRARY NAMES metalirconverter PATHS /
                                                                 usr / local / lib)
 
-                                    find_package(SDL2 QUIET)
+# SDL version selection. Default is SDL3; set -DMETALSHARP_SDL_VERSION=2 for SDL2.
+set(METALSHARP_SDL_VERSION "3" CACHE STRING "SDL major version (2 or 3)")
+set_property(CACHE METALSHARP_SDL_VERSION PROPERTY STRINGS "2" "3")
+
+if(METALSHARP_SDL_VERSION STREQUAL "2")
+    find_package(SDL2 REQUIRED)
+    add_compile_definitions(METALSHARP_SDL_VERSION_MAJOR=2)
+    message(STATUS "MetalSharp: using SDL2")
+else()
+    find_package(SDL3 QUIET)
+    if(NOT SDL3_FOUND)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(SDL3 IMPORTED_TARGET sdl3)
+        endif()
+    endif()
+    add_compile_definitions(METALSHARP_SDL_VERSION_MAJOR=3)
+    if(SDL3_FOUND)
+        message(STATUS "MetalSharp: using SDL3")
+        set(METALSHARP_HAS_SDL3 TRUE)
+    else()
+        message(WARNING "MetalSharp: SDL3 not found. Install with: brew install sdl3")
+    endif()
+endif()
+
+# Mojoshader SDL GPU backend is SDL3-only.
+if(METALSHARP_SDL_VERSION STREQUAL "3" AND SDL3_FOUND)
+    set(METALSHARP_HAS_SDL_GPU TRUE)
+endif()
 
                                         add_library(
                                             metalsharp_core STATIC src / metal / device / Device.cpp src / metal /
@@ -337,6 +367,37 @@ cmake_minimum_required(VERSION 3.24) project(metalsharp VERSION 0.56.1 LANGUAGES
                                                                                                                             E copy_if_different "$<TARGET_FILE:metalsharp_input>"
                                                                                                                                                 "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_input>" COMMENT
                                                                                                                                                 "Copying $<TARGET_FILE_NAME:metalsharp_input> to app/native/")
+
+# OpenGL 2.1-4.6 bridge. Delegates GL 2.1 to macOS native OpenGL framework.
+# GL 3.x+ shader translation via SPIRV-Cross is scaffolded for Phase 4c.
+                                                                                                                            add_library(
+                                                                                                                                metalsharp_opengl32 SHARED
+                                                                                                                                    src/opengl/OpenGLBridge.mm
+                                                                                                                                    src/opengl/EntryPoint.cpp
+                                                                                                                                    src/opengl/WGLShim.cpp)
+                                                                                                                            target_include_directories(
+                                                                                                                                metalsharp_opengl32
+                                                                                                                                    PRIVATE include)
+                                                                                                                            target_link_libraries(
+                                                                                                                                metalsharp_opengl32
+                                                                                                                                    PRIVATE metalsharp_core ${OPENGL_FRAMEWORK})
+                                                                                                                            target_compile_options(
+                                                                                                                                metalsharp_opengl32
+                                                                                                                                    PRIVATE -fobjc-arc)
+                                                                                                                            set_target_properties(
+                                                                                                                                metalsharp_opengl32
+                                                                                                                                    PROPERTIES OUTPUT_NAME "opengl32" PREFIX "")
+                                                                                                                            metalsharp_wine_target(
+                                                                                                                                metalsharp_opengl32)
+#Mirror the built shim into app/native/ so the bundle pipeline ships the real
+#binary rather than a zero-byte stub. Phase 4b: opengl32.dll shim for GL→Metal.
+                                                                                                                            add_custom_command(
+                                                                                                                                TARGET metalsharp_opengl32
+                                                                                                                                    POST_BUILD COMMAND
+                                                                                                                                        ${CMAKE_COMMAND} -
+                                                                                                                                E copy_if_different "$<TARGET_FILE:metalsharp_opengl32>"
+                                                                                                                                                            "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_opengl32>" COMMENT
+                                                                                                                                                            "Copying $<TARGET_FILE_NAME:metalsharp_opengl32> to app/native/")
 
                                                                                                                             add_executable(
                                                                                                                                 metalsharp_launcher tools /

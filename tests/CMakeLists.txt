@@ -75,6 +75,12 @@ add_executable(test_input
 target_link_libraries(test_input PRIVATE metalsharp_input metalsharp_core)
 target_compile_options(test_input PRIVATE -fobjc-arc)
 
+add_executable(test_opengl_bridge
+    test_opengl_bridge.cpp
+)
+target_link_libraries(test_opengl_bridge PRIVATE metalsharp_core)
+target_compile_options(test_opengl_bridge PRIVATE -fobjc-arc)
+
 add_executable(test_phase5
     test_phase5.cpp
 )
@@ -99,6 +105,7 @@ add_test(NAME host_runtime_abi COMMAND test_host_runtime_abi)
 add_test(NAME darwin_sync_map COMMAND test_darwin_sync_map)
 add_test(NAME audio COMMAND test_audio)
 add_test(NAME input COMMAND test_input)
+add_test(NAME opengl_bridge COMMAND test_opengl_bridge)
 add_test(NAME phase5 COMMAND test_phase5)
 add_test(NAME tiled_resources COMMAND test_tiled_resources)
 
