@@ -286,6 +286,34 @@ GL_PASSTHROUGH2(void, glPolygonMode, uint32_t, face, uint32_t, mode)
 GL_PASSTHROUGH2(void, glPolygonOffset, float, factor, float, units)
 
 // ---------------------------------------------------------------------------
+// Stencil state (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH3(void, glStencilFunc, uint32_t, func, int32_t, ref, uint32_t, mask)
+GL_PASSTHROUGH4(void, glStencilFuncSeparate, uint32_t, face, uint32_t, func, int32_t, ref, uint32_t, mask)
+GL_PASSTHROUGH3(void, glStencilOp, uint32_t, sfail, uint32_t, dpfail, uint32_t, dppass)
+GL_PASSTHROUGH4(void, glStencilOpSeparate, uint32_t, face, uint32_t, sfail, uint32_t, dpfail, uint32_t, dppass)
+GL_PASSTHROUGH1(void, glStencilMask, uint32_t, mask)
+GL_PASSTHROUGH2(void, glStencilMaskSeparate, uint32_t, face, uint32_t, mask)
+GL_PASSTHROUGH1(void, glClearStencil, int32_t, s)
+
+// ---------------------------------------------------------------------------
+// Color / blend state (GL 1.0-1.4)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH4(void, glColorMask, unsigned char, r, unsigned char, g, unsigned char, b, unsigned char, a)
+GL_PASSTHROUGH1(void, glBlendEquation, uint32_t, mode)
+GL_PASSTHROUGH2(void, glBlendEquationSeparate, uint32_t, modeRGB, uint32_t, modeAlpha)
+GL_PASSTHROUGH4(void, glBlendFuncSeparate, uint32_t, srcRGB, uint32_t, dstRGB, uint32_t, srcAlpha, uint32_t, dstAlpha)
+GL_PASSTHROUGH4(void, glBlendColor, float, r, float, g, float, b, float, a)
+GL_PASSTHROUGH1(void, glLogicOp, uint32_t, opcode)
+
+// ---------------------------------------------------------------------------
+// Depth state (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH1(void, glDepthMask, unsigned char, flag)
+GL_PASSTHROUGH2(void, glDepthRange, double, nearVal, double, farVal)
+GL_PASSTHROUGH1(void, glClearDepth, double, depth)
+
+// ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH1(void, glMatrixMode, uint32_t, mode)

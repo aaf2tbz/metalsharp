@@ -443,6 +443,94 @@ int main() {
         CHECK(bridge.state().blendEnabled == false, "Default state().blendEnabled is still false after init");
     }
 
+    {
+        printf("\n--- Stencil state passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for stencil state passthroughs");
+
+        // Symbol resolution: every GL 1.0 stencil entry point must resolve
+        // through the macOS OpenGL framework, which exports the full legacy
+        // profile (fixed-function stencil is still available on macOS via
+        // the legacy/2.1 compatibility profile).
+        const char* stencilSymbols[] = {
+            "glStencilFunc", "glStencilFuncSeparate", "glStencilOp",    "glStencilOpSeparate",
+            "glStencilMask", "glStencilMaskSeparate", "glClearStencil",
+        };
+        for (const char* name : stencilSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: stencil toggles (front/back face masks, stencil
+        // func, stencil op) intentionally do not introduce new binding
+        // slots. The bridge still reports a clean state after init, and
+        // depthTestEnabled must remain its default of false until something
+        // explicitly enables depth testing.
+        CHECK(bridge.state().depthTestEnabled == false, "Default state().depthTestEnabled is still false after init");
+    }
+
+    {
+        printf("\n--- Color / blend state passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for color/blend state passthroughs");
+
+        // Symbol resolution: every GL 1.0-1.4 color/blend entry point must
+        // resolve through the macOS OpenGL framework, which exports the full
+        // legacy profile (color mask, fixed-function blend, GL 1.4 separate
+        // blend, blend color, and GL 1.0 logic op).
+        const char* blendSymbols[] = {
+            "glColorMask",         "glBlendEquation", "glBlendEquationSeparate",
+            "glBlendFuncSeparate", "glBlendColor",    "glLogicOp",
+        };
+        for (const char* name : blendSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: blend toggles (color mask, blend equation,
+        // blend func, blend color, logic op) intentionally do not introduce
+        // new binding slots. The bridge still reports a clean state after
+        // init, and blendEnabled must remain its default of false until
+        // something explicitly enables blending.
+        CHECK(bridge.state().blendEnabled == false, "Default state().blendEnabled is still false after init");
+    }
+
+    {
+        printf("\n--- Depth state passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for depth state passthroughs");
+
+        // Symbol resolution: every GL 1.0 depth entry point must resolve
+        // through the macOS OpenGL framework, which exports the full legacy
+        // profile (depth mask, depth range, clear depth — all part of the
+        // fixed-function pipeline still available on macOS).
+        const char* depthSymbols[] = {
+            "glDepthMask",
+            "glDepthRange",
+            "glClearDepth",
+        };
+        for (const char* name : depthSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: depth toggles (depth mask, depth range, clear
+        // depth) intentionally do not introduce new binding slots. The
+        // bridge still reports a clean state after init, and depthTestEnabled
+        // must remain its default of false until something explicitly
+        // enables depth testing.
+        CHECK(bridge.state().depthTestEnabled == false, "Default state().depthTestEnabled is still false after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
