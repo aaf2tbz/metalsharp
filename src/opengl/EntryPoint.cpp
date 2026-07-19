@@ -14,7 +14,11 @@
 /// already captures program/blend/depth/attrib/viewport so future
 /// instrumentation can be added without breaking this shim.
 
+#include <metalsharp/GLShaderTracker.h>
+#include <metalsharp/GLSLCompiler.h>
+#include <metalsharp/GLSLVersion.h>
 #include <metalsharp/OpenGLBridge.h>
+#include <metalsharp/ShaderStage.h>
 #include <mutex>
 
 #if __has_include(<spirv_cross_c.h>)
@@ -205,20 +209,116 @@ GL_PASSTHROUGH2(void, glVertexAttribDivisor, uint32_t, index, uint32_t, divisor)
 // ---------------------------------------------------------------------------
 // Shader objects (GL 2.0)
 // ---------------------------------------------------------------------------
-GL_PASSTHROUGH1(uint32_t, glCreateShader, uint32_t, shaderType)
-GL_PASSTHROUGH1(void, glDeleteShader, uint32_t, shader)
-GL_PASSTHROUGH4(void, glShaderSource, uint32_t, shader, int32_t, count, const char**, string, const int32_t*, length)
+
+// glCreateShader is intercepted by the shader tracker so that subsequent
+// glShaderSource / glCompileShader calls observe a consistent handle and can
+// be routed through the SPIRV-Cross cross-compilation path. When SPIRV-Cross
+// is unavailable, the call falls through to the native OpenGL framework.
+extern "C" uint32_t glCreateShader(uint32_t shaderType) {
+    ensureGLInit();
+#if METALSHARP_HAS_SPIRV_CROSS
+    // Always allocate through the tracker so that the cross-compile path has
+    // a place to park source / SPIR-V / MSL state. A zero return means the
+    // tracker rejected the allocation (e.g. out of memory); in that case we
+    // fall through to native GL so the caller still gets a usable handle.
+    const uint32_t name = metalsharp::GLShaderTracker::instance().createShader(shaderType);
+    if (name != 0) {
+        return name;
+    }
+#endif
+    auto fn = reinterpret_cast<uint32_t (*)(uint32_t)>(g_glBridge.getGLProcAddress("glCreateShader"));
+    if (fn) {
+        return fn(shaderType);
+    }
+    return 0;
+}
+
+// glDeleteShader is intercepted so the tracker entry is removed before
+// the native handle goes away. Without this hook the tracker would leak
+// entries and recycled handles could collide with live shader objects.
+extern "C" void glDeleteShader(uint32_t shader) {
+    ensureGLInit();
+#if METALSHARP_HAS_SPIRV_CROSS
+    metalsharp::GLShaderTracker::instance().deleteShader(shader);
+#endif
+    auto fn = reinterpret_cast<void (*)(uint32_t)>(g_glBridge.getGLProcAddress("glDeleteShader"));
+    if (fn) {
+        fn(shader);
+    }
+}
+
+// glShaderSource is intercepted to capture the GLSL source string into the
+// shader's tracker entry, parse its #version directive, and decide whether
+// the cross-compile path is required. For tracked shaders we do NOT forward
+// the source to native GL — the cross-compile path owns these shaders end to
+// end. Shaders that are not in the tracker (e.g. created outside the shim)
+// fall through to the native driver unchanged.
+extern "C" void glShaderSource(uint32_t shader, int32_t count, const char** string, const int32_t* length) {
+    ensureGLInit();
+#if METALSHARP_HAS_SPIRV_CROSS
+    auto* state = metalsharp::GLShaderTracker::instance().getShader(shader);
+    if (state) {
+        // Concatenate the count source strings into a single buffer. Each
+        // string may be null-terminated (length == nullptr or length[i] < 0)
+        // or have an explicit byte length (length[i] > 0). Either way the
+        // result is one canonical source blob keyed by the shader handle.
+        std::string source;
+        for (int32_t i = 0; i < count; i++) {
+            if (!string || !string[i]) {
+                continue;
+            }
+            if (length && length[i] > 0) {
+                source.append(string[i], static_cast<size_t>(length[i]));
+            } else {
+                source.append(string[i]);
+            }
+        }
+        state->source = source;
+
+        // Parse the #version directive and decide whether the cross-compile
+        // path is required. Invalid / missing #version is treated as legacy
+        // GLSL 1.10 — needsCrossCompile stays false and the compile falls
+        // through to native GL.
+        metalsharp::parseGLSLVersion(source.c_str(), state->glslVersion);
+        state->needsCrossCompile = metalsharp::needsCrossCompile(state->glslVersion);
+        return; // Don't forward to native GL — we handle compilation.
+    }
+#endif
+    auto fn = reinterpret_cast<void (*)(uint32_t, int32_t, const char**, const int32_t*)>(
+        g_glBridge.getGLProcAddress("glShaderSource"));
+    if (fn) {
+        fn(shader, count, string, length);
+    }
+}
+
 GL_PASSTHROUGH3(void, glGetShaderiv, uint32_t, shader, uint32_t, pname, int32_t*, params)
 GL_PASSTHROUGH4(void, glGetShaderInfoLog, uint32_t, shader, int32_t, bufSize, int32_t*, length, char*, infoLog)
 GL_PASSTHROUGH2(void, glAttachShader, uint32_t, program, uint32_t, shader)
 GL_PASSTHROUGH2(void, glDetachShader, uint32_t, program, uint32_t, shader)
 GL_PASSTHROUGH1(unsigned char, glIsShader, uint32_t, shader)
 
-// glCompileShader is hand-written to update shaderCompilePending after
-// native compilation. Phase 1: synchronous native GL, flag set false
-// immediately. Phase 2: SPIRV-Cross overrides this.
+// glCompileShader is intercepted to drive the SPIRV-Cross cross-compilation
+// path for tracked shaders whose source needs cross-compilation (GLSL > 1.20
+// or any ES flavour). For native-compatible shaders the call still falls
+// through to the native OpenGL driver and shaderCompilePending is reset.
 extern "C" void glCompileShader(uint32_t shader) {
     ensureGLInit();
+#if METALSHARP_HAS_SPIRV_CROSS
+    auto* state = metalsharp::GLShaderTracker::instance().getShader(shader);
+    if (state && state->needsCrossCompile && !state->source.empty()) {
+        std::string errorLog;
+        bool ok = metalsharp::GLSLCompiler::compileToSPIRV(state->source.c_str(), state->stage, state->glslVersion,
+                                                           state->spirv, errorLog);
+        if (ok) {
+            ok = metalsharp::GLSLCompiler::translateSPIRVtoMSL(state->spirv, state->stage, state->msl, errorLog);
+        }
+        state->compiled = true;
+        state->compileSuccess = ok;
+        state->infoLog = errorLog;
+        g_glBridge.state().shaderCompilePending = false;
+        return;
+    }
+#endif
     auto fn = reinterpret_cast<void (*)(uint32_t)>(g_glBridge.getGLProcAddress("glCompileShader"));
     if (fn) {
         fn(shader);

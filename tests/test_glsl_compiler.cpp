@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include <metalsharp/GLShaderTracker.h>
 #include <metalsharp/GLSLCompiler.h>
 #include <metalsharp/GLSLVersion.h>
 #include <metalsharp/ShaderStage.h>
@@ -276,6 +277,73 @@ int main() {
         CHECK(!translated, "translateSPIRVtoMSL returns false for empty SPIR-V");
         CHECK(msl.empty(), "MSL output stays empty on failure");
         CHECK(!mslError.empty(), "errorLog is non-empty on failure");
+    }
+
+    {
+        printf("\n--- Shader tracker ---\n");
+
+        // 1. Get tracker instance.
+        auto& tracker = metalsharp::GLShaderTracker::instance();
+        CHECK(true, "GLShaderTracker::instance() returns a valid tracker");
+
+        // 2. Create vertex shader.
+        constexpr uint32_t kGL_VERTEX_SHADER = 0x8B31;
+        const uint32_t shaderName = tracker.createShader(kGL_VERTEX_SHADER);
+        char nameBuf[64];
+        std::snprintf(nameBuf, sizeof(nameBuf), "createShader returns non-zero name (got %u)", shaderName);
+        CHECK(shaderName != 0, nameBuf);
+
+        auto* state = tracker.getShader(shaderName);
+        CHECK(state != nullptr, "getShader returns non-null for freshly created shader");
+        if (state) {
+            CHECK(state->type == kGL_VERTEX_SHADER, "shader type matches GL_VERTEX_SHADER");
+            CHECK(state->stage == metalsharp::ShaderStage::Vertex, "shader stage mapped to ShaderStage::Vertex");
+            CHECK(!state->compiled, "freshly created shader is not yet compiled");
+            CHECK(!state->compileSuccess, "freshly created shader is not yet compileSuccess");
+        }
+
+        // 3. Set source — simulates glShaderSource. parseGLSLVersion + needsCrossCompile
+        //    are run on the captured source the same way the shim does.
+        const char* src450 = "#version 450 core\n"
+                             "layout(location = 0) in vec3 pos;\n"
+                             "void main() { gl_Position = vec4(pos, 1.0); }\n";
+
+        if (state) {
+            state->source = src450;
+            const bool parsed = metalsharp::parseGLSLVersion(state->source.c_str(), state->glslVersion);
+            state->needsCrossCompile = metalsharp::needsCrossCompile(state->glslVersion);
+
+            CHECK(parsed, "parseGLSLVersion finds #version 450 directive");
+            CHECK(state->glslVersion.major == 450, "Parsed major version is 450");
+            CHECK(state->glslVersion.valid, "GLSLVersion.valid is true");
+            CHECK(state->needsCrossCompile, "needsCrossCompile is true for #version 450");
+        }
+
+        // 4. Compile — drive GLSLCompiler::compileToSPIRV + translateSPIRVtoMSL
+        //    exactly the way glCompileShader does in the shim.
+        if (state && state->needsCrossCompile && !state->source.empty()) {
+            std::string errorLog;
+            bool ok = metalsharp::GLSLCompiler::compileToSPIRV(state->source.c_str(), state->stage, state->glslVersion,
+                                                               state->spirv, errorLog);
+            if (ok) {
+                ok = metalsharp::GLSLCompiler::translateSPIRVtoMSL(state->spirv, state->stage, state->msl, errorLog);
+            }
+            state->compiled = true;
+            state->compileSuccess = ok;
+            state->infoLog = errorLog;
+
+            CHECK(state->compileSuccess, "tracker-driven compile + translate succeeded");
+            CHECK(state->infoLog.empty(), "tracker infoLog is empty on success");
+            CHECK(!state->msl.empty(), "tracker MSL output is non-empty");
+            CHECK(!state->spirv.empty(), "tracker SPIR-V output is non-empty");
+        } else {
+            printf("  [FAIL] shader not in cross-compile state\n");
+            failed++;
+        }
+
+        // 5. Delete shader — getShader must return null afterwards.
+        tracker.deleteShader(shaderName);
+        CHECK(tracker.getShader(shaderName) == nullptr, "getShader returns null after deleteShader");
     }
 
     {

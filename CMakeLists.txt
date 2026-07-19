@@ -339,6 +339,7 @@ add_library(metalsharp_opengl32 SHARED
     src/opengl/EntryPoint.cpp
     src/opengl/WGLShim.cpp
     src/opengl/GLSLCompiler.cpp
+    src/opengl/GLShaderTracker.cpp
 )
 target_include_directories(metalsharp_opengl32 PRIVATE include)
 target_link_libraries(metalsharp_opengl32 PRIVATE
