@@ -269,6 +269,14 @@ GL_PASSTHROUGH7(void, glGetActiveUniform, uint32_t, program, uint32_t, index, in
                 int32_t*, size, uint32_t*, type, char*, name)
 
 // ---------------------------------------------------------------------------
+// Vertex attribute location queries (GL 2.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(int32_t, glGetAttribLocation, uint32_t, program, const char*, name)
+GL_PASSTHROUGH3(void, glBindAttribLocation, uint32_t, program, uint32_t, index, const char*, name)
+GL_PASSTHROUGH7(void, glGetActiveAttrib, uint32_t, program, uint32_t, index, int32_t, bufSize, int32_t*, length,
+                int32_t*, size, uint32_t*, type, char*, name)
+
+// ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH1(void, glMatrixMode, uint32_t, mode)

@@ -301,6 +301,35 @@ int main() {
         CHECK(bridge.state().currentProgram == 0, "Default state().currentProgram is 0 after init");
     }
 
+    {
+        printf("\n--- Vertex attribute location passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for vertex-attribute-location tests");
+
+        // Symbol resolution: every GL 2.0 vertex-attribute-location entry
+        // point must resolve through the macOS OpenGL framework, which
+        // exports the full legacy profile (including GL 2.0 generic vertex
+        // attribute location queries and binding).
+        const char* attribLocSymbols[] = {
+            "glGetAttribLocation",
+            "glBindAttribLocation",
+            "glGetActiveAttrib",
+        };
+        for (const char* name : attribLocSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: init must not leave a program bound. The vertex-
+        // attribute location entry points operate on a program, so the shim
+        // must leave currentProgram at 0 unless the application explicitly
+        // calls glUseProgram.
+        CHECK(bridge.state().currentProgram == 0, "Default state().currentProgram is 0 after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
