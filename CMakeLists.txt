@@ -341,10 +341,12 @@ add_library(metalsharp_opengl32 SHARED
     src/opengl/GLSLCompiler.cpp
     src/opengl/GLShaderCache.cpp
     src/opengl/GLShaderTracker.cpp
+    src/opengl/GLMetalRenderer.mm
 )
 target_include_directories(metalsharp_opengl32 PRIVATE include)
 target_link_libraries(metalsharp_opengl32 PRIVATE
     metalsharp_core
+    ${METAL_FRAMEWORK}
     ${OPENGL_FRAMEWORK}
     spirv-cross-core
     spirv-cross-glsl

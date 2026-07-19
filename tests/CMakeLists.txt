@@ -200,3 +200,10 @@ target_link_libraries(test_glsl_compiler PRIVATE
     spirv-cross-glsl
     spirv-cross-msl)
 add_test(NAME glsl_compiler COMMAND test_glsl_compiler)
+
+add_executable(test_metal_renderer
+    test_metal_renderer.mm
+)
+target_link_libraries(test_metal_renderer PRIVATE metalsharp_opengl32 metalsharp_core ${METAL_FRAMEWORK})
+target_compile_options(test_metal_renderer PRIVATE -fobjc-arc)
+add_test(NAME metal_renderer COMMAND test_metal_renderer)
