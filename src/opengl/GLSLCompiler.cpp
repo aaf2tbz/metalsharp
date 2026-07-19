@@ -24,6 +24,11 @@
 #include <glslang/Public/ShaderLang.h>
 #include <SPIRV/GlslangToSpv.h>
 
+// SPIRV-Cross MSL backend. We only use the C++ API; the C shim
+// (spirv-cross-c) is not needed here.
+#include <spirv_cross.hpp>
+#include <spirv_msl.hpp>
+
 #include <mutex>
 
 namespace metalsharp {
@@ -176,6 +181,80 @@ bool GLSLCompiler::compileToSPIRV(const char* source, ShaderStage stage, const G
 
     if (spirvOut.empty()) {
         errorLog = "GLSLCompiler: GlslangToSpv produced empty SPIR-V output";
+        return false;
+    }
+
+    return true;
+}
+
+bool GLSLCompiler::translateSPIRVtoMSL(const std::vector<uint32_t>& spirv, ShaderStage stage, std::string& mslOut,
+                                       std::string& errorLog) {
+    mslOut.clear();
+    errorLog.clear();
+
+    if (spirv.empty()) {
+        errorLog = "GLSLCompiler::translateSPIRVtoMSL: empty SPIR-V input";
+        return false;
+    }
+
+    // SPIRV-Cross's MSL entry-point model only covers the three stages the
+    // OpenGL bridge actually translates. Anything else (geometry,
+    // tessellation, mesh, ray-tracing) is rejected here so callers get a
+    // clean error instead of a confusing SPIRV-Cross exception.
+    spv::ExecutionModel model;
+    const char* entryPointName = nullptr;
+    switch (stage) {
+    case ShaderStage::Vertex:
+        model = spv::ExecutionModelVertex;
+        entryPointName = "vertex_main";
+        break;
+    case ShaderStage::Pixel:
+        model = spv::ExecutionModelFragment;
+        entryPointName = "fragment_main";
+        break;
+    case ShaderStage::Compute:
+        model = spv::ExecutionModelGLCompute;
+        entryPointName = "kernel_main";
+        break;
+    default:
+        errorLog = "GLSLCompiler::translateSPIRVtoMSL: unsupported shader stage for MSL translation";
+        return false;
+    }
+
+    try {
+        // Note: SPIRV-Cross does not surface `entry_point_name` as an option
+        // on CompilerMSL::Options (only platform, MSL version, resource
+        // binding layouts, etc.). The supported way to override the entry
+        // point name is rename_entry_point() before compile().
+        spirv_cross::CompilerMSL msl(spirv);
+
+        spirv_cross::CompilerMSL::Options opts;
+        opts.platform = spirv_cross::CompilerMSL::Options::macOS;
+        // Metal 2.4 is the safest default — it covers everything Apple
+        // Silicon supports and matches MoltenVK's MSL 2.x requirement for
+        // most modern SPIR-V features (argument buffers tier 2, etc.).
+        opts.msl_version = spirv_cross::CompilerMSL::Options::make_msl_version(2, 4);
+        msl.set_msl_options(opts);
+
+        // glslang emits the GLSL `void main()` entry point as the SPIR-V
+        // entry point named "main". "main" is a reserved keyword in MSL,
+        // and even if it were not, downstream Metal pipeline code wants a
+        // stable, stage-specific name. We rename unconditionally; the input
+        // SPIR-V is always produced by compileToSPIRV above, which uses
+        // glslang's default "main" entry point.
+        msl.rename_entry_point("main", entryPointName, model);
+
+        mslOut = msl.compile();
+    } catch (const spirv_cross::CompilerError& e) {
+        errorLog = std::string("GLSLCompiler::translateSPIRVtoMSL: SPIRV-Cross error: ") + e.what();
+        return false;
+    } catch (const std::exception& e) {
+        errorLog = std::string("GLSLCompiler::translateSPIRVtoMSL: unexpected error: ") + e.what();
+        return false;
+    }
+
+    if (mslOut.empty()) {
+        errorLog = "GLSLCompiler::translateSPIRVtoMSL: SPIRV-Cross produced empty MSL output";
         return false;
     }
 

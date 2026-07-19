@@ -156,6 +156,129 @@ int main() {
     }
 
     {
+        printf("\n--- SPIR-V -> MSL: vertex shader ---\n");
+        const char* src = "#version 450 core\n"
+                          "layout(location = 0) in vec3 pos;\n"
+                          "void main() { gl_Position = vec4(pos, 1.0); }\n";
+
+        metalsharp::GLSLVersion ver{};
+        metalsharp::parseGLSLVersion(src, ver);
+
+        std::vector<uint32_t> spirv;
+        std::string errorLog;
+        const bool compiled =
+            metalsharp::GLSLCompiler::compileToSPIRV(src, metalsharp::ShaderStage::Vertex, ver, spirv, errorLog);
+        CHECK(compiled, "vertex shader compiled to SPIR-V");
+
+        std::string msl;
+        std::string mslError;
+        const bool translated =
+            metalsharp::GLSLCompiler::translateSPIRVtoMSL(spirv, metalsharp::ShaderStage::Vertex, msl, mslError);
+        CHECK(translated, "translateSPIRVtoMSL succeeded for vertex shader");
+        CHECK(mslError.empty(), "vertex MSL errorLog is empty");
+        CHECK(!msl.empty(), "vertex MSL output is non-empty");
+
+        if (!msl.empty()) {
+            // MSL vertex shader signature is `vertex <return_type> <name>(...)`.
+            // SPIRV-Cross emits the `vertex` qualifier keyword on its own line,
+            // so a substring search is reliable.
+            const bool hasVertexKw = msl.find("vertex") != std::string::npos;
+            CHECK(hasVertexKw, "vertex MSL contains the `vertex` qualifier keyword");
+
+            // We rename to vertex_main in GLSLCompiler::translateSPIRVtoMSL.
+            const bool hasEntryName = msl.find("vertex_main") != std::string::npos;
+            CHECK(hasEntryName, "vertex MSL contains renamed entry point `vertex_main`");
+
+            // Metal platform include / namespace declarations are part of every
+            // SPIRV-Cross MSL output (e.g. `#include <metal_stdlib>`).
+            const bool hasMetalInclude = msl.find("metal") != std::string::npos;
+            CHECK(hasMetalInclude, "vertex MSL contains `metal` (stdlib include)");
+        }
+    }
+
+    {
+        printf("\n--- SPIR-V -> MSL: fragment shader ---\n");
+        const char* src = "#version 450 core\n"
+                          "layout(location = 0) out vec4 outColor;\n"
+                          "void main() { outColor = vec4(1.0, 0.0, 0.0, 1.0); }\n";
+
+        metalsharp::GLSLVersion ver{};
+        metalsharp::parseGLSLVersion(src, ver);
+
+        std::vector<uint32_t> spirv;
+        std::string errorLog;
+        const bool compiled =
+            metalsharp::GLSLCompiler::compileToSPIRV(src, metalsharp::ShaderStage::Pixel, ver, spirv, errorLog);
+        CHECK(compiled, "fragment shader compiled to SPIR-V");
+
+        std::string msl;
+        std::string mslError;
+        const bool translated =
+            metalsharp::GLSLCompiler::translateSPIRVtoMSL(spirv, metalsharp::ShaderStage::Pixel, msl, mslError);
+        CHECK(translated, "translateSPIRVtoMSL succeeded for fragment shader");
+        CHECK(mslError.empty(), "fragment MSL errorLog is empty");
+        CHECK(!msl.empty(), "fragment MSL output is non-empty");
+
+        if (!msl.empty()) {
+            // MSL fragment shader signature is `fragment <return_type> <name>(...)`.
+            // We need to be careful: the word `fragment` also appears in things
+            // like `[[fragment]]` qualifiers, but a simple substring match
+            // (case-sensitive) is sufficient for our purposes.
+            const bool hasFragmentKw = msl.find("fragment") != std::string::npos;
+            CHECK(hasFragmentKw, "fragment MSL contains the `fragment` qualifier keyword");
+
+            const bool hasEntryName = msl.find("fragment_main") != std::string::npos;
+            CHECK(hasEntryName, "fragment MSL contains renamed entry point `fragment_main`");
+        }
+    }
+
+    {
+        printf("\n--- SPIR-V -> MSL: compute shader ---\n");
+        const char* src = "#version 450 core\n"
+                          "layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;\n"
+                          "layout(set = 0, binding = 0) buffer Buf { uint counter; };\n"
+                          "void main() { counter += 1u; }\n";
+
+        metalsharp::GLSLVersion ver{};
+        metalsharp::parseGLSLVersion(src, ver);
+
+        std::vector<uint32_t> spirv;
+        std::string errorLog;
+        const bool compiled =
+            metalsharp::GLSLCompiler::compileToSPIRV(src, metalsharp::ShaderStage::Compute, ver, spirv, errorLog);
+        CHECK(compiled, "compute shader compiled to SPIR-V");
+
+        std::string msl;
+        std::string mslError;
+        const bool translated =
+            metalsharp::GLSLCompiler::translateSPIRVtoMSL(spirv, metalsharp::ShaderStage::Compute, msl, mslError);
+        CHECK(translated, "translateSPIRVtoMSL succeeded for compute shader");
+        CHECK(mslError.empty(), "compute MSL errorLog is empty");
+        CHECK(!msl.empty(), "compute MSL output is non-empty");
+
+        if (!msl.empty()) {
+            // MSL compute kernels use the `kernel` qualifier keyword.
+            const bool hasKernelKw = msl.find("kernel") != std::string::npos;
+            CHECK(hasKernelKw, "compute MSL contains the `kernel` qualifier keyword");
+
+            const bool hasEntryName = msl.find("kernel_main") != std::string::npos;
+            CHECK(hasEntryName, "compute MSL contains renamed entry point `kernel_main`");
+        }
+    }
+
+    {
+        printf("\n--- SPIR-V -> MSL: empty input rejected ---\n");
+        std::vector<uint32_t> emptySpirv;
+        std::string msl;
+        std::string mslError;
+        const bool translated =
+            metalsharp::GLSLCompiler::translateSPIRVtoMSL(emptySpirv, metalsharp::ShaderStage::Vertex, msl, mslError);
+        CHECK(!translated, "translateSPIRVtoMSL returns false for empty SPIR-V");
+        CHECK(msl.empty(), "MSL output stays empty on failure");
+        CHECK(!mslError.empty(), "errorLog is non-empty on failure");
+    }
+
+    {
         printf("\n--- Shutdown ---\n");
         metalsharp::GLSLCompiler::shutdown();
         printf("  [OK] shutdown() returned cleanly\n");

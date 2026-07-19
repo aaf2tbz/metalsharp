@@ -17,6 +17,27 @@ class GLSLCompiler {
     static bool compileToSPIRV(const char* source, ShaderStage stage, const GLSLVersion& version,
                                std::vector<uint32_t>& spirvOut, std::string& errorLog);
 
+    /// Translate SPIR-V binary to Metal Shading Language (MSL) source via
+    /// the SPIRV-Cross MSL backend. The compiler instance is created
+    /// transiently for each call; the function does not depend on glslang
+    /// initialization state and is safe to call from any thread.
+    ///
+    /// The MSL output uses stage-stable entry-point names ("vertex_main",
+    /// "fragment_main", "kernel_main") so downstream Metal pipeline code can
+    /// look them up by name without having to parse the SPIR-V first.
+    ///
+    /// Only Vertex, Pixel, and Compute stages are supported. Other stages
+    /// (geometry, tessellation, mesh, ray-tracing) are rejected up-front
+    /// because the OpenGL bridge never feeds them to this path.
+    ///
+    /// @param spirv      Vector of 32-bit SPIR-V words (from compileToSPIRV)
+    /// @param stage      Shader stage (controls the MSL entry-point name)
+    /// @param mslOut     Output MSL source string; cleared on entry
+    /// @param errorLog   Translation error/warning messages
+    /// @return true on success; false if translation failed or stage is unsupported
+    static bool translateSPIRVtoMSL(const std::vector<uint32_t>& spirv, ShaderStage stage, std::string& mslOut,
+                                    std::string& errorLog);
+
   private:
     static bool s_initialized;
 };

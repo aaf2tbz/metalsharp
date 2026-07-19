@@ -195,5 +195,8 @@ target_link_libraries(test_glsl_compiler PRIVATE
     glslang
     OSDependent
     SPIRV
-    glslang-default-resource-limits)
+    glslang-default-resource-limits
+    spirv-cross-core
+    spirv-cross-glsl
+    spirv-cross-msl)
 add_test(NAME glsl_compiler COMMAND test_glsl_compiler)
