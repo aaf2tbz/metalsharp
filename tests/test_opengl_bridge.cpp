@@ -247,6 +247,32 @@ int main() {
         CHECK(!bridge.state().shaderCompilePending, "Default state().shaderCompilePending is false after init");
     }
 
+    {
+        printf("\n--- Shader object passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for shader-object tests");
+
+        // Symbol resolution: every GL 2.0 shader-object entry point must
+        // resolve through the macOS OpenGL framework, which exports the full
+        // legacy profile (including GL 2.0 shader objects and info-log queries).
+        const char* shaderSymbols[] = {
+            "glCreateShader", "glDeleteShader",     "glShaderSource", "glCompileShader",
+            "glGetShaderiv",  "glGetShaderInfoLog", "glGetProgramiv", "glGetProgramInfoLog",
+            "glAttachShader", "glDetachShader",     "glIsShader",
+        };
+        for (const char* name : shaderSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: init must leave shaderCompilePending false; the
+        // bridge starts in a quiescent state with no compile in flight.
+        CHECK(!bridge.state().shaderCompilePending, "Default state().shaderCompilePending is false after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

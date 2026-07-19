@@ -198,12 +198,38 @@ GL_PASSTHROUGH3(void, glGetVertexAttribPointerv, uint32_t, index, uint32_t, pnam
 GL_PASSTHROUGH2(void, glVertexAttribDivisor, uint32_t, index, uint32_t, divisor)
 
 // ---------------------------------------------------------------------------
+// Shader objects (GL 2.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH1(uint32_t, glCreateShader, uint32_t, shaderType)
+GL_PASSTHROUGH1(void, glDeleteShader, uint32_t, shader)
+GL_PASSTHROUGH4(void, glShaderSource, uint32_t, shader, int32_t, count, const char**, string, const int32_t*, length)
+GL_PASSTHROUGH3(void, glGetShaderiv, uint32_t, shader, uint32_t, pname, int32_t*, params)
+GL_PASSTHROUGH4(void, glGetShaderInfoLog, uint32_t, shader, int32_t, bufSize, int32_t*, length, char*, infoLog)
+GL_PASSTHROUGH2(void, glAttachShader, uint32_t, program, uint32_t, shader)
+GL_PASSTHROUGH2(void, glDetachShader, uint32_t, program, uint32_t, shader)
+GL_PASSTHROUGH1(unsigned char, glIsShader, uint32_t, shader)
+
+// glCompileShader is hand-written to update shaderCompilePending after
+// native compilation. Phase 1: synchronous native GL, flag set false
+// immediately. Phase 2: SPIRV-Cross overrides this.
+extern "C" void glCompileShader(uint32_t shader) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t)>(g_glBridge.getGLProcAddress("glCompileShader"));
+    if (fn) {
+        fn(shader);
+    }
+    g_glBridge.state().shaderCompilePending = false;
+}
+
+// ---------------------------------------------------------------------------
 // Shader program objects (GL 2.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH0(uint32_t, glCreateProgram)
 GL_PASSTHROUGH1(void, glDeleteProgram, uint32_t, program)
 GL_PASSTHROUGH1(void, glLinkProgram, uint32_t, program)
 GL_PASSTHROUGH1(void, glValidateProgram, uint32_t, program)
+GL_PASSTHROUGH3(void, glGetProgramiv, uint32_t, program, uint32_t, pname, int32_t*, params)
+GL_PASSTHROUGH4(void, glGetProgramInfoLog, uint32_t, program, int32_t, bufSize, int32_t*, length, char*, infoLog)
 GL_PASSTHROUGH1(unsigned char, glIsProgram, uint32_t, program)
 
 // glUseProgram is hand-written because it must mirror the active program
