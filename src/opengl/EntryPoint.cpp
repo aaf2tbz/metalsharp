@@ -105,6 +105,39 @@ GL_PASSTHROUGH1(void, glDepthFunc, uint32_t, func)
 GL_PASSTHROUGH2(void, glBindTexture, uint32_t, target, uint32_t, texture)
 
 // ---------------------------------------------------------------------------
+// Buffer objects (GL 1.5)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glGenBuffers, int32_t, n, uint32_t*, buffers)
+GL_PASSTHROUGH2(void, glDeleteBuffers, int32_t, n, const uint32_t*, buffers)
+GL_PASSTHROUGH4(void, glBufferData, uint32_t, target, int64_t, size, const void*, data, uint32_t, usage)
+GL_PASSTHROUGH4(void, glBufferSubData, uint32_t, target, int64_t, offset, int64_t, size, const void*, data)
+GL_PASSTHROUGH2(void*, glMapBuffer, uint32_t, target, uint32_t, access)
+GL_PASSTHROUGH1(unsigned char, glUnmapBuffer, uint32_t, target)
+GL_PASSTHROUGH1(unsigned char, glIsBuffer, uint32_t, buffer)
+
+// glBindBuffer is hand-written because it must mirror the binding into
+// GLState so subsequent draw calls / VAO setup can observe which buffer
+// is currently bound. The native call is still issued so the framework
+// context state stays in sync.
+extern "C" void glBindBuffer(uint32_t target, uint32_t buffer) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t, uint32_t)>(g_glBridge.getGLProcAddress("glBindBuffer"));
+    if (fn) {
+        fn(target, buffer);
+    }
+    // Mirror into the state tracker for GL_ARRAY_BUFFER / GL_ELEMENT_ARRAY_BUFFER.
+    // Other targets (e.g. GL_PIXEL_PACK_BUFFER, GL_UNIFORM_BUFFER) are ignored
+    // here; the bridge only tracks the two targets consumed by draw submission.
+    constexpr uint32_t kGL_ARRAY_BUFFER = 0x8892;         // GL_ARRAY_BUFFER
+    constexpr uint32_t kGL_ELEMENT_ARRAY_BUFFER = 0x8893; // GL_ELEMENT_ARRAY_BUFFER
+    if (target == kGL_ARRAY_BUFFER) {
+        g_glBridge.state().boundArrayBuffer = buffer;
+    } else if (target == kGL_ELEMENT_ARRAY_BUFFER) {
+        g_glBridge.state().boundElementArrayBuffer = buffer;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Draw submission
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH3(void, glDrawArrays, uint32_t, mode, int32_t, first, int32_t, count)

@@ -146,6 +146,32 @@ int main() {
     }
 
     {
+        printf("\n--- Buffer object passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for buffer-object tests");
+
+        // The GL 1.5 buffer-object entry points should all resolve through
+        // the macOS OpenGL framework, which exports the full legacy profile.
+        const char* bufferSymbols[] = {
+            "glGenBuffers", "glBindBuffer",  "glBufferData", "glBufferSubData",
+            "glMapBuffer",  "glUnmapBuffer", "glIsBuffer",   "glDeleteBuffers",
+        };
+        for (const char* name : bufferSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // After a successful init, the buffer-binding fields on the state
+        // tracker must be zero by default — the framework reports nothing
+        // is bound until the application calls glBindBuffer.
+        CHECK(bridge.state().boundArrayBuffer == 0, "Default state().boundArrayBuffer is 0 after init");
+        CHECK(bridge.state().boundElementArrayBuffer == 0, "Default state().boundElementArrayBuffer is 0 after init");
+    }
+
+    {
         printf("\n--- kMaxTextureUnits / kMaxVertexAttribs ---\n");
         CHECK(metalsharp::kMaxTextureUnits >= 16, "kMaxTextureUnits is at least 16");
         CHECK(metalsharp::kMaxVertexAttribs >= 16, "kMaxVertexAttribs is at least 16");
