@@ -8,6 +8,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <metalsharp/GLSLVersion.h>
 #include <metalsharp/OpenGLBridge.h>
 
 static int passed = 0;
@@ -881,6 +882,130 @@ int main() {
               "Unique resolved GL symbols meet or exceed the EXPECTED_MINIMUM floor");
         CHECK(uniqueResolved == EXPECTED_GL_COUNT, "Unique resolved GL symbols equal the size of the master list "
                                                    "(no duplicates and no missing entries)");
+    }
+
+    {
+        printf("\n--- GLSL version parsing ---\n");
+
+        // Default-constructed GLSLVersion is invalid
+        {
+            metalsharp::GLSLVersion v{};
+            CHECK(!v.valid, "Default-constructed GLSLVersion.valid is false");
+            CHECK(v.major == 0, "Default-constructed GLSLVersion.major is 0");
+            CHECK(v.minor == 0, "Default-constructed GLSLVersion.minor is 0");
+            CHECK(!v.isES, "Default-constructed GLSLVersion.isES is false");
+            CHECK(!metalsharp::needsCrossCompile(v), "needsCrossCompile on default is false");
+            CHECK(metalsharp::packedGLSLVersion(v) == 0, "packedGLSLVersion on default is 0");
+        }
+
+        // "#version 300 es" — OpenGL ES 3.00, needs cross-compile.
+        // The 'es' profile keyword is the most important signal for the
+        // bridge: it tells us we MUST run the SPIRV-Cross pipeline because
+        // macOS has no native ES support.
+        {
+            const char* src = "#version 300 es\nprecision mediump float;\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(ok, "parseGLSLVersion(\"#version 300 es\") returns true");
+            CHECK(v.valid, "#version 300 es: valid is true");
+            CHECK(v.isES, "#version 300 es: isES is true");
+            CHECK(metalsharp::needsCrossCompile(v), "#version 300 es: needsCrossCompile is true (macOS has no ES)");
+            CHECK(metalsharp::packedGLSLVersion(v) > 0, "#version 300 es: packedGLSLVersion is non-zero");
+        }
+
+        // "#version 330 core" — desktop GL core profile, must cross-compile.
+        // Verifies that the 'core' keyword is accepted and isES stays false.
+        {
+            const char* src = "#version 330 core\nlayout(location = 0) in vec3 a;\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(ok, "parseGLSLVersion(\"#version 330 core\") returns true");
+            CHECK(v.valid, "#version 330 core: valid is true");
+            CHECK(!v.isES, "#version 330 core: isES is false (desktop GL, not ES)");
+            CHECK(metalsharp::needsCrossCompile(v), "#version 330 core: needsCrossCompile is true");
+        }
+
+        // "#version 450 compatibility" — older compatibility profile, still cross-compile.
+        // Verifies that the 'compatibility' keyword is accepted.
+        {
+            const char* src = "#version 450 compatibility\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(ok, "parseGLSLVersion(\"#version 450 compatibility\") returns true");
+            CHECK(v.valid, "#version 450 compatibility: valid is true");
+            CHECK(!v.isES, "#version 450 compatibility: isES is false");
+            CHECK(metalsharp::needsCrossCompile(v), "#version 450 compatibility: needsCrossCompile is true");
+        }
+
+        // Whitespace tolerance: leading spaces + tabs before '#'
+        {
+            const char* src = "   \t#version 330 core\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(ok, "parseGLSLVersion tolerates leading whitespace");
+            CHECK(v.valid, "Leading whitespace: valid is true after skipping spaces+tabs");
+            CHECK(!v.isES, "Leading whitespace: isES is false for desktop GL");
+        }
+
+        // Whitespace between '#' and 'version'
+        {
+            const char* src = "#   version   300   es\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(ok, "parseGLSLVersion tolerates whitespace between '#' and 'version'");
+            CHECK(v.valid, "Whitespace around version: valid is true");
+            CHECK(v.isES, "Whitespace around version: isES is true after parsing 'es'");
+        }
+
+        // Empty source
+        {
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion("", v);
+            CHECK(!ok, "parseGLSLVersion(\"\") returns false");
+            CHECK(!v.valid, "Empty source: GLSLVersion.valid stays false");
+        }
+
+        // nullptr source
+        {
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(nullptr, v);
+            CHECK(!ok, "parseGLSLVersion(nullptr) returns false");
+            CHECK(!v.valid, "nullptr source: GLSLVersion.valid stays false");
+        }
+
+        // Missing # prefix (does not start with #version)
+        {
+            const char* src = "version 330 core\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(!ok, "Source without leading '#' returns false");
+            CHECK(!v.valid, "No-# source: GLSLVersion.valid stays false");
+        }
+
+        // Bad directive (not 'version')
+        {
+            const char* src = "#extension GL_ARB_shader_objects : enable\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(!ok, "#extension directive (no #version) returns false");
+            CHECK(!v.valid, "#extension-only source: GLSLVersion.valid stays false");
+        }
+
+        // Missing version number after '#version'
+        {
+            const char* src = "#version\n";
+            metalsharp::GLSLVersion v{};
+            bool ok = metalsharp::parseGLSLVersion(src, v);
+            CHECK(!ok, "#version with no number returns false");
+            CHECK(!v.valid, "Bare #version: GLSLVersion.valid stays false");
+        }
+
+        // needsCrossCompile on invalid version
+        {
+            metalsharp::GLSLVersion v{};
+            v.valid = false;
+            CHECK(!metalsharp::needsCrossCompile(v), "needsCrossCompile on invalid version is false");
+        }
     }
 
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
