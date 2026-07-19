@@ -415,6 +415,34 @@ int main() {
         CHECK(bridge.state().boundFramebuffer == 0, "Default state().boundFramebuffer is still 0 after init");
     }
 
+    {
+        printf("\n--- Rasterization state passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for rasterization state passthroughs");
+
+        // Symbol resolution: every GL 1.0 rasterization entry point must
+        // resolve through the macOS OpenGL framework, which exports the full
+        // legacy profile (fixed-function pipeline is still available on
+        // macOS via the legacy/2.1 compatibility profile).
+        const char* rasterizationSymbols[] = {
+            "glCullFace", "glFrontFace", "glLineWidth", "glPointSize", "glPolygonMode", "glPolygonOffset",
+        };
+        for (const char* name : rasterizationSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: rasterization toggles (cull face, polygon mode,
+        // polygon offset, line/point size) intentionally do not introduce
+        // new binding slots. The bridge still reports a clean state after
+        // init, and blendEnabled must remain its default of false until
+        // something explicitly enables blending.
+        CHECK(bridge.state().blendEnabled == false, "Default state().blendEnabled is still false after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

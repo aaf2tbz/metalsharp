@@ -276,6 +276,16 @@ GL_PASSTHROUGH7(void, glGetActiveAttrib, uint32_t, program, uint32_t, index, int
                 int32_t*, size, uint32_t*, type, char*, name)
 
 // ---------------------------------------------------------------------------
+// Rasterization state (GL 1.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH1(void, glCullFace, uint32_t, mode)
+GL_PASSTHROUGH1(void, glFrontFace, uint32_t, mode)
+GL_PASSTHROUGH1(void, glLineWidth, float, width)
+GL_PASSTHROUGH1(void, glPointSize, float, size)
+GL_PASSTHROUGH2(void, glPolygonMode, uint32_t, face, uint32_t, mode)
+GL_PASSTHROUGH2(void, glPolygonOffset, float, factor, float, units)
+
+// ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH1(void, glMatrixMode, uint32_t, mode)
