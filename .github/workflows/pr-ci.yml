@@ -143,6 +143,17 @@ jobs:
       - name: Prettier
         run: npx prettier --check 'src/main/**/*.{ts,js,json}' 'src/shared/**/*.{ts,js,json}'
 
+  pr-readiness:
+    name: PR Readiness CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Validate PR description format
+        run: echo "$PR_BODY" | python3 tools/ci/validate-pr-readiness.py
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+
   dmg-workflow:
     name: DMG Workflow CI
     runs-on: ubuntu-latest
