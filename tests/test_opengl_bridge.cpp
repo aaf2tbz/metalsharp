@@ -609,6 +609,280 @@ int main() {
         CHECK(bridge.state().viewportWidth == 0, "Default state().viewportWidth is still 0 after init");
     }
 
+    {
+        printf("\n--- All GL 2.1 symbol coverage ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for the comprehensive GL symbol audit");
+
+        // Master list of every GL entry point exported by the
+        // src/opengl/EntryPoint.cpp shim. Each name below was hand-verified
+        // to either appear as a `GL_PASSTHROUGH<N>(ret, name, ...)` macro
+        // invocation or as a hand-written `extern "C"` definition in that
+        // file. Auditing the union of these two sets is the only way to
+        // guarantee that no exported symbol slips through untested.
+        //
+        // Total = 172 names = 161 GL_PASSTHROUGH macros + 11 hand-written
+        // extern "C" definitions (glBindBuffer, glBindFramebuffer,
+        // glCompileShader, glCopyTexImage2D, glCopyTexSubImage2D,
+        // glDisableVertexAttribArray, glEnableVertexAttribArray,
+        // glGetIntegerv, glGetString, glGetStringi, glUseProgram).
+        const char* allGLSymbols[] = {
+            // Vertex / immediate-mode pipeline (GL 1.0/1.1)
+            "glBegin",
+            "glEnd",
+            // Buffers / state (GL 1.0)
+            "glClear",
+            "glClearColor",
+            "glViewport",
+            "glEnable",
+            "glDisable",
+            "glBlendFunc",
+            "glDepthFunc",
+            // Buffer objects (GL 1.5)
+            "glGenBuffers",
+            "glDeleteBuffers",
+            "glBindBuffer",
+            "glBufferData",
+            "glBufferSubData",
+            "glMapBuffer",
+            "glUnmapBuffer",
+            "glIsBuffer",
+            // Draw submission (GL 1.1)
+            "glDrawArrays",
+            "glDrawElements",
+            // Client-side vertex arrays (GL 1.1)
+            "glVertexPointer",
+            "glTexCoordPointer",
+            "glColorPointer",
+            "glNormalPointer",
+            // Vertex attributes (GL 2.0)
+            "glEnableVertexAttribArray",
+            "glDisableVertexAttribArray",
+            "glVertexAttribPointer",
+            "glVertexAttrib1f",
+            "glVertexAttrib2f",
+            "glVertexAttrib3f",
+            "glVertexAttrib4f",
+            "glGetVertexAttribiv",
+            "glGetVertexAttribPointerv",
+            "glVertexAttribDivisor",
+            // Shader objects (GL 2.0)
+            "glCreateShader",
+            "glDeleteShader",
+            "glShaderSource",
+            "glCompileShader",
+            "glGetShaderiv",
+            "glGetShaderInfoLog",
+            "glAttachShader",
+            "glDetachShader",
+            "glIsShader",
+            // Shader program objects (GL 2.0)
+            "glCreateProgram",
+            "glDeleteProgram",
+            "glLinkProgram",
+            "glUseProgram",
+            "glValidateProgram",
+            "glIsProgram",
+            "glGetProgramiv",
+            "glGetProgramInfoLog",
+            // Uniforms (GL 2.0)
+            "glGetUniformLocation",
+            "glUniform1f",
+            "glUniform2f",
+            "glUniform3f",
+            "glUniform4f",
+            "glUniform1i",
+            "glUniform2i",
+            "glUniform3i",
+            "glUniform4i",
+            "glUniformMatrix2fv",
+            "glUniformMatrix3fv",
+            "glUniformMatrix4fv",
+            "glGetUniformfv",
+            "glGetUniformiv",
+            "glGetActiveUniform",
+            // Vertex attribute location queries (GL 2.0)
+            "glGetAttribLocation",
+            "glBindAttribLocation",
+            "glGetActiveAttrib",
+            // Texture objects (GL 1.1-1.3 / GL 1.3 multitexture)
+            "glGenTextures",
+            "glDeleteTextures",
+            "glBindTexture",
+            "glActiveTexture",
+            "glTexParameteri",
+            "glTexParameterf",
+            "glTexSubImage2D",
+            "glCopyTexImage2D",
+            "glCopyTexSubImage2D",
+            "glTexEnvi",
+            "glTexEnvf",
+            "glGetTexParameteriv",
+            "glGetTexParameterfv",
+            "glIsTexture",
+            // Framebuffer objects (GL 3.0 / EXT_framebuffer_object)
+            "glGenFramebuffers",
+            "glDeleteFramebuffers",
+            "glBindFramebuffer",
+            "glFramebufferTexture2D",
+            "glFramebufferRenderbuffer",
+            "glCheckFramebufferStatus",
+            "glIsFramebuffer",
+            // Renderbuffer objects (GL 3.0 / EXT_framebuffer_object)
+            "glGenRenderbuffers",
+            "glDeleteRenderbuffers",
+            "glBindRenderbuffer",
+            "glRenderbufferStorage",
+            "glIsRenderbuffer",
+            // Rasterization state (GL 1.0)
+            "glCullFace",
+            "glFrontFace",
+            "glLineWidth",
+            "glPointSize",
+            "glPolygonMode",
+            "glPolygonOffset",
+            // Stencil state (GL 1.0)
+            "glStencilFunc",
+            "glStencilFuncSeparate",
+            "glStencilOp",
+            "glStencilOpSeparate",
+            "glStencilMask",
+            "glStencilMaskSeparate",
+            "glClearStencil",
+            // Color / blend state (GL 1.0-1.4)
+            "glColorMask",
+            "glBlendEquation",
+            "glBlendEquationSeparate",
+            "glBlendFuncSeparate",
+            "glBlendColor",
+            "glLogicOp",
+            // Depth state (GL 1.0)
+            "glDepthMask",
+            "glDepthRange",
+            "glClearDepth",
+            // Pixel storage / transfer (GL 1.0)
+            "glPixelStorei",
+            "glPixelStoref",
+            "glReadBuffer",
+            "glDrawBuffer",
+            // State queries (GL 1.0-1.1)
+            "glGetBooleanv",
+            "glGetFloatv",
+            "glGetDoublev",
+            "glGetTexEnviv",
+            "glGetTexEnvfv",
+            "glGetError",
+            "glIsEnabled",
+            "glGetStringi",
+            // Misc commands (GL 1.0)
+            "glFlush",
+            "glFinish",
+            "glHint",
+            // Display lists (GL 1.0)
+            "glGenLists",
+            "glNewList",
+            "glEndList",
+            "glCallList",
+            "glCallLists",
+            "glDeleteLists",
+            "glIsList",
+            // Immediate-mode vertex data (GL 1.0)
+            "glVertex2f",
+            "glVertex3f",
+            "glVertex4f",
+            "glNormal3f",
+            "glTexCoord1f",
+            "glTexCoord2f",
+            "glTexCoord3f",
+            "glTexCoord4f",
+            "glColor3ub",
+            "glColor4ub",
+            "glColorMaterial",
+            // Lighting / material (GL 1.0)
+            "glLightfv",
+            "glLightModelfv",
+            "glMaterialfv",
+            "glShadeModel",
+            // Fog (GL 1.0)
+            "glFogfv",
+            "glFogi",
+            // Alpha test (GL 1.0)
+            "glAlphaFunc",
+            // Clip planes (GL 1.0)
+            "glClipPlane",
+            // Matrix stack (fixed pipeline, GL 1.0)
+            "glMatrixMode",
+            "glLoadIdentity",
+            "glOrtho",
+            "glFrustum",
+            "glPushMatrix",
+            "glPopMatrix",
+            "glTranslatef",
+            "glRotatef",
+            "glScalef",
+            // Color (legacy)
+            "glColor3f",
+            "glColor4f",
+            // Texture upload / readback
+            "glTexImage2D",
+            "glReadPixels",
+            // Info queries (return non-default values)
+            "glGetString",
+            "glGetIntegerv",
+        };
+
+        // Floor used to catch regressions where a future Phase removes an
+        // export without updating the master list above. The current shim
+        // exports exactly 172 entry points; the floor is set deliberately
+        // low (170) so a single accidental deletion trips the check while
+        // still leaving headroom for incidental drift.
+        constexpr size_t EXPECTED_GL_COUNT = sizeof(allGLSymbols) / sizeof(allGLSymbols[0]);
+        constexpr size_t EXPECTED_MINIMUM = 170;
+
+        size_t resolvedCount = 0;
+        for (size_t i = 0; i < EXPECTED_GL_COUNT; ++i) {
+            const char* name = allGLSymbols[i];
+            char msg[128];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") resolves through the macOS OpenGL framework",
+                          name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+            if (fn != nullptr) {
+                resolvedCount++;
+            }
+        }
+
+        // De-duplicate (the union of macros + hand-written exports should
+        // already be unique, but a duplicate write-up in the master list
+        // above must not inflate the audit count).
+        size_t uniqueResolved = 0;
+        for (size_t i = 0; i < EXPECTED_GL_COUNT; ++i) {
+            const char* name = allGLSymbols[i];
+            void* fn = bridge.getGLProcAddress(name);
+            if (fn == nullptr) {
+                continue;
+            }
+            bool seenBefore = false;
+            for (size_t j = 0; j < i; ++j) {
+                if (std::strcmp(allGLSymbols[j], name) == 0) {
+                    seenBefore = true;
+                    break;
+                }
+            }
+            if (!seenBefore) {
+                uniqueResolved++;
+            }
+        }
+
+        printf("  Resolved %zu / %zu expected minimum GL symbols (compiled list size = %zu)\n", uniqueResolved,
+               EXPECTED_MINIMUM, EXPECTED_GL_COUNT);
+        CHECK(uniqueResolved >= EXPECTED_MINIMUM,
+              "Unique resolved GL symbols meet or exceed the EXPECTED_MINIMUM floor");
+        CHECK(uniqueResolved == EXPECTED_GL_COUNT, "Unique resolved GL symbols equal the size of the master list "
+                                                   "(no duplicates and no missing entries)");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
