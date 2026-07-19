@@ -185,3 +185,15 @@ add_executable(test_spirv_cross_sanity
 )
 target_link_libraries(test_spirv_cross_sanity PRIVATE spirv-cross-c spirv-cross-glsl spirv-cross-msl spirv-cross-core)
 add_test(NAME spirv_cross_sanity COMMAND test_spirv_cross_sanity)
+
+add_executable(test_glsl_compiler
+    test_glsl_compiler.cpp
+)
+target_link_libraries(test_glsl_compiler PRIVATE
+    metalsharp_opengl32
+    metalsharp_core
+    glslang
+    OSDependent
+    SPIRV
+    glslang-default-resource-limits)
+add_test(NAME glsl_compiler COMMAND test_glsl_compiler)

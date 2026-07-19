@@ -91,6 +91,24 @@ set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
 add_subdirectory(vendor/SPIRV-Cross EXCLUDE_FROM_ALL)
 
+# glslang: GLSL → SPIR-V compiler.
+# Used by the OpenGL 3.x/4.x bridge to compile guest GLSL shaders into SPIR-V
+# before handing them off to SPIRV-Cross for cross-compilation to MSL.
+# Only the libraries we actually link against are built (glslang, OSDependent,
+# SPIRV, glslang-default-resource-limits); the standalone glslang binary,
+# spvremapper, HLSL frontend, spirv-opt, and tests are disabled to keep build
+# time and binary size small. The vendored glslang's CMakeLists.txt ships
+# spirv.hpp (from SPIRV-Headers) directly in SPIRV/, so we do not need to
+# fetch SPIRV-Headers separately.
+set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory(vendor/glslang EXCLUDE_FROM_ALL)
+
 add_library(metalsharp_core STATIC
     src/metal/device/Device.cpp
     src/metal/device/Device.mm
@@ -320,9 +338,20 @@ add_library(metalsharp_opengl32 SHARED
     src/opengl/OpenGLBridge.mm
     src/opengl/EntryPoint.cpp
     src/opengl/WGLShim.cpp
+    src/opengl/GLSLCompiler.cpp
 )
 target_include_directories(metalsharp_opengl32 PRIVATE include)
-target_link_libraries(metalsharp_opengl32 PRIVATE metalsharp_core ${OPENGL_FRAMEWORK} spirv-cross-core spirv-cross-glsl spirv-cross-msl)
+target_link_libraries(metalsharp_opengl32 PRIVATE
+    metalsharp_core
+    ${OPENGL_FRAMEWORK}
+    spirv-cross-core
+    spirv-cross-glsl
+    spirv-cross-msl
+    glslang
+    OSDependent
+    SPIRV
+    glslang-default-resource-limits
+)
 target_compile_options(metalsharp_opengl32 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_opengl32 PROPERTIES OUTPUT_NAME "opengl32" PREFIX "")
 metalsharp_wine_target(metalsharp_opengl32)
