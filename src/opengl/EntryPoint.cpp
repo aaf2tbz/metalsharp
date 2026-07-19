@@ -246,6 +246,29 @@ extern "C" void glUseProgram(uint32_t program) {
 }
 
 // ---------------------------------------------------------------------------
+// Uniforms (GL 2.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(int32_t, glGetUniformLocation, uint32_t, program, const char*, name)
+GL_PASSTHROUGH2(void, glUniform1f, int32_t, location, float, v0)
+GL_PASSTHROUGH3(void, glUniform2f, int32_t, location, float, v0, float, v1)
+GL_PASSTHROUGH4(void, glUniform3f, int32_t, location, float, v0, float, v1, float, v2)
+GL_PASSTHROUGH5(void, glUniform4f, int32_t, location, float, v0, float, v1, float, v2, float, v3)
+GL_PASSTHROUGH2(void, glUniform1i, int32_t, location, int32_t, v0)
+GL_PASSTHROUGH3(void, glUniform2i, int32_t, location, int32_t, v0, int32_t, v1)
+GL_PASSTHROUGH4(void, glUniform3i, int32_t, location, int32_t, v0, int32_t, v1, int32_t, v2)
+GL_PASSTHROUGH5(void, glUniform4i, int32_t, location, int32_t, v0, int32_t, v1, int32_t, v2, int32_t, v3)
+GL_PASSTHROUGH4(void, glUniformMatrix2fv, int32_t, location, int32_t, count, unsigned char, transpose, const float*,
+                value)
+GL_PASSTHROUGH4(void, glUniformMatrix3fv, int32_t, location, int32_t, count, unsigned char, transpose, const float*,
+                value)
+GL_PASSTHROUGH4(void, glUniformMatrix4fv, int32_t, location, int32_t, count, unsigned char, transpose, const float*,
+                value)
+GL_PASSTHROUGH3(void, glGetUniformfv, uint32_t, program, int32_t, location, float*, params)
+GL_PASSTHROUGH3(void, glGetUniformiv, uint32_t, program, int32_t, location, int32_t*, params)
+GL_PASSTHROUGH7(void, glGetActiveUniform, uint32_t, program, uint32_t, index, int32_t, bufSize, int32_t*, length,
+                int32_t*, size, uint32_t*, type, char*, name)
+
+// ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH1(void, glMatrixMode, uint32_t, mode)

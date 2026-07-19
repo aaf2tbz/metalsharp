@@ -273,6 +273,34 @@ int main() {
         CHECK(!bridge.state().shaderCompilePending, "Default state().shaderCompilePending is false after init");
     }
 
+    {
+        printf("\n--- Uniform passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for uniform passthroughs");
+
+        // Symbol resolution: every GL 2.0 uniform entry point must resolve
+        // through the macOS OpenGL framework, which exports the full legacy
+        // profile (including GL 2.0 uniform variables and uniforms queries).
+        const char* uniformSymbols[] = {
+            "glGetUniformLocation", "glUniform1f",        "glUniform2f",    "glUniform3f",    "glUniform4f",
+            "glUniform1i",          "glUniform2i",        "glUniform3i",    "glUniform4i",    "glUniformMatrix2fv",
+            "glUniformMatrix3fv",   "glUniformMatrix4fv", "glGetUniformfv", "glGetUniformiv", "glGetActiveUniform",
+        };
+        for (const char* name : uniformSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: init must not have left a program bound. Even
+        // though the uniform entry points read/write through the active
+        // program implicitly, the shim must leave currentProgram at 0
+        // unless the application explicitly calls glUseProgram.
+        CHECK(bridge.state().currentProgram == 0, "Default state().currentProgram is 0 after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
