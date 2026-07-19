@@ -222,6 +222,31 @@ int main() {
         CHECK(bridge.state().boundElementArrayBuffer == 0, "state().boundElementArrayBuffer is still 0 after init");
     }
 
+    {
+        printf("\n--- Shader program passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for shader-program tests");
+
+        // Symbol resolution: every GL 2.0 shader-program entry point must
+        // resolve through the macOS OpenGL framework, which exports the full
+        // legacy profile (including GL 2.0 program objects).
+        const char* programSymbols[] = {
+            "glCreateProgram", "glDeleteProgram", "glLinkProgram", "glUseProgram", "glValidateProgram", "glIsProgram",
+        };
+        for (const char* name : programSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: after init, no program is bound and no shader
+        // compile is pending — the framework reports a clean default.
+        CHECK(bridge.state().currentProgram == 0, "Default state().currentProgram is 0 after init");
+        CHECK(!bridge.state().shaderCompilePending, "Default state().shaderCompilePending is false after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

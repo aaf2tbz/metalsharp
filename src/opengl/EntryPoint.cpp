@@ -198,6 +198,28 @@ GL_PASSTHROUGH3(void, glGetVertexAttribPointerv, uint32_t, index, uint32_t, pnam
 GL_PASSTHROUGH2(void, glVertexAttribDivisor, uint32_t, index, uint32_t, divisor)
 
 // ---------------------------------------------------------------------------
+// Shader program objects (GL 2.0)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH0(uint32_t, glCreateProgram)
+GL_PASSTHROUGH1(void, glDeleteProgram, uint32_t, program)
+GL_PASSTHROUGH1(void, glLinkProgram, uint32_t, program)
+GL_PASSTHROUGH1(void, glValidateProgram, uint32_t, program)
+GL_PASSTHROUGH1(unsigned char, glIsProgram, uint32_t, program)
+
+// glUseProgram is hand-written because it must mirror the active program
+// into GLState::currentProgram so subsequent draw calls can observe which
+// program is bound. The native call is still issued so the framework
+// context state stays in sync with the shim's view.
+extern "C" void glUseProgram(uint32_t program) {
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t)>(g_glBridge.getGLProcAddress("glUseProgram"));
+    if (fn) {
+        fn(program);
+    }
+    g_glBridge.state().currentProgram = program;
+}
+
+// ---------------------------------------------------------------------------
 // Matrix stack (fixed pipeline, GL 1.0)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH1(void, glMatrixMode, uint32_t, mode)
