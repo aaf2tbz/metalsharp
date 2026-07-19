@@ -14,6 +14,8 @@
 /// already captures program/blend/depth/attrib/viewport so future
 /// instrumentation can be added without breaking this shim.
 
+#include <cstring>
+#include <metalsharp/GLShaderCache.h>
 #include <metalsharp/GLShaderTracker.h>
 #include <metalsharp/GLSLCompiler.h>
 #include <metalsharp/GLSLVersion.h>
@@ -196,6 +198,18 @@ extern "C" void glDisableVertexAttribArray(uint32_t index) {
     }
 }
 
+// glVertexAttribPointer is currently a passthrough. Phase 2h marks it as a
+// future interception point — Phase 3 will capture each (index, size, type,
+// normalized, stride, pointer) tuple in GLShaderTracker so that the Metal
+// draw emitter can build an MTLVertexDescriptor at draw time without
+// re-deriving the layout from the translated MSL. The capture must observe
+// the current GL_ARRAY_BUFFER binding (already tracked in GLState) to
+// resolve the actual MTLBuffer for the attribute stream.
+//
+// For Phase 2, native GL handles the layout; GLSL 1.20 / legacy shaders
+// don't need a Metal vertex descriptor because the framework emits them
+// directly. The interception only matters once cross-compiled shaders
+// start flowing through the Metal backend.
 GL_PASSTHROUGH6(void, glVertexAttribPointer, uint32_t, index, int32_t, size, uint32_t, type, unsigned char, normalized,
                 int32_t, stride, const void*, pointer)
 GL_PASSTHROUGH2(void, glVertexAttrib1f, uint32_t, index, float, v0)
@@ -291,8 +305,71 @@ extern "C" void glShaderSource(uint32_t shader, int32_t count, const char** stri
     }
 }
 
-GL_PASSTHROUGH3(void, glGetShaderiv, uint32_t, shader, uint32_t, pname, int32_t*, params)
-GL_PASSTHROUGH4(void, glGetShaderInfoLog, uint32_t, shader, int32_t, bufSize, int32_t*, length, char*, infoLog)
+// glGetShaderiv is hand-written so that shaders driven through the
+// SPIRV-Cross cross-compile path can report their compile status,
+// delete status, and info-log length from the tracker's state instead
+// of falling through to the native OpenGL framework (which never saw
+// the cross-compile and would always report GL_FALSE / length 0).
+// Phase 3 will extend this to also report shader type / source length
+// for non-tracked shaders using the same shim state.
+extern "C" void glGetShaderiv(uint32_t shader, uint32_t pname, int32_t* params) {
+    if (!params) {
+        return;
+    }
+#if METALSHARP_HAS_SPIRV_CROSS
+    auto* state = metalsharp::GLShaderTracker::instance().getShader(shader);
+    if (state && state->compiled) {
+        switch (pname) {
+        case 0x8B81: // GL_COMPILE_STATUS
+            *params = state->compileSuccess ? 1 : 0;
+            return;
+        case 0x8B80: // GL_DELETE_STATUS
+            *params = 0;
+            return;
+        case 0x8B82: // GL_INFO_LOG_LENGTH
+            *params = static_cast<int32_t>(state->infoLog.size()) + 1;
+            return;
+        default:
+            break;
+        }
+    }
+#endif
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t, uint32_t, int32_t*)>(g_glBridge.getGLProcAddress("glGetShaderiv"));
+    if (fn) {
+        fn(shader, pname, params);
+    }
+}
+
+// glGetShaderInfoLog is hand-written so cross-compiled shaders can
+// surface their translate / compile diagnostics to the guest through
+// the normal OpenGL info-log query. Native-only shaders fall through
+// to the framework unchanged.
+extern "C" void glGetShaderInfoLog(uint32_t shader, int32_t bufSize, int32_t* length, char* infoLog) {
+#if METALSHARP_HAS_SPIRV_CROSS
+    auto* state = metalsharp::GLShaderTracker::instance().getShader(shader);
+    if (state && state->compiled && !state->infoLog.empty()) {
+        int32_t len = static_cast<int32_t>(state->infoLog.size());
+        if (len > bufSize - 1) {
+            len = bufSize - 1;
+        }
+        if (len > 0) {
+            std::memcpy(infoLog, state->infoLog.data(), static_cast<size_t>(len));
+        }
+        infoLog[len] = '\0';
+        if (length) {
+            *length = len;
+        }
+        return;
+    }
+#endif
+    ensureGLInit();
+    auto fn = reinterpret_cast<void (*)(uint32_t, int32_t, int32_t*, char*)>(
+        g_glBridge.getGLProcAddress("glGetShaderInfoLog"));
+    if (fn) {
+        fn(shader, bufSize, length, infoLog);
+    }
+}
 GL_PASSTHROUGH2(void, glAttachShader, uint32_t, program, uint32_t, shader)
 GL_PASSTHROUGH2(void, glDetachShader, uint32_t, program, uint32_t, shader)
 GL_PASSTHROUGH1(unsigned char, glIsShader, uint32_t, shader)
@@ -301,11 +378,40 @@ GL_PASSTHROUGH1(unsigned char, glIsShader, uint32_t, shader)
 // path for tracked shaders whose source needs cross-compilation (GLSL > 1.20
 // or any ES flavour). For native-compatible shaders the call still falls
 // through to the native OpenGL driver and shaderCompilePending is reset.
+//
+// Phase 2i adds a per-(source, stage) MSL cache in front of the
+// GLSLCompiler round trip. Cache lookup is by hash, so the same source
+// string compiles exactly once per process per stage; subsequent compiles
+// short-circuit straight to MSL without paying for glslang or SPIRV-Cross.
+// The cache is process-wide and best-effort: failures of the cache lookup
+// (which shouldn't happen) fall through to the normal compile path.
 extern "C" void glCompileShader(uint32_t shader) {
     ensureGLInit();
 #if METALSHARP_HAS_SPIRV_CROSS
     auto* state = metalsharp::GLShaderTracker::instance().getShader(shader);
     if (state && state->needsCrossCompile && !state->source.empty()) {
+        // Cache lookup: if we already translated this exact (source, stage)
+        // pair, skip the GLSLCompiler round trip and use the cached MSL.
+        // This is safe because the MSL output for a given (source, stage)
+        // is fully determined by the inputs — there is no per-compile
+        // randomness in glslang or SPIRV-Cross on our code paths.
+        const std::string* cached =
+            metalsharp::GLShaderCache::instance().lookupMSL(state->source, static_cast<uint32_t>(state->stage));
+        if (cached) {
+            state->msl = *cached;
+            // The cached entry was a successful translation; the SPIR-V
+            // blob itself is not cached (we only store MSL), so rebuild
+            // it on demand from the cached MSL by leaving spirv empty.
+            // Phase 3 will switch to caching SPIR-V too so we can recover
+            // the binary blob without re-running glslang.
+            state->spirv.clear();
+            state->compiled = true;
+            state->compileSuccess = true;
+            state->infoLog.clear();
+            g_glBridge.state().shaderCompilePending = false;
+            return;
+        }
+
         std::string errorLog;
         bool ok = metalsharp::GLSLCompiler::compileToSPIRV(state->source.c_str(), state->stage, state->glslVersion,
                                                            state->spirv, errorLog);
@@ -315,6 +421,13 @@ extern "C" void glCompileShader(uint32_t shader) {
         state->compiled = true;
         state->compileSuccess = ok;
         state->infoLog = errorLog;
+        // Only cache successful translations — failures might succeed on a
+        // retry once underlying tools update, and we don't want to lock in
+        // a broken result.
+        if (ok) {
+            metalsharp::GLShaderCache::instance().storeMSL(state->source, static_cast<uint32_t>(state->stage),
+                                                           state->msl);
+        }
         g_glBridge.state().shaderCompilePending = false;
         return;
     }
@@ -353,6 +466,20 @@ extern "C" void glUseProgram(uint32_t program) {
 // ---------------------------------------------------------------------------
 // Uniforms (GL 2.0)
 // ---------------------------------------------------------------------------
+//
+// Phase 2g: glGetUniformLocation and the glUniform* family are currently
+// pass-through to the native OpenGL framework. Phase 3 will intercept them
+// so that:
+//   * glGetUniformLocation returns a Metal buffer-binding index that maps
+//     back to the guest's location (a 1:1 mapping is a reasonable Phase 3
+//     default since Metal buffer bindings also use small integers).
+//   * glUniform* writes are captured by GLShaderTracker and replayed against
+//     the Metal argument buffer at glDrawArrays / glDrawElements time.
+//
+// For Phase 2 we just forward to native GL so that GLSL 1.20 / legacy
+// shaders (which never reach the cross-compile path) keep working without
+// any uniform-mapping shim.
+
 GL_PASSTHROUGH2(int32_t, glGetUniformLocation, uint32_t, program, const char*, name)
 GL_PASSTHROUGH2(void, glUniform1f, int32_t, location, float, v0)
 GL_PASSTHROUGH3(void, glUniform2f, int32_t, location, float, v0, float, v1)

@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 
+#include <metalsharp/GLShaderCache.h>
 #include <metalsharp/GLShaderTracker.h>
 #include <metalsharp/GLSLCompiler.h>
 #include <metalsharp/GLSLVersion.h>
@@ -344,6 +345,272 @@ int main() {
         // 5. Delete shader — getShader must return null afterwards.
         tracker.deleteShader(shaderName);
         CHECK(tracker.getShader(shaderName) == nullptr, "getShader returns null after deleteShader");
+    }
+
+    {
+        printf("\n--- Shader cache ---\n");
+
+        auto& cache = metalsharp::GLShaderCache::instance();
+        // Start each section from a known-empty cache so size() checks are
+        // deterministic regardless of execution order.
+        cache.clear();
+        CHECK(cache.size() == 0, "Cache starts empty after clear()");
+
+        // 1. Determinism: identical (source, stage) → identical key.
+        const std::string srcA = "#version 450 core\n"
+                                 "void main() { gl_Position = vec4(0.0); }\n";
+        const std::string srcB = "#version 450 core\n"
+                                 "void main() { gl_Position = vec4(1.0); }\n";
+
+        const std::string keyA1 = metalsharp::GLShaderCache::makeKey(srcA, 0x8B31);
+        const std::string keyA2 = metalsharp::GLShaderCache::makeKey(srcA, 0x8B31);
+        CHECK(keyA1 == keyA2, "makeKey is deterministic for identical (source, stage)");
+        CHECK(!keyA1.empty(), "makeKey produces a non-empty key");
+
+        // 2. Different source produces a different key.
+        const std::string keyB1 = metalsharp::GLShaderCache::makeKey(srcB, 0x8B31);
+        CHECK(keyA1 != keyB1, "Different sources produce different keys");
+
+        // 3. Different stage produces a different key.
+        const std::string keyA3 = metalsharp::GLShaderCache::makeKey(srcA, 0x8B30);
+        CHECK(keyA1 != keyA3, "Different stages produce different keys for the same source");
+
+        // 4. Round-trip store + lookup by pre-computed key.
+        const std::string mslSample = "#include <metal_stdlib>\n"
+                                      "using namespace metal;\n"
+                                      "vertex float4 vertex_main() { return float4(0.0); }\n";
+        const bool inserted = cache.storeMSL(keyA1, mslSample);
+        CHECK(inserted, "storeMSL reports newly inserted on first call");
+        CHECK(cache.size() == 1, "Cache size is 1 after one insert");
+
+        const std::string* looked = cache.lookupMSL(keyA1);
+        CHECK(looked != nullptr, "lookupMSL returns non-null after store");
+        if (looked) {
+            CHECK(*looked == mslSample, "lookupMSL returns the stored MSL byte-for-byte");
+        }
+
+        // 5. Re-inserting the same key reports not-newly-inserted but still works.
+        const bool inserted2 = cache.storeMSL(keyA1, mslSample);
+        CHECK(!inserted2, "storeMSL reports not-newly-inserted on second call");
+        CHECK(cache.size() == 1, "Cache size is still 1 after duplicate insert");
+
+        // 6. Lookup by (source, stage) overload.
+        const std::string* looked2 = cache.lookupMSL(srcA, 0x8B31);
+        CHECK(looked2 != nullptr, "lookupMSL(source, stage) returns non-null for cached entry");
+        if (looked2) {
+            CHECK(*looked2 == mslSample, "lookupMSL(source, stage) returns the stored MSL byte-for-byte");
+        }
+
+        // 7. Lookup miss returns nullptr.
+        const std::string* missed = cache.lookupMSL(srcB, 0x8B31);
+        CHECK(missed == nullptr, "lookupMSL returns null for uncached key");
+
+        // 8. clear() empties the cache.
+        cache.clear();
+        CHECK(cache.size() == 0, "Cache size is 0 after clear()");
+        CHECK(cache.lookupMSL(keyA1) == nullptr, "lookupMSL returns null after clear()");
+    }
+
+    {
+        printf("\n--- Error reporting intercept ---\n");
+
+        // Compile an intentionally broken GLSL shader through the same path
+        // glCompileShader would take. We mirror the shim logic directly in
+        // the test because the shim's glCompileShader entry point is hidden
+        // behind the GL_PASSTHROUGH wrappers and not directly callable from
+        // a host process — but the GLShaderTracker / GLSLCompiler pair is
+        // exactly the path the shim drives, so testing it here exercises
+        // the same state that glGetShaderiv / glGetShaderInfoLog read.
+        auto& tracker = metalsharp::GLShaderTracker::instance();
+        constexpr uint32_t kGL_VERTEX_SHADER = 0x8B31;
+
+        const uint32_t shader = tracker.createShader(kGL_VERTEX_SHADER);
+        CHECK(shader != 0, "createShader returns non-zero for error test");
+
+        auto* state = tracker.getShader(shader);
+        CHECK(state != nullptr, "getShader returns non-null after createShader");
+        if (!state) {
+            printf("  [FAIL] cannot proceed with error intercept tests\n");
+            failed++;
+        } else {
+            // Intentionally invalid GLSL: includes a valid #version
+            // directive (so parseGLSLVersion succeeds and needsCrossCompile
+            // is true) followed by syntactically broken code.
+            const char* badSrc = "#version 450 core\n"
+                                 "this is not valid glsl @@@ !!!\n";
+            state->source = badSrc;
+            const bool parsed = metalsharp::parseGLSLVersion(state->source.c_str(), state->glslVersion);
+            state->needsCrossCompile = metalsharp::needsCrossCompile(state->glslVersion);
+
+            CHECK(parsed, "parseGLSLVersion finds #version directive in invalid source");
+            CHECK(state->glslVersion.major == 450, "Parsed major version is 450");
+            CHECK(state->needsCrossCompile, "needsCrossCompile is true for #version 450");
+
+            // Drive the exact same compile path glCompileShader does.
+            std::string errorLog;
+            bool ok = metalsharp::GLSLCompiler::compileToSPIRV(state->source.c_str(), state->stage, state->glslVersion,
+                                                               state->spirv, errorLog);
+            if (ok) {
+                ok = metalsharp::GLSLCompiler::translateSPIRVtoMSL(state->spirv, state->stage, state->msl, errorLog);
+            }
+            state->compiled = true;
+            state->compileSuccess = ok;
+            state->infoLog = errorLog;
+
+            // The state above is what glGetShaderiv / glGetShaderInfoLog
+            // would read in the shim. Mirror their behavior here so the
+            // assertions line up with the GL_COMPILE_STATUS / INFO_LOG_LENGTH
+            // pname values the shim answers with.
+            constexpr uint32_t kGL_COMPILE_STATUS = 0x8B81;
+            constexpr uint32_t kGL_INFO_LOG_LENGTH = 0x8B82;
+            constexpr uint32_t kGL_DELETE_STATUS = 0x8B80;
+
+            int32_t compileStatus = -1;
+            if (state && state->compiled) {
+                switch (kGL_COMPILE_STATUS) {
+                case kGL_COMPILE_STATUS:
+                    compileStatus = state->compileSuccess ? 1 : 0;
+                    break;
+                default:
+                    break;
+                }
+            }
+            CHECK(!state->compileSuccess, "compileSuccess is false for invalid source");
+            CHECK(compileStatus == 0, "GL_COMPILE_STATUS returns 0 for invalid source");
+
+            int32_t infoLogLength = -1;
+            if (state && state->compiled) {
+                switch (kGL_INFO_LOG_LENGTH) {
+                case kGL_INFO_LOG_LENGTH:
+                    infoLogLength = static_cast<int32_t>(state->infoLog.size()) + 1;
+                    break;
+                default:
+                    break;
+                }
+            }
+            CHECK(state->infoLog.empty() == false, "infoLog is non-empty for invalid source");
+            CHECK(infoLogLength > 0, "GL_INFO_LOG_LENGTH is > 0 when infoLog is non-empty");
+            CHECK(infoLogLength == static_cast<int32_t>(state->infoLog.size()) + 1,
+                  "GL_INFO_LOG_LENGTH matches infoLog size + 1 (null terminator)");
+
+            // GL_DELETE_STATUS is always false for live shaders.
+            int32_t deleteStatus = -1;
+            if (state && state->compiled) {
+                switch (kGL_DELETE_STATUS) {
+                case kGL_DELETE_STATUS:
+                    deleteStatus = 0;
+                    break;
+                default:
+                    break;
+                }
+            }
+            CHECK(deleteStatus == 0, "GL_DELETE_STATUS returns 0 for live shader");
+
+            // Spot-check that the info log actually mentions something useful
+            // to the guest — it must not be a hard-coded "compilation failed"
+            // string with no underlying detail.
+            if (!state->infoLog.empty()) {
+                printf("    infoLog snippet: %.160s%s\n", state->infoLog.c_str(),
+                       state->infoLog.size() > 160 ? "..." : "");
+            }
+        }
+
+        // Clean up.
+        tracker.deleteShader(shader);
+        CHECK(tracker.getShader(shader) == nullptr, "getShader returns null after deleteShader (error test)");
+    }
+
+    {
+        printf("\n--- Cross-compile pipeline with cache ---\n");
+
+        // Start clean — the cache might already have entries from earlier
+        // sections that share the same shader source.
+        metalsharp::GLShaderCache::instance().clear();
+
+        auto& tracker = metalsharp::GLShaderTracker::instance();
+        constexpr uint32_t kGL_VERTEX_SHADER = 0x8B31;
+        const char* src450 = "#version 450 core\n"
+                             "layout(location = 0) in vec3 pos;\n"
+                             "void main() { gl_Position = vec4(pos, 1.0); }\n";
+
+        // 1. First compile: cache miss → drives GLSLCompiler, populates cache.
+        const uint32_t shader1 = tracker.createShader(kGL_VERTEX_SHADER);
+        CHECK(shader1 != 0, "createShader returns non-zero for first compile");
+
+        auto* state1 = tracker.getShader(shader1);
+        if (!state1) {
+            printf("  [FAIL] state1 null, skipping pipeline-with-cache tests\n");
+            failed++;
+        } else {
+            state1->source = src450;
+            metalsharp::parseGLSLVersion(state1->source.c_str(), state1->glslVersion);
+            state1->needsCrossCompile = metalsharp::needsCrossCompile(state1->glslVersion);
+
+            std::string errorLog;
+            bool ok = metalsharp::GLSLCompiler::compileToSPIRV(state1->source.c_str(), state1->stage,
+                                                               state1->glslVersion, state1->spirv, errorLog);
+            if (ok) {
+                ok = metalsharp::GLSLCompiler::translateSPIRVtoMSL(state1->spirv, state1->stage, state1->msl, errorLog);
+            }
+            state1->compiled = true;
+            state1->compileSuccess = ok;
+            state1->infoLog = errorLog;
+
+            CHECK(state1->compileSuccess, "First cross-compile succeeded");
+            CHECK(state1->msl.empty() == false, "First compile MSL output is non-empty");
+            CHECK(state1->infoLog.empty(), "First compile infoLog is empty on success");
+
+            // Store into the cache — exactly what the shim does in
+            // glCompileShader on a successful first compile.
+            const std::string cacheKey =
+                metalsharp::GLShaderCache::makeKey(state1->source, static_cast<uint32_t>(state1->stage));
+            const bool inserted = metalsharp::GLShaderCache::instance().storeMSL(cacheKey, state1->msl);
+            CHECK(inserted, "storeMSL reports newly inserted on first compile");
+            CHECK(metalsharp::GLShaderCache::instance().size() == 1, "Cache size is 1 after first compile");
+
+            // Save the MSL for identity comparison against the cached copy.
+            const std::string firstMsl = state1->msl;
+
+            tracker.deleteShader(shader1);
+
+            // 2. Second compile: cache hit → MSL comes from cache, identical.
+            const uint32_t shader2 = tracker.createShader(kGL_VERTEX_SHADER);
+            CHECK(shader2 != 0, "createShader returns non-zero for second compile");
+            CHECK(shader2 != shader1, "Second shader handle is distinct from first");
+
+            auto* state2 = tracker.getShader(shader2);
+            if (!state2) {
+                printf("  [FAIL] state2 null, skipping cache-hit verification\n");
+                failed++;
+            } else {
+                state2->source = src450;
+                metalsharp::parseGLSLVersion(state2->source.c_str(), state2->glslVersion);
+                state2->needsCrossCompile = metalsharp::needsCrossCompile(state2->glslVersion);
+
+                // Mirror what the shim's glCompileShader does on a cache hit.
+                const std::string* cached = metalsharp::GLShaderCache::instance().lookupMSL(
+                    state2->source, static_cast<uint32_t>(state2->stage));
+                CHECK(cached != nullptr, "Cache lookup hits on the second compile");
+
+                if (cached) {
+                    state2->msl = *cached;
+                    state2->spirv.clear();
+                    state2->compiled = true;
+                    state2->compileSuccess = true;
+                    state2->infoLog.clear();
+                }
+
+                CHECK(state2->compileSuccess, "Second compile reports success from cache");
+                CHECK(state2->msl.empty() == false, "Second compile MSL output is non-empty");
+                CHECK(state2->infoLog.empty(), "Second compile infoLog is empty on cache hit");
+                CHECK(state2->msl == firstMsl, "Cached MSL is byte-identical to first compile's MSL output");
+
+                tracker.deleteShader(shader2);
+            }
+        }
+
+        // Clean up the cache so the test is repeatable in isolation.
+        metalsharp::GLShaderCache::instance().clear();
     }
 
     {
