@@ -78,7 +78,7 @@ target_compile_options(test_input PRIVATE -fobjc-arc)
 add_executable(test_opengl_bridge
     test_opengl_bridge.cpp
 )
-target_link_libraries(test_opengl_bridge PRIVATE metalsharp_core)
+target_link_libraries(test_opengl_bridge PRIVATE metalsharp_opengl32 metalsharp_core)
 target_compile_options(test_opengl_bridge PRIVATE -fobjc-arc)
 
 add_executable(test_phase5
