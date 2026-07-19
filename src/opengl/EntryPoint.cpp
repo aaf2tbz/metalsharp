@@ -342,6 +342,16 @@ extern "C" void glCopyTexSubImage2D(uint32_t target, int32_t level, int32_t xoff
 }
 
 // ---------------------------------------------------------------------------
+// Renderbuffer objects (GL 3.0 / EXT)
+// ---------------------------------------------------------------------------
+GL_PASSTHROUGH2(void, glGenRenderbuffers, int32_t, n, uint32_t*, renderbuffers)
+GL_PASSTHROUGH2(void, glDeleteRenderbuffers, int32_t, n, const uint32_t*, renderbuffers)
+GL_PASSTHROUGH2(void, glBindRenderbuffer, uint32_t, target, uint32_t, renderbuffer)
+GL_PASSTHROUGH4(void, glRenderbufferStorage, uint32_t, target, uint32_t, internalformat, int32_t, width, int32_t,
+                height)
+GL_PASSTHROUGH1(unsigned char, glIsRenderbuffer, uint32_t, renderbuffer)
+
+// ---------------------------------------------------------------------------
 // Framebuffer objects (GL 3.0 / EXT_framebuffer_object)
 // ---------------------------------------------------------------------------
 GL_PASSTHROUGH2(void, glGenFramebuffers, int32_t, n, uint32_t*, framebuffers)

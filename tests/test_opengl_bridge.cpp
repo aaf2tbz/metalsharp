@@ -385,6 +385,36 @@ int main() {
         CHECK(bridge.state().boundFramebuffer == 0, "Default state().boundFramebuffer is 0 after init");
     }
 
+    {
+        printf("\n--- Renderbuffer passthroughs ---\n");
+        metalsharp::OpenGLBridge bridge;
+        bool ok = bridge.init();
+        CHECK(ok, "init() succeeds for renderbuffer passthroughs");
+
+        // Symbol resolution: every GL 3.0 / EXT_framebuffer_object renderbuffer
+        // entry point must resolve through the macOS OpenGL framework, which
+        // exports the full legacy profile (including renderbuffer objects via
+        // EXT_framebuffer_object on macOS).
+        const char* renderbufferSymbols[] = {
+            "glGenRenderbuffers",    "glDeleteRenderbuffers", "glBindRenderbuffer",
+            "glRenderbufferStorage", "glIsRenderbuffer",
+        };
+        for (const char* name : renderbufferSymbols) {
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "getGLProcAddress(\"%s\") returns non-null", name);
+            void* fn = bridge.getGLProcAddress(name);
+            CHECK(fn != nullptr, msg);
+        }
+
+        // State tracking: after init, no framebuffer is bound by default.
+        // The framework reports a clean state until the application calls
+        // glBindFramebuffer(GL_FRAMEBUFFER, ...). Renderbuffer objects
+        // intentionally do not add a new binding slot — they are attached
+        // to a framebuffer via glFramebufferRenderbuffer, which is
+        // exercised by the framebuffer passthrough tests above.
+        CHECK(bridge.state().boundFramebuffer == 0, "Default state().boundFramebuffer is still 0 after init");
+    }
+
     printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }
