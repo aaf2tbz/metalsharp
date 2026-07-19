@@ -4,6 +4,7 @@
 #include <cstring>
 #include <metalsharp/D3DShims.h>
 #include <metalsharp/ExtraShims.h>
+#include <metalsharp/GameControllerBridge.h>
 #include <metalsharp/Kernel32Shim.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/MSABITrampolines.h>
@@ -18,6 +19,7 @@
 #include <metalsharp/SyncContext.h>
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/WindowManager.h>
+#include <mutex>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -45,6 +47,57 @@ static void* MSABI stub_noop_ptr() {
 #define STUB_V ((void*)(void (*)())stub_noop_void)
 #define STUB_I ((void*)(int (*)())stub_noop_int)
 #define STUB_P ((void*)(void* (*)())stub_noop_ptr)
+
+// Shim return type must be the Windows x64 HRESULT (int32_t). metalsharp::win32::HRESULT is a long (64-bit on
+// macOS), and the unqualified HRESULT in this TU is ambiguous between Platform.h's int32_t and win32's long.
+using ShimHRESULT = int32_t;
+
+// HRESULT returned by XInput when the requested user index has no controller connected.
+static constexpr ShimHRESULT kXInputErrorDeviceNotConnected = (ShimHRESULT)0x48F;
+
+static std::once_flag g_xinputInitFlag;
+static metalsharp::GameControllerBridge g_xinputBridge;
+
+static void ensureXInputBridgeInit() {
+    std::call_once(g_xinputInitFlag, [] { g_xinputBridge.init(); });
+}
+
+static ShimHRESULT MSABI xinputGetStateShim(uint32_t dwUserIndex, void* pState) {
+    ensureXInputBridgeInit();
+    if (!pState)
+        return E_POINTER;
+    if (dwUserIndex >= 4)
+        return E_FAIL;
+    auto* state = static_cast<metalsharp::XInputState*>(pState);
+    return g_xinputBridge.getState(dwUserIndex, state) ? S_OK : kXInputErrorDeviceNotConnected;
+}
+
+static ShimHRESULT MSABI xinputSetStateShim(uint32_t dwUserIndex, void* pVibration) {
+    ensureXInputBridgeInit();
+    if (!pVibration)
+        return E_POINTER;
+    if (dwUserIndex >= 4)
+        return E_FAIL;
+    auto* vib = static_cast<uint16_t*>(pVibration);
+    return g_xinputBridge.setState(dwUserIndex, vib[0], vib[1]) ? S_OK : kXInputErrorDeviceNotConnected;
+}
+
+static ShimHRESULT MSABI xinputGetCapabilitiesShim(uint32_t dwUserIndex, uint32_t dwFlags, void* pCapabilities) {
+    (void)dwFlags;
+    ensureXInputBridgeInit();
+    if (!pCapabilities)
+        return E_POINTER;
+    if (dwUserIndex >= 4)
+        return E_FAIL;
+    auto* caps = static_cast<metalsharp::XInputCapabilities*>(pCapabilities);
+    return g_xinputBridge.getCapabilities(dwUserIndex, caps) ? S_OK : kXInputErrorDeviceNotConnected;
+}
+
+static ShimHRESULT MSABI xinputRefreshShim() {
+    ensureXInputBridgeInit();
+    g_xinputBridge.refresh();
+    return S_OK;
+}
 
 static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
 #if defined(__x86_64__)
@@ -186,6 +239,22 @@ int main(int argc, char* argv[]) {
     loader.registerShim("D3D12.dll", win32::createD3D12Shim());
     loader.registerShim("dxgi.dll", win32::createDxgiShim());
     loader.registerShim("DXGI.dll", win32::createDxgiShim());
+
+    printf("Registering XInput shims...\n");
+    {
+        auto xinputFn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+        ShimLibrary xinput14;
+        xinput14.name = "xinput1_4.dll";
+        xinput14.functions["XInputGetState"] = xinputFn((void*)xinputGetStateShim);
+        xinput14.functions["XInputSetState"] = xinputFn((void*)xinputSetStateShim);
+        xinput14.functions["XInputGetCapabilities"] = xinputFn((void*)xinputGetCapabilitiesShim);
+        xinput14.functions["XInputRefresh"] = xinputFn((void*)xinputRefreshShim);
+        loader.registerShim("xinput1_4.dll", std::move(xinput14));
+
+        ShimLibrary xinput13 = xinput14;
+        xinput13.name = "xinput1_3.dll";
+        loader.registerShim("xinput1_3.dll", std::move(xinput13));
+    }
 
     auto apiSets = {
         "api-ms-win-core-synch-l1-2-0",

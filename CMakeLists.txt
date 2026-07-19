@@ -205,8 +205,10 @@ metalsharp_wine_target(metalsharp_loader)
 
 add_executable(metalsharp_native
     tools/launcher/NativeLauncher.cpp
+    src/input/GameControllerBridge.mm
 )
-target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core)
+target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core ${GAMECONTROLLER_FRAMEWORK})
+target_compile_options(metalsharp_native PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
 metalsharp_wine_target(metalsharp_native)
 

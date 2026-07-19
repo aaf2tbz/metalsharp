@@ -229,6 +229,10 @@ bool GameControllerBridge::getState(uint32_t index, XInputState* pState) {
     return true;
 }
 
+void GameControllerBridge::refresh() {
+    poll();
+}
+
 bool GameControllerBridge::setState(uint32_t index, uint16_t leftMotor, uint16_t rightMotor) {
     if (index >= MAX_CONTROLLERS || !m_impl->slots[index].controller)
         return false;
