@@ -4,11 +4,13 @@
 #include <cstring>
 #include <metalsharp/D3DShims.h>
 #include <metalsharp/ExtraShims.h>
+#include <metalsharp/GameControllerBridge.h>
 #include <metalsharp/Kernel32Shim.h>
 #include <metalsharp/Logger.h>
 #include <metalsharp/MSABITrampolines.h>
 #include <metalsharp/NetworkContext.h>
 #include <metalsharp/NtdllShim.h>
+#include <metalsharp/OpenGLBridge.h>
 #include <metalsharp/PEHeader.h>
 #include <metalsharp/PELoader.h>
 #include <metalsharp/PipelineCache.h>
@@ -18,6 +20,7 @@
 #include <metalsharp/SyncContext.h>
 #include <metalsharp/VirtualFileSystem.h>
 #include <metalsharp/WindowManager.h>
+#include <mutex>
 #include <pthread.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -45,6 +48,126 @@ static void* MSABI stub_noop_ptr() {
 #define STUB_V ((void*)(void (*)())stub_noop_void)
 #define STUB_I ((void*)(int (*)())stub_noop_int)
 #define STUB_P ((void*)(void* (*)())stub_noop_ptr)
+
+// Shim return type must be the Windows x64 HRESULT (int32_t). metalsharp::win32::HRESULT is a long (64-bit on
+// macOS), and the unqualified HRESULT in this TU is ambiguous between Platform.h's int32_t and win32's long.
+using ShimHRESULT = int32_t;
+
+// HRESULT returned by XInput when the requested user index has no controller connected.
+static constexpr ShimHRESULT kXInputErrorDeviceNotConnected = (ShimHRESULT)0x48F;
+
+static std::once_flag g_xinputInitFlag;
+static metalsharp::GameControllerBridge g_xinputBridge;
+
+static void ensureXInputBridgeInit() {
+    std::call_once(g_xinputInitFlag, [] { g_xinputBridge.init(); });
+}
+
+static ShimHRESULT MSABI xinputGetStateShim(uint32_t dwUserIndex, void* pState) {
+    ensureXInputBridgeInit();
+    if (!pState)
+        return E_POINTER;
+    if (dwUserIndex >= 4)
+        return E_FAIL;
+    auto* state = static_cast<metalsharp::XInputState*>(pState);
+    return g_xinputBridge.getState(dwUserIndex, state) ? S_OK : kXInputErrorDeviceNotConnected;
+}
+
+static ShimHRESULT MSABI xinputSetStateShim(uint32_t dwUserIndex, void* pVibration) {
+    ensureXInputBridgeInit();
+    if (!pVibration)
+        return E_POINTER;
+    if (dwUserIndex >= 4)
+        return E_FAIL;
+    auto* vib = static_cast<uint16_t*>(pVibration);
+    return g_xinputBridge.setState(dwUserIndex, vib[0], vib[1]) ? S_OK : kXInputErrorDeviceNotConnected;
+}
+
+static ShimHRESULT MSABI xinputGetCapabilitiesShim(uint32_t dwUserIndex, uint32_t dwFlags, void* pCapabilities) {
+    (void)dwFlags;
+    ensureXInputBridgeInit();
+    if (!pCapabilities)
+        return E_POINTER;
+    if (dwUserIndex >= 4)
+        return E_FAIL;
+    auto* caps = static_cast<metalsharp::XInputCapabilities*>(pCapabilities);
+    return g_xinputBridge.getCapabilities(dwUserIndex, caps) ? S_OK : kXInputErrorDeviceNotConnected;
+}
+
+static ShimHRESULT MSABI xinputRefreshShim() {
+    ensureXInputBridgeInit();
+    g_xinputBridge.refresh();
+    return S_OK;
+}
+
+// ---------------------------------------------------------------------------
+// OpenGL bridge — Phase 4b.
+// The opengl32 shim's exported entry points live in src/opengl/WGLShim.cpp
+// (wglCreateContext, wglMakeCurrent, wglDeleteContext, wglGetProcAddress) and
+// src/opengl/EntryPoint.cpp (the GL 1.x/2.x passthroughs). Wine resolves most
+// GL entry points itself via wglGetProcAddress, so the launcher's opengl32.dll
+// registration only needs to forward the four WGL entry points plus a small
+// set of static entry points that some games bind directly.
+//
+// The launcher provides its own WGL shim implementations (defined below) that
+// delegate to the OpenGLBridge. The src/opengl/WGLShim.cpp dylib exports the
+// same symbols for binaries loaded via Wine — both copies are kept in sync
+// because they share the same opengl32.dll contract.
+// ---------------------------------------------------------------------------
+
+extern "C" {
+
+// WGL entry-point shims. Bodies are defined below so this TU links cleanly
+// without taking a runtime dependency on the opengl32.dylib.
+void* wglCreateContext(void* hdc);
+int32_t wglMakeCurrent(void* hdc, void* hglrc);
+int32_t wglDeleteContext(void* hglrc);
+void* wglGetProcAddress(const char* name);
+
+} // extern "C"
+
+static std::once_flag g_openglInitFlag;
+static metalsharp::OpenGLBridge g_openglBridge;
+
+static void ensureOpenGLBridgeInit() {
+    std::call_once(g_openglInitFlag, [] { g_openglBridge.init(); });
+}
+
+// ---------------------------------------------------------------------------
+// WGL shim implementations (Phase 4b).
+// These match the contract in src/opengl/WGLShim.cpp so binaries loaded
+// either via Wine (which loads the dylib) or directly by the launcher get
+// consistent behaviour. Phase 4c will replace the sentinel returns with
+// real NSOpenGLContext management.
+// ---------------------------------------------------------------------------
+
+extern "C" void* wglCreateContext(void* hdc) {
+    ensureOpenGLBridgeInit();
+    (void)hdc;
+    // Non-null sentinel. Phase 4c: create NSOpenGLContext here.
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(0x1));
+}
+
+extern "C" int32_t wglMakeCurrent(void* hdc, void* hglrc) {
+    ensureOpenGLBridgeInit();
+    (void)hdc;
+    (void)hglrc;
+    return 1; // TRUE
+}
+
+extern "C" int32_t wglDeleteContext(void* hglrc) {
+    ensureOpenGLBridgeInit();
+    (void)hglrc;
+    return 1; // TRUE
+}
+
+extern "C" void* wglGetProcAddress(const char* name) {
+    ensureOpenGLBridgeInit();
+    if (!name) {
+        return nullptr;
+    }
+    return g_openglBridge.getGLProcAddress(name);
+}
 
 static void crash_handler(int sig, siginfo_t* info, void* ucontext) {
 #if defined(__x86_64__)
@@ -186,6 +309,48 @@ int main(int argc, char* argv[]) {
     loader.registerShim("D3D12.dll", win32::createD3D12Shim());
     loader.registerShim("dxgi.dll", win32::createDxgiShim());
     loader.registerShim("DXGI.dll", win32::createDxgiShim());
+
+    printf("Registering XInput shims...\n");
+    {
+        auto xinputFn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+        ShimLibrary xinput14;
+        xinput14.name = "xinput1_4.dll";
+        xinput14.functions["XInputGetState"] = xinputFn((void*)xinputGetStateShim);
+        xinput14.functions["XInputSetState"] = xinputFn((void*)xinputSetStateShim);
+        xinput14.functions["XInputGetCapabilities"] = xinputFn((void*)xinputGetCapabilitiesShim);
+        xinput14.functions["XInputRefresh"] = xinputFn((void*)xinputRefreshShim);
+        loader.registerShim("xinput1_4.dll", std::move(xinput14));
+
+        ShimLibrary xinput13 = xinput14;
+        xinput13.name = "xinput1_3.dll";
+        loader.registerShim("xinput1_3.dll", std::move(xinput13));
+    }
+
+    // Register OpenGL shim (Phase 4b). The opengl32 shim is thin — most GL
+    // functions are loaded by Wine via wglGetProcAddress, so we only need
+    // to forward the WGL entry points plus a small set of static entry
+    // points that some games bind directly. We initialize the bridge here
+    // so the first wglGetProcAddress call is warm.
+    ensureOpenGLBridgeInit();
+    printf("Registering OpenGL shim...\n");
+    {
+        auto glFn = [](void* ptr) -> ExportedFunction { return [ptr]() -> void* { return ptr; }; };
+        ShimLibrary opengl32;
+        opengl32.name = "opengl32.dll";
+        // Static entry points. Bound directly by some binaries that don't go
+        // through wglGetProcAddress. They forward to no-ops for now; real
+        // work happens through the WGL bridge.
+        opengl32.functions["glBegin"] = glFn((void*)+[](uint32_t) -> void {});
+        opengl32.functions["glEnd"] = glFn((void*)+[]() -> void {});
+        opengl32.functions["glClear"] = glFn((void*)+[](uint32_t) -> void {});
+        opengl32.functions["glClearColor"] = glFn((void*)+[](float, float, float, float) -> void {});
+        // WGL entry points — these resolve to the WGLShim.cpp implementations.
+        opengl32.functions["wglCreateContext"] = glFn((void*)wglCreateContext);
+        opengl32.functions["wglMakeCurrent"] = glFn((void*)wglMakeCurrent);
+        opengl32.functions["wglDeleteContext"] = glFn((void*)wglDeleteContext);
+        opengl32.functions["wglGetProcAddress"] = glFn((void*)wglGetProcAddress);
+        loader.registerShim("opengl32.dll", std::move(opengl32));
+    }
 
     auto apiSets = {
         "api-ms-win-core-synch-l1-2-0",

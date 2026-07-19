@@ -27,6 +27,8 @@ find_library(AVFOUNDATION_FRAMEWORK AVFoundation REQUIRED)
 
 find_library(SECURITY_FRAMEWORK Security REQUIRED)
 find_library(GAMECONTROLLER_FRAMEWORK GameController REQUIRED)
+find_library(COREHAPTICS_FRAMEWORK CoreHaptics)
+find_library(OPENGL_FRAMEWORK OpenGL)
 find_library(METALFX_FRAMEWORK MetalFX)
 
 find_path(METALIRCONVERTER_INCLUDE_DIR
@@ -38,7 +40,35 @@ find_library(METALIRCONVERTER_LIBRARY
     PATHS /usr/local/lib
 )
 
-find_package(SDL2 QUIET)
+# SDL version selection. Default is SDL3; set -DMETALSHARP_SDL_VERSION=2 for SDL2.
+set(METALSHARP_SDL_VERSION "3" CACHE STRING "SDL major version (2 or 3)")
+set_property(CACHE METALSHARP_SDL_VERSION PROPERTY STRINGS "2" "3")
+
+if(METALSHARP_SDL_VERSION STREQUAL "2")
+    find_package(SDL2 REQUIRED)
+    add_compile_definitions(METALSHARP_SDL_VERSION_MAJOR=2)
+    message(STATUS "MetalSharp: using SDL2")
+else()
+    find_package(SDL3 QUIET)
+    if(NOT SDL3_FOUND)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(SDL3 IMPORTED_TARGET sdl3)
+        endif()
+    endif()
+    add_compile_definitions(METALSHARP_SDL_VERSION_MAJOR=3)
+    if(SDL3_FOUND)
+        message(STATUS "MetalSharp: using SDL3")
+        set(METALSHARP_HAS_SDL3 TRUE)
+    else()
+        message(WARNING "MetalSharp: SDL3 not found. Install with: brew install sdl3")
+    endif()
+endif()
+
+# Mojoshader SDL GPU backend is SDL3-only.
+if(METALSHARP_SDL_VERSION STREQUAL "3" AND SDL3_FOUND)
+    set(METALSHARP_HAS_SDL_GPU TRUE)
+endif()
 
 add_library(metalsharp_core STATIC
     src/metal/device/Device.cpp
@@ -113,6 +143,14 @@ add_library(metalsharp_host_runtime SHARED
 target_include_directories(metalsharp_host_runtime PUBLIC include)
 set_target_properties(metalsharp_host_runtime PROPERTIES OUTPUT_NAME "metalsharp_host_runtime")
 metalsharp_host_target(metalsharp_host_runtime)
+add_custom_command(TARGET metalsharp_host_runtime POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${CMAKE_SOURCE_DIR}/app/native/host"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_host_runtime>"
+        "${CMAKE_SOURCE_DIR}/app/native/host/$<TARGET_FILE_NAME:metalsharp_host_runtime>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_host_runtime> to app/native/host/"
+)
 
 set(METALSHARP_D3D11_SOURCES
     src/d3d/d3d11/D3D11Device.cpp src/d3d/d3d11/D3D11DeviceContext.mm src/d3d/d3d11/D3D11Texture2D.cpp
@@ -133,18 +171,36 @@ target_link_libraries(metalsharp_d3d11 PRIVATE metalsharp_core metalsharp_dxgi)
 target_compile_options(metalsharp_d3d11 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_d3d11 PROPERTIES OUTPUT_NAME "d3d11" PREFIX "")
 metalsharp_wine_target(metalsharp_d3d11)
+add_custom_command(TARGET metalsharp_d3d11 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_d3d11>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_d3d11>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_d3d11> to app/native/"
+)
 
 add_library(metalsharp_d3d12 SHARED ${METALSHARP_D3D12_SOURCES})
 target_link_libraries(metalsharp_d3d12 PRIVATE metalsharp_core)
 target_compile_options(metalsharp_d3d12 PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_d3d12 PROPERTIES OUTPUT_NAME "d3d12" PREFIX "")
 metalsharp_wine_target(metalsharp_d3d12)
+add_custom_command(TARGET metalsharp_d3d12 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_d3d12>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_d3d12>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_d3d12> to app/native/"
+)
 
 add_library(metalsharp_dxgi SHARED ${METALSHARP_DXGI_SOURCES})
 target_link_libraries(metalsharp_dxgi PRIVATE metalsharp_core)
 target_compile_options(metalsharp_dxgi PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_dxgi PROPERTIES OUTPUT_NAME "dxgi" PREFIX "")
 metalsharp_wine_target(metalsharp_dxgi)
+add_custom_command(TARGET metalsharp_dxgi POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_dxgi>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_dxgi>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_dxgi> to app/native/"
+)
 
 add_library(metalsharp_audio SHARED
     src/audio/XAudio2Engine.cpp
@@ -158,16 +214,28 @@ add_library(metalsharp_audio SHARED
 target_link_libraries(metalsharp_audio PRIVATE metalsharp_core ${AUDIOUNIT_FRAMEWORK})
 set_target_properties(metalsharp_audio PROPERTIES OUTPUT_NAME "xaudio2_9" PREFIX "")
 metalsharp_wine_target(metalsharp_audio)
+add_custom_command(TARGET metalsharp_audio POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_audio>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_audio>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_audio> to app/native/"
+)
 
 add_library(metalsharp_input SHARED
     src/input/XInputEngine.cpp
     src/input/GameControllerBridge.mm
     src/input/EntryPoint.cpp
 )
-target_link_libraries(metalsharp_input PRIVATE metalsharp_core ${GAMECONTROLLER_FRAMEWORK})
+target_link_libraries(metalsharp_input PRIVATE metalsharp_core ${GAMECONTROLLER_FRAMEWORK} ${COREHAPTICS_FRAMEWORK})
 target_compile_options(metalsharp_input PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_input PROPERTIES OUTPUT_NAME "xinput1_4" PREFIX "")
 metalsharp_wine_target(metalsharp_input)
+add_custom_command(TARGET metalsharp_input POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_input>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_input>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_input> to app/native/"
+)
 
 add_executable(metalsharp_launcher
     tools/launcher/main.cpp
@@ -178,6 +246,12 @@ add_executable(metalsharp_launcher
 )
 target_link_libraries(metalsharp_launcher PRIVATE metalsharp_core ${FOUNDATION_FRAMEWORK})
 metalsharp_wine_target(metalsharp_launcher)
+add_custom_command(TARGET metalsharp_launcher POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_launcher>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_launcher>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_launcher> to app/native/"
+)
 
 add_library(metalsharp_loader STATIC
     src/loader/PELoader.cpp
@@ -205,10 +279,38 @@ metalsharp_wine_target(metalsharp_loader)
 
 add_executable(metalsharp_native
     tools/launcher/NativeLauncher.cpp
+    src/input/GameControllerBridge.mm
+    src/opengl/OpenGLBridge.mm
 )
-target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core)
+target_link_libraries(metalsharp_native PRIVATE metalsharp_loader metalsharp_core ${GAMECONTROLLER_FRAMEWORK} ${COREHAPTICS_FRAMEWORK} ${OPENGL_FRAMEWORK})
+target_compile_options(metalsharp_native PRIVATE -fobjc-arc)
 set_target_properties(metalsharp_native PROPERTIES OUTPUT_NAME "metalsharp")
 metalsharp_wine_target(metalsharp_native)
+add_custom_command(TARGET metalsharp_native POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_native>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_native>"
+    COMMENT "Copying $<TARGET_FILE_NAME:metalsharp_native> to app/native/"
+)
+
+# OpenGL 2.1-4.6 bridge. Delegates GL 2.1 to macOS native OpenGL framework.
+# GL 3.x+ shader translation via SPIRV-Cross is scaffolded for Phase 4c.
+add_library(metalsharp_opengl32 SHARED
+    src/opengl/OpenGLBridge.mm
+    src/opengl/EntryPoint.cpp
+    src/opengl/WGLShim.cpp
+)
+target_include_directories(metalsharp_opengl32 PRIVATE include)
+target_link_libraries(metalsharp_opengl32 PRIVATE metalsharp_core ${OPENGL_FRAMEWORK})
+target_compile_options(metalsharp_opengl32 PRIVATE -fobjc-arc)
+set_target_properties(metalsharp_opengl32 PROPERTIES OUTPUT_NAME "opengl32" PREFIX "")
+metalsharp_wine_target(metalsharp_opengl32)
+add_custom_command(TARGET metalsharp_opengl32 POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:metalsharp_opengl32>"
+        "${CMAKE_SOURCE_DIR}/app/native/$<TARGET_FILE_NAME:metalsharp_opengl32>"
+    COMMENT "Copying opengl32.dylib to app/native/"
+)
 
 add_executable(metalsharp_migrator
     tools/migrator/main.m

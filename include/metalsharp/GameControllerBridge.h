@@ -44,10 +44,26 @@ class GameControllerBridge {
     GameControllerBridge();
     ~GameControllerBridge();
 
+    /// @brief Initialize the bridge and register for GCController connect/disconnect notifications.
+    /// @return true on success.
     bool init();
+
+    /// @brief Poll every connected controller and refresh m_states in place. Cheap when no controllers are connected.
     void poll();
+
+    /// @brief Per-frame refresh hook for game loops. Reads every controller once; call this once per frame before
+    /// any getState() calls in that frame. Equivalent to poll().
+    void refresh();
+
+    /// @brief Poll every connected controller and return the latest state for @p index.
+    /// @note Each call performs a poll before reading the cache. Use refresh() once per frame as an
+    /// optimization so subsequent getState() calls within the same frame don't need to re-poll.
     bool getState(uint32_t index, XInputState* pState);
+
+    /// @brief Set vibration motor speeds for controller @p index.
     bool setState(uint32_t index, uint16_t leftMotor, uint16_t rightMotor);
+
+    /// @brief Query capabilities for controller @p index (gamepad subtype, supported flags, etc.).
     bool getCapabilities(uint32_t index, XInputCapabilities* pCaps);
 
   private:

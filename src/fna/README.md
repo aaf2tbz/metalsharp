@@ -1,6 +1,25 @@
 # FNA Integration for MetalSharp
 
-Native macOS game support via FNA (XNA reimplementation) + SDL3 + Metal.
+Native macOS game support via FNA (XNA reimplementation) + SDL + Metal.
+
+## SDL Version
+
+MetalSharp supports both SDL2 and SDL3 for FNA game hosting:
+
+- **SDL3** (default): Modern GPU API (`SDL_GPUDevice`, `SDL_ShaderCross`), recommended for macOS 14+
+- **SDL2**: Legacy support for older games that require SDL2's GameController API
+
+Build with: `cmake -DMETALSHARP_SDL_VERSION=2 ..` (defaults to `3`).
+
+The SDL version is selected at build time via `-DMETALSHARP_SDL_VERSION=` and exposed
+to translation units through the `METALSHARP_SDL_VERSION_MAJOR` macro. The unified
+wrapper is in `include/metalsharp/SDLBridge.h`. The mojoshader SDL GPU backend
+(`mojoshader_sdlgpu.c`) stays SDL3-only since SDL2 has no `SDL_GPUDevice` /
+`SDL_ShaderCross` equivalent.
+
+For FNA games using Mono P/Invoke dllmaps, choose the matching config file:
+- SDL3 build: `configs/celeste_dllmaps.config`, `configs/terraria_dllmaps.config`
+- SDL2 build: `configs/celeste_dllmaps_sdl2.config`, `configs/terraria_dllmaps_sdl2.config`
 
 ## Components
 
@@ -41,5 +60,5 @@ Build: `./build_fmod_stubs.sh` (outputs `libfmod.dylib`, `libfmodstudio.dylib`)
 ## Requirements
 
 - Mono 6.x+
-- SDL3 (homebrew)
+- SDL3 (homebrew) by default, or SDL2 when `-DMETALSHARP_SDL_VERSION=2` is set
 - Steam client running (for Steamworks)
