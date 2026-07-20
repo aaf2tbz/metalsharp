@@ -102,14 +102,24 @@
 #include "server.h"
 
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 /* ── Constants ── */
 
@@ -168,6 +178,8 @@ static MetalsharpResponse* handle_steam_watch_steamapps(const HttpRequest* req);
  * uninstall, bridge, compatdata, runtime-doctor, and mac-*
  * route until the real backend adapters land. */
 static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req);
+static MetalsharpResponse* handle_steam_launch(const HttpRequest* req);
+static MetalsharpResponse* handle_steam_stop(const HttpRequest* req);
 
 /* ── Response builders ── */
 
@@ -456,7 +468,7 @@ static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req) {
         return steam_route_response(
             "{\"ok\":true,\"path\":\"Steam installation started — polling /steam/status for completion\"}", 200);
     if (strcmp(path, "/steam/launch") == 0)
-        return steam_route_response("{\"ok\":false,\"error\":\"MetalSharp Wine not found\"}", 500);
+        return handle_steam_launch(req);
     if (strcmp(path, "/steam/mac-launch") == 0)
         return steam_route_response("{\"ok\":false,\"error\":\"macOS Steam is not installed\"}", 500);
     if (strcmp(path, "/steam/mac-install") == 0) {
@@ -467,7 +479,9 @@ static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req) {
                          (long)getpid());
         return n > 0 && (size_t)n < sizeof(body) ? steam_route_response(body, 200) : NULL;
     }
-    if (strcmp(path, "/steam/stop") == 0 || strcmp(path, "/steam/mac-stop") == 0)
+    if (strcmp(path, "/steam/stop") == 0)
+        return handle_steam_stop(req);
+    if (strcmp(path, "/steam/mac-stop") == 0)
         return steam_route_response("{\"ok\":true,\"running\":false}", 200);
     bool status_400 = strcmp(path, "/steam/install-game") == 0 || strcmp(path, "/steam/launch-game") == 0 ||
                       strcmp(path, "/steam/launch-offline") == 0 || strcmp(path, "/steam/mac-launch-game") == 0 ||
@@ -779,6 +793,296 @@ static MetalsharpResponse* handle_steam_watch_steamapps(const HttpRequest* req) 
         }
     }
     return make_data_response("{\"ok\":true,\"new_appids\":[]}");
+}
+
+/* ── Wine Steam launch helpers ── */
+
+static bool steam_find_wine(char* output, size_t output_size) {
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    if (home == NULL)
+        return false;
+    static const char* names[] = {"metalsharp-wine", "wine"};
+    for (size_t i = 0u; i < sizeof(names) / sizeof(names[0]); i++) {
+        int written = snprintf(output, output_size, "%s/runtime/wine/bin/%s", home, names[i]);
+        if (written >= 0 && (size_t)written < output_size && access(output, X_OK) == 0)
+            return true;
+    }
+    return false;
+}
+
+static char* steam_home(void) {
+    const char* home = getenv("METALSHARP_HOME");
+    if (home == NULL || home[0] == '\0')
+        home = getenv("HOME");
+    return (char*)(home != NULL ? home : "");
+}
+
+static void steam_set_runtime_environment(void) {
+    char value[PATH_MAX * 2u];
+    int written = snprintf(value, sizeof(value), "%s/runtime/wine/lib:%s/runtime/wine/lib/wine/x86_64-unix",
+                           steam_home(), steam_home());
+    if (written < 0 || (size_t)written >= sizeof(value))
+        return;
+#if defined(__APPLE__)
+    (void)setenv("DYLD_FALLBACK_LIBRARY_PATH", value, 1);
+#elif defined(__linux__)
+    (void)setenv("LD_LIBRARY_PATH", value, 1);
+#endif
+}
+
+static bool steam_spawn_wine(char* const argv[], const char* working_directory, const char* prefix, pid_t* pid_out,
+                             char* error, size_t error_size) {
+    int exec_pipe[2];
+    if (pipe(exec_pipe) != 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        return false;
+    }
+    (void)fcntl(exec_pipe[1], F_SETFD, FD_CLOEXEC);
+    pid_t pid = fork();
+    if (pid < 0) {
+        snprintf(error, error_size, "%s", strerror(errno));
+        close(exec_pipe[0]);
+        close(exec_pipe[1]);
+        return false;
+    }
+    if (pid == 0) {
+        close(exec_pipe[0]);
+        if (working_directory != NULL && chdir(working_directory) != 0) {
+            int child_errno = errno;
+            (void)write(exec_pipe[1], &child_errno, sizeof(child_errno));
+            _exit(127);
+        }
+        if (prefix != NULL)
+            (void)setenv("WINEPREFIX", prefix, 1);
+        (void)setenv("WINEDEBUG", "+vulkan,+d3d,+d3d11,+dxgi,+wined3d,+opengl", 1);
+        (void)setenv("WINEDEBUGGER", "none", 1);
+        (void)setenv("STEAM_RUNTIME", "0", 1);
+        (void)setenv("MS_FWD_COMPAT_GL_CTX", "1", 1);
+        (void)setenv("WINEDLLOVERRIDES",
+                     "dxgi,d3d11,d3d10core=n,b;bcrypt=b;ncrypt=b;gameoverlayrenderer,gameoverlayrenderer64=d", 1);
+        steam_set_runtime_environment();
+        execv(argv[0], argv);
+        int child_errno = errno;
+        (void)write(exec_pipe[1], &child_errno, sizeof(child_errno));
+        _exit(127);
+    }
+    close(exec_pipe[1]);
+    int child_errno = 0;
+    ssize_t count;
+    do {
+        count = read(exec_pipe[0], &child_errno, sizeof(child_errno));
+    } while (count < 0 && errno == EINTR);
+    close(exec_pipe[0]);
+    if (count > 0) {
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+        }
+        snprintf(error, error_size, "%s", strerror(child_errno));
+        return false;
+    }
+    *pid_out = pid;
+    return true;
+}
+
+static bool steam_is_wine_steam_running(void) {
+    char prefix[PATH_MAX];
+    snprintf(prefix, sizeof(prefix), "%s/prefix-steam", steam_home());
+    FILE* processes = popen("ps axo pid=,command=", "r");
+    if (processes == NULL)
+        return false;
+    bool running = false;
+    char line[16384];
+    while (!running && fgets(line, sizeof(line), processes) != NULL) {
+        if (strstr(line, prefix) != NULL &&
+            (strstr(line, "Steam.exe") != NULL || strstr(line, "steamwebhelper") != NULL))
+            running = true;
+    }
+    pclose(processes);
+    return running;
+}
+
+static bool steam_find_bundled_file(const char* relative, char* output, size_t output_size) {
+    struct stat info;
+    char candidate[PATH_MAX];
+    /* Check METALSHARP_HOME cache first */
+    int written = snprintf(candidate, sizeof(candidate), "%s/cache/steam/%s", steam_home(), relative);
+    if (written >= 0 && (size_t)written < sizeof(candidate) && stat(candidate, &info) == 0 && info.st_size > 0) {
+        snprintf(output, output_size, "%s", candidate);
+        return true;
+    }
+    /* Check app bundles directory */
+    static const char* bundle_roots[] = {"app/bundles", "../bundles", "../../bundles"};
+    char resources[PATH_MAX] = "";
+#ifdef __APPLE__
+    {
+        uint32_t size = sizeof(resources);
+        if (_NSGetExecutablePath(resources, &size) == 0) {
+            char* slash = strrchr(resources, '/');
+            if (slash != NULL) {
+                *slash = '\0';
+                slash = strrchr(resources, '/');
+                if (slash != NULL) {
+                    *slash = '\0';
+                    slash = strrchr(resources, '/');
+                    if (slash != NULL && strcmp(slash + 1, "MacOS") == 0) {
+                        *slash = '\0';
+                        snprintf(resources, sizeof(resources), "%s/Resources", resources);
+                    }
+                }
+            }
+        }
+    }
+#endif
+    for (size_t i = 0u; i < sizeof(bundle_roots) / sizeof(bundle_roots[0]); i++) {
+        const char* root = bundle_roots[i];
+        if (resources[0] != '\0') {
+            written = snprintf(candidate, sizeof(candidate), "%s/%s/%s", resources, root, relative);
+        } else {
+            written = snprintf(candidate, sizeof(candidate), "%s/%s", root, relative);
+        }
+        if (written >= 0 && (size_t)written < sizeof(candidate) && stat(candidate, &info) == 0 && info.st_size > 0) {
+            snprintf(output, output_size, "%s", candidate);
+            return true;
+        }
+    }
+    return false;
+}
+
+#define STEAMWEBHELPER_WRAPPER_MAX_BYTES 100000
+
+static bool steam_deploy_webhelper_wrapper(const char* steam_dir) {
+    char wrapper_source[PATH_MAX];
+    if (!steam_find_bundled_file("steamwebhelper.exe", wrapper_source, sizeof(wrapper_source)))
+        return false;
+    struct stat wrapper_info;
+    if (stat(wrapper_source, &wrapper_info) != 0 || wrapper_info.st_size == 0 ||
+        (size_t)wrapper_info.st_size > STEAMWEBHELPER_WRAPPER_MAX_BYTES)
+        return false;
+    char cef_root[PATH_MAX];
+    snprintf(cef_root, sizeof(cef_root), "%s/bin/cef", steam_dir);
+    static const char* priority[] = {"cef.win64", "cef.win7x64", "cef.win7"};
+    bool deployed = false;
+    for (size_t pi = 0u; pi < sizeof(priority) / sizeof(priority[0]); pi++) {
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s", cef_root, priority[pi]);
+        struct stat dir_info;
+        if (stat(path, &dir_info) != 0 || !S_ISDIR(dir_info.st_mode))
+            continue;
+        char original[PATH_MAX], real[PATH_MAX], marker[PATH_MAX];
+        snprintf(original, sizeof(original), "%s/steamwebhelper.exe", path);
+        snprintf(real, sizeof(real), "%s/steamwebhelper_real.exe", path);
+        snprintf(marker, sizeof(marker), "%s/.ms_wrapper_deployed", path);
+        struct stat orig_info, real_info;
+        bool orig_exists = stat(original, &orig_info) == 0;
+        long orig_size = orig_exists ? (long)orig_info.st_size : 0;
+        bool real_exists = stat(real, &real_info) == 0;
+        long real_size = real_exists ? (long)real_info.st_size : 0;
+        /* Already deployed: original is our wrapper AND marker present */
+        if (orig_exists && orig_size > 0 && orig_size <= (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES &&
+            stat(marker, &(struct stat){0}) == 0)
+            continue;
+        /* No real binary to preserve — directory is incomplete, skip */
+        bool has_real_binary =
+            (real_exists && real_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES) ||
+            (orig_exists && orig_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES);
+        if (!has_real_binary)
+            continue;
+        /* _real is a stale wrapper copy, original is real Steam binary */
+        if (real_exists && real_size > 0 && real_size < (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES) {
+            if (orig_exists && orig_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES) {
+                (void)unlink(real);
+                (void)rename(original, real);
+            } else {
+                continue;
+            }
+        } else if (orig_exists && orig_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES) {
+            /* Original is real Steam binary, _real missing or real — rename */
+            (void)unlink(real);
+            (void)rename(original, real);
+        } else if (orig_exists) {
+            (void)unlink(original);
+        }
+        FILE* source_file = fopen(wrapper_source, "rb");
+        FILE* dest_file = source_file != NULL ? fopen(original, "wb") : NULL;
+        if (source_file != NULL && dest_file != NULL) {
+            char buffer[4096];
+            size_t count;
+            while ((count = fread(buffer, 1u, sizeof(buffer), source_file)) != 0u)
+                (void)fwrite(buffer, 1u, count, dest_file);
+            fclose(dest_file);
+            fclose(source_file);
+            FILE* marker_file = fopen(marker, "wb");
+            if (marker_file != NULL) {
+                fputs("deployed", marker_file);
+                fclose(marker_file);
+            }
+            deployed = true;
+        } else {
+            if (source_file != NULL)
+                fclose(source_file);
+            if (dest_file != NULL)
+                fclose(dest_file);
+        }
+        if (deployed)
+            break;
+    }
+    return deployed;
+}
+
+static MetalsharpResponse* handle_steam_launch(const HttpRequest* req) {
+    (void)req;
+    char wine[PATH_MAX], prefix[PATH_MAX], steam_exe[PATH_MAX], steam_dir[PATH_MAX];
+    if (!steam_find_wine(wine, sizeof(wine)))
+        return steam_route_response("{\"ok\":false,\"error\":\"MetalSharp Wine not found\"}", 500);
+    snprintf(prefix, sizeof(prefix), "%s/prefix-steam", steam_home());
+    snprintf(steam_dir, sizeof(steam_dir), "%s/drive_c/Program Files (x86)/Steam", prefix);
+    snprintf(steam_exe, sizeof(steam_exe), "%s/Steam.exe", steam_dir);
+    if (access(steam_exe, F_OK) != 0)
+        return steam_route_response(
+            "{\"ok\":false,\"error\":\"Steam is not installed \u2014 use the setup wizard to install it first\"}", 500);
+    if (steam_is_wine_steam_running())
+        return steam_route_response("{\"ok\":true,\"message\":\"Steam already running\"}", 200);
+    (void)steam_deploy_webhelper_wrapper(steam_dir);
+    char* argv[] = {
+        wine, steam_exe, "-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite", NULL};
+    pid_t pid = 0;
+    char spawn_error[512];
+    if (!steam_spawn_wine(argv, steam_dir, prefix, &pid, spawn_error, sizeof(spawn_error)))
+        return steam_route_response(spawn_error, 500);
+    atomic_store(&g_steam_running, true);
+    char body[64];
+    int n = snprintf(body, sizeof(body), "{\"ok\":true,\"pid\":%ld}", (long)pid);
+    return n > 0 && (size_t)n < sizeof(body) ? steam_route_response(body, 200) : NULL;
+}
+
+static MetalsharpResponse* handle_steam_stop(const HttpRequest* req) {
+    (void)req;
+    char prefix[PATH_MAX];
+    snprintf(prefix, sizeof(prefix), "%s/prefix-steam", steam_home());
+    char wineserver[PATH_MAX];
+    int written = snprintf(wineserver, sizeof(wineserver), "%s/runtime/wine/bin/wineserver", steam_home());
+    if (written >= 0 && (size_t)written < sizeof(wineserver) && access(wineserver, X_OK) == 0) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            (void)setenv("WINEPREFIX", prefix, 1);
+            int null_fd = open("/dev/null", O_RDWR);
+            if (null_fd >= 0) {
+                (void)dup2(null_fd, STDOUT_FILENO);
+                (void)dup2(null_fd, STDERR_FILENO);
+                if (null_fd > STDERR_FILENO)
+                    close(null_fd);
+            }
+            execl(wineserver, wineserver, "-k", (char*)NULL);
+            _exit(127);
+        }
+        if (pid > 0) {
+            while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+            }
+        }
+    }
+    atomic_store(&g_steam_running, false);
+    return steam_route_response("{\"ok\":true,\"running\":false}", 200);
 }
 
 /* ── Route registration ── */
