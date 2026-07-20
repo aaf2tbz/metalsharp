@@ -247,6 +247,7 @@ def build_staging(tmp: Path) -> dict[str, Path]:
         "dxgi.dylib",
         "xaudio2_9.dylib",
         "xinput1_4.dylib",
+        "opengl32.dylib",
     ]
     native_so = [
         "d3d11.so",

@@ -15,7 +15,7 @@ set -euo pipefail
 NATIVE_DIR="${1:-${METALSHARP_NATIVE_DIR:-app/native}}"
 
 required_dylibs=(
-    d3d11.dylib d3d12.dylib dxgi.dylib xaudio2_9.dylib xinput1_4.dylib
+    d3d11.dylib d3d12.dylib dxgi.dylib xaudio2_9.dylib xinput1_4.dylib opengl32.dylib
 )
 required_bins=(metalsharp metalsharp_launcher)
 

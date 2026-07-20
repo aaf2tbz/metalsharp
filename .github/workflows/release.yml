@@ -27,6 +27,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          submodules: recursive
 
       - name: Build and validate committed C backend
         run: |
@@ -114,6 +116,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          submodules: recursive
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -133,7 +137,7 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
           cmake --build . --parallel $(sysctl -n hw.ncpu)
           mkdir -p ../app/native
-          cp libd3d11.dylib libd3d12.dylib libdxgi.dylib libxaudio2_9.dylib libxinput1_4.dylib ../app/native/ 2>/dev/null || true
+          cp libd3d11.dylib libd3d12.dylib libdxgi.dylib libxaudio2_9.dylib libxinput1_4.dylib libopengl32.dylib ../app/native/ 2>/dev/null || true
           cp metalsharp metalsharp_launcher MetalSharpMigrator ../app/native/ 2>/dev/null || true
           cd ..
           METALSHARP_BUILD_DIR="$PWD/build" tools/package/create-host-runtime.sh
