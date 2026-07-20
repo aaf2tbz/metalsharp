@@ -23,7 +23,7 @@ static const MetalsharpLaunchPolicy policies[] = {
         "lib/dxmt_m12/x86_64-windows",
         "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix",
         "winemetal.so",
-        "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
+        "opengl32,winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d",
         true,
         true,
     },
