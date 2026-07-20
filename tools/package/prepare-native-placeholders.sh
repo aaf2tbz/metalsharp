@@ -43,6 +43,7 @@ MUST_BUILD_BASE=(
   dxgi
   xaudio2_9
   xinput1_4
+  opengl32
 )
 MUST_BUILD_EXECUTABLES=(
   metalsharp
