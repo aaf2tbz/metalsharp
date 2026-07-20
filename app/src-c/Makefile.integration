@@ -1,0 +1,54 @@
+# Integration build for genuine-C backend rewrite (in progress)
+CC := $(shell xcrun --find clang)
+SDKROOT := $(shell xcrun --show-sdk-path)
+DEPLOYMENT_TARGET ?= 13.0
+OUT_DIR ?= ../build/c-backend-genuine
+
+# Our new hand-written C files
+NEW_SRCS := $(wildcard ../../PLAN/c-impl/*.c)
+
+# Maintained C files (unchanged)
+MAINTAINED_SRCS := bottles.c installer.c launcher.c migration.c runtime_surface.c
+
+# Native arm64 objects (unchanged)
+NATIVE_DIR := native/objects
+NATIVE_OBJS := $(wildcard $(NATIVE_DIR)/*.o)
+
+CFLAGS := -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-unused-function \
+  -fwrapv -fno-strict-aliasing -funwind-tables -fno-stack-protector \
+  -ffunction-sections -fdata-sections -fno-optimize-sibling-calls -fPIC \
+  -mno-outline-atomics -O1 -arch arm64 \
+  -mmacosx-version-min=$(DEPLOYMENT_TARGET) -isysroot $(SDKROOT) \
+  -I. -I../../PLAN/c-impl
+
+LDFLAGS := -arch arm64 -mmacosx-version-min=$(DEPLOYMENT_TARGET) -isysroot $(SDKROOT) \
+  -Wl,-dead_strip -lobjc -framework Foundation -framework Security \
+  -framework CoreFoundation -liconv -lc -lm
+
+BACKEND := $(OUT_DIR)/metalsharp-backend
+
+# Build all object files
+NEW_OBJS := $(patsubst ../../PLAN/c-impl/%.c,build/new/%.o,$(NEW_SRCS))
+MAINTAINED_OBJS := $(patsubst %.c,build/maintained/%.o,$(MAINTAINED_SRCS))
+
+.PHONY: backend clean
+
+backend: $(BACKEND)
+	@echo "=== Backend built: $(BACKEND) ==="
+	@ls -la $(BACKEND)
+	@file $(BACKEND)
+
+$(BACKEND): $(NEW_OBJS) $(MAINTAINED_OBJS) $(NATIVE_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(NEW_OBJS) $(MAINTAINED_OBJS) $(NATIVE_OBJS) $(LDFLAGS) -o $@
+
+build/new/%.o: ../../PLAN/c-impl/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+build/maintained/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+clean:
+	rm -rf build $(OUT_DIR)

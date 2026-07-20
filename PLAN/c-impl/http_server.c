@@ -285,78 +285,52 @@ static char* serialize_response(const MetalsharpResponse* resp) {
         return strdup("{\"ok\":false,\"error\":\"internal error\"}");
     }
 
-    char* esc_err = NULL;
+    /* If data is already a complete JSON object string, return it directly
+     * (the route handler is responsible for producing the full response).
+     * Otherwise build the envelope from ok/error_msg/data fields. */
+    const char* raw = (const char*)resp->data;
+    if (raw != NULL && raw[0] == '{') {
+        return strdup(raw);
+    }
+
+    /* Legacy envelope: build {"ok":...,"error":"..."} from struct fields. */
+    const char* msg = resp->error_msg ? resp->error_msg : "error";
     if (!resp->ok) {
-        const char* msg = resp->error_msg ? resp->error_msg : "error";
-        esc_err = json_escape(msg);
+        char* esc_err = json_escape(msg);
         if (!esc_err)
             return NULL;
+        size_t len = strlen(esc_err) + 64;
+        char* out = malloc(len);
+        if (out)
+            snprintf(out, len, "{\"ok\":false,\"error\":\"%s\"}", esc_err);
+        free(esc_err);
+        return out;
     }
 
+    /* Serialize JsonValue data if present. */
     char* data_json = NULL;
-    if (resp->data) {
+    if (resp->data && raw[0] != '{') {
         data_json = json_serialize((const JsonValue*)resp->data);
-        if (!data_json) {
-            free(esc_err);
-            return NULL;
-        }
     }
 
-    size_t total = 16;
-    if (esc_err)
-        total += strlen(esc_err) + 16;
+    size_t total = 32;
     if (data_json)
         total += strlen(data_json) + 16;
 
-    char* out = (char*)malloc(total);
+    char* out = malloc(total);
     if (!out) {
-        free(esc_err);
         free(data_json);
         return NULL;
     }
 
-    size_t off = 0;
-    int n = snprintf(out + off, total - off, "{\"ok\":%s", resp->ok ? "true" : "false");
-    if (n < 0 || (size_t)n >= total - off) {
-        free(out);
-        free(esc_err);
-        free(data_json);
-        return NULL;
-    }
-    off += (size_t)n;
-
-    if (esc_err) {
-        n = snprintf(out + off, total - off, ",\"error\":\"%s\"", esc_err);
-        if (n < 0 || (size_t)n >= total - off) {
-            free(out);
-            free(esc_err);
-            free(data_json);
-            return NULL;
-        }
-        off += (size_t)n;
-    }
     if (data_json) {
-        n = snprintf(out + off, total - off, ",\"data\":%s", data_json);
-        if (n < 0 || (size_t)n >= total - off) {
-            free(out);
-            free(esc_err);
-            free(data_json);
-            return NULL;
-        }
-        off += (size_t)n;
-    }
-    if (off + 2 > total) {
-        free(out);
-        free(esc_err);
+        snprintf(out, total, "{\"ok\":true,\"data\":%s}", data_json);
         free(data_json);
-        return NULL;
+        return out;
     }
-    out[off++] = '}';
-    out[off] = '\0';
 
-    free(esc_err);
-    free(data_json);
-    return out;
+    free(out);
+    return strdup("{\"ok\":true}");
 }
 
 /*
