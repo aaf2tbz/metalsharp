@@ -178,6 +178,8 @@ static MetalsharpResponse* handle_steam_watch_steamapps(const HttpRequest* req);
  * uninstall, bridge, compatdata, runtime-doctor, and mac-*
  * route until the real backend adapters land. */
 static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req);
+static bool steam_is_wine_steam_running(void);
+static bool steam_find_wine(char* output, size_t output_size);
 static MetalsharpResponse* handle_steam_launch(const HttpRequest* req);
 static MetalsharpResponse* handle_steam_stop(const HttpRequest* req);
 
@@ -399,19 +401,20 @@ static bool steam_installed(void) {
 
 static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
     (void)req;
-    bool running = atomic_load(&g_steam_running);
-    /* Real implementation will scan /Applications/Steam.app
-     * Contents/MacOS/Steam alongside the installed flag; for
-     * now the running flag reflects the bridge or scanner
-     * worker that last updated g_steam_running. */
+    bool running = steam_is_wine_steam_running();
+    if (!running)
+        running = atomic_load(&g_steam_running);
+    char wine_path[PATH_MAX];
+    bool wine_available = steam_find_wine(wine_path, sizeof(wine_path));
     char body[512];
     int n = snprintf(body, sizeof(body),
-                     "{\"installed\":false,\"running\":%s,\"installing\":false,"
-                     "\"path\":null,\"metalsharp_wine_available\":false,\"mac_installed\":%s,"
+                     "{\"installed\":true,\"running\":%s,\"installing\":false,"
+                     "\"path\":null,\"metalsharp_wine_available\":%s,\"mac_installed\":%s,"
                      "\"mac_running\":false,\"mac_path\":null,"
                      "\"mac_install_url\":\"https://store.steampowered.com/about/\","
                      "\"login_state\":{\"state\":\"unknown\",\"account\":null}}",
-                     running ? "true" : "false", steam_installed() ? "true" : "false");
+                     running ? "true" : "false", wine_available ? "true" : "false",
+                     steam_installed() ? "true" : "false");
     if (n < 0 || (size_t)n >= sizeof(body)) {
         return make_error_response("internal error");
     }
@@ -1041,8 +1044,10 @@ static MetalsharpResponse* handle_steam_launch(const HttpRequest* req) {
     if (access(steam_exe, F_OK) != 0)
         return steam_route_response(
             "{\"ok\":false,\"error\":\"Steam is not installed \u2014 use the setup wizard to install it first\"}", 500);
-    if (steam_is_wine_steam_running())
+    if (steam_is_wine_steam_running()) {
+        atomic_store(&g_steam_running, true);
         return steam_route_response("{\"ok\":true,\"message\":\"Steam already running\"}", 200);
+    }
     (void)steam_deploy_webhelper_wrapper(steam_dir);
     char* argv[] = {
         wine, steam_exe, "-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite", NULL};
