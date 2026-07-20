@@ -1,46 +1,28 @@
 /// @file WGLShim.cpp
-/// @brief WGL (Windows GL) function stubs for opengl32 shim.
+/// @brief WGL (Windows GL) entry points for opengl32 shim.
 ///
-/// Implements the subset of WGL that the opengl32.dll shim needs to satisfy
-/// direct (non-Wine) callers. In practice, the Wine/Proton path has its own
-/// WGL implementation that talks to macOS NSOpenGLContext; these stubs only
-/// fire when a binary loads opengl32.dll directly without going through
-/// Wine. We therefore return benign non-null sentinels rather than building
-/// a full NSOpenGLContext here — Phase 4c can layer that in if needed.
+/// Each function here delegates to WGLContextManager, which owns the
+/// AppKit NSOpenGLContext objects that back the Windows-side HGLRC
+/// handles. The shim is what direct opengl32.dll callers (i.e. binaries
+/// running outside Wine) see; under Wine, Wine's own WGL implementation
+/// owns the contexts and these stubs short-circuit.
 
 #include <cstdint>
 #include <metalsharp/OpenGLBridge.h>
+#include <metalsharp/WGLContextManager.h>
 
 extern "C" {
 
-// Sentinel "context" handle returned from wglCreateContext. Non-null so
-// callers that check the return value proceed; wglMakeCurrent is a no-op.
-static void* const kWglSentinelContext = reinterpret_cast<void*>(0x1);
-
 void* wglCreateContext(void* hdc) {
-    // On macOS, GL contexts are created through NSOpenGLContext. Wine handles
-    // context creation for Wine-launched binaries; this stub fires only for
-    // direct opengl32.dll loading. Returning a sentinel is sufficient because
-    // any real GL call would still fail without a live NSOpenGLContext, which
-    // is out of scope for the structural Phase 4b framework.
-    (void)hdc;
-    return kWglSentinelContext;
+    return metalsharp::WGLContextManager::instance().createContext(hdc, nullptr);
 }
 
 int32_t wglMakeCurrent(void* hdc, void* hglrc) {
-    // TODO(Phase 4c): wire to NSOpenGLContext -makeCurrentContext when running
-    // outside Wine. For now, accept any non-null sentinel and report success.
-    (void)hdc;
-    (void)hglrc;
-    return 1; // TRUE
+    return metalsharp::WGLContextManager::instance().makeCurrent(hdc, hglrc) ? 1 : 0;
 }
 
 int32_t wglDeleteContext(void* hglrc) {
-    // TODO(Phase 4c): release the corresponding NSOpenGLContext if we ever
-    // allocate one in wglCreateContext above. For Phase 4b we have nothing
-    // to release.
-    (void)hglrc;
-    return 1; // TRUE
+    return metalsharp::WGLContextManager::instance().deleteContext(hglrc) ? 1 : 0;
 }
 
 void* wglGetProcAddress(const char* name) {
@@ -58,12 +40,38 @@ void* wglGetProcAddress(const char* name) {
     return bridge.getGLProcAddress(name);
 }
 
-// wglShareLists is not supported on macOS Core GL — return FALSE so callers
-// know their context-sharing request was rejected rather than silently dropped.
-int32_t wglShareLists(void* hglrc1, void* hglrc2) {
-    (void)hglrc1;
-    (void)hglrc2;
-    return 0; // FALSE — share lists not supported
+// wglShareLists is implemented at context creation time on macOS —
+// callers wanting sharing must pass the share context into
+// wglCreateContext / wglCreateContextAttribsARB. Return FALSE so a
+// Windows caller that actively requests post-creation sharing learns
+// the operation was rejected rather than silently dropped.
+int32_t wglShareLists(void* /*hglrc1*/, void* /*hglrc2*/) {
+    return 0; // FALSE — share lists not supported post-creation
+}
+
+// WGL_ARB_create_context entry point. Maps to NSOpenGL's 3.2 Core
+// profile factory in the manager.
+void* wglCreateContextAttribsARB(void* hdc, void* shareContext, const int* attribs) {
+    return metalsharp::WGLContextManager::instance().createContextAttribs(hdc, shareContext, attribs);
+}
+
+int32_t wglSwapIntervalEXT(int32_t interval) {
+    return metalsharp::WGLContextManager::instance().setSwapInterval(static_cast<int>(interval)) ? 1 : 0;
+}
+
+// WGL_ARB_pixel_format chose path. MetalSharp currently exposes a
+// single pixel format; WGL's expected behaviour is to return a list of
+// matches. We just return the single index, mirroring the index used by
+// describePixelFormat below.
+int32_t wglChoosePixelFormat(void* /*hdc*/, const int* /*attribs*/) {
+    return 1;
+}
+
+int32_t wglDescribePixelFormat(void* /*hdc*/, int32_t format, uint32_t /*size*/, uint32_t* values) {
+    auto fmt = metalsharp::WGLContextManager::instance().choosePixelFormat(nullptr);
+    return metalsharp::WGLContextManager::instance().describePixelFormat(fmt, static_cast<uint32_t>(format), values)
+               ? 1
+               : 0;
 }
 
 } // extern "C"

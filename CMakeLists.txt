@@ -338,6 +338,7 @@ add_library(metalsharp_opengl32 SHARED
     src/opengl/OpenGLBridge.mm
     src/opengl/EntryPoint.cpp
     src/opengl/WGLShim.cpp
+    src/opengl/WGLContextManager.mm
     src/opengl/GLSLCompiler.cpp
     src/opengl/GLShaderCache.cpp
     src/opengl/GLShaderTracker.cpp

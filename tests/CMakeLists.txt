@@ -207,3 +207,10 @@ add_executable(test_metal_renderer
 target_link_libraries(test_metal_renderer PRIVATE metalsharp_opengl32 metalsharp_core ${METAL_FRAMEWORK})
 target_compile_options(test_metal_renderer PRIVATE -fobjc-arc)
 add_test(NAME metal_renderer COMMAND test_metal_renderer)
+
+add_executable(test_wgl_context
+    test_wgl_context.mm
+)
+target_link_libraries(test_wgl_context PRIVATE metalsharp_opengl32 metalsharp_core ${METAL_FRAMEWORK} ${APPKIT_FRAMEWORK})
+target_compile_options(test_wgl_context PRIVATE -fobjc-arc)
+add_test(NAME wgl_context COMMAND test_wgl_context)
