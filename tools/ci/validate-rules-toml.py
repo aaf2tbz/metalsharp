@@ -54,7 +54,7 @@ VALID_PIPELINES = {
     "managed",
 }
 
-VALID_SUB_KEYS = {"dependencies", "env", "diagnostics"}
+VALID_SUB_KEYS = {"dependencies", "env", "diagnostics", "exe_args"}
 
 M12_LAUNCH_CONTRACT = {
     "pipeline": "m12",
@@ -65,7 +65,7 @@ M12_LAUNCH_CONTRACT = {
     "windows_dll_path": "lib/dxmt_m12/x86_64-windows",
     "unix_library_path": "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix",
     "dll_overrides": (
-        "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;"
+        "opengl32,winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;"
         "gameoverlayrenderer,gameoverlayrenderer64=d"
     ),
     "steam_client": "background",
@@ -157,6 +157,40 @@ def main() -> int:
                     f"[overrides.{appid}.{key}] is not a recognized sub-table"
                 )
             seen_sub_keys.setdefault(appid, set()).add(key)
+
+    # 5b. Per-game `exe_args` (top-level list of non-empty strings) — used by
+    #     the C launcher to pass engine-specific flags (e.g. `-force-glcore`,
+    #     `-gl`, `+set`). Must reject shell metacharacters so the runtime
+    #     cannot be tricked into evaluating untrusted input.
+    exe_args_disallowed = set(";&|`$'\"\n\r")
+    for appid, rule in overrides.items():
+        if not isinstance(rule, dict):
+            continue
+        exe_args = rule.get("exe_args", [])
+        if isinstance(exe_args, str) or not isinstance(exe_args, list):
+            errors.append(
+                f"[overrides.{appid}] `exe_args` must be a list of strings"
+            )
+            continue
+        if not exe_args:
+            continue
+        for index, entry in enumerate(exe_args):
+            if not isinstance(entry, str):
+                errors.append(
+                    f"[overrides.{appid}] `exe_args[{index}]` must be a string"
+                )
+                continue
+            if entry == "":
+                errors.append(
+                    f"[overrides.{appid}] `exe_args[{index}]` must be non-empty"
+                )
+                continue
+            bad = [c for c in entry if c in exe_args_disallowed or ord(c) < 0x20]
+            if bad:
+                errors.append(
+                    f"[overrides.{appid}] `exe_args[{index}]` contains "
+                    f"disallowed characters: {bad!r}"
+                )
 
     # 6. A user-selected M12 bottle must inherit Elden Ring's proven runtime
     #    surface without inheriting its app-specific EAC executable mapping.

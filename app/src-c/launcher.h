@@ -29,4 +29,12 @@ bool metalsharp_launcher_preflight(unsigned int appid, unsigned char pipeline_co
 /* Own the idempotent direct-executable preparation for mapped EAC titles. */
 bool metalsharp_launcher_prepare_eac(unsigned int appid, const char* game_directory, size_t game_directory_len);
 
+/* Validate per-game `exe_args` from `configs/mtsp-rules.toml` before the
+ * launcher forwards them to the engine. Rejects NULL pointers, empty strings,
+ * shell metacharacters, path-traversal sequences, and control characters so
+ * untrusted TOML content cannot be evaluated by a shell or load off-tree
+ * files. A NULL data pointer with `arg_count == 0` is accepted (no flags). */
+bool metalsharp_launcher_validate_exe_args(unsigned int appid, unsigned char pipeline_code,
+                                            const char* const* args, size_t arg_count);
+
 #endif

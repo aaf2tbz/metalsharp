@@ -26,7 +26,7 @@ int main(void) {
     assert(strcmp(m12_launch->windows_dll_path, "lib/dxmt_m12/x86_64-windows") == 0);
     assert(strcmp(m12_launch->unix_library_path, "lib/dxmt_m12/x86_64-unix:lib/wine/x86_64-unix") == 0);
     assert(strcmp(m12_launch->dll_overrides,
-                  "winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d") ==
+                  "opengl32,winemetal,d3d12,dxgi,dxgi_dxmt,d3d11,d3d10core=n,b;gameoverlayrenderer,gameoverlayrenderer64=d") ==
            0);
     assert(m12_launch->direct_executable);
     assert(m12_launch->steam_background_client);
@@ -45,6 +45,27 @@ int main(void) {
     assert(strcmp(metalsharp_bottle_policy("m10_32")->surface_id, METALSHARP_DXMT_I386_SURFACE_ID) == 0);
     assert(metalsharp_bottle_policy(NULL) == NULL);
     assert(metalsharp_launch_policy("unknown") == NULL);
+
+    /* exe_args validation */
+    const char* valid_args[] = {"-force-glcore", "+set", "r_renderer"};
+    const char* invalid_empty[] = {""};
+    const char* invalid_null[] = {NULL};
+    const char* invalid_shell[] = {"; rm -rf /"};
+    const char* invalid_traversal[] = {"../../../etc/passwd"};
+    const char* invalid_control[] = {"foo\nbar"};
+    const char* invalid_backtick[] = {"`id`"};
+
+    assert(metalsharp_launcher_validate_exe_args(107100, 4, valid_args, 3));
+    assert(!metalsharp_launcher_validate_exe_args(107100, 4, invalid_empty, 1));
+    assert(!metalsharp_launcher_validate_exe_args(107100, 4, invalid_null, 1));
+    assert(!metalsharp_launcher_validate_exe_args(107100, 4, invalid_shell, 1));
+    assert(!metalsharp_launcher_validate_exe_args(107100, 4, invalid_traversal, 1));
+    assert(!metalsharp_launcher_validate_exe_args(107100, 4, invalid_control, 1));
+    assert(!metalsharp_launcher_validate_exe_args(107100, 4, invalid_backtick, 1));
+    /* empty list always passes */
+    assert(metalsharp_launcher_validate_exe_args(107100, 4, NULL, 0));
+
+    puts("exe_args validation tests passed");
     puts("maintained bottle/launcher policy tests passed");
     return 0;
 }

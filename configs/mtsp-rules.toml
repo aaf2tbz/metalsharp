@@ -131,6 +131,7 @@ name = "Mirror's Edge"
 [overrides.620]
 pipeline = "m9"
 name = "Portal 2"
+exe_args = ["-gl"]
 
 [overrides.265930]
 pipeline = "m9"
@@ -203,6 +204,7 @@ check_dlls = ["d3d12.dll", "d3d11.dll", "dxgi_dxmt.dll", "dxgi.dll", "winemetal.
 [overrides.397540]
 pipeline = "m11"
 name = "Borderlands 3"
+exe_args = ["-opengl"]
 
 [overrides.397540.diagnostics]
 check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
@@ -243,6 +245,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.774361]
 pipeline = "m9"
 name = "Blasphemous"
+exe_args = ["-force-glcore"]
 
 [overrides.1551360]
 pipeline = "m12"
@@ -445,10 +448,12 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.588650]
 pipeline = "wine_bare"
 name = "Dead Cells"
+exe_args = ["-force-glcore"]
 
 [overrides.1637320]
 pipeline = "wine_bare"
 name = "Dome Keeper"
+exe_args = ["-force-glcore"]
 
 [overrides.1562430]
 pipeline = "fna_arm64"
@@ -729,6 +734,7 @@ check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll",
 [overrides.240]
 pipeline = "m9"
 name = "Counter-Strike: Source"
+exe_args = ["-gl"]
 
 [overrides.240.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -739,6 +745,7 @@ check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll",
 [overrides.300]
 pipeline = "m9"
 name = "Day of Defeat: Source"
+exe_args = ["-gl"]
 
 [overrides.300.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -929,6 +936,7 @@ check_dlls = ["d3d10core.dll", "d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.8850]
 pipeline = "m11"
 name = "BioShock 2"
+exe_args = ["-opengl4"]
 
 [overrides.8850.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -939,6 +947,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.8870]
 pipeline = "m11"
 name = "BioShock Infinite"
+exe_args = ["-opengl4"]
 
 [overrides.8870.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -1349,6 +1358,7 @@ check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll",
 [overrides.35140]
 pipeline = "m9"
 name = "Batman: Arkham Asylum"
+exe_args = ["-opengl4"]
 
 [overrides.35140.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -1546,6 +1556,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.107100]
 pipeline = "m11_32"
 name = "Bastion"
+exe_args = ["-force-glcore"]
 
 [overrides.107100.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -1556,6 +1567,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.107410]
 pipeline = "m11"
 name = "Arma 3"
+exe_args = ["-opengl"]
 
 [overrides.107410.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -1736,6 +1748,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.208200]
 pipeline = "m11"
 name = "DOOM 3"
+exe_args = ["+set", "r_renderer", "opengl"]
 
 [overrides.208200.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -1836,6 +1849,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.219740]
 pipeline = "m11_32"
 name = "Don't Starve"
+exe_args = ["-force-glcore"]
 
 [overrides.219740.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -1916,6 +1930,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.226840]
 pipeline = "m11"
 name = "Age of Wonders III"
+exe_args = ["-force-glcore"]
 
 [overrides.226840.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -2046,6 +2061,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.238010]
 pipeline = "m11"
 name = "Deus Ex: Human Revolution - Director's Cut"
+exe_args = ["-force-glcore"]
 
 [overrides.238010.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -2096,6 +2112,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.247080]
 pipeline = "m11_32"
 name = "Crypt of the NecroDancer"
+exe_args = ["-force-glcore"]
 
 [overrides.247080.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -2136,6 +2153,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.251570]
 pipeline = "m11"
 name = "7 Days to Die"
+exe_args = ["-force-glcore"]
 
 [overrides.251570.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -2156,6 +2174,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.255710]
 pipeline = "m11"
 name = "Cities: Skylines"
+exe_args = ["-force-glcore"]
 
 [overrides.255710.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -2166,6 +2185,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.257350]
 pipeline = "m11"
 name = "Baldur's Gate II: Enhanced Edition"
+exe_args = ["-force-glcore"]
 
 [overrides.257350.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -2216,6 +2236,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.261640]
 pipeline = "m9"
 name = "Borderlands: The Pre-Sequel"
+exe_args = ["-opengl4"]
 
 [overrides.261640.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -2226,6 +2247,7 @@ check_dlls = ["d3d9.dll", "d3dx9_43.dll", "D3DCompiler_43.dll", "xinput1_3.dll",
 [overrides.262060]
 pipeline = "m11_32"
 name = "Darkest Dungeon"
+exe_args = ["-force-glcore"]
 
 [overrides.262060.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -2276,6 +2298,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.270880]
 pipeline = "m11"
 name = "American Truck Simulator"
+exe_args = ["-force-glcore"]
 
 [overrides.270880.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -2546,6 +2569,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.322330]
 pipeline = "m11_32"
 name = "Don't Starve Together"
+exe_args = ["-force-glcore"]
 
 [overrides.322330.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -2566,6 +2590,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.337000]
 pipeline = "m11"
 name = "Deus Ex: Mankind Divided"
+exe_args = ["-force-glcore"]
 
 [overrides.337000.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -3916,6 +3941,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.861540]
 pipeline = "m11_32"
 name = "Dicey Dungeons"
+exe_args = ["-force-glcore"]
 
 [overrides.861540.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -4166,6 +4192,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.977880]
 pipeline = "m11_32"
 name = "Eastward"
+exe_args = ["-force-glcore"]
 
 [overrides.977880.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -4246,6 +4273,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1055540]
 pipeline = "m11_32"
 name = "A Short Hike"
+exe_args = ["-force-glcore"]
 
 [overrides.1055540.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]
@@ -4566,6 +4594,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1148590]
 pipeline = "m11"
 name = "DOOM 64"
+exe_args = ["+set", "r_renderer", "opengl"]
 
 [overrides.1148590.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -4636,6 +4665,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.1158310]
 pipeline = "m11"
 name = "Crusader Kings III"
+exe_args = ["-force-glcore"]
 
 [overrides.1158310.dependencies]
 components = ["vcrun2019", "directx_jun2010"]
@@ -6276,6 +6306,7 @@ check_dlls = ["d3d11.dll", "dxgi.dll", "winemetal.dll"]
 [overrides.2379780]
 pipeline = "m11_32"
 name = "Balatro"
+exe_args = ["-force-glcore"]
 
 [overrides.2379780.dependencies]
 components = ["vcrun2019_x86", "directx_jun2010"]

@@ -1,5 +1,16 @@
 # OpenGL Bridge PE Shim & Per-Game Activation
 
+## Progress
+
+- [x] Phase 1: PE shim source & build infrastructure
+- [x] Phase 2: Pipeline wiring
+- [x] Phase 3: Bundle integration
+- [x] Phase 4: TOML schema for exe_args
+- [x] Phase 5: 30 OpenGL game entries
+- [x] Phase 6: C backend validation hook
+- [x] Phase 7: Documentation & CI
+- [ ] Phase 8: Commit & verify
+
 ## Overview
 
 PR #307 delivered the MetalSharp OpenGL bridge (`opengl32.dylib`, 172 GL exports, SPIRV-Cross pipeline, Metal draw emitter). However the bridge is not yet **activatable** for Windows games running under Wine:

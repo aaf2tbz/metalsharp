@@ -433,3 +433,27 @@ bool metalsharp_launcher_prepare_eac(unsigned int appid, const char* game_direct
     }
     return true;
 }
+
+bool metalsharp_launcher_validate_exe_args(unsigned int appid, unsigned char pipeline_code,
+                                            const char* const* args, size_t arg_count) {
+    (void)appid;
+    (void)pipeline_code;
+    if (arg_count == 0)
+        return true; /* empty list is valid; NULL data pointer is fine */
+    if (args == NULL)
+        return false;
+    for (size_t i = 0; i < arg_count; ++i) {
+        if (args[i] == NULL || args[i][0] == '\0')
+            return false;
+        for (const char* p = args[i]; *p; ++p) {
+            unsigned char c = (unsigned char)*p;
+            if (c < 0x20 || c == 0x7f)
+                return false;
+            if (c == '"' || c == '\'' || c == ';' || c == '&' || c == '|' || c == '$' || c == '`')
+                return false;
+        }
+        if (strstr(args[i], "..") != NULL)
+            return false;
+    }
+    return true;
+}
