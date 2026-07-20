@@ -128,5 +128,27 @@ contract: $(BACKEND)
 
 verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test test smoke contract
 
+# ── Genuine-C backend (hand-written C11, replaces transpiled .rcgu.c) ──
+GENUINE_SRCS := $(shell cat manifests/genuine-sources.txt)
+GENUINE_OBJS := $(patsubst runtime/genuine/%.c,build/genuine/%.o,$(GENUINE_SRCS))
+GENUINE_BACKEND := $(OUT_DIR)/metalsharp-backend-genuine
+
+genuine-backend: $(GENUINE_BACKEND)
+
+$(GENUINE_BACKEND): $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS) $(LDFLAGS) -o $@
+
+build/genuine/%.o: runtime/genuine/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I runtime/genuine -I . -c $< -o $@
+
+genuine-contract: $(GENUINE_BACKEND)
+	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
+	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(GENUINE_BACKEND)"
+
+genuine-verify: genuine-backend genuine-contract
+	@echo "Genuine-C backend verified: binary builds and passes contract conformance"
+
 clean:
 	rm -rf build $(OUT_DIR)
