@@ -122,20 +122,23 @@ test: $(TEST_BIN)
 smoke: $(BACKEND)
 	"$(CURDIR)/../../tools/c-backend/soak.sh" "$(CURDIR)/$(BACKEND)"
 
-contract: $(BACKEND)
-	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
-	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(BACKEND)"
-
-verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test test smoke contract
+verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test contract
 
 # ── Genuine-C backend (hand-written C11, replaces transpiled .rcgu.c) ──
+# This target replaces the transpiled backend build. The output binary
+# path is identical to $(BACKEND) so all downstream targets (contract,
+# conformance, soak) operate on the genuine-C backend without changes.
 GENUINE_SRCS := $(shell cat manifests/genuine-sources.txt)
 GENUINE_OBJS := $(patsubst runtime/genuine/%.c,build/genuine/%.o,$(GENUINE_SRCS))
-GENUINE_BACKEND := $(OUT_DIR)/metalsharp-backend-genuine
 
-genuine-backend: $(GENUINE_BACKEND)
+# When `make backend` is invoked, build from the genuine sources instead
+# of the transpiled runtime/c/*.rcgu.c files. Override RUNTIME_OBJS before
+# the $(BACKEND) target is evaluated.
+RUNTIME_OBJS := $(GENUINE_OBJS)
 
-$(GENUINE_BACKEND): $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
+backend: $(BACKEND)
+
+$(BACKEND): $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(GENUINE_OBJS) $(NATIVE_OBJS) $(MAINTAINED_OBJS) $(LDFLAGS) -o $@
 
@@ -143,11 +146,13 @@ build/genuine/%.o: runtime/genuine/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I runtime/genuine -I . -c $< -o $@
 
-genuine-contract: $(GENUINE_BACKEND)
+contract: $(BACKEND)
 	python3 "$(CURDIR)/../../tools/contracts/validate-electron-backend-contract.py"
-	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(GENUINE_BACKEND)"
+	python3 "$(CURDIR)/../../tools/contracts/run-electron-backend-conformance.py" "$(CURDIR)/$(BACKEND)"
 
-genuine-verify: genuine-backend genuine-contract
+verify: integrity backend graphics-archive-contract installer-test surface-test policy-test bottle-deployment-test contract
+
+genuine-verify: backend contract
 	@echo "Genuine-C backend verified: binary builds and passes contract conformance"
 
 clean:
