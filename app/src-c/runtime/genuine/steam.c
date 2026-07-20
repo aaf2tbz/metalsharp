@@ -456,8 +456,7 @@ static size_t steam_scan_installed_appids(unsigned* appids, size_t capacity) {
     if (home == NULL)
         return 0u;
     char steamapps[PATH_MAX];
-    snprintf(steamapps, sizeof(steamapps),
-             "%s/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps", home);
+    snprintf(steamapps, sizeof(steamapps), "%s/prefix-steam/drive_c/Program Files (x86)/Steam/steamapps", home);
     /* Scan appmanifest_*.acf files */
     const char* roots[] = {steamapps};
     for (size_t r = 0u; r < sizeof(roots) / sizeof(roots[0]); r++) {
@@ -557,14 +556,14 @@ static MetalsharpResponse* handle_steam_status(const HttpRequest* req) {
     char wine_path[PATH_MAX];
     bool wine_available = steam_find_wine(wine_path, sizeof(wine_path));
     char body[512];
-    int n = snprintf(body, sizeof(body),
-                     "{\"installed\":true,\"running\":%s,\"installing\":false,"
-                     "\"path\":null,\"metalsharp_wine_available\":%s,\"mac_installed\":%s,"
-                     "\"mac_running\":false,\"mac_path\":null,"
-                     "\"mac_install_url\":\"https://store.steampowered.com/about/\","
-                     "\"login_state\":{\"state\":\"unknown\",\"account\":null}}",
-                     running ? "true" : "false", wine_available ? "true" : "false",
-                     steam_installed() ? "true" : "false");
+    int n =
+        snprintf(body, sizeof(body),
+                 "{\"installed\":true,\"running\":%s,\"installing\":false,"
+                 "\"path\":null,\"metalsharp_wine_available\":%s,\"mac_installed\":%s,"
+                 "\"mac_running\":false,\"mac_path\":null,"
+                 "\"mac_install_url\":\"https://store.steampowered.com/about/\","
+                 "\"login_state\":{\"state\":\"unknown\",\"account\":null}}",
+                 running ? "true" : "false", wine_available ? "true" : "false", steam_installed() ? "true" : "false");
     if (n < 0 || (size_t)n >= sizeof(body)) {
         return make_error_response("internal error");
     }
@@ -637,8 +636,7 @@ static MetalsharpResponse* handle_steam_library(const HttpRequest* req) {
                             if (!json_object_get(game, "cover_url")) {
                                 char cover[256];
                                 snprintf(cover, sizeof(cover),
-                                         "https://steamcdn-a.akamaihd.net/steam/apps/%.0f/library_600x900.jpg",
-                                         appid);
+                                         "https://steamcdn-a.akamaihd.net/steam/apps/%.0f/library_600x900.jpg", appid);
                                 json_object_set_owned(game, "cover_url", json_new_string(cover));
                             }
                             if (!json_object_get(game, "header_url")) {
@@ -692,6 +690,39 @@ static MetalsharpResponse* steam_route_response(const char* json, int status) {
     if (response != NULL)
         response->http_status = status;
     return response;
+}
+
+static MetalsharpResponse* handle_steam_runtime_doctor(const HttpRequest* req) {
+    if (req == NULL)
+        return make_error_response("invalid request");
+    JsonValue* body = req->body != NULL && req->body_len > 0u ? json_parse(req->body, req->body_len, NULL) : NULL;
+    unsigned int appid = 0u;
+    if (body != NULL && json_type(body) == JSON_OBJECT) {
+        double v = json_get_number(json_object_get(body, "appid"), 0.0);
+        if (v > 0.0)
+            appid = (unsigned int)v;
+    }
+    json_free(body);
+    if (appid == 0u) {
+        char err[128];
+        snprintf(err, sizeof(err), "{\"ok\":false,\"error\":\"appid required\"}");
+        return steam_route_response(err, 400);
+    }
+    /* Build a minimal SteamRuntimeReport so the bottle dropdown works. */
+    char bottle_id[64];
+    snprintf(bottle_id, sizeof(bottle_id), "steam_%u", appid);
+    char buffer[2048];
+    int n = snprintf(buffer, sizeof(buffer),
+                     "{\"ok\":true,\"report\":{"
+                     "\"appid\":%u,\"bottle_id\":\"%s\",\"bottle_name\":null,"
+                     "\"preferred_pipeline\":null,\"pipeline\":\"m12\",\"runtime_profile\":\"dxmt_m12\","
+                     "\"prefix_path\":\"\",\"game_install_path\":null,"
+                     "\"runtime_assets\":[],\"components\":[],\"actions\":[]"
+                     "}}",
+                     appid, bottle_id);
+    if (n < 0 || (size_t)n >= sizeof(buffer))
+        return steam_route_response("{\"ok\":false,\"error\":\"response too large\"}", 500);
+    return steam_route_response(buffer, 200);
 }
 
 static MetalsharpResponse* handle_steam_stub_ok(const HttpRequest* req) {
@@ -901,9 +932,9 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
     if (api_key_set && has_steam_id) {
         char url[1024];
         int url_len = snprintf(url, sizeof(url),
-            "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
-            "?key=%s&steamid=%s&include_appinfo=1&include_played_free_games=1&format=json",
-            escaped_key, steam_id);
+                               "https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/"
+                               "?key=%s&steamid=%s&include_appinfo=1&include_played_free_games=1&format=json",
+                               escaped_key, steam_id);
         if (url_len > 0 && (size_t)url_len < sizeof(url)) {
             char stdout_tmp[] = "/tmp/metalsharp-steam-api-stdout-XXXXXX";
             char stderr_tmp[] = "/tmp/metalsharp-steam-api-stderr-XXXXXX";
@@ -913,13 +944,16 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
                 if (pid == 0) {
                     (void)dup2(stdout_fd, STDOUT_FILENO);
                     (void)dup2(stderr_fd, STDERR_FILENO);
-                    close(stdout_fd); close(stderr_fd);
+                    close(stdout_fd);
+                    close(stderr_fd);
                     execl("/usr/bin/curl", "curl", "-sL", "-m", "15", url, (char*)NULL);
                     _exit(127);
                 }
-                close(stdout_fd); close(stderr_fd);
+                close(stdout_fd);
+                close(stderr_fd);
                 int status = 0;
-                while (pid > 0 && waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+                while (pid > 0 && waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+                }
                 if (pid > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
                     FILE* f = fopen(stdout_tmp, "rb");
                     if (f != NULL) {
@@ -937,8 +971,8 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
                             if (games_only != NULL) {
                                 FILE* cache = fopen(cache_path, "wb");
                                 if (cache != NULL) {
-                                    fprintf(cache, "{\"timestamp\":%lld,\"games\":%s}\n",
-                                            (long long)time(NULL), games_only);
+                                    fprintf(cache, "{\"timestamp\":%lld,\"games\":%s}\n", (long long)time(NULL),
+                                            games_only);
                                     fclose(cache);
                                 }
                                 free(games_only);
@@ -947,7 +981,8 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
                         json_free(api_parsed);
                     }
                 }
-                unlink(stdout_tmp); unlink(stderr_tmp);
+                unlink(stdout_tmp);
+                unlink(stderr_tmp);
             }
         }
     }
@@ -962,7 +997,8 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
             (void)mkdir(cache, 0755);
             FILE* file = fopen(config, "wb");
             if (file != NULL) {
-                (void)fprintf(file, "{\n  \"steam_api_key\": \"%s\",\n  \"steam_id\": \"%s\"\n}\n", escaped_key, steam_id);
+                (void)fprintf(file, "{\n  \"steam_api_key\": \"%s\",\n  \"steam_id\": \"%s\"\n}\n", escaped_key,
+                              steam_id);
                 fclose(file);
             }
         }
@@ -976,10 +1012,9 @@ static MetalsharpResponse* handle_steam_save_api_key(const HttpRequest* req) {
                               "\"steam_id\":\"%s\",\"steam_id_detected\":%s},\"library\":{\"ok\":true,"
                               "\"games\":[],\"total\":%d,\"installed_count\":%d,\"sync\":{\"api_key_set\":%s,"
                               "\"owned_games_cache\":%s,\"steam_id\":\"%s\",\"steam_id_detected\":%s}}}",
-                              api_key_set ? "true" : "false", cache_exists_str,
-                              has_steam_id ? steam_id : "", has_steam_id ? "true" : "false", games_count,
-                              api_key_set ? "true" : "false", cache_exists_str,
-                              has_steam_id ? steam_id : "", has_steam_id ? "true" : "false");
+                              api_key_set ? "true" : "false", cache_exists_str, has_steam_id ? steam_id : "",
+                              has_steam_id ? "true" : "false", games_count, api_key_set ? "true" : "false",
+                              cache_exists_str, has_steam_id ? steam_id : "", has_steam_id ? "true" : "false");
     if (response_n < 0 || (size_t)response_n >= sizeof(response_body))
         return make_error_response("internal error");
     return make_data_response(response_body);
@@ -1293,9 +1328,8 @@ static bool steam_deploy_webhelper_wrapper(const char* steam_dir) {
             stat(marker, &(struct stat){0}) == 0)
             continue;
         /* No real binary to preserve — directory is incomplete, skip */
-        bool has_real_binary =
-            (real_exists && real_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES) ||
-            (orig_exists && orig_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES);
+        bool has_real_binary = (real_exists && real_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES) ||
+                               (orig_exists && orig_size > (long)STEAMWEBHELPER_WRAPPER_MAX_BYTES);
         if (!has_real_binary)
             continue;
         /* _real is a stale wrapper copy, original is real Steam binary */
@@ -1356,8 +1390,7 @@ static MetalsharpResponse* handle_steam_launch(const HttpRequest* req) {
         return steam_route_response("{\"ok\":true,\"message\":\"Steam already running\"}", 200);
     }
     (void)steam_deploy_webhelper_wrapper(steam_dir);
-    char* argv[] = {
-        wine, steam_exe, "-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite", NULL};
+    char* argv[] = {wine, steam_exe, "-no-cef-sandbox", "-cef-single-process", "-noverifyfiles", "-no-dwrite", NULL};
     pid_t pid = 0;
     char spawn_error[512];
     if (!steam_spawn_wine(argv, steam_dir, prefix, &pid, spawn_error, sizeof(spawn_error)))
@@ -1431,7 +1464,7 @@ void steam_register_routes(HttpServer* server, Database* db) {
     http_server_register(server, "POST", "/steam/compatdata", handle_steam_stub_ok);
     http_server_register(server, "GET", "/steam/watch-steamapps", handle_steam_watch_steamapps);
     http_server_register(server, "POST", "/steam/bridge-start", handle_steam_stub_ok);
-    http_server_register(server, "POST", "/steam/runtime-doctor", handle_steam_stub_ok);
+    http_server_register(server, "POST", "/steam/runtime-doctor", handle_steam_runtime_doctor);
     http_server_register(server, "POST", "/steam/d3d12-runtime-doctor", handle_steam_stub_ok);
     http_server_register(server, "POST", "/steam/mac-install", handle_steam_stub_ok);
     http_server_register(server, "POST", "/steam/mac-launch", handle_steam_stub_ok);
