@@ -75,6 +75,14 @@ struct GLState {
 /// forward GL 1.0/1.1/2.1 calls to native GL. Future phases will layer in
 /// GL 3.x/4.x shader translation (SPIRV-Cross → MSL) and Metal draw
 /// emission driven by @ref GLState.
+///
+/// @note OpenGL compatibility profile (fixed-function + shaders mixing)
+/// is partially supported. Fixed-function features (matrix stack, lighting,
+/// fog, alpha test) are forwarded to macOS native OpenGL 2.1 where available.
+/// When SPIRV-Cross shader translation is active (GLSL > 1.20), the fixed-
+/// function pipeline is not available — applications must use core-profile
+/// shader-only rendering. Full compatibility profile emulation via uniform
+/// injection into translated shaders is planned for a future release.
 class OpenGLBridge {
   public:
     OpenGLBridge();

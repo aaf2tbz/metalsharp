@@ -56,6 +56,9 @@ struct GLShaderState;
 /// itself owns an MTLDevice reference. Callers should create one renderer
 /// per GL context they intend to drive and call @ref init exactly once
 /// before any other method.
+/// @note Performance: pipeline states are cached via GLShaderCache;
+/// command encoders are reused across consecutive draws in the same
+/// render pass; buffer/uniform updates are coalesced between draw calls.
 class GLMetalRenderer {
   public:
     GLMetalRenderer();

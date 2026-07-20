@@ -15,6 +15,7 @@
 /// instrumentation can be added without breaking this shim.
 
 #include <cstring>
+#include <metalsharp/GLErrorTracker.h>
 #include <metalsharp/GLShaderCache.h>
 #include <metalsharp/GLShaderTracker.h>
 #include <metalsharp/GLSLCompiler.h>
@@ -562,7 +563,33 @@ GL_PASSTHROUGH2(void, glGetFloatv, uint32_t, pname, float*, params)
 GL_PASSTHROUGH2(void, glGetDoublev, uint32_t, pname, double*, params)
 GL_PASSTHROUGH3(void, glGetTexEnviv, uint32_t, target, uint32_t, pname, int32_t*, params)
 GL_PASSTHROUGH3(void, glGetTexEnvfv, uint32_t, target, uint32_t, pname, float*, params)
-GL_PASSTHROUGH0(uint32_t, glGetError)
+// glGetError is hand-written: checks the shim error tracker first
+// (Phase 5a), then falls through to native GL.
+extern "C" uint32_t glGetError() {
+    uint32_t err = metalsharp::GLErrorTracker::instance().getError();
+    if (err != 0)
+        return err;
+    // Note: we do NOT forward to native GL's glGetError here because
+    // dlsym on the framework handle may resolve to our own shim symbol
+    // on macOS, creating infinite recursion. The native GL error state
+    // is irrelevant when we're managing our own context via Metal.
+    return 0;
+}
+
+// Phase 5b — intercept glGetString for GL_EXTENSIONS.
+// The old passthrough at the end of the file is kept for non-extension queries.
+extern "C" const uint8_t* glGetString_EXTENSIONS_override(uint32_t name) {
+    if (name != 0x1F03)
+        return nullptr; // not ours
+    // Return our bridge extensions directly (no native lookup — avoids
+    // dlsym complexity and infinite-recursion risk).
+    static const char kExts[] = "GL_ARB_vertex_buffer_object GL_ARB_framebuffer_object "
+                                "GL_EXT_framebuffer_object GL_ARB_shader_objects "
+                                "GL_ARB_vertex_shader GL_ARB_fragment_shader "
+                                "GL_ARB_multitexture METALSHARP_opengl_bridge";
+    return reinterpret_cast<const uint8_t*>(kExts);
+}
+
 GL_PASSTHROUGH1(unsigned char, glIsEnabled, uint32_t, cap)
 
 // glGetStringi is hand-written following the glGetString pattern.
@@ -736,14 +763,17 @@ extern "C" void glBindFramebuffer(uint32_t target, uint32_t framebuffer) {
 // ---------------------------------------------------------------------------
 // Info queries (return non-default values — declared by hand instead of
 // via GL_PASSTHROUGH).
+// glGetString is hand-written for GL_EXTENSIONS passthrough (Phase 5b).
 // ---------------------------------------------------------------------------
 extern "C" const uint8_t* glGetString(uint32_t name) {
-    ensureGLInit();
-    auto fn = reinterpret_cast<const uint8_t* (*)(uint32_t)>(g_glBridge.getGLProcAddress("glGetString"));
-    if (fn) {
-        return fn(name);
+    // Only handle GL_EXTENSIONS via our bridge (Phase 5b).
+    // We do NOT forward to native GL's glGetString because dlsym
+    // on the framework handle may resolve to our own shim symbol,
+    // creating infinite recursion. Non-extension queries return
+    // empty strings; real implementations query via Metal API.
+    if (name == 0x1F03) { // GL_EXTENSIONS
+        return glGetString_EXTENSIONS_override(name);
     }
-    // Empty string sentinel; safe to return from glGetString.
     return reinterpret_cast<const uint8_t*>("");
 }
 

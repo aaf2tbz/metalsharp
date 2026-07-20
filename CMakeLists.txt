@@ -342,6 +342,7 @@ add_library(metalsharp_opengl32 SHARED
     src/opengl/GLSLCompiler.cpp
     src/opengl/GLShaderCache.cpp
     src/opengl/GLShaderTracker.cpp
+    src/opengl/GLErrorTracker.cpp
     src/opengl/GLMetalRenderer.mm
 )
 target_include_directories(metalsharp_opengl32 PRIVATE include)

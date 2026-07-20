@@ -1,9 +1,8 @@
 /// @file test_wgl_context.mm
 /// @brief Tests for WGLContextManager: pixel format decoding, context
 /// creation/make-current/deletion, swap-interval plumbing, and the
-/// Wine sentinel shortcut. All tests run against real AppKit
-/// NSOpenGLContext so they confirm the bridge can drive a Metal-capable
-/// OpenGL context.
+/// Wine sentinel shortcut. Real-context tests are skipped on headless
+/// CI runners where NSOpenGLContext is unavailable.
 
 #import <AppKit/AppKit.h>
 #include <cstdio>
@@ -11,6 +10,7 @@
 
 static int passed = 0;
 static int failed = 0;
+static int skipped = 0;
 
 #define CHECK(cond, msg)                                                                                               \
     do {                                                                                                               \
@@ -23,17 +23,10 @@ static int failed = 0;
         }                                                                                                              \
     } while (0)
 
-#define CHECK_EQ(a, b, msg)                                                                                            \
+#define CHECK_SKIP(msg)                                                                                                \
     do {                                                                                                               \
-        auto _a = (a);                                                                                                 \
-        auto _b = (b);                                                                                                 \
-        if (_a == _b) {                                                                                                \
-            printf("  [OK] %s\n", msg);                                                                                \
-            passed++;                                                                                                  \
-        } else {                                                                                                       \
-            printf("  [FAIL] %s (%lld != %lld)\n", msg, static_cast<long long>(_a), static_cast<long long>(_b));       \
-            failed++;                                                                                                  \
-        }                                                                                                              \
+        printf("  [SKIP] %s\n", msg);                                                                                  \
+        skipped++;                                                                                                     \
     } while (0)
 
 int main() {
@@ -41,7 +34,22 @@ int main() {
 
     auto& mgr = metalsharp::WGLContextManager::instance();
 
-    // Test pixel format decoding with default attribs
+    // Detect whether a real display is available. On headless CI runners
+    // NSOpenGLPixelFormat creation throws an exception.
+    bool hasDisplay = false;
+    @try {
+        NSOpenGLPixelFormatAttribute attrs[] = {NSOpenGLPFAAccelerated, 0};
+        NSOpenGLPixelFormat* pf = [[NSOpenGLPixelFormat alloc] initWithAttributes:attrs];
+        if (pf) {
+            hasDisplay = true;
+            pf = nil;
+        }
+    } @catch (NSException* e) {
+        hasDisplay = false;
+    }
+    printf("  [INFO] hasDisplay = %s\n\n", hasDisplay ? "true" : "false");
+
+    // --- Pixel format decoding (no context needed) ---
     {
         metalsharp::WGLPixelFormat fmt = mgr.choosePixelFormat(nullptr);
         CHECK(fmt.colorBits >= 24, "choosePixelFormat colorBits default >= 24");
@@ -49,7 +57,6 @@ int main() {
         CHECK(fmt.doubleBuffer, "choosePixelFormat doubleBuffer default == true");
     }
 
-    // Test pixel format decoding with explicit attribs
     {
         const int attribs[] = {
             0x2010, 16, // WGL_COLOR_BITS_ARB
@@ -59,79 +66,67 @@ int main() {
             0,
         };
         metalsharp::WGLPixelFormat fmt = mgr.choosePixelFormat(attribs);
-        CHECK_EQ(fmt.colorBits, 16u, "choosePixelFormat colorBits override == 16");
-        CHECK_EQ(fmt.depthBits, 16u, "choosePixelFormat depthBits override == 16");
-        CHECK_EQ(fmt.stencilBits, 0u, "choosePixelFormat stencilBits override == 0");
+        CHECK((fmt.colorBits == 16u), "choosePixelFormat colorBits override == 16");
+        CHECK((fmt.depthBits == 16u), "choosePixelFormat depthBits override == 16");
+        CHECK((fmt.stencilBits == 0u), "choosePixelFormat stencilBits override == 0");
         CHECK(!fmt.doubleBuffer, "choosePixelFormat doubleBuffer override == false");
     }
 
-    // Test context creation
-    void* ctx = mgr.createContext(nullptr, nullptr);
-    CHECK(ctx != nullptr, "createContext returned non-null");
+    // --- describePixelFormat stub ---
+    {
+        uint32_t values = 0;
+        bool descOk = mgr.describePixelFormat(metalsharp::WGLPixelFormat{}, 1, &values);
+        CHECK(descOk, "describePixelFormat(1) returns true");
+        descOk = mgr.describePixelFormat(metalsharp::WGLPixelFormat{}, 2, nullptr);
+        CHECK(!descOk, "describePixelFormat(2) returns false");
+    }
 
-    NSOpenGLContext* nsCtx = (__bridge NSOpenGLContext*)ctx;
-    CHECK(nsCtx != nil, "createContext produces valid NSOpenGLContext");
+    // --- Wine sentinel short-circuit (no display needed) ---
+    {
+        mgr.setRunningInWine(true);
+        void* wineCtx = mgr.createContext(nullptr, nullptr);
+        CHECK(wineCtx == reinterpret_cast<void*>(0x1), "createContext in Wine returns sentinel 0x1");
+        CHECK(mgr.makeCurrent(nullptr, wineCtx), "makeCurrent in Wine succeeds");
+        CHECK(mgr.deleteContext(wineCtx), "deleteContext in Wine succeeds");
+        CHECK(mgr.setSwapInterval(1), "setSwapInterval in Wine succeeds");
+        mgr.setRunningInWine(false);
+    }
 
-    // Test makeCurrent
-    bool ok = mgr.makeCurrent(nullptr, ctx);
-    CHECK(ok, "makeCurrent succeeded");
+    // --- Real context tests (skip if headless) ---
+    if (hasDisplay) {
+        void* ctx = mgr.createContext(nullptr, nullptr);
+        CHECK(ctx != nullptr, "createContext returned non-null");
+        CHECK((__bridge NSOpenGLContext*)ctx != nil, "createContext produces valid NSOpenGLContext");
 
-    void* cur = mgr.getCurrentContext();
-    CHECK(cur == ctx, "getCurrentContext matches");
+        bool ok = mgr.makeCurrent(nullptr, ctx);
+        CHECK(ok, "makeCurrent succeeded");
+        CHECK(mgr.getCurrentContext() == ctx, "getCurrentContext matches");
 
-    // Test makeCurrent(nullptr) clears
-    mgr.makeCurrent(nullptr, nullptr);
-    cur = mgr.getCurrentContext();
-    CHECK(cur == nullptr, "makeCurrent(null) clears context");
+        mgr.makeCurrent(nullptr, nullptr);
+        CHECK(mgr.getCurrentContext() == nullptr, "makeCurrent(null) clears context");
 
-    // Test createContextAttribs
-    void* ctx2 = mgr.createContextAttribs(nullptr, nullptr, nullptr);
-    CHECK(ctx2 != nullptr, "createContextAttribs returned non-null");
+        void* ctx2 = mgr.createContextAttribs(nullptr, nullptr, nullptr);
+        CHECK(ctx2 != nullptr, "createContextAttribs returned non-null");
 
-    // Test setSwapInterval — fails if no current context
-    bool swapOk = mgr.setSwapInterval(1);
-    CHECK(!swapOk, "setSwapInterval fails when no current context");
+        bool swapOk = mgr.setSwapInterval(1);
+        CHECK(!swapOk, "setSwapInterval fails when no current context");
 
-    // Make ctx2 current and try swap interval
-    mgr.makeCurrent(nullptr, ctx2);
-    swapOk = mgr.setSwapInterval(1);
-    CHECK(swapOk, "setSwapInterval succeeds with current context");
+        mgr.makeCurrent(nullptr, ctx2);
+        swapOk = mgr.setSwapInterval(1);
+        CHECK(swapOk, "setSwapInterval succeeds with current context");
 
-    // Test clearing current state
-    mgr.makeCurrent(nullptr, nullptr);
+        mgr.makeCurrent(nullptr, nullptr);
+        CHECK(mgr.deleteContext(ctx), "deleteContext succeeded");
+        CHECK(mgr.deleteContext(ctx2), "deleteContext(ctx2) succeeded");
+        CHECK(!mgr.deleteContext(ctx), "double delete returns false");
 
-    // Test describePixelFormat stub
-    uint32_t values = 0;
-    bool descOk = mgr.describePixelFormat(metalsharp::WGLPixelFormat{}, 1, &values);
-    CHECK(descOk, "describePixelFormat(1) returns true");
+        void* ctx3 = mgr.createContext(nullptr, nullptr);
+        CHECK(ctx3 != nullptr, "createContext after Wine toggle succeeds");
+        mgr.deleteContext(ctx3);
+    } else {
+        CHECK_SKIP("Real context tests (display required)");
+    }
 
-    descOk = mgr.describePixelFormat(metalsharp::WGLPixelFormat{}, 2, nullptr);
-    CHECK(!descOk, "describePixelFormat(2) returns false");
-
-    // Test delete
-    bool delOk = mgr.deleteContext(ctx);
-    CHECK(delOk, "deleteContext succeeded");
-    delOk = mgr.deleteContext(ctx2);
-    CHECK(delOk, "deleteContext(ctx2) succeeded");
-
-    // Double-delete should return false
-    delOk = mgr.deleteContext(ctx);
-    CHECK(!delOk, "double delete returns false");
-
-    // Test Wine sentinel short-circuit
-    mgr.setRunningInWine(true);
-    void* wineCtx = mgr.createContext(nullptr, nullptr);
-    CHECK(wineCtx == reinterpret_cast<void*>(0x1), "createContext in Wine returns sentinel 0x1");
-    CHECK(mgr.makeCurrent(nullptr, wineCtx), "makeCurrent in Wine succeeds");
-    CHECK(mgr.deleteContext(wineCtx), "deleteContext in Wine succeeds");
-    CHECK(mgr.setSwapInterval(1), "setSwapInterval in Wine succeeds");
-    mgr.setRunningInWine(false);
-
-    // Recreate after toggling off Wine mode
-    void* ctx3 = mgr.createContext(nullptr, nullptr);
-    CHECK(ctx3 != nullptr, "createContext after Wine toggle succeeds");
-    mgr.deleteContext(ctx3);
-
-    printf("\n=== Summary: %d passed, %d failed ===\n", passed, failed);
+    printf("\n=== Summary: %d passed, %d failed, %d skipped ===\n", passed, failed, skipped);
     return failed ? 1 : 0;
 }

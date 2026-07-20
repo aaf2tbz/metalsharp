@@ -214,3 +214,9 @@ add_executable(test_wgl_context
 target_link_libraries(test_wgl_context PRIVATE metalsharp_opengl32 metalsharp_core ${METAL_FRAMEWORK} ${APPKIT_FRAMEWORK})
 target_compile_options(test_wgl_context PRIVATE -fobjc-arc)
 add_test(NAME wgl_context COMMAND test_wgl_context)
+
+add_executable(test_phase5_error_ext
+    test_phase5_error_ext.cpp
+)
+target_link_libraries(test_phase5_error_ext PRIVATE metalsharp_opengl32 metalsharp_core)
+add_test(NAME phase5_error_ext COMMAND test_phase5_error_ext)

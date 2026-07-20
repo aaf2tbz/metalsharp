@@ -8,6 +8,12 @@ namespace metalsharp {
 
 struct GLSLVersion;
 
+/// @note GL 4.x tessellation, geometry, and compute shaders are supported
+/// via SPIRV-Cross translation. Tessellation control/evaluation shaders map
+/// to Metal post-tessellation vertex shaders. Geometry shaders with limited
+/// output topology map to Metal mesh shaders or are emulated via vertex
+/// amplification. Compute shaders map directly to Metal kernel functions.
+/// Transform feedback is not yet supported.
 class GLSLCompiler {
   public:
     static bool initialize();
