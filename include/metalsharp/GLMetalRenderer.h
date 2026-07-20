@@ -96,6 +96,39 @@ class GLMetalRenderer {
     /// Flush/commit pending Metal commands.
     void flush();
 
+    /// Commit and wait for GPU to finish (glFinish equivalent).
+    void finish();
+
+    /// Set the vertex descriptor stride and per-attribute layout.
+    /// @param stride   byte stride of a single vertex
+    /// @param offsets  per-attribute byte offsets (length = count)
+    /// @param formats  per-attribute Metal vertex format enum (length = count)
+    /// @param count    number of vertex attributes
+    void setVertexLayout(uint32_t stride, const uint32_t* offsets, const uint32_t* formats, uint32_t count);
+
+    /// Allocate/update a uniform buffer at the given binding index.
+    /// @param binding  fragment-shader uniform buffer binding slot
+    /// @param data     pointer to uniform data (nullptr and size==0 deletes)
+    /// @param size     size of uniform data in bytes
+    void updateUniformBuffer(uint32_t binding, const void* data, size_t size);
+
+    /// Create a Metal texture from raw pixel data.
+    /// @param width,height  texture dimensions in pixels
+    /// @param data         BGRA8 pixel data, tightly packed
+    /// @return non-zero texture handle on success
+    uint64_t createTexture(uint32_t width, uint32_t height, const void* data);
+
+    /// Bind a texture at the given fragment shader index.
+    /// @param textureHandle  handle returned by createTexture
+    /// @param index          fragment texture slot index
+    void bindTexture(uint64_t textureHandle, uint32_t index);
+
+    /// Set the encoder viewport (glViewport equivalent).
+    void setViewport(int32_t x, int32_t y, uint32_t width, uint32_t height);
+
+    /// Set the encoder scissor rectangle (glScissor equivalent).
+    void setScissor(int32_t x, int32_t y, uint32_t width, uint32_t height);
+
   private:
     struct Impl;
     Impl* m_impl;
